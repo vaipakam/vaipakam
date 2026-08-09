@@ -6327,6 +6327,11 @@ library LibVaipakam {
         // — stored, not recomputed, so a demotion moves EXACTLY what was
         // counted even if the arming day changed in between.
         uint128 armedFreshCounted;
+        // The ACTUAL credited delivery total (#1634 r3): the per-side pools
+        // each floor when a fee-on-transfer delivery scales, so their sum
+        // can sit a wei below what physically arrived and was counted — a
+        // demotion reserves THIS figure, wholesale, never the pool sum.
+        uint128 creditedAmount;
         bool compensated;
         bool provisional;
         address provisionalEra;

@@ -1286,6 +1286,13 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
     function testProvisionalConfirmedInPlace() public {
         _configureCompMirror();
         _deliverComp(3, REMITTER, 3e18, 2e18);
+        // Credited while the chain was UNARMED (no broadcast yet), so
+        // nothing counted toward the armed-fresh ledger at credit time.
+        assertEq(
+            _remit().getDayCompensation(3).armedFreshCounted,
+            0,
+            "unarmed at credit - uncounted"
+        );
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true; // genuinely zeroed, matching era
@@ -1296,6 +1303,46 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertFalse(dc.provisional, "confirmed in place");
         assertEq(dc.lenderPool18, 3e18, "pools untouched");
         assertEq(_remit().getStrandedRecoveryReserved(), 0, "no quarantine");
+        // #1634 r3 — the confirming broadcast ALSO installed D* (the core
+        // runs before the hook), so the credit reclassifies against it:
+        // the delivered-fresh bound must see this day's backing.
+        assertEq(
+            dc.armedFreshCounted,
+            5e18,
+            "reclassified against the now-installed arming day"
+        );
+    }
+
+    /// #1634 r3 — a fee-on-transfer delivery's per-side shares each floor,
+    /// so their sum can sit below the credited amount; the demotion
+    /// reserves the CREDITED amount wholesale, never the pool sum.
+    function testDemotionReservesFullCreditedAmount() public {
+        _configureCompMirror();
+        _remit().onCompensationBudgetReceived(
+            address(vpfiToken),
+            5e18, // credited amount
+            3,
+            CHAIN_BASE,
+            REMIT_ID,
+            address(0xDD), // stale era - will demote on the real broadcast
+            3e18,
+            2e18 - 1, // floored shares: sum = 5e18 - 1
+            uint64(block.timestamp),
+            uint32(1),
+            uint64(7 days),
+            uint64(24 hours)
+        );
+
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.zeroedForDest = true;
+        messenger.deliverBroadcastV3(b); // era 0xDD != ERA_BASE -> demote
+
+        assertEq(
+            _remit().getStrandedRecovery(address(0xDD), REMIT_ID).amount,
+            5e18,
+            "the FULL credited amount is reserved, not the floored pool sum"
+        );
+        assertEq(_remit().getStrandedRecoveryReserved(), 5e18, "sum moved");
     }
 
     function testProvisionalDemoted_EraMismatch() public {

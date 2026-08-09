@@ -615,6 +615,27 @@
   },
   {
     "type": "error",
+    "name": "CompensationDispatchPastCutoff",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiry",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispatchCutoffGap",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CompensationHookNotSelf",
     "inputs": [
       {

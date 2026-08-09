@@ -360,6 +360,14 @@ interface IVaipakamErrors {
     ///         machinery existed belongs to the w4 legacy-compensation
     ///         migration (`stampLegacyCompensation`), not this wire.
     error CompensationDayHasNoClock(uint256 dayId);
+    /// @notice #1634 r3 — the R3 dispatch cutoff: a compensation must not
+    ///         dispatch within `dispatchCutoffGap` of the day's frozen
+    ///         expiry — bridge latency could carry it past expiry, where
+    ///         the mirror quarantines it (reason 3) after Base has already
+    ///         closed the day and consumed headroom.
+    error CompensationDispatchPastCutoff(
+        uint256 dayId, uint256 expiry, uint64 dispatchCutoffGap
+    );
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by

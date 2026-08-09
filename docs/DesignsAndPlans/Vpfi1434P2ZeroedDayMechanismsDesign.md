@@ -177,7 +177,11 @@ schedule copies both halves:
 > receipt-keyed `strandedRecoveries` records; the `backingPosition`
 > natspec rule was narrowed to "no balance-OWNER subtractions" since the
 > reservation is a protocol LEDGER like the bucket. The R3 dispatch
-> cutoff is deferred to w4 with the terminals whose clocks it guards.)*
+> cutoff shipped IN w2 after review (#1634 r3): the ingress evaluates
+> expiry from the frozen words already, so a late dispatch could arrive
+> quarantined after Base closed the day — the cutoff and the evaluation
+> must travel together. Clockless days refuse dispatch outright (r2);
+> all four clock words ride the wire (r1).)*
 
 ### 1.3 R4b — the applicable expiry rides the remit too
 

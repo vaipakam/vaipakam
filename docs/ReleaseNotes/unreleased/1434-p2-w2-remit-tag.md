@@ -35,9 +35,13 @@ balance must cover bucket plus reservation — with the standing
 skip-on-unknown discipline for chains whose lens predates the widened
 snapshot shape.
 
-Deliberately deferred: the dispatch-cutoff refusal (the rule that the
-canonical chain will not dispatch a compensation too close to the day's
-expiry) ships with the w4 lapse terminals whose clocks it guards — until
-those exist, no arrival can lapse, so a late dispatch strands nothing.
-The post-lapse quarantine branch exists now but is unreachable until w4
-arms the terminals. Part of #1434 (P2); umbrella #1349.
+The review rounds pulled the dispatch cutoff INTO this slice: because
+the mirror now evaluates expiry directly from the frozen clock words,
+"no arrival can lapse before the terminals ship" stopped being true — so
+the canonical chain refuses to dispatch a compensation within the
+cutoff gap of the day's frozen expiry, and refuses clockless days
+outright (they can never settle; pre-clock days belong to the later
+legacy migration). The post-lapse quarantine branch driven by the
+terminal FLAGS exists now but stays unreachable until the terminals
+arm; the clock-based expiry quarantine is live. Part of #1434 (P2);
+umbrella #1349.

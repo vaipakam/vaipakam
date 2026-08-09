@@ -1264,6 +1264,7 @@ contract RewardRemittanceFacet is
         LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
         dc.lenderPool18 += SafeCast.toUint128(lenderShare18);
         dc.borrowerPool18 += SafeCast.toUint128(borrowerShare18);
+        dc.creditedAmount += SafeCast.toUint128(amount);
         dc.compensated = true;
         if (provisional) {
             dc.provisional = true;
@@ -1333,12 +1334,34 @@ contract RewardRemittanceFacet is
 
         if (dc.provisionalEra == baseDeployment && zeroedForDest) {
             dc.provisional = false;
+            // #1634 r3 — reclassify against the NOW-installed D*: the same
+            // core call that delivered this confirming broadcast installs
+            // `armedFromDay` BEFORE this hook runs, so a compensation that
+            // overtook the arming broadcast (credited while the chain was
+            // still unarmed, counted as zero) moves to the armed-fresh
+            // ledger here — otherwise the delivered-fresh bound would
+            // defer this day's claims despite their backing having landed.
+            uint256 armedFrom = s.governorCommitArmedFromDay;
+            if (
+                dc.armedFreshCounted == 0 && armedFrom != 0
+                    && dayId >= armedFrom
+            ) {
+                uint256 credited = dc.creditedAmount;
+                s.rewardBudgetArmedFreshReceived += credited;
+                uint256 unc = s.rewardBudgetFreshUncounted;
+                s.rewardBudgetFreshUncounted =
+                    unc > credited ? unc - credited : 0;
+                dc.armedFreshCounted = SafeCast.toUint128(credited);
+            }
             emit CompensationConfirmed(dayId, baseDeployment);
             return;
         }
-        // Demote: era mismatch (2) or the day was never zeroed (1).
+        // Demote: era mismatch (2) or the day was never zeroed (1). The
+        // reservation takes the CREDITED amount, wholesale (#1634 r3) —
+        // the pool sum can floor a wei below it on a scaled delivery, and
+        // the design promises the demotion moves the arrival, not the sum.
         uint8 reason = dc.provisionalEra == baseDeployment ? 1 : 2;
-        uint256 pools = uint256(dc.lenderPool18) + uint256(dc.borrowerPool18);
+        uint256 pools = dc.creditedAmount;
         uint256 counted = dc.armedFreshCounted;
         s.strandedRecoveryReserved += pools;
         // Move the counted portion back to uncounted so the
@@ -1755,8 +1778,26 @@ contract RewardRemittanceFacet is
         // post-w1 day heals its clock first (permissionless
         // {RewardAggregatorFacet.broadcastGlobalTo}); a pre-w1 day belongs
         // to the w4 legacy-compensation migration.
-        if (s.dayLapseClock[dayId].finalizedAt == 0) {
+        LibVaipakam.DayLapseClock storage clk = s.dayLapseClock[dayId];
+        if (clk.finalizedAt == 0) {
             revert CompensationDayHasNoClock(dayId);
+        }
+        // #1634 r3 — the R3 dispatch cutoff, enforced NOW rather than with
+        // the w4 terminals: the mirror already evaluates expiry from these
+        // same frozen words (the r1 fix), so a dispatch inside the cutoff
+        // window could arrive quarantined (reason 3) after Base closed the
+        // day and consumed headroom — no payable compensation, no return
+        // until w5. Refusing here is the explicit CCIP delivery budget R3
+        // ratified. Version 0 = not lapse-eligible = no cutoff, matching
+        // the never-expired rule at the ingress.
+        if (clk.scheduleVersion != 0) {
+            uint256 expiry =
+                uint256(clk.finalizedAt) + clk.lapseWindowSeconds;
+            if (block.timestamp + clk.dispatchCutoffGap > expiry) {
+                revert CompensationDispatchPastCutoff(
+                    dayId, expiry, clk.dispatchCutoffGap
+                );
+            }
         }
 
         // r6 — NET headroom; a manual send retires no commitment (the
@@ -1791,9 +1832,9 @@ contract RewardRemittanceFacet is
         // frozen expiry inputs) so the mirror ingress can CLASSIFY the
         // arrival (§2.2) instead of booking it as an ordinary delivery.
         // Still fresh-only (see `r.fresh = amount` above). The R3 dispatch
-        // cutoff is deliberately NOT enforced here yet — it ships with the
-        // w4 lapse terminals whose clocks it guards (until they exist, no
-        // arrival can lapse, so a late dispatch strands nothing).
+        // cutoff is enforced above (#1634 r3) — the ingress evaluates
+        // expiry from the same frozen words, so a late dispatch could
+        // otherwise arrive quarantined after this day was closed.
         messageId = _sendCompensationPayload(
             s,
             vpfi,

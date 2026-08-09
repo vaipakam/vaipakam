@@ -704,6 +704,38 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
+    /// @dev #1634 r3 — the R3 dispatch cutoff: a compensation must not
+    ///      dispatch within `dispatchCutoffGap` of the day's frozen expiry
+    ///      (bridge latency could carry it past expiry, where the mirror
+    ///      quarantines it after Base closed the day). Exactly AT the
+    ///      cutoff boundary is allowed; one second inside is refused.
+    function test_Manual_RefusesInsideDispatchCutoff() public {
+        RewardCommitmentFacet(address(diamond)).setLapseSchedule(
+            7 days, 24 hours
+        );
+        _finalizeDay(1);
+        (uint64 frozenAt, , , ) =
+            RewardCommitmentFacet(address(diamond)).getDayLapseClock(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+
+        uint256 expiry = uint256(frozenAt) + 7 days;
+        // One second INSIDE the cutoff window.
+        vm.warp(expiry - 24 hours + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationDispatchPastCutoff.selector,
+                1,
+                expiry,
+                uint64(24 hours)
+            )
+        );
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+
+        // Exactly AT the boundary (now + gap == expiry) is allowed.
+        vm.warp(expiry - 24 hours);
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+    }
+
     /// @dev #1434 P2-w2 — the P2 payload's expiry inputs are the day's
     ///      FROZEN clock words (w1's finalization-time freeze), never live
     ///      state: set schedule v1, finalize (freezing v1 + now), then bump

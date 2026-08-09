@@ -68,6 +68,11 @@
             "internalType": "uint128"
           },
           {
+            "name": "creditedAmount",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
             "name": "compensated",
             "type": "bool",
             "internalType": "bool"
@@ -1677,6 +1682,27 @@
         "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompensationDispatchPastCutoff",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiry",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispatchCutoffGap",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },

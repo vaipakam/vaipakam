@@ -69,7 +69,9 @@ library RemitWire {
     ///                            uint256 lenderShare18,
     ///                            uint256 borrowerShare18,
     ///                            uint256 finalizedAt,
-    ///                            uint256 lapseScheduleVersion)`
+    ///                            uint256 lapseScheduleVersion,
+    ///                            uint256 lapseWindowSeconds,
+    ///                            uint256 dispatchCutoffGap)`
     ///
     ///         The tag + the SINGLE-DAY shape ARE the compensation marker
     ///         (§2.2): a P2 payload always funds exactly one zeroed day
@@ -79,10 +81,12 @@ library RemitWire {
     ///         expiry inputs (R4b: `finalizedAt` + the schedule version,
     ///         both read from Base's finalization-time freeze) so the mirror
     ///         can classify the arrival even before its V3 broadcast lands
-    ///         (§2.2's unstamped case). Both values are zero for a day
-    ///         frozen before the clock machinery existed — such a day is
-    ///         not lapse-eligible, so zero expiry inputs are honest, not a
-    ///         fallback. Fresh-only by construction: the manual-compensation
+    ///         (§2.2's unstamped case). ALL FOUR frozen clock words ride
+    ///         (#1634 r1): w1 chose inline schedule parameters over a
+    ///         mirror-side version table, so the version number alone is
+    ///         underivable there and the window itself must travel for the
+    ///         ingress-time expiry evaluation. A clockless day never
+    ///         dispatches at all (#1634 r2 — `CompensationDayHasNoClock`). Fresh-only by construction: the manual-compensation
     ///         path relocates no recycled custody, so the payload carries no
     ///         `recycledShare` field at all.
     uint256 internal constant REMIT_WIRE_TAG_P2 =
