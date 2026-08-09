@@ -277,8 +277,23 @@ for (const [index, lng] of LOCALES.entries()) {
     deskText: [],
     error: null,
   };
-  const openDesk = () =>
-    page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  const openDesk = async () => {
+    const resp = await page.goto(`${SITE}/desk`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 45000,
+    });
+    // Status-checked exactly as the shared `visit()` is (Codex #1621 r9).
+    // A resolved `page.goto` is not proof of reachability — a 404 or CDN
+    // 5xx resolves fine, and the error document would then fail the
+    // language and desk assertions as if the app had regressed. This
+    // drive launches its own browser so it cannot use `visit()`; that is
+    // not a reason for it to answer the question differently.
+    const status = resp?.status();
+    if (typeof status === 'number' && status >= 400) {
+      throw new Error(`${SITE}/desk answered HTTP ${status}`);
+    }
+    return resp;
+  };
   try {
     // The reachability probe is the FIRST load that actually happens, not
     // whichever locale is index 0 (Codex #1621 r3). Keying it to the

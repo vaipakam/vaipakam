@@ -38,24 +38,43 @@ let recording = false;
 // error shell clears the weak body-length check — exit 0, batch prints
 // PASS, nothing audited.
 let rpcOk = 0;
-page.on('response', async (res) => {
-  if (!recording) return;
+// Attributed by when the REQUEST started, not when its response arrived
+// (Codex #1621 r9), matching how the budgets above count. Keyed on the
+// request object because the two clocks genuinely disagree: an 8s
+// warm-up request can land after `recording` flips on — satisfying the
+// floor while every request made INSIDE the window failed — and a
+// request made near the end can land after it flips off, producing a
+// false BLOCKED. Same request-owns-its-outcome discipline live-ux-sweep
+// uses for its per-route network attribution.
+const recordedRequests = new WeakSet();
+const bodyReads = [];
+page.on('response', (res) => {
   const req = res.request();
-  if (!req.postData() || res.status() !== 200) return;
-  try {
-    const parsed = JSON.parse(await res.text());
-    for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
-      // A JSON-RPC envelope carrying a result, not an error object.
-      if (r && r.jsonrpc && r.error === undefined && r.result !== undefined) rpcOk++;
-    }
-  } catch {
-    /* not a JSON-RPC response body */
-  }
+  if (!recordedRequests.has(req) || res.status() !== 200) return;
+  // Playwright fires `response` on HEADERS and does not await handlers,
+  // so the body read is still in flight; collect the promises and settle
+  // them before the floor is judged, or a slow body reads as "no
+  // successful RPC".
+  bodyReads.push(
+    res
+      .text()
+      .then((text) => {
+        const parsed = JSON.parse(text);
+        for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
+          // A JSON-RPC envelope carrying a result, not an error object.
+          if (r && r.jsonrpc && r.error === undefined && r.result !== undefined) rpcOk++;
+        }
+      })
+      .catch(() => {
+        /* not a JSON-RPC response body, or the body never arrived */
+      }),
+  );
 });
 page.on('request', (req) => {
   if (!recording) return;
   const body = req.postData();
   if (!body) return;
+  recordedRequests.add(req);
   try {
     const parsed = JSON.parse(body);
     for (const call of Array.isArray(parsed) ? parsed : [parsed]) {
@@ -72,6 +91,9 @@ recording = true;
 console.log('recording 60s of steady-state traffic…');
 await page.waitForTimeout(60_000);
 recording = false;
+
+// Settle the in-flight body reads before judging the floor.
+await Promise.allSettled(bodyReads);
 
 const total = Object.values(counts).reduce((a, n) => a + n, 0);
 console.log('tally:', JSON.stringify(counts), `| successful rpc responses: ${rpcOk}`);
