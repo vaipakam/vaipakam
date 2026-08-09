@@ -10,6 +10,8 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {
     IRewardMessenger,
@@ -1083,5 +1085,259 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertTrue(f.stamped, "V2 layer applied on top of legacy pair");
         (uint64 at, , , ) = _com().getDayLapseClock(3);
         assertEq(at, 1_700_000_000, "clock installed");
+    }
+}
+
+/// @notice #1434 P2-w2 — the §2.2 compensation-ingress CLASSIFICATION over
+///         the same harness (the mirror's era/zeroed/clock state is driven
+///         by real V3 deliveries). Slice-2 proofs: quarantine on each
+///         ingress case; the arrival reservation visible in the backing
+///         figures (the ONE `backingPosition` definition both enforcement
+///         sites read — #1555); unstamped-mirror classification (the
+///         provisional credit, CONFIRMED and DEMOTED).
+contract CompensationClassificationTest is RewardBroadcastV3Harness {
+    address internal constant REMITTER = ERA_BASE; // honest-path sender
+    uint256 internal constant REMIT_ID = 42;
+
+    ERC20Mock internal vpfiToken;
+
+    function _remit() internal view returns (RewardRemittanceFacet) {
+        return RewardRemittanceFacet(address(diamond));
+    }
+
+    function _lens() internal view returns (InteractionRewardsLensFacet) {
+        return InteractionRewardsLensFacet(address(diamond));
+    }
+
+    /// @dev Mirror config + this test as the remittance receiver (so the
+    ///      classifying ingress is directly callable) + a real ERC20 as
+    ///      the VPFI token with a funded Diamond balance, so the backing
+    ///      snapshot's balance read is live.
+    function _configureCompMirror() internal {
+        _configureMirror(CHAIN_ARB);
+        _remit().setRewardRemittanceReceiver(address(this));
+        vpfiToken = new ERC20Mock("VPFI", "VPFI", 18);
+        _mut().setVpfiTokenRaw(address(vpfiToken));
+        vpfiToken.mint(address(diamond), 1_000e18);
+    }
+
+    function _deliverComp(
+        uint256 dayId,
+        address remitter,
+        uint256 lenderShare,
+        uint256 borrowerShare
+    ) internal {
+        _remit().onCompensationBudgetReceived(
+            address(vpfiToken),
+            lenderShare + borrowerShare,
+            dayId,
+            CHAIN_BASE,
+            REMIT_ID,
+            remitter,
+            lenderShare,
+            borrowerShare,
+            uint64(1_700_000_000),
+            uint32(1)
+        );
+    }
+
+    // ── Quarantine case 1: day applied + era known, NOT zeroed ─────────────
+
+    function testQuarantine_NotZeroedDay() public {
+        _configureCompMirror();
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB)); // zeroed = false
+
+        (, , uint256 unearmarkedBefore, , , , uint256 reservedBefore) =
+            _lens().getRecycleBackingSnapshot();
+        assertEq(reservedBefore, 0, "reservation starts empty");
+
+        _deliverComp(3, REMITTER, 3e18, 2e18);
+
+        LibVaipakam.StrandedRecovery memory sr =
+            _remit().getStrandedRecovery(REMITTER, REMIT_ID);
+        assertEq(sr.amount, 5e18, "whole arrival reserved");
+        assertEq(sr.dayId, 3, "bound day recorded");
+        assertEq(sr.reason, 1, "reason: not a zeroed day");
+        assertEq(
+            _remit().getStrandedRecoveryReserved(), 5e18, "sum advanced"
+        );
+        // The §4.1 claim exclusion, visible at the ONE definition both
+        // enforcement sites read: unearmarked shrinks by the reservation.
+        (, , uint256 unearmarkedAfter, , , , uint256 reservedAfter) =
+            _lens().getRecycleBackingSnapshot();
+        assertEq(reservedAfter, 5e18, "snapshot publishes the reservation");
+        assertEq(
+            unearmarkedAfter,
+            unearmarkedBefore > 5e18 ? unearmarkedBefore - 5e18 : 0,
+            "unearmarked excludes the reservation"
+        );
+        // Nothing payable was credited, and the fresh value is UNCOUNTED.
+        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        assertEq(dc.lenderPool18, 0, "no pool credit");
+        assertFalse(dc.compensated, "not compensated");
+        // Receipt recorded exactly like an ordinary delivery (ACK path).
+        assertGt(
+            _remit().getReceivedRemit(REMITTER, REMIT_ID).receivedAt,
+            0,
+            "receipt recorded"
+        );
+    }
+
+    // ── Quarantine case 2: era mismatch on a known day ─────────────────────
+
+    function testQuarantine_EraMismatch() public {
+        _configureCompMirror();
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.zeroedForDest = true;
+        messenger.deliverBroadcastV3(b);
+
+        _deliverComp(3, address(0xDD), 3e18, 2e18);
+
+        LibVaipakam.StrandedRecovery memory sr =
+            _remit().getStrandedRecovery(address(0xDD), REMIT_ID);
+        assertEq(sr.amount, 5e18, "reserved");
+        assertEq(sr.reason, 2, "reason: era mismatch");
+        assertFalse(_remit().getDayCompensation(3).compensated, "no credit");
+    }
+
+    // ── Quarantine case 3: post-lapse arrival (w4 flags via mutator) ───────
+
+    function testQuarantine_PostLapse() public {
+        _configureCompMirror();
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.zeroedForDest = true;
+        messenger.deliverBroadcastV3(b);
+        _mut().setDayLapsedRaw(3, true, false);
+
+        _deliverComp(3, REMITTER, 3e18, 2e18);
+
+        assertEq(
+            _remit().getStrandedRecovery(REMITTER, REMIT_ID).reason,
+            3,
+            "reason: post-lapse"
+        );
+        assertFalse(_remit().getDayCompensation(3).compensated, "no credit");
+    }
+
+    // ── The confirmed credit: applied + era match + zeroed + not lapsed ────
+
+    function testCredit_ZeroedDay() public {
+        _configureCompMirror();
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.zeroedForDest = true;
+        messenger.deliverBroadcastV3(b);
+
+        uint256 armedBefore = 0; // fresh deploy: nothing armed-received yet
+        _deliverComp(3, REMITTER, 3e18, 2e18);
+
+        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        assertEq(dc.lenderPool18, 3e18, "lender pool per side");
+        assertEq(dc.borrowerPool18, 2e18, "borrower pool per side");
+        assertTrue(dc.compensated, "compensated");
+        assertFalse(dc.provisional, "state was known - not provisional");
+        // Day 3 >= the packet's armedFromDay (2): armed-attributable, and
+        // what was counted is recorded for a potential demotion.
+        assertEq(dc.armedFreshCounted, 5e18, "counted figure stored");
+        assertEq(
+            _remit().getStrandedRecoveryReserved(),
+            armedBefore,
+            "nothing quarantined"
+        );
+    }
+
+    // ── The provisional credit (§2.2 case b): compensation OVERTAKES V3 ────
+
+    function testProvisional_UnappliedDay() public {
+        _configureCompMirror();
+        _deliverComp(3, REMITTER, 3e18, 2e18); // no broadcast yet
+
+        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        assertTrue(dc.compensated, "credited");
+        assertTrue(dc.provisional, "provisional - era unknown");
+        assertEq(dc.provisionalEra, REMITTER, "assumed era = remitter");
+        assertEq(dc.lenderPool18, 3e18, "pools credited pending the era");
+    }
+
+    function testProvisionalConfirmedInPlace() public {
+        _configureCompMirror();
+        _deliverComp(3, REMITTER, 3e18, 2e18);
+
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.zeroedForDest = true; // genuinely zeroed, matching era
+        messenger.deliverBroadcastV3(b);
+
+        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        assertTrue(dc.compensated, "credit stands");
+        assertFalse(dc.provisional, "confirmed in place");
+        assertEq(dc.lenderPool18, 3e18, "pools untouched");
+        assertEq(_remit().getStrandedRecoveryReserved(), 0, "no quarantine");
+    }
+
+    function testProvisionalDemoted_EraMismatch() public {
+        _configureCompMirror();
+        _deliverComp(3, address(0xDD), 3e18, 2e18); // stale-era sender
+
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.zeroedForDest = true;
+        messenger.deliverBroadcastV3(b); // confirmed era = ERA_BASE
+
+        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        assertFalse(dc.compensated, "provisional state deleted");
+        LibVaipakam.StrandedRecovery memory sr =
+            _remit().getStrandedRecovery(address(0xDD), REMIT_ID);
+        assertEq(sr.amount, 5e18, "whole credit demoted to the reservation");
+        assertEq(sr.reason, 2, "reason: era mismatch");
+        assertEq(_remit().getStrandedRecoveryReserved(), 5e18, "sum moved");
+    }
+
+    function testProvisionalDemoted_NotZeroed() public {
+        _configureCompMirror();
+        _deliverComp(3, REMITTER, 3e18, 2e18);
+
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB)); // zeroed = false
+
+        LibVaipakam.StrandedRecovery memory sr =
+            _remit().getStrandedRecovery(REMITTER, REMIT_ID);
+        assertEq(sr.amount, 5e18, "demoted");
+        assertEq(sr.reason, 1, "reason: the day was never zeroed");
+    }
+
+    // ── Malformed payload + hook gate ──────────────────────────────────────
+
+    function testSharesBoundIsEnforced() public {
+        _configureCompMirror();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompensationSharesExceedDelivery.selector, 3e18, 3e18, 5e18
+            )
+        );
+        _remit().onCompensationBudgetReceived(
+            address(vpfiToken),
+            5e18,
+            3,
+            CHAIN_BASE,
+            REMIT_ID,
+            REMITTER,
+            3e18,
+            3e18,
+            uint64(1_700_000_000),
+            uint32(1)
+        );
+    }
+
+    function testHookIsSelfGated() public {
+        _configureCompMirror();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompensationHookNotSelf.selector, address(this)
+            )
+        );
+        _remit().onCompensationDayBroadcastArrived(3, ERA_BASE, true);
+    }
+
+    function testIngressIsReceiverGated() public {
+        _configureMirror(CHAIN_ARB); // receiver NOT set to this test
+        vm.expectRevert();
+        _deliverComp(3, REMITTER, 3e18, 2e18);
     }
 }

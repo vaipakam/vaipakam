@@ -27,6 +27,7 @@
 import type { Abi, AbiFunction } from 'viem';
 import rewardAggregatorAbi from '../../../packages/contracts/src/abis/RewardAggregatorFacet.json';
 import repatriationAbi from '../../../packages/contracts/src/abis/RepatriationFacet.json';
+import interactionRewardsLensAbi from '../../../packages/contracts/src/abis/InteractionRewardsLensFacet.json';
 
 /** The compiled `RewardAggregatorFacet` ABI, as viem consumes it. */
 export const REWARD_AGGREGATOR_ABI = rewardAggregatorAbi as unknown as Abi;
@@ -37,6 +38,13 @@ export const REWARD_AGGREGATOR_ABI = rewardAggregatorAbi as unknown as Abi;
  *  not-yet-refreshed chain stays attributable to the facet that is
  *  actually missing. */
 export const REPATRIATION_ABI = repatriationAbi as unknown as Abi;
+
+/** The compiled `InteractionRewardsLensFacet` ABI (#1434 P2-w2) — the
+ *  backing snapshot the arrival-reservation check reads (balance, bucket,
+ *  and the stranded-recovery reservation in one pinned-block tuple). Own
+ *  import for the same attribution reason as the repatriation ABI. */
+export const INTERACTION_REWARDS_LENS_ABI =
+  interactionRewardsLensAbi as unknown as Abi;
 
 /**
  * Every view this Worker calls, with the output shape its reader assumes.

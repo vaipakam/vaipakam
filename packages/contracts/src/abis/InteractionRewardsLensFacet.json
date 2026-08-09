@@ -289,6 +289,11 @@
         "name": "keeperBudget",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "strandedRecoveryReserved",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"

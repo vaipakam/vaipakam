@@ -57,4 +57,34 @@ library RemitWire {
     ///      (and so a reader can diff it against the preimage).
     uint256 internal constant REMIT_WIRE_TAG_D5 =
         uint256(keccak256("vaipakam.remit.wire.d5"));
+
+    /// @notice Leading word of the #1434 P2 MANUAL-COMPENSATION remit
+    ///         payload (design §1.3) — a NEW tag per the standing d5 rule,
+    ///         never another rung on the offset ladder.
+    /// @dev    Shape:
+    ///
+    ///           p2 : `abi.encode(REMIT_WIRE_TAG_P2, uint256 dayId,
+    ///                            uint256 total, uint256 remitId,
+    ///                            address remitter,
+    ///                            uint256 lenderShare18,
+    ///                            uint256 borrowerShare18,
+    ///                            uint256 finalizedAt,
+    ///                            uint256 lapseScheduleVersion)`
+    ///
+    ///         The tag + the SINGLE-DAY shape ARE the compensation marker
+    ///         (§2.2): a P2 payload always funds exactly one zeroed day
+    ///         (constraint 15 binds a compensation to one day), carries the
+    ///         authenticated PER-SIDE amounts (R1/R1b — the mirror can never
+    ///         be left to solve for a side), and duplicates the day's FROZEN
+    ///         expiry inputs (R4b: `finalizedAt` + the schedule version,
+    ///         both read from Base's finalization-time freeze) so the mirror
+    ///         can classify the arrival even before its V3 broadcast lands
+    ///         (§2.2's unstamped case). Both values are zero for a day
+    ///         frozen before the clock machinery existed — such a day is
+    ///         not lapse-eligible, so zero expiry inputs are honest, not a
+    ///         fallback. Fresh-only by construction: the manual-compensation
+    ///         path relocates no recycled custody, so the payload carries no
+    ///         `recycledShare` field at all.
+    uint256 internal constant REMIT_WIRE_TAG_P2 =
+        uint256(keccak256("vaipakam.remit.wire.p2"));
 }

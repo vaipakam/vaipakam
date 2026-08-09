@@ -88,7 +88,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](153);
+        selectors = new bytes4[](154);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -393,6 +393,9 @@ contract HelperTest {
         // #1434 P2-w1 — erase a day's frozen lapse clock to reproduce a day
         // finalized BEFORE the upgrade (the V2-wire fallback path).
         selectors[n++] = TestMutatorFacet.clearDayLapseClockRaw.selector;
+        // #1434 P2-w2 — drive the post-lapse quarantine branch before its
+        // w4 production writers exist.
+        selectors[n++] = TestMutatorFacet.setDayLapsedRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2091,7 +2094,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](30);
+        selectors = new bytes4[](35);
+        // #1434 P2-w2 — the classifying compensation ingress + the
+        // broadcast-arrival hook + the reservation reads.
+        selectors[30] =
+            RewardRemittanceFacet.onCompensationBudgetReceived.selector;
+        selectors[31] =
+            RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
+        selectors[32] = RewardRemittanceFacet.getDayCompensation.selector;
+        selectors[33] =
+            RewardRemittanceFacet.getStrandedRecoveryReserved.selector;
+        selectors[34] = RewardRemittanceFacet.getStrandedRecovery.selector;
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;

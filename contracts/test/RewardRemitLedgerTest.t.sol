@@ -14,6 +14,8 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {RemitWire} from "../src/crosschain/RemitWire.sol";
+import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
@@ -602,15 +604,16 @@ contract RewardRemitLedgerTest is SetupTest {
                 CHAIN_ARB
             )
         );
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 5e18);
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
     function test_Manual_FundsThroughTheLedger() public {
         _finalizeDay(1);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
 
+        // #1434 P2-w2 — the manual path is sized PER SIDE on the wire.
         uint256 amount = 5e18;
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, amount);
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
 
         LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
         assertEq(uint256(r.status), 1, "pending");
@@ -622,14 +625,38 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 1, "day closed");
         assertEq(remit.getRewardBudgetRemittedGlobal(), amount, "69M reserved");
 
-        // Payload rode the token channel with the echo id.
-        (, uint256[] memory pd, uint256 pt, uint256 prid, , ) = abi.decode(
+        // #1434 P2-w2 — the payload is the P2 compensation shape: tag +
+        // single day + per-side amounts + the day's frozen expiry inputs.
+        (
+            uint256 pTag,
+            uint256 pDay,
+            uint256 pt,
+            uint256 prid,
+            ,
+            uint256 pLender,
+            uint256 pBorrower,
+            ,
+
+        ) = abi.decode(
             ccip.sentPayload(0),
-            (uint256, uint256[], uint256, uint256, address, uint256)
+            (
+                uint256,
+                uint256,
+                uint256,
+                uint256,
+                address,
+                uint256,
+                uint256,
+                uint256,
+                uint256
+            )
         );
-        assertEq(pd[0], 1, "day");
+        assertEq(pTag, RemitWire.REMIT_WIRE_TAG_P2, "P2 wire tag");
+        assertEq(pDay, 1, "day");
         assertEq(pt, amount, "total");
         assertEq(prid, 1, "remitId");
+        assertEq(pLender, 3e18, "lender side rides the wire");
+        assertEq(pBorrower, 2e18, "borrower side rides the wire");
 
         // Ack finalizes like any remit.
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, amount);
@@ -643,7 +670,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 CHAIN_ARB
             )
         );
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, amount);
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
     function test_Manual_AdminOnly() public {
@@ -652,7 +679,46 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.deal(stranger, 1 ether);
         vm.prank(stranger);
         vm.expectRevert();
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 5e18);
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+    }
+
+    /// @dev #1434 P2-w2 — the P2 payload's expiry inputs are the day's
+    ///      FROZEN clock words (w1's finalization-time freeze), never live
+    ///      state: set schedule v1, finalize (freezing v1 + now), then bump
+    ///      to v2 and warp before dispatching — the wire still carries v1
+    ///      and the finalization instant.
+    function test_Manual_CarriesFrozenClockWords() public {
+        RewardCommitmentFacet(address(diamond)).setLapseSchedule(
+            7 days, 24 hours
+        );
+        _finalizeDay(1);
+        (uint64 frozenAt, uint32 frozenVer, , ) =
+            RewardCommitmentFacet(address(diamond)).getDayLapseClock(1);
+        assertEq(frozenVer, 1, "day froze schedule v1");
+
+        RewardCommitmentFacet(address(diamond)).setLapseSchedule(
+            10 days, 48 hours
+        );
+        vm.warp(block.timestamp + 3 days);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+
+        (, , , , , , , uint256 wireAt, uint256 wireVer) = abi.decode(
+            ccip.sentPayload(0),
+            (
+                uint256,
+                uint256,
+                uint256,
+                uint256,
+                address,
+                uint256,
+                uint256,
+                uint256,
+                uint256
+            )
+        );
+        assertEq(wireAt, uint256(frozenAt), "frozen finalizedAt on the wire");
+        assertEq(wireVer, 1, "frozen v1 despite the v2 bump");
     }
 
     // ─── mirror-side receipt + ack send ───────────────────────────────────

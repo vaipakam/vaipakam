@@ -11,6 +11,16 @@ import {
     RewardBroadcastV2,
     RewardBroadcastV3
 } from "../interfaces/IRewardMessenger.sol";
+
+/// @dev #1434 P2-w2 — the remittance facet's compensation hook, reached
+///      through the Diamond's own fallback (standard cross-facet call).
+interface ICompensationDayHook {
+    function onCompensationDayBroadcastArrived(
+        uint256 dayId,
+        address baseDeployment,
+        bool zeroedForDest
+    ) external;
+}
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -827,6 +837,7 @@ contract RewardReporterFacet is
                     .recycleConsume
             );
             _installDayClock(s, b, /* backfilled */ true);
+            _notifyCompensationHook(b);
             return;
         }
 
@@ -844,6 +855,20 @@ contract RewardReporterFacet is
         ) {
             revert BroadcastClockDivergence(dayId);
         }
+        _notifyCompensationHook(b);
+    }
+
+    /// @dev #1434 P2-w2 — every ACCEPTED clock-bearing broadcast settles
+    ///      any PROVISIONAL compensation the day holds (§2.2 case b): the
+    ///      packet's authenticated era + zeroed marker are exactly the two
+    ///      facts the provisional credit assumed. Routed through the
+    ///      Diamond's own fallback (the standard cross-facet path) to the
+    ///      remittance facet's self-gated hook; a no-op for days without a
+    ///      provisional credit.
+    function _notifyCompensationHook(RewardBroadcastV3 calldata b) private {
+        ICompensationDayHook(address(this)).onCompensationDayBroadcastArrived(
+            b.v2.dayId, b.baseDeployment, b.zeroedForDest
+        );
     }
 
     /// @dev The V3 fields' writer: the packed clock, the era record, and

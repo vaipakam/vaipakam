@@ -340,6 +340,17 @@ interface IVaipakamErrors {
     ///         installed frozen clock facts (finalizedAt / schedule version /
     ///         inline parameters / zeroed marker).
     error BroadcastClockDivergence(uint256 dayId);
+    /// @notice #1434 P2-w2 — a P2 compensation payload's per-side shares
+    ///         sum past the delivered amount (malformed payload; both
+    ///         shares floor when scaled, so an honest wire can never trip
+    ///         this).
+    error CompensationSharesExceedDelivery(
+        uint256 lenderShare18, uint256 borrowerShare18, uint256 amount
+    );
+    /// @notice #1434 P2-w2 — the compensation broadcast-arrival hook is
+    ///         Diamond-internal (the reporter facet invokes it through the
+    ///         Diamond's own fallback); any other caller is rejected.
+    error CompensationHookNotSelf(address caller);
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by
