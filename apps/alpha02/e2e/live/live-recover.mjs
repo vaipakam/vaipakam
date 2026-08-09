@@ -378,6 +378,22 @@ try {
 
   // 3. The route itself: deployed robots header, then the posture
   //    matching the live oracle.
+  // Re-read immediately before judging, rather than trusting the snapshot
+  // taken before Help, the guide and two Settings modes (Codex #1621 r5).
+  // Governance configuring or clearing the oracle mid-run would otherwise
+  // have the page render against current chain state while the assertion
+  // picks its expected posture from a minutes-old read — a legitimate
+  // configuration change reported as a product FAIL.
+  const oracleNow = await precondition('re-reading the sanctions oracle before the posture check', () =>
+    pub.readContract({ address: DIAMOND, abi: ORACLE_ABI, functionName: 'getSanctionsOracle' }),
+  );
+  const oracleSetNow = oracleNow.toLowerCase() !== ZERO;
+  if (oracleSetNow !== oracleSet) {
+    console.log(
+      `note: the sanctions oracle changed mid-run (${oracleSet ? 'configured' : 'UNSET'}` +
+        ` → ${oracleSetNow ? 'configured' : 'UNSET'}); judging against the CURRENT setting`,
+    );
+  }
   const recoverRes = await page.goto(SITE + '/recover', {
     waitUntil: 'domcontentloaded',
     timeout: 60000,
@@ -408,9 +424,11 @@ try {
         'withheld regardless of the oracle setting; re-run with a clean, unflagged ' +
         'wallet with no outstanding attempt to exercise the availability arms.',
     );
-  } else if (oracleSet) {
+  } else if (oracleSetNow) {
     // Configured deployment: the form is the correct posture for a
-    // clean wallet with nothing outstanding.
+    // clean wallet with nothing outstanding. Judged against the RE-READ
+    // setting, not the run-opening snapshot — re-reading and then
+    // asserting on the stale value would have been no fix at all.
     check('oracle configured → form offered', posture === 'form');
   } else {
     // Shipped retail default: recovery must be presented as

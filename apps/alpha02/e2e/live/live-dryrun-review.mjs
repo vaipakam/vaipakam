@@ -27,6 +27,18 @@ const TILQ =
   mocks.illiquidToken ?? '0x2affacdea8119e38d9754b2c2c15ec79af360807';
 const TILQ2 =
   mocks.illiquidToken2 ?? '0x2A6c7149199991243aCbc04e1d59Aa052A6f00c3';
+// A non-null but MALFORMED override survives the `??` fallback and is then
+// pasted into the product UI, where the flow fails and the batch reports a
+// stale fixture artifact as a dry-run regression (Codex #1621 r5). Same
+// class as the live-collateral-precheck fixture check.
+for (const [label, value] of [['illiquidToken', TILQ], ['illiquidToken2', TILQ2]]) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(String(value))) {
+    blockedSync(
+      `FAUCET_JSON's ${label} is not a 0x-40-hex address: ${JSON.stringify(value)}` +
+        ` — no usable fixture to drive the dry run with.`,
+    );
+  }
+}
 
 const { page, done } = await launch({ role: 'lender' });
 await visit(page, '/lend');
