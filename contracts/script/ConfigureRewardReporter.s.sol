@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {IRewardMessenger} from "../src/interfaces/IRewardMessenger.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -213,6 +214,28 @@ contract ConfigureRewardReporter is Script {
                 RewardAggregatorFacet(diamond).setExpectedSourceChainIds(chainIds);
                 console.log("Expected source chains set:", chainIds.length);
             }
+
+            // #1434 P2-w3 (#1636 r3) — the Base-side reciprocal of the
+            // mirror's BASE_REWARD_DEPLOYMENT: the CURRENT mirror Diamond
+            // per source chain, the fail-closed era ground truth the
+            // compensation-quote (kind-11) ingress authenticates EVERY
+            // arrival against. While a chain is unregistered its quotes
+            // revert `CompQuoteMirrorEraUnset` (failed, re-executable
+            // CCIP messages) — so zeroed-day compensation on that lane is
+            // unreachable until this registration lands. Format:
+            // "42161:0xabc...,10:0xdef..." (chainId:diamondAddress).
+            string memory mirrorCsv =
+                vm.envOr("MIRROR_REWARD_DEPLOYMENTS", string(""));
+            if (bytes(mirrorCsv).length == 0) {
+                console.log(
+                    "WARNING: canonical chain but MIRROR_REWARD_DEPLOYMENTS "
+                    "empty - the compensation-quote (kind-11) ingress stays "
+                    "DARK (fail-closed, CompQuoteMirrorEraUnset) until "
+                    "setMirrorRewardDeployment is called per mirror chain."
+                );
+            } else {
+                _applyMirrorDeployments(diamond, mirrorCsv);
+            }
         }
         vm.stopBroadcast();
 
@@ -230,6 +253,52 @@ contract ConfigureRewardReporter is Script {
         }
 
         console.log("Reward reporter configuration applied.");
+    }
+
+    /// @dev #1636 r3 — parse "chainId:0xaddr,chainId:0xaddr" and register
+    ///      each pair as the chain's current mirror Diamond. Same
+    ///      no-whitespace ops-only posture as {_parseChainIdCsv}.
+    function _applyMirrorDeployments(
+        address diamond,
+        string memory s
+    ) internal {
+        bytes memory b = bytes(s);
+        uint256 start = 0;
+        for (uint256 i = 0; i <= b.length; i++) {
+            if (i == b.length || b[i] == ",") {
+                // One "chainId:0xaddr" segment in [start, i).
+                uint256 colon = start;
+                while (colon < i && b[colon] != ":") colon++;
+                require(
+                    colon > start && colon < i,
+                    "ConfigureRewardReporter: MIRROR_REWARD_DEPLOYMENTS "
+                    "segment must be chainId:address"
+                );
+                uint256 acc = 0;
+                for (uint256 j = start; j < colon; j++) {
+                    require(
+                        b[j] >= 0x30 && b[j] <= 0x39,
+                        "ConfigureRewardReporter: non-digit chain id in "
+                        "MIRROR_REWARD_DEPLOYMENTS"
+                    );
+                    acc = acc * 10 + (uint8(b[j]) - 0x30);
+                }
+                bytes memory addrStr = new bytes(i - colon - 1);
+                for (uint256 j = colon + 1; j < i; j++) {
+                    addrStr[j - colon - 1] = b[j];
+                }
+                address dep = vm.parseAddress(string(addrStr));
+                require(
+                    dep != address(0),
+                    "ConfigureRewardReporter: zero mirror deployment"
+                );
+                RewardCommitmentFacet(diamond).setMirrorRewardDeployment(
+                    SafeCast.toUint32(acc), dep
+                );
+                console.log("Mirror reward deployment set:", acc, dep);
+                start = i + 1;
+            }
+        }
     }
 
     /// @dev Parse "8453,42161" → [8453, 42161]. No whitespace tolerance
