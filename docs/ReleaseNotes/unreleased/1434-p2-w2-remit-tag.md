@@ -1,4 +1,4 @@
-## Thread — P2-w2: the compensation remit classifies at the mirror, and quarantined value is reserved (PR #TBD)
+## Thread — P2-w2: the compensation remit classifies at the mirror, and quarantined value is reserved (PR #1634)
 
 Second build slice of the #1434 P2 zeroed-day lapse mechanisms (design
 §1.3, §2.2, §4.1 — slice 2 of §8), and the slice the halt lift is
