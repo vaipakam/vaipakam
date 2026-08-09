@@ -214,6 +214,24 @@ const erc20Read = (token, functionName, args = []) =>
 // dispatcher swap driver.mjs performs at import time, so the probes
 // work wherever the page traffic does.
 const INDEXER = process.env.INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com';
+// An operator override that is not an absolute http(s) origin never
+// reaches a server: `fetch` rejects on URL parsing, the drive catch
+// records it, and the batch reports an unusable CONFIG as a product FAIL
+// (Codex #1621 r10). Validated here, where exiting is free.
+{
+  let parsed = null;
+  try {
+    parsed = new URL(INDEXER);
+  } catch {
+    /* reported just below */
+  }
+  if (!parsed || !/^https?:$/.test(parsed.protocol)) {
+    blockedSync(
+      `INDEXER_ORIGIN is not an absolute http(s) origin: ${JSON.stringify(INDEXER)}` +
+        ' — the indexer probes this drive asserts against could never be reached.',
+    );
+  }
+}
 
 /** GET an indexer route; returns { status, body } with the body parsed
  *  leniently (null on non-JSON) — status/shape asserts are the

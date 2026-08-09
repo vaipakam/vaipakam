@@ -47,10 +47,18 @@ let rpcOk = 0;
 // false BLOCKED. Same request-owns-its-outcome discipline live-ux-sweep
 // uses for its per-route network attribution.
 const recordedRequests = new WeakSet();
+// Recorded requests still awaiting a `response` event. A request started
+// near the end of the window may not have emitted one when the window
+// closes, so snapshotting `bodyReads` right then omits it — and if that
+// late response is the window's only success, the floor reads zero and
+// the audit falsely BLOCKS (Codex #1621 r10).
+const awaitingResponse = new Set();
 const bodyReads = [];
 page.on('response', (res) => {
   const req = res.request();
-  if (!recordedRequests.has(req) || res.status() !== 200) return;
+  if (!recordedRequests.has(req)) return;
+  awaitingResponse.delete(req);
+  if (res.status() !== 200) return;
   // Playwright fires `response` on HEADERS and does not await handlers,
   // so the body read is still in flight; collect the promises and settle
   // them before the floor is judged, or a slow body reads as "no
@@ -70,11 +78,17 @@ page.on('response', (res) => {
       }),
   );
 });
+// A failed request never emits `response`, so it would otherwise sit in
+// `awaitingResponse` for the whole grace period. Registered up front with
+// the other handlers — registering it after the wait loop, as I first
+// wrote it, meant it could not drain anything during that loop.
+page.on('requestfailed', (req) => awaitingResponse.delete(req));
 page.on('request', (req) => {
   if (!recording) return;
   const body = req.postData();
   if (!body) return;
   recordedRequests.add(req);
+  awaitingResponse.add(req);
   try {
     const parsed = JSON.parse(body);
     for (const call of Array.isArray(parsed) ? parsed : [parsed]) {
@@ -92,7 +106,14 @@ console.log('recording 60s of steady-state traffic…');
 await page.waitForTimeout(60_000);
 recording = false;
 
-// Settle the in-flight body reads before judging the floor.
+// Let requests still in flight emit their response, THEN settle the body
+// reads. Bounded, because a request that never answers must not hang the
+// drive — and a request still unanswered after the grace period did not
+// contribute a success anyway (Codex #1621 r10).
+const settleBy = Date.now() + 15_000;
+while (awaitingResponse.size > 0 && Date.now() < settleBy) {
+  await page.waitForTimeout(500);
+}
 await Promise.allSettled(bodyReads);
 
 const total = Object.values(counts).reduce((a, n) => a + n, 0);
