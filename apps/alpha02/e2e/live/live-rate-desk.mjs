@@ -96,6 +96,7 @@ import {
   ensureConnected,
   launch,
   SITE,
+  precondition,
   requireSigningRole,
   visit,
 } from './driver.mjs';
@@ -115,14 +116,33 @@ const CONTRACTS_SRC = path.resolve(HERE, '../../../../packages/contracts/src');
 function loadDiamondAbi() {
   const dir = path.join(CONTRACTS_SRC, 'abis');
   const out = [];
+  // Per FILE, not just in total (Codex #1621 r1). A whole-bundle
+  // emptiness check passes a HALF-exported bundle: one truncated facet
+  // JSON among 70 healthy ones still leaves `out.length` large, and the
+  // reads that needed that facet then fail inside viem with exit 1 —
+  // a stale artifact reported as a desk regression. Every facet in this
+  // bundle currently exports at least one entry, so "parses to a
+  // non-empty array" is a true invariant rather than a guess.
+  const empty = [];
   try {
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith('.json') || f.startsWith('_')) continue;
       const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-      if (Array.isArray(parsed)) out.push(...parsed);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        empty.push(f);
+        continue;
+      }
+      out.push(...parsed);
     }
   } catch (err) {
     blockedSync(`cannot read the per-facet ABI bundle\n  dir: ${dir}\n  ${err.message}`);
+  }
+  if (empty.length) {
+    blockedSync(
+      `the per-facet ABI bundle is half-exported — ${empty.length} file(s)` +
+        ` carry no ABI entries: ${empty.slice(0, 8).join(', ')}` +
+        `\n  dir: ${dir}\n  → re-run contracts/script/exportFrontendAbis.sh`,
+    );
   }
   if (out.length === 0) {
     blockedSync(
@@ -143,14 +163,24 @@ function loadDeployment() {
   }
 }
 const deployment = loadDeployment();
-const DIAMOND = deployment.diamond;
-const WETH = deployment.weth;
-const TLIQ = deployment.testnetMocks?.liquidToken;
-if (!DIAMOND || !WETH || !TLIQ) {
-  blockedSync(
-    `the deployments bundle is missing diamond/weth/testnetMocks.liquidToken` +
-      ` for chain ${CHAIN_ID} — no market pair to drive the desk with.`,
-  );
+// Validated as ADDRESSES, not merely present (Codex #1621 r1). A
+// truthiness check accepts a non-empty but malformed value, and the
+// decimals/market reads a few lines below hand it straight to viem —
+// which throws at top level with exit 1, so a corrupt bundle was still
+// reported as a desk regression. `asAddress` below is the taint barrier
+// for outbound probe URLs and runs far too late to be this check.
+const DIAMOND = requireAddress(deployment.diamond, 'diamond');
+const WETH = requireAddress(deployment.weth, 'weth');
+const TLIQ = requireAddress(deployment.testnetMocks?.liquidToken, 'testnetMocks.liquidToken');
+function requireAddress(value, field) {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
+    blockedSync(
+      `the deployments bundle's ${field} for chain ${CHAIN_ID} is not a` +
+        ` 0x-40-hex address: ${JSON.stringify(value)} — no usable market to` +
+        ` drive the desk with.`,
+    );
+  }
+  return value;
 }
 const ABI = loadDiamondAbi();
 const { pub } = clientsFor(CHAIN_ID);
@@ -241,10 +271,15 @@ const ZERO_CREATOR = /^0x0{40}$/i;
 // from the live probes below (Codex #1590 r4).
 requireSigningRole('lender');
 
-const [WETH_DECIMALS, TLIQ_DECIMALS] = await Promise.all([
-  erc20Read(WETH, 'decimals'),
-  erc20Read(TLIQ, 'decimals'),
-]);
+// A PRECONDITION read, like the funding probe below (Codex #1621 r1):
+// it resolves the token scale the drive's expected amounts are built
+// from, before any browser exists. Left unwrapped it was the FIRST thing
+// a dead RPC hit, so wrapping only the later balance probe would have
+// fixed the symptom one line past where it actually surfaced.
+const [WETH_DECIMALS, TLIQ_DECIMALS] = await precondition(
+  'reading the market tokens\u2019 decimals',
+  () => Promise.all([erc20Read(WETH, 'decimals'), erc20Read(TLIQ, 'decimals')]),
+);
 const EXPECTED_AMOUNT_MAX = parseUnits(AMOUNT_WETH, WETH_DECIMALS);
 const EXPECTED_AMOUNT_MIN_PARTIAL =
   EXPECTED_AMOUNT_MAX / 10n > 0n ? EXPECTED_AMOUNT_MAX / 10n : 1n;
@@ -426,7 +461,13 @@ const lenderAddr = addressOf('lender');
 // mid-post and the batch reported "top up the lender" as a Rate Desk
 // regression. (The mirror check in live-signed-book.mjs reads the VAULT
 // free balance instead: the gasless path funds fills from there.)
-const walletWeth = await erc20Read(WETH, 'balanceOf', [lenderAddr]);
+// The probe itself is a precondition too (Codex #1621 r1): it exists
+// only to establish whether the wallet can fund the drive, and runs
+// before any browser or product observation, so an RPC that cannot
+// answer it must not be reported as a Rate Desk regression.
+const walletWeth = await precondition('reading the lender wallet WETH balance', () =>
+  erc20Read(WETH, 'balanceOf', [lenderAddr]),
+);
 if (walletWeth < EXPECTED_AMOUNT_MAX) {
   blockedSync(
     `lender wallet WETH ${walletWeth} < the ${EXPECTED_AMOUNT_MAX} this drive ` +

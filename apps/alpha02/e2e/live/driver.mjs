@@ -85,7 +85,7 @@ export function blockedSync(why) {
  * per-driver duplication `live-position-observe.mjs`'s `discovery()`
  * wrapper existed to avoid.
  */
-export async function blocked(why, err) {
+export async function blocked(why, err, cleanup) {
   const detail = err ? `\n  ${String(err.message ?? err).split('\n')[0].slice(0, 300)}` : '';
   console.error(`\nBLOCKED: ${why}${detail}`);
   try {
@@ -93,7 +93,38 @@ export async function blocked(why, err) {
   } catch {
     /* exiting anyway — a close failure must not mask the real cause */
   }
+  try {
+    // Runs AFTER the close, so a caller removing a throwaway profile
+    // directory is not fighting a Chromium that still holds it open.
+    await cleanup?.();
+  } catch {
+    /* same — cleanup is best effort on the way out */
+  }
   process.exit(2);
+}
+
+/**
+ * A browser/context SETUP failure, raised instead of exiting when the
+ * caller has asked to decide the verdict itself (Codex #1621 r1).
+ *
+ * `launch()` exiting BLOCKED directly is right for a drive that has
+ * observed nothing yet — which is all of them at launch time, with one
+ * exception. `live-recover-locales.mjs` launches a fresh browser PER
+ * LOCALE and accumulates findings across them, so a setup failure on
+ * locale 6 must not discard a real localization defect found on locale
+ * 2: "verified nothing" would be a false statement about that run. It
+ * catches this and lets its own `exitOnEvidence` choose.
+ *
+ * Part 1 of #1581 broke exactly that, silently — moving the exit inside
+ * `launch()` meant that catch could never run, and the precedence rule
+ * #1590 r6 added went dead without any test noticing.
+ */
+export class LiveSetupError extends Error {
+  constructor(what, cause) {
+    super(`browser setup failed (${what})`);
+    this.name = 'LiveSetupError';
+    this.cause = cause;
+  }
 }
 
 /**
@@ -377,6 +408,19 @@ export async function launch({
   // shim, viewport, profile handling and `done()` cleanup are shared
   // with every other drive rather than copied (Codex #1590 r1).
   keyless = false,
+  // onSetupFailure: what a browser/context SETUP failure does.
+  //
+  //   'blocked' (default) — exit 2 immediately. Right for a drive that
+  //     has observed nothing yet, which is every drive at launch time.
+  //   'throw' — raise a `LiveSetupError` for the caller to handle.
+  //     For a drive that launches repeatedly and ACCUMULATES findings
+  //     across launches, where exiting here would discard evidence
+  //     already gathered and claim the run verified nothing. Only
+  //     `live-recover-locales.mjs` needs it (Codex #1621 r1).
+  //
+  // The default is the safe one on purpose: forgetting the option costs
+  // a correct-but-blunt verdict, never a silently discarded finding.
+  onSetupFailure = 'blocked',
 } = {}) {
   const account = keyless
     ? null
@@ -393,9 +437,47 @@ export async function launch({
   // leaves it behind — the caller never gets a `done()` to clean up
   // with. Cleaning here rather than at each call site keeps the
   // create/remove pair in one place (Codex #1590 r6).
-  let ctx;
-  try {
-    ctx = await chromium.launchPersistentContext(profileDir, {
+  const removeThrowawayProfile = () => {
+    if (freshProfile) fs.rmSync(profileDir, { recursive: true, force: true });
+  };
+
+  /**
+   * Run one browser/context SETUP step.
+   *
+   * EVERY pre-page step goes through this, not just the launch (Codex
+   * #1621 r1). Guarding only `launchPersistentContext` left the route
+   * shim, the wallet binding, the init script and the first page
+   * unguarded: a rejection there reached the driver's top level as exit
+   * 1 AND leaked the Chromium, so an environment problem after a
+   * successful launch still read as a product regression. COVERAGE.md
+   * already stated the rule — "every step of it belongs inside the same
+   * wrapper" — and part 1 implemented only the first step of it.
+   */
+  const setup = async (what, fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (onSetupFailure === 'throw') {
+        // The caller decides the verdict, so clean up what `blocked()`
+        // would have and hand the failure back intact.
+        try {
+          await LIVE_BROWSER?.close();
+        } catch {
+          /* best effort on the way out */
+        }
+        LIVE_BROWSER = null;
+        removeThrowawayProfile();
+        throw new LiveSetupError(what, err);
+      }
+      // BLOCKED, not FAIL (#1581): no usable browser means the drive
+      // never got a page to assert against. Rethrowing exited 1 and made
+      // a missing or unusable Chromium read as a product regression.
+      await blocked(`browser setup failed (${what})`, err, removeThrowawayProfile);
+    }
+  };
+
+  const ctx = await setup('launching the browser', async () => {
+    const created = await chromium.launchPersistentContext(profileDir, {
       headless,
       // Optional override for environments with a pre-provisioned
       // browser image (e.g. a sandbox that blocks downloads); when
@@ -408,14 +490,9 @@ export async function launch({
     });
     // Register it so a later `blocked()` — from this module or a driver —
     // closes it instead of leaving a Chromium behind.
-    LIVE_BROWSER = ctx;
-  } catch (err) {
-    if (freshProfile) fs.rmSync(profileDir, { recursive: true, force: true });
-    // BLOCKED, not FAIL (#1581): no browser means the drive never got a
-    // page to assert against. Rethrowing exited 1 and made a missing or
-    // unusable Chromium read as a product regression.
-    await blocked('could not launch a browser', err);
-  }
+    LIVE_BROWSER = created;
+    return created;
+  });
 
   // The egress gateway resets Chromium's own TLS handshakes, so ALL
   // page traffic is served from THIS process via undici (whose stack
@@ -458,7 +535,8 @@ export async function launch({
     return `${method} (non-RPC mutating request)`;
   }
 
-  await ctx.route('**/*', async (route) => {
+  await setup('installing the route shim', () =>
+    ctx.route('**/*', async (route) => {
     const req = route.request();
     const violation = readOnlyViolation(req);
     if (violation) {
@@ -493,7 +571,8 @@ export async function launch({
     } catch {
       await route.abort('failed');
     }
-  });
+    }),
+  );
 
   const rpcLog = [];
   const WRITE_METHODS = new Set([
@@ -626,7 +705,8 @@ export async function launch({
   // public-page probe should present no provider at all, so an app
   // regression that asks for accounts on load has nothing to answer it.
   if (!keyless) {
-    await ctx.exposeBinding('__walletRequest', async (_src, payload) => {
+    await setup('exposing the wallet binding', () =>
+      ctx.exposeBinding('__walletRequest', async (_src, payload) => {
       try {
         const result = await handle(payload);
         return { result: jsonSafe(result) };
@@ -638,9 +718,11 @@ export async function launch({
           },
         };
       }
-    });
+      }),
+    );
 
-    await ctx.addInitScript(() => {
+    await setup('installing the wallet init script', () =>
+      ctx.addInitScript(() => {
       if (window.ethereum?.__vaipakamTest) return;
       const listeners = {};
       const provider = {
@@ -681,10 +763,11 @@ export async function launch({
         );
       window.addEventListener('eip6963:requestProvider', announce);
       announce();
-    });
+      }),
+    );
   }
 
-  const page = ctx.pages()[0] ?? (await ctx.newPage());
+  const page = await setup('opening the first page', async () => ctx.pages()[0] ?? ctx.newPage());
   page.setDefaultTimeout(20_000);
 
   const consoleErrors = [];

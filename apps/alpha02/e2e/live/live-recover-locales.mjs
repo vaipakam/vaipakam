@@ -344,6 +344,12 @@ for (const code of LOCALES) {
     // to mutate external state (Codex #1590 r2).
       readOnly: true,
       freshProfile: true,
+      // Hand the setup failure BACK rather than exiting on it, so the
+      // catch below can weigh it against evidence already gathered
+      // (Codex #1621 r1). Without this, `launch()` exits BLOCKED
+      // internally and this catch is unreachable — which is what part 1
+      // of #1581 silently did to the #1590 r6 precedence rule.
+      onSetupFailure: 'throw',
     });
   } catch (err) {
     // BLOCKED means "verified nothing". If an EARLIER locale already

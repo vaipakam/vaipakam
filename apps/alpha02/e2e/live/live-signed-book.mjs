@@ -98,12 +98,14 @@ import { fileURLToPath } from 'node:url';
 import { parseUnits } from 'viem';
 import {
   addressOf,
+  blocked,
   blockedSync,
   chooseMenuValue,
   clientsFor,
   ensureConnected,
   launch,
   SITE,
+  precondition,
   requireSigningRole,
   visit,
 } from './driver.mjs';
@@ -122,14 +124,33 @@ const CONTRACTS_SRC = path.resolve(HERE, '../../../../packages/contracts/src');
 function loadDiamondAbi() {
   const dir = path.join(CONTRACTS_SRC, 'abis');
   const out = [];
+  // Per FILE, not just in total (Codex #1621 r1). A whole-bundle
+  // emptiness check passes a HALF-exported bundle: one truncated facet
+  // JSON among 70 healthy ones still leaves `out.length` large, and the
+  // reads that needed that facet then fail inside viem with exit 1 —
+  // a stale artifact reported as a desk regression. Every facet in this
+  // bundle currently exports at least one entry, so "parses to a
+  // non-empty array" is a true invariant rather than a guess.
+  const empty = [];
   try {
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith('.json') || f.startsWith('_')) continue;
       const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-      if (Array.isArray(parsed)) out.push(...parsed);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        empty.push(f);
+        continue;
+      }
+      out.push(...parsed);
     }
   } catch (err) {
     blockedSync(`cannot read the per-facet ABI bundle\n  dir: ${dir}\n  ${err.message}`);
+  }
+  if (empty.length) {
+    blockedSync(
+      `the per-facet ABI bundle is half-exported — ${empty.length} file(s)` +
+        ` carry no ABI entries: ${empty.slice(0, 8).join(', ')}` +
+        `\n  dir: ${dir}\n  → re-run contracts/script/exportFrontendAbis.sh`,
+    );
   }
   if (out.length === 0) {
     blockedSync(
@@ -150,14 +171,24 @@ function loadDeployment() {
   }
 }
 const deployment = loadDeployment();
-const DIAMOND = deployment.diamond;
-const WETH = deployment.weth;
-const TLIQ = deployment.testnetMocks?.liquidToken;
-if (!DIAMOND || !WETH || !TLIQ) {
-  blockedSync(
-    `the deployments bundle is missing diamond/weth/testnetMocks.liquidToken` +
-      ` for chain ${CHAIN_ID} — no market pair to drive the signed book with.`,
-  );
+// Validated as ADDRESSES, not merely present (Codex #1621 r1). A
+// truthiness check accepts a non-empty but malformed value, and the
+// decimals/market reads a few lines below hand it straight to viem —
+// which throws at top level with exit 1, so a corrupt bundle was still
+// reported as a desk regression. `asAddress` below is the taint barrier
+// for outbound probe URLs and runs far too late to be this check.
+const DIAMOND = requireAddress(deployment.diamond, 'diamond');
+const WETH = requireAddress(deployment.weth, 'weth');
+const TLIQ = requireAddress(deployment.testnetMocks?.liquidToken, 'testnetMocks.liquidToken');
+function requireAddress(value, field) {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
+    blockedSync(
+      `the deployments bundle's ${field} for chain ${CHAIN_ID} is not a` +
+        ` 0x-40-hex address: ${JSON.stringify(value)} — no usable market to` +
+        ` drive the signed book with.`,
+    );
+  }
+  return value;
 }
 const ABI = loadDiamondAbi();
 const { pub } = clientsFor(CHAIN_ID);
@@ -239,10 +270,18 @@ const SCAN_WAIT_MS = 600_000;
 // from the live probes below (Codex #1590 r4).
 requireSigningRole('lender');
 
-const [WETH_DECIMALS, TLIQ_DECIMALS] = await Promise.all([
-  pub.readContract({ address: WETH, abi: ERC20_ABI, functionName: 'decimals' }),
-  pub.readContract({ address: TLIQ, abi: ERC20_ABI, functionName: 'decimals' }),
-]);
+// A PRECONDITION read (Codex #1621 r1): it resolves the token scale the
+// drive's expected amounts are built from, before any browser exists, so
+// an RPC that cannot answer it means nothing was observed — not that the
+// signed book regressed.
+const [WETH_DECIMALS, TLIQ_DECIMALS] = await precondition(
+  'reading the market tokens’ decimals',
+  () =>
+    Promise.all([
+      pub.readContract({ address: WETH, abi: ERC20_ABI, functionName: 'decimals' }),
+      pub.readContract({ address: TLIQ, abi: ERC20_ABI, functionName: 'decimals' }),
+    ]),
+);
 const EXPECTED_AMOUNT = parseUnits(AMOUNT_WETH, WETH_DECIMALS);
 const EXPECTED_COLLATERAL = parseUnits(COLLATERAL_TLIQ, TLIQ_DECIMALS);
 const sameAddr = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
@@ -579,7 +618,14 @@ try {
     // vault" as a gasless-posting regression. Safe to exit here: no
     // signature exists yet (`signClicked` is still false), so the
     // cleanup boundary that process.exit skips has nothing to unwind.
-    blockedSync(
+    //
+    // The ASYNC exit, not `blockedSync` — this runs after `launch()`, so
+    // there is a persistent-profile Chromium open. Exiting without
+    // closing it orphans the process and leaves the profile directory
+    // locked, which makes the NEXT lender driver in a sequential batch
+    // fail to launch — turning one blocked drive into several
+    // (Codex #1621 r1).
+    await blocked(
       `lender vault free WETH ${freeWeth} < the ${EXPECTED_AMOUNT} this drive ` +
         'commits — deposit WETH to the vault (or shrink AMOUNT_WETH) before running',
     );

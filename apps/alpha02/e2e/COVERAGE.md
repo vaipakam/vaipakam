@@ -281,6 +281,38 @@ driver's own step recorder — `record(step, 'FAIL', …)` — and reported "top
 up the lender's vault" as a gasless-posting regression. Read what each
 non-zero path actually MEANS, rather than trusting the shape of the exit.
 
+Four more traps, each of which cost a review round on #1621:
+
+- **Guard the WHOLE setup, not its first step.** Wrapping only the browser
+  launch leaves the route shim, the wallet binding, the init script and
+  the first page unguarded — a rejection there still exits 1 and leaks the
+  Chromium. `launch()` routes every pre-page step through one wrapper.
+- **A shared BLOCKED exit must not overrule a caller that has evidence.**
+  A drive that launches repeatedly and accumulates findings across
+  launches (`live-recover-locales.mjs`, one browser per locale) must be
+  able to weigh a later setup failure against a real defect found
+  earlier; exiting inside `launch()` silently deleted that rule. Hence
+  `onSetupFailure: 'throw'` — default `'blocked'`, because forgetting the
+  option must cost a blunt verdict, never a discarded finding.
+- **After a browser exists, use the ASYNC exit.** `blockedSync` skips the
+  close, so a post-launch BLOCKED can strand a persistent-profile Chromium
+  and leave its profile directory locked — which makes the NEXT driver in
+  a sequential batch fail to launch, turning one blocked drive into
+  several.
+- **Presence is not validity, and "not empty" is not "complete".** A
+  truthiness check on a deployment address accepts a malformed one and
+  hands it to the RPC client, which throws exit 1 long before any
+  address-shaped guard runs. A whole-bundle emptiness check on the ABI
+  export passes a HALF-exported bundle. Validate the shape at load, and
+  per file.
+
+The write-permission version of the same point: `mkdirSync(recursive)` on
+an existing directory succeeds without testing write access, so a check
+that only creates the directory does not prove the artifacts can be
+written. Probe an actual write. (Note this is invisible when the drive
+runs as root, which ignores directory permissions — verify it as an
+unprivileged user or the check looks like it passed.)
+
 The transport rule covers EVERY way the page reaches the network, not
 just the one the driver proxies. Reads the app makes through an injected
 wallet do not travel the routed-fetch path, so a driver that records

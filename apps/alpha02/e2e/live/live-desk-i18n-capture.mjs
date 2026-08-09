@@ -47,7 +47,7 @@ if (process.env.LIVE_PROXY_SETUP) {
 const ufetch = globalThis.fetch;
 
 import { chromium } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 
 // Dynamic, not a static import: a static one is HOISTED above the shim
 // block above, so driver.mjs would capture its own `globalThis.fetch`
@@ -62,9 +62,20 @@ const OUT = new URL('./shots/desk-i18n/', import.meta.url).pathname;
 try {
   // The screenshots and report ARE this drive's output — nowhere to write
   // them means it captured nothing, which is BLOCKED, not a defect.
+  //
+  // `mkdirSync(recursive)` alone was not enough (Codex #1621 r1): on an
+  // EXISTING but non-writable directory it succeeds without touching
+  // write permission, and the failure then surfaced at the very end —
+  // screenshot errors are swallowed by design, so the first hard error
+  // was the closing `writeFileSync`, exiting 1 after ten locales of work
+  // and labelling "nowhere to write" an i18n regression. Probe an actual
+  // write, so the drive stops in the first second with the true cause.
   mkdirSync(OUT, { recursive: true });
+  const probe = `${OUT}.write-probe`;
+  writeFileSync(probe, '');
+  rmSync(probe, { force: true });
 } catch (err) {
-  blockedSync(`cannot create the capture output directory\n  path: ${OUT}\n  ${err.message}`);
+  blockedSync(`cannot write to the capture output directory\n  path: ${OUT}\n  ${err.message}`);
 }
 
 const LOCALES = (process.env.DESK_I18N_LOCALES || 'en,zh,ta,de,fr,es,ar,ja,ko,hi')

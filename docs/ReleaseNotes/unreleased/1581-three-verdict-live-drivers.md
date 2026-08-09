@@ -50,6 +50,17 @@ it stays a finding. Reclassifying it would have hidden a real defect behind
 a "re-run this later" verdict, which is the same mislabelling this change
 exists to remove, pointed the other way.
 
+**One rule that deliberately runs the other way.** A drive that checks each
+of nine languages in turn opens a fresh browser for each one and collects
+what it finds as it goes. If the browser fails to start on the sixth
+language after a real translation fault was found on the second, saying
+"could not look" about that run would be false — something was found, and
+reporting otherwise would bury it. That drive keeps deciding its own
+verdict: a real finding outranks a later setup problem, and only a run
+that found nothing at all reports as blocked. The first pass of this work
+removed that rule by accident, which is exactly the kind of quiet reversal
+the review round exists to catch.
+
 **How it was checked.** Each class of blocking condition was forced
 deliberately — an unreachable target, a missing credential file, an
 unusable browser, a corrupted address bundle, an emptied interface bundle,
