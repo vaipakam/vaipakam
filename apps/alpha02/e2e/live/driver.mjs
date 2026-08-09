@@ -192,13 +192,30 @@ export async function precondition(what, fn) {
  * navigation succeed".
  */
 export async function visit(page, pathname, opts = {}) {
-  return precondition(`opening ${pathname}`, () =>
-    page.goto(`${SITE}${pathname}`, {
+  return precondition(`opening ${pathname}`, async () => {
+    const resp = await page.goto(`${SITE}${pathname}`, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
       ...opts,
-    }),
-  );
+    });
+    // A THROW is not the only way a target can be unreachable (Codex
+    // #1621 r8). `page.goto` resolves normally for an HTTP error page —
+    // a preview URL 404ing, a CDN returning 502/503 — so without this the
+    // helper declared reachability established and every later assertion
+    // ran against a gateway error body. During an infrastructure outage
+    // that is not one misleading row but the whole fleet reporting
+    // product FAILs, which is the exact scenario this contract exists to
+    // prevent.
+    //
+    // Status is checked only for the FIRST navigation, which is what this
+    // helper is for. A later route returning 404 is a plausible product
+    // regression and stays exit 1.
+    const status = resp?.status();
+    if (typeof status === 'number' && status >= 400) {
+      throw new Error(`${SITE}${pathname} answered HTTP ${status}`);
+    }
+    return resp;
+  });
 }
 
 let WALLETS;
