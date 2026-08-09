@@ -166,6 +166,23 @@ schedule copies both halves:
   version table. `MSG_TYPE_BROADCAST_V3` landed as kind 10 — kinds 8/9
   were taken by the #1568 repatriation wire.)*
 
+> *(w2 implementation notes: `REMIT_WIRE_TAG_P2` landed as specified —
+> single-day, per-side amounts, frozen `finalizedAt` + schedule version
+> inline; fresh-only (no `recycledShare` field). The §2.2 classification
+> is ERA-FIRST: with `broadcastV2Applied && dayClockEra != 0` the known-
+> state ladder runs (era match → zeroed → not lapsed → credit; any
+> failure quarantines with a reason code); otherwise the provisional
+> branch. The provisional confirm/demote hook rides every ACCEPTED V3
+> broadcast. §4.1's reservation landed as `strandedRecoveryReserved` +
+> receipt-keyed `strandedRecoveries` records; the `backingPosition`
+> natspec rule was narrowed to "no balance-OWNER subtractions" since the
+> reservation is a protocol LEDGER like the bucket. The R3 dispatch
+> cutoff shipped IN w2 after review (#1634 r3): the ingress evaluates
+> expiry from the frozen words already, so a late dispatch could arrive
+> quarantined after Base closed the day — the cutoff and the evaluation
+> must travel together. Clockless days refuse dispatch outright (r2);
+> all four clock words ride the wire (r1).)*
+
 ### 1.3 R4b — the applicable expiry rides the remit too
 
 Constraint 12c is already ratified: a compensation must be classifiable at

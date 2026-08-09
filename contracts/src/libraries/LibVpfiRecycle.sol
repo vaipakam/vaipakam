@@ -546,8 +546,25 @@ library LibVpfiRecycle {
         // no enumeration and closes every owner at once — the same bound
         // #1434 prerequisite 1 needs for the cross-chain axis.
         //
-        // Do NOT add a sixth subtraction here. Land that bound.
+        // Do NOT add another BALANCE-OWNER subtraction here. Land that bound.
+        //
+        // #1434 P2-w2 — `strandedRecoveryReserved` joined the subtraction,
+        // and it is NOT a violation of the rule above, which is why the
+        // rule's wording narrowed from "sixth subtraction" to "balance-owner
+        // subtraction": the ban was on enumerating REMEMBERED OWNERS of the
+        // shared balance (unverifiable completeness, silent misses). This
+        // term — like `recycleBucket` itself — is a protocol-MAINTAINED
+        // ledger with a single writer set (the §2.2 compensation quarantine
+        // credits it, the R4 return debits it), ratified as the ONE arrival
+        // reservation in design §4.1: quarantined compensation tokens sit
+        // in this same balance awaiting their return to Base, and an
+        // ordinary fresh claim spending them first would strand the return.
+        // Subtraction-first with saturation at each step (a hostile or
+        // buggy over-reservation must floor, never revert a transparency
+        // read or wedge the claim gate).
         unearmarked = vpfiBalance > bucket ? vpfiBalance - bucket : 0;
+        uint256 reserved = s.strandedRecoveryReserved;
+        unearmarked = unearmarked > reserved ? unearmarked - reserved : 0;
     }
 
     /**

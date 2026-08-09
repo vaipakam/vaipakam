@@ -465,7 +465,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         // The backing snapshot is a LOCAL figure and must survive on a
         // mirror — a blanket guard over both views would pass a naive revert
         // test while removing something mirrors legitimately need.
-        (uint256 bal, , , , , ) = _lens().getRecycleBackingSnapshot();
+        (uint256 bal, , , , , , ) = _lens().getRecycleBackingSnapshot();
         assertEq(
             bal,
             DIAMOND_SEED,
@@ -637,6 +637,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             uint256 unearmarked,
             ,
             ,
+            ,
 
         ) = _lens().getRecycleBackingSnapshot();
         assertEq(bal, DIAMOND_SEED, "diamond holds the seed");
@@ -644,7 +645,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
         assertEq(unearmarked, DIAMOND_SEED, "all of it is unearmarked");
 
         _mut().setRecycleBucketRaw(40_000_000 ether);
-        (bal, bucket, unearmarked, , , ) = _lens().getRecycleBackingSnapshot();
+        (bal, bucket, unearmarked, , , , ) = _lens().getRecycleBackingSnapshot();
         assertEq(bucket, 40_000_000 ether, "bucket label applied");
         assertEq(
             unearmarked,
@@ -676,6 +677,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             uint256 bal,
             uint256 bucket,
             uint256 unearmarked,
+            ,
             ,
             ,
 
@@ -729,6 +731,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             ,
             uint256 outstandingRecycled,
             ,
+            ,
 
         ) = _lens().getRecycleBackingSnapshot();
 
@@ -761,12 +764,12 @@ contract RecycleTransparencyMetricsTest is SetupTest {
     function testBackingSnapshotReportsTheLiveConsumedRecycledFigure() public {
         _mut().setRecycleBucketRaw(1_000_000 ether);
 
-        (, , , , uint256 before_, ) = _lens().getRecycleBackingSnapshot();
+        (, , , , uint256 before_, , ) = _lens().getRecycleBackingSnapshot();
         assertEq(before_, 0, "nothing consumed yet");
 
         _mut().consumeRecycleRaw(250_000 ether);
 
-        (, , , , uint256 after_, ) = _lens().getRecycleBackingSnapshot();
+        (, , , , uint256 after_, , ) = _lens().getRecycleBackingSnapshot();
         assertEq(after_, 250_000 ether, "consume advances the live figure");
 
         (, , , uint256 statePaidOut) = _agg().getGovernorCommitState();
@@ -793,7 +796,7 @@ contract RecycleTransparencyMetricsTest is SetupTest {
      *      term being structurally absent.
      */
     function testBackingSnapshotExposesTheKeeperEarmark() public {
-        (, , , , , uint256 keeperBefore) =
+        (, , , , , uint256 keeperBefore, ) =
             _lens().getRecycleBackingSnapshot();
         assertEq(keeperBefore, 0, "register is dark by default");
 
@@ -811,7 +814,8 @@ contract RecycleTransparencyMetricsTest is SetupTest {
             ,
             ,
             ,
-            uint256 keeperAfter
+            uint256 keeperAfter,
+
         ) = _lens().getRecycleBackingSnapshot();
 
         assertGt(keeperAfter, 0, "the register earmarked a keeper share");

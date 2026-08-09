@@ -9,6 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {GuardianPausable} from "./GuardianPausable.sol";
 import {RemitWire} from "./RemitWire.sol";
@@ -34,6 +35,12 @@ import {
 ///      fresh (Codex #1556 r1 P1). This contract is the only party that knows
 ///      which generation it decoded, so it is the only one that can answer,
 ///      and for the two old generations the honest answer is ZERO.
+/// @dev #1434 P2-w2 — the receiver's CURRENT wire generation, at file
+///      level so the refresh script can import the same value the
+///      deployed probe ({RewardRemittanceReceiver.WIRE_GENERATION})
+///      returns — one definition, no literal to drift.
+uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 3;
+
 interface IRewardBudgetIngress {
     function onRewardBudgetReceived(
         address token,
@@ -44,6 +51,28 @@ interface IRewardBudgetIngress {
         address remitter,
         uint256 recycledShare,
         uint256 freshShare
+    ) external;
+}
+
+/// @notice #1434 P2-w2 — the mirror Diamond's COMPENSATION ingress
+///         (`RewardRemittanceFacet.onCompensationBudgetReceived`): the
+///         classifying counterpart of the ordinary budget ingress for the
+///         P2 manual-compensation wire (one zeroed day, per-side amounts,
+///         the day's frozen expiry inputs riding along — §1.3/§2.2).
+interface ICompensationBudgetIngress {
+    function onCompensationBudgetReceived(
+        address token,
+        uint256 amount,
+        uint256 dayId,
+        uint256 sourceChainId,
+        uint256 remitId,
+        address remitter,
+        uint256 lenderShare18,
+        uint256 borrowerShare18,
+        uint64 finalizedAt,
+        uint32 lapseScheduleVersion,
+        uint64 lapseWindowSeconds,
+        uint64 dispatchCutoffGap
     ) external;
 }
 
@@ -233,6 +262,16 @@ contract RewardRemittanceReceiver is
         address remitter;
         uint256 recycledShare;
         uint256 head = abi.decode(payload[:32], (uint256));
+        // #1434 P2-w2 — the manual-compensation shape has its own tag, its
+        // own decode and its own Diamond ingress (the classifying one);
+        // handled in a separate frame and RETURNED from. Both shapes share
+        // ONE token-delivery implementation ({_deliverTokens}) so the
+        // delivered-vs-declared and fee-on-transfer rules can never diverge
+        // between wire generations.
+        if (head == RemitWire.REMIT_WIRE_TAG_P2) {
+            _handleCompensation(sourceChainId, payload, tokens);
+            return;
+        }
         if (head == RemitWire.REMIT_WIRE_TAG_D5) {
             (, dayIds, declaredTotal, remitId, remitter, recycledShare) =
                 abi.decode(
@@ -248,30 +287,8 @@ contract RewardRemittanceReceiver is
             (dayIds, declaredTotal) = abi.decode(payload, (uint256[], uint256));
         }
 
-        address deliveredToken = tokens[0].token;
-        uint256 deliveredAmount = tokens[0].amount;
-        if (deliveredToken != vpfiToken) {
-            revert TokenMismatch(vpfiToken, deliveredToken);
-        }
-        if (deliveredAmount != declaredTotal) {
-            revert AmountMismatch(declaredTotal, deliveredAmount);
-        }
-        if (deliveredAmount == 0) revert ZeroAmount();
-
-        // Fee-on-transfer safety: spend what this contract actually holds and
-        // credit only what actually lands in the Diamond (mirrors the buyback
-        // receiver). VPFI is a standard token, so this is normally benign.
-        uint256 spendable = IERC20(deliveredToken).balanceOf(address(this));
-        if (spendable == 0) revert ZeroAmount();
-        uint256 toTransfer = spendable < deliveredAmount
-            ? spendable
-            : deliveredAmount;
-
-        uint256 diamondBalBefore = IERC20(deliveredToken).balanceOf(diamond);
-        IERC20(deliveredToken).safeTransfer(diamond, toTransfer);
-        uint256 actualReceived = IERC20(deliveredToken).balanceOf(diamond) -
-            diamondBalBefore;
-        if (actualReceived == 0) revert ZeroAmount();
+        (address deliveredToken, uint256 actualReceived) =
+            _deliverTokens(tokens, declaredTotal);
 
         // #1434 P1-a — the FRESH component, decided HERE because this is the
         // only place the wire generation is known. d5 carries the split, so
@@ -342,6 +359,136 @@ contract RewardRemittanceReceiver is
             remitId
         );
     }
+
+    /// @notice #1434 P2-w2 — a P2 manual-compensation delivery was
+    ///         forwarded into the Diamond's classifying ingress.
+    event CompensationBudgetForwarded(
+        uint256 indexed sourceChainId,
+        uint256 indexed dayId,
+        uint256 actualReceived,
+        uint256 remitId
+    );
+
+    /// @dev #1434 P2-w2 — decode + forward the P2 compensation shape (own
+    ///      frame for stack headroom). Same delivered-vs-declared and
+    ///      fee-on-transfer rules as the ordinary path ({_deliverTokens} is
+    ///      shared), with BOTH per-side shares scaled to what actually
+    ///      landed, each flooring — the dust stays unattributed, the
+    ///      direction that defers (the d5 precedent). The expiry inputs
+    ///      pass through verbatim: they are Base's frozen words, not this
+    ///      contract's to interpret.
+    function _handleCompensation(
+        uint256 sourceChainId,
+        bytes calldata payload,
+        ICrossChainMessenger.TokenAmount[] calldata tokens
+    ) private {
+        (
+            ,
+            uint256 dayId,
+            uint256 declaredTotal,
+            uint256 remitId,
+            address remitter,
+            uint256 lenderShare,
+            uint256 borrowerShare,
+            uint256 finalizedAt,
+            uint256 lapseScheduleVersion,
+            uint256 lapseWindowSeconds,
+            uint256 dispatchCutoffGap
+        ) = abi.decode(
+            payload,
+            (
+                uint256,
+                uint256,
+                uint256,
+                uint256,
+                address,
+                uint256,
+                uint256,
+                uint256,
+                uint256,
+                uint256,
+                uint256
+            )
+        );
+
+        (address deliveredToken, uint256 actualReceived) =
+            _deliverTokens(tokens, declaredTotal);
+
+        if (actualReceived != declaredTotal) {
+            if (lenderShare != 0) {
+                lenderShare =
+                    Math.mulDiv(lenderShare, actualReceived, declaredTotal);
+            }
+            if (borrowerShare != 0) {
+                borrowerShare =
+                    Math.mulDiv(borrowerShare, actualReceived, declaredTotal);
+            }
+        }
+
+        ICompensationBudgetIngress(diamond).onCompensationBudgetReceived(
+            deliveredToken,
+            actualReceived,
+            dayId,
+            sourceChainId,
+            remitId,
+            remitter,
+            lenderShare,
+            borrowerShare,
+            SafeCast.toUint64(finalizedAt),
+            SafeCast.toUint32(lapseScheduleVersion),
+            SafeCast.toUint64(lapseWindowSeconds),
+            SafeCast.toUint64(dispatchCutoffGap)
+        );
+
+        emit CompensationBudgetForwarded(
+            sourceChainId, dayId, actualReceived, remitId
+        );
+    }
+
+    /// @dev The ONE token-delivery implementation both wire generations
+    ///      share: validate the declared single-token VPFI delivery,
+    ///      forward it to the Diamond, and return what ACTUALLY landed
+    ///      (fee-on-transfer safety — mirrors the buyback receiver).
+    function _deliverTokens(
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        uint256 declaredTotal
+    ) private returns (address deliveredToken, uint256 actualReceived) {
+        deliveredToken = tokens[0].token;
+        uint256 deliveredAmount = tokens[0].amount;
+        if (deliveredToken != vpfiToken) {
+            revert TokenMismatch(vpfiToken, deliveredToken);
+        }
+        if (deliveredAmount != declaredTotal) {
+            revert AmountMismatch(declaredTotal, deliveredAmount);
+        }
+        if (deliveredAmount == 0) revert ZeroAmount();
+
+        uint256 spendable = IERC20(deliveredToken).balanceOf(address(this));
+        if (spendable == 0) revert ZeroAmount();
+        uint256 toTransfer = spendable < deliveredAmount
+            ? spendable
+            : deliveredAmount;
+
+        uint256 diamondBalBefore = IERC20(deliveredToken).balanceOf(diamond);
+        IERC20(deliveredToken).safeTransfer(diamond, toTransfer);
+        actualReceived =
+            IERC20(deliveredToken).balanceOf(diamond) - diamondBalBefore;
+        if (actualReceived == 0) revert ZeroAmount();
+    }
+
+    /// @notice #1434 P2-w2 (Codex #1634 r1) — the DURABLE upgrade probe
+    ///         for the standalone receiver. The facet-refresh script's
+    ///         original gate keyed on retired Diamond selectors, which an
+    ///         already-migrated deployment no longer routes — so the P2
+    ///         decoder would never install there and every manual
+    ///         compensation would sit as a failed CCIP delivery while Base
+    ///         had already closed the day. The script now probes THIS
+    ///         constant instead: a missing selector (pre-P2 impl) or a
+    ///         lower value means the proxy needs the upgrade. Bump it with
+    ///         every wire generation the receiver learns to decode
+    ///         (1 = legacy/d2 · 2 = d5 + P1-a · 3 = P2 compensation).
+    uint256 public constant WIRE_GENERATION =
+        REMIT_RECEIVER_WIRE_GENERATION;
 
     // ─── Emergency pause ──────────────────────────────────────────────
 

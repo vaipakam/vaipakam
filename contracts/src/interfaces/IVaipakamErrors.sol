@@ -340,6 +340,34 @@ interface IVaipakamErrors {
     ///         installed frozen clock facts (finalizedAt / schedule version /
     ///         inline parameters / zeroed marker).
     error BroadcastClockDivergence(uint256 dayId);
+    /// @notice #1434 P2-w2 — a P2 compensation payload's per-side shares
+    ///         sum past the delivered amount (malformed payload; both
+    ///         shares floor when scaled, so an honest wire can never trip
+    ///         this).
+    error CompensationSharesExceedDelivery(
+        uint256 lenderShare18, uint256 borrowerShare18, uint256 amount
+    );
+    /// @notice #1434 P2-w2 — the compensation broadcast-arrival hook is
+    ///         Diamond-internal (the reporter facet invokes it through the
+    ///         Diamond's own fallback); any other caller is rejected.
+    error CompensationHookNotSelf(address caller);
+    /// @notice #1634 r2 — a P2 compensation cannot dispatch for a day with
+    ///         no frozen lapse clock: such a day can never emit the V3
+    ///         broadcast that settles the mirror's classification, so the
+    ///         credit would sit provisional forever (or quarantine
+    ///         wrongly). A post-w1 zeroed day heals its clock first
+    ///         (`broadcastGlobalTo`); a day finalized before the clock
+    ///         machinery existed belongs to the w4 legacy-compensation
+    ///         migration (`stampLegacyCompensation`), not this wire.
+    error CompensationDayHasNoClock(uint256 dayId);
+    /// @notice #1634 r3 — the R3 dispatch cutoff: a compensation must not
+    ///         dispatch within `dispatchCutoffGap` of the day's frozen
+    ///         expiry — bridge latency could carry it past expiry, where
+    ///         the mirror quarantines it (reason 3) after Base has already
+    ///         closed the day and consumed headroom.
+    error CompensationDispatchPastCutoff(
+        uint256 dayId, uint256 expiry, uint64 dispatchCutoffGap
+    );
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by

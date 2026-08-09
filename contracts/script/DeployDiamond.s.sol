@@ -2649,7 +2649,15 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardRemittanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](30);
+        s = new bytes4[](35);
+        // #1434 P2-w2 — the classifying compensation ingress + the
+        // broadcast-arrival hook + the reservation reads.
+        s[30] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
+        s[31] =
+            RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
+        s[32] = RewardRemittanceFacet.getDayCompensation.selector;
+        s[33] = RewardRemittanceFacet.getStrandedRecoveryReserved.selector;
+        s[34] = RewardRemittanceFacet.getStrandedRecovery.selector;
         s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;

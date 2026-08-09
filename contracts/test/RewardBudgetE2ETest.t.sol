@@ -143,7 +143,7 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
     ///      Read rather than assumed so the expectation below pins the
     ///      figure the protocol actually holds, not one the test invented.
     function _backingRoom() internal view returns (uint256 room) {
-        (, , room, , , ) = _lens().getRecycleBackingSnapshot();
+        (, , room, , , , ) = _lens().getRecycleBackingSnapshot();
     }
 
     function _days1() internal pure returns (uint256[] memory d) {

@@ -1163,6 +1163,20 @@ contract TestMutatorFacet {
         delete LibVaipakam.storageSlot().dayLapseClock[dayId];
     }
 
+    /// @notice #1434 P2-w2 test-only — set the lapse flags whose ONLY
+    ///         production writers are the w4 lapse terminals, so the §2.2
+    ///         post-lapse quarantine branch (deliberately unreachable until
+    ///         w4 ships) can be exercised now.
+    function setDayLapsedRaw(
+        uint256 dayId,
+        bool lapsed,
+        bool shortLapsed
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.dayLapsed[dayId] = lapsed;
+        s.dayShortLapsed[dayId] = shortLapsed;
+    }
+
     /// @notice #1008 (S13) — seed the per-day §4 cap threshold `T_d` directly
     ///         (production snapshots it at finalization from the ETH feed +
     ///         effective cap ratio). `type(uint256).max` = cap disabled that

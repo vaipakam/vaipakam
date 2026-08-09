@@ -6260,6 +6260,85 @@ library LibVaipakam {
         //   cannot smuggle a rotation past the detector.
         address rewardEraLastNonzero;
         bool rewardEraRotated;
+        // ─── #1434 P2-w2 — compensation ingress + arrival reservation ────
+        // MIRROR-ONLY: Σ of quarantined compensation arrivals (§2.2's
+        //   token-safe rejection + §4.1). The ONE ratified subtrahend added
+        //   to `LibVpfiRecycle.backingPosition`: quarantined tokens sit in
+        //   the Diamond's balance awaiting the R4 return (w5), and without
+        //   the reservation an ordinary fresh claim could spend them first.
+        //   A protocol-maintained LEDGER like `recycleBucket` — NOT another
+        //   entry in the balance-owner enumeration #1555 forbade.
+        uint256 strandedRecoveryReserved;
+        // MIRROR-ONLY: per-receipt quarantine records, keyed exactly like
+        //   receipts (`keccak256(remitter, remitId)`) so the R4 return can
+        //   name what it repatriates.
+        mapping(bytes32 => StrandedRecovery) strandedRecoveries;
+        // MIRROR-ONLY: per-day compensation state (§2.2 cases b/c). The
+        //   per-side pools are the day's payable compensated obligation —
+        //   PRICED by w3's repricing, never by the ordinary walk before it.
+        mapping(uint256 => DayCompensation) dayCompensation;
+        // MIRROR-ONLY: the two lapse terminals' flags (§2.1/§2.5).
+        //   DECLARED in w2 so the ingress's post-lapse quarantine branch
+        //   (§2.2 case d) exists from day one; their ONLY writers are the
+        //   w4 lapse terminals — until those ship, both stay false and the
+        //   branch is deliberately unreachable.
+        mapping(uint256 => bool) dayLapsed;
+        mapping(uint256 => bool) dayShortLapsed;
+    }
+
+    /// @notice #1434 P2-w2 — one quarantined compensation arrival (§2.2's
+    ///         token-safe rejection): the tokens were ACCEPTED into the
+    ///         arrival reservation (never reverted — a revert is
+    ///         re-executable into the same revert forever) and await the R4
+    ///         return (w5). `reason` names the quarantine branch for the
+    ///         return's evidence: 1 = not-a-zeroed-day (§2.2 case a),
+    ///         2 = era mismatch (at ingress, or a provisional credit whose
+    ///         V3 broadcast named a different deployment), 3 = past the
+    ///         day's expiry (terminal flags, the installed clock, or the
+    ///         wire-carried frozen words — §2.2 case d), 4 = a second
+    ///         arrival while a provisional credit was already held (one
+    ///         provisional receipt binding per day — #1634 r1), 5 = the
+    ///         day is permanently V3-unhealable on a rotated mirror
+    ///         (#1634 r1; the confirm/demote hook could never run), 6 =
+    ///         clockless payload (#1634 r2; an honest Base refuses such a
+    ///         dispatch — stale or hostile, could never settle).
+    struct StrandedRecovery {
+        uint256 amount;
+        uint256 dayId;
+        uint64 reservedAt;
+        uint8 reason;
+    }
+
+    /// @notice #1434 P2-w2 — one zeroed day's compensation state on a
+    ///         mirror. The per-side pools are the day's payable compensated
+    ///         obligation (credited by the §2.2 ingress, sized by the
+    ///         authenticated per-side wire amounts); w3's repricing prices
+    ///         claims from them. `provisional` marks the unstamped-arrival
+    ///         case (§2.2 case b): the compensation OVERTOOK the day's V3
+    ///         broadcast, so `provisionalEra` records the payload's
+    ///         authenticated remitter as the assumed era — the V3 arrival
+    ///         later CONFIRMS it in place (matching deployment) or DEMOTES
+    ///         the whole credit to the stranded-recovery reservation
+    ///         (mismatch: the confirmed era's state governs).
+    struct DayCompensation {
+        uint128 lenderPool18;
+        uint128 borrowerPool18;
+        // What this day's credits added to `rewardBudgetArmedFreshReceived`
+        // — stored, not recomputed, so a demotion moves EXACTLY what was
+        // counted even if the arming day changed in between.
+        uint128 armedFreshCounted;
+        // The ACTUAL credited delivery total (#1634 r3): the per-side pools
+        // each floor when a fee-on-transfer delivery scales, so their sum
+        // can sit a wei below what physically arrived and was counted — a
+        // demotion reserves THIS figure, wholesale, never the pool sum.
+        uint128 creditedAmount;
+        bool compensated;
+        bool provisional;
+        address provisionalEra;
+        // The crediting receipt's id — with `provisionalEra` (= the
+        // payload's authenticated remitter) it reconstructs the receipt
+        // key a demotion records the quarantine under.
+        uint256 remitId;
     }
 
     /// @notice #1434 P2-w1 — one day's frozen lapse clock (design §1.1's
