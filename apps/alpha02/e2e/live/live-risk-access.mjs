@@ -13,7 +13,15 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
-import { blockedSync, clientsFor, ensureConnected, launch, precondition, visit } from './driver.mjs';
+import {
+  blockedSync,
+  clientsFor,
+  ensureConnected,
+  launch,
+  precondition,
+  SITE,
+  visit,
+} from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIAMOND = readDiamond();
@@ -147,17 +155,21 @@ async function tierZeroAtOrAfter(minBlock) {
 // or the read-path assertions must still restore the wallet and close
 // the context — not leave the manual driver stuck.
 try {
-// Persistent-wallet normalization BEFORE the page loads (Codex #1539
-// r4): a prior strict-mode run must not poison the OFF-posture
-// assertions. Chain-confirmed direct write, exactly like the fork
-// spec's resetRiskState.
-// The strict-mode READ and the first page load are PRECONDITIONS — a
-// dead RPC or an unreachable site means this drive never got a page to
-// assert against, so they exit BLOCKED rather than FAIL (#1581). Both sit
-// ahead of every TIER mutation on purpose: a BLOCKED exit skips the
-// cleanup boundary below, and that is only safe while the wallet is still
-// where the drive found it. Do not move a precondition below the first
-// tier write.
+// Reachability FIRST, before anything mutates the wallet (Codex #1621
+// r2). A BLOCKED exit uses `process.exit`, so it skips the cleanup
+// boundary below — which is only safe while the wallet is still as the
+// drive found it. Probing the site after the strict-mode write could
+// therefore exit "observed nothing" having already changed persistent
+// on-chain state.
+//
+// It cannot simply be reordered with the real `/risk-access` load: the
+// normalization has to land BEFORE the page boots (#1539 r4), or a prior
+// run's strict mode poisons the OFF-posture assertions. So the
+// reachability question is asked separately, and cheaply, up front.
+await visit(page, '/');
+
+// The strict-mode READ is a PRECONDITION — a dead RPC means this drive
+// never got to assert anything (#1581).
 //
 // The normalization WRITE is deliberately NOT wrapped. A chain that
 // reverts a valid `setRiskStrictMode(false)` is evidence of a defect, and
@@ -171,6 +183,10 @@ const strictOn = await precondition('reading strict mode from a prior run', () =
     args: [who],
   }),
 );
+// Persistent-wallet normalization BEFORE the page loads (Codex #1539
+// r4): a prior strict-mode run must not poison the OFF-posture
+// assertions. Chain-confirmed direct write, exactly like the fork
+// spec's resetRiskState.
 if (strictOn) {
   console.log('note: strict mode ON from a prior run — normalizing OFF');
   const w = clientsFor(84532).wallet('borrower');
@@ -183,7 +199,12 @@ if (strictOn) {
   await pub.waitForTransactionReceipt({ hash });
 }
 
-await visit(page, '/risk-access');
+// A plain navigation, NOT `visit()`. The site is already known reachable
+// from the probe above, so a `/risk-access` route that will not load is a
+// plausible product regression — and the wallet may now be mutated, so a
+// BLOCKED exit here would skip the cleanup boundary. Both reasons point
+// the same way: exit 1.
+await page.goto(`${SITE}/risk-access`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForTimeout(3000);
 await ensureConnected(page);
 

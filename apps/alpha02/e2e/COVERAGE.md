@@ -255,7 +255,11 @@ Which failures are preconditions, driver by driver:
   shared `visit()` helper. Later navigations stay FAIL: once the site is
   known to serve, a route that will not load IS a plausible regression.
   The line is "did we ever get served anything", not "did every
-  navigation succeed".
+  navigation succeed". One deliberate exception: `live-ux-sweep.mjs` is
+  an evidence sweep rather than a pass/fail drive, so it RECORDS a failed
+  route navigation in its report and keeps going — its exit code speaks
+  only to whether the sweep stayed read-only. Whether that should change
+  is #1626.
 - **Fixture data the drive reads rather than asserts** — the deployments
   bundle's addresses, the per-facet ABI bundle, an override artifact a
   flag points at. A stale or half-exported bundle means the surface went
@@ -289,11 +293,18 @@ Four more traps, each of which cost a review round on #1621:
   Chromium. `launch()` routes every pre-page step through one wrapper.
 - **A shared BLOCKED exit must not overrule a caller that has evidence.**
   A drive that launches repeatedly and accumulates findings across
-  launches (`live-recover-locales.mjs`, one browser per locale) must be
-  able to weigh a later setup failure against a real defect found
-  earlier; exiting inside `launch()` silently deleted that rule. Hence
-  `onSetupFailure: 'throw'` — default `'blocked'`, because forgetting the
-  option must cost a blunt verdict, never a discarded finding.
+  launches must be able to weigh a later setup failure against a real
+  defect found earlier; exiting inside `launch()` silently deleted that
+  rule. Hence `onSetupFailure: 'throw'` — default `'blocked'`, because
+  forgetting the option must cost a blunt verdict, never a discarded
+  finding. **Three drives are in this shape**, not one, and the rule has
+  to be applied to each: `live-recover-locales.mjs` (a browser per
+  locale), `live-ux-sweep.mjs` (a browser per session, accumulating
+  read-only violations) and `live-desk-i18n-capture.mjs` (a context per
+  locale). The test to apply: does this drive record anything before its
+  LAST launch? If so, a mid-run setup failure must not decide the verdict
+  alone. In all three the precedence is the same — a real finding outranks
+  an incomplete run, and only a run that found nothing reports BLOCKED.
 - **After a browser exists, use the ASYNC exit.** `blockedSync` skips the
   close, so a post-launch BLOCKED can strand a persistent-profile Chromium
   and leave its profile directory locked — which makes the NEXT driver in

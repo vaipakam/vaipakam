@@ -82,6 +82,18 @@ const LOCALES = (process.env.DESK_I18N_LOCALES || 'en,zh,ta,de,fr,es,ar,ja,ko,hi
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+// A selector that normalises to NOTHING is BLOCKED, not PASS (Codex
+// #1621 r2). `DESK_I18N_LOCALES=",,,"` is non-empty, so the `||` default
+// does not apply, and the filter then leaves an empty list: the loop ran
+// zero times, the report was written empty, and the drive exited 0 —
+// the batch reporting "captured cleanly" about a run that captured
+// nothing. Same rule as live-ux-sweep.mjs's empty session selection.
+if (LOCALES.length === 0) {
+  blockedSync(
+    `DESK_I18N_LOCALES=${JSON.stringify(process.env.DESK_I18N_LOCALES)} selects` +
+      ` no locales — nothing to capture.`,
+  );
+}
 
 // A read-only capture never mutates state. Chain READS are JSON-RPC POSTs, so
 // POST can't be blanket-blocked; instead a POST is allowed only when its body
@@ -137,34 +149,14 @@ function languageMatches(lng, htmlLang, dir) {
   return lng === 'ar' ? d === 'rtl' : d !== 'rtl';
 }
 
-const report = {};
-const blockedRequests = [];
-
-// No browser means no capture at all — BLOCKED, not a desk-i18n defect.
-const browser = await precondition('launching a browser', () =>
-  chromium.launch({
-    headless: true,
-    ...(process.env.LIVE_CHROMIUM_PATH
-      ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
-      : {}),
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
-  }),
-);
-// Register it so a later BLOCKED exit closes it instead of leaving a
-// Chromium behind. `launch()` does this for every other drive; this one
-// builds its own per-locale context matrix, so it registers its own.
-trackBrowser(browser);
-
-for (const [index, lng] of LOCALES.entries()) {
-  const ctx = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
-    locale: lng,
-    ignoreHTTPSErrors: true,
-  });
-
-  // Serve every page request from THIS process via undici (so LIVE_PROXY_SETUP
-  // takes effect) AND enforce the read-only guard on the way through.
-  await ctx.route('**/*', async (route) => {
+/**
+ * Serve every page request from THIS process via undici (so
+ * LIVE_PROXY_SETUP takes effect) AND enforce the read-only guard on the
+ * way through. Defined once rather than per locale — it closes over
+ * nothing loop-scoped, and hoisting it lets the whole per-locale setup
+ * sit inside one guarded block (Codex #1621 r2).
+ */
+const routeThroughUndici =  async (route) => {
     const req = route.request();
     const violation = readOnlyViolation(req);
     if (violation) {
@@ -195,17 +187,64 @@ for (const [index, lng] of LOCALES.entries()) {
     } catch {
       await route.abort('failed');
     }
-  });
+  };
 
-  // Seed the language BEFORE the app boots — the shared i18n factory reads
-  // `vaipakam:language` from localStorage on init.
-  await ctx.addInitScript((code) => {
-    try {
-      window.localStorage.setItem('vaipakam:language', code);
-    } catch {}
-  }, lng);
+const report = {};
+const blockedRequests = [];
 
-  const page = await ctx.newPage();
+// No browser means no capture at all — BLOCKED, not a desk-i18n defect.
+const browser = await precondition('launching a browser', () =>
+  chromium.launch({
+    headless: true,
+    ...(process.env.LIVE_CHROMIUM_PATH
+      ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
+      : {}),
+    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  }),
+);
+// Register it so a later BLOCKED exit closes it instead of leaving a
+// Chromium behind. `launch()` does this for every other drive; this one
+// builds its own per-locale context matrix, so it registers its own.
+trackBrowser(browser);
+
+// Locales whose per-locale browser context never came up. Recorded, not
+// exited on (Codex #1621 r2): this drive ACCUMULATES findings across
+// locales, so a context failure on locale 6 must not erase a real
+// language regression found on locale 2. Same precedence rule as
+// live-recover-locales.mjs and live-ux-sweep.mjs.
+const setupFailures = [];
+
+for (const [index, lng] of LOCALES.entries()) {
+  let ctx;
+  let page;
+  try {
+    ctx = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      locale: lng,
+      ignoreHTTPSErrors: true,
+    });
+    await ctx.route('**/*', routeThroughUndici);
+    // Seed the language BEFORE the app boots — the shared i18n factory
+    // reads `vaipakam:language` from localStorage on init.
+    await ctx.addInitScript((code) => {
+      try {
+        window.localStorage.setItem('vaipakam:language', code);
+      } catch {}
+    }, lng);
+    page = await ctx.newPage();
+  } catch (err) {
+    // An invalid locale tag in DESK_I18N_LOCALES lands here, as does an
+    // exhausted browser or a failed route install. Either way nothing was
+    // captured for this row — and the context may be half-built, so close
+    // it rather than leaking one per failed locale.
+    await ctx?.close().catch(() => {});
+    const why = String(err?.message ?? err).split('\n')[0].slice(0, 200);
+    setupFailures.push({ lng, why });
+    report[lng] = { lng, ok: false, blocked: why };
+    console.log(`[${lng}] BLOCKED — context setup failed: ${why}`);
+    continue;
+  }
+
   const rec = {
     lng,
     url: `${SITE}/desk`,
@@ -288,12 +327,24 @@ await browser.close();
 
 // Fail loudly so run-live-batch.mjs (which reads the child exit code) can't
 // report a blocked/regressed run as green.
-const failed = Object.values(report).filter((r) => !r.ok);
+// A real finding OUTRANKS an incomplete capture (Codex #1621 r2): a row
+// that loaded and showed the wrong language is a defect, and reporting
+// BLOCKED because some other locale's context failed would bury it.
+const failed = Object.values(report).filter((r) => !r.ok && !r.blocked);
 if (failed.length || blockedRequests.length) {
   console.error(
     `\nFAIL: ${failed.length}/${LOCALES.length} locale(s) did not capture cleanly` +
       (blockedRequests.length ? ` + ${blockedRequests.length} blocked non-read request(s)` : '') +
+      (setupFailures.length ? ` (${setupFailures.length} more could not be checked)` : '') +
       `: ${failed.map((r) => `${r.lng}(${r.error || 'no desk text'})`).join(', ')}`,
   );
   process.exitCode = 1;
+} else if (setupFailures.length) {
+  console.error(
+    `\nBLOCKED: ${setupFailures.length}/${LOCALES.length} locale(s) could not be` +
+      ` captured and none of the rest found a problem, so those languages are` +
+      ` still unreviewed:\n` +
+      setupFailures.map((f) => `  ${f.lng}: ${f.why}`).join('\n'),
+  );
+  process.exitCode = 2;
 }

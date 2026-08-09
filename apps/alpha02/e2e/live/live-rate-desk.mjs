@@ -295,13 +295,40 @@ function record(name, status, detail = '') {
 }
 
 // ---- chain read helpers --------------------------------------------
+/**
+ * The ABI member a call is about to use, or BLOCKED if the bundle does
+ * not carry it (Codex #1621 r2).
+ *
+ * Checked at the POINT OF USE rather than against a list of "functions
+ * this driver requires". A list is a second thing to maintain, and one
+ * that goes stale exactly when someone adds a read and forgets it —
+ * reintroducing the gap it was added to close. This asks the question
+ * about whatever the driver actually calls, so it cannot drift.
+ *
+ * A half-exported bundle is a stale ARTIFACT, not a desk regression:
+ * viem's own "function not found" throw exits 1 and reads as a product
+ * defect.
+ */
+function requireAbiMember(name, kind) {
+  const found = ABI.some((e) => e.type === kind && e.name === name);
+  if (!found) {
+    blockedSync(
+      `the bundled ABI has no ${kind} "${name}" — the export is stale or` +
+        ` half-written, so this drive cannot reach the surface it reviews.` +
+        `\n  → re-run contracts/script/exportFrontendAbis.sh`,
+    );
+  }
+  return ABI.find((e) => e.type === kind && e.name === name);
+}
+
+/** Diamond read that fails BLOCKED on a missing ABI member. */
+function diamondRead(functionName, args) {
+  requireAbiMember(functionName, 'function');
+  return pub.readContract({ address: DIAMOND, abi: ABI, functionName, args });
+}
+
 async function getOffer(offerId) {
-  return pub.readContract({
-    address: DIAMOND,
-    abi: ABI,
-    functionName: 'getOffer',
-    args: [offerId],
-  });
+  return diamondRead('getOffer', [offerId]);
 }
 
 /** Length of `creator`'s LIFETIME offer index. getUserOffersPaginated
@@ -309,12 +336,7 @@ async function getOffer(offerId) {
  *  append-only `userOfferIds[user]` array — a limit-0 read is a cheap
  *  total-only probe. */
 async function offerIndexTotal(creator) {
-  const [, total] = await pub.readContract({
-    address: DIAMOND,
-    abi: ABI,
-    functionName: 'getUserOffersPaginated',
-    args: [creator, 0n, 0n],
-  });
+  const [, total] = await diamondRead('getUserOffersPaginated', [creator, 0n, 0n]);
   return total;
 }
 
@@ -329,12 +351,7 @@ async function offerIdsAppendedSince(creator, beforeTotal) {
   const out = [];
   const PAGE = 200n;
   for (let offset = beforeTotal; ; ) {
-    const [ids, total] = await pub.readContract({
-      address: DIAMOND,
-      abi: ABI,
-      functionName: 'getUserOffersPaginated',
-      args: [creator, offset, PAGE],
-    });
+    const [ids, total] = await diamondRead('getUserOffersPaginated', [creator, offset, PAGE]);
     out.push(...ids);
     offset += BigInt(ids.length);
     if (ids.length === 0 || offset >= total) return out;
@@ -379,12 +396,7 @@ async function noncesSettled(address, { timeoutMs = 120_000, intervalMs = 5_000 
  *  now (the ranked view is active-only); falls back to the least-
  *  populated bucket if every one is taken. */
 async function pickTenor() {
-  const [rankings] = await pub.readContract({
-    address: DIAMOND,
-    abi: ABI,
-    functionName: 'getActiveOffersByAssetPairRanked',
-    args: [WETH, TLIQ],
-  });
+  const [rankings] = await diamondRead('getActiveOffersByAssetPairRanked', [WETH, TLIQ]);
   const counts = new Map();
   for (const r of rankings) {
     const d = Number(r.durationDays);
@@ -474,8 +486,20 @@ if (walletWeth < EXPECTED_AMOUNT_MAX) {
       'escrows — top up the wallet (or shrink AMOUNT_WETH) before running',
   );
 }
-const startBlock = await pub.getBlockNumber();
-const { days: tenor, empty: tenorEmpty } = await pickTenor();
+// The rest of the pre-browser preflight, under the same precondition
+// (Codex #1621 r2). Wrapping individual reads left a moving target: an
+// RPC that answered the balance probe and then failed still exited 1
+// here. The whole preflight is setup — nothing has been observed yet —
+// so it is one guarded block rather than a growing list of wrapped
+// calls.
+const { startBlock, tenor, tenorEmpty } = await precondition(
+  'reading the pre-drive chain state (head block + tenor selection)',
+  async () => {
+    const head = await pub.getBlockNumber();
+    const picked = await pickTenor();
+    return { startBlock: head, tenor: picked.days, tenorEmpty: picked.empty };
+  },
+);
 console.log(
   `run: lender=${lenderAddr} market=WETH/tLIQ tenor=${tenor}d` +
     `${tenorEmpty ? ' (verified live-empty)' : ' (least-populated fallback)'} site=${SITE}` +
@@ -908,8 +932,7 @@ try {
   // (Codex round-1 P2 #6) — the event OfferMutateFacet emits on every
   // mutation entry point, with `offerId` as topic1, so getLogs can
   // filter server-side over this short block range.
-  const offerModifiedAbi = ABI.find((e) => e.type === 'event' && e.name === 'OfferModified');
-  if (!offerModifiedAbi) throw new Error('OfferModified event missing from the bundled ABI');
+  const offerModifiedAbi = requireAbiMember('OfferModified', 'event');
   const modLogs = await pollChain(
     `the OfferModified log for offer #${offerId}`,
     async () => {
@@ -1206,10 +1229,7 @@ try {
       let createLogCount = null;
       if (postAttempted && prePostBlock !== null) {
         try {
-          const offerCreatedAbi = ABI.find(
-            (e) => e.type === 'event' && e.name === 'OfferCreated',
-          );
-          if (!offerCreatedAbi) throw new Error('OfferCreated event missing from the bundled ABI');
+          const offerCreatedAbi = requireAbiMember('OfferCreated', 'event');
           const createLogs = await pub.getLogs({
             address: DIAMOND,
             event: offerCreatedAbi,

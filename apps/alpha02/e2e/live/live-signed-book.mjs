@@ -295,8 +295,28 @@ function record(name, status, detail = '') {
 }
 
 // ---- chain read helpers ----------------------------------------------
-const diamondRead = (functionName, args) =>
-  pub.readContract({ address: DIAMOND, abi: ABI, functionName, args });
+/**
+ * The ABI member a call is about to use, or BLOCKED if the bundle does
+ * not carry it (Codex #1621 r2) — same helper and same reasoning as
+ * live-rate-desk.mjs: checked at the POINT OF USE, so there is no
+ * required-functions list to go stale when someone adds a read.
+ */
+function requireAbiMember(name, kind) {
+  const found = ABI.find((e) => e.type === kind && e.name === name);
+  if (!found) {
+    blockedSync(
+      `the bundled ABI has no ${kind} "${name}" — the export is stale or` +
+        ` half-written, so this drive cannot reach the surface it reviews.` +
+        `\n  → re-run contracts/script/exportFrontendAbis.sh`,
+    );
+  }
+  return found;
+}
+
+const diamondRead = (functionName, args) => {
+  requireAbiMember(functionName, 'function');
+  return pub.readContract({ address: DIAMOND, abi: ABI, functionName, args });
+};
 
 /** Wire order (all-strings JSON) → the typed struct viem's ABI encoder
  *  expects for `cancelSignedOffer` / `signedOfferOrderHash` — the same
@@ -539,7 +559,16 @@ async function selectTenor(page, days) {
 
 // ----------------------------------------------------------------------
 const lenderAddr = addressOf('lender');
-const { days: tenor, bucketWasEmpty: tenorBucketWasEmpty } = await pickTenor();
+// Pre-browser preflight, same precondition rule as live-rate-desk.mjs
+// (Codex #1621 r2): a partial RPC outage here means nothing was
+// observed, not that the signed book regressed.
+const { tenor, tenorBucketWasEmpty } = await precondition(
+  'selecting a tenor from the live book',
+  async () => {
+    const picked = await pickTenor();
+    return { tenor: picked.days, tenorBucketWasEmpty: picked.bucketWasEmpty };
+  },
+);
 console.log(
   `run: lender=${lenderAddr} market=WETH/tLIQ tenor=${tenor}d site=${SITE}` +
     ` indexer=${INDEXER} ws=${INDEXER_WS}/ws/chain/${CHAIN_ID} (phase 3 gasless signed book)`,
@@ -1207,8 +1236,7 @@ try {
   await page
     .getByText(/signed order cancelled on-chain/i)
     .waitFor({ timeout: 150_000 });
-  const cancelledEvt = ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferCancelled');
-  if (!cancelledEvt) throw new Error('SignedOfferCancelled missing from the bundled ABI');
+  const cancelledEvt = requireAbiMember('SignedOfferCancelled', 'event');
   const cancelLogs = await pollFor(
     'the SignedOfferCancelled log',
     async () => {

@@ -428,17 +428,14 @@ export async function launch({
   let chainId = startChainId;
   let authorized = preAuthorized;
 
-  const profileDir = freshProfile
-    ? fs.mkdtempSync(path.join(os.tmpdir(), `alpha02-fresh-${role}-`))
-    : path.join(HERE, 'profiles', role);
-  fs.mkdirSync(profileDir, { recursive: true });
+  let profileDir = null;
   // A throwaway profile is created BEFORE the browser is launched, so a
   // launch failure (Chromium missing, bad LIVE_CHROMIUM_PATH, no disk)
   // leaves it behind — the caller never gets a `done()` to clean up
   // with. Cleaning here rather than at each call site keeps the
   // create/remove pair in one place (Codex #1590 r6).
   const removeThrowawayProfile = () => {
-    if (freshProfile) fs.rmSync(profileDir, { recursive: true, force: true });
+    if (freshProfile && profileDir) fs.rmSync(profileDir, { recursive: true, force: true });
   };
 
   /**
@@ -475,6 +472,18 @@ export async function launch({
       await blocked(`browser setup failed (${what})`, err, removeThrowawayProfile);
     }
   };
+
+  // Creating the profile directory is setup too (Codex #1621 r2). An
+  // unwritable profile parent or exhausted temp storage threw here,
+  // BEFORE the wrapper below existed to catch it, so the shared
+  // launcher's promise of BLOCKED-on-setup-failure had a hole in it at
+  // the very first step.
+  await setup('creating the browser profile directory', async () => {
+    profileDir = freshProfile
+      ? fs.mkdtempSync(path.join(os.tmpdir(), `alpha02-fresh-${role}-`))
+      : path.join(HERE, 'profiles', role);
+    fs.mkdirSync(profileDir, { recursive: true });
+  });
 
   const ctx = await setup('launching the browser', async () => {
     const created = await chromium.launchPersistentContext(profileDir, {

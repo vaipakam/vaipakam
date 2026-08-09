@@ -42,7 +42,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launch, ensureConnected, addressOf, blockedSync, SITE, visit } from './driver.mjs';
+import {
+  launch,
+  ensureConnected,
+  addressOf,
+  blockedSync,
+  LiveSetupError,
+  SITE,
+  visit,
+} from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(HERE, 'shots', 'ux-sweep');
@@ -283,10 +291,21 @@ const routesEnv = process.env.UX_SWEEP_ROUTES;
 
 // The sweep's whole output is these artifacts — nowhere to write them is
 // a missing precondition, not a finding (#1581).
+//
+// Probe an actual write, because `mkdirSync(recursive)` on an EXISTING
+// directory succeeds without testing write access (Codex #1621 r2).
+// Without the probe the first hard failure was a screenshot `rmSync`
+// mid-sweep — which exits 1 AND leaves the browser open — or, in
+// probe-only mode, the closing `writeFileSync` after the whole sweep had
+// run. Both report "nowhere to write" as a product finding, and the
+// first one does it after wasting the run.
 try {
   fs.mkdirSync(OUT_DIR, { recursive: true });
+  const probe = path.join(OUT_DIR, '.write-probe');
+  fs.writeFileSync(probe, '');
+  fs.rmSync(probe, { force: true });
 } catch (err) {
-  blockedSync(`cannot create the sweep output directory\n  path: ${OUT_DIR}\n  ${err.message}`);
+  blockedSync(`cannot write to the sweep output directory\n  path: ${OUT_DIR}\n  ${err.message}`);
 }
 const report = {
   site: SITE,
@@ -296,6 +315,9 @@ const report = {
 };
 report.startedAt = new Date().toISOString();
 const allBlockedRequests = [];
+// Sessions whose browser never started. Reported at the end rather than
+// exited on, so a finding from a session that DID run still wins.
+const setupFailures = [];
 const backgroundNetworkBySession = {};
 
 for (const session of activeSessions) {
@@ -312,15 +334,37 @@ for (const session of activeSessions) {
     passes: session.passes.map((p) => p.name),
   });
 
-const { page, done, blockedRequests } = await launch({
-  role: session.role,
-  startChainId: session.chainId,
-  headless: true,
-  readOnly: true,
-  preAuthorized: session.preAuthorized ?? true,
-  allowRequestAccounts: session.allowRequestAccounts ?? true,
-  freshProfile: session.freshProfile ?? false,
-});
+// This sweep launches once PER SESSION and accumulates findings across
+// them in `allBlockedRequests`, so it is evidence-accumulating in the
+// same way live-recover-locales.mjs is (Codex #1621 r2). If session 1
+// caught a page-initiated write — a proven product defect — and session
+// 3's browser fails to start, exiting BLOCKED there would replace that
+// finding with "verified nothing". Take the error back and decide at
+// the end, where the evidence is.
+let launched;
+try {
+  launched = await launch({
+    role: session.role,
+    startChainId: session.chainId,
+    headless: true,
+    readOnly: true,
+    onSetupFailure: 'throw',
+    preAuthorized: session.preAuthorized ?? true,
+    allowRequestAccounts: session.allowRequestAccounts ?? true,
+    freshProfile: session.freshProfile ?? false,
+  });
+} catch (err) {
+  if (!(err instanceof LiveSetupError)) throw err;
+  // Record and carry on to the next session: the verdict is decided at
+  // the end, where a finding from an earlier session can outrank this.
+  setupFailures.push({
+    key: session.key,
+    why: String(err.cause?.message ?? err.cause ?? err).split('\n')[0].slice(0, 200),
+  });
+  console.error(`session ${session.key}: browser setup failed — ${err.message}`);
+  continue;
+}
+const { page, done, blockedRequests } = launched;
 
 // One console/request tap for the lifetime of the context.
 let sink = null;
@@ -535,4 +579,19 @@ if (allBlockedRequests.length > 0) {
 // but verified nothing", whose cause and remedy are the opposite of this
 // one's (#1529 review round 5). This sweep verified plenty; what it found
 // is a defect.
-process.exit(allBlockedRequests.length > 0 ? 1 : 0);
+//
+// A finding OUTRANKS an incomplete sweep (Codex #1621 r2), the same
+// precedence live-recover-locales.mjs applies: reporting BLOCKED here
+// would discard a proven write attempt because some later session's
+// browser would not start.
+if (allBlockedRequests.length > 0) process.exit(1);
+if (setupFailures.length > 0) {
+  console.error(
+    `\nBLOCKED: ${setupFailures.length} of ${activeSessions.length} session(s)` +
+      ` never started, so those surfaces are unswept and no finding came from` +
+      ` the ones that did:\n` +
+      setupFailures.map((f) => `  ${f.key}: ${f.why}`).join('\n'),
+  );
+  process.exit(2);
+}
+process.exit(0);
