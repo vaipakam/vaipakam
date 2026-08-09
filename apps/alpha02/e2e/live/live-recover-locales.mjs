@@ -179,10 +179,22 @@ async function probe(page, code) {
   page.on('response', onResponse);
 
   try {
-    await page.goto(`${SITE}/recover`, {
+    const resp = await page.goto(`${SITE}/recover`, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
     });
+    // A resolved `goto` is not proof of reachability (Codex #1621 r11).
+    // `page.goto` resolves for a 404 or CDN 5xx, and this probe checked
+    // only for a THROWN navigation error — so an unavailable target had
+    // its error document scored as a missing locale chunk and wrong page
+    // content, i.e. reported as a localization defect. Thrown into the
+    // catch below, which already classifies a failed navigation as
+    // "nothing observed". Third drive to need this: the shared `visit()`
+    // got it in r8, live-desk-i18n-capture in r9.
+    const status = resp?.status();
+    if (typeof status === 'number' && status >= 400) {
+      throw new Error(`${SITE}/recover answered HTTP ${status}`);
+    }
   } catch (err) {
     // Nothing has been OBSERVED yet, so this cannot be a product
     // finding: an unreachable host, a wrong SITE_URL or an egress
