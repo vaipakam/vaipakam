@@ -20,7 +20,6 @@ import {
   launch,
   precondition,
   SITE,
-  visit,
 } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -174,7 +173,20 @@ try {
 // normalization has to land BEFORE the page boots (#1539 r4), or a prior
 // run's strict mode poisons the OFF-posture assertions. So the
 // reachability question is asked separately, and cheaply, up front.
-await visit(page, '/');
+// Asked over plain HTTP, NOT by navigating the signing context (Codex
+// #1621 r12). `launch()` defaults to `readOnly: false` +
+// `preAuthorized: true`, so `page` carries a funded, already-connected
+// wallet whose injected binding forwards `eth_sendTransaction` and the
+// signature methods with no confirmation step. Pointing THAT context at
+// an arbitrary SITE_URL hands a regressed or hostile build a live signer
+// before this drive has asserted anything — and the `finally` below only
+// restores a risk tier, which cannot unwind a transaction. A reachability
+// question does not need a browser, let alone a wallet; live-recover-
+// locales states the same rule for its keyless context.
+await precondition(`opening ${SITE}`, async () => {
+  const res = await fetch(SITE, { redirect: 'follow' });
+  if (!res.ok) throw new Error(`${SITE} answered HTTP ${res.status}`);
+});
 
 // The strict-mode READ is a PRECONDITION — a dead RPC means this drive
 // never got to assert anything (#1581).

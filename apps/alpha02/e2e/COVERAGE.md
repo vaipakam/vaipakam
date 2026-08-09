@@ -259,7 +259,20 @@ Which failures are preconditions, driver by driver:
   an evidence sweep rather than a pass/fail drive, so it RECORDS a failed
   route navigation in its report and keeps going — its exit code speaks
   only to whether the sweep stayed read-only. Whether that should change
-  is #1626.
+  is #1626. A drive holding a FUNDED, pre-authorized wallet asks the
+  reachability question over plain HTTP instead — `live-risk-access.mjs`
+  does — because `launch()` defaults to a signer that forwards
+  `eth_sendTransaction` without a confirmation step, and pointing that at
+  an arbitrary `SITE_URL` would hand a regressed or hostile build a live
+  key before the drive has asserted anything. Reachability needs no
+  browser; the probe should not be the thing that exposes a signer.
+- **Cleanup capacity, for any drive that publishes something fillable** —
+  reserved BEFORE the mutation, not discovered after it. A gasless post
+  costs the maker no ETH, so vault funding alone does not prove the
+  maker can RETRACT what it posts; `live-signed-book.mjs` checks the
+  native balance against a padded `cancelSignedOffer` estimate up front
+  and exits BLOCKED rather than leave a live order resting against a
+  real vault.
 - **Fixture data the drive reads rather than asserts** — the deployments
   bundle's addresses, the per-facet ABI bundle, an override artifact a
   flag points at. A stale or half-exported bundle means the surface went

@@ -693,6 +693,43 @@ try {
         'commits — deposit WETH to the vault (or shrink AMOUNT_WETH) before running',
     );
   }
+  // Cancellation gas, reserved BEFORE any signature can exist (Codex
+  // #1621 r12). The post is GASLESS — it escrows nothing and costs the
+  // lender no ETH — so a wallet holding plenty of vault WETH but zero
+  // NATIVE balance clears the check above and publishes a fillable
+  // order. Step 6 then cannot submit `cancelSignedOffer`, and the
+  // `finally` fallback signs with the same unfunded key, so the drive
+  // exits FAIL having left a live order resting against the lender's
+  // vault for any taker to fill. Funds exposure is not a verdict
+  // problem — the only safe moment to discover an unfundable cleanup is
+  // before the thing needing cleanup exists.
+  {
+    const reserve = await precondition(
+      'reading the lender native balance and current gas price',
+      async () => {
+        const [nativeBal, fees] = await Promise.all([
+          pub.getBalance({ address: lenderAddr }),
+          pub.estimateFeesPerGas().catch(() => ({})),
+        ]);
+        const perGas =
+          fees.maxFeePerGas ?? fees.gasPrice ?? (await pub.getGasPrice());
+        if (!perGas) throw new Error('chain returned no usable gas price');
+        // A cancel is one small write. 200k gas is several times its real
+        // cost and the 2x pad absorbs a base-fee climb between here and
+        // the cleanup at the very end of the drive.
+        return { need: perGas * 200_000n * 2n, have: nativeBal };
+      },
+    );
+    if (reserve.have < reserve.need) {
+      await blocked(
+        `lender native balance ${reserve.have} wei is under the ~${reserve.need} wei` +
+          ' reserved for cancelSignedOffer. This drive publishes a signable order it' +
+          ' must be able to retract, so it refuses to post one it could strand —' +
+          ' fund the lender EOA with Base Sepolia ETH before running.',
+      );
+    }
+  }
+
   // The production route the whole drive rides: market-scoped GET must
   // 200 with the { chainId, offers } shape and `no-store` (the desk's
   // mutation flows refetch this URL expecting fresh state — a cached
