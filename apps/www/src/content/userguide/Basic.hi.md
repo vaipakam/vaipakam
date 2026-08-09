@@ -169,6 +169,8 @@ acceptance के समय protocol borrower की तरफ़ एक सु�
 बनता है, और अवधि भर offer के तय rate पर ब्याज कमाता है। ब्याज
 का छोटा हिस्सा (`{liveValue:treasuryFeeBps}`%) settlement के समय protocol treasury में
 जाता है।
+यह rate loan बनते समय तय हो जाता है, इसलिए protocol fee में बाद का कोई
+बदलाव पहले से खुले loan को उसी rate पर छोड़ देता है जिस पर वह शुरू हुआ था।
 
 ---
 

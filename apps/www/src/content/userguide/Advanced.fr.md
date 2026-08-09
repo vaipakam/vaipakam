@@ -244,6 +244,9 @@ Factor d'au moins 1,5 face au principal demandé par le prêteur.
 La mathématique HF est celle du protocole — le verrou n'est pas
 contournable. La coupe de trésorerie de `{liveValue:treasuryFeeBps}`% sur les intérêts est
 prélevée au règlement terminal, pas en amont.
+Ce taux est figé à la création du prêt : une modification ultérieure des
+frais du protocole laisse un prêt déjà ouvert au taux avec lequel il a
+commencé.
 
 <a id="offer-book.borrower-offers"></a>
 

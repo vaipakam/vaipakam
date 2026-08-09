@@ -188,6 +188,7 @@ Offers" — 该列表始终完整显示。
 必须针对 lender 的 principal request 产生至少 1.5 的 Health Factor。
 HF 计算由 protocol 自己执行 — gate 无法被绕过。interest 上的 `{liveValue:treasuryFeeBps}`%
 treasury cut 会在 terminal settlement 时 debit，而不是预先收取。
+该 rate 在 loan 创建时即已固定，因此之后 protocol fee 的调整不会改变一笔已经开启的 loan。
 
 <a id="offer-book.borrower-offers"></a>
 

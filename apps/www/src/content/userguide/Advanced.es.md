@@ -245,6 +245,9 @@ de al menos 1,5 frente al monto principal solicitado por el
 prestamista. La matemática de HF es del propio protocolo —el gate
 no es eludible. El `{liveValue:treasuryFeeBps}`% de tesorería sobre los intereses se debita en
 la liquidación terminal, no por adelantado.
+Esa tasa queda fijada al crear el préstamo, así que un cambio posterior
+de la comisión del protocolo deja un préstamo ya abierto con la tasa con
+la que empezó.
 
 <a id="offer-book.borrower-offers"></a>
 

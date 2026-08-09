@@ -176,6 +176,9 @@ Asset des Lenders geht zum Borrower, der Lender wird zum
 Lender-of-record und der Lender verdient Zinsen zum Satz der Offer
 über die gesamte Laufzeit. Ein kleiner Anteil (`{liveValue:treasuryFeeBps}`%) der Zinsen geht
 beim Settlement an die Treasury des Protokolls.
+Dieser Satz wird bei der Kreditvergabe festgeschrieben; eine spätere
+Änderung der Protokollgebühr lässt einen bereits laufenden Kredit auf
+seinem ursprünglichen Satz.
 
 ---
 

@@ -244,6 +244,9 @@ Principal-Anforderung des Lenders einen Health Factor von
 mindestens 1,5 erzeugen. Die HF-Mathematik ist die des Protokolls
 selbst — das Gate ist nicht umgehbar. Der `{liveValue:treasuryFeeBps}`%-Treasury-Anteil auf
 Zinsen wird beim terminalen Settlement abgezogen, nicht im Voraus.
+Dieser Satz wird bei der Kreditvergabe festgeschrieben; eine spätere
+Änderung der Protokollgebühr lässt einen bereits laufenden Kredit auf
+seinem ursprünglichen Satz.
 
 <a id="offer-book.borrower-offers"></a>
 

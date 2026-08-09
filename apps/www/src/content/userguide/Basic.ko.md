@@ -158,6 +158,7 @@ loan은 시작되지 않습니다.
 borrower에게 가고, lender는 lender-of-record가 되며, 기간 동안 offer
 의 rate로 interest를 얻습니다. interest의 작은 일부(`{liveValue:treasuryFeeBps}`%)는 settlement
 시 protocol treasury로 갑니다.
+이 rate는 loan이 생성될 때 고정되므로, 이후 protocol fee가 바뀌어도 이미 열려 있는 loan은 시작할 때의 rate를 유지합니다.
 
 ---
 

@@ -141,6 +141,7 @@ lender 接受其中一条后，就会为 loan 提供资金：lender 的 asset �
 转给 borrower，lender 成为 lender-of-record，并在期限内按 offer
 的 rate 赚取利息。settlement 时，利息的一小部分 (`{liveValue:treasuryFeeBps}`%) 会进入
 protocol treasury。
+该 rate 在 loan 创建时即已固定，因此之后 protocol fee 的调整不会改变一笔已经开启的 loan。
 
 ---
 

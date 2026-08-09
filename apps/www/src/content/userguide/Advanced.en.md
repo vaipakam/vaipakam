@@ -223,6 +223,8 @@ borrower's collateral basket must produce a Health Factor of at
 least 1.5 against the lender's principal request. The HF math is
 the protocol's own — the gate is not bypassable. The `{liveValue:treasuryFeeBps}`% treasury
 cut on interest is debited at terminal settlement, not up front.
+That rate is fixed when the loan is created, so a later change to the
+protocol fee leaves an already-open loan on the rate it started with.
 
 <a id="offer-book.borrower-offers"></a>
 

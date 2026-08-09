@@ -162,6 +162,8 @@ goes to the borrower, the lender becomes the lender-of-record, and
 the lender earns interest at the offer's rate over the duration. A
 small slice (`{liveValue:treasuryFeeBps}`%) of the interest goes to the protocol treasury at
 settlement.
+That rate is fixed when the loan is created, so a later change to the
+protocol fee leaves an already-open loan on the rate it started with.
 
 ---
 

@@ -173,6 +173,9 @@ en el prestamista-de-registro, y gana intereses a la tasa de la
 oferta durante toda la duración. Una pequeña porción (`{liveValue:treasuryFeeBps}`%) de los
 intereses va a la tesorería del protocolo en el momento de la
 liquidación.
+Esa tasa queda fijada al crear el préstamo, así que un cambio posterior
+de la comisión del protocolo deja un préstamo ya abierto con la tasa con
+la que empezó.
 
 ---
 

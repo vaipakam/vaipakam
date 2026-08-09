@@ -164,6 +164,7 @@ borrower の collateral が足りなければ、loan は開始されません。
 asset が borrower に渡り、lender は lender-of-record になり、
 期間中 offer の rate で interest を得ます。interest の小さな
 一部 (`{liveValue:treasuryFeeBps}`%) は settlement 時に protocol treasury へ送られます。
+この rate は loan の作成時に固定されるため、後から protocol fee が変更されても、すでに開いている loan は開始時の rate のままです。
 
 ---
 

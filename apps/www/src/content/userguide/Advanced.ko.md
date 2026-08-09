@@ -210,6 +210,7 @@ basket은 lender의 principal request에 대해 최소 1.5 Health Factor를
 만들어야 합니다. HF math는 protocol 자체 규칙이며 gate는 우회할 수
 없습니다. interest에 대한 `{liveValue:treasuryFeeBps}`% treasury cut은 terminal settlement에서
 debit되며 upfront가 아닙니다.
+이 rate는 loan이 생성될 때 고정되므로, 이후 protocol fee가 바뀌어도 이미 열려 있는 loan은 시작할 때의 rate를 유지합니다.
 
 <a id="offer-book.borrower-offers"></a>
 

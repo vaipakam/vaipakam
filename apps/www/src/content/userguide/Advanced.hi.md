@@ -229,6 +229,8 @@ borrower accept करता है। initiation पर hard gate है: borro
 कम से कम 1.5 Health Factor बनाना होगा। HF math protocol का
 अपना है — gate bypass नहीं किया जा सकता। ब्याज पर `{liveValue:treasuryFeeBps}`% treasury
 cut terminal settlement पर debit होती है, upfront नहीं।
+यह rate loan बनते समय तय हो जाता है, इसलिए protocol fee में बाद का कोई
+बदलाव पहले से खुले loan को उसी rate पर छोड़ देता है जिस पर वह शुरू हुआ था।
 
 <a id="offer-book.borrower-offers"></a>
 

@@ -231,6 +231,9 @@ request-க்கு எதிராக குறைந்தபட்சம் 
 HF math protocol-இன் சொந்த கணக்கீடு — இந்த gate-இன் மீற முடியாது.
 Interest-இன் `{liveValue:treasuryFeeBps}`% treasury cut terminal settlement-இல் debit செய்யப்படும்,
 முன்கூட்டியே அல்ல.
+இந்த rate loan உருவாக்கப்படும்போதே நிலைநிறுத்தப்படுகிறது; எனவே protocol
+fee-ல் பிறகு ஏற்படும் மாற்றம், ஏற்கனவே திறந்திருக்கும் loan-ஐ அது தொடங்கிய
+rate-லேயே விட்டுவிடும்.
 
 <a id="offer-book.borrower-offers"></a>
 

@@ -172,6 +172,9 @@ du prêteur va à l'emprunteur, le prêteur devient le prêteur inscrit,
 et le prêteur perçoit des intérêts au taux de l'offre sur toute la
 durée. Une petite portion (`{liveValue:treasuryFeeBps}`%) des intérêts revient à la trésorerie
 du protocole au moment du règlement.
+Ce taux est figé à la création du prêt : une modification ultérieure des
+frais du protocole laisse un prêt déjà ouvert au taux avec lequel il a
+commencé.
 
 ---
 

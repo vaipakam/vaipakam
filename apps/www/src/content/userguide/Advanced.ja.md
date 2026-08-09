@@ -227,6 +227,7 @@ borrower の collateral basket は、lender の principal request に
 math は protocol 独自のもので、gate は bypass できません。interest
 に対する `{liveValue:treasuryFeeBps}`% treasury cut は terminal settlement 時に debit され、
 upfront ではありません。
+この rate は loan の作成時に固定されるため、後から protocol fee が変更されても、すでに開いている loan は開始時の rate のままです。
 
 <a id="offer-book.borrower-offers"></a>
 
