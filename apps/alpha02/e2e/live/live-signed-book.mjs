@@ -558,6 +558,27 @@ async function selectTenor(page, days) {
 }
 
 // ----------------------------------------------------------------------
+/**
+ * Every ABI member this drive needs AT OR AFTER its first on-chain
+ * mutation, asserted BEFORE the browser opens — same reasoning as
+ * live-rate-desk.mjs (Codex #1621 r3).
+ *
+ * Ordering, not coverage: `signedOfferOrderHash`, `signedOfferFilledAmount`
+ * and `SignedOfferCancelled` are first reached after a signature exists,
+ * and `cancelSignedOffer` is what the cleanup itself uses — a BLOCKED
+ * `process.exit` at any of them skips the `finally` and can leave a
+ * fillable signed order resting on the book. The point-of-use check
+ * stays as the backstop for anything not listed here.
+ */
+for (const [name, kind] of [
+  ['signedOfferOrderHash', 'function'],
+  ['signedOfferFilledAmount', 'function'],
+  ['cancelSignedOffer', 'function'],
+  ['SignedOfferCancelled', 'event'],
+]) {
+  requireAbiMember(name, kind);
+}
+
 const lenderAddr = addressOf('lender');
 // Pre-browser preflight, same precondition rule as live-rate-desk.mjs
 // (Codex #1621 r2): a partial RPC outage here means nothing was
@@ -634,10 +655,19 @@ try {
   // wallet would be the wrong pocket) and warns on shortfall. The
   // drive wants the CLEAN path, so the order size must sit inside the
   // live free balance — assert that before touching the UI.
-  const [tracked, encumbered] = await Promise.all([
-    diamondRead('getProtocolTrackedVaultBalance', [lenderAddr, WETH]),
-    diamondRead('getEncumbered', [lenderAddr, WETH, 0n]),
-  ]);
+  // The READS are part of the precondition, not just their verdict
+  // (Codex #1621 r3). Only the insufficient-balance BRANCH was BLOCKED;
+  // an RPC that dropped during either probe rejected into the drive's
+  // catch and exited 1 — reporting a signed-book regression from a read
+  // that happened before any page or product behaviour was observed.
+  const [tracked, encumbered] = await precondition(
+    'reading the lender vault balance',
+    () =>
+      Promise.all([
+        diamondRead('getProtocolTrackedVaultBalance', [lenderAddr, WETH]),
+        diamondRead('getEncumbered', [lenderAddr, WETH, 0n]),
+      ]),
+  );
   const freeWeth = tracked > encumbered ? tracked - encumbered : 0n;
   if (freeWeth < EXPECTED_AMOUNT) {
     // BLOCKED, not FAIL (#1581). An underfunded dev wallet is a missing

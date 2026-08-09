@@ -314,6 +314,16 @@ const report = {
   passes: [],
 };
 report.startedAt = new Date().toISOString();
+// Every selected session's credential, resolved BEFORE any evidence is
+// gathered (Codex #1621 r3). `addressOf` and `launch`'s own `walletFor`
+// both exit BLOCKED synchronously and both run outside the try below, so
+// a wallet file with a valid lender but no borrower let session 1 record
+// a real read-only violation and then had session 2 exit 2 — replacing a
+// proven finding with "verified nothing", the very thing
+// `onSetupFailure: 'throw'` was added to prevent. Resolving them here
+// makes a missing credential a precondition again: nothing has been
+// observed yet, so exiting is honest and costs no evidence.
+for (const s of activeSessions) addressOf(s.role);
 const allBlockedRequests = [];
 // Sessions whose browser never started. Reported at the end rather than
 // exited on, so a finding from a session that DID run still wins.

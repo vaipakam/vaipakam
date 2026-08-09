@@ -462,6 +462,32 @@ async function selectTenor(page, days) {
 }
 
 // ---------------------------------------------------------------------
+/**
+ * Every ABI member this drive needs AT OR AFTER its first on-chain
+ * mutation, asserted BEFORE the browser opens (Codex #1621 r3).
+ *
+ * The point-of-use check below cannot serve this drive alone, and the
+ * reason is ordering rather than coverage. `OfferModified` is first
+ * looked up AFTER an offer has been posted and amended; a BLOCKED exit
+ * there is a `process.exit`, so the `finally` cleanup never runs and the
+ * run leaves a live offer with the lender's WETH escrowed. A stale
+ * artifact must not cost real testnet funds.
+ *
+ * So the members needed past that boundary are asserted here, where
+ * exiting is free. This IS the enumerated list I argued against in round
+ * 2 — that argument was about DRIFT, and it still holds, which is why
+ * the point-of-use check stays as the backstop: forget an entry here and
+ * the miss is still caught, just later and more expensively. The two
+ * checks answer different questions.
+ */
+for (const [name, kind] of [
+  ['OfferCreated', 'event'],
+  ['OfferModified', 'event'],
+  ['cancelOffer', 'function'],
+]) {
+  requireAbiMember(name, kind);
+}
+
 const lenderAddr = addressOf('lender');
 // Funding preflight — BLOCKED, not FAIL (#1581), and BEFORE the browser
 // so an underfunded run wastes nothing.

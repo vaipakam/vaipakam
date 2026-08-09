@@ -26,7 +26,12 @@ starts, instead of silently downgrading its verdict later on.
 reachability check, so a site that never answers blocks it, while a route
 that fails after the site has already served pages stays a finding — a
 broken route is exactly the kind of regression these drives exist to
-catch. Reference data a drive reads rather than checks — the deployed
+catch. One drive is deliberately outside that rule: the whole-site
+evidence sweep is not a pass/fail check at all, so it records a route
+that would not load in its report and carries on, exactly as it does for
+console errors and slow responses. Whether its summary verdict should
+start counting those is a separate question, recorded rather than decided
+here. Reference data a drive reads rather than checks — the deployed
 addresses, the contract interface descriptions, an artifact a flag points
 at — blocks it, because a stale copy leaves the drive with nothing to
 compare against. So does a configuration selector that names nothing, and

@@ -213,6 +213,8 @@ trackBrowser(browser);
 // language regression found on locale 2. Same precedence rule as
 // live-recover-locales.mjs and live-ux-sweep.mjs.
 const setupFailures = [];
+// Set once the site has actually served a page — see the probe below.
+let reachabilityProven = false;
 
 for (const [index, lng] of LOCALES.entries()) {
   let ctx;
@@ -259,13 +261,21 @@ for (const [index, lng] of LOCALES.entries()) {
   const openDesk = () =>
     page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded', timeout: 45000 });
   try {
-    // The FIRST locale's load is the reachability probe: an unreachable
-    // site means no locale can be captured, so stop at BLOCKED rather
-    // than grind through nine more rows and report a dead target as ten
-    // i18n regressions (#1581). Later locales keep failing the row — by
-    // then the site is known to serve, so a load that fails IS a finding.
-    if (index === 0) await precondition(`opening ${SITE}/desk`, openDesk);
-    else await openDesk();
+    // The reachability probe is the FIRST load that actually happens, not
+    // whichever locale is index 0 (Codex #1621 r3). Keying it to the
+    // index meant that if locale 0's context setup failed, locale 1 --
+    // the first page load of the run -- skipped the probe entirely, and
+    // an unreachable target was then recorded as an i18n regression on a
+    // page that was never served.
+    //
+    // Once ANY load has succeeded the site is known to serve, so a later
+    // failure is a finding rather than a blocked run (#1581).
+    if (!reachabilityProven) {
+      await precondition(`opening ${SITE}/desk`, openDesk);
+      reachabilityProven = true;
+    } else {
+      await openDesk();
+    }
     await page.waitForTimeout(7000); // SPA boot + lazy locale chunk activation
 
     rec.htmlLang = await page.getAttribute('html', 'lang').catch(() => null);
