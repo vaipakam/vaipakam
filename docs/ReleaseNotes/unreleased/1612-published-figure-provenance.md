@@ -31,7 +31,20 @@ Collecting them fixed the many-copies problem, but a single copy can still
 go quietly out of date.
 
 Publication now fails if any published figure disagrees with the protocol
-constant it claims to mirror. It compares against the protocol's own source
+constant it claims to mirror — and "publication" means the path that
+actually publishes, not only the optional validation command. The check runs
+before the site is built, so the deploy command cannot produce pages from a
+stale registry, and the continuous-integration job that runs it is now
+triggered by changes to the protocol library itself. Without that second
+part the check would have been skipped on exactly the change it exists to
+catch: a pull request that retunes only a fee touches no site file at all.
+
+It also verifies the *scale* each figure is published at, not just its
+value. Marking a fee as a token count rather than a percentage leaves the
+number identical and every value comparison green, while the page renders
+two hundred where it should read two.
+
+The comparison is against the protocol's own source
 rather than a live deployment, deliberately: there is no production
 deployment yet, the only readable one is a test network whose values are
 changed for testing, and gating published wording on it would fail releases

@@ -90,7 +90,25 @@ const ANCHORS: Record<KnobName, Anchor> = {
   tier4DiscountBps: { constant: 'VPFI_TIER4_DISCOUNT_BPS', scale: 'bps' },
 };
 
-const source = readFileSync(LIB, 'utf8');
+/**
+ * The library source with COMMENTS REMOVED (Codex #1623 r1).
+ *
+ * The declaration match scans raw text, so a refactor that comments out
+ * an old declaration while renaming the live one — `// uint256 constant
+ * TREASURY_FEE_BPS = 100;` — would match the commented text and compare
+ * the registry against a value no longer compiled. The guard would then
+ * report success about a constant that does not exist, which is the
+ * opposite of the fail-closed behaviour its own header promises.
+ *
+ * String literals are not a concern here: these are numeric constant
+ * declarations, and a `//` or block-comment sequence inside a Solidity
+ * string in this file would have to appear on the same line as one of the
+ * anchored declarations to matter. Block comments are stripped first so a
+ * `//` inside one cannot terminate the wrong thing.
+ */
+const source = readFileSync(LIB, 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/\/\/[^\n]*/g, '');
 const failures: string[] = [];
 
 /**
@@ -140,6 +158,22 @@ for (const knob of Object.keys(KNOB_DEFAULTS) as KnobName[]) {
   if (typeof actual === 'string') {
     failures.push(`${knob} → ${anchor.constant}: ${actual}`);
     continue;
+  }
+
+  // The display FORMAT is part of what gets published, not just the
+  // number (Codex #1623 r1). Flipping `treasuryFeeBps` from `percent` to
+  // `count` leaves `200 === TREASURY_FEE_BPS` true and every value check
+  // green, while the page renders "200" where it should read "2". Each
+  // anchor already knows whether its constant is BPS or whole tokens, so
+  // the correspondence is checkable rather than assumed.
+  const expectedFormat = anchor.scale === 'bps' ? 'percent' : 'count';
+  if (KNOB_DEFAULTS[knob].format !== expectedFormat) {
+    failures.push(
+      `${knob}: ${anchor.constant} is ${anchor.scale}, so the registry should` +
+        ` format it as "${expectedFormat}" — it says "${KNOB_DEFAULTS[knob].format}".` +
+        `\n    → the value would render at the wrong scale even though the` +
+        ` number matches.`,
+    );
   }
 
   const published = KNOB_DEFAULTS[knob].defaultValue;
