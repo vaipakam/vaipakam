@@ -328,6 +328,11 @@ const allBlockedRequests = [];
 // Sessions whose browser never started. Reported at the end rather than
 // exited on, so a finding from a session that DID run still wins.
 const setupFailures = [];
+// Set once the site has actually served a page. Keyed to the first load
+// that HAPPENS, not to activeSessions[0] (Codex #1621 r4): if session 0's
+// setup failed, session 1 is the run's first load and skipped the probe,
+// so an unreachable target exited 1 and leaked that session's browser.
+let reachabilityProven = false;
 const backgroundNetworkBySession = {};
 
 for (const session of activeSessions) {
@@ -443,8 +448,12 @@ page.on('response', async (res) => {
 // (#1581). Later sessions keep exiting 1 — by then the site is known to
 // serve, and the per-route loop below already records its own nav
 // failures as findings rather than crashing.
-if (session === activeSessions[0]) await visit(page, '/');
-else await page.goto(SITE, { waitUntil: 'domcontentloaded' });
+if (!reachabilityProven) {
+  await visit(page, '/');
+  reachabilityProven = true;
+} else {
+  await page.goto(SITE, { waitUntil: 'domcontentloaded' });
+}
 if (session.connect) {
   await ensureConnected(page);
 }

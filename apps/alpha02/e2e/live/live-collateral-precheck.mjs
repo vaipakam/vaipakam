@@ -28,13 +28,22 @@ import { blockedSync, launch, ensureConnected, SITE, visit, pasteAssetLive } fro
 import deployments from '@vaipakam/contracts/deployments.json' with { type: 'json' };
 
 const mocks = deployments['84532']?.testnetMocks;
-if (!mocks?.liquidToken || !mocks?.liquidToken2) {
+// Validated as ADDRESSES, not merely present (Codex #1621 r4). A
+// non-empty but malformed value (`liquidToken: "stale"`) passes a
+// truthiness check and is then pasted into the product UI, where the
+// flow fails and — now that this driver is registered as honouring the
+// contract — the batch reports a stale deployment artifact as a product
+// regression on the precheck banner.
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+if (!ADDRESS_RE.test(mocks?.liquidToken ?? '') || !ADDRESS_RE.test(mocks?.liquidToken2 ?? '')) {
   // BLOCKED, not FAIL (#1581): the drive needs these fixtures to have
   // anything to assert against, so a bundle that does not carry them
   // means this surface went UNREVIEWED — not that the app regressed.
   blockedSync(
-    'base-sepolia testnetMocks (liquidToken/liquidToken2) missing from the' +
-      ' deployments bundle — no fixture pair to drive the precheck with.',
+    'base-sepolia testnetMocks (liquidToken/liquidToken2) missing or not a' +
+      ' 0x-40-hex address in the deployments bundle — no usable fixture pair' +
+      ` to drive the precheck with.\n  liquidToken:  ${JSON.stringify(mocks?.liquidToken)}` +
+      `\n  liquidToken2: ${JSON.stringify(mocks?.liquidToken2)}`,
   );
 }
 const TLIQ = mocks.liquidToken; // asset to borrow (Liquid, Tier 1)

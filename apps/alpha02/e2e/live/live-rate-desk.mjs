@@ -95,6 +95,7 @@ import {
   clientsFor,
   ensureConnected,
   launch,
+  LivePreconditionError,
   SITE,
   precondition,
   requireSigningRole,
@@ -312,7 +313,12 @@ function record(name, status, detail = '') {
 function requireAbiMember(name, kind) {
   const found = ABI.some((e) => e.type === kind && e.name === name);
   if (!found) {
-    blockedSync(
+    // THROWN, not exited (Codex #1621 r4): this can fire after the
+    // drive has posted something, and `process.exit` skips the
+    // `finally` that cancels it. The drive maps this type to exit 2
+    // at the end, so the verdict is still BLOCKED — but the cleanup
+    // runs first and no testnet funds are stranded.
+    throw new LivePreconditionError(
       `the bundled ABI has no ${kind} "${name}" — the export is stale or` +
         ` half-written, so this drive cannot reach the surface it reviews.` +
         `\n  → re-run contracts/script/exportFrontendAbis.sh`,
@@ -462,32 +468,6 @@ async function selectTenor(page, days) {
 }
 
 // ---------------------------------------------------------------------
-/**
- * Every ABI member this drive needs AT OR AFTER its first on-chain
- * mutation, asserted BEFORE the browser opens (Codex #1621 r3).
- *
- * The point-of-use check below cannot serve this drive alone, and the
- * reason is ordering rather than coverage. `OfferModified` is first
- * looked up AFTER an offer has been posted and amended; a BLOCKED exit
- * there is a `process.exit`, so the `finally` cleanup never runs and the
- * run leaves a live offer with the lender's WETH escrowed. A stale
- * artifact must not cost real testnet funds.
- *
- * So the members needed past that boundary are asserted here, where
- * exiting is free. This IS the enumerated list I argued against in round
- * 2 — that argument was about DRIFT, and it still holds, which is why
- * the point-of-use check stays as the backstop: forget an entry here and
- * the miss is still caught, just later and more expensively. The two
- * checks answer different questions.
- */
-for (const [name, kind] of [
-  ['OfferCreated', 'event'],
-  ['OfferModified', 'event'],
-  ['cancelOffer', 'function'],
-]) {
-  requireAbiMember(name, kind);
-}
-
 const lenderAddr = addressOf('lender');
 // Funding preflight — BLOCKED, not FAIL (#1581), and BEFORE the browser
 // so an underfunded run wastes nothing.
@@ -539,6 +519,7 @@ let offerId = null;
 let offerCreatedAt = 0;
 let cancelled = false;
 let failed = false;
+let driveError = null;
 // True once the ticket's Post button has actually been clicked (Codex
 // round-2 P2 #1) — from that moment a create tx may exist even if
 // unmined, so an empty cleanup sweep no longer proves "nothing
@@ -1190,6 +1171,10 @@ try {
   );
 } catch (err) {
   failed = true;
+  // Remembered so the exit below can tell a stale-artifact precondition
+  // from a product defect — AFTER the finally has unwound anything this
+  // run created (Codex #1621 r4).
+  driveError = err;
   record('drive', 'FAIL', err.message);
   await snap('rate-desk-99-failure').catch(() => {});
   const body = await page
@@ -1444,5 +1429,12 @@ if (consoleErrors.length) {
 }
 
 const ok = !failed && steps.every((s) => s.status !== 'FAIL') && (offerId === null || cancelled);
+// A precondition that surfaced mid-drive is BLOCKED, not FAIL — but only
+// now, once the `finally` above has cancelled whatever this run posted.
+// Exiting at the point of discovery would have left it resting (r4).
+if (!ok && driveError instanceof LivePreconditionError) {
+  console.log('BLOCKED — a precondition failed mid-drive; cleanup completed first');
+  process.exit(2);
+}
 console.log(ok ? 'PASS — Rate Desk live review complete' : 'FAIL — see steps above');
 process.exit(ok ? 0 : 1);

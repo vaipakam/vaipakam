@@ -104,6 +104,7 @@ import {
   clientsFor,
   ensureConnected,
   launch,
+  LivePreconditionError,
   SITE,
   precondition,
   requireSigningRole,
@@ -304,7 +305,12 @@ function record(name, status, detail = '') {
 function requireAbiMember(name, kind) {
   const found = ABI.find((e) => e.type === kind && e.name === name);
   if (!found) {
-    blockedSync(
+    // THROWN, not exited (Codex #1621 r4): this can fire after the
+    // drive has posted something, and `process.exit` skips the
+    // `finally` that cancels it. The drive maps this type to exit 2
+    // at the end, so the verdict is still BLOCKED — but the cleanup
+    // runs first and no testnet funds are stranded.
+    throw new LivePreconditionError(
       `the bundled ABI has no ${kind} "${name}" — the export is stale or` +
         ` half-written, so this drive cannot reach the surface it reviews.` +
         `\n  → re-run contracts/script/exportFrontendAbis.sh`,
@@ -558,27 +564,6 @@ async function selectTenor(page, days) {
 }
 
 // ----------------------------------------------------------------------
-/**
- * Every ABI member this drive needs AT OR AFTER its first on-chain
- * mutation, asserted BEFORE the browser opens — same reasoning as
- * live-rate-desk.mjs (Codex #1621 r3).
- *
- * Ordering, not coverage: `signedOfferOrderHash`, `signedOfferFilledAmount`
- * and `SignedOfferCancelled` are first reached after a signature exists,
- * and `cancelSignedOffer` is what the cleanup itself uses — a BLOCKED
- * `process.exit` at any of them skips the `finally` and can leave a
- * fillable signed order resting on the book. The point-of-use check
- * stays as the backstop for anything not listed here.
- */
-for (const [name, kind] of [
-  ['signedOfferOrderHash', 'function'],
-  ['signedOfferFilledAmount', 'function'],
-  ['cancelSignedOffer', 'function'],
-  ['SignedOfferCancelled', 'event'],
-]) {
-  requireAbiMember(name, kind);
-}
-
 const lenderAddr = addressOf('lender');
 // Pre-browser preflight, same precondition rule as live-rate-desk.mjs
 // (Codex #1621 r2): a partial RPC outage here means nothing was
@@ -599,6 +584,7 @@ const { page, shot, done, consoleErrors, rpcLog } = await launch({ role: 'lender
 const snap = async (name) => shotPaths.push(await shot(name));
 
 let failed = false;
+let driveError = null;
 // The signed row this run put on the book — module scope so the
 // cleanup can revoke it even when the drive fails between milestones.
 // orderHash is captured DETERMINISTICALLY from the page's own
@@ -1791,6 +1777,10 @@ try {
   );
 } catch (err) {
   failed = true;
+  // Remembered so the exit below can tell a stale-artifact precondition
+  // from a product defect — AFTER the finally has cancelled anything this
+  // run left resting on the book (Codex #1621 r4).
+  driveError = err;
   record('drive', 'FAIL', err.message);
   await snap('signed-book-99-failure').catch(() => {});
   const body = await page
@@ -2010,4 +2000,11 @@ const ok =
   steps.every((s) => s.status !== 'FAIL') &&
   (!signClicked || ledgerPoisoned);
 console.log(ok ? 'PASS — signed-book live review complete' : 'FAIL — see steps above');
+// A precondition that surfaced mid-drive is BLOCKED, not FAIL — but only
+// now, once the `finally` above has cancelled whatever this run left
+// resting. Exiting at the point of discovery would have stranded it (r4).
+if (!ok && driveError instanceof LivePreconditionError) {
+  console.log('BLOCKED — a precondition failed mid-drive; cleanup completed first');
+  process.exit(2);
+}
 process.exit(ok ? 0 : 1);
