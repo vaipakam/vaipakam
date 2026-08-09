@@ -31,6 +31,27 @@ for the following platform areas:
 - Lender position-sale listings settle against the live loan. A buyer acquires
   the current lender side of an already-running loan; the borrower and the
   original loan obligations do not change.
+- A position sale is an **admission**, not a hand-off of already-accepted
+  risk: the incoming lender never underwrote the loan. Both lender-exit sale
+  paths therefore refuse a position whose live health factor has fallen below
+  the admission floor that loan was originally opened under — a seller may not
+  hand a sub-floor (in the worst case immediately liquidatable) position to a
+  counterparty whose price was computed from principal and accrued interest,
+  figures that say nothing about a collateral shortfall. The floor is read
+  from the loan's own origination snapshot, so a later governance retune never
+  retroactively freezes an open position out of the sale paths.
+- For a resting sale listing that check is binding **at the moment the buyer's
+  value commits**, not at listing: a listing rests while the position keeps
+  moving, and only the fill-time reading describes what the buyer actually
+  inherits. Listing creation applies the same test so a seller learns
+  immediately rather than after a buyer's transaction fails, and the read-only
+  accept preview reports a sub-floor position so an interface can explain the
+  block before anyone signs. The check is deliberately not repeated at sale
+  completion, where a refusal would strand a buyer whose principal has already
+  settled.
+- Where either leg of a position is not price-discoverable, no health factor
+  exists to measure, and the floor does not apply; those positions remain
+  governed by the explicit both-parties-consent regime for illiquid assets.
 - Offer collateral floors and lending ceilings apply consistently at offer
   creation, offer modification, and match materialization.
 - Fee rates are snapshotted at loan origination. Later governance changes do

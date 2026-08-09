@@ -7,6 +7,7 @@ import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {RefinanceFacet} from "./RefinanceFacet.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
+import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
@@ -848,6 +849,15 @@ contract OfferAcceptFacet is
                     uint256(saleLoan.startTime) +
                         uint256(saleLoan.durationDays) * 1 days
                 ) revert SaleLoanPastMaturity();
+                // #1503 PR-E (design item 11) — the BINDING solvency
+                // admission floor. `createLoanSaleOffer` checks it too, but
+                // a listing rests while the position keeps moving: only the
+                // read at the moment the buyer's value commits governs what
+                // they actually inherit. Enforced HERE, alongside maturity
+                // and for the same reason — before any buyer value moves,
+                // never at `completeLoanSale`, where a revert would strand a
+                // buyer whose principal has already settled.
+                LibSaleSolvency.assertSaleSolvent(saleLoanId);
             }
         }
 
@@ -1900,7 +1910,15 @@ contract OfferAcceptFacet is
         // `OfferExpired` classifier); post-upgrade vehicles normally classify
         // as `OfferExpired` first (expiry clamped at maturity). APPENDED —
         // prior values stay stable.
-        SaleLoanPastMaturity
+        SaleLoanPastMaturity,
+        // #1503 PR-E (design item 11) — the sale vehicle's linked loan is
+        // below the solvency floor its own admission required, so
+        // acceptance would revert `SalePositionBelowSolvencyFloor`. Also
+        // covers the fail-closed case where the position claims to be
+        // priceable but the oracle cannot price it. Surfaced so the UI can
+        // show the live HF against the floor instead of letting the buyer
+        // discover it by burning gas. APPENDED — prior values stay stable.
+        SalePositionBelowSolvencyFloor
     }
 
     /// @notice Projection of the loan that would land if the supplied

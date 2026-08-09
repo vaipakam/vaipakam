@@ -25,6 +25,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {LibSaleSolvency} from "../src/libraries/LibSaleSolvency.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -3494,5 +3495,152 @@ contract EarlyWithdrawalFacetTest is Test {
                 "torn-down vehicle must drop out of open-position view"
             );
         }
+    }
+
+    // ─── #1503 PR-E (design item 11): the sale solvency admission floor ──────
+    //
+    // The baseline loan is 1000 principal against 2000 collateral, both priced
+    // 1:1 and Liquid, with a snapshotted liquidation LTV of 8500 bps — so
+    // HF == 2.0 * 0.85 == 1.7e18, comfortably over the 1.5e18 admission floor.
+    // Every other test in this file therefore exercises the guard's PASS
+    // branch already. These cover the branch that refuses.
+
+    /// @dev Drops the collateral price so the position sits BELOW the
+    ///      admission floor while staying ABOVE the liquidation trigger:
+    ///      ratio 1.6 → HF 1.36e18, under the 1.5e18 floor but over 1e18.
+    ///      Chosen deliberately — it proves the floor is the loan's own
+    ///      ADMISSION standard, not merely "not liquidatable yet".
+    function _sinkBelowFloorButSolvent() internal returns (uint256 hf, uint256 floor) {
+        mockPrice(mockCollateralERC20, 0.8e8, 8);
+        hf = RiskFacet(address(diamond)).calculateHealthFactor(activeLoanId);
+        floor = LibVaipakam.MIN_HEALTH_FACTOR;
+        assertLt(hf, floor, "fixture must sit below the admission floor");
+        assertGt(hf, LibVaipakam.HF_LIQUIDATION_THRESHOLD, "and above liquidation");
+    }
+
+    function test_sellLoanViaBuyOffer_revertsBelowSolvencyFloor() public {
+        (uint256 hf, uint256 floor) = _sinkBelowFloorButSolvent();
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+                activeLoanId,
+                hf,
+                floor
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    function test_createLoanSaleOffer_revertsBelowSolvencyFloor() public {
+        (uint256 hf, uint256 floor) = _sinkBelowFloorButSolvent();
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+                activeLoanId,
+                hf,
+                floor
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+    }
+
+    /// @dev THE case the floor exists for: the listing is published while the
+    ///      position is healthy and the collateral falls while it rests. Only
+    ///      the read at the moment the buyer's value commits can catch that,
+    ///      which is why the binding check is at accept and not at listing.
+    function test_saleAccept_revertsAfterCollateralFallsBelowFloor() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("solvencyFloorBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        // The position deteriorates AFTER the listing rests and after the
+        // buyer signed — the drift window no frontend can observe.
+        (uint256 hf, uint256 floor) = _sinkBelowFloorButSolvent();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+                activeLoanId,
+                hf,
+                floor
+            )
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev The guard must not over-block: a position exactly AT its floor is
+    ///      admissible (the comparison is `<`, not `<=`).
+    function test_sellLoanViaBuyOffer_admittedExactlyAtFloor() public {
+        // HF == collateralValue * 8500/10000 / borrowValue. For HF == 1.5e18
+        // against the ~1000 borrowed (principal plus a little accrued),
+        // collateralValue must be ≈ 1500/0.85 ≈ 1765 — reached by pricing the
+        // 2000 collateral units just over 0.882e8. Pinned just ABOVE, since
+        // that is the side the guard must admit; the epsilon assert keeps this
+        // a genuine boundary fixture rather than a comfortably-healthy one
+        // that would pass even if the comparison were inverted.
+        mockPrice(mockCollateralERC20, 0.8830e8, 8);
+        uint256 hf = RiskFacet(address(diamond)).calculateHealthFactor(activeLoanId);
+        assertGe(hf, LibVaipakam.MIN_HEALTH_FACTOR, "fixture must sit at/above the floor");
+        assertLt(
+            hf,
+            LibVaipakam.MIN_HEALTH_FACTOR + 0.01e18,
+            "fixture must sit AT the boundary, not safely above it"
+        );
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "a position at its floor must still be sellable"
+        );
+    }
+
+    /// @dev Documented carve-out: Health Factor is a ratio of oracle-priced
+    ///      values, so an illiquid leg has no floor to measure against —
+    ///      `calculateHealthFactor` reverts for those. Illiquid positions stay
+    ///      governed by the explicit both-parties-consent regime; the guard
+    ///      must step aside rather than refuse every illiquid sale.
+    function test_sale_illiquidPositionIsOutOfScopeForTheFloor() public {
+        // Collateral goes illiquid AND worthless — the shape that would fail
+        // the floor hardest if the floor applied to it.
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+        mockPrice(mockCollateralERC20, 0.01e8, 8);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "illiquid positions are out of the floor's scope, not blocked by it"
+        );
+    }
+
+    /// @dev The buyer must learn this from the preview, not from a burnt-gas
+    ///      revert.
+    function test_previewAccept_saleVehicle_flagsBelowSolvencyFloor() public {
+        uint256 saleOfferId = _listSaleOffer();
+        _sinkBelowFloorButSolvent();
+        OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
+            .previewAccept(saleOfferId, makeAddr("previewSolvencyBuyer"));
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SalePositionBelowSolvencyFloor),
+            "preview must classify the sub-floor position"
+        );
     }
 }

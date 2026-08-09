@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -180,6 +181,16 @@ contract OfferPreviewFacet {
             ) {
                 preview.errorCode =
                     OfferAcceptFacet.AcceptError.SaleLoanPastMaturity;
+                return preview;
+            }
+            // #1503 PR-E (design item 11) — mirror the accept-time solvency
+            // admission floor. Classified rather than reverted so the buyer
+            // sees "this position is below its sale floor" on the card.
+            (bool _solvent, , ) = LibSaleSolvency.saleSolvency(_saleLoanId);
+            if (!_solvent) {
+                preview.errorCode = OfferAcceptFacet
+                    .AcceptError
+                    .SalePositionBelowSolvencyFloor;
                 return preview;
             }
         }
