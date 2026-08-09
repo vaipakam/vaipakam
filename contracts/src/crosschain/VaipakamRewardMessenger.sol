@@ -341,7 +341,9 @@ contract VaipakamRewardMessenger is
     ///         standing four-word collision family (legacy report /
     ///         commitment report / remit ack / repat instruction) — the
     ///         kind tag disambiguates, never the length.
-    uint256 internal constant COMP_QUOTE_PAYLOAD_SIZE = 4 * 32;
+    // #1636 r1 — 5 words: kind, dayId, lender18, borrower18, sending
+    // diamond (the era word Base binds the standing quote to).
+    uint256 internal constant COMP_QUOTE_PAYLOAD_SIZE = 5 * 32;
 
     // ─── Storage ────────────────────────────────────────────────────────────
 
@@ -840,8 +842,17 @@ contract VaipakamRewardMessenger is
         if (messenger == address(0)) revert MessengerNotSet();
         if (baseChainId == 0) revert BaseChainNotConfigured();
 
+        // #1636 r1 — stamp the sending diamond as the quote's era word:
+        // the messenger's own binding is the authenticated ground truth,
+        // and Base binds the standing quote to it so a wire from a
+        // RETIRED diamond (the messenger's diamond can rotate without
+        // rotating the channel peer) cannot overwrite newer evidence.
         bytes memory payload = abi.encode(
-            MSG_TYPE_COMP_QUOTE, dayId, quotedLender18, quotedBorrower18
+            MSG_TYPE_COMP_QUOTE,
+            dayId,
+            quotedLender18,
+            quotedBorrower18,
+            diamond
         );
         messageId = _dispatch(baseChainId, payload, msg.value, refundAddress);
 
@@ -859,7 +870,11 @@ contract VaipakamRewardMessenger is
         return ICrossChainMessenger(messenger).quoteMessageFee(
             baseChainId,
             abi.encode(
-                MSG_TYPE_COMP_QUOTE, dayId, quotedLender18, quotedBorrower18
+                MSG_TYPE_COMP_QUOTE,
+                dayId,
+                quotedLender18,
+                quotedBorrower18,
+                diamond
             ),
             _noTokens(),
             destGasLimit
@@ -1659,8 +1674,10 @@ contract VaipakamRewardMessenger is
         // REPAT_INSTRUCTION #1568 C2 — disambiguated by the kind tag below),
         // 8 (REPORT #1222 B3 / legacy BROADCAST / TierUpdated), 2
         // (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3 (REPAT_CANCEL,
-        // #1568 C2), 21 (BROADCAST_V3, #1434 P2-w1). Any other length is a
-        // padded / truncated packet and is rejected before decode.
+        // #1568 C2), 21 (BROADCAST_V3, #1434 P2-w1), 5 (COMP_QUOTE,
+        // #1434 P2-w3 — grew from the 4-word family when #1636 r1 added
+        // the era word). Any other length is a padded / truncated packet
+        // and is rejected before decode.
         uint256 len = payload.length;
         if (
             len != REPORT_PAYLOAD_SIZE
@@ -1672,6 +1689,7 @@ contract VaipakamRewardMessenger is
             && len != REMIT_ACK_PAYLOAD_SIZE
             && len != REPAT_CANCEL_PAYLOAD_SIZE
             && len != BROADCAST_V3_PAYLOAD_SIZE
+            && len != COMP_QUOTE_PAYLOAD_SIZE
         ) {
             revert PayloadSizeMismatch(len, REPORT_PAYLOAD_SIZE);
         }
@@ -1779,11 +1797,11 @@ contract VaipakamRewardMessenger is
             if (sourceChainId > type(uint32).max) {
                 revert ChainIdTooLarge(sourceChainId);
             }
-            (, uint256 qDay, uint256 qL, uint256 qB) =
-                abi.decode(payload, (uint8, uint256, uint256, uint256));
+            (, uint256 qDay, uint256 qL, uint256 qB, address qEra) = abi
+                .decode(payload, (uint8, uint256, uint256, uint256, address));
             emit CompQuoteReceived(sourceChainId, qDay, qL, qB);
             ICompQuoteIngress(diamond).onCompQuoteReceived(
-                SafeCast.toUint32(sourceChainId), qDay, qL, qB
+                SafeCast.toUint32(sourceChainId), qDay, qL, qB, qEra
             );
         } else if (msgType == MSG_TYPE_TIER_UPDATED) {
             if (len != TIER_UPDATED_PAYLOAD_SIZE) {

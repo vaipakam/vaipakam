@@ -740,6 +740,64 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
     }
 
+    /// @dev #1636 r1 P1 — the standing quote is BOUND to the sending
+    ///      Diamond era: same-era re-delivery refreshes, a divergent era
+    ///      reverts, the ADMIN clear releases a stale binding (mirror
+    ///      redeploy), and a funded day rejects both re-quote and clear.
+    function test_Quote_EraBindingAndClear() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        address eraA = makeAddr("mirrorDiamondA");
+        address eraB = makeAddr("mirrorDiamondB");
+
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraA);
+        // Same era refreshes (the honest lost-message retry).
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 4e18, 2e18, eraA);
+        LibVaipakam.CompQuote memory q =
+            RewardCommitmentFacet(address(diamond)).getCompQuote(1, CHAIN_ARB);
+        assertEq(q.lender18, 4e18, "same-era refresh applied");
+        assertEq(q.era, eraA, "bound to the first era");
+
+        // A divergent era must not overwrite.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteEraMismatch.selector,
+                1,
+                CHAIN_ARB,
+                eraA,
+                eraB
+            )
+        );
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 9e18, 9e18, eraB);
+
+        // The ADMIN clear releases the binding; the new era quotes afresh.
+        RewardCommitmentFacet(address(diamond)).clearCompQuote(1, CHAIN_ARB);
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
+        assertEq(
+            RewardCommitmentFacet(address(diamond)).getCompQuote(1, CHAIN_ARB).era, eraB, "re-bound"
+        );
+
+        // Fund the day — both re-quote and clear are now rejected: the
+        // quote standing at dispatch is the receipt-bound obligation.
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteDayAlreadyFunded.selector,
+                1,
+                CHAIN_ARB
+            )
+        );
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteDayAlreadyFunded.selector,
+                1,
+                CHAIN_ARB
+            )
+        );
+        RewardCommitmentFacet(address(diamond)).clearCompQuote(1, CHAIN_ARB);
+    }
+
     /// @dev #1634 r2 — a clockless day cannot dispatch a P2 compensation:
     ///      it can never emit the settling V3 broadcast (the V2-permanent
     ///      fallback), so the mirror credit would sit provisional forever.

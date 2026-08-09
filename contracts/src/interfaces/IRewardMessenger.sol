@@ -76,7 +76,12 @@ interface ICompQuoteIngress {
         uint32 sourceChainId,
         uint256 dayId,
         uint256 quotedLender18,
-        uint256 quotedBorrower18
+        uint256 quotedBorrower18,
+        // #1636 r1 — the sending mirror Diamond, stamped by the messenger
+        // from its own binding (the reciprocal of `baseDeployment` above):
+        // Base binds the standing quote to it and rejects divergent
+        // re-deliveries.
+        address sourceEra
     ) external;
 }
 

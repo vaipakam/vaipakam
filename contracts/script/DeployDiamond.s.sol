@@ -2217,7 +2217,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](21);
+        s = new bytes4[](23);
         s[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2236,6 +2236,10 @@ contract DeployDiamond is Script {
         s[18] = RewardCommitmentFacet.getCompQuote.selector;
         s[19] = RewardCommitmentFacet.getCompQuoteAccum.selector;
         s[20] = RewardCommitmentFacet.getDayResolvedZero.selector;
+        // #1636 r1 — the accumulation reset valve + the era-rotation
+        // quote clear.
+        s[21] = RewardCommitmentFacet.resetCompQuoteAccumulation.selector;
+        s[22] = RewardCommitmentFacet.clearCompQuote.selector;
         s[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         s[2] = RewardCommitmentFacet.isChainDayCommitmentsComplete.selector;
         // #1222 M3 B2-d1 — mirror commitment-report surface.

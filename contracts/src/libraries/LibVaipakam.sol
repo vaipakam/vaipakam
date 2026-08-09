@@ -6327,6 +6327,14 @@ library LibVaipakam {
         uint256 lender18;
         uint256 borrower18;
         uint64 receivedAt;
+        /// @dev #1434 P2-w3 (#1636 r1) — the sending mirror Diamond the
+        ///      standing quote is bound to (stamped by the messenger from
+        ///      its own paired-diamond state, so it is authenticated).
+        ///      While the day is unfunded, only the SAME era may refresh
+        ///      the quote; a divergent era reverts. Like the w2
+        ///      provisional-credit posture, the FIRST arrival cannot be
+        ///      era-verified — the binding defends every arrival after it.
+        address era;
     }
 
     /// @notice #1434 P2-w2 — one quarantined compensation arrival (§2.2's

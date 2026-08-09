@@ -2165,7 +2165,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](23);
         selectors[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2187,6 +2187,11 @@ contract HelperTest {
         selectors[18] = RewardCommitmentFacet.getCompQuote.selector;
         selectors[19] = RewardCommitmentFacet.getCompQuoteAccum.selector;
         selectors[20] = RewardCommitmentFacet.getDayResolvedZero.selector;
+        // #1636 r1 — the accumulation reset valve + the era-rotation
+        // quote clear.
+        selectors[21] =
+            RewardCommitmentFacet.resetCompQuoteAccumulation.selector;
+        selectors[22] = RewardCommitmentFacet.clearCompQuote.selector;
         selectors[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         selectors[2] = RewardCommitmentFacet
             .isChainDayCommitmentsComplete

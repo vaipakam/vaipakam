@@ -332,7 +332,29 @@ broadcast halves.
 > re-delivery refresh only while the day is unfunded, and a `(0,0)` quote
 > clears `remitIneligible` (nothing to compensate) while bounding funding
 > to zero. `remitManualBudget` enforces the §2.5 PER-SIDE bound, stricter
-> than the aggregate wording here.)*
+> than the aggregate wording here.
+>
+> Review round 1 (#1636) added four more deviations, all accepted: (4)
+> **Δq's numerator is `dayPoolStamp[d].scheduleFloor / 2`** exactly as
+> §1.4 above prescribes — the first implementation wrongly read the
+> chain's own `chainDayRecycledFunding` slice, which `_perDestFields`
+> stamps ZERO for a zeroed destination, so it would have quoted (0,0)
+> and resolved a demand-carrying day; the quote surface now also REFUSES
+> an unstamped day. (5) **The quote is UNCAPPED** (`Σ perDay × Δq`, no
+> `C_side` min): forfeit settlement prices without the per-user ceiling
+> by design (#1353), and bulk window pricing skips the per-(user,day)
+> ceiling, so a capped quote would open the funding gate below the real
+> settlement liability; caps still apply at payment time per path. (6)
+> An ADMIN **reset valve** (`resetCompQuoteAccumulation`) mirrors the
+> commitment accumulator's — the permissionless accumulator's cursor can
+> be parked past the covering set by a single high-id submission. (7)
+> The wire carries the **sending diamond as an era word** (stamped by
+> the messenger) and Base BINDS the standing quote to it: same-era
+> re-delivery refreshes, divergence reverts, ADMIN `clearCompQuote`
+> releases a stale binding after a mirror redeploy (funded days refuse
+> both). The `_contribFor` global-zero short-circuit was removed — the
+> stored cumulative row is the one pricing truth for walk and bulk
+> alike.)*
 
 ---
 

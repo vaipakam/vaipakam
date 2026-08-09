@@ -413,6 +413,20 @@ interface IVaipakamErrors {
         uint256 quotedLender18,
         uint256 quotedBorrower18
     );
+    /// @notice #1434 P2-w3 (#1636 r1) — the quote surface needs the day's
+    ///         frozen pool stamp (the Δq numerator); pricing without it
+    ///         would quote (0,0) and wrongly resolve a demand-carrying day
+    ///         to zero.
+    error CompQuoteDayPoolStampMissing(uint256 dayId);
+    /// @notice #1434 P2-w3 (#1636 r1) — a re-delivered quote's sending
+    ///         Diamond diverges from the era the standing quote is bound
+    ///         to; a stale-era wire must not overwrite newer evidence.
+    error CompQuoteEraMismatch(
+        uint256 dayId,
+        uint32 chainId,
+        address boundEra,
+        address arrivedEra
+    );
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by

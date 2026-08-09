@@ -10,6 +10,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol";
 
 /// @title RewardCompQuoteTest
 /// @notice #1434 P2-w3 — the zeroed-day compensation QUOTE + the Δq pricing
@@ -97,6 +98,13 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
     function _zeroedDayG0() internal {
         _mut().setGovernorCommitArmedFromDayRaw(DAY);
         _mut().setDayPoolStampRaw(DAY, 40e18, 20e18);
+        // #1636 r1 P1 — the PRODUCTION zeroed-day shape: the excluded
+        // chain's own per-(day,chain) funding slice is stamped ZERO by
+        // `_perDestFields` (its slice was sized without its demand). Δq
+        // must come from the day-level `dayPoolStamp` floor, never this
+        // slice — the fixture zeroes it so a slice-reading Δq quotes
+        // (0,0) and fails these tests.
+        _mut().setChainDayFundingRaw(DAY, uint32(block.chainid), 0, 0);
         _mut().setChainReportSentAtRaw(DAY, uint64(block.timestamp));
         _mut().setDayDeliberatelyZeroedRaw(DAY, true);
         _mut().setDailyLenderInterest(DAY, u1, 60e18, 100e18);
@@ -179,17 +187,71 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         assertEq(sentAt, 0, "not dispatched yet");
     }
 
-    function test_accumulate_perEntryCapBinds() public {
+    function test_accumulate_capsDoNotTrimTheQuote() public {
+        // #1636 r1 P1 — the quote is the UNCAPPED fair-share sum: it must
+        // upper-bound the cap-free bulk settlement paths (a forfeited
+        // entry's window prices uncapped by design), so a per-entry
+        // ceiling must NOT shrink it below that liability.
         _configureMirror();
         _zeroedDayG0();
         (uint256 e1, uint256 e2, uint256 e3) = _seedLenderEntries();
-        // Tighten the per-entry D1 ceiling below e1's raw 12e18.
+        // A ceiling below e1's raw 12e18 — the quote ignores it.
         _mut().setDayUserSideCapRaw(DAY, 10e18);
         _com().accumulateCompQuoteBatch(
             DAY, LibVaipakam.RewardSide.Lender, _ids3(e1, e2, e3)
         );
         (, , uint256 accL, , , , ) = _com().getCompQuoteAccum(DAY);
-        assertEq(accL, 18e18, "e1 capped at 10, e2/e3 raw (5 + 3)");
+        assertEq(accL, 20e18, "uncapped: 12 + 5 + 3 despite the ceiling");
+    }
+
+    function test_accumulate_refusesUnstampedDay() public {
+        // #1636 r1 P1 — no frozen pool stamp, no quote: pricing without
+        // the Dq numerator would quote (0,0) and wrongly resolve a
+        // demand-carrying day to zero.
+        _configureMirror();
+        _mut().setGovernorCommitArmedFromDayRaw(DAY);
+        _mut().setChainReportSentAtRaw(DAY, uint64(block.timestamp));
+        _mut().setDayDeliberatelyZeroedRaw(DAY, true);
+        (uint256 e1, uint256 e2, uint256 e3) = _seedLenderEntries();
+        _mut().setDailyLenderInterest(DAY, u1, 60e18, 100e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompQuoteDayPoolStampMissing.selector, DAY
+            )
+        );
+        _com().accumulateCompQuoteBatch(
+            DAY, LibVaipakam.RewardSide.Lender, _ids3(e1, e2, e3)
+        );
+    }
+
+    function test_accumulate_reset_recoversSkippedEntries() public {
+        // #1636 r1 P1 — a permissionless caller parks the cursor past the
+        // covering set; the ADMIN reset valve recovers the day.
+        _configureMirror();
+        _zeroedDayG0();
+        (uint256 e1, uint256 e2, uint256 e3) = _seedLenderEntries();
+        uint256[] memory high = new uint256[](1);
+        high[0] = e3;
+        _com().accumulateCompQuoteBatch(
+            DAY, LibVaipakam.RewardSide.Lender, high
+        );
+        // e1/e2 are now below the cursor — unrecoverable without a reset.
+        uint256[] memory low = new uint256[](1);
+        low[0] = e1;
+        vm.expectRevert(
+            abi.encodeWithSelector(CommitmentEntriesNotAscending.selector, e1)
+        );
+        _com().accumulateCompQuoteBatch(
+            DAY, LibVaipakam.RewardSide.Lender, low
+        );
+
+        _com().resetCompQuoteAccumulation(DAY, L);
+        _com().accumulateCompQuoteBatch(
+            DAY, LibVaipakam.RewardSide.Lender, _ids3(e1, e2, e3)
+        );
+        (, , uint256 accL, , uint256 consL, , ) = _com().getCompQuoteAccum(DAY);
+        assertEq(accL, 20e18, "full set re-accumulated");
+        assertEq(consL, 100e18, "conservation complete after reset");
     }
 
     function test_accumulate_mixedGlobal_pricesAgainstSum() public {
@@ -472,6 +534,50 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
             0,
             "ordinary armed mirror day stays halted until P1-b"
         );
+    }
+
+    function test_walk_paysCompensatedConstraint17Day() public {
+        // #1636 r1 P1 — the WALK must consume the same Δq the fold
+        // stored. The retired `_contribFor` global-zero guard priced this
+        // day at 0 (`knownGlobal == 0` on the constraint-17 side even
+        // though the row carries Δq), advanced terminally, and retired
+        // the entries UNPAID — while bulk window pricing could still pay
+        // from the same row. One row, one truth, both paths.
+        _configureMirror();
+        _zeroedDayG0();
+        (uint256 e1, , ) = _accumulateAllLender();
+        _mut().setDayCompensationRaw(DAY, 20e18, 0, true, false);
+        assertEq(_mut().advanceCumThroughRaw(L, DAY), DAY, "fold crossed");
+
+        // The primitive pays only CLAIMABLE entries — close e1's window.
+        _mut().closeRewardEntryRaw(e1, 10);
+
+        // The walk's own gates: ShareOfPool mode + a loan-side ceiling
+        // generous enough that the D1 ceiling is the binding constraint.
+        _mut().setDayCapModeRaw(DAY, 1);
+        _mut().setFeeEntitlementRaw(
+            1,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 30,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: 10_000 ether
+            })
+        );
+        uint256[] memory one = new uint256[](1);
+        one[0] = e1;
+        (LibInteractionRewards.DayCharge memory ch, ) = _mut()
+            .processUserSideDayRaw(
+                u1, DAY, one, type(uint256).max, type(uint256).max
+            );
+        assertTrue(ch.advanced, "day settles");
+        assertEq(ch.toUser.total, 12e18, "e1 pays perDay x Dq = 60 x 0.2");
+        assertEq(ch.toUser.armedFresh, 12e18, "classified armed-fresh");
+        assertEq(ch.toUser.recycled, 0, "no recycled component");
     }
 
     // ═══ Mirror: commitment-twin lockstep ════════════════════════════════════

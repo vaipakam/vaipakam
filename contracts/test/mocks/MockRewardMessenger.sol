@@ -573,8 +573,23 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 quotedLender18,
         uint256 quotedBorrower18
     ) external {
+        // Default era = this mock (the "sending diamond" a real messenger
+        // would stamp); era-divergence tests use the explicit overload.
         RewardCommitmentFacet(diamond).onCompQuoteReceived(
-            srcChainId, dayId, quotedLender18, quotedBorrower18
+            srcChainId, dayId, quotedLender18, quotedBorrower18, address(this)
+        );
+    }
+
+    /// @dev #1636 r1 — era-explicit delivery for the binding tests.
+    function deliverCompQuoteFromEra(
+        uint32 srcChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address era
+    ) external {
+        RewardCommitmentFacet(diamond).onCompQuoteReceived(
+            srcChainId, dayId, quotedLender18, quotedBorrower18, era
         );
     }
 

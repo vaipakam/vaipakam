@@ -117,18 +117,21 @@ contract MockRewardDiamond {
     uint256 public lastQuoteDay;
     uint256 public lastQuoteLender;
     uint256 public lastQuoteBorrower;
+    address public lastQuoteEra;
     uint256 public quoteCount;
 
     function onCompQuoteReceived(
         uint32 srcChainId,
         uint256 dayId,
         uint256 quotedLender18,
-        uint256 quotedBorrower18
+        uint256 quotedBorrower18,
+        address sourceEra
     ) external {
         lastQuoteSrcChain = srcChainId;
         lastQuoteDay = dayId;
         lastQuoteLender = quotedLender18;
         lastQuoteBorrower = quotedBorrower18;
+        lastQuoteEra = sourceEra;
         ++quoteCount;
     }
 
@@ -505,6 +508,10 @@ contract VaipakamRewardFlowTest is Test {
     /// #1222 M3 B1 — a five-word report is neither the legacy nor the current
     /// shape: rejected as a padded/truncated packet.
     function test_Report_FiveWordShape_Rejected() public {
+        // 5 words is now a VALID union length (#1434 P2-w3 claimed it for
+        // the comp quote), so a padded REPORT reaches its own per-kind
+        // check and is rejected there — the kind tag disambiguates, never
+        // the length.
         bytes memory padded = abi.encode(
             REPORT, uint256(42), uint256(1 ether), uint256(1 ether), uint256(1 ether)
         );
@@ -513,7 +520,7 @@ contract VaipakamRewardFlowTest is Test {
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
                 uint256(5 * 32),
-                uint256(6 * 32)
+                uint256(8 * 32)
             )
         );
         rewardBase.onCrossChainMessage(
@@ -927,6 +934,13 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(diamondBase.lastQuoteDay(), 42, "day");
         assertEq(diamondBase.lastQuoteLender(), 5e18, "lender quote");
         assertEq(diamondBase.lastQuoteBorrower(), 2e18, "borrower quote");
+        // #1636 r1 — the messenger stamped its own paired diamond as the
+        // era word.
+        assertEq(
+            diamondBase.lastQuoteEra(),
+            address(diamondMirror),
+            "sending-era stamp"
+        );
     }
 
     /// @dev #1434 P2-w3 — a quote-kind payload delivered to a MIRROR
@@ -938,7 +952,11 @@ contract VaipakamRewardFlowTest is Test {
         rewardMirror.onCrossChainMessage(
             BASE,
             address(rewardBase),
-            abi.encode(uint8(11), uint256(1), uint256(0), uint256(0)),
+            // 5 words (#1636 r1 era word) so the size pin passes and the
+            // canonical-only check is what fires.
+            abi.encode(
+                uint8(11), uint256(1), uint256(0), uint256(0), address(0)
+            ),
             _empty()
         );
     }
@@ -1230,23 +1248,31 @@ contract VaipakamRewardFlowTest is Test {
     }
 
     function test_Receive_RevertOnInvalidSize() public {
-        // A 5-word payload — not in the accepted union {2, 3, 4, 6, 8, 15,
-        // 21}. The outer size gate catches it before decode. (This test
-        // used a 3-word payload until #1568 C2 claimed 3 words for the
-        // repatriation cancel; #1434 P2-w1 claimed 21 for the V3
+        // A 7-word payload — not in the accepted union {2, 3, 4, 5, 6, 8,
+        // 15, 21}. The outer size gate catches it before decode. (This
+        // test used a 3-word payload until #1568 C2 claimed 3 words for
+        // the repatriation cancel, then a 5-word one until #1434 P2-w3
+        // claimed 5 for the comp quote; #1434 P2-w1 claimed 21 for the V3
         // broadcast.)
-        bytes memory fiveWords =
-            abi.encode(REPORT, uint256(1), uint256(2), uint256(3), uint256(4));
+        bytes memory sevenWords = abi.encode(
+            REPORT,
+            uint256(1),
+            uint256(2),
+            uint256(3),
+            uint256(4),
+            uint256(5),
+            uint256(6)
+        );
         vm.prank(address(messengerMirror));
         vm.expectRevert(
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
-                fiveWords.length,
+                sevenWords.length,
                 uint256(6 * 32)
             )
         );
         rewardMirror.onCrossChainMessage(
-            BASE, address(rewardBase), fiveWords, _empty()
+            BASE, address(rewardBase), sevenWords, _empty()
         );
     }
 

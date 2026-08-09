@@ -650,6 +650,43 @@
   },
   {
     "type": "error",
+    "name": "CompQuoteDayPoolStampMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteEraMismatch",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "boundEra",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "arrivedEra",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CompQuoteIncomplete",
     "inputs": [
       {

@@ -976,37 +976,43 @@ library LibInteractionRewards {
 
     /// @notice #1434 P2-w3 (§1.4) — Δq for side `s` on day `d`: the
     ///         counterfactual fair-share delta `halfPool_s × 1e18 /
-    ///         (G_s + L_s)`, from FROZEN inputs only — the
-    ///         finalize-snapshotted funded fresh half this chain's own
-    ///         stamp carries (never the raw schedule half, which
-    ///         overstates near 69M exhaustion), the frozen global
-    ///         denominator that EXCLUDES this chain, and the mirror's own
-    ///         folded side total. NOT the day's Δ_d, whose excluded
-    ///         denominator is zero on the constraint-17 side.
-    ///         `G_s + L_s == 0` (or an unfunded half) ⇒ zero — the
-    ///         genuinely-zero side. The ONE Δq implementation: the quote
-    ///         accumulator, the pricing ladder and the payment path all
-    ///         read it, so the quoted figure and the priced figure can
-    ///         never diverge.
+    ///         (G_s + L_s)`, from FROZEN inputs only.
+    /// @dev    The numerator is the DAY-level finalize-snapshotted funded
+    ///         half — `dayPoolStamp[d].scheduleFloor / 2`, the broadcast's
+    ///         floor-half stored by the mirror's apply — NOT this chain's
+    ///         per-(day,chain) funding slice (#1636 r1 P1: a deliberately
+    ///         zeroed destination's slice is stamped ZERO by
+    ///         `_perDestFields`, so reading it here would quote (0,0) for
+    ///         a demand-carrying day and wrongly resolve it to zero; and
+    ///         not the raw schedule half either, which overstates what
+    ///         finalization funded near 69M exhaustion). `G_s` is the
+    ///         frozen global denominator that EXCLUDES this chain; `L_s`
+    ///         is the mirror's own folded side total. NOT the day's Δ_d,
+    ///         whose excluded denominator is zero on the constraint-17
+    ///         side. `G_s + L_s == 0` (or an unstamped/zero pool) ⇒ zero —
+    ///         the genuinely-zero side (the quote surface separately
+    ///         REFUSES an unstamped day, so the zero here cannot be a
+    ///         missing-stamp artifact on the quoted path). The ONE Δq
+    ///         implementation: the quote accumulator, the pricing ladder
+    ///         and the payment path all read it, so the quoted figure and
+    ///         the priced figure can never diverge.
     function compQuoteDelta(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardSide side,
         uint256 d
     ) internal view returns (uint256) {
-        LibVaipakam.ChainDayFunding storage f =
-            s.chainDayRecycledFunding[d][uint32(block.chainid)];
-        (uint256 halfPool, uint256 g, uint256 l) =
-            side == LibVaipakam.RewardSide.Lender
-                ? (
-                    uint256(f.freshLenderHalf),
-                    s.knownGlobalLenderInterestNumeraire18[d],
-                    s.totalLenderInterestNumeraire18[d]
-                )
-                : (
-                    uint256(f.freshBorrowerHalf),
-                    s.knownGlobalBorrowerInterestNumeraire18[d],
-                    s.totalBorrowerInterestNumeraire18[d]
-                );
+        LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[d];
+        if (!p.stamped) return 0;
+        uint256 halfPool = uint256(p.scheduleFloor) / 2;
+        (uint256 g, uint256 l) = side == LibVaipakam.RewardSide.Lender
+            ? (
+                s.knownGlobalLenderInterestNumeraire18[d],
+                s.totalLenderInterestNumeraire18[d]
+            )
+            : (
+                s.knownGlobalBorrowerInterestNumeraire18[d],
+                s.totalBorrowerInterestNumeraire18[d]
+            );
         uint256 denom = g + l;
         if (denom == 0 || halfPool == 0) return 0;
         return (halfPool * 1e18) / denom;
@@ -3730,10 +3736,14 @@ library LibInteractionRewards {
         LibVaipakam.RewardEntry storage e,
         uint256 d
     ) private view returns (uint256) {
-        uint256 global = e.side == LibVaipakam.RewardSide.Lender
-            ? s.knownGlobalLenderInterestNumeraire18[d]
-            : s.knownGlobalBorrowerInterestNumeraire18[d];
-        if (global == 0) return 0;
+        // #1636 r1 P1 — price from the STORED row alone; no global-zero
+        // short-circuit. On an ordinary zero-global day the fold already
+        // wrote Δ_d = 0, so the row is zero and the old guard was
+        // redundant; on a compensated constraint-17 day (global == 0, row
+        // = Δq) the guard DISCARDED the materialized delta — the walk
+        // priced 0, `rawPay == 0` advanced terminally, and the entries
+        // retired unpaid while bulk window pricing could still pay from
+        // the same row. One row, one truth, both paths.
         return (e.perDayNumeraire18 * _uncappedDelta(s, e.side, d)) / 1e18;
     }
 

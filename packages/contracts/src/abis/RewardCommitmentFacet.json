@@ -24,6 +24,24 @@
   },
   {
     "type": "function",
+    "name": "clearCompQuote",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getChainDayCommitments",
     "inputs": [
       {
@@ -137,6 +155,11 @@
             "name": "receivedAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "era",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -391,6 +414,11 @@
         "name": "quotedBorrower18",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "sourceEra",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -460,6 +488,24 @@
   {
     "type": "function",
     "name": "resetCommitmentAccumulation",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "resetCompQuoteAccumulation",
     "inputs": [
       {
         "name": "dayId",
@@ -606,6 +652,25 @@
   },
   {
     "type": "event",
+    "name": "CompQuoteAccumulationReset",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "CompQuoteBatchAccumulated",
     "inputs": [
       {
@@ -631,6 +696,25 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompQuoteCleared",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -1061,6 +1145,43 @@
         "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayPoolStampMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteEraMismatch",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "boundEra",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "arrivedEra",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
