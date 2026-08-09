@@ -98,6 +98,12 @@ try {
 
   // Terms: rate + a materially-under-collateralised amount.
   await page.locator('input[placeholder="5"]').fill('5');
+  // The window opens BEFORE the inputs that trigger the simulation, not
+  // after. `reset()` orphans everything already in flight, so a reset
+  // placed after the fill would drop the very createOffer round-trip it
+  // means to observe whenever the app's debounce fired first — and a
+  // dropped answer reads as "no RPC", i.e. BLOCKED over a real regression.
+  rpc.reset();
   await pasteAssetLive(page, 'collateral-asset', MUSDC);
   await page.locator('#collateral-amount').fill('100');
 
@@ -105,10 +111,10 @@ try {
   // DISTINCTIVE friendly sentence, not just the "Before you continue —"
   // lead-in. A regression that rendered a raw decoded error name / selector
   // would keep the same prefix, so matching only the prefix would false-pass.
-  const banner = page.getByText(/before you continue/i);
   // From here on, RPC health is what separates "the banner regressed" from
-  // "the simulation never ran".
-  rpc.reset();
+  // "the simulation never ran"; the window was opened above, before the
+  // inputs that trigger it.
+  const banner = page.getByText(/before you continue/i);
   await banner.waitFor({ state: 'visible', timeout: 45_000 });
   const text = (await banner.textContent())?.trim() ?? '';
   if (!/collateral is too low for the amount you want to borrow/i.test(text)) {
