@@ -126,9 +126,28 @@ try {
   // transient gap BEFORE the recomputed, debounced createOffer eth_call settles
   // (Codex #1121 P2). Wait out the debounce + settle, then require the banner to
   // STAY absent across a stability window so a re-rendered verdict can't slip by.
+  //
+  // The clearing simulation must be OBSERVED, not merely awaited (Codex
+  // #1621 r14). Changing the field hides the banner instantly — the
+  // loading state unmounts it — so if the RPC works for the positive case
+  // and then dies, the absence checks below all pass against a banner that
+  // is missing because nothing recomputed, and the drive exits 0 claiming
+  // it verified the negative case. A false PASS, and the only reason the
+  // r13 guard did not catch it is that `rpc.settled()` was consulted only
+  // on the exception path.
+  rpc.reset();
   await page.locator('#collateral-amount').fill('1000000000');
   await banner.waitFor({ state: 'hidden', timeout: 45_000 });
   await page.waitForTimeout(9_000); // debounce + createOffer eth_call round-trip
+  if ((await rpc.settled()) === 0) {
+    await done();
+    await blocked(
+      'the collateral was raised but the page received no answer from its' +
+        ' JSON-RPC endpoint afterwards, so the clearing simulation never ran.' +
+        ' The banner is absent because nothing recomputed — that is not the' +
+        ' negative case being verified.',
+    );
+  }
   for (let i = 0; i < 4; i++) {
     if (await banner.isVisible().catch(() => false)) {
       throw new Error('under-collateral banner re-appeared after the recomputed simulation settled — negative case failed');

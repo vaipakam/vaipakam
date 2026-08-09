@@ -707,10 +707,28 @@ try {
     const reserve = await precondition(
       'reading the lender native balance and current gas price',
       async () => {
-        const [nativeBal, fees] = await Promise.all([
-          pub.getBalance({ address: lenderAddr }),
+        // Balance at the PENDING block, and a settled-mempool check
+        // (Codex #1621 r14). `getBalance()` defaults to the latest
+        // CONFIRMED block, so an aborted earlier run that left a
+        // transaction in the mempool shows its pre-spend balance here —
+        // the reserve passes, the gasless order is published, and the ETH
+        // is gone by the time either cancellation path needs it. The
+        // driver already distinguishes the two nonces later for exactly
+        // this reason; the reserve has to as well.
+        const [nativeBal, fees, pendingNonce, latestNonce] = await Promise.all([
+          pub.getBalance({ address: lenderAddr, blockTag: 'pending' }),
           pub.estimateFeesPerGas().catch(() => ({})),
+          pub.getTransactionCount({ address: lenderAddr, blockTag: 'pending' }),
+          pub.getTransactionCount({ address: lenderAddr, blockTag: 'latest' }),
         ]);
+        if (pendingNonce !== latestNonce) {
+          throw new Error(
+            `lender has ${pendingNonce - latestNonce} transaction(s) still pending` +
+              ' — their spend is not reflected in any balance this check can read,' +
+              ' so the cancellation reserve cannot be trusted. Let the mempool' +
+              ' settle before running.',
+          );
+        }
         const perGas =
           fees.maxFeePerGas ?? fees.gasPrice ?? (await pub.getGasPrice());
         if (!perGas) throw new Error('chain returned no usable gas price');

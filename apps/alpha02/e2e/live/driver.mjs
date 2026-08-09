@@ -227,8 +227,19 @@ export async function precondition(what, fn) {
 export function watchPageRpc(page) {
   let answered = 0;
   const bodyReads = [];
+  // Membership is decided when the REQUEST starts, not when its response
+  // arrives (Codex #1621 r14). A slow hydration request issued before
+  // `reset()` can land after it, and counting that as an answer makes a
+  // total outage DURING the assertion look like a live endpoint — FAIL
+  // where BLOCKED is right, which is the exact failure this helper exists
+  // to prevent. live-rpc-audit.mjs already keys on the request object for
+  // the same reason; the helper was written without carrying that over.
+  const inWindow = new WeakSet();
+  page.on('request', (req) => {
+    if (req.method() === 'POST') inWindow.add(req);
+  });
   page.on('response', (res) => {
-    if (res.request().method() !== 'POST' || res.status() !== 200) return;
+    if (!inWindow.has(res.request()) || res.status() !== 200) return;
     // `response` fires on HEADERS and does not await handlers, so the body
     // is still in flight; collect the promises and settle before judging.
     bodyReads.push(
@@ -248,7 +259,14 @@ export function watchPageRpc(page) {
     );
   });
   return {
-    /** Start a fresh window. Call immediately before the critical wait. */
+    /**
+     * Start a fresh window. Call immediately before the critical wait.
+     *
+     * Requests already in flight stay in `inWindow` but their answers no
+     * longer count, because the tally and the collected body reads are
+     * both cleared here — so only responses to requests that BOTH started
+     * as POSTs and answer after this point contribute.
+     */
     reset() {
       answered = 0;
       bodyReads.length = 0;

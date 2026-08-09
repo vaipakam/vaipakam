@@ -211,6 +211,47 @@ const strictOn = await precondition('reading strict mode from a prior run', () =
     args: [who],
   }),
 );
+// Gas for the WHOLE mutation arc, reserved before the first write (Codex
+// #1621 r14).
+//
+// This drive raises the vault's risk tier and is responsible for putting
+// it back — via the UI, and failing that via the direct write in the
+// `finally`. A wallet with enough ETH for the raise but not the restore
+// therefore succeeds at leaving the vault at Broad liquid and then fails
+// BOTH restoration paths, exiting FAIL with persistent chain state left in
+// the riskier posture. Registering this driver as contract-compliant while
+// it can do that is the same class of problem as publishing an order you
+// cannot cancel: the unsafe state is the harm, and the verdict is the
+// lesser issue.
+//
+// Reserved for up to four writes (optional strict normalize, raise, lower,
+// plus the finally's direct restore) at a padded price, read at the
+// PENDING block so an aborted earlier run's un-mined spend is counted.
+await precondition('reserving native gas for the tier raise and its restore', async () => {
+  const [bal, fees, pendingNonce, latestNonce] = await Promise.all([
+    pub.getBalance({ address: who, blockTag: 'pending' }),
+    pub.estimateFeesPerGas().catch(() => ({})),
+    pub.getTransactionCount({ address: who, blockTag: 'pending' }),
+    pub.getTransactionCount({ address: who, blockTag: 'latest' }),
+  ]);
+  if (pendingNonce !== latestNonce) {
+    throw new Error(
+      `borrower has ${pendingNonce - latestNonce} transaction(s) still pending;` +
+        ' their spend is invisible to this reserve check',
+    );
+  }
+  const perGas = fees.maxFeePerGas ?? fees.gasPrice ?? (await pub.getGasPrice());
+  if (!perGas) throw new Error('chain returned no usable gas price');
+  const need = perGas * 200_000n * 4n * 2n;
+  if (bal < need) {
+    throw new Error(
+      `borrower native balance ${bal} wei is under the ~${need} wei needed to` +
+        ' raise the tier AND guarantee putting it back — refusing to mutate a' +
+        ' tier this run could not restore',
+    );
+  }
+});
+
 // Persistent-wallet normalization BEFORE the page loads (Codex #1539
 // r4): a prior strict-mode run must not poison the OFF-posture
 // assertions. Chain-confirmed direct write, exactly like the fork

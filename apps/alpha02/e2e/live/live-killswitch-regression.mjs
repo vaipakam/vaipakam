@@ -134,7 +134,14 @@ if (typeof lendStatus === 'number' && lendStatus >= 400) {
       // Nothing answered in the window ⇒ the gates this button waits on
       // could not have resolved either way, so the kill switch was never
       // observed here. BLOCKED, not a FAIL against the banner.
-      if ((await rpc.settled()) === 0) {
+      //
+      // But only when the RPC outage is the run's ONLY problem (Codex
+      // #1621 r14). A route in the sweep above may already have proven a
+      // defect — an HTTP 500, or the banner copy actually present — and
+      // exiting 2 here would discard it and report "verified nothing"
+      // about a run that verified something real. Same evidence-precedence
+      // rule live-ux-sweep and live-recover-locales apply.
+      if (failures === 0 && (await rpc.settled()) === 0) {
         await done();
         await blocked(
           'the submit gate never resolved and the page received no answer from' +
