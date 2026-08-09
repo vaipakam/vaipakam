@@ -864,6 +864,20 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         if (s.dayClosedByRemitId[chainId][dayId] != 0) {
             revert CompQuoteDayAlreadyFunded(dayId, chainId);
         }
+        LibVaipakam.CompQuote storage q = s.compQuote[dayId][chainId];
+        // #1636 r4 — a RESOLVED-ZERO record is terminal, not clearable:
+        // its (0,0) ingress already retired `remitIneligible`, so a
+        // deleted record leaves `receivedAt == 0 && !remitIneligible` —
+        // outside every admission path, with no production route back.
+        // Nothing is lost by refusing: the quote is deterministic from
+        // frozen inputs, so a re-quote under ANY era is (0,0) again —
+        // the day is genuinely zero, and this record is its receipt.
+        if (
+            q.receivedAt != 0 && q.lender18 == 0 && q.borrower18 == 0
+                && !s.chainDayCommitments[dayId][chainId].remitIneligible
+        ) {
+            revert CompQuoteResolvedZeroFinal(dayId, chainId);
+        }
         delete s.compQuote[dayId][chainId];
         emit CompQuoteCleared(dayId, chainId);
     }

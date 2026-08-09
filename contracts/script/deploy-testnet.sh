@@ -515,6 +515,14 @@ phase_preflight() {
     echo "    P2 lapse machinery cannot arm) until setBaseRewardDeployment"
     echo "    is called with canonical Base's Diamond address."
   fi
+  # #1434 P2-w3 (#1636 r4) — the canonical-side reciprocal. WARN-only
+  # on testnet (lanes come up incrementally); mainnet HARD-FAILS.
+  if [ "$IS_CANONICAL" = "1" ] && [ -z "${MIRROR_REWARD_DEPLOYMENTS:-}" ]; then
+    echo "  ⚠ MIRROR_REWARD_DEPLOYMENTS unset — the compensation-quote"
+    echo "    (kind-11) ingress will stay DARK per lane (fail-closed,"
+    echo "    CompQuoteMirrorEraUnset) until setMirrorRewardDeployment is"
+    echo "    called with each mirror's Diamond address."
+  fi
   if [ ${#MISSING[@]} -ne 0 ]; then
     echo "FAIL: required env vars missing in .env:"
     for v in "${MISSING[@]}"; do echo "    - $v"; done

@@ -512,6 +512,14 @@ phase_preflight() {
   if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_REWARD_DEPLOYMENT:-}" ]; then
     MISSING+=("BASE_REWARD_DEPLOYMENT  (REQUIRED on mirror chains — canonical Base DIAMOND address, the V3 broadcast era ground truth)")
   fi
+  # #1434 P2-w3 (#1636 r4) — the reciprocal on CANONICAL Base: the
+  # per-mirror Diamond registry the kind-11 compensation-quote ingress
+  # is fail-closed against. HARD-FAIL on mainnet: a canonical deploy
+  # without it leaves zeroed-day compensation unreachable on every lane
+  # until a post-handover governance transaction repairs each one.
+  if [ "$IS_CANONICAL" = "1" ] && [ -z "${MIRROR_REWARD_DEPLOYMENTS:-}" ]; then
+    MISSING+=("MIRROR_REWARD_DEPLOYMENTS  (REQUIRED on canonical Base — per-mirror Diamond registry, format \"42161:0x...,10:0x...\"; the kind-11 quote-ingress era ground truth)")
+  fi
   if [ ${#MISSING[@]} -ne 0 ]; then
     echo "FAIL: required env vars missing in .env:"
     for v in "${MISSING[@]}"; do echo "    - $v"; done
@@ -1116,6 +1124,23 @@ ground truth every V3 (kind-10) reward broadcast must name
 (ConfigureRewardReporter → setBaseRewardDeployment). Without it the V3
 ingress stays fail-closed dark on this mirror and the P2 lapse
 machinery can never arm. Set it in .env (or export it) and re-run.
+EOF
+    exit 1
+  fi
+  # #1434 P2-w3 (#1636 r4) — the reciprocal gate on CANONICAL Base,
+  # enforced on the same transaction-producing path for the same reason
+  # (the spell itself only warns; a phase marker landing over the warn
+  # would carry the deploy to handover with every lane's zeroed-day
+  # compensation unreachable).
+  if [ "$IS_CANONICAL" = "1" ] && [ -z "${MIRROR_REWARD_DEPLOYMENTS:-}" ]; then
+    cat >&2 <<'EOF'
+FAIL: MIRROR_REWARD_DEPLOYMENTS is required on canonical Base before
+the configure phase. It is the per-mirror Diamond registry (format
+"42161:0xMirrorDiamond,10:0xMirrorDiamond") — the era ground truth the
+kind-11 compensation-quote ingress authenticates every arrival against
+(ConfigureRewardReporter → setMirrorRewardDeployment). Without it every
+mirror's quotes revert CompQuoteMirrorEraUnset and zeroed-day
+compensation is unreachable. Set it in .env (or export it) and re-run.
 EOF
     exit 1
   fi

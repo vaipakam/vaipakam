@@ -433,6 +433,14 @@ interface IVaipakamErrors {
     ///         delayed retired-era wire could be the FIRST arrival and
     ///         bind (or zero-clear) the day unchallenged.
     error CompQuoteMirrorEraUnset(uint32 chainId);
+    /// @notice #1434 P2-w3 (#1636 r4) — a resolved-zero standing quote is
+    ///         TERMINAL and refuses the era-rotation clear: its (0,0)
+    ///         ingress already retired the day's manual-funding anchor,
+    ///         deleting the record would strand the chain-day outside
+    ///         every admission path, and a re-quote under ANY era is
+    ///         deterministically (0,0) again — there is nothing to
+    ///         restate.
+    error CompQuoteResolvedZeroFinal(uint256 dayId, uint32 chainId);
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by

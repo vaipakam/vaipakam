@@ -746,6 +746,31 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
     }
 
+    /// @dev #1636 r4 — a resolved-zero standing quote is TERMINAL: its
+    ///      (0,0) ingress retired the day's manual-funding anchor, so the
+    ///      era-rotation clear refuses it (deleting would strand the
+    ///      chain-day outside every admission path, and any era's
+    ///      re-quote is deterministically (0,0) again).
+    function test_Quote_ResolvedZeroRecordRefusesClear() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        RewardCommitmentFacet com = RewardCommitmentFacet(address(diamond));
+
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 0, 0);
+        assertFalse(
+            com.getChainDayCommitments(1, CHAIN_ARB).remitIneligible,
+            "zero quote retired the funding anchor"
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteResolvedZeroFinal.selector,
+                1,
+                CHAIN_ARB
+            )
+        );
+        com.clearCompQuote(1, CHAIN_ARB);
+    }
+
     /// @dev #1636 r1+r2 — the full two-layer era lifecycle: the FAIL-CLOSED
     ///      registry ground truth authenticates every arrival (including
     ///      the first), the standing-quote binding protects evidence

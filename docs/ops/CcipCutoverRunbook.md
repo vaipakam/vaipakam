@@ -378,10 +378,15 @@ flight, in this order when **lowering**:
      unreachable for the unregistered lanes.
   2. **When a MIRROR Diamond rotates**: on Base, run
      `setMirrorRewardDeployment(chainId, newMirrorDiamond)`, then
-     `clearCompQuote(dayId, chainId)` for any quote still standing
-     under the retired mirror (funded days refuse the clear — their
-     standing quote is the receipt-bound obligation and stays). The
-     new era then re-quotes permissionlessly from the mirror side.
+     `clearCompQuote(dayId, chainId)` for any NONZERO quote still
+     standing under the retired mirror. Two record classes refuse the
+     clear by design (#1636 r4): funded days (their standing quote is
+     the receipt-bound obligation) and RESOLVED-ZERO records
+     (`CompQuoteResolvedZeroFinal` — the (0,0) ingress already retired
+     the day's funding anchor, the day is terminally zero, and a
+     re-quote under any era is deterministically (0,0) again; the
+     record stays as the receipt). The new era then re-quotes the
+     cleared days permissionlessly from the mirror side.
 
 ---
 
