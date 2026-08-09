@@ -17,6 +17,9 @@
 //   4. No drain before settling. A request that started in the window but
 //      had not answered yet was absent from `bodyReads`, so the snapshot
 //      returned zero and the drive falsely BLOCKED.
+//   5. Generation checked only before the async body read. A response that
+//      passed the gate could finish parsing after a later reset() and
+//      increment the freshly-zeroed counter.
 //
 // Each case below pins one of those. Following the precedent redact.test.mjs
 // set: driver logic worth trusting belongs in the suite, not in a scratch
@@ -150,6 +153,29 @@ describe('watchPageRpc', () => {
     expect(await rpc.settled(10_000)).toBe(0);
     // Drained immediately rather than burning the whole grace period.
     expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('does not credit a body that finishes parsing after the window closed', async () => {
+    const page = new FakePage();
+    const rpc = watchPageRpc(page);
+    rpc.reset();
+    const req = request();
+    page.emit('request', req);
+    // A body that resolves only after the NEXT reset().
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    page.emit('response', {
+      request: () => req,
+      status: () => 200,
+      text: async () => {
+        await gate;
+        return JSON.stringify({ jsonrpc: '2.0', result: '0x1' });
+      },
+    });
+    rpc.reset();  // window closes while that body is still in flight
+    release();
+    // Crediting it here would make a totally unanswered window look live.
+    expect(await rpc.settled(600)).toBe(0);
   });
 
   it('ignores a body that is not JSON-RPC rather than throwing', async () => {

@@ -77,6 +77,14 @@ const step = (m) => console.log(`  · ${m}`);
 // banner's own reads go out, disarmed the guard and fell through to FAIL
 // regardless. `reset()` below moves the window to the reads that matter.
 const rpc = watchPageRpc(page);
+// True only while awaiting something whose arrival DEPENDS on the RPC.
+// The zero-answer fallback in the catch must not cover the whole try:
+// a missing collateral picker or amount input is a concrete UI defect on
+// a page that was served and driven, and reporting that as BLOCKED
+// because no simulation happened to run would mask a real finding behind
+// an infrastructure excuse — the inverse of the mislabelling this
+// contract exists to prevent (Codex #1621 r16).
+let awaitingSimulation = false;
 try {
   console.log('wallet:', account.address, '| site:', SITE);
   step(`goto ${SITE}/borrow`);
@@ -115,7 +123,9 @@ try {
   // "the simulation never ran"; the window was opened above, before the
   // inputs that trigger it.
   const banner = page.getByText(/before you continue/i);
+  awaitingSimulation = true;
   await banner.waitFor({ state: 'visible', timeout: 45_000 });
+  awaitingSimulation = false;
   const text = (await banner.textContent())?.trim() ?? '';
   if (!/collateral is too low for the amount you want to borrow/i.test(text)) {
     throw new Error(`banner shown but the friendly under-collateral copy regressed: "${text}"`);
@@ -143,8 +153,10 @@ try {
   // on the exception path.
   rpc.reset();
   await page.locator('#collateral-amount').fill('1000000000');
+  awaitingSimulation = true;
   await banner.waitFor({ state: 'hidden', timeout: 45_000 });
   await page.waitForTimeout(9_000); // debounce + createOffer eth_call round-trip
+  awaitingSimulation = false;
   if ((await rpc.settled()) === 0) {
     await done();
     await blocked(
@@ -169,7 +181,7 @@ try {
   // A 200 carrying a JSON-RPC ERROR counts as answered — for this drive the
   // revert IS the expected result, so requiring `result` would have missed
   // the one call the verdict rests on and mislabelled every run.
-  const answered = await rpc.settled();
+  const answered = awaitingSimulation ? await rpc.settled() : 1;
   if (answered === 0) {
     await shot('1112-precheck-blocked').catch(() => {});
     // `done()` FIRST, then the shared blocked exit: `blocked()` ends the

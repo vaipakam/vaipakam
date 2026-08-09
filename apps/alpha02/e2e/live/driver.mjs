@@ -262,13 +262,22 @@ export function watchPageRpc(page) {
   page.on('requestfailed', (req) => outstanding.delete(req));
   page.on('response', (res) => {
     outstanding.delete(res.request());
-    if (startedIn.get(res.request()) !== generation || res.status() !== 200) return;
+    // Captured here and RE-CHECKED after the body read below. The read is
+    // async, so a response that passed this gate can finish parsing after
+    // a later `reset()` and increment the freshly-zeroed counter — making
+    // a completely unanswered window look RPC-live. Checking the
+    // generation only once, before the await, was the fifth way this
+    // helper got the window wrong.
+    const gen = startedIn.get(res.request());
+    if (gen !== generation || res.status() !== 200) return;
     // `response` fires on HEADERS and does not await handlers, so the body
     // is still in flight; collect the promises and settle before judging.
     bodyReads.push(
       res
         .text()
         .then((text) => {
+          // The window may have closed while this body was in flight.
+          if (gen !== generation) return;
           const parsed = JSON.parse(text);
           for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
             if (r && r.jsonrpc && (r.result !== undefined || r.error !== undefined)) {
