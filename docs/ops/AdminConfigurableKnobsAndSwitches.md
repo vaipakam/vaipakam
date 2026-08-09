@@ -293,13 +293,6 @@ emergency rollback if a bad schedule was pushed by mistake.
   compromised admin from setting `reserveFactor = 100%` (lender
   receives 0% interest, defeats the lending product).
 
-### Staking APR
-
-Range **[0%, 20%]**. APRs above 20% on VPFI staking
-are unrealistic and a higher cap is a governance-error vector rather
-than a feature. Zero permitted (disables rewards while preserving
-staked principal accounting).
-
 ### Notification fee (per loan-side)
 
 Per-loan-side notification tariff billed at the first paid-tier
@@ -443,12 +436,26 @@ transient outage from being confused with real grace; the 30-day
 ceiling prevents the window from being set to "indefinite" (defeats
 the purpose). Default is 4 hours.
 
-### Reward OApp / local eid / base eid / canonical reward chain flag
+### Reward messenger / base chain id / canonical reward chain flag
 
 Address + integer + bool fields configuring the cross-chain
-reward reporter. Eid values are LayerZero V2 endpoint ids (40000s
-testnet, 30000s mainnet); no numeric range beyond "a known eid".
-Setter accepts and emits.
+reward reporter, all setter-accepts-and-emits with no numeric range:
+
+- **`rewardMessenger`** — the only address permitted to call the trusted
+  ingress handlers (aggregator receive on Base, broadcast receive on
+  mirrors). Pre-T-068 this slot held a LayerZero OApp and was named
+  `rewardOApp`; the rename is layout-preserving, but the selector and
+  error names changed, so a consumer reading the old ABI fails loudly
+  rather than silently.
+- **`baseChainId`** — the plain EVM chain id of the canonical reward
+  chain, zero on Base itself. Note this is a chain id, NOT a CCIP chain
+  selector: since T-068 the reward flow identifies chains by
+  `block.chainid` and leaves selector translation to the messenger. The
+  old per-chain endpoint-id slot survives only as
+  `localEidLegacyDoNotUse`, never read or written.
+- **`isCanonicalRewardChain`** — gates aggregator ingress, finalize and
+  the broadcast trigger. Admin-settable so the flag does not depend on
+  which chain the Diamond happens to be deployed to.
 
 ### Interaction-rewards launch timestamp
 
@@ -780,18 +787,6 @@ pre-notify lane (HF watcher's existing surface) and the periodic-
 interest pre-notify lane (T-034) read from the same `getPreNotifyDays()`
 view.
 
-## Cross-chain VPFI buy (T-031 Layer 4a)
-
-### Reconciliation watchdog enabled flag (reconciliationWatchdogEnabled)
-
-Master switch for the
-off-chain buy-flow reconciliation watchdog. Default `true`
-post-init. The watchdog Worker reads this flag before each pass —
-when `false`, it skips reconciliation and emits no alerts. Same
-governance auth as every other lever. Lets governance silence the
-watchdog during a planned bridge ceremony or known reconciliation
-gap without redeploying the Worker. Boolean — no range.
-
 ## Range Orders match constraints
 
 ### Range-orders cancel cooldown
@@ -822,16 +817,34 @@ only configs. Zero disables that adapter; non-zero enables it.
 
 ## Reward + cross-chain pairs
 
-### Reward OApp address / Buy receiver address / Buy adapter mapping
+### Reward messenger address mapping
 
 Address-only; non-zero enforced; zero disables that
 specific cross-chain lane.
 
-### LayerZero peers
+### CCIP messenger registry (chain selectors, remote messengers, channel peers)
 
-(set per-eid, per-OApp). Standard LZ V2 peer
-mesh. Mismatch surfaces as undelivered packets; not a runtime
-exploit vector under the DVN policy.
+Three owner-set maps on each chain's `CcipMessenger`, all
+address-or-identifier only, no numeric ranges:
+
+- **chain id ↔ CCIP chain selector** (`setChainSelector`) — the
+  translation point the design mandates: domain contracts pass a plain
+  EVM chain id and only the adapter knows the selector. Kept one-to-one
+  in both directions; rebinding a selector already bound to a different
+  chain id reverts. A zero selector means unconfigured, not "default".
+- **remote messenger per chain** (`setRemoteMessenger`) — outbound, the
+  CCIP message receiver; inbound, the allowlisted sender. Zero means no
+  peer.
+- **channel peer per (channel, remote chain)** (`setChannelPeer`) — the
+  counterpart domain contract, surfaced to the local handler as the
+  inbound sender for its own equality check.
+
+A mismatch surfaces as an undelivered or rejected message, not as a
+runtime exploit path. Note that CCIP's transport security is operated by
+Chainlink — a committing DON, an executing DON, and an independent Risk
+Management Network — and is uniform for every integrator. There is no
+verifier fleet to select or configure here, so there is no insecure
+default to get wrong.
 
 ## Pause levers
 
@@ -1095,8 +1108,8 @@ touches user funds or per-user consent state.
 - **Default new chain bring-up**: every numeric knob defaults to a
   reasonable library value. Governance does NOT need to write each
   knob at deploy time; the only mandatory writes are the
-  chain-specific addresses (treasury, oracles, LZ endpoints, peers,
-  per-chain VPFI Buy adapter registry).
+  chain-specific addresses (treasury, oracles, the CCIP messenger
+  registry, and the sanctions oracle on retail).
 - **Governance handover** (DeploymentRunbook §6): post-deploy, every
   tunable transitions from EOA-controllable to multisig-via-timelock
   controllable. Range guards apply equally to both before and after

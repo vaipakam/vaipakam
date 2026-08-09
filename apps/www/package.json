@@ -9,12 +9,13 @@
     "prebuild": "node scripts/generate-sitemap.mjs && tsx --tsconfig tsconfig.app.json scripts/generate-llms.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit && eslint . -c eslint.hooks.config.js && node scripts/check-guide-anchor-parity.mjs && tsx scripts/check-guide-toc-coverage.ts && tsx --tsconfig tsconfig.app.json scripts/check-live-value-render.tsx",
+    "typecheck": "tsc -b --noEmit && eslint . -c eslint.hooks.config.js && node scripts/check-guide-anchor-parity.mjs && tsx scripts/check-guide-toc-coverage.ts && tsx --tsconfig tsconfig.app.json scripts/check-live-value-render.tsx && node scripts/check-admin-knobs-mirror.mjs",
     "prerender": "node scripts/prerender.mjs",
     "deploy": "npm run build && npm run prerender && wrangler deploy",
     "sitemap": "node scripts/generate-sitemap.mjs",
     "check:anchors": "node scripts/check-guide-anchor-parity.mjs",
     "check:toc": "tsx scripts/check-guide-toc-coverage.ts",
+    "check:admin-mirror": "node scripts/check-admin-knobs-mirror.mjs",
     "check:livevalue": "tsx --tsconfig tsconfig.app.json scripts/check-live-value-render.tsx"
   },
   "dependencies": {

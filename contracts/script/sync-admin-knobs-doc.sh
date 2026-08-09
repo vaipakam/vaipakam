@@ -46,3 +46,10 @@ echo "Bytes:  $(wc -c < "$DST")"
 echo
 echo "Reminder: commit both files together so the marketing-site"
 echo "bundle matches the canonical reference."
+echo
+echo "Review the diff before committing. This script OVERWRITES the"
+echo "mirror, so if anyone edited that file directly the copy silently"
+echo "discards their change — which is exactly what #1624 caught, five"
+echo "months after the two files quietly swapped roles. The guard"
+echo "\`pnpm --filter @vaipakam/www check:admin-mirror\` now fails when"
+echo "they diverge, so the divergence surfaces before a sync, not after."

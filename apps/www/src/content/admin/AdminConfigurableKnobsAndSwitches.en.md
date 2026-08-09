@@ -66,7 +66,7 @@ shift.
 ### VPFI tier discount thresholds + tier discount BPS
 
 (4 values
-each). Configures the time-weighted VPFI vault tier system that
+each). Configures the time-weighted VPFI staking tier system that
 discounts the loan-initiation fee. Thresholds must be strictly
 monotonic; discount BPS each ≤ `MAX_DISCOUNT_BPS` and
 non-decreasing across tiers. Setter rejects non-monotone or
@@ -78,6 +78,124 @@ above-cap writes.
 bounded by its own `MAX_*_BPS` cap. The `liqBonusBps` per asset (set
 via `updateRiskParams`) cannot exceed the chain-level
 `maxLiquidatorIncentiveBps` — the latter is the hard ceiling.
+
+### Graduated partial-liquidation sizing (#395)
+
+(3 values, set together via `AdminFacet.setPartialLiquidationSizing` —
+hosted on `AdminFacet` rather than `ConfigFacet` because the latter is at
+the EIP-170 ceiling, same as the #633 kill-switches). These bound how much
+collateral a single *intentional* partial liquidation
+(`RiskFacet.triggerPartialLiquidation`) may sell, so a routine partial sizes
+itself to "as much as needed" and can't over-liquidate the borrower. Each
+parameter accepts `0` to reset to its library default, and any non-zero
+value is range-checked, so the reads are trusted unconditionally.
+
+- **`partialLiqTargetHfCeilingBps`** — the upper health-factor a *routine*
+  partial may leave the borrower at, in BPS of `HF_SCALE` (default `12_000`
+  = HF 1.20). A partial that lands the borrower above this — i.e. it sold
+  more than needed — reverts `PartialOverLiquidates`, unless an escalation
+  case below applies. Bounded `[10_500, 15_000]` (HF 1.05–1.50) so it always
+  sits strictly above the HF-1.00 restore floor.
+- **`partialLiqDeepUnderwaterHfBps`** — the health factor at/below which the
+  ceiling is **waived** so a keeper may delever aggressively to restore
+  solvency, in BPS of `HF_SCALE` (default `9_500` = HF 0.95). Bounded
+  `[8_000, 9_900]` (HF 0.80–0.99), always strictly below the restore floor.
+- **`liquidationDustFloorNumeraire`** — governs dust handling. **Default `0`
+  = DISABLED** (there is no universally-correct default because the active
+  oracle numeraire can be rotated away from USD, so a hard-coded value would
+  mis-classify ordinary loans as dust on a non-USD deployment — governance
+  sets an explicit floor *in the active numeraire* to switch it on). When set
+  (`> 0`) it does two things: (1) **waives** the over-liquidation ceiling for
+  a position that was **already** dust-sized at entry (its pre-partial debt OR
+  collateral below the floor) so a genuinely-tiny loan isn't blocked from
+  clearing — keyed on *entry* size, not the manufacturable residual, so a
+  keeper can't self-waive by over-liquidating; and (2) **prevents** a routine
+  partial from leaving a *fresh* dust position out of a non-dust loan (both
+  residual debt AND collateral below the floor) — that reverts
+  `PartialLeavesDust` and the keeper must use full liquidation. **Units:
+  whole-numeraire**, the same
+  scale `RiskFacet._computeNumeraireValues` returns (whole-USD with standard
+  8-decimal feeds — `$1k == 1_000`, NOT `1e18`-scaled). Capped at `100_000`
+  ($100k) so a misconfigured floor can't turn every routine partial into a
+  full close. **Setting a nonzero floor both widens (the pre-existing-dust
+  waiver) AND narrows (the leave-fresh-dust prevention) what a keeper may do —
+  it is not a harmless one-way knob — and `0` is the explicit disable path.**
+  Plan for keeper partials to start reverting `PartialLeavesDust` (and require
+  full liquidation) on small loans once a floor is set.
+
+The over-liquidation **ceiling** and **deep-underwater** thresholds default to
+sensible values and are active on a fresh deploy with no operator action; the
+**dust floor defaults to `0` (disabled)** and is opt-in (set it in the active
+numeraire to switch dust handling on). The whole guardrail governs only *how
+much* collateral a partial sells (via HF/value bounds) — never how the loan is
+priced — and leaves full liquidation (`triggerLiquidation`) unchanged as the
+alternative.
+
+### Loan-admission HF floor (#394)
+
+(`RiskFacet.setMinHealthFactor(uint256)` / `getMinHealthFactor()`,
+`RISK_ADMIN_ROLE`.) The minimum Health Factor a **new** loan must clear at
+admission in the standard (non-depth-tiered) regime. Defaults to `1.5e18`
+(the `MIN_HEALTH_FACTOR` library default) when the on-chain override is unset
+(`0`); range-bounded `[1.2e18, 2.0e18]`. This is the protocol's per-deploy
+risk-appetite dial — tighten it in a volatile regime, loosen it for a
+proven-safe book — **without a contract redeploy**.
+
+Three properties keep it safe:
+
+- **Prospective only.** Each loan snapshots the floor it was admitted under
+  (`Loan.minHealthFactorAtInit`) plus the effective init-LTV cap
+  (`Loan.initLtvCapBpsAtInit`); every post-admission check (collateral
+  withdrawal, fallback-cure, partial-repay / swap-to-repay guards, refinance)
+  reads that snapshot, so a retune never retroactively loosens *or* tightens
+  an open position's buffer.
+- **Branch-aware.** The dial moves only the non-tiered admission floor. The
+  depth-tiered regime keeps its `1.0` not-born-liquidatable floor, and the
+  liquidation trigger (`HF < 1.0`) is untouched in both regimes — so because
+  the dial is bounded `≥ 1.2`, no retune can make an open loan liquidatable.
+- **Discoverable.** Surfaced in the protocol console catalogue (Risk
+  Parameters) so governance can view / propose / track it via the operator
+  surface; the dApp's HF gauges colour each open loan against its snapshot.
+
+It does **not** change how any loan is priced — only the admission gate.
+
+### Quote-time interest-rate model (#400)
+
+(`AdminFacet.setRateModel(address)` / `getRateModel()`.) The active
+`IRateModel` — a pluggable, view-only quote function used for **rate
+guidance + automated/delegated pricing**, NOT to override human-typed offer
+rates. **Default `address(0)` = the IDENTITY model: the user-supplied rate
+stands, today's behaviour, zero-config.** Vaipakam's market rate is set by the
+human P2P order book (price discovery); registering a model never rewrites a
+manually-created offer — it is consulted only by the dApp (as a suggestion)
+and by automated flows (auto-lend / auto-roll / keeper-posted intents, #393;
+risk premiums, #394) that price the offers they post on a user's behalf.
+
+- **Enable-slow / disable-fast asymmetry.** REGISTERING / changing a model
+  (`setRateModel`, non-zero, risk-increasing) is ADMIN → governance **timelock**
+  after handover. DISABLING it (`disableRateModel()` → identity) is the fast
+  risk-decreasing path: callable by **WATCHER_ROLE** (the constrained
+  fast-incident key, like `autoPause`) *or* ADMIN, so a misbehaving model is
+  killed instantly without waiting on the enable-side timelock. `setRateModel`
+  rejects `address(0)` (`UseDisableRateModel`) — disabling always goes through
+  the fast path. A non-zero model must be a contract (`RateModelNotContract`
+  on an EOA).
+- **On-chain deviation cap (anti-rate-setting guarantee).**
+  `setRateModelMaxDeviationBps(uint16)` / `getRateModelMaxDeviationBps()` —
+  default `500` (5%), range `[50, 2500]` (0.5%–25%). The resolver **clamps**
+  the model's output to `±maxDeviation` of the caller's reference (market)
+  rate, so a registered model — even buggy or adversarial — can only nudge the
+  rate around the market anchor, never drive an automated offer far off-market
+  (instant-loss-fill if too low, idle capital if too high). This is enforced in
+  the substrate (`OfferCreateFacet.quoteOfferRateBps`) so every consumer
+  inherits it, not trusted to each caller.
+- **E2-safe.** A model only ever sets the value written into a *new* offer; a
+  matched / live loan's rate is snapshotted immutably at init and never
+  re-priced.
+- **Consumers still market-anchor.** The clamp bounds deviation from whatever
+  reference is supplied, so automated callers (#393/#394) must still pass the
+  **live cleared-market rate** as the reference (the clamp then bounds drift
+  from the real market). The registry itself never auto-posts.
 
 ### Swap-to-Repay max slippage (T-090)
 
@@ -318,12 +436,26 @@ transient outage from being confused with real grace; the 30-day
 ceiling prevents the window from being set to "indefinite" (defeats
 the purpose). Default is 4 hours.
 
-### Reward OApp / local eid / base eid / canonical reward chain flag
+### Reward messenger / base chain id / canonical reward chain flag
 
 Address + integer + bool fields configuring the cross-chain
-reward reporter. Eid values are Chainlink CCIP chainSelector ids (40000s
-testnet, 30000s mainnet); no numeric range beyond "a known eid".
-Setter accepts and emits.
+reward reporter, all setter-accepts-and-emits with no numeric range:
+
+- **`rewardMessenger`** — the only address permitted to call the trusted
+  ingress handlers (aggregator receive on Base, broadcast receive on
+  mirrors). Pre-T-068 this slot held a LayerZero OApp and was named
+  `rewardOApp`; the rename is layout-preserving, but the selector and
+  error names changed, so a consumer reading the old ABI fails loudly
+  rather than silently.
+- **`baseChainId`** — the plain EVM chain id of the canonical reward
+  chain, zero on Base itself. Note this is a chain id, NOT a CCIP chain
+  selector: since T-068 the reward flow identifies chains by
+  `block.chainid` and leaves selector translation to the messenger. The
+  old per-chain endpoint-id slot survives only as
+  `localEidLegacyDoNotUse`, never read or written.
+- **`isCanonicalRewardChain`** — gates aggregator ingress, finalize and
+  the broadcast trigger. Admin-settable so the flag does not depend on
+  which chain the Diamond happens to be deployed to.
 
 ### Interaction-rewards launch timestamp
 
@@ -685,16 +817,34 @@ only configs. Zero disables that adapter; non-zero enables it.
 
 ## Reward + cross-chain pairs
 
-### Reward OApp address mapping
+### Reward messenger address mapping
 
 Address-only; non-zero enforced; zero disables that
 specific cross-chain lane.
 
-### Chainlink CCIP peers
+### CCIP messenger registry (chain selectors, remote messengers, channel peers)
 
-(set per-eid, per-OApp). Standard LZ V2 peer
-mesh. Mismatch surfaces as undelivered packets; not a runtime
-exploit vector under the DVN policy.
+Three owner-set maps on each chain's `CcipMessenger`, all
+address-or-identifier only, no numeric ranges:
+
+- **chain id ↔ CCIP chain selector** (`setChainSelector`) — the
+  translation point the design mandates: domain contracts pass a plain
+  EVM chain id and only the adapter knows the selector. Kept one-to-one
+  in both directions; rebinding a selector already bound to a different
+  chain id reverts. A zero selector means unconfigured, not "default".
+- **remote messenger per chain** (`setRemoteMessenger`) — outbound, the
+  CCIP message receiver; inbound, the allowlisted sender. Zero means no
+  peer.
+- **channel peer per (channel, remote chain)** (`setChannelPeer`) — the
+  counterpart domain contract, surfaced to the local handler as the
+  inbound sender for its own equality check.
+
+A mismatch surfaces as an undelivered or rejected message, not as a
+runtime exploit path. Note that CCIP's transport security is operated by
+Chainlink — a committing DON, an executing DON, and an independent Risk
+Management Network — and is uniform for every integrator. There is no
+verifier fleet to select or configure here, so there is no insecure
+default to get wrong.
 
 ## Pause levers
 
@@ -717,12 +867,249 @@ pair OFF on the retail deploy.
 
 ---
 
+## T-092 auto-lifecycle kill switches
+
+Three admin master flags gating the auto-lend / auto-refinance /
+auto-extend surface. All three default `false` on a fresh deploy.
+Each is an independent break-glass — flipping one off only stops
+the matching keeper-driven path; the per-user consent storage stays
+intact and users can still revoke their own opt-ins. Storage lives
+on `ProtocolConfig`, setters + getters on `AdminFacet`. Read in the
+dapp via the Protocol Console (`/admin`) under the **Auto-Lifecycle
+Kill Switches** category.
+
+### `cfgAutoLendEnabled`
+
+Master flag for the auto-lend opt-in.
+
+- **Getter:** `AdminFacet.getAutoLendEnabled() -> bool`
+- **Setter:** `AdminFacet.setAutoLendEnabled(bool)`
+- **What `false` blocks:** new opt-ins via
+  `AutoLifecycleFacet.setAutoLendConsent(true)` revert
+  `AutoLendDisabled`. Existing consent is unaffected; users can
+  still revoke (`setAutoLendConsent(false)` remains permitted) to
+  avoid trapping users in consent when the admin disables the
+  feature.
+- **When to flip on:** once governance has rehearsed an auto-lend
+  end-to-end cycle on a testnet and is satisfied the matcher's
+  composition with the auto-lend posting flow doesn't introduce
+  unexpected lender-side risk.
+- **When to flip off:** if a real-world scenario surfaces where
+  auto-lend posts standing offers under terms the lender wouldn't
+  have accepted manually (e.g., a mass-vault-deposit script gets
+  matched against the worst counterparties available). Flipping
+  off freezes new opt-ins; existing standing offers remain on the
+  book until cancelled or matched.
+
+### `cfgAutoRefinanceEnabled`
+
+Master flag for the keeper-driven refinance path.
+
+- **Getter:** `AdminFacet.getAutoRefinanceEnabled() -> bool`
+- **Setter:** `AdminFacet.setAutoRefinanceEnabled(bool)`
+- **What `false` blocks:** `RefinanceFacet.refinanceLoan` reverts
+  `AutoRefinanceDisabled` on the keeper-driven path (when
+  `msg.sender != currentBorrowerNftOwner`). The borrower-direct
+  refinance path (`msg.sender == currentBorrowerNftOwner`)
+  remains permitted — a borrower can always refinance their own
+  loan even when the kill switch is off. **Also blocks** the
+  T-092-H atomic chain (`refinanceLoanFromAccept`) for the same
+  reason — that entry shares the same Phase 2a sanctions +
+  kill-switch gating as the standalone keeper-driven path.
+- **When to flip on:** once governance has confirmed the cap-check
+  surface (Phase 2b: `LibAutoRefinanceCheck.validate` at both
+  offer-create AND offer-accept) is operationally sound and the
+  keeper-bot is enforcing the per-loan
+  `autoRefinanceCaps[loanId]` correctly.
+- **When to flip off:** if a real-world scenario surfaces where
+  a keeper routes a borrower into worse refinance terms despite
+  the cap check (the Phase 2b round-3 P1 + P2 surface should
+  catch every misuse pattern audited to date; this is the
+  break-glass for unforeseen cases).
+
+#### T-092-H atomic accept-and-refinance (PR #553, 2026-06-11)
+
+Accepting a refinance-tagged Borrower offer (`offer.refinanceTargetLoanId != 0`)
+now chains into `RefinanceFacet.refinanceLoanFromAccept` inside
+the SAME transaction. Both `OfferAcceptFacet._acceptOffer` (direct
+accept + `matchOffers` with `partialFillEnabled` off) and
+`OfferMatchFacet.matchOffers`' dust-close branch (when
+`partialFillEnabled` is on) carry the chain hook.
+
+**Operational implication:** the old multi-tx race window between
+accept and refinance is closed. A borrower whose wallet held the
+new principal between transactions is no longer exposed to
+intermediate spends / MEV front-runs / approval revocations. The
+chain reverts the WHOLE tx when the refinance fails — both loans
+roll back atomically.
+
+**Kill-switch interaction:** flipping `cfgAutoRefinanceEnabled` off
+blocks the atomic chain too (the inner `refinanceLoanFromAccept`
+goes through the same sanctions + kill-switch gates as the
+external `refinanceLoan`). Borrowers who set a refinance-tagged
+offer during the kill-switch-off window will find the accept-side
+revert with `AutoRefinanceDisabled` until the flag flips back on.
+
+**Error surface:** the chain bubbles inner revert payloads
+verbatim (no synthetic wrapper). The dapp's `autoLifecycleErrors.ts`
+decoder already handles every typed inner error
+(`RefinanceCapsRequired`, `SanctionedAddress`, etc.). Codex
+review on PR #542 caught the wrapper-error misdesign in the first
+attempt; PR #553 (the design-doc-first re-attempt under
+[`docs/DesignsAndPlans/T092AtomicAcceptAndRefinance.md`](../DesignsAndPlans/T092AtomicAcceptAndRefinance.md))
+shipped without further findings.
+
+**Reentrancy:** `refinanceLoanFromAccept` is `onlyDiamondInternal`
+(`msg.sender == address(this)`) gated + has NO `nonReentrant`
+modifier — the outer `acceptOffer` / `matchOffers` `nonReentrant`
+lock covers the whole atomic tx. External EOAs cannot call the
+inner entry directly.
+
+### `cfgAutoExtendEnabled`
+
+Master flag for the in-place loan extension.
+
+- **Getter:** `AdminFacet.getAutoExtendEnabled() -> bool`
+- **Setter:** `AdminFacet.setAutoExtendEnabled(bool)`
+- **What `false` blocks:** BOTH keeper-driven AND borrower-direct
+  `AutoLifecycleFacet.extendLoanInPlace` revert `AutoExtendDisabled`.
+  Unlike `cfgAutoRefinanceEnabled`, the borrower-direct path is
+  ALSO blocked — there is no "manual extension" fallback when the
+  flag is off, because the executor is shared.
+- **When to flip on:** once governance has rehearsed an extend on
+  a testnet loan with both-side consent and validated the
+  per-side cap intersection logic (lender minimum, both-side
+  maxes, both-side expiry caps) and the
+  `LibInteractionRewards` schedule refresh.
+- **When to flip off:** if the executor's interest-accrual / fee
+  treatment surfaces an unexpected behaviour. Existing loans
+  continue with their original terms (no extension fired ⇒ no
+  state change); the next extension simply doesn't happen.
+
+### Independence from per-user consent
+
+The three flags are independent. Flipping `cfgAutoLendEnabled` off
+does NOT disable `cfgAutoExtendEnabled` — users with both-side
+extend caps set continue to benefit from the auto-extend pass even
+while auto-lend is paused. Each flag's `Set` event is indexed by
+the new value so an indexer can reconstruct the flip history
+without a state migration.
+
+### Recommended operational mode
+
+`(false, false, false)` on a fresh deploy. After audit + testnet
+rehearsal, flip in sequence:
+1. `cfgAutoExtendEnabled` first — the safest path because both
+   sides explicitly consent per-loan + the cap intersection logic
+   has the smallest attack surface.
+2. `cfgAutoRefinanceEnabled` second — the cap-check surface is
+   larger (Phase 2b's binding-by-loan-id + assetType + amount-range
+   + collateral + prepay matching), but the per-loan opt-in still
+   constrains it.
+3. `cfgAutoLendEnabled` last — touches the standing-offer book
+   directly, so flipping it on is the highest-impact change.
+
+Each flip is reversible at zero cost beyond gas.
+
+---
+
+## #633 — Feature kill switches (aggregators / keepers / swap venues / peer data)
+
+Four admin break-glass levers that pause an individual platform feature
+without disabling unrelated machinery. Setters + events live on
+`AdminFacet`; storage is on `ProtocolConfig` (the three booleans) plus a
+per-adapter mapping. Admin-settable now; moves to the governance timelock
+after handover — the same posture as the #399 backstop switches.
+
+> ⚠️ **PAUSE semantics — opposite polarity to the `*Enabled` flags above.**
+> These default `false` meaning **active / not paused** (the gated
+> features — aggregators, keepers, swap venues, peer reads — are *already
+> live*, so a default-off flag would have silently disabled working
+> behaviour and broken tests). Flipping one to **`true` PAUSES** the
+> feature. Do not pattern-match these onto the `cfgAuto*Enabled` /
+> `discountPathEnabled` flags, where `false` = off and `true` = on. Here
+> `true` = paused.
+
+### `keepersPaused` — global keeper pause
+
+- **Getter:** `AdminFacet.keepersPaused() -> bool`
+- **Setter:** `AdminFacet.setKeepersPaused(bool value)` → emits
+  `KeepersPausedSet`.
+- **What `true` blocks:** all delegated third-party keeper activity
+  protocol-wide — `ConfigFacet.setKeeperTier`, the `LibAuth.requireKeeperFor`
+  / `requireKeeperForPrincipal` gates (after the owner/principal
+  short-circuit), the backstop buyout (`ClaimFacet._claimViaBackstopImpl`),
+  and the aggregator adapter's keeper path
+  (`AggregatorAdapterImplementation`). Position owners can **always** still
+  act on their own positions directly, and ordinary **permissionless**
+  liquidation stays open — only delegated keepers are frozen.
+- **When to flip on:** a keeper-key compromise or a misbehaving bot fleet
+  (mass mis-priced auto-actions). It is the broad incident lever; the
+  per-user keeper revoke is the narrow one.
+
+### `aggregatorAdaptersPaused` — external yield-aggregator pause
+
+- **Getter:** `LibVaipakam.cfgAggregatorAdaptersPaused()` (read on-chain;
+  surfaced in the Protocol Console).
+- **Setter:** `AdminFacet.setAggregatorAdaptersPaused(bool value)` → emits
+  `AggregatorAdaptersPausedSet`.
+- **What `true` blocks:** onboarding a new aggregator
+  (`AggregatorAdapterFactoryFacet.createAggregatorAdapter`) **and** filling
+  an existing aggregator's standing lending intent
+  (`OfferMatchFacet.matchIntent` when the lender is a registered aggregator
+  adapter). Ordinary user lending intents and the backstop are unaffected.
+- **When to flip on:** a Yearn-style external aggregator integration is
+  found compromised or mispricing, and the protocol wants to stop routing
+  fills to it without unwinding ordinary intents.
+
+### `peerLtvReadsPaused` — peer-protocol data-read pause
+
+- **Getter:** `LibVaipakam.cfgPeerLtvReadsPaused()`.
+- **Setter:** `AdminFacet.setPeerLtvReadsPaused(bool value)` → emits
+  `PeerLtvReadsPausedSet`. The setter also **invalidates the tier-LTV
+  cache** (zeroes `tierLtvCache[t].lastRefreshedAt` for every tier) on
+  every toggle, so an unpause can't re-trust a stale (possibly compromised)
+  cached reading.
+- **What `true` blocks:** the optional reads of peer lending protocols used
+  to refine the depth-tiered collateral limits. While paused,
+  `effectiveTierMaxInitLtvBps` falls back to the **governance-set cap**
+  (`cfgTierMaxInitLtvBps`) — never the library default — so a compromised
+  external data source can't influence risk parameters, and unpausing can
+  never transiently widen a tier below the governance cap.
+- **When to flip on:** a peer protocol's on-chain LTV reads look
+  manipulated or unreliable.
+
+### `swapAdapterDisabled[adapter]` — per-venue swap pause
+
+- **Getter:** `AdminFacet.isSwapAdapterDisabled(address adapter) -> bool`
+- **Setter:** `AdminFacet.setSwapAdapterDisabled(address adapter, bool disabled)`
+  → emits `SwapAdapterDisabledSet`. The setter rejects an unregistered
+  adapter (`SwapAdapterNotRegistered`) — you can only pause a venue that
+  is actually in the `swapAdapters` registry.
+- **What `disabled = true` blocks:** liquidation routing through that one
+  venue, on **both** routes — the single-route failover path
+  (`LibSwap.swapWithFailover` and `ClaimFacet._attemptRetrySwap`) **skips**
+  it and fails over to the remaining venues, and the multi-route split path
+  (`LibSwap.swapWithSplit`, called by `RiskSplitLiquidationFacet.triggerLiquidationSplit`)
+  **reverts `SwapVenuePaused`** rather than routing a leg through it (split
+  legs carry no per-leg slippage floor, so the pause must be enforced
+  on-chain, not left to the off-chain keeper). The venue stays registered,
+  so re-activating is a single `disabled = false` flip with no reshuffle.
+- **When to flip on:** a DEX/aggregator venue is compromised or temporarily
+  illiquid and you want it sidelined instantly.
+
+Each flip is reversible at zero cost beyond gas. None of these levers
+touches user funds or per-user consent state.
+
+---
+
 ## Operational policy summary
 
 - **Default new chain bring-up**: every numeric knob defaults to a
   reasonable library value. Governance does NOT need to write each
   knob at deploy time; the only mandatory writes are the
-  chain-specific addresses (treasury, oracles, LZ endpoints, peers).
+  chain-specific addresses (treasury, oracles, the CCIP messenger
+  registry, and the sanctions oracle on retail).
 - **Governance handover** (DeploymentRunbook §6): post-deploy, every
   tunable transitions from EOA-controllable to multisig-via-timelock
   controllable. Range guards apply equally to both before and after
