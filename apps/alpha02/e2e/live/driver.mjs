@@ -228,18 +228,27 @@ export function watchPageRpc(page) {
   let answered = 0;
   const bodyReads = [];
   // Membership is decided when the REQUEST starts, not when its response
-  // arrives (Codex #1621 r14). A slow hydration request issued before
-  // `reset()` can land after it, and counting that as an answer makes a
-  // total outage DURING the assertion look like a live endpoint — FAIL
-  // where BLOCKED is right, which is the exact failure this helper exists
-  // to prevent. live-rpc-audit.mjs already keys on the request object for
-  // the same reason; the helper was written without carrying that over.
-  const inWindow = new WeakSet();
+  // arrives. A slow hydration request issued before `reset()` can land
+  // after it, and counting that as an answer makes a total outage DURING
+  // the assertion look like a live endpoint — FAIL where BLOCKED is right,
+  // the exact failure this helper exists to prevent. live-rpc-audit.mjs
+  // already keys on the request object for this reason; the helper was
+  // first written without carrying that over.
+  //
+  // Stamped with a GENERATION rather than added to a set. A set plus a
+  // cleared tally is not enough and was the second wrong version of this:
+  // clearing the counter does nothing about a stale request whose response
+  // arrives later and increments it again. The generation bumps on reset,
+  // so a response can only count when its request started in the CURRENT
+  // window. (A WeakSet cannot be cleared, which is what made the set
+  // approach quietly unfixable.)
+  let generation = 0;
+  const startedIn = new WeakMap();
   page.on('request', (req) => {
-    if (req.method() === 'POST') inWindow.add(req);
+    if (req.method() === 'POST') startedIn.set(req, generation);
   });
   page.on('response', (res) => {
-    if (!inWindow.has(res.request()) || res.status() !== 200) return;
+    if (startedIn.get(res.request()) !== generation || res.status() !== 200) return;
     // `response` fires on HEADERS and does not await handlers, so the body
     // is still in flight; collect the promises and settle before judging.
     bodyReads.push(
@@ -262,12 +271,11 @@ export function watchPageRpc(page) {
     /**
      * Start a fresh window. Call immediately before the critical wait.
      *
-     * Requests already in flight stay in `inWindow` but their answers no
-     * longer count, because the tally and the collected body reads are
-     * both cleared here — so only responses to requests that BOTH started
-     * as POSTs and answer after this point contribute.
+     * Only responses to POSTs that START after this point can contribute:
+     * the generation bump orphans everything already in flight.
      */
     reset() {
+      generation++;
       answered = 0;
       bodyReads.length = 0;
     },

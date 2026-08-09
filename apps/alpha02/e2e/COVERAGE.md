@@ -277,6 +277,12 @@ Which failures are preconditions, driver by driver:
   assertion's reads go out still reports FAIL), and counting only JSON-RPC
   `result` (a 200 carrying an `error` still proves the endpoint answered,
   and for a revert-driven assertion that error IS the expected result).
+  A third, subtler one: window membership has to be stamped when the
+  REQUEST starts, because clearing the tally on reset does nothing about a
+  stale request whose response lands afterwards and increments it again.
+  All three are pinned by `e2e/live/watchPageRpc.test.mjs` — this helper
+  was wrong three times, each time in a way that read as correct, so it is
+  unit-tested rather than trusted.
 - **Cleanup capacity, for any drive that publishes something fillable** —
   reserved BEFORE the mutation, not discovered after it. A gasless post
   costs the maker no ETH, so vault funding alone does not prove the
