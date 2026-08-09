@@ -182,7 +182,11 @@ risk premiums, #394) that price the offers they post on a user's behalf.
   on an EOA).
 - **On-chain deviation cap (anti-rate-setting guarantee).**
   `setRateModelMaxDeviationBps(uint16)` / `getRateModelMaxDeviationBps()` —
-  default `500` (5%), range `[50, 2500]` (0.5%–25%). The resolver **clamps**
+  default `500` (5%), range `[50, 2500]` (0.5%–25%), **plus `0` as an
+  explicit reset** — the setter range-checks only nonzero values, and a
+  stored `0` resolves to the 500-bps library default. That is the
+  supported rollback: to undo a retune, write `0` rather than trying to
+  re-type the default. The resolver **clamps**
   the model's output to `±maxDeviation` of the caller's reference (market)
   rate, so a registered model — even buggy or adversarial — can only nudge the
   rate around the market anchor, never drive an automated offer far off-market
@@ -824,8 +828,12 @@ specific cross-chain lane.
 
 ### CCIP messenger registry (chain selectors, remote messengers, channel peers)
 
-Three owner-set maps on each chain's `CcipMessenger`, all
-address-or-identifier only, no numeric ranges:
+Four owner-set maps on each chain's `CcipMessenger`, all
+address-or-identifier only, no numeric ranges. All four are required:
+a lane with a selector and a peer but no registered channel is not
+half-configured, it is unusable, because `sendMessage` and
+`quoteMessageFee` reject a caller absent from the channel map and
+inbound delivery rejects a missing handler as `UnknownChannel`.
 
 - **chain id ↔ CCIP chain selector** (`setChainSelector`) — the
   translation point the design mandates: domain contracts pass a plain
@@ -835,12 +843,28 @@ address-or-identifier only, no numeric ranges:
 - **remote messenger per chain** (`setRemoteMessenger`) — outbound, the
   CCIP message receiver; inbound, the allowlisted sender. Zero means no
   peer.
+- **channel registration** (`registerChannel`) — binds a channelId to
+  the local domain contract that handles its inbound messages, in both
+  directions. Without it that contract cannot send and cannot receive.
 - **channel peer per (channel, remote chain)** (`setChannelPeer`) — the
-  counterpart domain contract, surfaced to the local handler as the
-  inbound sender for its own equality check.
+  counterpart domain contract on the remote chain, passed to the local
+  handler as the inbound `sourceSender`.
 
-A mismatch surfaces as an undelivered or rejected message, not as a
-runtime exploit path. Note that CCIP's transport security is operated by
+  **Read what this does and does not authenticate.** The messenger
+  checks only that the peer is set (a zero entry rejects the message);
+  it does not compare the CCIP sender against it. And no handler
+  shipping today compares it either — `VaipakamRewardMessenger`,
+  `RewardRemittanceReceiver`, `BuybackRemittanceReceiver` and
+  `VpfiReturnReceiver` all ignore the argument, the remittance receivers
+  binding deployment identity from the payload instead. So a peer set to
+  the WRONG non-zero address is not caught here. The authentication that
+  does hold is one layer up: `CcipMessenger` allowlists the source
+  messenger per chain (`setRemoteMessenger`) and the router's own
+  sender check. Treat the peer map as routing metadata, not as a
+  forgery guard.
+
+A misconfigured selector, remote messenger or channel registration
+surfaces as an undelivered or rejected message. Note that CCIP's transport security is operated by
 Chainlink — a committing DON, an executing DON, and an independent Risk
 Management Network — and is uniform for every integrator. There is no
 verifier fleet to select or configure here, so there is no insecure
@@ -956,7 +980,7 @@ decoder already handles every typed inner error
 (`RefinanceCapsRequired`, `SanctionedAddress`, etc.). Codex
 review on PR #542 caught the wrapper-error misdesign in the first
 attempt; PR #553 (the design-doc-first re-attempt under
-[`docs/DesignsAndPlans/T092AtomicAcceptAndRefinance.md`](../DesignsAndPlans/T092AtomicAcceptAndRefinance.md))
+[`docs/DesignsAndPlans/T092AtomicAcceptAndRefinance.md`](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/T092AtomicAcceptAndRefinance.md))
 shipped without further findings.
 
 **Reentrancy:** `refinanceLoanFromAccept` is `onlyDiamondInternal`
@@ -991,9 +1015,11 @@ Master flag for the in-place loan extension.
 The three flags are independent. Flipping `cfgAutoLendEnabled` off
 does NOT disable `cfgAutoExtendEnabled` — users with both-side
 extend caps set continue to benefit from the auto-extend pass even
-while auto-lend is paused. Each flag's `Set` event is indexed by
-the new value so an indexer can reconstruct the flip history
-without a state migration.
+while auto-lend is paused. Each flag emits a `Set` event carrying the
+new value, so the flip history is reconstructible from the logs without
+a state migration — but the parameter is NOT `indexed`
+(`event AutoLendEnabledSet(bool enabled)`), so a consumer must fetch the
+events and decode them; it cannot filter by value at the RPC.
 
 ### Recommended operational mode
 
@@ -1043,14 +1069,30 @@ after handover — the same posture as the #399 backstop switches.
   (`AggregatorAdapterImplementation`). Position owners can **always** still
   act on their own positions directly, and ordinary **permissionless**
   liquidation stays open — only delegated keepers are frozen.
+- **What `true` does NOT block — read this before relying on it in an
+  incident.** The flag is consulted in `LibAuth` and at the sites listed
+  above; it is not a global gate on everything a `KEEPER_ROLE` holder
+  can call. `RewardCommitmentFacet.submitCommitmentBatch` is
+  `onlyRole(KEEPER_ROLE)` with no keeper-pause check, and it is the
+  entry point the production keeper's commitment-report pass uses. A
+  compromised key can therefore keep submitting — or grief — reward
+  commitments while the console shows keepers paused, which can delay
+  remittance until someone resets the accumulation. **On a key
+  compromise, pausing is not sufficient: revoke `KEEPER_ROLE` from the
+  compromised address as part of the same action.**
 - **When to flip on:** a keeper-key compromise or a misbehaving bot fleet
   (mass mis-priced auto-actions). It is the broad incident lever; the
-  per-user keeper revoke is the narrow one.
+  per-user keeper revoke is the narrow one. Note the caveat above — for a
+  compromise the two are used together, not as alternatives.
 
 ### `aggregatorAdaptersPaused` — external yield-aggregator pause
 
-- **Getter:** `LibVaipakam.cfgAggregatorAdaptersPaused()` (read on-chain;
-  surfaced in the Protocol Console).
+- **Getter:** none on the ABI. `LibVaipakam.cfgAggregatorAdaptersPaused()`
+  is an `internal` library read, so it is not callable from outside the
+  Diamond and does not appear in the Protocol Console — the facet
+  exposes the setter only. To confirm the live state, read the
+  `AggregatorAdaptersPausedSet` event or the storage slot directly.
+  (An external getter would be the better fix; tracked separately.)
 - **Setter:** `AdminFacet.setAggregatorAdaptersPaused(bool value)` → emits
   `AggregatorAdaptersPausedSet`.
 - **What `true` blocks:** onboarding a new aggregator
@@ -1064,7 +1106,9 @@ after handover — the same posture as the #399 backstop switches.
 
 ### `peerLtvReadsPaused` — peer-protocol data-read pause
 
-- **Getter:** `LibVaipakam.cfgPeerLtvReadsPaused()`.
+- **Getter:** none on the ABI — `LibVaipakam.cfgPeerLtvReadsPaused()` is
+  an `internal` library read, same as the aggregator flag above. Confirm
+  the live state from `PeerLtvReadsPausedSet`.
 - **Setter:** `AdminFacet.setPeerLtvReadsPaused(bool value)` → emits
   `PeerLtvReadsPausedSet`. The setter also **invalidates the tier-LTV
   cache** (zeroes `tierLtvCache[t].lastRefreshedAt` for every tier) on
@@ -1072,10 +1116,15 @@ after handover — the same posture as the #399 backstop switches.
   cached reading.
 - **What `true` blocks:** the optional reads of peer lending protocols used
   to refine the depth-tiered collateral limits. While paused,
-  `effectiveTierMaxInitLtvBps` falls back to the **governance-set cap**
-  (`cfgTierMaxInitLtvBps`) — never the library default — so a compromised
-  external data source can't influence risk parameters, and unpausing can
-  never transiently widen a tier below the governance cap.
+  `effectiveTierMaxInitLtvBps` falls back to `cfgTierMaxInitLtvBps`, so a
+  compromised external data source cannot influence risk parameters.
+
+  **That fallback is the governance-set cap only where governance has
+  set one.** `cfgTier{1,2,3}MaxInitLtvBps` treat a stored `0` as "use the
+  library default" (50% / 60% / 65%), so on a fresh or partly-configured
+  deployment pausing falls back to the library value, not to an operator
+  decision. Before relying on this switch as a containment measure,
+  verify each tier cap is a nonzero override.
 - **When to flip on:** a peer protocol's on-chain LTV reads look
   manipulated or unreliable.
 
