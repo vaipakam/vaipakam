@@ -274,6 +274,73 @@ interface IVaipakamErrors {
     ///         apply another chain's funded figures here).
     error BroadcastDestinationMismatch(uint256 destChainId);
 
+    // ─── #1434 P2-w1 — V3 broadcast + versioned lapse schedule ──────────────
+
+    /// @notice `lapseWindowSeconds` outside the hard-coded `[3 days,
+    ///         30 days]` bounds (design §7).
+    error LapseWindowOutOfBounds(uint64 lapseWindowSeconds);
+    /// @notice `dispatchCutoffGap` outside the hard-coded `[6 hours,
+    ///         7 days]` bounds (design §7).
+    error DispatchCutoffGapOutOfBounds(uint64 dispatchCutoffGap);
+    /// @notice The relational bound `lapseWindowSeconds >= dispatchCutoffGap
+    ///         + 48 hours` failed — such a version would place the dispatch
+    ///         cutoff at (or before) finalization and forbid every
+    ///         compensation for every day frozen under it, unrepairably
+    ///         (frozen parameters are permanent). Refused, never stored.
+    error LapseScheduleMarginViolated(
+        uint64 lapseWindowSeconds, uint64 dispatchCutoffGap
+    );
+    /// @notice {broadcastGlobalTo} on a day with no frozen lapse clock (a
+    ///         day finalized before the P2-w1 upgrade). There is no
+    ///         authentic clock to heal with — such days broadcast on the V2
+    ///         wire via the ordinary {broadcastGlobal}.
+    error DayHasNoLapseClock(uint256 dayId);
+    /// @notice {broadcastGlobalTo}'s destination has no day-scoped
+    ///         historical standing for `dayId` (neither included in its
+    ///         finalized denominator nor holding a chain-day commitments
+    ///         record) — the permissionless heal only re-delivers facts a
+    ///         destination already had a stake in.
+    error DestinationHasNoDayStanding(uint256 dayId, uint256 destChainId);
+    /// @notice {broadcastGlobalTo} needs the kind-10 single-destination
+    ///         send, which this messenger proxy predates. Unlike the full
+    ///         {broadcastGlobal}, the heal cannot fall back to the V2 wire —
+    ///         kind-5 carries no clock, so a fallback would "succeed" while
+    ///         healing nothing.
+    error MessengerPredatesV3();
+    /// @notice A V3 broadcast arrived carrying a zero `finalizedAt`. An
+    ///         honest Base never sends one (clockless days ride the V2
+    ///         wire), so this fails closed as a re-executable CCIP message.
+    error BroadcastClockMissing(uint256 dayId);
+    /// @notice A V3 broadcast named a different Base deployment than the one
+    ///         already recorded for this day (§2h constraint 20 — a delayed
+    ///         broadcast from a retired deployment must never install its
+    ///         clock, schedule or zeroed marker into the new era).
+    error BroadcastEraMismatch(
+        uint256 dayId, address recordedEra, address packetEra
+    );
+    /// @notice A V3 broadcast's `baseDeployment` does not match this
+    ///         mirror's configured CURRENT Base deployment — or that
+    ///         config is unset (`expected == 0`), in which case the V3
+    ///         ingress is deliberately dark (Codex #1632 r1: the per-day
+    ///         era record cannot defend the FIRST install, so the ground
+    ///         truth must be explicit, and fail-closed while unarmed).
+    error BroadcastEraUnauthenticated(
+        uint256 dayId, address expected, address packetEra
+    );
+    /// @notice A LEGACY broadcast (kind-5 / kind-2) attempted a FRESH
+    ///         apply after this mirror rotated Base eras (Codex #1632 r2:
+    ///         legacy packets carry no deployment identity, so a retired
+    ///         era's delayed or manually re-executed delivery is
+    ///         indistinguishable from a legitimate one — after a rotation
+    ///         the only legitimate sender speaks V3, and the legacy wires
+    ///         retire permanently). Replays of already-applied days stay
+    ///         idempotent.
+    error LegacyBroadcastRetired(uint256 dayId);
+    /// @notice A re-delivered V3 broadcast disagreed with the day's already-
+    ///         installed frozen clock facts (finalizedAt / schedule version /
+    ///         inline parameters / zeroed marker).
+    error BroadcastClockDivergence(uint256 dayId);
+
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by
     ///         governance. Exit paths (repay / liquidate / claim / withdraw)

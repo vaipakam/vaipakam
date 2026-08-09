@@ -6191,6 +6191,99 @@ library LibVaipakam {
         //   endpoints); the registry itself is permanent Chainlink
         //   chain infrastructure, the one address that never rotates.
         address repatriationTokenAdminRegistry;
+        // ─── #1434 P2-w1 — V3 broadcast day clock + versioned lapse schedule ─
+        // BOTH SIDES: the day's frozen lapse clock. Base writes it ONCE inside
+        //   `_finalizeAndWrite` (never read live at send — R2a: two sends of
+        //   the same finalized day must carry byte-identical clock facts); a
+        //   mirror installs it only from an authenticated V3 broadcast
+        //   (`RewardReporterFacet.onRewardBroadcastV3Received`), including the
+        //   clock-backfill branch for a day applied via kind-5 before the
+        //   upgrade. `finalizedAt == 0` ⇒ no clock: the day is neither
+        //   lapse-eligible nor priceable as a zeroed day (design §1.1 — both
+        //   P2 machines gate on it), and Base keeps broadcasting such a day on
+        //   the V2 wire (a pre-upgrade-finalized day has no authentic
+        //   finalization timestamp to freeze, and inventing one would forge
+        //   the very evidence the permissionless lapse trusts).
+        mapping(uint256 => DayLapseClock) dayLapseClock;
+        // BASE-ONLY: frozen per-(day, destination) R1 zeroed marker — the
+        //   value of `chainDayCommitments[d][dest].remitIneligible` AT
+        //   finalization. The live flag is operator-clearable
+        //   (`reconcileCommitmentRemitEligibility`), so re-broadcast
+        //   determinism requires this frozen copy: a reconcile between two
+        //   sends of the same day must not change what the wire says.
+        mapping(uint256 => mapping(uint32 => bool)) dayZeroedForDest;
+        // MIRROR-ONLY: this chain's R1 zeroed marker as delivered by the V3
+        //   broadcast (`zeroedForDest` for THIS destination).
+        mapping(uint256 => bool) dayDeliberatelyZeroed;
+        // MIRROR-ONLY: the Base deployment whose V3 broadcast installed this
+        //   day's clock (§2h constraint 20 era binding — the d2 ACK
+        //   precedent). A V3 packet naming a different `baseDeployment` for a
+        //   day with a recorded era is rejected: a delayed broadcast from a
+        //   retired Base deployment must never install its clock, schedule or
+        //   zeroed marker into the new era.
+        mapping(uint256 => address) dayClockEra;
+        // BASE-ONLY: the current lapse-schedule version (R5). 0 = no schedule
+        //   has ever been set; days finalized under version 0 freeze a
+        //   zero-parameter clock and are NOT lapse-eligible (the w4 lapse
+        //   terminals additionally gate on a nonzero frozen version — a zero
+        //   `lapseWindowSeconds` must never read as "lapse immediately").
+        uint32 lapseScheduleCurrentVersion;
+        // BASE-ONLY: version → parameter set. Append-only: a change is a NEW
+        //   version, never an edit in place — a finalized day prices its
+        //   clocks under its frozen `scheduleVersion` forever (the R5 race:
+        //   a later parameter change must not retroactively move an
+        //   already-finalized day's expiry).
+        mapping(uint32 => LapseScheduleParams) lapseSchedules;
+        // MIRROR-ONLY (#1632 r1 P1): the CURRENT Base deployment this
+        //   mirror accepts V3 clock facts from — the explicit era ground
+        //   truth. The per-day `dayClockEra` record alone cannot defend the
+        //   FIRST install: nothing is recorded yet, and the CCIP lane
+        //   authenticates the shared remote MESSENGER, not the Diamond
+        //   generation behind it — so after a Base rotation, a retired
+        //   deployment's in-flight packet would win the race and poison the
+        //   day's era permanently. Zero = V3 ingress is DARK on this mirror
+        //   (fail-closed; packets stay failed-but-re-executable CCIP
+        //   messages until the operator arms this, exactly the repatriation
+        //   endpoint posture). Rotated by the same ceremony that rotates
+        //   the Base deployment.
+        address baseRewardDeployment;
+        // MIRROR-ONLY (#1632 r2): the last NONZERO era ever configured,
+        //   and whether a true era ROTATION has occurred (a second,
+        //   different nonzero value). One-way: once rotated, the LEGACY
+        //   broadcast wires (kind-5 / kind-2) refuse FRESH applies forever
+        //   — those packets carry no deployment identity, so a retired
+        //   era's in-flight or manually re-executed delivery is
+        //   indistinguishable from a legitimate one, and after a rotation
+        //   the only legitimate sender speaks V3. Replays of
+        //   already-applied days stay idempotent. Tracked against the last
+        //   NONZERO value (not the live config) so a disarm/re-arm cycle
+        //   cannot smuggle a rotation past the detector.
+        address rewardEraLastNonzero;
+        bool rewardEraRotated;
+    }
+
+    /// @notice #1434 P2-w1 — one day's frozen lapse clock (design §1.1's
+    ///         `dayFinalizedAt[d]` / `dayLapseScheduleVersion[d]` plus the
+    ///         inline schedule parameters, packed into a single slot).
+    /// @dev    Written once at Base finalization; installed on a mirror only
+    ///         from an authenticated V3 broadcast. The schedule parameters
+    ///         are duplicated INLINE per day (design §1.2 grants the
+    ///         implementer this pick over a mirror-side version table): both
+    ///         sides then derive the same expiry from the same frozen words,
+    ///         with no first-appearance tracking and no cross-packet table
+    ///         consistency to defend. 64+32+64+64 = 224 bits — one slot.
+    struct DayLapseClock {
+        uint64 finalizedAt;
+        uint32 scheduleVersion;
+        uint64 lapseWindowSeconds;
+        uint64 dispatchCutoffGap;
+    }
+
+    /// @notice #1434 P2-w1 (R5) — one lapse-schedule version's parameter
+    ///         pair. Stored under its version number, append-only.
+    struct LapseScheduleParams {
+        uint64 lapseWindowSeconds;
+        uint64 dispatchCutoffGap;
     }
 
     /// @notice #1568 C2 Mode A — one planned-surplus repatriation

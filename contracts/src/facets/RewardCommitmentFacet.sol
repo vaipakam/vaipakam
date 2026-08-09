@@ -335,4 +335,136 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         return LibVaipakam.storageSlot()
             .chainDayCommitments[dayId][chainId].complete;
     }
+
+    // ─── #1434 P2-w1 (R5) — the versioned lapse schedule + day clock ─────────
+    //
+    // Hosted HERE rather than in {RewardAggregatorFacet} (which writes the
+    // per-day freeze at finalization and reads it back at broadcast): the
+    // aggregator sits within ~500 bytes of the EIP-170 ceiling, while this
+    // facet has ~20KB of headroom — and it already owns the day-scoped
+    // operator surface ({reconcileCommitmentRemitEligibility}) whose live
+    // flag the frozen `dayZeroedForDest` copy exists to be compared
+    // against.
+
+    /// @notice Hard bounds on the lapse window (design §7). The window must
+    ///         exceed the reward grace period + lane latency + cross-chain
+    ///         clock skew by a wide margin; 7 days is the proposed default.
+    uint64 internal constant LAPSE_WINDOW_MIN = 3 days;
+    uint64 internal constant LAPSE_WINDOW_MAX = 30 days;
+    /// @notice Hard bounds on the R3 dispatch-cutoff gap (design §7).
+    uint64 internal constant DISPATCH_CUTOFF_GAP_MIN = 6 hours;
+    uint64 internal constant DISPATCH_CUTOFF_GAP_MAX = 7 days;
+    /// @notice The dispatch-opportunity margin: `lapseWindowSeconds >=
+    ///         dispatchCutoffGap + 48 hours`, or the version would place the
+    ///         cutoff at/before finalization and unrepairably forbid every
+    ///         compensation for every day frozen under it (Codex #1600 r1).
+    uint64 internal constant LAPSE_DISPATCH_MARGIN = 48 hours;
+
+    /// @notice #1434 P2-w1 (R5) — emitted once per new lapse-schedule
+    ///         version.
+    /// @custom:event-category informational/reward-governor
+    event LapseScheduleVersionSet(
+        uint32 indexed version,
+        uint64 lapseWindowSeconds,
+        uint64 dispatchCutoffGap
+    );
+
+    /// @notice Create the NEXT lapse-schedule version (R5). Versions are
+    ///         append-only — a parameter change is a new version, never an
+    ///         edit in place, because a finalized day evaluates its clocks
+    ///         under the version frozen at its finalization forever (a later
+    ///         change must not retroactively move an already-finalized
+    ///         day's expiry). Days finalized from this call onward freeze
+    ///         the new version.
+    /// @dev    ADMIN + canonical-only (the schedule is authoritative on
+    ///         Base and rides the V3 broadcast to mirrors — a mirror-local
+    ///         version would be exactly the unauthenticated schedule §2h
+    ///         constraint 13 forbids). Both values are range-bounded and
+    ///         relationally bounded (the `VpfiPoolRateGovernor` refused-
+    ///         never-stored pattern): an out-of-bounds version is refused,
+    ///         so no frozen day can ever carry unrepairable parameters.
+    function setLapseSchedule(
+        uint64 lapseWindowSeconds,
+        uint64 dispatchCutoffGap
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.isCanonicalRewardChain) revert NotCanonicalRewardChain();
+        if (
+            lapseWindowSeconds < LAPSE_WINDOW_MIN
+                || lapseWindowSeconds > LAPSE_WINDOW_MAX
+        ) {
+            revert LapseWindowOutOfBounds(lapseWindowSeconds);
+        }
+        if (
+            dispatchCutoffGap < DISPATCH_CUTOFF_GAP_MIN
+                || dispatchCutoffGap > DISPATCH_CUTOFF_GAP_MAX
+        ) {
+            revert DispatchCutoffGapOutOfBounds(dispatchCutoffGap);
+        }
+        if (lapseWindowSeconds < dispatchCutoffGap + LAPSE_DISPATCH_MARGIN) {
+            revert LapseScheduleMarginViolated(
+                lapseWindowSeconds, dispatchCutoffGap
+            );
+        }
+        uint32 version = s.lapseScheduleCurrentVersion + 1;
+        s.lapseScheduleCurrentVersion = version;
+        s.lapseSchedules[version] = LibVaipakam.LapseScheduleParams({
+            lapseWindowSeconds: lapseWindowSeconds,
+            dispatchCutoffGap: dispatchCutoffGap
+        });
+        emit LapseScheduleVersionSet(
+            version, lapseWindowSeconds, dispatchCutoffGap
+        );
+    }
+
+    /// @notice The current lapse-schedule version (0 = never set).
+    function getCurrentLapseScheduleVersion() external view returns (uint32) {
+        return LibVaipakam.storageSlot().lapseScheduleCurrentVersion;
+    }
+
+    /// @notice One stored lapse-schedule version's parameter pair (both
+    ///         zero for a version that was never created).
+    function getLapseSchedule(uint32 version)
+        external
+        view
+        returns (uint64 lapseWindowSeconds, uint64 dispatchCutoffGap)
+    {
+        LibVaipakam.LapseScheduleParams storage p =
+            LibVaipakam.storageSlot().lapseSchedules[version];
+        return (p.lapseWindowSeconds, p.dispatchCutoffGap);
+    }
+
+    /// @notice #1434 P2-w1 — the day's frozen lapse clock. On Base, written
+    ///         at finalization; on a mirror, installed from an authenticated
+    ///         V3 broadcast. `finalizedAt == 0` ⇒ no clock (the day is
+    ///         neither lapse-eligible nor priceable as a zeroed day).
+    function getDayLapseClock(uint256 dayId)
+        external
+        view
+        returns (
+            uint64 finalizedAt,
+            uint32 scheduleVersion,
+            uint64 lapseWindowSeconds,
+            uint64 dispatchCutoffGap
+        )
+    {
+        LibVaipakam.DayLapseClock storage c =
+            LibVaipakam.storageSlot().dayLapseClock[dayId];
+        return (
+            c.finalizedAt,
+            c.scheduleVersion,
+            c.lapseWindowSeconds,
+            c.dispatchCutoffGap
+        );
+    }
+
+    /// @notice #1434 P2-w1 — the FROZEN per-(day, destination) R1 zeroed
+    ///         marker (what the V3 wire carries; the live `remitIneligible`
+    ///         is operator-clearable and may differ after reconciliation).
+    function getDayZeroedForDest(
+        uint256 dayId,
+        uint32 destChainId
+    ) external view returns (bool) {
+        return LibVaipakam.storageSlot().dayZeroedForDest[dayId][destChainId];
+    }
 }

@@ -2185,11 +2185,18 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](17);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
         s[11] = RewardReporterFacet.onRewardBroadcastV2Received.selector;
+        // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
+        // + the era ground truth (#1632 r1).
+        s[12] = RewardReporterFacet.onRewardBroadcastV3Received.selector;
+        s[13] = RewardReporterFacet.getDayClockEra.selector;
+        s[14] = RewardReporterFacet.getDayDeliberatelyZeroed.selector;
+        s[15] = RewardReporterFacet.setBaseRewardDeployment.selector;
+        s[16] = RewardReporterFacet.getBaseRewardDeployment.selector;
         s[2] = RewardReporterFacet.setRewardMessenger.selector;
         // T-068: `setLocalEid` removed — a chain's own identity is
         // `block.chainid`, no longer a settable endpoint id.
@@ -2210,10 +2217,17 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](10);
+        s = new bytes4[](15);
         s[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
+        // #1434 P2-w1 — the versioned lapse schedule + frozen day-clock
+        // reads (hosted here for EIP-170 headroom; see the facet natspec).
+        s[10] = RewardCommitmentFacet.setLapseSchedule.selector;
+        s[11] = RewardCommitmentFacet.getCurrentLapseScheduleVersion.selector;
+        s[12] = RewardCommitmentFacet.getLapseSchedule.selector;
+        s[13] = RewardCommitmentFacet.getDayLapseClock.selector;
+        s[14] = RewardCommitmentFacet.getDayZeroedForDest.selector;
         s[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         s[2] = RewardCommitmentFacet.isChainDayCommitmentsComplete.selector;
         // #1222 M3 B2-d1 — mirror commitment-report surface.
@@ -2561,7 +2575,13 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](33);
+        // #1434 P2-w1 — the V3 broadcast heal (single-destination). The
+        // lapse-schedule setter + day-clock reads live on
+        // RewardCommitmentFacet (EIP-170: this facet is ~500B from the
+        // ceiling).
+        s[31] = RewardAggregatorFacet.broadcastGlobalTo.selector;
+        s[32] = RewardAggregatorFacet.quoteBroadcastGlobalTo.selector;
         // #1222 M3 B3 — the per-chain mesh ledger reads MOVED here from
         // ConfigFacet (which hit the EIP-170 ceiling); they join the rest of
         // the Base-side finalization records.

@@ -33,6 +33,10 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
 - `finalizedAt` (`uint64`) — Base's `block.timestamp` at
   `_finalizeAndWrite`, **frozen in new per-day storage at finalization**
   (`dayFinalizedAt[dayId]`), never read live at send.
+  *(w1 implementation note: the four frozen scalars — `finalizedAt`,
+  `scheduleVersion` and the two inline parameters — live packed in one
+  per-day slot, `dayLapseClock[dayId]`, on both sides; the doc's
+  per-fact names below map onto its fields.)*
 - `lapseScheduleVersion` (`uint32`) — the version of the lapse-window /
   cutoff-gap parameter set under which this day's clocks are evaluated,
   **frozen per day at finalization** (`dayLapseScheduleVersion[dayId]`).
@@ -52,7 +56,32 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
   compensation ingress (§2.2) accepts a compensation for a day only from
   the remitter matching the day's recorded era, and a V3 packet whose
   `baseDeployment` differs from an already-recorded era for that day is
-  rejected.
+  rejected. *(w1 strengthening, Codex #1632 r1 P1: the recorded-era check
+  alone cannot defend a day's FIRST install — nothing is recorded yet,
+  and the CCIP lane authenticates the shared remote messenger, not the
+  Diamond generation behind it, so a retired deployment's in-flight
+  packet would win the race after a rotation. The mirror therefore holds
+  an explicit ADMIN-set ground truth, `baseRewardDeployment`, that every
+  V3 packet must name; while unset the V3 ingress is dark (fail-closed,
+  packets stay re-executable), and rotation belongs to the same ceremony
+  that rotates the Base deployment. Second strengthening, #1632 r2: the
+  identity-less LEGACY wires are the remaining cross-era channel — a
+  retired era's kind-5 landing around a rotation could create applied
+  state a new-era V3 would then backfill its clock onto. So an armed
+  mirror stamps era PROVENANCE (`dayClockEra`) on every legacy apply,
+  and a true era rotation — a second, different nonzero ground truth —
+  permanently retires the legacy wires' fresh applies
+  (`LegacyBroadcastRetired`; replays stay idempotent). Arming ships in
+  the standard `ConfigureRewardReporter` spell + deploy wrappers (the
+  mainnet wrapper enforces it on the transaction-producing configure
+  phase itself, #1632 r3); the rotation ceremony is recorded in
+  CcipCutoverRunbook §8. Third strengthening, #1632 r3: a rotated
+  mirror also refuses V3 clock facts for days with prior state but
+  UNKNOWN era (applied before arming — the pre-arming inventory), which
+  the ceremony therefore heals BEFORE rotating; and the heal's standing
+  predicate includes the frozen `dayZeroedForDest` marker, so
+  reconciliation clearing the live flag never strands a zeroed
+  destination's heal.)*
 
 **Why frozen-at-finalization is load-bearing (R2a).** A re-broadcast today
 is NOT byte-identical by construction — `broadcastGlobal` reads everything
@@ -131,7 +160,11 @@ schedule copies both halves:
   (implementation may inline the two bounded values per packet instead of a
   side table — 2 words, simpler, no first-appearance tracking; the
   implementer picks, the requirement is only that the day's *applicable
-  parameters* are mirror-known from authenticated Base data).
+  parameters* are mirror-known from authenticated Base data). *(w1 took
+  the inline option: the two bounded values ride every V3 packet and are
+  frozen per day in `dayLapseClock[dayId]`; there is no mirror-side
+  version table. `MSG_TYPE_BROADCAST_V3` landed as kind 10 — kinds 8/9
+  were taken by the #1568 repatriation wire.)*
 
 ### 1.3 R4b — the applicable expiry rides the remit too
 

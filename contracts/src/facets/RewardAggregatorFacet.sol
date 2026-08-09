@@ -562,6 +562,13 @@ contract RewardAggregatorFacet is
                 emit ChainContributionZeroed(dayId, chainId, forced);
                 if (markIneligible && chainId != selfId) {
                     s.chainDayCommitments[dayId][chainId].remitIneligible = true;
+                    // #1434 P2-w1 — FREEZE the R1 zeroed marker for the V3
+                    // broadcast. The live `remitIneligible` flag is operator-
+                    // clearable (reconciliation), so the wire reads this
+                    // frozen copy instead: a reconcile between two sends of
+                    // the same day must not change what the broadcast says
+                    // (R2a re-broadcast determinism).
+                    s.dayZeroedForDest[dayId][chainId] = true;
                     emit CommitmentRemitIneligible(dayId, chainId);
                 }
                 unchecked {
@@ -583,6 +590,24 @@ contract RewardAggregatorFacet is
         s.knownGlobalLenderInterestNumeraire18[dayId] = globalLender;
         s.knownGlobalBorrowerInterestNumeraire18[dayId] = globalBorrower;
         s.knownGlobalSet[dayId] = true;
+
+        // #1434 P2-w1 — freeze the day's lapse clock ONCE, here, under the
+        // schedule version current at this moment. Every V3 broadcast of
+        // this day reads these frozen words back (never live state), so two
+        // sends of the same finalized day are byte-identical by construction
+        // (R2a). Version 0 (no schedule ever set) freezes a zero-parameter
+        // clock: the day carries an authentic `finalizedAt` but is NOT
+        // lapse-eligible — the w4 terminals gate on a nonzero frozen
+        // version, so a zero window can never read as "lapse immediately".
+        uint32 lapseVer = s.lapseScheduleCurrentVersion;
+        LibVaipakam.LapseScheduleParams storage lapseParams =
+            s.lapseSchedules[lapseVer];
+        s.dayLapseClock[dayId] = LibVaipakam.DayLapseClock({
+            finalizedAt: uint64(block.timestamp),
+            scheduleVersion: lapseVer,
+            lapseWindowSeconds: lapseParams.lapseWindowSeconds,
+            dispatchCutoffGap: lapseParams.dispatchCutoffGap
+        });
 
         // #1008 (S13, Option B) — snapshot the §4 daily-cap threshold at
         // finalization from Base's ETH feed + the effective cap ratio. This is
@@ -1442,14 +1467,18 @@ contract RewardAggregatorFacet is
         address messenger = s.rewardMessenger;
         if (messenger == address(0)) revert RewardMessengerNotSet();
 
-        // #1222 M3 B2-b — per-destination V2 assembly. The destination
-        // list getter exists on every messenger generation; the V2 SEND is
-        // the capability boundary: a pre-B2-b messenger proxy has no such
-        // selector and reverts EMPTY, in which case the facet falls back
-        // to the legacy kind-2 send (same shim shape as closeDay's B1
-        // report fallback). A reasoned revert is a real failure and
-        // bubbles.
-        _broadcastDayV2(
+        // #1434 P2-w1 — three-step send ladder: V3 (kind-10, the frozen
+        // day-clock facts) → V2 (kind-5) → legacy (kind-2). Each step falls
+        // through ONLY on an empty revert (= missing selector on an older
+        // messenger proxy — the established capability probe); a reasoned
+        // revert is a real failure and bubbles. A day finalized BEFORE this
+        // upgrade has no frozen clock (`dayLapseClock[dayId].finalizedAt ==
+        // 0`) and is broadcast on the V2 wire permanently: there is no
+        // authentic finalization timestamp to send, and a zero-clock V3
+        // would fail closed at the mirror ingress as a PERMANENTLY failed
+        // CCIP message — the V2 fallback is what keeps pre-upgrade days
+        // broadcastable at all.
+        _broadcastDayV3(
             s,
             dayId,
             messenger,
@@ -1480,6 +1509,24 @@ contract RewardAggregatorFacet is
         ) = _assembleDayV2(
             s, dayId, IRewardMessenger(messenger).getBroadcastDestinations()
         );
+        // #1434 P2-w1 — quote the V3 shape iff the send path would send it:
+        // the day carries a frozen clock AND the messenger has the V3
+        // selector. The exact mirror of the send-side ladder, so the
+        // permissionless trigger's quote can never price a different wire
+        // generation than the send dispatches.
+        if (s.dayLapseClock[dayId].finalizedAt != 0) {
+            try IRewardMessenger(messenger).quoteBroadcastDayV3(
+                shared, _dayExtras(s, dayId), _toV3PerDest(s, dayId, perDest)
+            ) returns (uint256 f3) {
+                return f3;
+            } catch (bytes memory reason) {
+                if (reason.length != 0) {
+                    assembly ("memory-safe") {
+                        revert(add(reason, 0x20), mload(reason))
+                    }
+                }
+            }
+        }
         try IRewardMessenger(messenger).quoteBroadcastDayV2(shared, perDest)
         returns (uint256 f) {
             return f;
@@ -1498,6 +1545,137 @@ contract RewardAggregatorFacet is
             s.dailyGlobalBorrowerInterestNumeraire18[dayId]
         );
     }
+
+    /// @notice #1434 P2-w1 — the single-destination V3 heal: re-deliver day
+    ///         `dayId`'s frozen clock facts (plus the full V2 figures) to
+    ///         ONE destination. Permissionless and repeatable, exactly like
+    ///         {broadcastGlobal} — the payload is assembled from the same
+    ///         frozen state, so a re-send is byte-identical and the mirror
+    ///         ingress is idempotent.
+    /// @dev    Exists because {broadcastGlobal} enumerates the messenger's
+    ///         CURRENT destination list: a mirror removed from that list
+    ///         after its kind-5 apply could otherwise never receive its V3
+    ///         clock backfill (design §1.1). Admission is day-scoped
+    ///         historical standing — included in the day's finalized
+    ///         denominator, or holding any chain-day commitments record
+    ///         (complete report, remit-ineligible marking, or a reported
+    ///         liability) — NOT current-list membership. A chain with
+    ///         neither has no stake in the day and cannot be used to spray
+    ///         arbitrary lanes. If the LANE itself is torn down, the
+    ///         underlying CCIP messenger reverts — the operator
+    ///         decommissioning boundary stated in the design.
+    /// @param dayId       The finalized day to heal.
+    /// @param destChainId The destination chain (uint32-bounded).
+    function broadcastGlobalTo(
+        uint256 dayId,
+        uint256 destChainId
+    ) external payable nonReentrant whenNotPaused onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.dailyGlobalFinalized[dayId]) revert DayNotReadyToFinalize();
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
+        if (s.dayLapseClock[dayId].finalizedAt == 0) {
+            revert DayHasNoLapseClock(dayId);
+        }
+        _assertDayStanding(s, dayId, destChainId);
+
+        uint256[] memory one = new uint256[](1);
+        one[0] = destChainId;
+        (
+            IRewardMessenger.BroadcastV2Shared memory shared,
+            IRewardMessenger.BroadcastV2PerDest[] memory perDest
+        ) = _assembleDayV2(s, dayId, one);
+
+        try IRewardMessenger(messenger).broadcastDayV3Single{
+            value: msg.value
+        }(
+            shared,
+            _dayExtras(s, dayId),
+            _toV3PerDest(s, dayId, perDest)[0],
+            payable(msg.sender)
+        ) returns (bytes32) {} catch (bytes memory reason) {
+            if (reason.length != 0) {
+                assembly ("memory-safe") {
+                    revert(add(reason, 0x20), mload(reason))
+                }
+            }
+            revert MessengerPredatesV3();
+        }
+    }
+
+    /// @notice #1434 P2-w1 — quote the fee {broadcastGlobalTo} will pay.
+    ///         Same admission checks as the send, so quoting a
+    ///         non-admissible heal fails the same way the send would.
+    function quoteBroadcastGlobalTo(
+        uint256 dayId,
+        uint256 destChainId
+    ) external view returns (uint256 nativeFee) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.dailyGlobalFinalized[dayId]) revert DayNotReadyToFinalize();
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
+        if (s.dayLapseClock[dayId].finalizedAt == 0) {
+            revert DayHasNoLapseClock(dayId);
+        }
+        _assertDayStanding(s, dayId, destChainId);
+
+        uint256[] memory one = new uint256[](1);
+        one[0] = destChainId;
+        (
+            IRewardMessenger.BroadcastV2Shared memory shared,
+            IRewardMessenger.BroadcastV2PerDest[] memory perDest
+        ) = _assembleDayV2(s, dayId, one);
+
+        try IRewardMessenger(messenger).quoteBroadcastDayV3Single(
+            shared, _dayExtras(s, dayId), _toV3PerDest(s, dayId, perDest)[0]
+        ) returns (uint256 f) {
+            return f;
+        } catch (bytes memory reason) {
+            if (reason.length != 0) {
+                assembly ("memory-safe") {
+                    revert(add(reason, 0x20), mload(reason))
+                }
+            }
+            revert MessengerPredatesV3();
+        }
+    }
+
+    /// @dev #1434 P2-w1 — the heal's admission gate: day-scoped historical
+    ///      standing. A destination wider than uint32 can hold no standing
+    ///      (every per-chain ledger is keyed uint32), so it fails here too.
+    ///      Own frame for viaIR stack headroom.
+    function _assertDayStanding(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 destChainId
+    ) private view {
+        if (destChainId <= type(uint32).max && destChainId != block.chainid) {
+            uint32 dest = uint32(destChainId);
+            LibVaipakam.ChainDayCommitments storage c =
+                s.chainDayCommitments[dayId][dest];
+            // Codex #1632 r3 P1 — the FROZEN zeroed marker is part of the
+            // standing predicate: `remitIneligible` is operator-clearable
+            // (reconciliation), so a zeroed destination that was reconciled
+            // and then removed from the destination list would otherwise
+            // lose its heal eligibility — the exact chain the heal exists
+            // for. The frozen copy never clears, so standing survives.
+            if (
+                s.chainDailyIncluded[dayId][dest] || c.complete
+                    || c.remitIneligible || c.liabilityLender18 != 0
+                    || c.liabilityBorrower18 != 0
+                    || s.dayZeroedForDest[dayId][dest]
+            ) {
+                return;
+            }
+        }
+        revert DestinationHasNoDayStanding(dayId, destChainId);
+    }
+
+    // #1434 P2-w1 — the versioned lapse-schedule setter and the day-clock
+    // read views live in {RewardCommitmentFacet}, NOT here: this facet sits
+    // ~500 bytes under the EIP-170 ceiling and the commitment facet (which
+    // already owns the day-scoped reconciliation surface the frozen zeroed
+    // marker exists to be compared against) has ~20KB of headroom.
 
     /// @dev B2-b — assemble the kind-5 per-destination broadcast: the
     ///      day-shared consensus fields once, each destination's OWN funded
@@ -1577,6 +1755,82 @@ contract RewardAggregatorFacet is
             }
             _broadcastLegacy(s, dayId, messenger);
         }
+    }
+
+    /// @dev #1434 P2-w1 — the V3 ladder head: assemble the SAME V2 fields
+    ///      the kind-5 wire would carry, append the day's frozen clock facts,
+    ///      and try the kind-10 send; fall through to {_broadcastDayV2} on
+    ///      an empty revert (pre-V3 messenger proxy — the established
+    ///      missing-selector probe; the failed call returned the full
+    ///      msg.value, so the V2 send re-forwards it) or when the day has no
+    ///      frozen clock (finalized before this upgrade — see
+    ///      {broadcastGlobal}). Reasoned reverts bubble.
+    function _broadcastDayV3(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        address messenger,
+        uint256[] memory dests
+    ) private {
+        if (s.dayLapseClock[dayId].finalizedAt == 0) {
+            _broadcastDayV2(s, dayId, messenger, dests);
+            return;
+        }
+        (
+            IRewardMessenger.BroadcastV2Shared memory shared,
+            IRewardMessenger.BroadcastV2PerDest[] memory perDest
+        ) = _assembleDayV2(s, dayId, dests);
+
+        try IRewardMessenger(messenger).broadcastDayV3{value: msg.value}(
+            shared,
+            _dayExtras(s, dayId),
+            _toV3PerDest(s, dayId, perDest),
+            payable(msg.sender)
+        ) {} catch (bytes memory reason) {
+            if (reason.length != 0) {
+                assembly ("memory-safe") {
+                    revert(add(reason, 0x20), mload(reason))
+                }
+            }
+            _broadcastDayV2(s, dayId, messenger, dests);
+        }
+    }
+
+    /// @dev #1434 P2-w1 — the day's frozen clock facts, read back verbatim
+    ///      from the finalization-time freeze (never recomputed — R2a).
+    function _dayExtras(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) private view returns (IRewardMessenger.BroadcastV3Extras memory) {
+        LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
+        return IRewardMessenger.BroadcastV3Extras({
+            finalizedAt: c.finalizedAt,
+            lapseScheduleVersion: c.scheduleVersion,
+            lapseWindowSeconds: c.lapseWindowSeconds,
+            dispatchCutoffGap: c.dispatchCutoffGap
+        });
+    }
+
+    /// @dev #1434 P2-w1 — wrap the assembled V2 per-destination entries with
+    ///      each destination's FROZEN zeroed marker (never the live
+    ///      `remitIneligible`, which reconciliation can clear between two
+    ///      sends of the same day).
+    function _toV3PerDest(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        IRewardMessenger.BroadcastV2PerDest[] memory perDest
+    ) private view returns (IRewardMessenger.BroadcastV3PerDest[] memory) {
+        uint256 n = perDest.length;
+        IRewardMessenger.BroadcastV3PerDest[] memory v3 =
+            new IRewardMessenger.BroadcastV3PerDest[](n);
+        for (uint256 i; i < n; ++i) {
+            v3[i] = IRewardMessenger.BroadcastV3PerDest({
+                base: perDest[i],
+                zeroedForDest: s.dayZeroedForDest[dayId][
+                    uint32(perDest[i].destChainId)
+                ]
+            });
+        }
+        return v3;
     }
 
     /// @dev One destination's V2 fields (own frame — viaIR stack headroom).

@@ -1152,6 +1152,17 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().rewardEntries[id].forfeited = true;
     }
 
+    /// @notice #1434 P2-w1 test-only — erase a day's frozen lapse clock,
+    ///         reproducing a day that was FINALIZED before the P2-w1
+    ///         upgrade (production writes the clock unconditionally at
+    ///         `_finalizeAndWrite`, so the pre-upgrade shape is otherwise
+    ///         unreachable in a fresh test deployment). Drives the
+    ///         V2-wire-fallback and `DayHasNoLapseClock` heal-refusal
+    ///         paths.
+    function clearDayLapseClockRaw(uint256 dayId) external {
+        delete LibVaipakam.storageSlot().dayLapseClock[dayId];
+    }
+
     /// @notice #1008 (S13) — seed the per-day §4 cap threshold `T_d` directly
     ///         (production snapshots it at finalization from the ETH feed +
     ///         effective cap ratio). `type(uint256).max` = cap disabled that
