@@ -1,4 +1,4 @@
-## Thread — P2-w1: the V3 broadcast carries the day's frozen lapse clock (PR #TBD)
+## Thread — P2-w1: the V3 broadcast carries the day's frozen lapse clock (PR #1632)
 
 First build slice of the #1434 P2 zeroed-day lapse mechanisms (design
 record: Vpfi1434P2ZeroedDayMechanismsDesign.md §1.1/§1.2, slice 1 of §8).
