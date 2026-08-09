@@ -28,10 +28,13 @@ The cross-chain description was rewritten rather than renamed. The published cop
 had already been half-corrected: the headings named the current provider while
 the text beneath still described the old one's peer mesh and its verifier policy,
 and the chain identifiers were still described using the old provider's numbering
-scheme. It now describes what is actually configured — the three address maps on
-each chain's messenger — and says plainly that transport security is operated by
-the provider and uniform for every integrator, so there is no verifier selection
-to get wrong.
+scheme. It now describes what is actually configured — the four owner-set maps on each
+chain's messenger, including the channel registration a lane cannot work without
+— and says plainly that transport security is operated by the provider and
+uniform for every integrator, so there is no verifier selection to get wrong.
+It also stops presenting the peer map as a forgery guard: no handler shipping
+today checks the sender against it, and the description now names the boundary
+that does hold.
 
 ### And a check so the two cannot drift apart again
 

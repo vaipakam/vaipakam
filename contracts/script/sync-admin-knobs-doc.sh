@@ -48,9 +48,15 @@ fi
 # copying would destroy work that exists nowhere else. Git can tell the
 # two apart, because a hand-edited mirror is dirty against HEAD while a
 # mirror merely awaiting a sync is not.
+# BOTH comparisons are needed. A bare `git diff` compares the worktree
+# against the INDEX, so an edit that has been `git add`-ed looks clean —
+# the `cp` would then overwrite the worktree while the divergent bytes
+# sat staged, and a plain `git commit` would commit them with the script
+# reporting success (#1624 review r2). `--cached` catches that half.
 MIRROR_DIRTY=0
 if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-  if ! git -C "$REPO_ROOT" diff --quiet -- "$DST" 2>/dev/null; then
+  if ! git -C "$REPO_ROOT" diff --quiet -- "$DST" 2>/dev/null \
+    || ! git -C "$REPO_ROOT" diff --cached --quiet -- "$DST" 2>/dev/null; then
     MIRROR_DIRTY=1
   fi
 fi
@@ -68,6 +74,7 @@ if [ "$MIRROR_DIRTY" = "1" ]; then
     # advice below — leaving the operator with a truncated refusal and
     # exit 141. Caught by testing the refusal path rather than reading it.
     { git -C "$REPO_ROOT" diff -- "$DST" | head -40; } || true
+    { git -C "$REPO_ROOT" diff --cached -- "$DST" | head -40; } || true
     echo
     echo "Copying now would DISCARD whatever the mirror holds. That is how"
     echo "these two swapped roles in the first place: edits landed on the"

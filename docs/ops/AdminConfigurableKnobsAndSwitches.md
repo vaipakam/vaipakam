@@ -146,9 +146,19 @@ Three properties keep it safe:
 - **Prospective only.** Each loan snapshots the floor it was admitted under
   (`Loan.minHealthFactorAtInit`) plus the effective init-LTV cap
   (`Loan.initLtvCapBpsAtInit`); every post-admission check (collateral
-  withdrawal, fallback-cure, partial-repay / swap-to-repay guards, refinance)
+  withdrawal, fallback-cure, refinance)
   reads that snapshot, so a retune never retroactively loosens *or* tightens
   an open position's buffer.
+
+  **Two guards deliberately do NOT read it.** `RepayFacet.repayPartial`
+  and the partial swap-to-repay path enforce MONOTONICITY instead —
+  `hfAfter < hfBefore` reverts `PartialRepayWorsensHealthFactor`, with no
+  comparison against `minHealthFactorAtInit`. So a borrower already below
+  their admission floor may partially repay, improving health while
+  staying under that floor. That is intentional: refusing a repayment
+  that makes a distressed position safer would be perverse. Do not read
+  the snapshot as a floor every post-admission action re-asserts — for
+  these two it is a direction, not a level.
 - **Branch-aware.** The dial moves only the non-tiered admission floor. The
   depth-tiered regime keeps its `1.0` not-born-liquidatable floor, and the
   liquidation trigger (`HF < 1.0`) is untouched in both regimes — so because
@@ -191,8 +201,19 @@ risk premiums, #394) that price the offers they post on a user's behalf.
   rate, so a registered model — even buggy or adversarial — can only nudge the
   rate around the market anchor, never drive an automated offer far off-market
   (instant-loss-fill if too low, idle capital if too high). This is enforced in
-  the substrate (`OfferCreateFacet.quoteOfferRateBps`) so every consumer
-  inherits it, not trusted to each caller.
+  the resolver (`OfferCreateFacet.quoteOfferRateBps`).
+
+  **The resolver is a DORMANT opt-in quote, not a substrate every offer
+  passes through — read this before registering a model.** A rate a human
+  types is binding and is never transformed; the manual create path does
+  not call the model at all. The quote exists for dApp guidance and for
+  automated pricing (#393 auto-lend / auto-roll / keeper-posted intents,
+  #394 risk premiums), and those callers are expected to pass the quote
+  result in as the offer rate *themselves*. Today there is no such
+  caller: outside its own definition, `quoteOfferRateBps` is invoked
+  only by `RateModelTest`. So registering a model and tightening the
+  deviation cap currently constrains nothing in production — the clamp
+  binds whoever calls the quote, and nobody does yet.
 - **E2-safe.** A model only ever sets the value written into a *new* offer; a
   matched / live loan's rate is snapshotted immutably at init and never
   re-priced.
@@ -452,7 +473,14 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
   error names changed, so a consumer reading the old ABI fails loudly
   rather than silently.
 - **`baseChainId`** — the plain EVM chain id of the canonical reward
-  chain, zero on Base itself. Note this is a chain id, NOT a CCIP chain
+  chain. **Expect `8453` everywhere on mainnet, Base included** — the
+  deploy exports it unconditionally ("whether this chain is the
+  canonical itself or a mirror") and `ConfigureRewardReporter` writes
+  it, so an audit reading `8453` on Base is reading a correctly
+  configured Diamond, not drift. (The struct comment in `LibVaipakam`
+  still says "zero on Base itself", describing a field the canonical
+  chain does not consult rather than the value it is given.) Note this
+  is a chain id, NOT a CCIP chain
   selector: since T-068 the reward flow identifies chains by
   `block.chainid` and leaves selector translation to the messenger. The
   old per-chain endpoint-id slot survives only as
