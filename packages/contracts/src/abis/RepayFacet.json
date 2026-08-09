@@ -691,6 +691,17 @@
   },
   {
     "type": "error",
+    "name": "CompQuoteMirrorEraUnset",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CompensationDayHasNoClock",
     "inputs": [
       {

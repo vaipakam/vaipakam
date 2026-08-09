@@ -427,6 +427,12 @@ interface IVaipakamErrors {
         address boundEra,
         address arrivedEra
     );
+    /// @notice #1434 P2-w3 (#1636 r2) — the quote ingress is FAIL-CLOSED
+    ///         until the operator registers the sending chain's current
+    ///         mirror Diamond: without a configured ground truth, a
+    ///         delayed retired-era wire could be the FIRST arrival and
+    ///         bind (or zero-clear) the day unchallenged.
+    error CompQuoteMirrorEraUnset(uint32 chainId);
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by

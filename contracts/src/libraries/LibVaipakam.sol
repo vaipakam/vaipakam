@@ -6315,6 +6315,17 @@ library LibVaipakam {
         //   becomes evidence-bounded). Overwritable while the day is
         //   unfunded; frozen once `dayClosedByRemitId` marks it funded.
         mapping(uint256 => mapping(uint32 => CompQuote)) compQuote;
+        // BASE-ONLY (#1636 r2) — the configured CURRENT mirror Diamond per
+        //   chain: the quote ingress's era ground truth, the reciprocal of
+        //   the mirror-side `baseRewardDeployment`. FAIL-CLOSED: while
+        //   unset for a chain, that chain's quotes are refused (a failed,
+        //   re-executable CCIP message) — so a delayed retired-era wire
+        //   can never be the FIRST arrival that binds the standing quote
+        //   or spuriously clears a day's manual-funding anchor. Updated by
+        //   the operator as part of the mirror-rotation ceremony
+        //   (CcipCutoverRunbook §8), alongside {clearCompQuote} for any
+        //   quote standing under the retired era.
+        mapping(uint32 => address) mirrorRewardDeployment;
     }
 
     /// @notice #1434 P2-w3 — one chain-day's standing compensation quote on

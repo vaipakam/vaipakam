@@ -416,7 +416,9 @@ contract MeshBusMessenger is IRewardMessenger {
             lapseWindowSeconds: extras.lapseWindowSeconds,
             dispatchCutoffGap: extras.dispatchCutoffGap,
             zeroedForDest: d.zeroedForDest,
-            baseDeployment: baseDiamond
+            baseDeployment: baseDiamond,
+            dayScheduleFloorHalf: extras.dayScheduleFloorHalf,
+            dayRecycledBudgetHalf: extras.dayRecycledBudgetHalf
         }));
     }
 

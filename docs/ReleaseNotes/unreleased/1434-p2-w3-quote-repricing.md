@@ -14,7 +14,11 @@ without the per-user ceiling by design — while each payment still
 applies its own path's ceilings; an admin reset valve recovers a day
 whose permissionless accumulation was mis-ordered, and a day whose
 frozen pool figures have not arrived refuses to quote rather than
-wrongly resolving to zero. The quote travels to the canonical chain on its own wire
+wrongly resolving to zero. The day-level funded pool figure now
+travels to every mirror on the day's own broadcast — a zeroed chain's
+own funding slice is deliberately zero, so the day-level figure is the
+only faithful pricing input — and a re-send of the broadcast heals any
+day delivered before the figure joined the wire. The quote travels to the canonical chain on its own wire
 kind and lands as evidence, never funding: manual compensation for a
 quoted day is bounded per side by the standing quote, an unquoted day
 cannot be manually funded at all, and a both-sides-zero quote resolves

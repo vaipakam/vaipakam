@@ -2165,7 +2165,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](25);
         selectors[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2192,6 +2192,11 @@ contract HelperTest {
         selectors[21] =
             RewardCommitmentFacet.resetCompQuoteAccumulation.selector;
         selectors[22] = RewardCommitmentFacet.clearCompQuote.selector;
+        // #1636 r2 — the fail-closed mirror-era registry.
+        selectors[23] =
+            RewardCommitmentFacet.setMirrorRewardDeployment.selector;
+        selectors[24] =
+            RewardCommitmentFacet.getMirrorRewardDeployment.selector;
         selectors[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         selectors[2] = RewardCommitmentFacet
             .isChainDayCommitmentsComplete

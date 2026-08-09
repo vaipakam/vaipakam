@@ -2217,7 +2217,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](23);
+        s = new bytes4[](25);
         s[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2240,6 +2240,9 @@ contract DeployDiamond is Script {
         // quote clear.
         s[21] = RewardCommitmentFacet.resetCompQuoteAccumulation.selector;
         s[22] = RewardCommitmentFacet.clearCompQuote.selector;
+        // #1636 r2 — the fail-closed mirror-era registry.
+        s[23] = RewardCommitmentFacet.setMirrorRewardDeployment.selector;
+        s[24] = RewardCommitmentFacet.getMirrorRewardDeployment.selector;
         s[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         s[2] = RewardCommitmentFacet.isChainDayCommitmentsComplete.selector;
         // #1222 M3 B2-d1 — mirror commitment-report surface.

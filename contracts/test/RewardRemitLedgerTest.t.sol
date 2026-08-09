@@ -90,6 +90,12 @@ contract RewardRemitLedgerTest is SetupTest {
         chainIds[2] = CHAIN_OP;
         RewardAggregatorFacet(address(diamond)).setExpectedSourceChainIds(chainIds);
 
+        // #1636 r2 — the quote ingress is FAIL-CLOSED until the mirror era
+        // is registered; the mock stamps itself as the sending diamond.
+        RewardCommitmentFacet(address(diamond)).setMirrorRewardDeployment(
+            CHAIN_ARB, address(rewardMessenger)
+        );
+
         vm.deal(address(this), 10 ether);
         vm.deal(stranger, 10 ether);
     }
@@ -740,25 +746,39 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
     }
 
-    /// @dev #1636 r1 P1 — the standing quote is BOUND to the sending
-    ///      Diamond era: same-era re-delivery refreshes, a divergent era
-    ///      reverts, the ADMIN clear releases a stale binding (mirror
-    ///      redeploy), and a funded day rejects both re-quote and clear.
+    /// @dev #1636 r1+r2 — the full two-layer era lifecycle: the FAIL-CLOSED
+    ///      registry ground truth authenticates every arrival (including
+    ///      the first), the standing-quote binding protects evidence
+    ///      across a registry rotation, the ADMIN clear releases a stale
+    ///      binding, and a funded day rejects both re-quote and clear.
     function test_Quote_EraBindingAndClear() public {
         _finalizeDay(1);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        RewardCommitmentFacet com = RewardCommitmentFacet(address(diamond));
         address eraA = makeAddr("mirrorDiamondA");
         address eraB = makeAddr("mirrorDiamondB");
 
+        // LAYER 1 — registry ground truth. Unset (fail-closed): even a
+        // FIRST arrival is refused, so a delayed retired-era wire can
+        // never bind unchallenged.
+        com.setMirrorRewardDeployment(CHAIN_ARB, address(0));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteMirrorEraUnset.selector, CHAIN_ARB
+            )
+        );
         rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraA);
-        // Same era refreshes (the honest lost-message retry).
-        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 4e18, 2e18, eraA);
-        LibVaipakam.CompQuote memory q =
-            RewardCommitmentFacet(address(diamond)).getCompQuote(1, CHAIN_ARB);
-        assertEq(q.lender18, 4e18, "same-era refresh applied");
-        assertEq(q.era, eraA, "bound to the first era");
 
-        // A divergent era must not overwrite.
+        // Registered era A: A's quote lands; same-era re-delivery
+        // refreshes (the honest lost-message retry).
+        com.setMirrorRewardDeployment(CHAIN_ARB, eraA);
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraA);
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 4e18, 2e18, eraA);
+        LibVaipakam.CompQuote memory q = com.getCompQuote(1, CHAIN_ARB);
+        assertEq(q.lender18, 4e18, "same-era refresh applied");
+        assertEq(q.era, eraA, "bound era recorded");
+
+        // A non-registered era is refused by the ground truth.
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.CompQuoteEraMismatch.selector,
@@ -770,12 +790,23 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 9e18, 9e18, eraB);
 
-        // The ADMIN clear releases the binding; the new era quotes afresh.
-        RewardCommitmentFacet(address(diamond)).clearCompQuote(1, CHAIN_ARB);
-        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
-        assertEq(
-            RewardCommitmentFacet(address(diamond)).getCompQuote(1, CHAIN_ARB).era, eraB, "re-bound"
+        // LAYER 2 — the rotation ceremony: registry moves to B, but the
+        // STANDING quote is still bound to A — B's wire diverges from the
+        // record until the operator clears it deliberately.
+        com.setMirrorRewardDeployment(CHAIN_ARB, eraB);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteEraMismatch.selector,
+                1,
+                CHAIN_ARB,
+                eraA,
+                eraB
+            )
         );
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
+        com.clearCompQuote(1, CHAIN_ARB);
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
+        assertEq(com.getCompQuote(1, CHAIN_ARB).era, eraB, "re-bound");
 
         // Fund the day — both re-quote and clear are now rejected: the
         // quote standing at dispatch is the receipt-bound obligation.
@@ -795,7 +826,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 CHAIN_ARB
             )
         );
-        RewardCommitmentFacet(address(diamond)).clearCompQuote(1, CHAIN_ARB);
+        com.clearCompQuote(1, CHAIN_ARB);
     }
 
     /// @dev #1634 r2 — a clockless day cannot dispatch a P2 compensation:

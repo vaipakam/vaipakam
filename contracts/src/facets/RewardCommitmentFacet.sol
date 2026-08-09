@@ -756,19 +756,30 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         if (s.dayClosedByRemitId[sourceChainId][dayId] != 0) {
             revert CompQuoteDayAlreadyFunded(dayId, sourceChainId);
         }
-        // #1636 r1 P1 — bind the standing quote to the sending Diamond
-        // era (the messenger stamps its own paired diamond into the
-        // payload). The messenger's diamond can rotate without rotating
-        // the channel peer, so a delayed or manually re-executed wire
-        // from the RETIRED diamond would otherwise be indistinguishable
-        // from the current era and could overwrite newer evidence — a
-        // stale (0,0) even clears the manual-funding anchor. Same-era
-        // re-delivery refreshes (the honest lost-message retry);
-        // divergence reverts; after a mirror redeploy the operator clears
-        // the stale record via {clearCompQuote} and the new era
-        // re-quotes. Like the w2 provisional posture, the FIRST arrival
-        // cannot be era-verified — the binding defends every arrival
-        // after it.
+        // #1636 r1+r2 — two-layer era authentication, mirroring the V3
+        // broadcast's own gate family. LAYER 1 (r2, the ground truth):
+        // the CONFIGURED current mirror Diamond for this chain — the
+        // reciprocal of the mirror-side `baseRewardDeployment` — checked
+        // on EVERY arrival including the first, fail-closed while unset.
+        // Without it, a delayed retired-era wire arriving FIRST (or first
+        // after a {clearCompQuote}) would bind unchallenged, and a stale
+        // (0,0) would clear the day's manual-funding anchor permanently.
+        // LAYER 2 (r1, the standing-evidence record): the era the quote
+        // was bound to at storage — protects a standing quote across a
+        // registry rotation (new-era wires diverge from the old record
+        // until the operator clears it deliberately via {clearCompQuote}).
+        // Same-era re-delivery refreshes (the honest lost-message retry).
+        {
+            address expected = s.mirrorRewardDeployment[sourceChainId];
+            if (expected == address(0)) {
+                revert CompQuoteMirrorEraUnset(sourceChainId);
+            }
+            if (sourceEra != expected) {
+                revert CompQuoteEraMismatch(
+                    dayId, sourceChainId, expected, sourceEra
+                );
+            }
+        }
         if (q.receivedAt != 0 && q.era != sourceEra) {
             revert CompQuoteEraMismatch(
                 dayId, sourceChainId, q.era, sourceEra
@@ -795,6 +806,38 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
                 false;
             emit CompQuoteResolvedZero(dayId, sourceChainId);
         }
+    }
+
+    /// @notice #1434 P2-w3 (#1636 r2) — the operator registered (or
+    ///         rotated) a chain's current mirror Diamond — the quote
+    ///         ingress's era ground truth.
+    /// @custom:event-category informational/reward-compensation
+    event MirrorRewardDeploymentSet(
+        uint32 indexed chainId,
+        address indexed deployment
+    );
+
+    /// @notice Register the CURRENT mirror Diamond for `chainId` — the
+    ///         fail-closed ground truth the quote ingress authenticates
+    ///         every arrival's era word against (#1636 r2; the reciprocal
+    ///         of the mirror-side `setBaseRewardDeployment`).
+    /// @dev ADMIN-only. Part of the mirror-rotation ceremony: update this,
+    ///      then {clearCompQuote} any quote standing under the retired era.
+    function setMirrorRewardDeployment(
+        uint32 chainId,
+        address deployment
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.storageSlot().mirrorRewardDeployment[chainId] =
+            deployment;
+        emit MirrorRewardDeploymentSet(chainId, deployment);
+    }
+
+    /// @notice #1434 P2-w3 (#1636 r2) — the configured current mirror
+    ///         Diamond for `chainId` (zero = quote ingress fail-closed).
+    function getMirrorRewardDeployment(
+        uint32 chainId
+    ) external view returns (address) {
+        return LibVaipakam.storageSlot().mirrorRewardDeployment[chainId];
     }
 
     /// @notice #1434 P2-w3 (#1636 r1) — an operator cleared a chain-day's

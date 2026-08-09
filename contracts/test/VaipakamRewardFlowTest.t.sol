@@ -736,7 +736,9 @@ contract VaipakamRewardFlowTest is Test {
             finalizedAt: 1_700_000_000,
             lapseScheduleVersion: 2,
             lapseWindowSeconds: 7 days,
-            dispatchCutoffGap: 24 hours
+            dispatchCutoffGap: 24 hours,
+            dayScheduleFloorHalf: 20e18,
+            dayRecycledBudgetHalf: 10e18
         });
     }
 

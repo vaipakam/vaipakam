@@ -836,12 +836,25 @@ contract RewardReporterFacet is
                 s.chainDayRecycledFunding[dayId][uint32(block.chainid)]
                     .recycleConsume
             );
+            // #1636 r2 — the day-pool stamp backfills alongside the clock
+            // (a pre-r2 V3 day has neither; both are finalize-frozen facts
+            // healed by the same re-send).
+            _installDayPoolStampV3(s, b);
             _installDayClock(s, b, /* backfilled */ true);
             _notifyCompensationHook(b);
             return;
         }
 
         _applyBroadcastV2Core(s, b.v2, /* legacyWire */ false);
+        // #1636 r2 — install (or verify) the day-level funded pool stamp
+        // from the V3 packet. The V2 core deliberately does not write it
+        // (the V2 wire never carried the day-level figure — only per-chain
+        // slices, which are ZERO for a zeroed dest), yet Δq's numerator
+        // and the quote surface's stamp gate both need it mirror-side; the
+        // legacy kind-2 ingress that used to install it retires at
+        // rotation. Runs on replays too, so any pre-r2 V3 day heals by a
+        // permissionless re-send.
+        _installDayPoolStampV3(s, b);
 
         LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
         if (c.finalizedAt == 0) {
@@ -869,6 +882,37 @@ contract RewardReporterFacet is
         ICompensationDayHook(address(this)).onCompensationDayBroadcastArrived(
             b.v2.dayId, b.baseDeployment, b.zeroedForDest
         );
+    }
+
+    /// @dev #1636 r2 — install (first V3 for the day) or VERIFY (replay /
+    ///      mixed-generation) the day-level funded pool stamp from the V3
+    ///      packet's day-pool words. Divergence joins the broadcast
+    ///      consensus family (`KnownGlobalAlreadySet`), matching the
+    ///      legacy kind-2 ingress's own stamp-divergence rule. Stored
+    ///      doubled, read halved — byte-compatible with every existing
+    ///      `dayPoolStamp` consumer (the kind-2 write at
+    ///      {onRewardBroadcastReceived} uses the identical convention).
+    function _installDayPoolStampV3(
+        LibVaipakam.Storage storage s,
+        RewardBroadcastV3 calldata b
+    ) private {
+        LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[b.v2.dayId];
+        if (p.stamped) {
+            if (
+                uint256(p.scheduleFloor) != b.dayScheduleFloorHalf * 2
+                    || uint256(p.recycledBudget) != b.dayRecycledBudgetHalf * 2
+            ) {
+                revert KnownGlobalAlreadySet();
+            }
+            return;
+        }
+        s.dayPoolStamp[b.v2.dayId] = LibVaipakam.DayPoolStamp({
+            scheduleFloor: SafeCast.toUint128(b.dayScheduleFloorHalf * 2),
+            recycledBudget: SafeCast.toUint128(b.dayRecycledBudgetHalf * 2),
+            aBarAtFinalize: 0,
+            marginBpsAtFinalize: 0,
+            stamped: true
+        });
     }
 
     /// @dev The V3 fields' writer: the packed clock, the era record, and

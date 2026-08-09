@@ -424,6 +424,16 @@
             "name": "baseDeployment",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "dayScheduleFloorHalf",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "dayRecycledBudgetHalf",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -1133,6 +1143,17 @@
         "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteMirrorEraUnset",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },

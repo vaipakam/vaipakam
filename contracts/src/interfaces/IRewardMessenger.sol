@@ -65,6 +65,14 @@ struct RewardBroadcastV3 {
     // The sending deployment's identity (§2h constraint 20 era binding),
     // stamped by the messenger from its own Diamond binding.
     address baseDeployment;
+    // #1636 r2 — the DAY-LEVEL funded pool halves frozen at finalization
+    // (Base's `dayPoolStamp` figures). The Δq quote numerator: a zeroed
+    // destination's own per-chain slice is deliberately zero, so the
+    // day-level figure must travel — the V2 wire never carried it (only
+    // the legacy kind-2 did), which left mirror-side quoting unreachable
+    // on the V3 production path.
+    uint256 dayScheduleFloorHalf;
+    uint256 dayRecycledBudgetHalf;
 }
 
 /// @notice #1434 P2-w3 — Base-side Diamond ingress for an inbound mirror
@@ -428,6 +436,10 @@ interface IRewardMessenger {
         uint32 lapseScheduleVersion;
         uint64 lapseWindowSeconds;
         uint64 dispatchCutoffGap;
+        // #1636 r2 — day-level funded pool halves (the Δq numerator
+        // transport; see {RewardBroadcastV3}).
+        uint256 dayScheduleFloorHalf;
+        uint256 dayRecycledBudgetHalf;
     }
 
     /// @notice One destination's V3 figures: the V2 per-destination fields

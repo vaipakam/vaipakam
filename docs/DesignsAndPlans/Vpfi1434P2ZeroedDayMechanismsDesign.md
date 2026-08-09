@@ -354,7 +354,27 @@ broadcast halves.
 > releases a stale binding after a mirror redeploy (funded days refuse
 > both). The `_contribFor` global-zero short-circuit was removed — the
 > stored cumulative row is the one pricing truth for walk and bulk
-> alike.)*
+> alike.
+>
+> Round 2 added two more: (8) **the V3 broadcast carries the day-level
+> funded pool halves** (2 new wire words, 21 → 23): the V2 wire never
+> transported the day-level figure (only per-chain slices, zero for a
+> zeroed dest) and the legacy kind-2 ingress that installed
+> `dayPoolStamp` retires at rotation — without the transport, mirror-side
+> quoting was unreachable on the V3 production path. The V3 apply
+> installs the stamp (divergence-checked against any standing one, the
+> broadcast consensus family), including on replays, so pre-r2 V3 days
+> heal by the same permissionless re-send that backfills clocks. (9)
+> **Base holds a FAIL-CLOSED mirror-era registry**
+> (`setMirrorRewardDeployment`, the reciprocal of the mirror-side
+> `setBaseRewardDeployment`): the quote ingress authenticates EVERY
+> arrival — including the first — against it, closing the
+> first-arrival window the r1 standing-quote binding alone could not
+> defend (a delayed retired-era wire arriving first would have bound
+> unchallenged, and a stale (0,0) would have cleared the
+> manual-funding anchor permanently). Rotation ceremony: update the
+> registry, then `clearCompQuote` any quote standing under the retired
+> era.)*
 
 ---
 

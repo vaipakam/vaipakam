@@ -771,6 +771,30 @@ contract MockRewardMessenger is IRewardMessenger {
         );
     }
 
+    /// @dev #1636 r2 — legacy kind-2 delivery carrying the full frozen
+    ///      tuple, for mixed-generation consistency tests: a V3 for the
+    ///      same day must agree on the day-pool figures (production sends
+    ///      the SAME finalize-frozen values on both wires).
+    function deliverBroadcastFull(
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
+    ) external {
+        RewardReporterFacet(diamond).onRewardBroadcastReceived(
+            dayId,
+            globalLenderNumeraire18,
+            globalBorrowerNumeraire18,
+            capThreshold18,
+            scheduleFloorHalf,
+            recycledHalf,
+            armedFromDay
+        );
+    }
+
     /// @notice PR-3c — full-shape broadcast delivery (composition + arming).
     function deliverBroadcastWithComposition(
         uint256 dayId,

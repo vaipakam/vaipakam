@@ -163,7 +163,12 @@ abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
             lapseWindowSeconds: 7 days,
             dispatchCutoffGap: 24 hours,
             zeroedForDest: false,
-            baseDeployment: ERA_BASE
+            baseDeployment: ERA_BASE,
+            // #1636 r2 — the day-level funded pool halves (the Δq
+            // numerator transport; the raw-stamp convention's 40e18/20e18
+            // shape halved).
+            dayScheduleFloorHalf: 20e18,
+            dayRecycledBudgetHalf: 10e18
         });
     }
 
@@ -377,7 +382,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
 
         _agg().broadcastGlobal(dayId);
         assertEq(messenger.broadcastV3Count(), 1);
-        (uint64 at1, uint32 v1, uint64 w1, uint64 g1) =
+        (uint64 at1, uint32 v1, uint64 w1, uint64 g1, , ) =
             messenger.lastV3Extras();
         bool zeroedOp1 = _zeroedFlagFor(CHAIN_OP);
 
@@ -390,7 +395,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
 
         _agg().broadcastGlobal(dayId);
         assertEq(messenger.broadcastV3Count(), 2);
-        (uint64 at2, uint32 v2, uint64 w2, uint64 g2) =
+        (uint64 at2, uint32 v2, uint64 w2, uint64 g2, , ) =
             messenger.lastV3Extras();
 
         assertEq(at2, at1, "finalizedAt identical across sends");
@@ -433,7 +438,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         assertEq(messenger.broadcastV3Count(), 1, "V3 wire used");
         assertEq(messenger.broadcastV2Count(), 0);
         assertEq(messenger.broadcastCount(), 0);
-        (uint64 at, uint32 ver, uint64 w, uint64 g) =
+        (uint64 at, uint32 ver, uint64 w, uint64 g, , ) =
             messenger.lastV3Extras();
         (uint64 cAt, uint32 cVer, uint64 cW, uint64 cG) =
             _com().getDayLapseClock(1);
@@ -511,7 +516,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         ) = messenger.lastV3SingleDest();
         assertEq(base.destChainId, CHAIN_ARB, "targeted destination");
         assertFalse(zeroed, "reported chain not zeroed");
-        (uint64 at, , uint64 w, ) = messenger.lastV3SingleExtras();
+        (uint64 at, , uint64 w, , , ) = messenger.lastV3SingleExtras();
         (uint64 cAt, , uint64 cW, ) = _com().getDayLapseClock(1);
         assertEq(at, cAt, "frozen clock rides the heal");
         assertEq(w, cW);
@@ -1076,7 +1081,13 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
     /// `broadcastV2Applied` days.
     function testV3OnLegacyKind2AppliedDayDoesFullApply() public {
         _configureMirror(CHAIN_ARB);
-        messenger.deliverBroadcast(3, 30e18, 15e18, type(uint256).max);
+        // #1636 r2 — the kind-2 pair carries the SAME frozen day-pool
+        // figures the V3 packet does (production freezes once, sends on
+        // both wires); a divergent pair is the consensus violation
+        // {_installDayPoolStampV3} rejects.
+        messenger.deliverBroadcastFull(
+            3, 30e18, 15e18, type(uint256).max, 20e18, 10e18, 0
+        );
 
         messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
 
@@ -1085,6 +1096,37 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertTrue(f.stamped, "V2 layer applied on top of legacy pair");
         (uint64 at, , , ) = _com().getDayLapseClock(3);
         assertEq(at, 1_700_000_000, "clock installed");
+    }
+
+    /// @dev #1636 r2 P1 — the V3 PRODUCTION path installs the day-level
+    ///      pool stamp (the Δq quote numerator + the quote surface's
+    ///      stamp gate). Before r2 only the retiring legacy kind-2
+    ///      ingress wrote it, leaving V3-delivered zeroed days unable to
+    ///      quote at all; the earlier tests concealed that by seeding the
+    ///      stamp raw.
+    function testV3InstallsDayPoolStamp() public {
+        _configureMirror(CHAIN_ARB);
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+        (bool stamped, uint256 floor, uint256 recycled, , ) =
+            _agg().getDayPoolStamp(3);
+        assertTrue(stamped, "V3 apply installs the day-pool stamp");
+        assertEq(floor, 40e18, "floor = wire half x 2");
+        assertEq(recycled, 20e18, "recycled = half x 2");
+    }
+
+    /// @dev #1636 r2 — a pre-r2 V3 day (kind-5 applied: clock and stamp
+    ///      both missing) heals BOTH by the same permissionless re-send,
+    ///      through the clock-backfill branch.
+    function testV3BackfillInstallsDayPoolStampToo() public {
+        _configureMirror(CHAIN_ARB);
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // no stamp
+        (bool stampedBefore, , , , ) = _agg().getDayPoolStamp(3);
+        assertFalse(stampedBefore, "kind-5 leaves no day-pool stamp");
+
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB)); // backfill
+        (bool stamped, uint256 floor, , , ) = _agg().getDayPoolStamp(3);
+        assertTrue(stamped, "backfill branch installs the stamp");
+        assertEq(floor, 40e18, "floor from the wire");
     }
 }
 

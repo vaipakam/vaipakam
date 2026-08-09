@@ -335,7 +335,9 @@ contract VaipakamRewardMessenger is
     ///         1 + (14 nested V2 + 6 appended) static words. Unique in the
     ///         accepted-length union, but disambiguation remains the kind
     ///         tag per the standing rule.
-    uint256 internal constant BROADCAST_V3_PAYLOAD_SIZE = 21 * 32;
+    // #1636 r2 — 23 words: the w1 21-word shape + the two day-level funded
+    // pool halves (the Δq numerator transport).
+    uint256 internal constant BROADCAST_V3_PAYLOAD_SIZE = 23 * 32;
     /// @notice #1434 P2-w3 — comp quote `abi.encode(uint8 kind, dayId,
     ///         quotedLender18, quotedBorrower18)` = FOUR words. Joins the
     ///         standing four-word collision family (legacy report /
@@ -1648,7 +1650,9 @@ contract VaipakamRewardMessenger is
             lapseWindowSeconds: extras.lapseWindowSeconds,
             dispatchCutoffGap: extras.dispatchCutoffGap,
             zeroedForDest: d.zeroedForDest,
-            baseDeployment: diamond
+            baseDeployment: diamond,
+            dayScheduleFloorHalf: extras.dayScheduleFloorHalf,
+            dayRecycledBudgetHalf: extras.dayRecycledBudgetHalf
         });
         return abi.encode(MSG_TYPE_BROADCAST_V3, b);
     }
@@ -1674,10 +1678,11 @@ contract VaipakamRewardMessenger is
         // REPAT_INSTRUCTION #1568 C2 — disambiguated by the kind tag below),
         // 8 (REPORT #1222 B3 / legacy BROADCAST / TierUpdated), 2
         // (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3 (REPAT_CANCEL,
-        // #1568 C2), 21 (BROADCAST_V3, #1434 P2-w1), 5 (COMP_QUOTE,
-        // #1434 P2-w3 — grew from the 4-word family when #1636 r1 added
-        // the era word). Any other length is a padded / truncated packet
-        // and is rejected before decode.
+        // #1568 C2), 23 (BROADCAST_V3, #1434 P2-w1's 21 + the two #1636 r2
+        // day-pool words), 5 (COMP_QUOTE, #1434 P2-w3 — grew from the
+        // 4-word family when #1636 r1 added the era word). Any other
+        // length is a padded / truncated packet and is rejected before
+        // decode.
         uint256 len = payload.length;
         if (
             len != REPORT_PAYLOAD_SIZE
