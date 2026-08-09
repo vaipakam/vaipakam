@@ -327,6 +327,15 @@ interface IVaipakamErrors {
     error BroadcastEraUnauthenticated(
         uint256 dayId, address expected, address packetEra
     );
+    /// @notice A LEGACY broadcast (kind-5 / kind-2) attempted a FRESH
+    ///         apply after this mirror rotated Base eras (Codex #1632 r2:
+    ///         legacy packets carry no deployment identity, so a retired
+    ///         era's delayed or manually re-executed delivery is
+    ///         indistinguishable from a legitimate one — after a rotation
+    ///         the only legitimate sender speaks V3, and the legacy wires
+    ///         retire permanently). Replays of already-applied days stay
+    ///         idempotent.
+    error LegacyBroadcastRetired(uint256 dayId);
     /// @notice A re-delivered V3 broadcast disagreed with the day's already-
     ///         installed frozen clock facts (finalizedAt / schedule version /
     ///         inline parameters / zeroed marker).

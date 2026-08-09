@@ -37,7 +37,13 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 ///              wire-level in VaipakamRewardFlowTest).
 ///           4. Divergence-check extension to the frozen fields
 ///              ({testV3ReplayDivergenceOnEachFrozenField}).
-contract RewardBroadcastV3Test is SetupTest, IVaipakamErrors {
+///
+///         SPLIT into two suite contracts over one shared harness on
+///         purpose: a single contract holding the full test set exceeded
+///         solc 0.8.29's per-assembly jump-tag space under viaIR
+///         ("Tag too large for reserved space" ICE) — the same
+///         unit-size ceiling family as #601/#603, at the assembly stage.
+abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
     MockRewardMessenger internal messenger;
 
     address internal alice;
@@ -151,6 +157,12 @@ contract RewardBroadcastV3Test is SetupTest, IVaipakamErrors {
         });
     }
 
+}
+
+/// @notice Base-side coverage: the R5 schedule, the finalization freeze,
+///         proof 1 (re-broadcast determinism), the send/quote ladder and
+///         the permissionless heal.
+contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
     // ════════════════════════════════════════════════════════════════════════
     // R5 — the versioned lapse schedule (bounds, append-only versions)
     // ════════════════════════════════════════════════════════════════════════
@@ -593,6 +605,12 @@ contract RewardBroadcastV3Test is SetupTest, IVaipakamErrors {
         );
     }
 
+}
+
+/// @notice Mirror-side coverage: the V3 ingress (install / gates / era
+///         binding / rotation), proof 2 (clock backfill), proof 3
+///         (kind-5 still applies) and proof 4 (divergence extension).
+contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
     // ════════════════════════════════════════════════════════════════════════
     // Mirror-side V3 ingress — install, gates, era binding
     // ════════════════════════════════════════════════════════════════════════
@@ -728,6 +746,69 @@ contract RewardBroadcastV3Test is SetupTest, IVaipakamErrors {
         _rep().setBaseRewardDeployment(ERA_BASE);
     }
 
+    /// Codex #1632 r2 P1 — a true era ROTATION permanently retires the
+    /// identity-less legacy wires' FRESH applies (a retired era's delayed
+    /// or re-executed kind-5/kind-2 is indistinguishable from a
+    /// legitimate one; the new era only speaks V3). Replays of
+    /// already-applied days stay idempotent, and a disarm/re-arm cycle of
+    /// the SAME era is not a rotation.
+    function testRotationRetiresLegacyWire() public {
+        _configureMirror(CHAIN_ARB);
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // day 3 applied
+
+        // Disarm/re-arm same era: NOT a rotation — wire stays open.
+        _rep().setBaseRewardDeployment(address(0));
+        _rep().setBaseRewardDeployment(ERA_BASE);
+        RewardBroadcastV2 memory day4 = _v2Packet(CHAIN_ARB);
+        day4.dayId = 4;
+        messenger.deliverBroadcastV2(day4);
+
+        // A DIFFERENT nonzero era: rotation — legacy fresh applies retire.
+        _rep().setBaseRewardDeployment(address(0xE2));
+        RewardBroadcastV2 memory day5 = _v2Packet(CHAIN_ARB);
+        day5.dayId = 5;
+        vm.expectRevert(
+            abi.encodeWithSelector(LegacyBroadcastRetired.selector, 5)
+        );
+        messenger.deliverBroadcastV2(day5);
+
+        // Kind-2 fresh writes retire too (a retired era's pair would wedge
+        // the day against the new era's V3).
+        vm.expectRevert(
+            abi.encodeWithSelector(LegacyBroadcastRetired.selector, 6)
+        );
+        messenger.deliverBroadcast(6, 1e18, 1e18, type(uint256).max);
+
+        // Replays of the pre-rotation days stay idempotent.
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
+        messenger.deliverBroadcastV2(day4);
+    }
+
+    /// Codex #1632 r2 P1 — the cross-era backfill sequence: a kind-5
+    /// applied under era 1, then a rotation, then a current-era V3 for
+    /// the same day. The apply-time PROVENANCE stamp is what blocks it:
+    /// the day's recorded era names era 1, so the era-2 packet fails the
+    /// per-day check instead of stamping era 2 onto era-1 figures.
+    function testCrossEraBackfillBlocked() public {
+        _configureMirror(CHAIN_ARB);
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // era-1 figures
+        assertEq(_rep().getDayClockEra(3), ERA_BASE, "provenance = era 1");
+
+        _rep().setBaseRewardDeployment(address(0xE2)); // rotation
+
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.baseDeployment = address(0xE2); // passes the configured-era gate
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BroadcastEraMismatch.selector, 3, ERA_BASE, address(0xE2)
+            )
+        );
+        messenger.deliverBroadcastV3(b);
+
+        (uint64 at, , , ) = _com().getDayLapseClock(3);
+        assertEq(at, 0, "no cross-era clock was smuggled in");
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // PROOF 2 — clock backfill on an already-applied day
     // ════════════════════════════════════════════════════════════════════════
@@ -832,7 +913,12 @@ contract RewardBroadcastV3Test is SetupTest, IVaipakamErrors {
         assertEq(gl, 30e18);
         (uint64 at, , , ) = _com().getDayLapseClock(3);
         assertEq(at, 0, "no clock - day not lapse-eligible");
-        assertEq(_rep().getDayClockEra(3), address(0), "no era recorded");
+        // #1632 r2 — an ARMED mirror stamps era PROVENANCE at apply time
+        // (the configured era it believed was sending), even though the
+        // kind-5 wire itself carries no identity and no clock.
+        assertEq(
+            _rep().getDayClockEra(3), ERA_BASE, "provenance stamped on apply"
+        );
     }
 
     // ════════════════════════════════════════════════════════════════════════

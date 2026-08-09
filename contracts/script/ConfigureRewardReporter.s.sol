@@ -64,6 +64,15 @@ interface IPeerBoundMessenger {
  *        - REWARD_EXPECTED_SOURCE_CHAIN_IDS : comma-separated EVM chain
  *                                      ids (only needed on Base). Example
  *                                      "8453,42161,10,137".
+ *        - BASE_REWARD_DEPLOYMENT   : mirror chains only (#1434 P2-w1) —
+ *                                      the canonical BASE DIAMOND address,
+ *                                      the era ground truth every V3
+ *                                      (kind-10) broadcast must name.
+ *                                      Unset ⇒ loud warning and the V3
+ *                                      ingress stays DARK (fail-closed)
+ *                                      on this mirror until
+ *                                      `setBaseRewardDeployment` is
+ *                                      called.
  */
 contract ConfigureRewardReporter is Script {
     /// @dev Base chainIds (8453 mainnet, 84532 sepolia) are canonical.
@@ -160,6 +169,26 @@ contract ConfigureRewardReporter is Script {
         console.log("Grace secs:    ", uint256(grace));
         console.log("Canonical:     ", canonical);
 
+        // #1434 P2-w1 (Codex #1632 r2) — the mirror's V3 era ground truth:
+        // the CANONICAL BASE DIAMOND address every kind-10 broadcast must
+        // name. Resolved OUTSIDE the broadcast so a missing value warns
+        // before any tx lands. Without it the V3 (kind-10) ingress is
+        // deliberately DARK on this mirror (fail-closed,
+        // `BroadcastEraUnauthenticated`; deliveries stay re-executable) —
+        // day figures still flow on the kind-5 wire, but no day clock
+        // installs, so none of the P2 lapse machinery can ever arm here.
+        // Canonical chains never receive broadcasts and need no value.
+        address baseRewardDeployment =
+            vm.envOr("BASE_REWARD_DEPLOYMENT", address(0));
+        if (!canonical && baseRewardDeployment == address(0)) {
+            console.log(
+                "WARNING: BASE_REWARD_DEPLOYMENT unset - the V3 (kind-10) "
+                "broadcast ingress stays DARK on this mirror until "
+                "setBaseRewardDeployment is called (day clocks will not "
+                "install; the P2 lapse machinery cannot arm)."
+            );
+        }
+
         vm.startBroadcast(deployerKey);
         RewardReporterFacet rr = RewardReporterFacet(diamond);
         // No `setLocalEid` — a chain's identity is `block.chainid`.
@@ -167,6 +196,10 @@ contract ConfigureRewardReporter is Script {
         rr.setRewardMessenger(rewardMessenger);
         rr.setRewardGraceSeconds(grace);
         rr.setIsCanonicalRewardChain(canonical);
+        if (!canonical && baseRewardDeployment != address(0)) {
+            rr.setBaseRewardDeployment(baseRewardDeployment);
+            console.log("Base reward deployment:", baseRewardDeployment);
+        }
 
         if (canonical) {
             string memory csv =
@@ -190,6 +223,11 @@ contract ConfigureRewardReporter is Script {
         Deployments.writeRewardBaseChainId(baseChainId);
         Deployments.writeRewardGraceSeconds(grace);
         Deployments.writeIsCanonicalReward(canonical);
+        if (!canonical && baseRewardDeployment != address(0)) {
+            Deployments.writeAddress(
+                ".baseRewardDeployment", baseRewardDeployment
+            );
+        }
 
         console.log("Reward reporter configuration applied.");
     }

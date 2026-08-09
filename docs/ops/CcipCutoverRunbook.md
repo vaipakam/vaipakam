@@ -333,6 +333,29 @@ flight, in this order when **lowering**:
   before pointing the receiver at a new Diamond; this is the standing
   receiver-rotation precondition shared by every remittance receiver,
   not a repatriation-specific rule.
+- **Reward-broadcast era rotation** (#1434 P2-w1, Codex #1632 r2) —
+  when the canonical Base DIAMOND rotates, every mirror's V3-broadcast
+  era ground truth rotates with it, in this order:
+  1. **Drain the old era's broadcasts first**: let (or force) every
+     in-flight kind-5/kind-10 delivery from the old Base land — or
+     accept their loss — BEFORE step 2. Order matters because step 2
+     is one-way.
+  2. On every mirror: `RewardReporterFacet.setBaseRewardDeployment(newBaseDiamond)`.
+     A second, DIFFERENT nonzero value is detected as a rotation and
+     **permanently retires the legacy broadcast wires' fresh applies**
+     on that mirror (`LegacyBroadcastRetired`): kind-5/kind-2 packets
+     carry no deployment identity, so after a rotation a retired era's
+     delayed or manually re-executed delivery cannot be told apart
+     from a legitimate one — only the V3 wire (which authenticates its
+     era) keeps applying fresh days. Replays of already-applied days
+     stay idempotent.
+  3. Days whose figures were applied under the OLD era keep their
+     recorded era (the apply-time provenance stamp) and refuse
+     new-era V3 backfills (`BroadcastEraMismatch`) — cross-era
+     combination is the exact state-poisoning this blocks. Such days
+     are the drain/heal ceremony's job, not silent overwrite.
+  The first arming (zero → nonzero) is NOT a rotation; a disarm/re-arm
+  cycle of the same address is not one either.
 
 ---
 

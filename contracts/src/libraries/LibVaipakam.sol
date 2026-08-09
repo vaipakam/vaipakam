@@ -6247,6 +6247,19 @@ library LibVaipakam {
         //   endpoint posture). Rotated by the same ceremony that rotates
         //   the Base deployment.
         address baseRewardDeployment;
+        // MIRROR-ONLY (#1632 r2): the last NONZERO era ever configured,
+        //   and whether a true era ROTATION has occurred (a second,
+        //   different nonzero value). One-way: once rotated, the LEGACY
+        //   broadcast wires (kind-5 / kind-2) refuse FRESH applies forever
+        //   — those packets carry no deployment identity, so a retired
+        //   era's in-flight or manually re-executed delivery is
+        //   indistinguishable from a legitimate one, and after a rotation
+        //   the only legitimate sender speaks V3. Replays of
+        //   already-applied days stay idempotent. Tracked against the last
+        //   NONZERO value (not the live config) so a disarm/re-arm cycle
+        //   cannot smuggle a rotation past the detector.
+        address rewardEraLastNonzero;
+        bool rewardEraRotated;
     }
 
     /// @notice #1434 P2-w1 — one day's frozen lapse clock (design §1.1's

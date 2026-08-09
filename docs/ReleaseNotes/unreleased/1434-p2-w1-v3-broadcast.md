@@ -36,6 +36,18 @@ pair, writes the clock, and performs the same idempotent reservation
 repair the ordinary re-delivery path performs (from the day's stored
 figures, never the packet's), so the one supported migration sequence
 stays healable without leaving a healed day under-reserved.
+
+Two operational closures from the review's second round: the era ground
+truth is armed by the standard deployment spell (with the canonical Base
+Diamond address now part of the mirror-chain deployment environment —
+warned on testnet, required on mainnet), and the old-wire cross-era
+channel is shut — an armed mirror records era provenance on every
+old-wire apply, and a genuine era rotation permanently retires the old
+wires' fresh applies (their packets carry no sender identity, so after a
+rotation only the clock-bearing wire can introduce new days). The
+rotation ceremony — drain old-era broadcasts, rotate every mirror's
+ground truth, heal old-era days by ceremony — is recorded in the CCIP
+cutover runbook.
 A new permissionless single-destination re-broadcast heals a clockless
 day even for a mirror that has been removed from the current broadcast
 destination list, admitted on the destination's day-scoped historical

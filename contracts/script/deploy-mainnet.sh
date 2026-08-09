@@ -503,6 +503,15 @@ phase_preflight() {
   if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_CHAIN_ID:-}" ]; then
     MISSING+=("BASE_CHAIN_ID  (REQUIRED on mirror chains — canonical Base chain id, 8453)")
   fi
+  # #1434 P2-w1 (Codex #1632 r2) — mirror chains also need canonical
+  # Base's DIAMOND address: the V3 broadcast era ground truth
+  # (ConfigureRewardReporter → setBaseRewardDeployment). HARD-FAIL on
+  # mainnet (testnet warns): a mirror deployed without it has the
+  # kind-10 ingress fail-closed dark, and the P2 lapse machinery can
+  # never arm on that chain.
+  if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_REWARD_DEPLOYMENT:-}" ]; then
+    MISSING+=("BASE_REWARD_DEPLOYMENT  (REQUIRED on mirror chains — canonical Base DIAMOND address, the V3 broadcast era ground truth)")
+  fi
   if [ ${#MISSING[@]} -ne 0 ]; then
     echo "FAIL: required env vars missing in .env:"
     for v in "${MISSING[@]}"; do echo "    - $v"; done

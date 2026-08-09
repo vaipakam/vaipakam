@@ -64,7 +64,16 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
   an explicit ADMIN-set ground truth, `baseRewardDeployment`, that every
   V3 packet must name; while unset the V3 ingress is dark (fail-closed,
   packets stay re-executable), and rotation belongs to the same ceremony
-  that rotates the Base deployment.)*
+  that rotates the Base deployment. Second strengthening, #1632 r2: the
+  identity-less LEGACY wires are the remaining cross-era channel — a
+  retired era's kind-5 landing around a rotation could create applied
+  state a new-era V3 would then backfill its clock onto. So an armed
+  mirror stamps era PROVENANCE (`dayClockEra`) on every legacy apply,
+  and a true era rotation — a second, different nonzero ground truth —
+  permanently retires the legacy wires' fresh applies
+  (`LegacyBroadcastRetired`; replays stay idempotent). Arming ships in
+  the standard `ConfigureRewardReporter` spell + deploy wrappers; the
+  rotation ceremony is recorded in CcipCutoverRunbook §8.)*
 
 **Why frozen-at-finalization is load-bearing (R2a).** A re-broadcast today
 is NOT byte-identical by construction — `broadcastGlobal` reads everything
