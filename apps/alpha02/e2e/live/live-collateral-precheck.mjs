@@ -24,7 +24,7 @@
  * (issue #1118 / #1119); addresses are read from the deployments bundle so this
  * driver survives future mock refreshes.
  */
-import { blockedSync, launch, ensureConnected, SITE, visit, pasteAssetLive } from './driver.mjs';
+import { blocked, blockedSync, launch, ensureConnected, SITE, visit, pasteAssetLive } from './driver.mjs';
 import deployments from '@vaipakam/contracts/deployments.json' with { type: 'json' };
 
 const mocks = deployments['84532']?.testnetMocks;
@@ -51,6 +51,41 @@ const MUSDC = mocks.liquidToken2; // collateral (Liquid)
 
 const { page, done, shot, account } = await launch({ role: 'borrower' });
 const step = (m) => console.log(`  · ${m}`);
+
+// Successful JSON-RPC responses the PAGE received (Codex #1621 r13).
+//
+// Every assertion in this drive hangs off a `createOffer` simulation: the
+// precheck banner is rendered FROM that eth_call's result. So when the RPC
+// the deployed page uses is unavailable, the banner simply never appears,
+// the 45s `waitFor` expires, and the catch at the bottom exits 1 — and
+// because this driver IS registered in THREE_VERDICT_DRIVERS, the batch
+// TRUSTS that code and reports an RPC outage as a #1112 product
+// regression. A drive whose evidence never arrived has verified nothing.
+//
+// Counted from the page's own traffic rather than probing an endpoint the
+// driver picks: the served SPA chooses its RPC at build time, so the only
+// reliable way to know which endpoint matters is to watch what the page
+// actually does (the same reasoning live-rpc-audit.mjs records).
+let rpcOk = 0;
+const bodyReads = [];
+page.on('response', (res) => {
+  if (res.request().method() !== 'POST' || res.status() !== 200) return;
+  // `response` fires on HEADERS and does not await handlers, so the body is
+  // still in flight; collect the promises and settle them before judging.
+  bodyReads.push(
+    res
+      .text()
+      .then((text) => {
+        const parsed = JSON.parse(text);
+        for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
+          if (r && r.jsonrpc && r.error === undefined && r.result !== undefined) rpcOk++;
+        }
+      })
+      .catch(() => {
+        /* not a JSON-RPC body, or it never arrived */
+      }),
+  );
+});
 try {
   console.log('wallet:', account.address, '| site:', SITE);
   step(`goto ${SITE}/borrow`);
@@ -112,6 +147,21 @@ try {
   console.log('\nLIVE REVIEW PASSED — #1112 verified on', SITE);
   await done();
 } catch (e) {
+  // Settle the in-flight body reads before judging, or a slow response
+  // reads as "no successful RPC" and turns a real finding into BLOCKED.
+  await Promise.allSettled(bodyReads);
+  if (rpcOk === 0) {
+    await shot('1112-precheck-blocked').catch(() => {});
+    // `done()` FIRST, then the shared blocked exit: `blocked()` ends the
+    // process, so anything after it never runs.
+    await done();
+    await blocked(
+      'the page received no successful JSON-RPC response, so the createOffer' +
+        ' simulation this drive reads its verdict from never ran. Nothing was' +
+        ' observed about the precheck banner either way.',
+      e,
+    );
+  }
   console.error('\nLIVE REVIEW FAILED:', e.message);
   await shot('1112-precheck-fail').catch(() => {});
   await done();
