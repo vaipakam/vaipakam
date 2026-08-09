@@ -242,7 +242,7 @@ réalisée par un emprunteur. Verrou strict à l'initialisation : le
 panier de collatéral de l'emprunteur doit produire un Health
 Factor d'au moins 1,5 face au principal demandé par le prêteur.
 La mathématique HF est celle du protocole — le verrou n'est pas
-contournable. La coupe de trésorerie de 1% sur les intérêts est
+contournable. La coupe de trésorerie de `{liveValue:treasuryFeeBps}`% sur les intérêts est
 prélevée au règlement terminal, pas en amont.
 
 <a id="offer-book.borrower-offers"></a>
@@ -417,7 +417,7 @@ déplacer d'actifs.
 - **Slippage de liquidation** — le failover 4-DEX route vers la
   meilleure exécution qu'il puisse trouver, mais ne peut garantir
   un prix spécifique. La récupération est nette de slippage et
-  de la coupe de trésorerie de 1% sur les intérêts.
+  de la coupe de trésorerie de `{liveValue:treasuryFeeBps}`% sur les intérêts.
 - **Défauts sur collatéral illiquide** — le collatéral te revient
   intégralement au moment du défaut. Aucun recours si l'actif
   vaut moins que le principal plus les intérêts accumulés.
@@ -720,7 +720,7 @@ d'encaisser.
 La réclamation du prêteur rend :
 
 - Ton principal de retour dans ton wallet sur cette chaîne.
-- Les intérêts accumulés moins la coupe de trésorerie de 1%. La
+- Les intérêts accumulés moins la coupe de trésorerie de `{liveValue:treasuryFeeBps}`%. La
   coupe est elle-même réduite par ton accumulateur de remise sur
   frais VPFI pondéré dans le temps quand le consentement est
   activé.
@@ -1032,7 +1032,7 @@ Actions permissionless disponibles à tous quel que soit le rôle :
 #### Si tu es le prêteur
 
 - **Réclamer en tant que prêteur** — uniquement en état terminal. Rend
-  principal plus intérêts moins la coupe de trésorerie de 1%
+  principal plus intérêts moins la coupe de trésorerie de `{liveValue:treasuryFeeBps}`%
   (encore réduite par ta remise yield-fee VPFI pondérée dans le
   temps quand le consentement est activé). Brûle le NFT de
   position de prêteur.

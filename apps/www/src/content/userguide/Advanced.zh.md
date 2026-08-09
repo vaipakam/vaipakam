@@ -186,7 +186,7 @@ Offers" — 该列表始终完整显示。
 来自愿意出借的 creators 的 Active offers。Acceptance 由 borrower
 执行。initiation 时有一个硬 gate：borrower 的 collateral basket
 必须针对 lender 的 principal request 产生至少 1.5 的 Health Factor。
-HF 计算由 protocol 自己执行 — gate 无法被绕过。interest 上的 1%
+HF 计算由 protocol 自己执行 — gate 无法被绕过。interest 上的 `{liveValue:treasuryFeeBps}`%
 treasury cut 会在 terminal settlement 时 debit，而不是预先收取。
 
 <a id="offer-book.borrower-offers"></a>
@@ -330,7 +330,7 @@ cross-chain-facing contracts 中，受 timelock 控制，也不能移动 assets�
   recovery。
 - **Liquidation slippage** — 4-DEX failover 会 route 到它能找到的
   最佳 execution，但不能保证特定价格。Recovery 是扣除 slippage 和
-  interest 上 1% treasury cut 后的净额。
+  interest 上 `{liveValue:treasuryFeeBps}`% treasury cut 后的净额。
 - **Illiquid-collateral defaults** — collateral 在 default 时全
   额转移给您。如果资产价值低于 principal 和 accrued interest，
   您没有任何追索权。
@@ -557,7 +557,7 @@ holder。
 lender claim 会返回：
 
 - 您的 principal 回到这条 chain 上的 wallet。
-- Accrued interest 减去 1% treasury cut。当 consent 打开时，cut
+- Accrued interest 减去 `{liveValue:treasuryFeeBps}`% treasury cut。当 consent 打开时，cut
   本身又被您的 time-weighted VPFI fee-discount accumulator 减
   少。
 
@@ -820,7 +820,7 @@ locked" 等)。
 #### 如果您是 lender
 
 - **Claim as lender** — 仅在 terminal state 可用。返回 principal 和 interest
-  minus 1% treasury cut (consent on 时，会再由您的 time-weighted
+  minus `{liveValue:treasuryFeeBps}`% treasury cut (consent on 时，会再由您的 time-weighted
   VPFI yield-fee discount 降低)。会 burn lender position NFT。
 - **Initiate early withdrawal** — 以 asking price 把 lender position
   NFT list 出售。完成销售的 buyer 会接管您这一侧；您获得 proceeds。

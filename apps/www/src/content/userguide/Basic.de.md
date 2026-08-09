@@ -174,7 +174,7 @@ darauf warten, dass jemand den Loan finanziert.
 Ein Lender, der eine davon akzeptiert, finanziert den Loan: das
 Asset des Lenders geht zum Borrower, der Lender wird zum
 Lender-of-record und der Lender verdient Zinsen zum Satz der Offer
-über die gesamte Laufzeit. Ein kleiner Anteil (1%) der Zinsen geht
+über die gesamte Laufzeit. Ein kleiner Anteil (`{liveValue:treasuryFeeBps}`%) der Zinsen geht
 beim Settlement an die Treasury des Protokolls.
 
 ---
@@ -358,7 +358,7 @@ von Claim zurückgibt.
 #### Wenn du der Lender bist
 
 Dein Lender-Claim gibt den Principal des Loans plus die
-aufgelaufenen Zinsen zurück, abzüglich eines 1%-Treasury-Anteils
+aufgelaufenen Zinsen zurück, abzüglich eines `{liveValue:treasuryFeeBps}`%-Treasury-Anteils
 auf den Zinsanteil. Er wird claimbar, sobald der Loan settled —
 zurückgezahlt, defaultet oder liquidiert. Der Claim verbraucht
 deinen Lender-Position-NFT atomar — sobald er durchgeht, ist diese
@@ -556,7 +556,7 @@ mit einem kleinen Tooltip, das erklärt, warum.
 
 - **Claim** — sobald der Loan settled (zurückgezahlt, defaultet
   oder liquidiert), schaltet das den Principal zurück frei plus
-  Zinsen, abzüglich des 1%-Treasury-Anteils auf die Zinsen.
+  Zinsen, abzüglich des `{liveValue:treasuryFeeBps}`%-Treasury-Anteils auf die Zinsen.
   Verbraucht deinen Lender-NFT.
 - **Initiate Early Withdrawal** — stell deinen Lender-NFT mitten
   im Loan zum Verkauf an einen anderen Käufer ein. Der Käufer

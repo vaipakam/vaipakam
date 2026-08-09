@@ -243,7 +243,7 @@ realiza un prestatario. Hay un gate rígido en la inicialización: la
 canasta de colateral del prestatario debe producir un Health Factor
 de al menos 1,5 frente al monto principal solicitado por el
 prestamista. La matemática de HF es del propio protocolo —el gate
-no es eludible. El 1% de tesorería sobre los intereses se debita en
+no es eludible. El `{liveValue:treasuryFeeBps}`% de tesorería sobre los intereses se debita en
 la liquidación terminal, no por adelantado.
 
 <a id="offer-book.borrower-offers"></a>
@@ -418,7 +418,7 @@ timelock, y no pueden mover activos.
 - **Slippage de liquidación** — el failover de 4 DEX enruta a la
   mejor ejecución que pueda encontrar, pero no puede garantizar
   un precio específico. La recuperación es neta de slippage y del
-  1% de tesorería sobre intereses.
+  `{liveValue:treasuryFeeBps}`% de tesorería sobre intereses.
 - **Defaults con colateral ilíquido** — el colateral se transfiere
   íntegro a ti en el momento del default. No tienes recurso si el
   activo vale menos que el principal más los intereses
@@ -722,7 +722,7 @@ antes de reclamar le da al nuevo poseedor el derecho a cobrar.
 La reclamación del prestamista devuelve:
 
 - Tu principal de vuelta a tu billetera en esta cadena.
-- Los intereses acumulados menos el 1% de tesorería. Ese corte se
+- Los intereses acumulados menos el `{liveValue:treasuryFeeBps}`% de tesorería. Ese corte se
   reduce a su vez por tu acumulador de descuento de comisiones
   VPFI ponderado por tiempo cuando el consentimiento está
   activado.
@@ -1031,7 +1031,7 @@ del rol:
 #### Si eres el prestamista
 
 - **Reclamar como prestamista** — sólo en estados terminales. Devuelve
-  principal más intereses menos el 1% de tesorería (reducido aún
+  principal más intereses menos el `{liveValue:treasuryFeeBps}`% de tesorería (reducido aún
   más por tu descuento de yield-fee VPFI ponderado por tiempo
   cuando el consentimiento está activado). Quema el NFT de
   posición de prestamista.

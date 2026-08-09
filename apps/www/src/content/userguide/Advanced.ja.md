@@ -225,7 +225,7 @@ creator が貸し出す意思を示している active offers です。accept
 borrower の collateral basket は、lender の principal request に
 対して少なくとも 1.5 の Health Factor を作る必要があります。HF
 math は protocol 独自のもので、gate は bypass できません。interest
-に対する 1% treasury cut は terminal settlement 時に debit され、
+に対する `{liveValue:treasuryFeeBps}`% treasury cut は terminal settlement 時に debit され、
 upfront ではありません。
 
 <a id="offer-book.borrower-offers"></a>
@@ -384,7 +384,7 @@ cross-chain-facing contracts にのみあり、timelock-gated で、assets
   小さな skew はなお recovery を削る可能性があります。
 - **Liquidation slippage** — 4-DEX failover は可能な限り良い
   execution へ route しますが、specific price は保証できません。
-  Recovery は slippage と interest に対する 1% treasury cut を
+  Recovery は slippage と interest に対する `{liveValue:treasuryFeeBps}`% treasury cut を
   差し引いた net です。
 - **Illiquid-collateral defaults** — default time に collateral
   全体があなたへ transfer されます。asset が principal + accrued
@@ -671,7 +671,7 @@ NFT *こそ* bearer instrument です — claim 前に transfer すると、
 Lender claim は次を返します:
 
 - principal がこの chain 上のあなたの wallet に戻ります。
-- accrued interest minus 1% treasury cut。同意が on の場合、その
+- accrued interest minus `{liveValue:treasuryFeeBps}`% treasury cut。同意が on の場合、その
   cut 自体があなたの time-weighted VPFI fee-discount accumulator
   によってさらに減ります。
 
@@ -957,7 +957,7 @@ role に関係なく誰でも利用できる permissionless actions:
 #### あなたが lender の場合
 
 - **Lender として claim** — terminal state のみ。Principal plus interest
-  minus 1% treasury cut を返します (consent on の場合は
+  minus `{liveValue:treasuryFeeBps}`% treasury cut を返します (consent on の場合は
   time-weighted VPFI yield-fee discount でさらに減ります)。
   Lender position NFT を burn します。
 - **Early withdrawal を開始** — 選んだ asking price で lender

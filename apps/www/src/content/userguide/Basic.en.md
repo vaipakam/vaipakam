@@ -160,7 +160,7 @@ are waiting for someone to fund the loan.
 A lender accepting one of these funds the loan: the lender's asset
 goes to the borrower, the lender becomes the lender-of-record, and
 the lender earns interest at the offer's rate over the duration. A
-small slice (1%) of the interest goes to the protocol treasury at
+small slice (`{liveValue:treasuryFeeBps}`%) of the interest goes to the protocol treasury at
 settlement.
 
 ---
@@ -330,7 +330,7 @@ what each kind of claim returns.
 #### If you're the lender
 
 Your lender claim returns the loan's principal plus the interest
-that accrued, minus a 1% treasury cut on the interest portion. It
+that accrued, minus a `{liveValue:treasuryFeeBps}`% treasury cut on the interest portion. It
 becomes claimable as soon as the loan settles — repaid, defaulted,
 or liquidated. The claim consumes your lender position NFT
 atomically — once it lands, that side of the loan is fully closed
@@ -515,7 +515,7 @@ will be greyed out, with a small tooltip explaining why.
 
 - **Claim** — once the loan settles (repaid, defaulted, or
   liquidated), unlocks the principal back plus interest, less the
-  1% treasury cut on interest. Consumes your lender NFT.
+  `{liveValue:treasuryFeeBps}`% treasury cut on interest. Consumes your lender NFT.
 - **Initiate Early Withdrawal** — list your lender NFT for sale to
   another buyer mid-loan. The buyer takes over your side; you walk
   away with the sale proceeds.

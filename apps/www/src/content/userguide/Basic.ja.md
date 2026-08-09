@@ -163,7 +163,7 @@ borrower の collateral が足りなければ、loan は開始されません。
 これを accept した lender は loan を fund します。lender の
 asset が borrower に渡り、lender は lender-of-record になり、
 期間中 offer の rate で interest を得ます。interest の小さな
-一部 (1%) は settlement 時に protocol treasury へ送られます。
+一部 (`{liveValue:treasuryFeeBps}`%) は settlement 時に protocol treasury へ送られます。
 
 ---
 
@@ -339,7 +339,7 @@ tabs では、それぞれの claim が何を返すかを説明します。
 #### あなたが lender の場合
 
 あなたの lender claim は、loan の principal と accrued interest
-を返します。ただし interest 部分から 1% の treasury cut が
+を返します。ただし interest 部分から `{liveValue:treasuryFeeBps}`% の treasury cut が
 差し引かれます。loan が settle されると (repaid、defaulted、
 または liquidated)、すぐに claimable になります。claim は
 あなたの lender position NFT を atomically に consume します
@@ -529,7 +529,7 @@ role-specific tabs で各 side の options を確認できます。今は
 
 - **Claim** — loan が settle された後 (repaid、defaulted、
   または liquidated)、principal と interest を戻します。ただし
-  interest 部分から 1% treasury cut が引かれます。あなたの
+  interest 部分から `{liveValue:treasuryFeeBps}`% treasury cut が引かれます。あなたの
   lender NFT を consume します。
 - **Initiate Early Withdrawal** — loan の途中で lender NFT を
   他の buyer 向けに sale listing します。buyer があなたの side

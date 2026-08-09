@@ -156,7 +156,7 @@ loan은 시작되지 않습니다.
 
 이 중 하나를 accept한 lender가 loan을 fund합니다. lender의 asset은
 borrower에게 가고, lender는 lender-of-record가 되며, 기간 동안 offer
-의 rate로 interest를 얻습니다. interest의 작은 일부(1%)는 settlement
+의 rate로 interest를 얻습니다. interest의 작은 일부(`{liveValue:treasuryFeeBps}`%)는 settlement
 시 protocol treasury로 갑니다.
 
 ---
@@ -321,7 +321,7 @@ loan이 끝난 뒤 — repay되었든, default되었든, liquidated되었든 —
 #### 내가 lender인 경우
 
 lender claim은 loan의 principal과 accrued interest를 돌려줍니다.
-다만 interest 부분에서 1% treasury cut이 차감됩니다. loan이 settle되는
+다만 interest 부분에서 `{liveValue:treasuryFeeBps}`% treasury cut이 차감됩니다. loan이 settle되는
 즉시(repaid, defaulted, 또는 liquidated) claimable이 됩니다. claim은
 lender position NFT를 atomically consume합니다 — 완료되면 그 side의
 loan은 완전히 close됩니다.
@@ -500,7 +500,7 @@ side의 options를 정리합니다. 지금 사용할 수 없는 buttons는 greye
 #### 내가 lender인 경우
 
 - **Claim** — loan이 settle되면(repaid, defaulted, 또는 liquidated)
-  principal과 interest를 돌려받습니다. interest에는 1% treasury cut이
+  principal과 interest를 돌려받습니다. interest에는 `{liveValue:treasuryFeeBps}`% treasury cut이
   적용됩니다. lender NFT를 consume합니다.
 - **Initiate Early Withdrawal** — loan 중간에 lender NFT를 다른 buyer에게
   sale listing합니다. buyer가 내 side를 이어받고, 나는 sale proceeds를

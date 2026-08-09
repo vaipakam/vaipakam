@@ -87,6 +87,15 @@ Public-navigation requirements:
   figure, while the public marketing pages read no chain state at all
   and show the figure shipped with the build — current as of the last
   deploy, and never to be described to a reader as read live
+- the exception is a page documenting a governance knob's DEFAULT, which
+  states a plain number rather than a reference. The two look identical
+  on the page and are different claims: "the fee is 2%" describes what
+  the protocol charges today, while "the default is 2%" describes where
+  the knob starts before anyone tunes it. A reference resolves to the
+  first, so using one for the second would silently rewrite the
+  documented default every time the live figure moved — and an operator
+  reading that page is trying to learn exactly what a retune would be
+  departing from
 - a number that is DERIVED — a worked example computing a fee on a
   stated amount — cannot be referenced that way, so it is recomputed
   whenever the rate it depends on changes, in every language the

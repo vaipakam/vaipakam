@@ -170,7 +170,7 @@ esperando a alguien que financie el préstamo.
 Un prestamista que acepta una de estas financia el préstamo: el
 activo del prestamista va al prestatario, el prestamista se convierte
 en el prestamista-de-registro, y gana intereses a la tasa de la
-oferta durante toda la duración. Una pequeña porción (1%) de los
+oferta durante toda la duración. Una pequeña porción (`{liveValue:treasuryFeeBps}`%) de los
 intereses va a la tesorería del protocolo en el momento de la
 liquidación.
 
@@ -352,7 +352,7 @@ devuelve.
 #### Si eres el prestamista
 
 Tu reclamación de prestamista devuelve el principal del préstamo más
-los intereses acumulados, menos un 1% de tesorería sobre la porción
+los intereses acumulados, menos un `{liveValue:treasuryFeeBps}`% de tesorería sobre la porción
 de intereses. Pasa a ser reclamable apenas el préstamo se liquida —
 repagado, en default o liquidado. La reclamación consume tu NFT de
 posición de prestamista de forma atómica —una vez que se ejecuta,
@@ -546,7 +546,7 @@ explicando por qué.
 
 - **Reclamar** — una vez que el préstamo se liquida (repagado, en
   default o liquidado), desbloquea el principal de vuelta más los
-  intereses, menos el 1% de tesorería sobre el interés. Consume tu
+  intereses, menos el `{liveValue:treasuryFeeBps}`% de tesorería sobre el interés. Consume tu
   NFT de prestamista.
 - **Iniciar retiro anticipado** — pon a la venta tu NFT de
   prestamista a otro comprador a mitad del préstamo. El comprador se

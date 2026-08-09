@@ -208,7 +208,7 @@ creator가 빌려줄 의향이 있는 active offers입니다. accept하는 쪽�
 borrower입니다. initiation 시 hard gate가 있습니다: borrower의 collateral
 basket은 lender의 principal request에 대해 최소 1.5 Health Factor를
 만들어야 합니다. HF math는 protocol 자체 규칙이며 gate는 우회할 수
-없습니다. interest에 대한 1% treasury cut은 terminal settlement에서
+없습니다. interest에 대한 `{liveValue:treasuryFeeBps}`% treasury cut은 terminal settlement에서
 debit되며 upfront가 아닙니다.
 
 <a id="offer-book.borrower-offers"></a>
@@ -358,7 +358,7 @@ assets를 move할 수 없습니다.
   줄일 수 있습니다.
 - **Liquidation slippage** — 4-DEX failover는 가능한 최선의 execution으로
   route하지만 specific price를 보장할 수 없습니다. Recovery는 slippage와
-  interest에 대한 1% treasury cut을 뺀 net입니다.
+  interest에 대한 `{liveValue:treasuryFeeBps}`% treasury cut을 뺀 net입니다.
 - **Illiquid-collateral defaults** — default time에 collateral 전체가
   나에게 transfer됩니다. asset value가 principal + accrued interest보다
   낮다면 recourse는 없습니다.
@@ -618,7 +618,7 @@ bearer instrument입니다 — claim 전에 transfer하면 새 holder가 collect
 Lender claim은 다음을 반환합니다:
 
 - 이 chain의 내 wallet으로 돌아오는 principal.
-- accrued interest minus 1% treasury cut. consent가 on이면 그 cut 자체가
+- accrued interest minus `{liveValue:treasuryFeeBps}`% treasury cut. consent가 on이면 그 cut 자체가
   time-weighted VPFI fee-discount accumulator에 의해 더 줄어듭니다.
 
 loan이 terminal state(Settled, Defaulted, 또는 Liquidated)에 도달하는
@@ -886,7 +886,7 @@ role과 관계없이 누구나 사용할 수 있는 permissionless actions:
 
 #### 내가 lender인 경우
 
-- **Lender로 claim** — terminal state 전용. Principal plus interest minus 1%
+- **Lender로 claim** — terminal state 전용. Principal plus interest minus `{liveValue:treasuryFeeBps}`%
   treasury cut을 반환합니다(consent가 on이면 time-weighted VPFI yield-fee
   discount로 더 줄어듭니다). Lender position NFT를 burn합니다.
 - **Early withdrawal 시작** — 선택한 asking price로 lender position NFT를

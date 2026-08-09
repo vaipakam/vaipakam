@@ -229,7 +229,7 @@ Acceptance borrower-ஆல் செய்யப்படுகிறது. Ini
 gate உள்ளது: borrower-இன் collateral basket, lender-இன் principal
 request-க்கு எதிராக குறைந்தபட்சம் 1.5 Health Factor உருவாக்க வேண்டும்.
 HF math protocol-இன் சொந்த கணக்கீடு — இந்த gate-இன் மீற முடியாது.
-Interest-இன் 1% treasury cut terminal settlement-இல் debit செய்யப்படும்,
+Interest-இன் `{liveValue:treasuryFeeBps}`% treasury cut terminal settlement-இல் debit செய்யப்படும்,
 முன்கூட்டியே அல்ல.
 
 <a id="offer-book.borrower-offers"></a>
@@ -386,7 +386,7 @@ admin key இல்லை. Pause levers cross-chain-facing contracts-களி�
 - **Liquidation slippage** — 4-DEX failover சாத்தியமான சிறந்த
   execution-க்கு route செய்கிறது, ஆனால் குறிப்பிட்ட விலையை
   உத்தரவாதம் செய்ய முடியாது. Recovery, slippage மற்றும் interest-இன்
-  மீதான 1% treasury cut-க்குப் பிறகுதான்.
+  மீதான `{liveValue:treasuryFeeBps}`% treasury cut-க்குப் பிறகுதான்.
 - **Illiquid-collateral defaults** — default time-இல் collateral
   உங்களுக்கு முழுமையாக transfer ஆகிறது. Asset-இன் மதிப்பு principal
   கூடவே accrued interest-ஐ விட குறைவாக இருந்தால் உங்களுக்கு recourse
@@ -686,7 +686,7 @@ NFT *தான்* bearer instrument — claim செய்வதற்கு �
 Lender claim திருப்பித் தருவது:
 
 - இந்த chain-இல் உங்கள் principal மீண்டும் wallet-க்கு.
-- Accrued interest minus 1% treasury cut. Consent on ஆக இருக்கும்போது
+- Accrued interest minus `{liveValue:treasuryFeeBps}`% treasury cut. Consent on ஆக இருக்கும்போது
   cut-ஐ உங்கள் time-weighted VPFI fee-discount accumulator குறைக்கிறது.
 
 Loan terminal state-ஐ (Settled, Defaulted, அல்லது Liquidated) எட்டியவுடன்
@@ -978,7 +978,7 @@ Role-இப் பொருட்படுத்தாமல் யாரும�
 #### நீங்கள் lender-ஆக இருந்தால்
 
 - **Claim as lender** — Terminal state-இல் மட்டும். Principal மற்றும் interest minus
-  1% treasury cut-ஐ திருப்பித் தருகிறது (consent on ஆக இருக்கும்போது
+  `{liveValue:treasuryFeeBps}`% treasury cut-ஐ திருப்பித் தருகிறது (consent on ஆக இருக்கும்போது
   உங்கள் time-weighted VPFI yield-fee discount-ஆல் மேலும் குறையும்).
   Lender position NFT-ஐ burn செய்கிறது.
 - **Initiate early withdrawal** — asking price-இல் lender position NFT-ஐ

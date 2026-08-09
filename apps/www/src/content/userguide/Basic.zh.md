@@ -139,7 +139,7 @@ collateral 的价值必须至少达到 loan 的 1.5 倍。(这个数字称为
 
 lender 接受其中一条后，就会为 loan 提供资金：lender 的 asset 会
 转给 borrower，lender 成为 lender-of-record，并在期限内按 offer
-的 rate 赚取利息。settlement 时，利息的一小部分 (1%) 会进入
+的 rate 赚取利息。settlement 时，利息的一小部分 (`{liveValue:treasuryFeeBps}`%) 会进入
 protocol treasury。
 
 ---
@@ -296,7 +296,7 @@ borrower claims (来自他借入的 loans) — 两者会出现在同一个列表
 #### 如果您是 lender
 
 您的 lender claim 会返还 loan 的 principal 和累计利息，并从利息
-部分扣除 1% 的 treasury cut。loan 一旦 settle (repaid、defaulted
+部分扣除 `{liveValue:treasuryFeeBps}`% 的 treasury cut。loan 一旦 settle (repaid、defaulted
 或 liquidated) 就可以 claim。claim 会 atomically consume 您的
 lender position NFT — transaction 确认后，loan 的 lender 这一侧
 就完全关闭。
@@ -465,7 +465,7 @@ default 会把您的全部 collateral 转给 lender，您没有后续 claim。
 #### 如果您是 lender
 
 - **Claim** — 一旦 loan settle (repaid、defaulted 或 liquidated)，
-  返还 principal 和 interest，并从 interest 中扣除 1% treasury
+  返还 principal 和 interest，并从 interest 中扣除 `{liveValue:treasuryFeeBps}`% treasury
   cut。会 consume 您的 lender NFT。
 - **Initiate Early Withdrawal** — 在 loan 中途把您的 lender NFT
   挂牌出售给另一买家。买家接管您这一面；您带着销售所得离开。
