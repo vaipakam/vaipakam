@@ -1746,6 +1746,27 @@
   },
   {
     "type": "error",
+    "name": "SalePositionBelowSolvencyFloor",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "healthFactor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "floor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SalePositionNotConsolidatable",
     "inputs": []
   },
