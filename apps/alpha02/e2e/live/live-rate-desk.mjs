@@ -510,6 +510,42 @@ if (walletWeth < EXPECTED_AMOUNT_MAX) {
       'escrows — top up the wallet (or shrink AMOUNT_WETH) before running',
   );
 }
+// Native gas for the WHOLE mutation arc, before any escrow moves (Codex
+// #1621 r15). WETH funds the ESCROW; it does not pay for the transactions.
+// This drive posts an offer (escrowing real WETH), amends it, waits out
+// the 300s cooldown and cancels — and the `finally` sweep uses the same
+// EOA. A wallet that can afford the post but not the cancel therefore
+// leaves a LIVE offer with escrow held on a shared testnet, which is the
+// same harm as publishing a gasless order that cannot be retracted; the
+// verdict is the lesser problem. Read at the PENDING block so an aborted
+// earlier run's un-mined spend counts, and refuse outright on a dirty
+// mempool, matching live-signed-book.mjs and live-risk-access.mjs.
+await precondition('reserving native gas for the post, amend and cancel', async () => {
+  const [bal, fees, pendingNonce, latestNonce] = await Promise.all([
+    pub.getBalance({ address: lenderAddr, blockTag: 'pending' }),
+    pub.estimateFeesPerGas().catch(() => ({})),
+    pub.getTransactionCount({ address: lenderAddr, blockTag: 'pending' }),
+    pub.getTransactionCount({ address: lenderAddr, blockTag: 'latest' }),
+  ]);
+  if (pendingNonce !== latestNonce) {
+    throw new Error(
+      `lender has ${pendingNonce - latestNonce} transaction(s) still pending;` +
+        ' their spend is invisible to this reserve check',
+    );
+  }
+  const perGas = fees.maxFeePerGas ?? fees.gasPrice ?? (await pub.getGasPrice());
+  if (!perGas) throw new Error('chain returned no usable gas price');
+  // approve + post + amend + cancel, plus the finally sweep, at a 2x pad.
+  const need = perGas * 250_000n * 5n * 2n;
+  if (bal < need) {
+    throw new Error(
+      `lender native balance ${bal} wei is under the ~${need} wei needed to post,` +
+        ' amend AND cancel — refusing to escrow WETH behind an offer this run' +
+        ' could not take back',
+    );
+  }
+});
+
 // The rest of the pre-browser preflight, under the same precondition
 // (Codex #1621 r2). Wrapping individual reads left a moving target: an
 // RPC that answered the balance probe and then failed still exited 1

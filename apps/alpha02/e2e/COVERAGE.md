@@ -283,13 +283,18 @@ Which failures are preconditions, driver by driver:
   All three are pinned by `e2e/live/watchPageRpc.test.mjs` — this helper
   was wrong three times, each time in a way that read as correct, so it is
   unit-tested rather than trusted.
-- **Cleanup capacity, for any drive that publishes something fillable** —
-  reserved BEFORE the mutation, not discovered after it. A gasless post
-  costs the maker no ETH, so vault funding alone does not prove the
-  maker can RETRACT what it posts; `live-signed-book.mjs` checks the
-  native balance against a padded `cancelSignedOffer` estimate up front
-  and exits BLOCKED rather than leave a live order resting against a
-  real vault.
+- **Cleanup capacity, for any drive that MUTATES shared chain state** —
+  reserved BEFORE the mutation, not discovered after it, and read at the
+  PENDING block so an aborted earlier run's un-mined spend counts. Asset
+  funding is not gas: a gasless post costs the maker no ETH, and WETH pays
+  escrow rather than transactions, so proving either one says nothing about
+  whether the drive can UNDO what it does. Reserve for the whole arc
+  including the `finally` sweep. Three drives do this — `live-signed-book`
+  (cancel a resting signed order), `live-rate-desk` (post → amend → cancel
+  with real escrow held), `live-risk-access` (raise a risk tier and put it
+  back) — and each would otherwise leave live orders, held escrow, or an
+  elevated tier behind on a shared testnet. The verdict is the lesser
+  problem; the stranded state is the harm.
 - **Fixture data the drive reads rather than asserts** — the deployments
   bundle's addresses, the per-facet ABI bundle, an override artifact a
   flag points at. A stale or half-exported bundle means the surface went
