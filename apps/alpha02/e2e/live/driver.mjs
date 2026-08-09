@@ -244,10 +244,24 @@ export function watchPageRpc(page) {
   // approach quietly unfixable.)
   let generation = 0;
   const startedIn = new WeakMap();
+  // Recorded requests that have not yet emitted `response`. Without this,
+  // `settled()` snapshots `bodyReads` while a request is still in flight,
+  // `Promise.allSettled([])` returns instantly, and the window reports
+  // ZERO answers — a false BLOCKED over whatever the drive was asserting.
+  // live-rpc-audit.mjs solved this with a bounded drain loop; this helper
+  // was written without it, the same way it was written without
+  // request-start attribution.
+  const outstanding = new Set();
   page.on('request', (req) => {
-    if (req.method() === 'POST') startedIn.set(req, generation);
+    if (req.method() !== 'POST') return;
+    startedIn.set(req, generation);
+    outstanding.add(req);
   });
+  // A request that fails at the transport level never emits `response`, so
+  // it would otherwise hold the drain loop open for the whole grace period.
+  page.on('requestfailed', (req) => outstanding.delete(req));
   page.on('response', (res) => {
+    outstanding.delete(res.request());
     if (startedIn.get(res.request()) !== generation || res.status() !== 200) return;
     // `response` fires on HEADERS and does not await handlers, so the body
     // is still in flight; collect the promises and settle before judging.
@@ -278,9 +292,22 @@ export function watchPageRpc(page) {
       generation++;
       answered = 0;
       bodyReads.length = 0;
+      outstanding.clear();
     },
-    /** Settle in-flight body reads, then report answers seen this window. */
-    async settled() {
+    /**
+     * Report answers seen this window.
+     *
+     * Drains outstanding requests first, bounded — a request still
+     * unanswered after the grace period did not contribute an answer
+     * anyway, and must not hang the drive. Then settles the body reads,
+     * because `response` fires on HEADERS and the parse is still in
+     * flight when the handler returns.
+     */
+    async settled(graceMs = 15_000) {
+      const until = Date.now() + graceMs;
+      while (outstanding.size > 0 && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
       await Promise.allSettled(bodyReads);
       return answered;
     },
