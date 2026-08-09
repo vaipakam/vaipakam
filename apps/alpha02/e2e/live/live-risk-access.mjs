@@ -184,7 +184,15 @@ try {
 // question does not need a browser, let alone a wallet; live-recover-
 // locales states the same rule for its keyless context.
 await precondition(`opening ${SITE}`, async () => {
-  const res = await fetch(SITE, { redirect: 'follow' });
+  // Bounded, matching the 60s ceiling every Playwright navigation carries
+  // (Codex #1621 r12). A target that accepts the connection and then stalls
+  // before headers would otherwise hang on whatever timeout the runtime
+  // happens to have — holding this drive, and the sequential batch behind
+  // it, open with a launched browser and no verdict.
+  const res = await fetch(SITE, {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(60_000),
+  });
   if (!res.ok) throw new Error(`${SITE} answered HTTP ${res.status}`);
 });
 
