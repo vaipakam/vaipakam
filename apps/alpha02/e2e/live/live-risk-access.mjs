@@ -45,8 +45,16 @@ function readDiamond() {
   } catch (err) {
     blockedSync(`cannot read the deployments bundle\n  path: ${file}\n  ${err.message}`);
   }
-  if (typeof diamond !== 'string') {
-    blockedSync(`the deployments bundle has no 84532.diamond address\n  path: ${file}`);
+  // Validated as an ADDRESS, not merely as a string (Codex #1621 r4
+  // applied to its siblings — this file was the one I missed). A
+  // malformed-but-non-empty value passes a type check and is then handed
+  // to viem, which throws at top level with exit 1: a stale artifact
+  // reported as a /risk-access regression.
+  if (typeof diamond !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(diamond)) {
+    blockedSync(
+      `the deployments bundle's 84532.diamond is not a 0x-40-hex address:` +
+        ` ${JSON.stringify(diamond)}\n  path: ${file}`,
+    );
   }
   return diamond;
 }
