@@ -14,7 +14,20 @@
 // Sandbox egress shim (proxy CA + undici dispatcher) — optional:
 // present only in environments that need it, pointed at by env.
 if (process.env.LIVE_PROXY_SETUP) {
-  await import(process.env.LIVE_PROXY_SETUP);
+  try {
+    await import(process.env.LIVE_PROXY_SETUP);
+  } catch (err) {
+    // A shim that will not load is a broken ENVIRONMENT, not a product
+    // regression (Codex #1621 r6) — and it fails before any browser or
+    // page exists, so there is nothing this run could have observed.
+    // `blockedSync` is a hoisted function declaration, so it is callable
+    // from here despite being defined further down.
+    blockedSync(
+      `cannot load LIVE_PROXY_SETUP — the egress shim this environment` +
+        ` needs would not initialise.\n  module: ${process.env.LIVE_PROXY_SETUP}` +
+        `\n  ${err.message}`,
+    );
+  }
 }
 // Node's built-in fetch (undici under the hood) — no extra dep. The
 // optional LIVE_PROXY_SETUP shim may swap the global dispatcher.
@@ -485,7 +498,17 @@ export async function launch({
           /* best effort on the way out */
         }
         LIVE_BROWSER = null;
-        removeThrowawayProfile();
+        // Best effort, exactly as the close above is (Codex #1621 r6). An
+        // rmSync failure here would REPLACE the LiveSetupError with a raw
+        // filesystem exception, and the evidence-accumulating callers key
+        // on `instanceof LiveSetupError` — so they would rethrow and exit 1
+        // for a setup problem where no page was ever observed, defeating
+        // the whole point of handing the error back.
+        try {
+          removeThrowawayProfile();
+        } catch {
+          /* the setup failure is the story; a leftover temp dir is not */
+        }
         throw new LiveSetupError(what, err);
       }
       // BLOCKED, not FAIL (#1581): no usable browser means the drive

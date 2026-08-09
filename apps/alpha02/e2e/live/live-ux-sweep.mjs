@@ -337,8 +337,20 @@ const backgroundNetworkBySession = {};
 
 for (const session of activeSessions) {
   const routes = routesEnv
-    ? routesEnv.split(',').map((s) => s.trim())
+    ? routesEnv.split(',').map((s) => s.trim()).filter(Boolean)
     : [...(session.routes ?? STATIC_ROUTES)];
+  // A selector that normalises to NOTHING is BLOCKED, not PASS (Codex
+  // #1621 r6) — the same rule DESK_I18N_LOCALES got, on the sibling
+  // selector I did not revisit. `UX_SWEEP_ROUTES=",,,"` is non-empty, so
+  // the default does not apply; unfiltered it produced empty route names
+  // that re-visited SITE and exited 0 having swept none of the routes
+  // asked for.
+  if (routes.length === 0) {
+    blockedSync(
+      `UX_SWEEP_ROUTES=${JSON.stringify(routesEnv)} selects no routes —` +
+        ` nothing to sweep.`,
+    );
+  }
 
   report.sessions.push({
     key: session.key,

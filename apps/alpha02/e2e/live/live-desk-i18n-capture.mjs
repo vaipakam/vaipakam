@@ -41,8 +41,18 @@
 
 // Egress shim (optional) — MUST run before we capture `globalThis.fetch`, so
 // a swapped undici dispatcher is the one the route handler below uses.
+// Remembered, not exited on yet: the shared `blockedSync` lives in
+// driver.mjs, which must not be imported before this block runs (see the
+// dynamic import below). So the failure is carried the few lines needed
+// to reach the shared exit, rather than growing a second copy of it here
+// (Codex #1621 r6).
+let proxyShimError = null;
 if (process.env.LIVE_PROXY_SETUP) {
-  await import(process.env.LIVE_PROXY_SETUP);
+  try {
+    await import(process.env.LIVE_PROXY_SETUP);
+  } catch (err) {
+    proxyShimError = err;
+  }
 }
 const ufetch = globalThis.fetch;
 
@@ -56,6 +66,15 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 // (#1581) without disturbing it — the shared exits are the point, since a
 // second local copy is how two definitions of "BLOCKED" start diverging.
 const { blockedSync, precondition, trackBrowser } = await import('./driver.mjs');
+if (proxyShimError) {
+  // A broken ENVIRONMENT, not a product regression — and it failed before
+  // any browser or page existed, so nothing could have been observed.
+  blockedSync(
+    `cannot load LIVE_PROXY_SETUP — the egress shim this environment needs` +
+      ` would not initialise.\n  module: ${process.env.LIVE_PROXY_SETUP}` +
+      `\n  ${proxyShimError.message}`,
+  );
+}
 
 const SITE = process.env.SITE_URL || 'https://alpha02.vaipakam.com';
 const OUT = new URL('./shots/desk-i18n/', import.meta.url).pathname;
