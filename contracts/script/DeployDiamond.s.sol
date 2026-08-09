@@ -2185,15 +2185,18 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](15);
+        s = new bytes4[](17);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
         s[11] = RewardReporterFacet.onRewardBroadcastV2Received.selector;
-        // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads.
+        // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
+        // + the era ground truth (#1632 r1).
         s[12] = RewardReporterFacet.onRewardBroadcastV3Received.selector;
         s[13] = RewardReporterFacet.getDayClockEra.selector;
         s[14] = RewardReporterFacet.getDayDeliberatelyZeroed.selector;
+        s[15] = RewardReporterFacet.setBaseRewardDeployment.selector;
+        s[16] = RewardReporterFacet.getBaseRewardDeployment.selector;
         s[2] = RewardReporterFacet.setRewardMessenger.selector;
         // T-068: `setLocalEid` removed — a chain's own identity is
         // `block.chainid`, no longer a settable endpoint id.

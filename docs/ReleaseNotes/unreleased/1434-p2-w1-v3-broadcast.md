@@ -24,12 +24,18 @@ finalized day prices its clocks under the version frozen at its
 finalization forever.
 
 Mirror-side, the new ingress installs the clock beside the day's figures
-with three protections: era binding (a delayed broadcast from a retired
-Base deployment cannot install its clock into the new era), a
-divergence check extended to every frozen clock fact on re-delivery, and
-a clock-backfill branch for days whose figures were already applied by
-the old wire — it verifies only the immutable global pair and writes
-only the clock, so the one supported migration sequence stays healable.
+with three protections: two-layer era binding (the packet must name the
+mirror's explicitly configured current Base deployment — fail-closed
+while that configuration is unset, since the per-day record cannot
+defend a day's first install against a retired deployment's delayed
+packet after a rotation — and must match the day's recorded era where
+one exists), a divergence check extended to every frozen clock fact on
+re-delivery, and a clock-backfill branch for days whose figures were
+already applied by the old wire — it verifies only the immutable global
+pair, writes the clock, and performs the same idempotent reservation
+repair the ordinary re-delivery path performs (from the day's stored
+figures, never the packet's), so the one supported migration sequence
+stays healable without leaving a healed day under-reserved.
 A new permissionless single-destination re-broadcast heals a clockless
 day even for a mirror that has been removed from the current broadcast
 destination list, admitted on the destination's day-scoped historical

@@ -6234,6 +6234,19 @@ library LibVaipakam {
         //   a later parameter change must not retroactively move an
         //   already-finalized day's expiry).
         mapping(uint32 => LapseScheduleParams) lapseSchedules;
+        // MIRROR-ONLY (#1632 r1 P1): the CURRENT Base deployment this
+        //   mirror accepts V3 clock facts from — the explicit era ground
+        //   truth. The per-day `dayClockEra` record alone cannot defend the
+        //   FIRST install: nothing is recorded yet, and the CCIP lane
+        //   authenticates the shared remote MESSENGER, not the Diamond
+        //   generation behind it — so after a Base rotation, a retired
+        //   deployment's in-flight packet would win the race and poison the
+        //   day's era permanently. Zero = V3 ingress is DARK on this mirror
+        //   (fail-closed; packets stay failed-but-re-executable CCIP
+        //   messages until the operator arms this, exactly the repatriation
+        //   endpoint posture). Rotated by the same ceremony that rotates
+        //   the Base deployment.
+        address baseRewardDeployment;
     }
 
     /// @notice #1434 P2-w1 — one day's frozen lapse clock (design §1.1's

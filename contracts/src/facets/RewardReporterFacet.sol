@@ -686,11 +686,15 @@ contract RewardReporterFacet is
      *         (an honest Base broadcasts clockless pre-upgrade days on the
      *         V2 wire instead), so the packet stays a failed, re-executable
      *         CCIP message rather than installing a meaningless clock.
-     *      3. Era binding (§2h constraint 20) — a packet naming a different
-     *         `baseDeployment` than the day's recorded era is rejected: a
-     *         delayed broadcast from a retired Base deployment must never
-     *         install its clock, schedule or zeroed marker into the new
-     *         era, where a new-era compensation could combine with it.
+     *      3. Era binding (§2h constraint 20), TWO layers (Codex #1632 r1):
+     *         the packet's `baseDeployment` must equal the mirror's
+     *         CONFIGURED current Base deployment ({setBaseRewardDeployment}
+     *         — the explicit ground truth; fail-closed while unset, since
+     *         the per-day record cannot defend a day's FIRST install), and
+     *         must match the day's recorded era where one exists: a delayed
+     *         broadcast from a retired Base deployment must never install
+     *         its clock, schedule or zeroed marker into the new era, where
+     *         a new-era compensation could combine with it.
      *      4. CLOCK BACKFILL (the 12b migration branch) — an already-applied
      *         day with no clock verifies day identity, destination, era and
      *         the immutable global pair ONLY, then writes ONLY the V3
@@ -714,6 +718,26 @@ contract RewardReporterFacet is
             _broadcastIngressGates(b.v2.destChainId);
         uint256 dayId = b.v2.dayId;
         if (b.finalizedAt == 0) revert BroadcastClockMissing(dayId);
+        // Codex #1632 r1 P1 — the era ground truth is the CONFIGURED
+        // current Base deployment, not the packet: the per-day record
+        // below cannot defend the FIRST install (nothing is recorded
+        // yet, and the CCIP lane authenticates the shared remote
+        // messenger, not the Diamond generation behind it), so without
+        // this gate a retired deployment's in-flight packet after a Base
+        // rotation would win the race and poison the day's era
+        // permanently. Fail-closed while unarmed: a V3 to a mirror whose
+        // operator has not set {setBaseRewardDeployment} stays a failed,
+        // re-executable CCIP message.
+        address expectedEra = s.baseRewardDeployment;
+        if (expectedEra == address(0) || b.baseDeployment != expectedEra) {
+            revert BroadcastEraUnauthenticated(
+                dayId, expectedEra, b.baseDeployment
+            );
+        }
+        // The per-day RECORD still binds a day to the era that installed
+        // its clock: after a rotation bumps the config, a day recorded
+        // under the previous era rejects new-era re-deliveries (the
+        // drain/heal ceremony owns cross-era days, not silent overwrite).
         address era = s.dayClockEra[dayId];
         if (era != address(0) && era != b.baseDeployment) {
             revert BroadcastEraMismatch(dayId, era, b.baseDeployment);
@@ -733,6 +757,22 @@ contract RewardReporterFacet is
             ) {
                 revert KnownGlobalAlreadySet();
             }
+            // Codex #1632 r1 P1 — the pre-d3 reservation repair the V2
+            // replay path performs must survive this branch: a day applied
+            // by a PRE-d3 receiver has `broadcastV2Applied` set without its
+            // reservation, and returning early here would leave the heal
+            // looking complete while the mirror stays under-reserved
+            // against the local share Base already booked and netted.
+            // Idempotent (its own flag), and it reserves the STORED applied
+            // figure — never the packet's halves, which this branch
+            // deliberately does not trust (`backfillDayInclusion` may have
+            // mutated them on Base after the original send).
+            _reserveMirrorCommitOnce(
+                s,
+                dayId,
+                s.chainDayRecycledFunding[dayId][uint32(block.chainid)]
+                    .recycleConsume
+            );
             _installDayClock(s, b, /* backfilled */ true);
             return;
         }
@@ -796,6 +836,36 @@ contract RewardReporterFacet is
         returns (bool)
     {
         return LibVaipakam.storageSlot().dayDeliberatelyZeroed[dayId];
+    }
+
+    /// @notice #1632 r1 — emitted when the mirror's era ground truth is
+    ///         set or rotated.
+    /// @custom:event-category informational/reward-clock
+    event BaseRewardDeploymentSet(address baseDeployment);
+
+    /// @notice Set (or rotate) the CURRENT Base deployment this mirror
+    ///         accepts V3 clock facts from — the explicit era ground truth
+    ///         (Codex #1632 r1: the per-day era record cannot defend the
+    ///         FIRST install, and the CCIP lane authenticates the shared
+    ///         messenger, not the Diamond generation behind it).
+    /// @dev    ADMIN. Zero disables the V3 ingress entirely (fail-closed —
+    ///         packets stay failed, re-executable CCIP messages until
+    ///         re-armed). Rotation belongs to the same ceremony that
+    ///         rotates the Base deployment; days whose clocks were
+    ///         installed under the PREVIOUS era keep rejecting new-era
+    ///         re-deliveries via their per-day record (drain/heal owns
+    ///         cross-era days).
+    function setBaseRewardDeployment(address baseDeployment)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().baseRewardDeployment = baseDeployment;
+        emit BaseRewardDeploymentSet(baseDeployment);
+    }
+
+    /// @notice The configured era ground truth (0 = V3 ingress dark).
+    function getBaseRewardDeployment() external view returns (address) {
+        return LibVaipakam.storageSlot().baseRewardDeployment;
     }
 
     // ─── Admin ──────────────────────────────────────────────────────────────

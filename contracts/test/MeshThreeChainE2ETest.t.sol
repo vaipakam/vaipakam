@@ -242,6 +242,9 @@ contract MeshThreeChainE2ETest is Test {
         vm.chainId(chainId);
         RewardReporterFacet(d).setBaseChainId(uint32(BASE));
         RewardReporterFacet(d).setRewardMessenger(address(bus));
+        // #1632 r1 — the era ground truth (the bus stamps `baseDeployment`
+        // from the base diamond, mirroring the production messenger).
+        RewardReporterFacet(d).setBaseRewardDeployment(baseD);
     }
 
     // ─── Cycle drivers ─────────────────────────────────────────────────────

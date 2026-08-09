@@ -1976,17 +1976,20 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](15);
+        selectors = new bytes4[](17);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
         selectors[11] = RewardReporterFacet.onRewardBroadcastV2Received.selector;
-        // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads.
+        // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
+        // + the era ground truth (#1632 r1).
         selectors[12] =
             RewardReporterFacet.onRewardBroadcastV3Received.selector;
         selectors[13] = RewardReporterFacet.getDayClockEra.selector;
         selectors[14] =
             RewardReporterFacet.getDayDeliberatelyZeroed.selector;
+        selectors[15] = RewardReporterFacet.setBaseRewardDeployment.selector;
+        selectors[16] = RewardReporterFacet.getBaseRewardDeployment.selector;
         selectors[2] = RewardReporterFacet.setRewardMessenger.selector;
         // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
         selectors[3] = RewardReporterFacet.setBaseChainId.selector;

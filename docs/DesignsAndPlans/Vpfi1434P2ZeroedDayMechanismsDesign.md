@@ -56,7 +56,15 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
   compensation ingress (§2.2) accepts a compensation for a day only from
   the remitter matching the day's recorded era, and a V3 packet whose
   `baseDeployment` differs from an already-recorded era for that day is
-  rejected.
+  rejected. *(w1 strengthening, Codex #1632 r1 P1: the recorded-era check
+  alone cannot defend a day's FIRST install — nothing is recorded yet,
+  and the CCIP lane authenticates the shared remote messenger, not the
+  Diamond generation behind it, so a retired deployment's in-flight
+  packet would win the race after a rotation. The mirror therefore holds
+  an explicit ADMIN-set ground truth, `baseRewardDeployment`, that every
+  V3 packet must name; while unset the V3 ingress is dark (fail-closed,
+  packets stay re-executable), and rotation belongs to the same ceremony
+  that rotates the Base deployment.)*
 
 **Why frozen-at-finalization is load-bearing (R2a).** A re-broadcast today
 is NOT byte-identical by construction — `broadcastGlobal` reads everything

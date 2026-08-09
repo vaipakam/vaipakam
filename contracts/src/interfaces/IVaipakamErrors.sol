@@ -318,6 +318,15 @@ interface IVaipakamErrors {
     error BroadcastEraMismatch(
         uint256 dayId, address recordedEra, address packetEra
     );
+    /// @notice A V3 broadcast's `baseDeployment` does not match this
+    ///         mirror's configured CURRENT Base deployment — or that
+    ///         config is unset (`expected == 0`), in which case the V3
+    ///         ingress is deliberately dark (Codex #1632 r1: the per-day
+    ///         era record cannot defend the FIRST install, so the ground
+    ///         truth must be explicit, and fail-closed while unarmed).
+    error BroadcastEraUnauthenticated(
+        uint256 dayId, address expected, address packetEra
+    );
     /// @notice A re-delivered V3 broadcast disagreed with the day's already-
     ///         installed frozen clock facts (finalizedAt / schedule version /
     ///         inline parameters / zeroed marker).

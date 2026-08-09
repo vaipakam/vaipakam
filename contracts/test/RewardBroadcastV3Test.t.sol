@@ -95,6 +95,9 @@ contract RewardBroadcastV3Test is SetupTest, IVaipakamErrors {
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(false);
         _rep().setRewardMessenger(address(messenger));
+        // #1632 r1 — arm the era ground truth: without it the V3 ingress
+        // is deliberately dark (fail-closed).
+        _rep().setBaseRewardDeployment(ERA_BASE);
     }
 
     /// @dev Full-coverage day-1 reports + finalize on the canonical config.
@@ -657,10 +660,14 @@ contract RewardBroadcastV3Test is SetupTest, IVaipakamErrors {
     /// Era binding (§2h constraint 20): once a day's clock names its Base
     /// deployment, a packet from any OTHER deployment is rejected — a
     /// delayed broadcast from a retired Base cannot reach into the new era.
+    /// (Reaching the per-day check requires a packet that PASSES the
+    /// configured-era gate: rotate the config to the stale sender first —
+    /// exactly the recorded-era-survives-rotation property.)
     function testV3IngressEraMismatchRejected() public {
         _configureMirror(CHAIN_ARB);
         messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
 
+        _rep().setBaseRewardDeployment(address(0x0DD));
         RewardBroadcastV3 memory stale = _v3Packet(CHAIN_ARB);
         stale.baseDeployment = address(0x0DD);
         vm.expectRevert(
@@ -669,6 +676,56 @@ contract RewardBroadcastV3Test is SetupTest, IVaipakamErrors {
             )
         );
         messenger.deliverBroadcastV3(stale);
+    }
+
+    /// Codex #1632 r1 P1 — the FIRST install is the era race the per-day
+    /// record cannot defend: with no clock recorded, a retired
+    /// deployment's delayed packet must be rejected by the CONFIGURED
+    /// ground truth, never allowed to win the race and poison the day.
+    function testV3IngressRejectsRetiredDeploymentFirstInstall() public {
+        _configureMirror(CHAIN_ARB);
+        RewardBroadcastV3 memory stale = _v3Packet(CHAIN_ARB);
+        stale.baseDeployment = address(0x0DD); // retired deployment
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BroadcastEraUnauthenticated.selector,
+                3,
+                ERA_BASE,
+                address(0x0DD)
+            )
+        );
+        messenger.deliverBroadcastV3(stale);
+        assertEq(_rep().getDayClockEra(3), address(0), "era not poisoned");
+    }
+
+    /// Fail-closed while unarmed: a mirror whose operator has not set the
+    /// era ground truth rejects EVERY V3 (the packet stays a failed,
+    /// re-executable CCIP message — healable after arming).
+    function testV3IngressDarkUntilEraGroundTruthArmed() public {
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        _rep().setRewardMessenger(address(messenger));
+        // Deliberately NO setBaseRewardDeployment.
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BroadcastEraUnauthenticated.selector, 3, address(0), ERA_BASE
+            )
+        );
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+
+        // Arming heals: the same packet now applies.
+        _rep().setBaseRewardDeployment(ERA_BASE);
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+        assertEq(_rep().getDayClockEra(3), ERA_BASE);
+    }
+
+    function testSetBaseRewardDeploymentRequiresAdmin() public {
+        _configureMirror(CHAIN_ARB);
+        vm.prank(alice);
+        vm.expectRevert();
+        _rep().setBaseRewardDeployment(ERA_BASE);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -711,6 +768,43 @@ contract RewardBroadcastV3Test is SetupTest, IVaipakamErrors {
             _agg().getChainDayRecycledFunding(3, CHAIN_ARB);
         assertEq(f.freshLenderHalf, 20e18, "halves untouched by backfill");
         assertEq(f.recycleConsume, 5e18, "consume untouched by backfill");
+    }
+
+    /// Codex #1632 r1 P1 — the backfill must PRESERVE the pre-d3
+    /// reservation repair the V2 replay path performs: a day applied by a
+    /// pre-d3 receiver has `broadcastV2Applied` without its reservation,
+    /// and a backfill that returned early would leave the heal looking
+    /// complete while the mirror stayed under-reserved. The repair uses the
+    /// STORED applied figure — proven by a packet carrying divergent
+    /// halves — and is idempotent on replay.
+    function testClockBackfillRepairsPreD3Reservation() public {
+        _configureMirror(CHAIN_ARB);
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
+        // Reconstruct the PRE-d3 receiver state: applied + stamped, but
+        // never reserved.
+        _mut().setMirrorCommitReservedRaw(3, false);
+        _mut().setOutstandingCommitRaw(0, 0);
+
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.v2.recycleConsume = 777e18; // divergent packet figure — untrusted
+        messenger.deliverBroadcastV3(b);
+
+        (, , uint256 outstandingRecycled, ) = _agg().getGovernorCommitState();
+        assertEq(
+            outstandingRecycled,
+            5e18,
+            "repair reserved the STORED applied figure, not the packet's"
+        );
+
+        // Idempotent: a replay does not double-reserve. (With the clock now
+        // installed, a replay routes through the shared core's
+        // full-divergence path — so it must carry the TRUE figures; the
+        // divergent probe above was only admissible on the backfill branch,
+        // which deliberately does not compare halves.)
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+        (, , uint256 outstandingAfterReplay, ) =
+            _agg().getGovernorCommitState();
+        assertEq(outstandingAfterReplay, 5e18, "no double reservation");
     }
 
     /// The backfill still verifies the immutable pair — a packet from a
