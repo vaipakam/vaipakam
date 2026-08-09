@@ -41,7 +41,7 @@ returns the _effective_ value (default OR stored, whichever applies).
 
 ### Treasury fee on lender interest
 
-Default 1% of accrued lender
+Default 2% of accrued lender
 interest goes to treasury. Range: 0% – `MAX_FEE_BPS` (the cap is
 defined alongside the setter; conventionally 10% to leave headroom
 for protocol-fee experiments without ever crossing into "majority of
@@ -50,7 +50,7 @@ turns the cut off entirely.
 
 ### Loan-initiation fee
 
-Default 0.1% of principal, paid by the
+Default 0.2% of principal, paid by the
 borrower in VPFI at loan start. Range matches the treasury fee cap.
 Time-weighted VPFI tier discounts can take the borrower's effective
 fee to zero — the setter cap is on the gross rate.
