@@ -1432,7 +1432,19 @@ const ok = !failed && steps.every((s) => s.status !== 'FAIL') && (offerId === nu
 // A precondition that surfaced mid-drive is BLOCKED, not FAIL — but only
 // now, once the `finally` above has cancelled whatever this run posted.
 // Exiting at the point of discovery would have left it resting (r4).
-if (!ok && driveError instanceof LivePreconditionError) {
+// BLOCKED only if the precondition is the ONLY thing wrong (Codex #1621
+// r5). If the cleanup ALSO failed — the cancel reverted, the RPC dropped,
+// a CLEANUP-UNKNOWN was recorded — this run may have left a live offer
+// with WETH escrowed, and that is actionable in a way "verified nothing"
+// is not. Reporting BLOCKED there buries funds still exposed behind a
+// re-run-later verdict.
+const onlyDriveFailed = steps.every((s) => s.status !== 'FAIL' || s.name === 'drive');
+if (
+  !ok &&
+  driveError instanceof LivePreconditionError &&
+  onlyDriveFailed &&
+  (offerId === null || cancelled)
+) {
   console.log('BLOCKED — a precondition failed mid-drive; cleanup completed first');
   process.exit(2);
 }

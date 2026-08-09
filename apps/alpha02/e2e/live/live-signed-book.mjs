@@ -2003,7 +2003,19 @@ console.log(ok ? 'PASS — signed-book live review complete' : 'FAIL — see ste
 // A precondition that surfaced mid-drive is BLOCKED, not FAIL — but only
 // now, once the `finally` above has cancelled whatever this run left
 // resting. Exiting at the point of discovery would have stranded it (r4).
-if (!ok && driveError instanceof LivePreconditionError) {
+// BLOCKED only if the precondition is the ONLY thing wrong (Codex #1621
+// r5) — same rule as live-rate-desk.mjs. If the cleanup ALSO failed — the cancel reverted, the RPC dropped,
+// a CLEANUP-UNKNOWN was recorded — this run may have left a signed order RESTING
+// and fillable, and that is actionable in a way "verified nothing"
+// is not. Reporting BLOCKED there buries funds still exposed behind a
+// re-run-later verdict.
+const onlyDriveFailed = steps.every((s) => s.status !== 'FAIL' || s.name === 'drive');
+if (
+  !ok &&
+  driveError instanceof LivePreconditionError &&
+  onlyDriveFailed &&
+  (!signClicked || ledgerPoisoned)
+) {
   console.log('BLOCKED — a precondition failed mid-drive; cleanup completed first');
   process.exit(2);
 }
