@@ -3,15 +3,18 @@
  * (fee BPS, discount tier, VPFI threshold, etc.) inline inside doc
  * markdown, via `useProtocolConfig`.
  *
- * ON THIS SURFACE THAT IS ALWAYS THE COMPILE-TIME DEFAULT. The
- * marketing site is deliberately wallet-free, so its `useProtocolConfig`
- * is a stub that reports no config and every knob below falls back to
- * `defaultValue`. The component is shared with connected-app surfaces
- * where the read is real; here it buys a single definition point for a
- * number that ten locale files would otherwise each hold a copy of.
- * That is worth having — #1352 retuned both fees and the copies drifted
- * — but it is not liveness, and marketing copy must not tell a reader
- * these figures come from the chain.
+ * On this surface the value comes from the indexer's published config
+ * snapshot (#1612), not from a chain client — the site stays wallet-
+ * free and carries no ABI. The bundled default is the fallback, used
+ * before the snapshot resolves and on every failure path, so a page
+ * always renders a figure.
+ *
+ * The distinction the tooltip draws is therefore real and worth
+ * keeping honest: a dotted underline means the number followed the last
+ * governance retune, a dashed one means it is the number shipped with
+ * this build. Until #1612 the second was ALWAYS the case while the
+ * tooltip described a failed chain read, which told readers something
+ * was broken on a page that was working exactly as designed.
  *
  * Markdown integration: doc content uses inline-code tokens like
  *   `{liveValue:treasuryFeeBps}`
@@ -23,26 +26,29 @@
  *
  * Why a single component (vs. raw text):
  * - A retune updates one definition rather than every sentence in
- *   every language that quotes the figure. On surfaces that read
- *   config, that update needs no deploy at all; here it needs one
- *   build, which is still nine fewer places to forget.
+ *   every language that quotes the figure — and now needs no deploy at
+ *   all, since the figure follows the published configuration.
  * - Compile-time defaults are bundled in, so the page renders with
- *   sensible values before a chain read resolves, when the read fails
- *   (offline, RPC blip, no Diamond on this chain), and — on the
- *   marketing site — always.
- * - The `<span title="...">` tooltip names the source so a reader
- *   curious about provenance can hover to confirm the value comes
- *   from the chain rather than a hardcoded marketing claim.
+ *   sensible values before the snapshot resolves and when it cannot be
+ *   reached (indexer redeploying, chain absent from the snapshot, a row
+ *   too stale to trust). A docs page must render for whoever arrives
+ *   during any of those.
+ * - The `<span title="...">` tooltip names the source, so a reader
+ *   curious about provenance can tell a figure that tracks the protocol
+ *   from one baked into this build.
  *
  * The component is a React hook caller — must be invoked from the
- * React tree (i.e. inside the markdown render of a doc page that
- * mounted `useProtocolConfig`'s deps via `<DiamondReadProvider>`).
+ * React tree (i.e. inside the markdown render of a doc page). It needs
+ * no provider here: `useProtocolConfig` is a module-level store doing
+ * one `fetch` per page load, shared by every token on the page.
  *
  * Defaults, display format and the formatter itself live in
  * `lib/liveValueKnobs.ts`, NOT here (#1606 review). The build script that
  * publishes the machine-readable docs substitutes the same tokens, and
  * two copies of "what does this token mean" would drift. This file owns
- * only the chain reads, which are the part the build script cannot do.
+ * only the live read, which is the part the build script cannot do —
+ * the published markdown has no runtime, so it substitutes the bundled
+ * default and is current as of its build.
  */
 
 import { useProtocolConfig } from '../../hooks/useProtocolConfig';
@@ -126,10 +132,20 @@ export function LiveValue({ knob, locale }: LiveValueProps) {
 
   return (
     <span
+      // A stable structural marker for "this figure came from a knob".
+      // The render guard used to identify these spans by matching their
+      // TOOLTIP COPY, so rewording the tooltip broke a check about
+      // structure — the same fact written in two places, one of them a
+      // sentence meant for humans. The attribute is the fact; the
+      // tooltip is prose. It also names WHICH knob, so the guard and a
+      // live-review driver can assert a specific figure rather than
+      // "some span exists".
+      data-live-value={knob}
+      data-live-value-source={isLive ? 'published' : 'bundled'}
       title={
         isLive
-          ? 'Live value from on-chain protocol config'
-          : 'Compile-time default — chain read pending or unavailable'
+          ? 'Live value from the published protocol configuration'
+          : 'Value shipped with this page — published configuration not loaded'
       }
       style={{
         // Subtle styling so live values don't visually shout — the

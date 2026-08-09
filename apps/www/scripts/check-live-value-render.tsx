@@ -133,10 +133,13 @@ function check(name: string, ok: boolean, detail: string) {
     !html.includes('liveValue:'),
     `the raw token survived into the output — this is the #1606 failure:\n      ${html}`,
   );
-  // LiveValue renders a <span title="…"> naming the value's provenance.
+  // LiveValue marks its span with `data-live-value="<knob>"`. Assert on
+  // that rather than on the tooltip copy: the tooltip is prose for a
+  // human and gets reworded (it did in #1612), and a structural check
+  // that breaks when copy changes is checking the wrong thing.
   check(
     'inline token emits live-value markup',
-    /<span[^>]*title="[^"]*(Live value from on-chain|Compile-time default)/.test(html),
+    /<span[^>]*data-live-value="treasuryFeeBps"/.test(html),
     `no LiveValue span found; the token was consumed but nothing replaced it:\n      ${html}`,
   );
 }

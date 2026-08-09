@@ -82,11 +82,26 @@ Public-navigation requirements:
   the figure the protocol uses. A rate is written down once and
   referenced from every sentence and every translation that quotes it,
   rather than copied into each, so a retune updates one definition
-  instead of ten. What that reference resolves to depends on the
-  surface: a page that reads protocol configuration shows the current
-  figure, while the public marketing pages read no chain state at all
-  and show the figure shipped with the build — current as of the last
-  deploy, and never to be described to a reader as read live
+  instead of ten. Every rendered page resolves that reference against
+  the protocol's published configuration, so a documented rate follows a
+  retune rather than a release, on the public pages as much as inside
+  the app
+- a page must still render when that configuration cannot be reached,
+  and it renders the figure shipped with the build. That fallback is
+  normal operation, not an error state — a reader arriving mid-redeploy
+  gets a page, not a broken one — but it means a displayed figure has
+  two possible provenances, and the page says which it is rather than
+  presenting both identically. What it must never do is describe the
+  fallback as a failure: for most of this site's life the tooltip said a
+  chain read was "pending or unavailable" on pages where none was ever
+  attempted, which told readers something was broken about a page
+  working exactly as designed
+- the machine-readable copies are the one surface with no runtime, so
+  they resolve every reference at build time and are current as of their
+  build. That is a property of the artefact, not a gap to close: a
+  static file cannot follow a retune, and pretending otherwise by
+  leaving the reference unresolved would serve a crawler a token instead
+  of a number
 - the exception is a page documenting a governance knob's DEFAULT, which
   states a plain number rather than a reference. The two look identical
   on the page and are different claims: "the fee is X%" describes what
