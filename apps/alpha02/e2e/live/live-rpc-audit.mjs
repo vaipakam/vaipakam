@@ -8,7 +8,7 @@
 // stragglers. The pre-diet defect measured ~85 eth_blockNumber +
 // ~19 eth_getLogs in 100s — an order of magnitude over budget, so
 // the thresholds cleanly separate regression from timing noise.
-import { clientsFor, launch, precondition, visit } from './driver.mjs';
+import { blocked, launch, visit } from './driver.mjs';
 
 const BUDGET_TOTAL = 12; // all JSON-RPC calls in the 60s window
 const BUDGET_BLOCKNUMBER = 5;
@@ -22,6 +22,36 @@ const check = (name, ok, detail = '') => {
 
 const counts = {};
 let recording = false;
+// Successful JSON-RPC responses the PAGE actually received, counted from
+// its own traffic (Codex #1621 r7).
+//
+// My first attempt at this probed `clientsFor(84532)` — the DRIVER's
+// endpoint. The served SPA picks its RPC at build time
+// (VITE_BASE_SEPOLIA_RPC_URL), so a preview built against a dead custom
+// endpoint passed that probe on the driver's healthy default while every
+// page request was still aborted. The check has to observe the endpoint
+// the page uses, and the only reliable way to know which that is, is to
+// watch what the page does.
+//
+// This is also the FLOOR both budgets lack. They are ceilings: with the
+// chain unreachable the tally is 0, comfortably "within budget", and the
+// error shell clears the weak body-length check — exit 0, batch prints
+// PASS, nothing audited.
+let rpcOk = 0;
+page.on('response', async (res) => {
+  if (!recording) return;
+  const req = res.request();
+  if (!req.postData() || res.status() !== 200) return;
+  try {
+    const parsed = JSON.parse(await res.text());
+    for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
+      // A JSON-RPC envelope carrying a result, not an error object.
+      if (r && r.jsonrpc && r.error === undefined && r.result !== undefined) rpcOk++;
+    }
+  } catch {
+    /* not a JSON-RPC response body */
+  }
+});
 page.on('request', (req) => {
   if (!recording) return;
   const body = req.postData();
@@ -36,26 +66,6 @@ page.on('request', (req) => {
   }
 });
 
-// A WORKING RPC is a precondition of this audit, not something it can
-// infer from the tally (Codex #1621 r5). With the chain unreachable the
-// route shim aborts every JSON-RPC call, so the counts stay LOW — inside
-// both budgets — and the rendered error shell can clear the weak
-// `body.length > 300` check. The drive would exit 0 having audited no RPC
-// behaviour at all, and the batch would print PASS. Both budgets are
-// CEILINGS; nothing here establishes a floor, so reachability has to be
-// asserted rather than assumed.
-//
-// Identity as well as reachability: an RPC pointed at another network
-// answers happily and would satisfy a bare liveness probe while the
-// budget being measured belongs to a different chain's traffic.
-const CHAIN_ID = 84532;
-await precondition('confirming the configured RPC serves the expected chain', async () => {
-  const seen = await clientsFor(CHAIN_ID).pub.getChainId();
-  if (Number(seen) !== CHAIN_ID) {
-    throw new Error(`RPC reports chain ${seen}, expected ${CHAIN_ID}`);
-  }
-});
-
 await visit(page, '/offers');
 await page.waitForTimeout(8_000); // initial hydration outside the window
 recording = true;
@@ -64,7 +74,17 @@ await page.waitForTimeout(60_000);
 recording = false;
 
 const total = Object.values(counts).reduce((a, n) => a + n, 0);
-console.log('tally:', JSON.stringify(counts));
+console.log('tally:', JSON.stringify(counts), `| successful rpc responses: ${rpcOk}`);
+// No SUCCESSFUL RPC in the window means there was no RPC behaviour to
+// audit — BLOCKED, not a budget PASS (Codex #1621 r7).
+if (rpcOk === 0) {
+  await blocked(
+    'the page received no successful JSON-RPC response in the 60s window, so' +
+      ' there was no RPC behaviour to audit. The budgets below are CEILINGS —' +
+      ' an unreachable or misconfigured chain endpoint scores zero and would' +
+      ' otherwise pass them.',
+  );
+}
 check(`total JSON-RPC calls within budget (${total} <= ${BUDGET_TOTAL})`, total <= BUDGET_TOTAL);
 check(
   `eth_blockNumber within budget (${counts['eth_blockNumber'] ?? 0} <= ${BUDGET_BLOCKNUMBER})`,
