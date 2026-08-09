@@ -636,6 +636,8 @@ contract RewardRemitLedgerTest is SetupTest {
             uint256 pLender,
             uint256 pBorrower,
             ,
+            ,
+            ,
 
         ) = abi.decode(
             ccip.sentPayload(0),
@@ -645,6 +647,8 @@ contract RewardRemitLedgerTest is SetupTest {
                 uint256,
                 uint256,
                 address,
+                uint256,
+                uint256,
                 uint256,
                 uint256,
                 uint256,
@@ -703,7 +707,19 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
 
-        (, , , , , , , uint256 wireAt, uint256 wireVer) = abi.decode(
+        (
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
+            ,
+            uint256 wireAt,
+            uint256 wireVer,
+            uint256 wireWindow,
+            uint256 wireGap
+        ) = abi.decode(
             ccip.sentPayload(0),
             (
                 uint256,
@@ -714,11 +730,18 @@ contract RewardRemitLedgerTest is SetupTest {
                 uint256,
                 uint256,
                 uint256,
+                uint256,
+                uint256,
                 uint256
             )
         );
         assertEq(wireAt, uint256(frozenAt), "frozen finalizedAt on the wire");
         assertEq(wireVer, 1, "frozen v1 despite the v2 bump");
+        // Codex #1634 r1 — the INLINE parameters ride too (w1 chose no
+        // mirror-side version table, so the version number alone is
+        // underivable there).
+        assertEq(wireWindow, 7 days, "frozen v1 window inline");
+        assertEq(wireGap, 24 hours, "frozen v1 gap inline");
     }
 
     // ─── mirror-side receipt + ack send ───────────────────────────────────

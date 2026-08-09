@@ -6292,9 +6292,14 @@ library LibVaipakam {
     ///         re-executable into the same revert forever) and await the R4
     ///         return (w5). `reason` names the quarantine branch for the
     ///         return's evidence: 1 = not-a-zeroed-day (§2.2 case a),
-    ///         2 = era demotion (a provisional credit whose V3 broadcast
-    ///         named a different deployment), 3 = post-lapse arrival
-    ///         (§2.2 case d; unreachable until the w4 terminals ship).
+    ///         2 = era mismatch (at ingress, or a provisional credit whose
+    ///         V3 broadcast named a different deployment), 3 = past the
+    ///         day's expiry (terminal flags, the installed clock, or the
+    ///         wire-carried frozen words — §2.2 case d), 4 = a second
+    ///         arrival while a provisional credit was already held (one
+    ///         provisional receipt binding per day — #1634 r1), 5 = the
+    ///         day is permanently V3-unhealable on a rotated mirror
+    ///         (#1634 r1; the confirm/demote hook could never run).
     struct StrandedRecovery {
         uint256 amount;
         uint256 dayId;

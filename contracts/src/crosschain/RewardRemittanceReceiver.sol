@@ -35,6 +35,12 @@ import {
 ///      fresh (Codex #1556 r1 P1). This contract is the only party that knows
 ///      which generation it decoded, so it is the only one that can answer,
 ///      and for the two old generations the honest answer is ZERO.
+/// @dev #1434 P2-w2 — the receiver's CURRENT wire generation, at file
+///      level so the refresh script can import the same value the
+///      deployed probe ({RewardRemittanceReceiver.WIRE_GENERATION})
+///      returns — one definition, no literal to drift.
+uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 3;
+
 interface IRewardBudgetIngress {
     function onRewardBudgetReceived(
         address token,
@@ -64,7 +70,9 @@ interface ICompensationBudgetIngress {
         uint256 lenderShare18,
         uint256 borrowerShare18,
         uint64 finalizedAt,
-        uint32 lapseScheduleVersion
+        uint32 lapseScheduleVersion,
+        uint64 lapseWindowSeconds,
+        uint64 dispatchCutoffGap
     ) external;
 }
 
@@ -383,7 +391,9 @@ contract RewardRemittanceReceiver is
             uint256 lenderShare,
             uint256 borrowerShare,
             uint256 finalizedAt,
-            uint256 lapseScheduleVersion
+            uint256 lapseScheduleVersion,
+            uint256 lapseWindowSeconds,
+            uint256 dispatchCutoffGap
         ) = abi.decode(
             payload,
             (
@@ -392,6 +402,8 @@ contract RewardRemittanceReceiver is
                 uint256,
                 uint256,
                 address,
+                uint256,
+                uint256,
                 uint256,
                 uint256,
                 uint256,
@@ -423,7 +435,9 @@ contract RewardRemittanceReceiver is
             lenderShare,
             borrowerShare,
             SafeCast.toUint64(finalizedAt),
-            SafeCast.toUint32(lapseScheduleVersion)
+            SafeCast.toUint32(lapseScheduleVersion),
+            SafeCast.toUint64(lapseWindowSeconds),
+            SafeCast.toUint64(dispatchCutoffGap)
         );
 
         emit CompensationBudgetForwarded(
@@ -461,6 +475,20 @@ contract RewardRemittanceReceiver is
             IERC20(deliveredToken).balanceOf(diamond) - diamondBalBefore;
         if (actualReceived == 0) revert ZeroAmount();
     }
+
+    /// @notice #1434 P2-w2 (Codex #1634 r1) — the DURABLE upgrade probe
+    ///         for the standalone receiver. The facet-refresh script's
+    ///         original gate keyed on retired Diamond selectors, which an
+    ///         already-migrated deployment no longer routes — so the P2
+    ///         decoder would never install there and every manual
+    ///         compensation would sit as a failed CCIP delivery while Base
+    ///         had already closed the day. The script now probes THIS
+    ///         constant instead: a missing selector (pre-P2 impl) or a
+    ///         lower value means the proxy needs the upgrade. Bump it with
+    ///         every wire generation the receiver learns to decode
+    ///         (1 = legacy/d2 · 2 = d5 + P1-a · 3 = P2 compensation).
+    uint256 public constant WIRE_GENERATION =
+        REMIT_RECEIVER_WIRE_GENERATION;
 
     // ─── Emergency pause ──────────────────────────────────────────────
 

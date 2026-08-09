@@ -59,7 +59,7 @@ const EXPECTED_VIEWS: ReadonlyArray<{
   readonly inputs: readonly string[];
   readonly outputs: readonly string[];
   /** Which compiled facet ABI carries the view (default: aggregator). */
-  readonly facet?: 'repatriation';
+  readonly facet?: 'repatriation' | 'lens';
 }> = [
   {
     name: 'getExpectedSourceChainIds',
@@ -149,6 +149,26 @@ const EXPECTED_VIEWS: ReadonlyArray<{
     ],
     facet: 'repatriation',
   },
+  // #1434 P2-w2 — the backing snapshot on `InteractionRewardsLensFacet`:
+  // the balance / arrival-reservation tuple the recovery-reservation check
+  // compares. Shape-asserted like every other watched view — the reader's
+  // positional cast of output [6] as `strandedRecoveryReserved` must fail
+  // AT STARTUP on any drift, not silently misread a neighbouring word
+  // (Codex #1634 r1 P2).
+  {
+    name: 'getRecycleBackingSnapshot',
+    inputs: [],
+    outputs: [
+      'vpfiBalance:uint256',
+      'bucket:uint256',
+      'unearmarked:uint256',
+      'outstandingRecycled:uint256',
+      'paidOutRecycled:uint256',
+      'keeperBudget:uint256',
+      'strandedRecoveryReserved:uint256',
+    ],
+    facet: 'lens',
+  },
 ] as const;
 
 /** Names of the views asserted above — handy for tests and diagnostics. */
@@ -172,11 +192,17 @@ function describe(io: { name?: string; type: string }): string {
 export function assertAbiShape(
   abi: Abi = REWARD_AGGREGATOR_ABI,
   repatAbi: Abi = REPATRIATION_ABI,
+  lensAbi: Abi = INTERACTION_REWARDS_LENS_ABI,
 ): void {
   const problems: string[] = [];
 
   for (const expected of EXPECTED_VIEWS) {
-    const source = expected.facet === 'repatriation' ? repatAbi : abi;
+    const source =
+      expected.facet === 'repatriation'
+        ? repatAbi
+        : expected.facet === 'lens'
+          ? lensAbi
+          : abi;
     const matches = source.filter(
       (item): item is AbiFunction =>
         item.type === 'function' && item.name === expected.name,

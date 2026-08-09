@@ -635,6 +635,11 @@ contract RewardRemittanceFacet is
         uint256 borrowerAmount18
     ) private returns (bytes32 messageId) {
         LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
+        // Codex #1634 r1 — ALL FOUR frozen clock words ride the wire, not
+        // just the timestamp + version number: w1 chose inline schedule
+        // parameters over a mirror-side version table, so the version
+        // number alone is underivable there, and the mirror's ingress-time
+        // expiry classification (the R4b promise) needs the window itself.
         bytes memory payload = abi.encode(
             RemitWire.REMIT_WIRE_TAG_P2,
             dayId,
@@ -644,7 +649,9 @@ contract RewardRemittanceFacet is
             lenderAmount18,
             borrowerAmount18,
             uint256(c.finalizedAt),
-            uint256(c.scheduleVersion)
+            uint256(c.scheduleVersion),
+            uint256(c.lapseWindowSeconds),
+            uint256(c.dispatchCutoffGap)
         );
         messageId = _dispatchRemitTail(
             s,
@@ -1014,7 +1021,13 @@ contract RewardRemittanceFacet is
     ///         stranded-recovery reservation (§2.2's token-safe rejection —
     ///         tokens accepted, never payable here; the R4 return takes it
     ///         from the reservation). `reason`: 1 = day not deliberately
-    ///         zeroed, 2 = era mismatch, 3 = post-lapse arrival.
+    ///         zeroed, 2 = era mismatch, 3 = past the day's expiry (lapse
+    ///         flags or the frozen clock words, installed or wire-carried),
+    ///         4 = a second arrival while a provisional credit is already
+    ///         held (one provisional receipt binding per day), 5 = the day
+    ///         is permanently V3-unhealable on this rotated mirror (prior
+    ///         state, no recorded era — the confirm/demote hook could never
+    ///         run).
     /// @custom:event-category informational/reward-compensation
     event CompensationQuarantined(
         uint256 indexed dayId,
@@ -1086,9 +1099,11 @@ contract RewardRemittanceFacet is
         address remitter,
         uint256 lenderShare18,
         uint256 borrowerShare18,
-        uint64, /* finalizedAt — carried for w4's lapse gates; the clock
-                   itself installs from the authenticated V3 broadcast */
-        uint32 /* lapseScheduleVersion — likewise */
+        uint64 finalizedAt,
+        uint32 lapseScheduleVersion,
+        uint64 lapseWindowSeconds,
+        uint64 /* dispatchCutoffGap — Base-side input (the R3 refusal);
+                  carried for symmetry + w4's gates, unused here */
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardRemittanceReceiver) {
@@ -1123,7 +1138,19 @@ contract RewardRemittanceFacet is
             uint8 reason = 0;
             if (remitter != era) reason = 2;
             else if (!s.dayDeliberatelyZeroed[dayId]) reason = 1;
-            else if (s.dayLapsed[dayId] || s.dayShortLapsed[dayId]) {
+            else if (
+                s.dayLapsed[dayId] || s.dayShortLapsed[dayId]
+                    || _pastExpiry(
+                        s.dayLapseClock[dayId].finalizedAt,
+                        s.dayLapseClock[dayId].scheduleVersion,
+                        s.dayLapseClock[dayId].lapseWindowSeconds
+                    )
+            ) {
+                // Codex #1634 r1 — the flags alone are the w4 TERMINALS'
+                // record; the INSTALLED clock itself already decides "past
+                // the applicable expiry" (§2.2's fourth case tests the
+                // clock, not just the flags), so an arrival after the true
+                // expiry quarantines even before any terminal has run.
                 reason = 3;
             }
             if (reason != 0) {
@@ -1144,6 +1171,45 @@ contract RewardRemittanceFacet is
             );
             return;
         }
+
+        // Codex #1634 r1 — two arrivals that must NOT go provisional:
+        //
+        // (a) A day the w1 rotation gate has made permanently V3-unhealable
+        //     (rotated mirror + prior state + no recorded era): its
+        //     provisional credit could never reach the confirm/demote hook,
+        //     leaving the value outside the reservation forever. Quarantine
+        //     at ingress instead — the same three conjuncts the V3 ingress
+        //     refuses on, threaded verbatim.
+        if (
+            s.rewardEraRotated && era == address(0)
+                && (s.broadcastV2Applied[dayId] || s.knownGlobalSet[dayId])
+        ) {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 5);
+            return;
+        }
+        // (b) A SECOND compensation while one is already provisional: the
+        //     day holds one provisional receipt binding (era + remitId),
+        //     and overwriting it would demote BOTH packets' pools under the
+        //     last receipt key — the receipt-bounded return could then
+        //     recover at most that one reservation's entitlement, stranding
+        //     the earlier packet. One provisional credit per day;
+        //     conflicting arrivals hold their own receipt-keyed reservation
+        //     until the day's broadcast settles which era governs.
+        LibVaipakam.DayCompensation storage dcPrior = s.dayCompensation[dayId];
+        if (dcPrior.provisional) {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 4);
+            return;
+        }
+        // (c) The overtake case can still be PAST ITS TRUE EXPIRY: the wire
+        //     carries the full frozen clock words (R4b), so the ingress
+        //     evaluates them even with no broadcast state — a delivery
+        //     arriving after the day's expiry must never be provisionally
+        //     credited only to lapse at confirmation.
+        if (_pastExpiry(finalizedAt, lapseScheduleVersion, lapseWindowSeconds))
+        {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 3);
+            return;
+        }
         _creditCompensation(
             s,
             dayId,
@@ -1154,6 +1220,20 @@ contract RewardRemittanceFacet is
             /* provisional */ true,
             remitter
         );
+    }
+
+    /// @dev §2.4 — expiry from FROZEN words only, both sourced from Base's
+    ///      finalization-time freeze (the installed clock on a stamped day,
+    ///      the wire's duplicated words on an unstamped one). Version 0 =
+    ///      no schedule frozen ⇒ never expired (a zero window must not
+    ///      read as "lapse immediately" — the w1 rule).
+    function _pastExpiry(
+        uint64 finalizedAt,
+        uint32 scheduleVersion,
+        uint64 lapseWindowSeconds
+    ) private view returns (bool) {
+        return finalizedAt != 0 && scheduleVersion != 0
+            && block.timestamp > uint256(finalizedAt) + lapseWindowSeconds;
     }
 
     /// @dev Credit the per-side pools (+ the armed-fresh counter when the

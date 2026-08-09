@@ -1127,6 +1127,29 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         uint256 lenderShare,
         uint256 borrowerShare
     ) internal {
+        // Healthy clock words: frozen v1, 7-day window, far-future
+        // finalization relative to the test clock (t is small in tests),
+        // so the arrival is never past expiry unless a test says so.
+        _deliverCompWithClock(
+            dayId,
+            remitter,
+            lenderShare,
+            borrowerShare,
+            uint64(block.timestamp),
+            uint32(1),
+            uint64(7 days)
+        );
+    }
+
+    function _deliverCompWithClock(
+        uint256 dayId,
+        address remitter,
+        uint256 lenderShare,
+        uint256 borrowerShare,
+        uint64 finalizedAt,
+        uint32 scheduleVersion,
+        uint64 lapseWindowSeconds
+    ) internal {
         _remit().onCompensationBudgetReceived(
             address(vpfiToken),
             lenderShare + borrowerShare,
@@ -1136,8 +1159,10 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             remitter,
             lenderShare,
             borrowerShare,
-            uint64(1_700_000_000),
-            uint32(1)
+            finalizedAt,
+            scheduleVersion,
+            lapseWindowSeconds,
+            uint64(24 hours)
         );
     }
 
@@ -1321,7 +1346,9 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             3e18,
             3e18,
             uint64(1_700_000_000),
-            uint32(1)
+            uint32(1),
+            uint64(7 days),
+            uint64(24 hours)
         );
     }
 
@@ -1339,5 +1366,93 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         _configureMirror(CHAIN_ARB); // receiver NOT set to this test
         vm.expectRevert();
         _deliverComp(3, REMITTER, 3e18, 2e18);
+    }
+
+    // ── Codex #1634 r1 fixes ───────────────────────────────────────────────
+
+    /// A SECOND arrival while a provisional credit is held must quarantine
+    /// under its OWN receipt key (reason 4), never overwrite the first
+    /// packet's era/remitId binding — otherwise a demotion would record
+    /// BOTH packets' pools under the last key and the receipt-bounded
+    /// return could recover at most one reservation's entitlement.
+    function testSecondProvisionalArrivalQuarantines() public {
+        _configureCompMirror();
+        _deliverComp(3, address(0xD1), 3e18, 2e18); // first: provisional
+
+        _deliverComp(3, address(0xD2), 4e18, 1e18); // second: conflicts
+
+        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        assertEq(dc.provisionalEra, address(0xD1), "first binding intact");
+        assertEq(dc.lenderPool18, 3e18, "first pools intact");
+        LibVaipakam.StrandedRecovery memory sr =
+            _remit().getStrandedRecovery(address(0xD2), REMIT_ID);
+        assertEq(sr.amount, 5e18, "second arrival reserved whole");
+        assertEq(sr.reason, 4, "reason: provisional conflict");
+    }
+
+    /// A rotated mirror's legacy-applied era-less day can never receive its
+    /// V3 heal (the w1 gate), so a compensation for it must quarantine at
+    /// ingress (reason 5) — a provisional credit there could never reach
+    /// the confirm/demote hook and its tokens would sit outside the
+    /// reservation as spendable backing.
+    function testUnhealableDayQuarantinesInsteadOfProvisional() public {
+        _configureCompMirror();
+        // Era-less applied state (pre-arming kind-5 apply), then a rotation.
+        _rep().setBaseRewardDeployment(address(0));
+        vm.chainId(CHAIN_ARB);
+        _mut().setBroadcastV2AppliedRaw(3, true);
+        _rep().setBaseRewardDeployment(ERA_BASE);
+        _rep().setBaseRewardDeployment(address(0xE2)); // rotation
+
+        _deliverComp(3, address(0xE2), 3e18, 2e18);
+
+        assertFalse(
+            _remit().getDayCompensation(3).provisional,
+            "never provisional"
+        );
+        LibVaipakam.StrandedRecovery memory sr =
+            _remit().getStrandedRecovery(address(0xE2), REMIT_ID);
+        assertEq(sr.amount, 5e18, "reserved");
+        assertEq(sr.reason, 5, "reason: V3-unhealable day");
+    }
+
+    /// The overtake case evaluates the WIRE-CARRIED frozen words: an
+    /// arrival already past its true expiry quarantines (reason 3) instead
+    /// of taking a provisional credit that could only lapse at
+    /// confirmation.
+    function testExpiredOvertakeQuarantinesFromWireWords() public {
+        _configureCompMirror();
+        vm.warp(block.timestamp + 30 days);
+        uint64 finalizedLongAgo = uint64(block.timestamp - 10 days);
+
+        _deliverCompWithClock(
+            3, REMITTER, 3e18, 2e18, finalizedLongAgo, 1, uint64(7 days)
+        );
+
+        assertFalse(_remit().getDayCompensation(3).compensated, "no credit");
+        assertEq(
+            _remit().getStrandedRecovery(REMITTER, REMIT_ID).reason,
+            3,
+            "reason: past expiry, evaluated from the wire words"
+        );
+    }
+
+    /// The known-state ladder evaluates the INSTALLED clock even before any
+    /// w4 terminal has run: a compensation arriving after the day's true
+    /// expiry quarantines on the clock alone (no lapse flags involved).
+    function testExpiredKnownDayQuarantinesFromInstalledClock() public {
+        _configureCompMirror();
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.zeroedForDest = true; // installed clock: 1.7e9 + 7 days
+        messenger.deliverBroadcastV3(b);
+
+        vm.warp(uint256(1_700_000_000) + 8 days); // past the installed expiry
+        _deliverComp(3, REMITTER, 3e18, 2e18);
+
+        assertEq(
+            _remit().getStrandedRecovery(REMITTER, REMIT_ID).reason,
+            3,
+            "reason: past expiry, evaluated from the installed clock"
+        );
     }
 }

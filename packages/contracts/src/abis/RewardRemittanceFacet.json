@@ -534,14 +534,24 @@
         "internalType": "uint256"
       },
       {
-        "name": "",
+        "name": "finalizedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "lapseScheduleVersion",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "lapseWindowSeconds",
         "type": "uint64",
         "internalType": "uint64"
       },
       {
         "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [],

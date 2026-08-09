@@ -83,7 +83,10 @@ import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 // proxy, not a Diamond facet; the B2-d5 block below upgrades it in step
 // with the widened ingress so an un-upgraded receiver cannot silently
 // decode the new payload as the legacy shape.
-import {RewardRemittanceReceiver} from "../src/crosschain/RewardRemittanceReceiver.sol";
+import {
+    RewardRemittanceReceiver,
+    REMIT_RECEIVER_WIRE_GENERATION
+} from "../src/crosschain/RewardRemittanceReceiver.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 /// @dev Minimal ERC-173 view to pre-flight the diamond owner.
@@ -420,6 +423,48 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             console.log(
                 "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a)"
             );
+        }
+
+        // ─── #1434 P2-w2 (Codex #1634 r1) — receiver wire-generation probe ──
+        //
+        // The B2-d5 block above gates its receiver upgrade on the RETIRED
+        // Diamond selectors still being routed — its own durable migration
+        // marker. A deployment already past that migration routes neither,
+        // so the block is (correctly) skipped there — but that also skipped
+        // the RECEIVER upgrade for every LATER wire generation: the P2
+        // compensation tag would hit a receiver that reads the keccak-sized
+        // tag as a legacy array offset and reverts every delivery, while
+        // Base has already closed the day and holds the reservation Pending.
+        //
+        // The durable gate for this and every future generation is the
+        // receiver's OWN `WIRE_GENERATION` constant: a missing selector
+        // (pre-P2 implementation) or a lower value means the proxy needs
+        // the upgrade. Idempotent — a rerun (or a same-run pass after the
+        // B2-d5 block already upgraded) reads the new implementation's
+        // value and skips.
+        {
+            address remitReceiverP2 =
+                _readAddrOptional(".rewardRemittanceReceiver");
+            if (remitReceiverP2 != address(0)) {
+                uint256 gen = 0;
+                (bool ok, bytes memory ret) = remitReceiverP2.staticcall(
+                    abi.encodeWithSignature("WIRE_GENERATION()")
+                );
+                if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+                if (gen < REMIT_RECEIVER_WIRE_GENERATION) {
+                    address newImplP2 = address(new RewardRemittanceReceiver());
+                    UUPSUpgradeable(remitReceiverP2).upgradeToAndCall(
+                        newImplP2, ""
+                    );
+                    Deployments.writeRewardRemittanceReceiverImpl(newImplP2);
+                    console.log(
+                        "P2-w2: upgraded RewardRemittanceReceiver (wire gen",
+                        gen,
+                        "-> 3) impl:",
+                        newImplP2
+                    );
+                }
+            }
         }
 
         // ─── #1503 PR-A — listing lifecycle: retire the 3-arg selector ──────
