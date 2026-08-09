@@ -266,6 +266,17 @@ Which failures are preconditions, driver by driver:
   an arbitrary `SITE_URL` would hand a regressed or hostile build a live
   key before the drive has asserted anything. Reachability needs no
   browser; the probe should not be the thing that exposes a signer.
+- **A verdict read out of chain-backed UI state** — a banner rendered from
+  an `eth_call`, a submit button gated on live reads. When the page's RPC
+  stops answering, that state never arrives, a `waitFor` expires, and the
+  drive reports a product regression for an outage. Use `watchPageRpc()`
+  from `driver.mjs`: `reset()` immediately before the critical wait,
+  `settled()` in the failure path, and treat zero answers as BLOCKED. Two
+  things that look right and are not — a session-wide counter (the
+  page-load reads disarm it, so an endpoint that dies exactly when the
+  assertion's reads go out still reports FAIL), and counting only JSON-RPC
+  `result` (a 200 carrying an `error` still proves the endpoint answered,
+  and for a revert-driven assertion that error IS the expected result).
 - **Cleanup capacity, for any drive that publishes something fillable** —
   reserved BEFORE the mutation, not discovered after it. A gasless post
   costs the maker no ETH, so vault funding alone does not prove the

@@ -24,7 +24,16 @@
  * (issue #1118 / #1119); addresses are read from the deployments bundle so this
  * driver survives future mock refreshes.
  */
-import { blocked, blockedSync, launch, ensureConnected, SITE, visit, pasteAssetLive } from './driver.mjs';
+import {
+  blocked,
+  blockedSync,
+  launch,
+  ensureConnected,
+  SITE,
+  visit,
+  pasteAssetLive,
+  watchPageRpc,
+} from './driver.mjs';
 import deployments from '@vaipakam/contracts/deployments.json' with { type: 'json' };
 
 const mocks = deployments['84532']?.testnetMocks;
@@ -52,40 +61,22 @@ const MUSDC = mocks.liquidToken2; // collateral (Liquid)
 const { page, done, shot, account } = await launch({ role: 'borrower' });
 const step = (m) => console.log(`  · ${m}`);
 
-// Successful JSON-RPC responses the PAGE received (Codex #1621 r13).
+// Is the endpoint the PAGE uses actually answering? (Codex #1621 r13.)
 //
-// Every assertion in this drive hangs off a `createOffer` simulation: the
-// precheck banner is rendered FROM that eth_call's result. So when the RPC
-// the deployed page uses is unavailable, the banner simply never appears,
-// the 45s `waitFor` expires, and the catch at the bottom exits 1 — and
-// because this driver IS registered in THREE_VERDICT_DRIVERS, the batch
-// TRUSTS that code and reports an RPC outage as a #1112 product
-// regression. A drive whose evidence never arrived has verified nothing.
+// Every assertion here reads its verdict out of a `createOffer`
+// simulation: the precheck banner is rendered FROM that eth_call. So when
+// that RPC is unavailable the banner never appears, the 45s `waitFor`
+// expires, and the catch at the bottom exits 1 — and this driver IS
+// registered in THREE_VERDICT_DRIVERS, so the batch trusts that code and
+// reports an outage as a #1112 regression.
 //
-// Counted from the page's own traffic rather than probing an endpoint the
-// driver picks: the served SPA chooses its RPC at build time, so the only
-// reliable way to know which endpoint matters is to watch what the page
-// actually does (the same reasoning live-rpc-audit.mjs records).
-let rpcOk = 0;
-const bodyReads = [];
-page.on('response', (res) => {
-  if (res.request().method() !== 'POST' || res.status() !== 200) return;
-  // `response` fires on HEADERS and does not await handlers, so the body is
-  // still in flight; collect the promises and settle them before judging.
-  bodyReads.push(
-    res
-      .text()
-      .then((text) => {
-        const parsed = JSON.parse(text);
-        for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
-          if (r && r.jsonrpc && r.error === undefined && r.result !== undefined) rpcOk++;
-        }
-      })
-      .catch(() => {
-        /* not a JSON-RPC body, or it never arrived */
-      }),
-  );
-});
+// Window-scoped on purpose. My first pass at this counted successful RPC
+// for the WHOLE session, which the page-load reads (asset symbols, the
+// config bundle, balances) satisfy immediately — so an endpoint that
+// answered on load and then died or started throttling, exactly when the
+// banner's own reads go out, disarmed the guard and fell through to FAIL
+// regardless. `reset()` below moves the window to the reads that matter.
+const rpc = watchPageRpc(page);
 try {
   console.log('wallet:', account.address, '| site:', SITE);
   step(`goto ${SITE}/borrow`);
@@ -115,6 +106,9 @@ try {
   // lead-in. A regression that rendered a raw decoded error name / selector
   // would keep the same prefix, so matching only the prefix would false-pass.
   const banner = page.getByText(/before you continue/i);
+  // From here on, RPC health is what separates "the banner regressed" from
+  // "the simulation never ran".
+  rpc.reset();
   await banner.waitFor({ state: 'visible', timeout: 45_000 });
   const text = (await banner.textContent())?.trim() ?? '';
   if (!/collateral is too low for the amount you want to borrow/i.test(text)) {
@@ -147,10 +141,11 @@ try {
   console.log('\nLIVE REVIEW PASSED — #1112 verified on', SITE);
   await done();
 } catch (e) {
-  // Settle the in-flight body reads before judging, or a slow response
-  // reads as "no successful RPC" and turns a real finding into BLOCKED.
-  await Promise.allSettled(bodyReads);
-  if (rpcOk === 0) {
+  // A 200 carrying a JSON-RPC ERROR counts as answered — for this drive the
+  // revert IS the expected result, so requiring `result` would have missed
+  // the one call the verdict rests on and mislabelled every run.
+  const answered = await rpc.settled();
+  if (answered === 0) {
     await shot('1112-precheck-blocked').catch(() => {});
     // `done()` FIRST, then the shared blocked exit: `blocked()` ends the
     // process, so anything after it never runs.

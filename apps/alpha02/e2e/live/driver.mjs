@@ -191,6 +191,76 @@ export async function precondition(what, fn) {
  * The line is "did we ever get served anything", not "did every
  * navigation succeed".
  */
+/**
+ * Watch whether the PAGE's own JSON-RPC endpoint is answering.
+ *
+ * The problem this solves: several drives read their verdict out of a
+ * chain-backed UI state — a precheck banner rendered from an eth_call, a
+ * submit button gated on live reads. When the RPC the deployed page uses
+ * stops answering, that state never arrives, a `waitFor` expires, and the
+ * drive reports FAIL. Every one of those drives is registered in
+ * THREE_VERDICT_DRIVERS, so the batch TRUSTS that code and calls an
+ * outage a product regression.
+ *
+ * Two traps, both of which a first attempt at this fell into:
+ *
+ *  1. SCOPE. A whole-session counter is disarmed by the page-load reads
+ *     that have nothing to do with the verdict: the endpoint answers on
+ *     load, then dies or starts throttling exactly when the assertion's
+ *     reads go out, and the drive falls through to FAIL anyway. So the
+ *     window has to be reset immediately before the wait that matters.
+ *
+ *  2. WHAT COUNTS. A 200 carrying a JSON-RPC *error* still proves the
+ *     endpoint answered — and for a revert-driven assertion that error IS
+ *     the expected result. Counting only `result` misses precisely the
+ *     call the verdict rests on.
+ *
+ * Usage: `const rpc = watchPageRpc(page)` once after launch; `rpc.reset()`
+ * just before the critical wait; `await rpc.settled()` in the failure
+ * path, and treat `0` as BLOCKED.
+ *
+ * Counted from the page's traffic rather than an endpoint the driver
+ * picks, because the served SPA chooses its RPC at build time — the only
+ * reliable way to know which endpoint matters is to watch what the page
+ * does (the reasoning live-rpc-audit.mjs records at length).
+ */
+export function watchPageRpc(page) {
+  let answered = 0;
+  const bodyReads = [];
+  page.on('response', (res) => {
+    if (res.request().method() !== 'POST' || res.status() !== 200) return;
+    // `response` fires on HEADERS and does not await handlers, so the body
+    // is still in flight; collect the promises and settle before judging.
+    bodyReads.push(
+      res
+        .text()
+        .then((text) => {
+          const parsed = JSON.parse(text);
+          for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
+            if (r && r.jsonrpc && (r.result !== undefined || r.error !== undefined)) {
+              answered++;
+            }
+          }
+        })
+        .catch(() => {
+          /* not a JSON-RPC body, or it never arrived */
+        }),
+    );
+  });
+  return {
+    /** Start a fresh window. Call immediately before the critical wait. */
+    reset() {
+      answered = 0;
+      bodyReads.length = 0;
+    },
+    /** Settle in-flight body reads, then report answers seen this window. */
+    async settled() {
+      await Promise.allSettled(bodyReads);
+      return answered;
+    },
+  };
+}
+
 export async function visit(page, pathname, opts = {}) {
   return precondition(`opening ${pathname}`, async () => {
     const resp = await page.goto(`${SITE}${pathname}`, {

@@ -3,7 +3,15 @@
 // is: every page renders normally and the kill-switch banner copy
 // appears NOWHERE. (Flipping the switch on production is an operator
 // action we don't do for a review — exception stated in the PR body.)
-import { ensureConnected, launch, SITE, visit, pasteAssetLive } from './driver.mjs';
+import {
+  blocked,
+  ensureConnected,
+  launch,
+  SITE,
+  visit,
+  pasteAssetLive,
+  watchPageRpc,
+} from './driver.mjs';
 
 const KILL_COPY = 'switched off right now';
 // EVERY public route in App.tsx — the claim is "the banner appears
@@ -14,6 +22,7 @@ const PAGES = [
 ];
 
 const { page, done } = await launch({ role: 'lender' });
+const rpc = watchPageRpc(page);
 // Connect BEFORE the sweep: several killable surfaces render only in
 // the connected branch (Vpfi.tsx shows the connect-first card to an
 // unauthenticated visit, hiding the deposit banner spot), so an
@@ -100,6 +109,14 @@ if (typeof lendStatus === 'number' && lendStatus >= 400) {
   await page.getByRole('button', { name: /continue to review/i }).click();
   await page.waitForTimeout(3000);
   const post = page.getByRole('button', { name: /post lending offer/i });
+  // The submit button is gated on LIVE chain reads (grace seconds, leg
+  // liquidity, token metadata, wallet balance, the sanctions oracle). With
+  // the RPC unavailable — or the hardcoded faucet fixture drained or
+  // redeployed — none of those settle, the button never enables, and the
+  // deadline below used to spend a FAIL on it. The old message admitted as
+  // much ("a closed gate or the kill switch") while still reporting a
+  // kill-switch product regression for an outage (Codex #1621 r13).
+  rpc.reset();
   let reviewOk = false;
   const reviewDeadline = Date.now() + 90_000;
   for (;;) {
@@ -114,7 +131,19 @@ if (typeof lendStatus === 'number' && lendStatus >= 400) {
     }
     if (await post.isEnabled().catch(() => false)) { reviewOk = true; break; }
     if (Date.now() > reviewDeadline) {
-      console.log('FAIL — sign button never enabled (a closed gate or the kill switch)');
+      // Nothing answered in the window ⇒ the gates this button waits on
+      // could not have resolved either way, so the kill switch was never
+      // observed here. BLOCKED, not a FAIL against the banner.
+      if ((await rpc.settled()) === 0) {
+        await done();
+        await blocked(
+          'the submit gate never resolved and the page received no answer from' +
+            ' its JSON-RPC endpoint in that window, so nothing was observed' +
+            ' about the post-offer kill switch. Check the chain endpoint and' +
+            ' that the lender wallet still holds the faucet fixture token.',
+        );
+      }
+      console.log('FAIL — sign button never enabled with a live RPC (a closed gate or the kill switch)');
       break;
     }
   }
