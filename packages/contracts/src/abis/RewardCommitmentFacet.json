@@ -1,6 +1,29 @@
 [
   {
     "type": "function",
+    "name": "accumulateCompQuoteBatch",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardSide"
+      },
+      {
+        "name": "entryIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getChainDayCommitments",
     "inputs": [
       {
@@ -81,6 +104,96 @@
   },
   {
     "type": "function",
+    "name": "getCompQuote",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibVaipakam.CompQuote",
+        "components": [
+          {
+            "name": "lender18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "borrower18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "receivedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getCompQuoteAccum",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "cursorLender",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cursorBorrower",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "accumLender18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "accumBorrower18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "conservationLender18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "conservationBorrower18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sentAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getCurrentLapseScheduleVersion",
     "inputs": [],
     "outputs": [
@@ -122,6 +235,25 @@
         "name": "dispatchCutoffGap",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getDayResolvedZero",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -238,6 +370,34 @@
   },
   {
     "type": "function",
+    "name": "onCompQuoteReceived",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedLender18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedBorrower18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "quoteCommitmentReportFee",
     "inputs": [
       {
@@ -254,6 +414,30 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quoteZeroedDayCompensation",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "refundAddress",
+        "type": "address",
+        "internalType": "address payable"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -413,6 +597,124 @@
       },
       {
         "name": "liabilityBorrower18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompQuoteBatchAccumulated",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "accumulated18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "conservation18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompQuoteDispatched",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedLender18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedBorrower18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "resolvedZero",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompQuoteResolvedZero",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CompQuoteStored",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "quotedLender18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedBorrower18",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -688,6 +990,119 @@
   },
   {
     "type": "error",
+    "name": "CompQuoteAlreadyDispatched",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayAlreadyFunded",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayLapsed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayNotFinalized",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayNotIneligible",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayNotZeroed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteIncomplete",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "conservation18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "total18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteLocalCloseMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CompensationDayHasNoClock",
     "inputs": [
       {
@@ -720,12 +1135,54 @@
   },
   {
     "type": "error",
+    "name": "CompensationExceedsQuote",
+    "inputs": [
+      {
+        "name": "lenderAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedLender18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedBorrower18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CompensationHookNotSelf",
     "inputs": [
       {
         "name": "caller",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompensationNotQuoted",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
   },

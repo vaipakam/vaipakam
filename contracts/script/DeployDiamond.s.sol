@@ -2217,7 +2217,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](15);
+        s = new bytes4[](21);
         s[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2228,6 +2228,14 @@ contract DeployDiamond is Script {
         s[12] = RewardCommitmentFacet.getLapseSchedule.selector;
         s[13] = RewardCommitmentFacet.getDayLapseClock.selector;
         s[14] = RewardCommitmentFacet.getDayZeroedForDest.selector;
+        // #1434 P2-w3 — the compensation-quote surface: mirror accumulator
+        // + dispatch, Base ingress + evidence views, resolved-zero read.
+        s[15] = RewardCommitmentFacet.accumulateCompQuoteBatch.selector;
+        s[16] = RewardCommitmentFacet.quoteZeroedDayCompensation.selector;
+        s[17] = RewardCommitmentFacet.onCompQuoteReceived.selector;
+        s[18] = RewardCommitmentFacet.getCompQuote.selector;
+        s[19] = RewardCommitmentFacet.getCompQuoteAccum.selector;
+        s[20] = RewardCommitmentFacet.getDayResolvedZero.selector;
         s[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         s[2] = RewardCommitmentFacet.isChainDayCommitmentsComplete.selector;
         // #1222 M3 B2-d1 — mirror commitment-report surface.

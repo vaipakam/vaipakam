@@ -300,6 +300,40 @@ stamp written at compensation ingress (`dayCompensated[dayId] =
 receiptKey`) and prices it from the compensated pool instead of the
 broadcast halves.
 
+> *(w3 implementation notes — three recorded deviations, each toward the
+> stricter shape. (1) **No second marker**: the walk recognises a
+> compensated day by w2's own record (`dayCompensation[d].compensated &&
+> !provisional`), not a separate `dayCompensated` stamp — one fact, one
+> flag. (2) **The deferral ceiling moved from per-entry to the day
+> CROSSING**: scouting found the cumulative cursor exposes a crossed day
+> to TWO payment paths — the per-day walk AND the entry path's bulk
+> window pricing of spanning entries (`_entryWindowSplitFrom`), which a
+> walk-level per-entry bound cannot protect. So the §2.1 ladder's
+> compensated arm crosses only when the side's delivered pool covers the
+> side's own quoted sum (`compQuoteAccum18`, complete by the dispatch
+> conservation proof) — keyed on the AMOUNT present per the standing
+> B2-d4 constraint — and an underfunded day defers WHOLE (§2g's
+> never-trim holds; per-entry ceilings are vacuous on a crossed day by
+> construction). Under-quote partial funding therefore waits for w4's
+> supplemental remit or short-lapse terminal (the w2 manual remit is
+> once-per-day). (3) **Resolved-zero is a ladder arm, not "ordinary
+> walk"**: pre-P1-b the ordinary walk IS the blanket mirror halt, so the
+> ladder returns the zero-delta crossing itself. The ladder landed as ONE
+> shared per-day derivation (`_dayDeltas`) consumed by both cumulative
+> folds, the commitment twin (a governed-open day is NOT priceable — a
+> zero report for a later-compensated day would under-commit), and the
+> walk's own decomposition; Δq itself is the one shared
+> `LibInteractionRewards.compQuoteDelta` the quote accumulator also
+> reads, so quoted figure and priced figure cannot diverge. A compensated
+> day's Δq stays in `cumMinArmed*` so the window split classifies it
+> armed-fresh — matching w2's counting of the credit into
+> `rewardBudgetArmedFreshReceived` — and carries zero recycled component.
+> `MSG_TYPE_COMP_QUOTE` landed as kind 11; Base ingress admits a
+> re-delivery refresh only while the day is unfunded, and a `(0,0)` quote
+> clears `remitIneligible` (nothing to compensate) while bounding funding
+> to zero. `remitManualBudget` enforces the §2.5 PER-SIDE bound, stricter
+> than the aggregate wording here.)*
+
 ---
 
 ## 2. R1 — the zeroed day: suppression, classification, ingress, top-up

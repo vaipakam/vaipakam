@@ -1635,6 +1635,99 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().borrowerLifRebate[loanId].vpfiHeld = amount;
     }
 
+    // ─── #1434 P2-w3 test-only — compensation-quote / pricing-ladder ─────────
+
+    /// @notice #1434 P2-w3 test-only — set the deliberately-zeroed marker
+    ///         whose production writer is the V3 broadcast ingress, so the
+    ///         quote surface and the pricing ladder can stage a zeroed day
+    ///         without a full Base→mirror broadcast round.
+    function setDayDeliberatelyZeroedRaw(uint256 dayId, bool zeroed) external {
+        LibVaipakam.storageSlot().dayDeliberatelyZeroed[dayId] = zeroed;
+    }
+
+    /// @notice #1434 P2-w3 test-only — stage a day's compensation record
+    ///         (production writer: `RewardRemittanceFacet._creditCompensation`)
+    ///         so the ladder's funded / underfunded / provisional arms can be
+    ///         exercised directly.
+    function setDayCompensationRaw(
+        uint256 dayId,
+        uint128 lenderPool18,
+        uint128 borrowerPool18,
+        bool compensated,
+        bool provisional
+    ) external {
+        LibVaipakam.DayCompensation storage dc =
+            LibVaipakam.storageSlot().dayCompensation[dayId];
+        dc.lenderPool18 = lenderPool18;
+        dc.borrowerPool18 = borrowerPool18;
+        dc.compensated = compensated;
+        dc.provisional = provisional;
+    }
+
+    /// @notice #1434 P2-w3 test-only — drive the internal cumulative fold so
+    ///         ladder tests observe crossing vs deferral without a full claim
+    ///         fixture.
+    function advanceCumThroughRaw(
+        uint8 side,
+        uint256 through
+    ) external returns (uint256 reached) {
+        return side == uint8(LibVaipakam.RewardSide.Lender)
+            ? LibInteractionRewards.advanceCumLenderThrough(through)
+            : LibInteractionRewards.advanceCumBorrowerThrough(through);
+    }
+
+    /// @notice #1434 P2-w3 test-only — the fold's stored state at day `d`
+    ///         (cursor + all four cumulative series), so the ladder tests can
+    ///         assert the exact figures each arm writes.
+    function getCumStateRaw(
+        uint8 side,
+        uint256 d
+    )
+        external
+        view
+        returns (
+            uint256 cursor,
+            uint256 rpn,
+            uint256 minRpn,
+            uint256 minRecycled,
+            uint256 minArmed
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (side == uint8(LibVaipakam.RewardSide.Lender)) {
+            return (
+                s.cumLenderCursor,
+                s.cumLenderRpn18[d],
+                s.cumMinLenderRpn18[d],
+                s.cumMinRecycledLenderRpn18[d],
+                s.cumMinArmedLenderRpn18[d]
+            );
+        }
+        return (
+            s.cumBorrowerCursor,
+            s.cumBorrowerRpn18[d],
+            s.cumMinBorrowerRpn18[d],
+            s.cumMinRecycledBorrowerRpn18[d],
+            s.cumMinArmedBorrowerRpn18[d]
+        );
+    }
+
+    /// @notice #1434 P2-w3 test-only — the commitment twin's verdict for day
+    ///         `d`, so ladder lockstep (fold ↔ report pricing) is directly
+    ///         assertable.
+    function dailyDeltaForCommitmentRaw(
+        uint8 side,
+        uint256 d
+    ) external view returns (uint256 delta, bool priceable) {
+        return LibInteractionRewards.dailyDeltaForCommitment(
+            LibVaipakam.storageSlot(),
+            side == uint8(LibVaipakam.RewardSide.Lender)
+                ? LibVaipakam.RewardSide.Lender
+                : LibVaipakam.RewardSide.Borrower,
+            d
+        );
+    }
+
     /// @dev Route `data` back through the diamond fallback (bubbling the raw
     ///      revert) so a routed `onlyDiamondInternal` host sees `msg.sender ==
     ///      address(this)`.

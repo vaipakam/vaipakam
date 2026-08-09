@@ -111,6 +111,27 @@ contract MockRewardDiamond {
         return lastV3Stored;
     }
 
+    // #1434 P2-w3 — compensation-quote ingress spy (the production
+    // diamond's `RewardCommitmentFacet.onCompQuoteReceived`).
+    uint32 public lastQuoteSrcChain;
+    uint256 public lastQuoteDay;
+    uint256 public lastQuoteLender;
+    uint256 public lastQuoteBorrower;
+    uint256 public quoteCount;
+
+    function onCompQuoteReceived(
+        uint32 srcChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
+    ) external {
+        lastQuoteSrcChain = srcChainId;
+        lastQuoteDay = dayId;
+        lastQuoteLender = quotedLender18;
+        lastQuoteBorrower = quotedBorrower18;
+        ++quoteCount;
+    }
+
     // T-087 Sub 2.C — mirror-side tier ingress capture. The mock simply
     // records the most-recent call so tests can assert the messenger
     // forwarded the right args; the production Diamond's
@@ -877,6 +898,51 @@ contract VaipakamRewardFlowTest is Test {
         rewardMirror.sendChainReport{value: fee}(1, 0, 0, 0, 0, payable(owner));
     }
 
+    /// @dev #1434 P2-w3 — the quote send is Diamond-only like every other
+    ///      mirror-side dispatch (the Diamond enforces the zeroed-day +
+    ///      completeness preconditions).
+    function test_SendCompQuote_RevertWhen_NotDiamond() public {
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
+        rewardMirror.sendCompQuote{value: fee}(1, 0, 0, payable(owner));
+    }
+
+    /// @dev #1434 P2-w3 — kind 11 end to end: mirror dispatch → CCIP →
+    ///      Base messenger → the diamond's comp-quote ingress, args intact.
+    function test_CompQuote_FullFlow_MirrorToBase() public {
+        vm.prank(address(diamondMirror));
+        rewardMirror.sendCompQuote{value: fee}(
+            42, 5e18, 2e18, payable(address(diamondMirror))
+        );
+        assertEq(router.pendingCount(), 1, "quote captured");
+
+        router.deliver(0, SEL_MIRROR);
+
+        assertEq(diamondBase.quoteCount(), 1, "Base ingress fired");
+        assertEq(
+            uint256(diamondBase.lastQuoteSrcChain()),
+            MIRROR,
+            "source chain preserved"
+        );
+        assertEq(diamondBase.lastQuoteDay(), 42, "day");
+        assertEq(diamondBase.lastQuoteLender(), 5e18, "lender quote");
+        assertEq(diamondBase.lastQuoteBorrower(), 2e18, "borrower quote");
+    }
+
+    /// @dev #1434 P2-w3 — a quote-kind payload delivered to a MIRROR
+    ///      instance is refused (canonical-only, like every mirror→Base
+    ///      kind).
+    function test_Receive_RevertWhen_CompQuoteOnMirror() public {
+        vm.prank(address(messengerMirror));
+        vm.expectRevert(VaipakamRewardMessenger.ReportOnMirror.selector);
+        rewardMirror.onCrossChainMessage(
+            BASE,
+            address(rewardBase),
+            abi.encode(uint8(11), uint256(1), uint256(0), uint256(0)),
+            _empty()
+        );
+    }
+
     function test_BroadcastGlobal_RevertWhen_NotDiamond() public {
         vm.deal(address(this), 1 ether);
         vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
@@ -950,19 +1016,20 @@ contract VaipakamRewardFlowTest is Test {
     }
 
     function test_Receive_RevertWhen_UnknownMessageType() public {
-        // Kind 11 is the lowest unassigned kind (9 became the repatriation
-        // cancel in #1568 C2, 10 the V3 broadcast in #1434 P2-w1 — this
-        // test must track the next free constant).
+        // Kind 12 is the lowest unassigned kind (9 became the repatriation
+        // cancel in #1568 C2, 10 the V3 broadcast in #1434 P2-w1, 11 the
+        // compensation quote in #1434 P2-w3 — this test must track the
+        // next free constant).
         vm.prank(address(messengerBase));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaipakamRewardMessenger.UnknownMessageType.selector, uint8(11)
+                VaipakamRewardMessenger.UnknownMessageType.selector, uint8(12)
             )
         );
         rewardBase.onCrossChainMessage(
             MIRROR,
             address(rewardMirror),
-            abi.encode(uint8(11), uint256(1), uint256(0), uint256(0)),
+            abi.encode(uint8(12), uint256(1), uint256(0), uint256(0)),
             _empty()
         );
     }
@@ -972,6 +1039,10 @@ contract VaipakamRewardFlowTest is Test {
     function test_Quotes() public view {
         assertEq(
             rewardMirror.quoteSendChainReport(1, 0, 0, 0, 0), fee, "report quote"
+        );
+        // #1434 P2-w3 — the compensation-quote dispatch fee.
+        assertEq(
+            rewardMirror.quoteSendCompQuote(1, 0, 0), fee, "comp-quote fee"
         );
         // Codex #1413 r2 — the legacy three-argument quote overload stays
         // callable for old-ABI callers during the rollout window.

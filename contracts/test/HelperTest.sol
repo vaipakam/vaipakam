@@ -88,7 +88,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](154);
+        selectors = new bytes4[](159);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -396,6 +396,16 @@ contract HelperTest {
         // #1434 P2-w2 — drive the post-lapse quarantine branch before its
         // w4 production writers exist.
         selectors[n++] = TestMutatorFacet.setDayLapsedRaw.selector;
+        // #1434 P2-w3 — compensation-quote / pricing-ladder fixtures: stage
+        // zeroed + compensated day state, drive the internal fold, and read
+        // the stored cumulative rows + the commitment twin's verdict.
+        selectors[n++] =
+            TestMutatorFacet.setDayDeliberatelyZeroedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDayCompensationRaw.selector;
+        selectors[n++] = TestMutatorFacet.advanceCumThroughRaw.selector;
+        selectors[n++] = TestMutatorFacet.getCumStateRaw.selector;
+        selectors[n++] =
+            TestMutatorFacet.dailyDeltaForCommitmentRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2155,7 +2165,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](15);
+        selectors = new bytes4[](21);
         selectors[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2167,6 +2177,16 @@ contract HelperTest {
         selectors[12] = RewardCommitmentFacet.getLapseSchedule.selector;
         selectors[13] = RewardCommitmentFacet.getDayLapseClock.selector;
         selectors[14] = RewardCommitmentFacet.getDayZeroedForDest.selector;
+        // #1434 P2-w3 — the compensation-quote surface: mirror accumulator
+        // + dispatch, Base ingress + evidence views, resolved-zero read.
+        selectors[15] =
+            RewardCommitmentFacet.accumulateCompQuoteBatch.selector;
+        selectors[16] =
+            RewardCommitmentFacet.quoteZeroedDayCompensation.selector;
+        selectors[17] = RewardCommitmentFacet.onCompQuoteReceived.selector;
+        selectors[18] = RewardCommitmentFacet.getCompQuote.selector;
+        selectors[19] = RewardCommitmentFacet.getCompQuoteAccum.selector;
+        selectors[20] = RewardCommitmentFacet.getDayResolvedZero.selector;
         selectors[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         selectors[2] = RewardCommitmentFacet
             .isChainDayCommitmentsComplete

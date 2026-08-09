@@ -10,6 +10,7 @@ import {
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RepatriationFacet} from "../../src/facets/RepatriationFacet.sol";
+import {RewardCommitmentFacet} from "../../src/facets/RewardCommitmentFacet.sol";
 
 /// @title MockRewardMessenger
 /// @notice Test double for the production CCIP-backed reward messenger
@@ -532,6 +533,49 @@ contract MockRewardMessenger is IRewardMessenger {
     ///         mirror reporter ingress.
     function deliverBroadcastV3(RewardBroadcastV3 calldata b) external {
         RewardReporterFacet(diamond).onRewardBroadcastV3Received(b);
+    }
+
+    // ─── #1434 P2-w3 — compensation-quote surface ─────────────────────────
+
+    uint256 public lastCompQuoteDay;
+    uint256 public lastCompQuoteLender18;
+    uint256 public lastCompQuoteBorrower18;
+    uint256 public compQuoteSendCount;
+
+    function sendCompQuote(
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address payable
+    ) external payable override returns (bytes32) {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (revertOnSend) revert("MockMessenger: send revert");
+        lastCompQuoteDay = dayId;
+        lastCompQuoteLender18 = quotedLender18;
+        lastCompQuoteBorrower18 = quotedBorrower18;
+        compQuoteSendCount += 1;
+        return bytes32(uint256(0xC0117E));
+    }
+
+    function quoteSendCompQuote(
+        uint256,
+        uint256,
+        uint256
+    ) external view override returns (uint256) {
+        return quoteNative;
+    }
+
+    /// @notice #1434 P2-w3 — simulate a kind-11 delivery landing on the
+    ///         canonical commitment-facet ingress.
+    function deliverCompQuote(
+        uint32 srcChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
+    ) external {
+        RewardCommitmentFacet(diamond).onCompQuoteReceived(
+            srcChainId, dayId, quotedLender18, quotedBorrower18
+        );
     }
 
     // ─── #1568 C2 — repatriation instruction surfaces ─────────────────────

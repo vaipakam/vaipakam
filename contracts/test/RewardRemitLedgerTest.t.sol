@@ -610,6 +610,8 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Manual_FundsThroughTheLedger() public {
         _finalizeDay(1);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        // #1434 P2-w3 — the standing mirror quote the funding is bounded by.
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
 
         // #1434 P2-w2 — the manual path is sized PER SIDE on the wire.
         uint256 amount = 5e18;
@@ -686,6 +688,58 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
+    /// @dev #1434 P2-w3 — funding is EVIDENCE-BOUNDED (§1.4): no standing
+    ///      mirror quote, no manual compensation.
+    function test_Manual_RequiresStandingQuote() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationNotQuoted.selector, 1, CHAIN_ARB
+            )
+        );
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+    }
+
+    /// @dev #1434 P2-w3 — each side is bounded SEPARATELY by the standing
+    ///      quote (§2.5: an aggregate bound admits overfunding one side
+    ///      while shorting the other). Under-quote per side is allowed —
+    ///      partial funding defers on the mirror until w4's supplemental /
+    ///      short-lapse terminal resolves it.
+    function test_Manual_BoundedPerSideByQuote() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+
+        // Aggregate below the quoted sum, but the LENDER side over its
+        // bound — must still refuse.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationExceedsQuote.selector,
+                4e18,
+                1e18,
+                3e18,
+                2e18
+            )
+        );
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 4e18, 1e18);
+
+        // Borrower side over its bound.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationExceedsQuote.selector,
+                1e18,
+                4e18,
+                3e18,
+                2e18
+            )
+        );
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 4e18);
+
+        // Per-side under-quote is allowed.
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+    }
+
     /// @dev #1634 r2 — a clockless day cannot dispatch a P2 compensation:
     ///      it can never emit the settling V3 broadcast (the V2-permanent
     ///      fallback), so the mirror credit would sit provisional forever.
@@ -719,6 +773,9 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
 
         uint256 expiry = uint256(frozenAt) + 7 days;
+        // #1434 P2-w3 — quote first, so the boundary probe below reaches
+        // the cutoff gate (which runs before the quote gate).
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         // One second INSIDE the cutoff window.
         vm.warp(expiry - 24 hours + 1);
         vm.expectRevert(
@@ -755,6 +812,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         vm.warp(block.timestamp + 3 days);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
 
         (

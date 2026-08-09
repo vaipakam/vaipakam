@@ -67,6 +67,19 @@ struct RewardBroadcastV3 {
     address baseDeployment;
 }
 
+/// @notice #1434 P2-w3 — Base-side Diamond ingress for an inbound mirror
+///         compensation QUOTE (`RewardCommitmentFacet.onCompQuoteReceived`):
+///         the zeroed chain's authenticated per-side counterfactual fair
+///         share — evidence the manual compensation dispatch is bounded by.
+interface ICompQuoteIngress {
+    function onCompQuoteReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
+    ) external;
+}
+
 /// @notice #1434 P2-w1 — mirror-side Diamond ingress for an inbound V3
 ///         broadcast (`RewardReporterFacet.onRewardBroadcastV3Received`).
 interface IRewardReporterIngressV3 {
@@ -460,5 +473,25 @@ interface IRewardMessenger {
         BroadcastV2Shared calldata shared,
         BroadcastV3Extras calldata extras,
         BroadcastV3PerDest calldata dest
+    ) external view returns (uint256 nativeFee);
+
+    // ─── #1434 P2-w3 — mirror → Base compensation quote (kind 11) ───────────
+
+    /// @notice Send a mirror's zeroed-day compensation QUOTE to Base
+    ///         (§1.4): the authenticated per-side counterfactual fair
+    ///         share — evidence bounding the manual compensation, never
+    ///         funding. Diamond-only; re-sendable idempotently.
+    function sendCompQuote(
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+
+    /// @notice Quote the native CCIP fee for a {sendCompQuote}.
+    function quoteSendCompQuote(
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
     ) external view returns (uint256 nativeFee);
 }

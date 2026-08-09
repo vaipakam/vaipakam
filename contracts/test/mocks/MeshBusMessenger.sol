@@ -532,5 +532,26 @@ contract MeshBusMessenger is IRewardMessenger {
         return 0;
     }
 
+    // #1434 P2-w3 — inert on the bus (the quote flow is covered at the
+    // facet/wire layers; the mesh-accounting harness has no zeroed-day
+    // scenario yet). Concrete rather than absent so the bus keeps
+    // satisfying the interface.
+    function sendCompQuote(
+        uint256,
+        uint256,
+        uint256,
+        address payable
+    ) external payable override returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function quoteSendCompQuote(
+        uint256,
+        uint256,
+        uint256
+    ) external pure override returns (uint256) {
+        return 0;
+    }
+
     receive() external payable {}
 }
