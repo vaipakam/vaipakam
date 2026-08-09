@@ -12,7 +12,7 @@
 // FAIL is reserved for dishonest states: no ticket number AND no
 // failure banner, a failure banner without the mail escape hatch, or
 // the pre-send disclosure missing the stored page/network mention.
-import { launch, SITE } from './driver.mjs';
+import { launch, visit } from './driver.mjs';
 
 const { page, done, shot } = await launch({ role: 'lender' });
 let fails = 0;
@@ -21,7 +21,7 @@ const check = (name, ok, detail = '') => {
   if (!ok) fails++;
 };
 
-await page.goto(SITE + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+await visit(page, '/');
 await page.waitForTimeout(2500);
 
 // The ticket card lives inside the Support drawer (FAB on every page).

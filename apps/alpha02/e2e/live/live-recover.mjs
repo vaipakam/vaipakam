@@ -41,16 +41,44 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
-import { ensureConnected, launch, SITE } from './driver.mjs';
+import { blockedSync, ensureConnected, launch, precondition, SITE, visit } from './driver.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DIAMOND = JSON.parse(
-  readFileSync(
-    path.join(HERE, '../../../../packages/contracts/src/deployments.json'),
-    'utf8',
-  ),
-)['84532'].diamond;
+const DIAMOND = readDiamond();
+/**
+ * The Base-Sepolia Diamond address from the shipped bundle.
+ *
+ * BLOCKED, not FAIL (#1581): the oracle read that decides which posture
+ * is CORRECT for this deployment needs it, so without an address the
+ * drive cannot judge anything. Unguarded, a missing bundle key threw
+ * `TypeError: Cannot read properties of undefined` and the batch
+ * reported a stale artifact as a /recover regression.
+ */
+function readDiamond() {
+  const file = path.join(
+    HERE,
+    '../../../../packages/contracts/src/deployments.json',
+  );
+  let diamond;
+  try {
+    diamond = JSON.parse(readFileSync(file, 'utf8'))['84532']?.diamond;
+  } catch (err) {
+    blockedSync(`cannot read the deployments bundle\n  path: ${file}\n  ${err.message}`);
+  }
+  // Validated as an ADDRESS, not merely as a string (Codex #1621 r4
+  // applied to its siblings — this file was the one I missed). A
+  // malformed-but-non-empty value passes a type check and is then handed
+  // to viem, which throws at top level with exit 1: a stale artifact
+  // reported as a /recover regression.
+  if (typeof diamond !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(diamond)) {
+    blockedSync(
+      `the deployments bundle's 84532.diamond is not a 0x-40-hex address:` +
+        ` ${JSON.stringify(diamond)}\n  path: ${file}`,
+    );
+  }
+  return diamond;
+}
 const ORACLE_ABI = parseAbi([
   'function getSanctionsOracle() view returns (address)',
 ]);
@@ -184,17 +212,25 @@ const { page, ctx, done, blockedRequests, consoleErrors } = await launch({
 });
 try {
   // The live oracle setting decides which posture is CORRECT — read it
-  // first so this driver checks the deployment it actually found.
-  const oracle = await pub.readContract({
-    address: DIAMOND,
-    abi: ORACLE_ABI,
-    functionName: 'getSanctionsOracle',
-  });
+  // first so this driver checks the deployment it actually found. A
+  // PRECONDITION, therefore: without it every posture assert below is
+  // unanchored, so a dead RPC exits BLOCKED rather than reporting
+  // /recover as regressed (#1581).
+  const oracle = await precondition('reading the live sanctions-oracle setting', () =>
+    pub.readContract({
+      address: DIAMOND,
+      abi: ORACLE_ABI,
+      functionName: 'getSanctionsOracle',
+    }),
+  );
   const oracleSet = oracle.toLowerCase() !== ZERO;
   console.log(`sanctions oracle: ${oracleSet ? 'configured' : 'UNSET'}`);
 
-  // 1. Discoverability gate — in via Help only.
-  await page.goto(SITE + '/help', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  // 1. Discoverability gate — in via Help only. This first load is also
+  //    the reachability probe: BLOCKED if the site never answers, while
+  //    the /settings and /recover navigations below stay FAIL, since by
+  //    then the site is known to serve.
+  await visit(page, '/help');
   await ensureConnected(page);
   // Help is a React.lazy route and `domcontentloaded` does not wait for
   // its dynamic import, so an immediate isVisible() can read the
@@ -342,6 +378,22 @@ try {
 
   // 3. The route itself: deployed robots header, then the posture
   //    matching the live oracle.
+  // Re-read immediately before judging, rather than trusting the snapshot
+  // taken before Help, the guide and two Settings modes (Codex #1621 r5).
+  // Governance configuring or clearing the oracle mid-run would otherwise
+  // have the page render against current chain state while the assertion
+  // picks its expected posture from a minutes-old read — a legitimate
+  // configuration change reported as a product FAIL.
+  const oracleNow = await precondition('re-reading the sanctions oracle before the posture check', () =>
+    pub.readContract({ address: DIAMOND, abi: ORACLE_ABI, functionName: 'getSanctionsOracle' }),
+  );
+  const oracleSetNow = oracleNow.toLowerCase() !== ZERO;
+  if (oracleSetNow !== oracleSet) {
+    console.log(
+      `note: the sanctions oracle changed mid-run (${oracleSet ? 'configured' : 'UNSET'}` +
+        ` → ${oracleSetNow ? 'configured' : 'UNSET'}); judging against the CURRENT setting`,
+    );
+  }
   const recoverRes = await page.goto(SITE + '/recover', {
     waitUntil: 'domcontentloaded',
     timeout: 60000,
@@ -372,9 +424,11 @@ try {
         'withheld regardless of the oracle setting; re-run with a clean, unflagged ' +
         'wallet with no outstanding attempt to exercise the availability arms.',
     );
-  } else if (oracleSet) {
+  } else if (oracleSetNow) {
     // Configured deployment: the form is the correct posture for a
-    // clean wallet with nothing outstanding.
+    // clean wallet with nothing outstanding. Judged against the RE-READ
+    // setting, not the run-opening snapshot — re-reading and then
+    // asserting on the stale value would have been no fix at all.
     check('oracle configured → form offered', posture === 'form');
   } else {
     // Shipped retail default: recovery must be presented as

@@ -98,12 +98,17 @@ import { fileURLToPath } from 'node:url';
 import { parseUnits } from 'viem';
 import {
   addressOf,
+  blocked,
+  blockedSync,
   chooseMenuValue,
   clientsFor,
   ensureConnected,
   launch,
+  LivePreconditionError,
   SITE,
+  precondition,
   requireSigningRole,
+  visit,
 } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -113,25 +118,79 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // can never drift from the app's own address/ABI source. --------------
 const CONTRACTS_SRC = path.resolve(HERE, '../../../../packages/contracts/src');
 
+// PRECONDITIONS, all of them — same reasoning as live-rate-desk.mjs: a
+// stale or half-exported bundle leaves this drive with nothing to assert
+// against, which means the signed book went UNREVIEWED rather than
+// regressed, so it exits BLOCKED instead of FAIL (#1581).
 function loadDiamondAbi() {
   const dir = path.join(CONTRACTS_SRC, 'abis');
   const out = [];
-  for (const f of fs.readdirSync(dir)) {
-    if (!f.endsWith('.json') || f.startsWith('_')) continue;
-    const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-    if (Array.isArray(parsed)) out.push(...parsed);
+  // Per FILE, not just in total (Codex #1621 r1). A whole-bundle
+  // emptiness check passes a HALF-exported bundle: one truncated facet
+  // JSON among 70 healthy ones still leaves `out.length` large, and the
+  // reads that needed that facet then fail inside viem with exit 1 —
+  // a stale artifact reported as a desk regression. Every facet in this
+  // bundle currently exports at least one entry, so "parses to a
+  // non-empty array" is a true invariant rather than a guess.
+  const empty = [];
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json') || f.startsWith('_')) continue;
+      const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        empty.push(f);
+        continue;
+      }
+      out.push(...parsed);
+    }
+  } catch (err) {
+    blockedSync(`cannot read the per-facet ABI bundle\n  dir: ${dir}\n  ${err.message}`);
+  }
+  if (empty.length) {
+    blockedSync(
+      `the per-facet ABI bundle is half-exported — ${empty.length} file(s)` +
+        ` carry no ABI entries: ${empty.slice(0, 8).join(', ')}` +
+        `\n  dir: ${dir}\n  → re-run contracts/script/exportFrontendAbis.sh`,
+    );
+  }
+  if (out.length === 0) {
+    blockedSync(
+      `the per-facet ABI bundle is empty — nothing to decode this drive's` +
+        ` events with.\n  dir: ${dir}\n  → run contracts/script/exportFrontendAbis.sh`,
+    );
   }
   return out;
 }
 
 const CHAIN_ID = 84532;
-const deployment = JSON.parse(
-  fs.readFileSync(path.join(CONTRACTS_SRC, 'deployments.json'), 'utf8'),
-)[String(CHAIN_ID)];
-const DIAMOND = deployment.diamond;
-const WETH = deployment.weth;
-const TLIQ = deployment.testnetMocks?.liquidToken;
-if (!WETH || !TLIQ) throw new Error('bundle missing weth/testnetMocks.liquidToken');
+function loadDeployment() {
+  const file = path.join(CONTRACTS_SRC, 'deployments.json');
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'))[String(CHAIN_ID)] ?? {};
+  } catch (err) {
+    blockedSync(`cannot read the deployments bundle\n  path: ${file}\n  ${err.message}`);
+  }
+}
+const deployment = loadDeployment();
+// Validated as ADDRESSES, not merely present (Codex #1621 r1). A
+// truthiness check accepts a non-empty but malformed value, and the
+// decimals/market reads a few lines below hand it straight to viem —
+// which throws at top level with exit 1, so a corrupt bundle was still
+// reported as a desk regression. `asAddress` below is the taint barrier
+// for outbound probe URLs and runs far too late to be this check.
+const DIAMOND = requireAddress(deployment.diamond, 'diamond');
+const WETH = requireAddress(deployment.weth, 'weth');
+const TLIQ = requireAddress(deployment.testnetMocks?.liquidToken, 'testnetMocks.liquidToken');
+function requireAddress(value, field) {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
+    blockedSync(
+      `the deployments bundle's ${field} for chain ${CHAIN_ID} is not a` +
+        ` 0x-40-hex address: ${JSON.stringify(value)} — no usable market to` +
+        ` drive the signed book with.`,
+    );
+  }
+  return value;
+}
 const ABI = loadDiamondAbi();
 const { pub } = clientsFor(CHAIN_ID);
 
@@ -147,6 +206,24 @@ const ERC20_ABI = [
 
 // ---- indexer wire (same conventions as live-rate-desk.mjs) ----------
 const INDEXER = process.env.INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com';
+// An operator override that is not an absolute http(s) origin never
+// reaches a server: `fetch` rejects on URL parsing, the drive catch
+// records it, and the batch reports an unusable CONFIG as a product FAIL
+// (Codex #1621 r10). Validated here, where exiting is free.
+{
+  let parsed = null;
+  try {
+    parsed = new URL(INDEXER);
+  } catch {
+    /* reported just below */
+  }
+  if (!parsed || !/^https?:$/.test(parsed.protocol)) {
+    blockedSync(
+      `INDEXER_ORIGIN is not an absolute http(s) origin: ${JSON.stringify(INDEXER)}` +
+        ' — the indexer probes this drive asserts against could never be reached.',
+    );
+  }
+}
 // wss:// origin derived from the probe origin — the same derivation the
 // app's indexerWsOrigin() performs on VITE_INDEXER_ORIGIN.
 const INDEXER_WS = INDEXER.replace(/^http/, 'ws');
@@ -163,10 +240,11 @@ async function indexerGet(url) {
 /** Validate an address loaded from a bundle/wallet FILE and rebuild it
  *  numerically before it may enter a probe URL (CodeQL
  *  js/file-data-in-outbound-network-request) — same helper as
- *  live-rate-desk.mjs. */
+ *  live-rate-desk.mjs, including its BLOCKED exit on a corrupt bundle
+ *  (#1581): the numeric rebuild remains the taint barrier. */
 function asAddress(value, label) {
   if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
-    throw new Error(`${label} is not a 0x-40-hex address: "${value}"`);
+    blockedSync(`${label} is not a 0x-40-hex address: "${value}"`);
   }
   return `0x${BigInt(value).toString(16).padStart(40, '0')}`;
 }
@@ -211,10 +289,18 @@ const SCAN_WAIT_MS = 600_000;
 // from the live probes below (Codex #1590 r4).
 requireSigningRole('lender');
 
-const [WETH_DECIMALS, TLIQ_DECIMALS] = await Promise.all([
-  pub.readContract({ address: WETH, abi: ERC20_ABI, functionName: 'decimals' }),
-  pub.readContract({ address: TLIQ, abi: ERC20_ABI, functionName: 'decimals' }),
-]);
+// A PRECONDITION read (Codex #1621 r1): it resolves the token scale the
+// drive's expected amounts are built from, before any browser exists, so
+// an RPC that cannot answer it means nothing was observed — not that the
+// signed book regressed.
+const [WETH_DECIMALS, TLIQ_DECIMALS] = await precondition(
+  'reading the market tokens’ decimals',
+  () =>
+    Promise.all([
+      pub.readContract({ address: WETH, abi: ERC20_ABI, functionName: 'decimals' }),
+      pub.readContract({ address: TLIQ, abi: ERC20_ABI, functionName: 'decimals' }),
+    ]),
+);
 const EXPECTED_AMOUNT = parseUnits(AMOUNT_WETH, WETH_DECIMALS);
 const EXPECTED_COLLATERAL = parseUnits(COLLATERAL_TLIQ, TLIQ_DECIMALS);
 const sameAddr = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
@@ -228,8 +314,33 @@ function record(name, status, detail = '') {
 }
 
 // ---- chain read helpers ----------------------------------------------
-const diamondRead = (functionName, args) =>
-  pub.readContract({ address: DIAMOND, abi: ABI, functionName, args });
+/**
+ * The ABI member a call is about to use, or BLOCKED if the bundle does
+ * not carry it (Codex #1621 r2) — same helper and same reasoning as
+ * live-rate-desk.mjs: checked at the POINT OF USE, so there is no
+ * required-functions list to go stale when someone adds a read.
+ */
+function requireAbiMember(name, kind) {
+  const found = ABI.find((e) => e.type === kind && e.name === name);
+  if (!found) {
+    // THROWN, not exited (Codex #1621 r4): this can fire after the
+    // drive has posted something, and `process.exit` skips the
+    // `finally` that cancels it. The drive maps this type to exit 2
+    // at the end, so the verdict is still BLOCKED — but the cleanup
+    // runs first and no testnet funds are stranded.
+    throw new LivePreconditionError(
+      `the bundled ABI has no ${kind} "${name}" — the export is stale or` +
+        ` half-written, so this drive cannot reach the surface it reviews.` +
+        `\n  → re-run contracts/script/exportFrontendAbis.sh`,
+    );
+  }
+  return found;
+}
+
+const diamondRead = (functionName, args) => {
+  requireAbiMember(functionName, 'function');
+  return pub.readContract({ address: DIAMOND, abi: ABI, functionName, args });
+};
 
 /** Wire order (all-strings JSON) → the typed struct viem's ABI encoder
  *  expects for `cancelSignedOffer` / `signedOfferOrderHash` — the same
@@ -472,7 +583,16 @@ async function selectTenor(page, days) {
 
 // ----------------------------------------------------------------------
 const lenderAddr = addressOf('lender');
-const { days: tenor, bucketWasEmpty: tenorBucketWasEmpty } = await pickTenor();
+// Pre-browser preflight, same precondition rule as live-rate-desk.mjs
+// (Codex #1621 r2): a partial RPC outage here means nothing was
+// observed, not that the signed book regressed.
+const { tenor, tenorBucketWasEmpty } = await precondition(
+  'selecting a tenor from the live book',
+  async () => {
+    const picked = await pickTenor();
+    return { tenor: picked.days, tenorBucketWasEmpty: picked.bucketWasEmpty };
+  },
+);
 console.log(
   `run: lender=${lenderAddr} market=WETH/tLIQ tenor=${tenor}d site=${SITE}` +
     ` indexer=${INDEXER} ws=${INDEXER_WS}/ws/chain/${CHAIN_ID} (phase 3 gasless signed book)`,
@@ -482,6 +602,7 @@ const { page, shot, done, consoleErrors, rpcLog } = await launch({ role: 'lender
 const snap = async (name) => shotPaths.push(await shot(name));
 
 let failed = false;
+let driveError = null;
 // The signed row this run put on the book — module scope so the
 // cleanup can revoke it even when the drive fails between milestones.
 // orderHash is captured DETERMINISTICALLY from the page's own
@@ -538,17 +659,95 @@ try {
   // wallet would be the wrong pocket) and warns on shortfall. The
   // drive wants the CLEAN path, so the order size must sit inside the
   // live free balance — assert that before touching the UI.
-  const [tracked, encumbered] = await Promise.all([
-    diamondRead('getProtocolTrackedVaultBalance', [lenderAddr, WETH]),
-    diamondRead('getEncumbered', [lenderAddr, WETH, 0n]),
-  ]);
+  // The READS are part of the precondition, not just their verdict
+  // (Codex #1621 r3). Only the insufficient-balance BRANCH was BLOCKED;
+  // an RPC that dropped during either probe rejected into the drive's
+  // catch and exited 1 — reporting a signed-book regression from a read
+  // that happened before any page or product behaviour was observed.
+  const [tracked, encumbered] = await precondition(
+    'reading the lender vault balance',
+    () =>
+      Promise.all([
+        diamondRead('getProtocolTrackedVaultBalance', [lenderAddr, WETH]),
+        diamondRead('getEncumbered', [lenderAddr, WETH, 0n]),
+      ]),
+  );
   const freeWeth = tracked > encumbered ? tracked - encumbered : 0n;
   if (freeWeth < EXPECTED_AMOUNT) {
-    throw new Error(
+    // BLOCKED, not FAIL (#1581). An underfunded dev wallet is a missing
+    // PRECONDITION — the signed book was never exercised, so the surface
+    // is unreviewed. Thrown, this reached the catch below as
+    // `record('drive', 'FAIL', …)` and the batch reported "top up the
+    // vault" as a gasless-posting regression. Safe to exit here: no
+    // signature exists yet (`signClicked` is still false), so the
+    // cleanup boundary that process.exit skips has nothing to unwind.
+    //
+    // The ASYNC exit, not `blockedSync` — this runs after `launch()`, so
+    // there is a persistent-profile Chromium open. Exiting without
+    // closing it orphans the process and leaves the profile directory
+    // locked, which makes the NEXT lender driver in a sequential batch
+    // fail to launch — turning one blocked drive into several
+    // (Codex #1621 r1).
+    await blocked(
       `lender vault free WETH ${freeWeth} < the ${EXPECTED_AMOUNT} this drive ` +
         'commits — deposit WETH to the vault (or shrink AMOUNT_WETH) before running',
     );
   }
+  // Cancellation gas, reserved BEFORE any signature can exist (Codex
+  // #1621 r12). The post is GASLESS — it escrows nothing and costs the
+  // lender no ETH — so a wallet holding plenty of vault WETH but zero
+  // NATIVE balance clears the check above and publishes a fillable
+  // order. Step 6 then cannot submit `cancelSignedOffer`, and the
+  // `finally` fallback signs with the same unfunded key, so the drive
+  // exits FAIL having left a live order resting against the lender's
+  // vault for any taker to fill. Funds exposure is not a verdict
+  // problem — the only safe moment to discover an unfundable cleanup is
+  // before the thing needing cleanup exists.
+  {
+    const reserve = await precondition(
+      'reading the lender native balance and current gas price',
+      async () => {
+        // Balance at the PENDING block, and a settled-mempool check
+        // (Codex #1621 r14). `getBalance()` defaults to the latest
+        // CONFIRMED block, so an aborted earlier run that left a
+        // transaction in the mempool shows its pre-spend balance here —
+        // the reserve passes, the gasless order is published, and the ETH
+        // is gone by the time either cancellation path needs it. The
+        // driver already distinguishes the two nonces later for exactly
+        // this reason; the reserve has to as well.
+        const [nativeBal, fees, pendingNonce, latestNonce] = await Promise.all([
+          pub.getBalance({ address: lenderAddr, blockTag: 'pending' }),
+          pub.estimateFeesPerGas().catch(() => ({})),
+          pub.getTransactionCount({ address: lenderAddr, blockTag: 'pending' }),
+          pub.getTransactionCount({ address: lenderAddr, blockTag: 'latest' }),
+        ]);
+        if (pendingNonce !== latestNonce) {
+          throw new Error(
+            `lender has ${pendingNonce - latestNonce} transaction(s) still pending` +
+              ' — their spend is not reflected in any balance this check can read,' +
+              ' so the cancellation reserve cannot be trusted. Let the mempool' +
+              ' settle before running.',
+          );
+        }
+        const perGas =
+          fees.maxFeePerGas ?? fees.gasPrice ?? (await pub.getGasPrice());
+        if (!perGas) throw new Error('chain returned no usable gas price');
+        // A cancel is one small write. 200k gas is several times its real
+        // cost and the 2x pad absorbs a base-fee climb between here and
+        // the cleanup at the very end of the drive.
+        return { need: perGas * 200_000n * 2n, have: nativeBal };
+      },
+    );
+    if (reserve.have < reserve.need) {
+      await blocked(
+        `lender native balance ${reserve.have} wei is under the ~${reserve.need} wei` +
+          ' reserved for cancelSignedOffer. This drive publishes a signable order it' +
+          ' must be able to retract, so it refuses to post one it could strand —' +
+          ' fund the lender EOA with Base Sepolia ETH before running.',
+      );
+    }
+  }
+
   // The production route the whole drive rides: market-scoped GET must
   // 200 with the { chainId, offers } shape and `no-store` (the desk's
   // mutation flows refetch this URL expecting fresh state — a cached
@@ -766,7 +965,10 @@ try {
       /* non-HTTP or malformed URL — step 4 asserts the capture landed */
     }
   });
-  await page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded' });
+  // BLOCKED if the site never answers (#1581). Safe ahead of the
+  // cleanup boundary: nothing is signed yet, so the finally block below
+  // has nothing to unwind.
+  await visit(page, '/desk');
   await page
     .getByRole('heading', { name: 'Rate Desk', level: 1 })
     .waitFor({ timeout: 30_000 });
@@ -1123,8 +1325,7 @@ try {
   await page
     .getByText(/signed order cancelled on-chain/i)
     .waitFor({ timeout: 150_000 });
-  const cancelledEvt = ABI.find((e) => e.type === 'event' && e.name === 'SignedOfferCancelled');
-  if (!cancelledEvt) throw new Error('SignedOfferCancelled missing from the bundled ABI');
+  const cancelledEvt = requireAbiMember('SignedOfferCancelled', 'event');
   const cancelLogs = await pollFor(
     'the SignedOfferCancelled log',
     async () => {
@@ -1649,6 +1850,10 @@ try {
   );
 } catch (err) {
   failed = true;
+  // Remembered so the exit below can tell a stale-artifact precondition
+  // from a product defect — AFTER the finally has cancelled anything this
+  // run left resting on the book (Codex #1621 r4).
+  driveError = err;
   record('drive', 'FAIL', err.message);
   await snap('signed-book-99-failure').catch(() => {});
   const body = await page
@@ -1868,4 +2073,23 @@ const ok =
   steps.every((s) => s.status !== 'FAIL') &&
   (!signClicked || ledgerPoisoned);
 console.log(ok ? 'PASS — signed-book live review complete' : 'FAIL — see steps above');
+// A precondition that surfaced mid-drive is BLOCKED, not FAIL — but only
+// now, once the `finally` above has cancelled whatever this run left
+// resting. Exiting at the point of discovery would have stranded it (r4).
+// BLOCKED only if the precondition is the ONLY thing wrong (Codex #1621
+// r5) — same rule as live-rate-desk.mjs. If the cleanup ALSO failed — the cancel reverted, the RPC dropped,
+// a CLEANUP-UNKNOWN was recorded — this run may have left a signed order RESTING
+// and fillable, and that is actionable in a way "verified nothing"
+// is not. Reporting BLOCKED there buries funds still exposed behind a
+// re-run-later verdict.
+const onlyDriveFailed = steps.every((s) => s.status !== 'FAIL' || s.name === 'drive');
+if (
+  !ok &&
+  driveError instanceof LivePreconditionError &&
+  onlyDriveFailed &&
+  (!signClicked || ledgerPoisoned)
+) {
+  console.log('BLOCKED — a precondition failed mid-drive; cleanup completed first');
+  process.exit(2);
+}
 process.exit(ok ? 0 : 1);

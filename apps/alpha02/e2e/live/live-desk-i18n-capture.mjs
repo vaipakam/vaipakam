@@ -26,9 +26,13 @@
  *                         uses) when a pinned Playwright build mismatches the
  *                         installed browser (e.g. a sandbox image).
  *
- * Exit code: non-zero if ANY locale failed to load OR did not switch to the
- * requested language (so `run-live-batch.mjs`, which judges PASS by child
- * exit status, cannot report a blocked/regressed run as green).
+ * Exit codes follow the three-verdict contract in `run-live-batch.mjs`
+ * (#1581): 0 when every locale captured cleanly, 1 when a locale loaded but
+ * did not switch language or rendered no desk (a regression this drive
+ * found), 2 when it could not capture at all — no browser, nowhere to write
+ * the artifacts, or a site that never answered the first load. Before the
+ * migration all three collapsed into 1, so a sandbox without a usable
+ * Chromium was reported as a desk-i18n defect.
  *
  * NB: some desk strings (positions, own orders) only render with a connected
  * wallet + live data — this read-only pass confirms the language switch and
@@ -37,22 +41,78 @@
 
 // Egress shim (optional) — MUST run before we capture `globalThis.fetch`, so
 // a swapped undici dispatcher is the one the route handler below uses.
+// Remembered, not exited on yet: the shared `blockedSync` lives in
+// driver.mjs, which must not be imported before this block runs (see the
+// dynamic import below). So the failure is carried the few lines needed
+// to reach the shared exit, rather than growing a second copy of it here
+// (Codex #1621 r6).
+let proxyShimError = null;
 if (process.env.LIVE_PROXY_SETUP) {
-  await import(process.env.LIVE_PROXY_SETUP);
+  try {
+    await import(process.env.LIVE_PROXY_SETUP);
+  } catch (err) {
+    proxyShimError = err;
+  }
 }
 const ufetch = globalThis.fetch;
 
 import { chromium } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+
+// Dynamic, not a static import: a static one is HOISTED above the shim
+// block above, so driver.mjs would capture its own `globalThis.fetch`
+// before this file's documented shim ordering had run. This drive owns
+// that ordering deliberately, so it reaches the shared BLOCKED exits
+// (#1581) without disturbing it — the shared exits are the point, since a
+// second local copy is how two definitions of "BLOCKED" start diverging.
+const { blockedSync, precondition, trackBrowser } = await import('./driver.mjs');
+if (proxyShimError) {
+  // A broken ENVIRONMENT, not a product regression — and it failed before
+  // any browser or page existed, so nothing could have been observed.
+  blockedSync(
+    `cannot load LIVE_PROXY_SETUP — the egress shim this environment needs` +
+      ` would not initialise.\n  module: ${process.env.LIVE_PROXY_SETUP}` +
+      `\n  ${proxyShimError.message}`,
+  );
+}
 
 const SITE = process.env.SITE_URL || 'https://alpha02.vaipakam.com';
 const OUT = new URL('./shots/desk-i18n/', import.meta.url).pathname;
-mkdirSync(OUT, { recursive: true });
+try {
+  // The screenshots and report ARE this drive's output — nowhere to write
+  // them means it captured nothing, which is BLOCKED, not a defect.
+  //
+  // `mkdirSync(recursive)` alone was not enough (Codex #1621 r1): on an
+  // EXISTING but non-writable directory it succeeds without touching
+  // write permission, and the failure then surfaced at the very end —
+  // screenshot errors are swallowed by design, so the first hard error
+  // was the closing `writeFileSync`, exiting 1 after ten locales of work
+  // and labelling "nowhere to write" an i18n regression. Probe an actual
+  // write, so the drive stops in the first second with the true cause.
+  mkdirSync(OUT, { recursive: true });
+  const probe = `${OUT}.write-probe`;
+  writeFileSync(probe, '');
+  rmSync(probe, { force: true });
+} catch (err) {
+  blockedSync(`cannot write to the capture output directory\n  path: ${OUT}\n  ${err.message}`);
+}
 
 const LOCALES = (process.env.DESK_I18N_LOCALES || 'en,zh,ta,de,fr,es,ar,ja,ko,hi')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+// A selector that normalises to NOTHING is BLOCKED, not PASS (Codex
+// #1621 r2). `DESK_I18N_LOCALES=",,,"` is non-empty, so the `||` default
+// does not apply, and the filter then leaves an empty list: the loop ran
+// zero times, the report was written empty, and the drive exited 0 —
+// the batch reporting "captured cleanly" about a run that captured
+// nothing. Same rule as live-ux-sweep.mjs's empty session selection.
+if (LOCALES.length === 0) {
+  blockedSync(
+    `DESK_I18N_LOCALES=${JSON.stringify(process.env.DESK_I18N_LOCALES)} selects` +
+      ` no locales — nothing to capture.`,
+  );
+}
 
 // A read-only capture never mutates state. Chain READS are JSON-RPC POSTs, so
 // POST can't be blanket-blocked; instead a POST is allowed only when its body
@@ -108,27 +168,14 @@ function languageMatches(lng, htmlLang, dir) {
   return lng === 'ar' ? d === 'rtl' : d !== 'rtl';
 }
 
-const report = {};
-const blockedRequests = [];
-
-const browser = await chromium.launch({
-  headless: true,
-  ...(process.env.LIVE_CHROMIUM_PATH
-    ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
-    : {}),
-  args: ['--no-sandbox', '--disable-dev-shm-usage'],
-});
-
-for (const lng of LOCALES) {
-  const ctx = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
-    locale: lng,
-    ignoreHTTPSErrors: true,
-  });
-
-  // Serve every page request from THIS process via undici (so LIVE_PROXY_SETUP
-  // takes effect) AND enforce the read-only guard on the way through.
-  await ctx.route('**/*', async (route) => {
+/**
+ * Serve every page request from THIS process via undici (so
+ * LIVE_PROXY_SETUP takes effect) AND enforce the read-only guard on the
+ * way through. Defined once rather than per locale — it closes over
+ * nothing loop-scoped, and hoisting it lets the whole per-locale setup
+ * sit inside one guarded block (Codex #1621 r2).
+ */
+const routeThroughUndici =  async (route) => {
     const req = route.request();
     const violation = readOnlyViolation(req);
     if (violation) {
@@ -159,17 +206,66 @@ for (const lng of LOCALES) {
     } catch {
       await route.abort('failed');
     }
-  });
+  };
 
-  // Seed the language BEFORE the app boots — the shared i18n factory reads
-  // `vaipakam:language` from localStorage on init.
-  await ctx.addInitScript((code) => {
-    try {
-      window.localStorage.setItem('vaipakam:language', code);
-    } catch {}
-  }, lng);
+const report = {};
+const blockedRequests = [];
 
-  const page = await ctx.newPage();
+// No browser means no capture at all — BLOCKED, not a desk-i18n defect.
+const browser = await precondition('launching a browser', () =>
+  chromium.launch({
+    headless: true,
+    ...(process.env.LIVE_CHROMIUM_PATH
+      ? { executablePath: process.env.LIVE_CHROMIUM_PATH }
+      : {}),
+    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  }),
+);
+// Register it so a later BLOCKED exit closes it instead of leaving a
+// Chromium behind. `launch()` does this for every other drive; this one
+// builds its own per-locale context matrix, so it registers its own.
+trackBrowser(browser);
+
+// Locales whose per-locale browser context never came up. Recorded, not
+// exited on (Codex #1621 r2): this drive ACCUMULATES findings across
+// locales, so a context failure on locale 6 must not erase a real
+// language regression found on locale 2. Same precedence rule as
+// live-recover-locales.mjs and live-ux-sweep.mjs.
+const setupFailures = [];
+// Set once the site has actually served a page — see the probe below.
+let reachabilityProven = false;
+
+for (const [index, lng] of LOCALES.entries()) {
+  let ctx;
+  let page;
+  try {
+    ctx = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      locale: lng,
+      ignoreHTTPSErrors: true,
+    });
+    await ctx.route('**/*', routeThroughUndici);
+    // Seed the language BEFORE the app boots — the shared i18n factory
+    // reads `vaipakam:language` from localStorage on init.
+    await ctx.addInitScript((code) => {
+      try {
+        window.localStorage.setItem('vaipakam:language', code);
+      } catch {}
+    }, lng);
+    page = await ctx.newPage();
+  } catch (err) {
+    // An invalid locale tag in DESK_I18N_LOCALES lands here, as does an
+    // exhausted browser or a failed route install. Either way nothing was
+    // captured for this row — and the context may be half-built, so close
+    // it rather than leaking one per failed locale.
+    await ctx?.close().catch(() => {});
+    const why = String(err?.message ?? err).split('\n')[0].slice(0, 200);
+    setupFailures.push({ lng, why });
+    report[lng] = { lng, ok: false, blocked: why };
+    console.log(`[${lng}] BLOCKED — context setup failed: ${why}`);
+    continue;
+  }
+
   const rec = {
     lng,
     url: `${SITE}/desk`,
@@ -181,8 +277,39 @@ for (const lng of LOCALES) {
     deskText: [],
     error: null,
   };
+  const openDesk = async () => {
+    const resp = await page.goto(`${SITE}/desk`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 45000,
+    });
+    // Status-checked exactly as the shared `visit()` is (Codex #1621 r9).
+    // A resolved `page.goto` is not proof of reachability — a 404 or CDN
+    // 5xx resolves fine, and the error document would then fail the
+    // language and desk assertions as if the app had regressed. This
+    // drive launches its own browser so it cannot use `visit()`; that is
+    // not a reason for it to answer the question differently.
+    const status = resp?.status();
+    if (typeof status === 'number' && status >= 400) {
+      throw new Error(`${SITE}/desk answered HTTP ${status}`);
+    }
+    return resp;
+  };
   try {
-    await page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    // The reachability probe is the FIRST load that actually happens, not
+    // whichever locale is index 0 (Codex #1621 r3). Keying it to the
+    // index meant that if locale 0's context setup failed, locale 1 --
+    // the first page load of the run -- skipped the probe entirely, and
+    // an unreachable target was then recorded as an i18n regression on a
+    // page that was never served.
+    //
+    // Once ANY load has succeeded the site is known to serve, so a later
+    // failure is a finding rather than a blocked run (#1581).
+    if (!reachabilityProven) {
+      await precondition(`opening ${SITE}/desk`, openDesk);
+      reachabilityProven = true;
+    } else {
+      await openDesk();
+    }
     await page.waitForTimeout(7000); // SPA boot + lazy locale chunk activation
 
     rec.htmlLang = await page.getAttribute('html', 'lang').catch(() => null);
@@ -244,12 +371,24 @@ await browser.close();
 
 // Fail loudly so run-live-batch.mjs (which reads the child exit code) can't
 // report a blocked/regressed run as green.
-const failed = Object.values(report).filter((r) => !r.ok);
+// A real finding OUTRANKS an incomplete capture (Codex #1621 r2): a row
+// that loaded and showed the wrong language is a defect, and reporting
+// BLOCKED because some other locale's context failed would bury it.
+const failed = Object.values(report).filter((r) => !r.ok && !r.blocked);
 if (failed.length || blockedRequests.length) {
   console.error(
     `\nFAIL: ${failed.length}/${LOCALES.length} locale(s) did not capture cleanly` +
       (blockedRequests.length ? ` + ${blockedRequests.length} blocked non-read request(s)` : '') +
+      (setupFailures.length ? ` (${setupFailures.length} more could not be checked)` : '') +
       `: ${failed.map((r) => `${r.lng}(${r.error || 'no desk text'})`).join(', ')}`,
   );
   process.exitCode = 1;
+} else if (setupFailures.length) {
+  console.error(
+    `\nBLOCKED: ${setupFailures.length}/${LOCALES.length} locale(s) could not be` +
+      ` captured and none of the rest found a problem, so those languages are` +
+      ` still unreviewed:\n` +
+      setupFailures.map((f) => `  ${f.lng}: ${f.why}`).join('\n'),
+  );
+  process.exitCode = 2;
 }
