@@ -1437,6 +1437,22 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         );
     }
 
+    /// #1634 r2 — a CLOCKLESS payload (zero finalizedAt) quarantines on
+    /// the overtake path (reason 6): an honest Base refuses such a
+    /// dispatch, so an arrival carrying one is stale or hostile and its
+    /// provisional credit could never settle.
+    function testClocklessPayloadQuarantines() public {
+        _configureCompMirror();
+        _deliverCompWithClock(3, REMITTER, 3e18, 2e18, 0, 0, 0);
+
+        assertFalse(_remit().getDayCompensation(3).compensated, "no credit");
+        assertEq(
+            _remit().getStrandedRecovery(REMITTER, REMIT_ID).reason,
+            6,
+            "reason: clockless payload"
+        );
+    }
+
     /// The known-state ladder evaluates the INSTALLED clock even before any
     /// w4 terminal has run: a compensation arriving after the day's true
     /// expiry quarantines on the clock alone (no lapse flags involved).

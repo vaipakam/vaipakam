@@ -6299,7 +6299,9 @@ library LibVaipakam {
     ///         arrival while a provisional credit was already held (one
     ///         provisional receipt binding per day — #1634 r1), 5 = the
     ///         day is permanently V3-unhealable on a rotated mirror
-    ///         (#1634 r1; the confirm/demote hook could never run).
+    ///         (#1634 r1; the confirm/demote hook could never run), 6 =
+    ///         clockless payload (#1634 r2; an honest Base refuses such a
+    ///         dispatch — stale or hostile, could never settle).
     struct StrandedRecovery {
         uint256 amount;
         uint256 dayId;

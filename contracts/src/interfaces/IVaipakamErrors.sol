@@ -351,6 +351,15 @@ interface IVaipakamErrors {
     ///         Diamond-internal (the reporter facet invokes it through the
     ///         Diamond's own fallback); any other caller is rejected.
     error CompensationHookNotSelf(address caller);
+    /// @notice #1634 r2 — a P2 compensation cannot dispatch for a day with
+    ///         no frozen lapse clock: such a day can never emit the V3
+    ///         broadcast that settles the mirror's classification, so the
+    ///         credit would sit provisional forever (or quarantine
+    ///         wrongly). A post-w1 zeroed day heals its clock first
+    ///         (`broadcastGlobalTo`); a day finalized before the clock
+    ///         machinery existed belongs to the w4 legacy-compensation
+    ///         migration (`stampLegacyCompensation`), not this wire.
+    error CompensationDayHasNoClock(uint256 dayId);
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by

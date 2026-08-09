@@ -686,6 +686,24 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
+    /// @dev #1634 r2 — a clockless day cannot dispatch a P2 compensation:
+    ///      it can never emit the settling V3 broadcast (the V2-permanent
+    ///      fallback), so the mirror credit would sit provisional forever.
+    ///      Fail-closed at the dispatch, where the operator can heal the
+    ///      clock first (or route a pre-w1 day to the w4 legacy migration).
+    function test_Manual_RefusesClocklessDay() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        mutator.clearDayLapseClockRaw(1); // reproduce a pre-w1 day
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationDayHasNoClock.selector, 1
+            )
+        );
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+    }
+
     /// @dev #1434 P2-w2 — the P2 payload's expiry inputs are the day's
     ///      FROZEN clock words (w1's finalization-time freeze), never live
     ///      state: set schedule v1, finalize (freezing v1 + now), then bump

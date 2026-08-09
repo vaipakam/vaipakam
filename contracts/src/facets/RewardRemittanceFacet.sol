@@ -1027,7 +1027,9 @@ contract RewardRemittanceFacet is
     ///         held (one provisional receipt binding per day), 5 = the day
     ///         is permanently V3-unhealable on this rotated mirror (prior
     ///         state, no recorded era — the confirm/demote hook could never
-    ///         run).
+    ///         run), 6 = clockless payload (zero finalizedAt — an honest
+    ///         Base refuses such a dispatch, so this is stale or hostile
+    ///         and could never settle).
     /// @custom:event-category informational/reward-compensation
     event CompensationQuarantined(
         uint256 indexed dayId,
@@ -1200,7 +1202,17 @@ contract RewardRemittanceFacet is
             _quarantineCompensation(s, dayId, remitter, remitId, amount, 4);
             return;
         }
-        // (c) The overtake case can still be PAST ITS TRUE EXPIRY: the wire
+        // (c) A CLOCKLESS payload (zero finalizedAt) cannot settle: an
+        //     honest Base refuses such a dispatch outright (#1634 r2 —
+        //     {CompensationDayHasNoClock}), so one arriving here is stale
+        //     or hostile, and a provisional credit for it would wait on a
+        //     V3 broadcast that can never carry a matching clock. The
+        //     token-safe mirror of the Base-side refusal (reason 6).
+        if (finalizedAt == 0) {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 6);
+            return;
+        }
+        // (d) The overtake case can still be PAST ITS TRUE EXPIRY: the wire
         //     carries the full frozen clock words (R4b), so the ingress
         //     evaluates them even with no broadcast state — a delivery
         //     arriving after the day's expiry must never be provisionally
@@ -1733,6 +1745,19 @@ contract RewardRemittanceFacet is
         if (vpfi == address(0)) revert VPFITokenNotSet();
         address messenger = s.crossChainMessenger;
         if (messenger == address(0)) revert RewardBudgetMessengerNotSet();
+
+        // #1634 r2 — a clockless day can never emit the V3 broadcast that
+        // settles the mirror's classification: `_broadcastDayV3` falls back
+        // to the V2 wire permanently for it, V2 installs neither the zeroed
+        // marker nor the era, and the compensation hook never fires — so
+        // the credit would sit provisional forever, outside the recovery
+        // reservation. Fail closed HERE, where the operator can act: a
+        // post-w1 day heals its clock first (permissionless
+        // {RewardAggregatorFacet.broadcastGlobalTo}); a pre-w1 day belongs
+        // to the w4 legacy-compensation migration.
+        if (s.dayLapseClock[dayId].finalizedAt == 0) {
+            revert CompensationDayHasNoClock(dayId);
+        }
 
         // r6 — NET headroom; a manual send retires no commitment (the
         // zeroed chain's share was never committed at finalize).

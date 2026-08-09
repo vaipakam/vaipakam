@@ -445,6 +445,20 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         {
             address remitReceiverP2 =
                 _readAddrOptional(".rewardRemittanceReceiver");
+            // #1634 r2 — the SAME fail-closed posture as the B2-d5 block:
+            // `_readAddrOptional` returns zero for a missing / stale /
+            // malformed artifact as well as for a chain that genuinely has
+            // no receiver, and a MIRROR silently skipping here would ship
+            // the P2 Diamond ingress with a receiver that cannot decode
+            // the P2 tag — every manual compensation failing while Base
+            // has closed the day. Only the canonical chain legitimately
+            // has no receiver.
+            (, , , bool isCanonicalRewardP2, ) =
+                RewardReporterFacet(diamond).getRewardReporterConfig();
+            require(
+                remitReceiverP2 != address(0) || isCanonicalRewardP2,
+                "P2-w2: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
+            );
             if (remitReceiverP2 != address(0)) {
                 uint256 gen = 0;
                 (bool ok, bytes memory ret) = remitReceiverP2.staticcall(
@@ -464,6 +478,40 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                         newImplP2
                     );
                 }
+            }
+        }
+
+        // ─── #1434 P2-w2 (#1634 r2) — retire the 3-arg manual remit ─────────
+        //
+        // `remitManualBudget` changed from (uint32,uint256,uint256) to the
+        // per-side (uint32,uint256,uint256,uint256) shape, so its SELECTOR
+        // changed — and this script Replaces/Adds but never Removes (SCOPE
+        // note above). The retired selector would stay routed to the OLD
+        // facet bytecode: an admin on stale tooling could still close a
+        // day and dispatch the legacy d5 ordinary-remit payload, which the
+        // upgraded mirror books through `onRewardBudgetReceived` instead
+        // of the compensation classifier — no compensated pools, no
+        // recovery reservation, while Base considers the compensation
+        // sent. Remove it so stale tooling FAILS CLOSED. Gated on the old
+        // selector being routed (the standing idempotent-rerun pattern).
+        {
+            bytes4 oldManualRemit3 = bytes4(
+                keccak256("remitManualBudget(uint32,uint256,uint256)")
+            );
+            if (loupe.facetAddress(oldManualRemit3) != address(0)) {
+                bytes4[] memory rmManual = new bytes4[](1);
+                rmManual[0] = oldManualRemit3;
+                IDiamondCut.FacetCut[] memory rmManualCut =
+                    new IDiamondCut.FacetCut[](1);
+                rmManualCut[0] = IDiamondCut.FacetCut({
+                    facetAddress: address(0),
+                    action: IDiamondCut.FacetCutAction.Remove,
+                    functionSelectors: rmManual
+                });
+                IDiamondCut(diamond).diamondCut(rmManualCut, address(0), "");
+                console.log(
+                    "P2-w2: removed retired remitManualBudget(uint32,uint256,uint256) selector"
+                );
             }
         }
 
