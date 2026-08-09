@@ -16,9 +16,11 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {
     IRewardMessenger,
     IRewardReporterIngressV2,
+    IRewardReporterIngressV3,
     IRewardCommitmentIngress,
     IRewardRemitAckIngress,
-    RewardBroadcastV2
+    RewardBroadcastV2,
+    RewardBroadcastV3
 } from "../interfaces/IRewardMessenger.sol";
 
 /// @dev Base-side Diamond ingress for an inbound REPORT.
@@ -202,6 +204,15 @@ contract VaipakamRewardMessenger is
     ///         mirror (including one never received — a pre-tombstone), so
     ///         the mirror can ACK the cancellation over the return channel.
     uint8 internal constant MSG_TYPE_REPAT_CANCEL = 9;
+    /// @notice #1434 P2-w1 — Base → ONE mirror per-destination broadcast V3:
+    ///         the full kind-5 semantics plus the day's FROZEN lapse-clock
+    ///         facts (finalizedAt, schedule version + inline parameters, the
+    ///         destination's R1 zeroed marker, and the sending deployment's
+    ///         era identity). A NEW kind per the B2-d5 rule — the kind-5
+    ///         branch is kept unchanged so an old in-flight packet still
+    ///         decodes; only the sender generation decides which kind goes
+    ///         out.
+    uint8 internal constant MSG_TYPE_BROADCAST_V3 = 10;
 
     /// @notice LEGACY REPORT payload size — the pre-#1222 mirror→Base
     ///         `abi.encode(uint8, uint256, uint256, uint256)` four-word
@@ -313,6 +324,11 @@ contract VaipakamRewardMessenger is
     /// @notice #1568 C2 — repatriation CANCEL payload:
     ///         `abi.encode(uint8, address issuingBase, uint256 authId)`.
     uint256 internal constant REPAT_CANCEL_PAYLOAD_SIZE = 3 * 32;
+    /// @notice #1434 P2-w1 — `abi.encode(uint8 kind, RewardBroadcastV3)` =
+    ///         1 + (14 nested V2 + 6 appended) static words. Unique in the
+    ///         accepted-length union, but disambiguation remains the kind
+    ///         tag per the standing rule.
+    uint256 internal constant BROADCAST_V3_PAYLOAD_SIZE = 21 * 32;
 
     // ─── Storage ────────────────────────────────────────────────────────────
 
@@ -455,6 +471,22 @@ contract VaipakamRewardMessenger is
 
     /// @notice #1222 M3 B2-b — a kind-5 broadcast arrived on this mirror.
     event BroadcastV2Received(
+        uint256 indexed sourceChainId,
+        uint256 indexed dayId
+    );
+
+    /// @custom:event-category informational/reward-transport
+    /// @notice #1434 P2-w1 — one kind-10 per-destination broadcast left
+    ///         this (canonical) messenger.
+    event BroadcastV3Sent(
+        bytes32 indexed messageId,
+        uint256 indexed dstChainId,
+        uint256 indexed dayId
+    );
+
+    /// @custom:event-category informational/reward-transport
+    /// @notice #1434 P2-w1 — a kind-10 broadcast arrived on this mirror.
+    event BroadcastV3Received(
         uint256 indexed sourceChainId,
         uint256 indexed dayId
     );
@@ -1346,7 +1378,17 @@ contract VaipakamRewardMessenger is
         IRewardMessenger.BroadcastV2Shared calldata shared,
         IRewardMessenger.BroadcastV2PerDest calldata d
     ) private pure returns (bytes memory) {
-        RewardBroadcastV2 memory b = RewardBroadcastV2({
+        return abi.encode(MSG_TYPE_BROADCAST_V2, _wireV2(shared, d));
+    }
+
+    /// @dev The ONE shared→wire field mapping, used by both the kind-5 and
+    ///      the kind-10 encoder (the V3 wire struct nests this one verbatim)
+    ///      so the two kinds can never transcribe the V2 fields differently.
+    function _wireV2(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV2PerDest calldata d
+    ) private pure returns (RewardBroadcastV2 memory) {
+        return RewardBroadcastV2({
             dayId: shared.dayId,
             globalLenderNumeraire18: shared.globalLenderNumeraire18,
             globalBorrowerNumeraire18: shared.globalBorrowerNumeraire18,
@@ -1362,7 +1404,160 @@ contract VaipakamRewardMessenger is
             keeperAllocate: d.keeperAllocate,
             destChainId: d.destChainId
         });
-        return abi.encode(MSG_TYPE_BROADCAST_V2, b);
+    }
+
+    // ─── #1434 P2-w1 — per-destination broadcast V3 (kind-10) ───────────────
+
+    /// @notice Send day `shared.dayId` as one kind-10 payload PER configured
+    ///         destination — the V2 semantics plus the frozen P2 day-clock
+    ///         facts. Same Diamond-only / set-coverage / quote-then-send /
+    ///         refund contract as {broadcastDayV2}.
+    // slither-disable-start msg-value-loop
+    function broadcastDayV3(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV3Extras calldata extras,
+        IRewardMessenger.BroadcastV3PerDest[] calldata dests,
+        address payable refundAddress
+    ) external payable onlyDiamond whenNotPaused nonReentrant {
+        if (messenger == address(0)) revert MessengerNotSet();
+        uint256 n = broadcastDestinationChainIds.length;
+        if (n == 0) revert NoBroadcastDestinations();
+        if (dests.length != n) {
+            revert BroadcastDestinationSetMismatch(dests.length, n);
+        }
+
+        uint256 spent;
+        for (uint256 i; i < n; ++i) {
+            uint256 dst = broadcastDestinationChainIds[i];
+            bytes memory payload =
+                _encodeBroadcastV3(shared, extras, _findDestV3(dests, dst));
+            uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
+                dst, payload, _noTokens(), destGasLimit
+            );
+            if (msg.value - spent < fee) {
+                revert InsufficientFee(msg.value - spent, fee);
+            }
+            // slither-disable-next-line arbitrary-send-eth,msg-value-loop
+            bytes32 messageId = ICrossChainMessenger(messenger).sendMessage{
+                value: fee
+            }(dst, payload, _noTokens(), destGasLimit);
+            spent += fee;
+
+            emit BroadcastV3Sent(messageId, dst, shared.dayId);
+        }
+
+        _refund(refundAddress, msg.value - spent);
+    }
+    // slither-disable-end msg-value-loop
+
+    /// @notice Quote the total native fee for a {broadcastDayV3}.
+    function quoteBroadcastDayV3(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV3Extras calldata extras,
+        IRewardMessenger.BroadcastV3PerDest[] calldata dests
+    ) external view returns (uint256 nativeFee) {
+        uint256 n = broadcastDestinationChainIds.length;
+        if (dests.length != n) {
+            revert BroadcastDestinationSetMismatch(dests.length, n);
+        }
+        for (uint256 i; i < n; ++i) {
+            uint256 dst = broadcastDestinationChainIds[i];
+            bytes memory payload =
+                _encodeBroadcastV3(shared, extras, _findDestV3(dests, dst));
+            nativeFee += ICrossChainMessenger(messenger).quoteMessageFee(
+                dst, payload, _noTokens(), destGasLimit
+            );
+        }
+    }
+
+    /// @notice Send ONE kind-10 payload to `dest.base.destChainId` — the
+    ///         clock-backfill heal path. Deliberately EXEMPT from the
+    ///         configured-set coverage rule: a mirror removed from the
+    ///         destination list after its kind-5 apply must remain reachable
+    ///         for its V3 clock backfill (design §1.1). The underlying CCIP
+    ///         messenger still enforces that the LANE exists — a torn-down
+    ///         lane reverts at quote/send, which is the design's stated
+    ///         decommissioning boundary. Admission control (day standing)
+    ///         lives on the Diamond facet; this is transport only.
+    function broadcastDayV3Single(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV3Extras calldata extras,
+        IRewardMessenger.BroadcastV3PerDest calldata dest,
+        address payable refundAddress
+    )
+        external
+        payable
+        onlyDiamond
+        whenNotPaused
+        nonReentrant
+        returns (bytes32 messageId)
+    {
+        if (messenger == address(0)) revert MessengerNotSet();
+        uint256 dst = dest.base.destChainId;
+        bytes memory payload = _encodeBroadcastV3(shared, extras, dest);
+        uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
+            dst, payload, _noTokens(), destGasLimit
+        );
+        if (msg.value < fee) revert InsufficientFee(msg.value, fee);
+        // slither-disable-next-line arbitrary-send-eth
+        messageId = ICrossChainMessenger(messenger).sendMessage{value: fee}(
+            dst, payload, _noTokens(), destGasLimit
+        );
+        emit BroadcastV3Sent(messageId, dst, shared.dayId);
+        _refund(refundAddress, msg.value - fee);
+    }
+
+    /// @notice Quote the native fee for a {broadcastDayV3Single}.
+    function quoteBroadcastDayV3Single(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV3Extras calldata extras,
+        IRewardMessenger.BroadcastV3PerDest calldata dest
+    ) external view returns (uint256 nativeFee) {
+        return ICrossChainMessenger(messenger).quoteMessageFee(
+            dest.base.destChainId,
+            _encodeBroadcastV3(shared, extras, dest),
+            _noTokens(),
+            destGasLimit
+        );
+    }
+
+    /// @dev V3 twin of {_findDest}: every configured destination must have
+    ///      exactly one funded entry (equal lengths + every-configured-found
+    ///      rules out extras and duplicates).
+    function _findDestV3(
+        IRewardMessenger.BroadcastV3PerDest[] calldata dests,
+        uint256 dst
+    )
+        private
+        pure
+        returns (IRewardMessenger.BroadcastV3PerDest calldata)
+    {
+        for (uint256 j; j < dests.length; ++j) {
+            if (dests[j].base.destChainId == dst) return dests[j];
+        }
+        revert MissingDestinationFunding(dst);
+    }
+
+    /// @dev Kind-10 encoder: nests the {_wireV2} struct verbatim and appends
+    ///      the frozen clock facts. `baseDeployment` is stamped HERE from
+    ///      this messenger's own Diamond binding — never caller-supplied —
+    ///      so a facet bug can never mislabel the sending era (§2h
+    ///      constraint 20).
+    function _encodeBroadcastV3(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV3Extras calldata extras,
+        IRewardMessenger.BroadcastV3PerDest calldata d
+    ) private view returns (bytes memory) {
+        RewardBroadcastV3 memory b = RewardBroadcastV3({
+            v2: _wireV2(shared, d.base),
+            finalizedAt: extras.finalizedAt,
+            lapseScheduleVersion: extras.lapseScheduleVersion,
+            lapseWindowSeconds: extras.lapseWindowSeconds,
+            dispatchCutoffGap: extras.dispatchCutoffGap,
+            zeroedForDest: d.zeroedForDest,
+            baseDeployment: diamond
+        });
+        return abi.encode(MSG_TYPE_BROADCAST_V3, b);
     }
 
     // ─── Inbound — the {ICrossChainMessageRecipient} port ───────────────────
@@ -1386,8 +1581,8 @@ contract VaipakamRewardMessenger is
         // REPAT_INSTRUCTION #1568 C2 — disambiguated by the kind tag below),
         // 8 (REPORT #1222 B3 / legacy BROADCAST / TierUpdated), 2
         // (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3 (REPAT_CANCEL,
-        // #1568 C2). Any other length is a padded / truncated packet and is
-        // rejected before decode.
+        // #1568 C2), 21 (BROADCAST_V3, #1434 P2-w1). Any other length is a
+        // padded / truncated packet and is rejected before decode.
         uint256 len = payload.length;
         if (
             len != REPORT_PAYLOAD_SIZE
@@ -1398,6 +1593,7 @@ contract VaipakamRewardMessenger is
             && len != BROADCAST_V2_PAYLOAD_SIZE
             && len != REMIT_ACK_PAYLOAD_SIZE
             && len != REPAT_CANCEL_PAYLOAD_SIZE
+            && len != BROADCAST_V3_PAYLOAD_SIZE
         ) {
             revert PayloadSizeMismatch(len, REPORT_PAYLOAD_SIZE);
         }
@@ -1476,6 +1672,21 @@ contract VaipakamRewardMessenger is
                 abi.decode(payload[32:], (RewardBroadcastV2));
             emit BroadcastV2Received(sourceChainId, b2.dayId);
             IRewardReporterIngressV2(diamond).onRewardBroadcastV2Received(b2);
+        } else if (msgType == MSG_TYPE_BROADCAST_V3) {
+            // #1434 P2-w1 — per-destination broadcast V3. Same rollout
+            // posture as kind-5: NO downgrade to an older ingress on a
+            // pre-P2 diamond — the packet stays a failed, re-executable
+            // CCIP message until the mirror Diamond carries the V3 ingress
+            // (a kind-5 downgrade would silently drop the clock facts the
+            // whole P2 lapse machinery gates on).
+            if (len != BROADCAST_V3_PAYLOAD_SIZE) {
+                revert PayloadSizeMismatch(len, BROADCAST_V3_PAYLOAD_SIZE);
+            }
+            if (isCanonical) revert BroadcastOnCanonical();
+            RewardBroadcastV3 memory b3 =
+                abi.decode(payload[32:], (RewardBroadcastV3));
+            emit BroadcastV3Received(sourceChainId, b3.v2.dayId);
+            IRewardReporterIngressV3(diamond).onRewardBroadcastV3Received(b3);
         } else if (msgType == MSG_TYPE_TIER_UPDATED) {
             if (len != TIER_UPDATED_PAYLOAD_SIZE) {
                 revert PayloadSizeMismatch(len, TIER_UPDATED_PAYLOAD_SIZE);

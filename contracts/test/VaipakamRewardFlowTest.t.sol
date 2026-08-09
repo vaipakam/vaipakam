@@ -12,7 +12,8 @@ import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {
     IRewardMessenger,
-    RewardBroadcastV2
+    RewardBroadcastV2,
+    RewardBroadcastV3
 } from "../src/interfaces/IRewardMessenger.sol";
 
 /// @dev Records the reward-ingress calls — stands in for a Vaipakam Diamond.
@@ -90,6 +91,24 @@ contract MockRewardDiamond {
     {
         lastV2 = b;
         ++v2Count;
+    }
+
+    // #1434 P2-w1 — V3 broadcast ingress spy (the production diamond's
+    // `RewardReporterFacet.onRewardBroadcastV3Received`). Stored internal +
+    // explicit accessor: the auto-getter of a nested-struct member flattens
+    // awkwardly.
+    RewardBroadcastV3 internal lastV3Stored;
+    uint256 public v3Count;
+
+    function onRewardBroadcastV3Received(RewardBroadcastV3 calldata b)
+        external
+    {
+        lastV3Stored = b;
+        ++v3Count;
+    }
+
+    function lastV3() external view returns (RewardBroadcastV3 memory) {
+        return lastV3Stored;
     }
 
     // T-087 Sub 2.C — mirror-side tier ingress capture. The mock simply
@@ -678,6 +697,178 @@ contract VaipakamRewardFlowTest is Test {
         );
     }
 
+    // ─── #1434 P2-w1 — per-destination broadcast V3 (kind-10) ───────────────
+
+    function _v3Extras()
+        internal
+        pure
+        returns (IRewardMessenger.BroadcastV3Extras memory)
+    {
+        return IRewardMessenger.BroadcastV3Extras({
+            finalizedAt: 1_700_000_000,
+            lapseScheduleVersion: 2,
+            lapseWindowSeconds: 7 days,
+            dispatchCutoffGap: 24 hours
+        });
+    }
+
+    function _v3Dest(uint256 chainId, bool zeroed)
+        internal
+        pure
+        returns (IRewardMessenger.BroadcastV3PerDest memory)
+    {
+        return IRewardMessenger.BroadcastV3PerDest({
+            base: _v2Dest(chainId),
+            zeroedForDest: zeroed
+        });
+    }
+
+    /// Full round trip: Base assembles one kind-10 payload for the mirror,
+    /// the mirror messenger decodes it and forwards it to the V3 diamond
+    /// ingress — the nested V2 fields verbatim PLUS the frozen clock facts,
+    /// with `baseDeployment` stamped by the SENDING messenger from its own
+    /// Diamond binding (never caller-supplied).
+    function test_BroadcastV3_BaseToMirror() public {
+        IRewardMessenger.BroadcastV3PerDest[] memory dests =
+            new IRewardMessenger.BroadcastV3PerDest[](1);
+        dests[0] = _v3Dest(MIRROR, true);
+
+        vm.prank(address(diamondBase));
+        rewardBase.broadcastDayV3{value: fee}(
+            _v2Shared(), _v3Extras(), dests, payable(address(diamondBase))
+        );
+        assertEq(router.pendingCount(), 1, "one packet per destination");
+
+        router.deliver(0, SEL_BASE);
+
+        assertEq(diamondMirror.v3Count(), 1, "mirror got the V3 broadcast");
+        assertEq(diamondMirror.v2Count(), 0, "V2 ingress untouched");
+        assertEq(diamondMirror.bcastCount(), 0, "legacy ingress untouched");
+        RewardBroadcastV3 memory got = diamondMirror.lastV3();
+        assertEq(got.v2.dayId, 42);
+        assertEq(got.v2.globalLenderNumeraire18, 9_000 ether);
+        assertEq(got.v2.globalBorrowerNumeraire18, 4_000 ether);
+        assertEq(got.v2.capMode, 1);
+        assertEq(got.v2.armedFromDay, 40);
+        assertEq(got.v2.recycleConsume, 5 ether);
+        assertEq(got.v2.destChainId, MIRROR, "destination binding");
+        assertEq(got.finalizedAt, 1_700_000_000, "frozen clock");
+        assertEq(got.lapseScheduleVersion, 2, "frozen version");
+        assertEq(got.lapseWindowSeconds, 7 days, "inline window");
+        assertEq(got.dispatchCutoffGap, 24 hours, "inline gap");
+        assertTrue(got.zeroedForDest, "frozen zeroed marker");
+        assertEq(
+            got.baseDeployment,
+            address(diamondBase),
+            "era identity stamped from the sender's Diamond binding"
+        );
+    }
+
+    /// PROOF (design SS8 slice 1): an OLD kind-5 packet still decodes and
+    /// applies through the UPGRADED mirror messenger after kind-10 ships —
+    /// the kind-5 branch is kept unchanged, so an in-flight pre-upgrade
+    /// broadcast is never rejected and nothing wedges.
+    function test_BroadcastV3_OldKind5InFlight_StillApplies() public {
+        RewardBroadcastV2 memory b;
+        b.dayId = 7;
+        b.destChainId = MIRROR;
+        vm.prank(address(messengerMirror));
+        rewardMirror.onCrossChainMessage(
+            BASE, address(rewardBase), abi.encode(uint8(5), b), _empty()
+        );
+        assertEq(diamondMirror.v2Count(), 1, "kind-5 still dispatches");
+        assertEq(diamondMirror.v3Count(), 0, "V3 ingress untouched");
+    }
+
+    /// The heal path sends to a lane OUTSIDE the configured broadcast set —
+    /// deliberately exempt from set coverage (a mirror removed from the
+    /// list must remain reachable for its clock backfill).
+    function test_BroadcastV3Single_IgnoresConfiguredSet() public {
+        vm.prank(owner);
+        rewardBase.setBroadcastDestinations(new uint256[](0));
+
+        vm.prank(address(diamondBase));
+        bytes32 id = rewardBase.broadcastDayV3Single{value: fee}(
+            _v2Shared(), _v3Extras(), _v3Dest(MIRROR, false),
+            payable(address(diamondBase))
+        );
+        assertTrue(id != bytes32(0), "messageId returned");
+        assertEq(router.pendingCount(), 1, "single packet dispatched");
+
+        router.deliver(0, SEL_BASE);
+        assertEq(diamondMirror.v3Count(), 1, "mirror got the single V3");
+    }
+
+    function test_BroadcastV3_RevertWhen_NotDiamond() public {
+        IRewardMessenger.BroadcastV3PerDest[] memory dests =
+            new IRewardMessenger.BroadcastV3PerDest[](1);
+        dests[0] = _v3Dest(MIRROR, false);
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
+        rewardBase.broadcastDayV3{value: fee}(
+            _v2Shared(), _v3Extras(), dests, payable(owner)
+        );
+    }
+
+    function test_BroadcastV3Single_RevertWhen_NotDiamond() public {
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
+        rewardBase.broadcastDayV3Single{value: fee}(
+            _v2Shared(), _v3Extras(), _v3Dest(MIRROR, false), payable(owner)
+        );
+    }
+
+    function test_Receive_BroadcastV3_RevertOnCanonical() public {
+        RewardBroadcastV3 memory b;
+        b.v2.dayId = 1;
+        b.v2.destChainId = BASE;
+        b.finalizedAt = 1;
+        vm.prank(address(messengerBase));
+        vm.expectRevert(VaipakamRewardMessenger.BroadcastOnCanonical.selector);
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(uint8(10), b),
+            _empty()
+        );
+    }
+
+    /// The 21-word pin: a truncated kind-10 payload is rejected before any
+    /// decode (20 words is not in the size union at all).
+    function test_Receive_BroadcastV3_WrongSize_Rejected() public {
+        bytes memory truncated = new bytes(20 * 32);
+        truncated[31] = bytes1(uint8(10));
+        vm.prank(address(messengerMirror));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.PayloadSizeMismatch.selector,
+                20 * 32,
+                6 * 32
+            )
+        );
+        rewardMirror.onCrossChainMessage(
+            BASE, address(rewardBase), truncated, _empty()
+        );
+    }
+
+    function test_QuoteBroadcastDayV3_AndSingle() public view {
+        IRewardMessenger.BroadcastV3PerDest[] memory dests =
+            new IRewardMessenger.BroadcastV3PerDest[](1);
+        dests[0] = _v3Dest(MIRROR, false);
+        assertEq(
+            rewardBase.quoteBroadcastDayV3(_v2Shared(), _v3Extras(), dests),
+            fee,
+            "one lane, one fee"
+        );
+        assertEq(
+            rewardBase.quoteBroadcastDayV3Single(
+                _v2Shared(), _v3Extras(), dests[0]
+            ),
+            fee,
+            "single lane fee"
+        );
+    }
+
     // ─── Sender access control ──────────────────────────────────────────────
 
     function test_SendChainReport_RevertWhen_NotDiamond() public {
@@ -759,16 +950,19 @@ contract VaipakamRewardFlowTest is Test {
     }
 
     function test_Receive_RevertWhen_UnknownMessageType() public {
+        // Kind 11 is the lowest unassigned kind (9 became the repatriation
+        // cancel in #1568 C2, 10 the V3 broadcast in #1434 P2-w1 — this
+        // test must track the next free constant).
         vm.prank(address(messengerBase));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaipakamRewardMessenger.UnknownMessageType.selector, uint8(9)
+                VaipakamRewardMessenger.UnknownMessageType.selector, uint8(11)
             )
         );
         rewardBase.onCrossChainMessage(
             MIRROR,
             address(rewardMirror),
-            abi.encode(uint8(9), uint256(1), uint256(0), uint256(0)),
+            abi.encode(uint8(11), uint256(1), uint256(0), uint256(0)),
             _empty()
         );
     }
@@ -965,19 +1159,23 @@ contract VaipakamRewardFlowTest is Test {
     }
 
     function test_Receive_RevertOnInvalidSize() public {
-        // A 3-word payload — not in {2, 4, 6, 8}. The outer size gate
-        // catches it before decode.
-        bytes memory threeWords = abi.encode(REPORT, uint256(1), uint256(2));
+        // A 5-word payload — not in the accepted union {2, 3, 4, 6, 8, 15,
+        // 21}. The outer size gate catches it before decode. (This test
+        // used a 3-word payload until #1568 C2 claimed 3 words for the
+        // repatriation cancel; #1434 P2-w1 claimed 21 for the V3
+        // broadcast.)
+        bytes memory fiveWords =
+            abi.encode(REPORT, uint256(1), uint256(2), uint256(3), uint256(4));
         vm.prank(address(messengerMirror));
         vm.expectRevert(
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
-                threeWords.length,
+                fiveWords.length,
                 uint256(6 * 32)
             )
         );
         rewardMirror.onCrossChainMessage(
-            BASE, address(rewardBase), threeWords, _empty()
+            BASE, address(rewardBase), fiveWords, _empty()
         );
     }
 

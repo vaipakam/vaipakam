@@ -1304,7 +1304,15 @@ contract MeshThreeChainE2ETest is Test {
 
         // WITNESS, not proof of causation: a real claim on this mirror runs
         // and pays — so the surface is live — and consumes zero recycled.
-        vpfiOf[ARB].mint(arbD, 100_000 ether);
+        // The mint must exceed the RAW bucket counter seeded above: since
+        // #1460 the claim gate prices scheduled backing as
+        // `balance − recycleBucket` (saturating), so the pre-#1460 mint of
+        // 100k against the 500k counter read as ZERO backing and the
+        // witness claim was refused with InteractionRewardBackingShort.
+        // (Failing on `main` since #1460 — cifast never compiles this
+        // suite, the same blind spot as #1580/#1619; surfaced by this
+        // PR's verification re-running it.)
+        vpfiOf[ARB].mint(arbD, BUCKET_SEED + 100_000 ether);
         vm.chainId(ARB);
         vm.prank(alice);
         (uint256 paid,,) = RewardClaimFacet(arbD).claimInteractionRewards();

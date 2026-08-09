@@ -8,7 +8,8 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {
     IRewardMessenger,
-    RewardBroadcastV2
+    RewardBroadcastV2,
+    RewardBroadcastV3
 } from "../interfaces/IRewardMessenger.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
@@ -511,15 +512,39 @@ contract RewardReporterFacet is
     function onRewardBroadcastV2Received(RewardBroadcastV2 calldata b)
         external
     {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Storage storage s = _broadcastIngressGates(b.destChainId);
+        _applyBroadcastV2Core(s, b);
+    }
+
+    /// @dev #1434 P2-w1 — the trust + destination-binding gates shared by
+    ///      the kind-5 and kind-10 ingresses (messenger-gated; the packet's
+    ///      embedded `destChainId` must equal `block.chainid`).
+    function _broadcastIngressGates(uint256 destChainId)
+        private
+        view
+        returns (LibVaipakam.Storage storage s)
+    {
+        s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0))
         {
             revert NotAuthorizedRewardMessenger();
         }
-        if (b.destChainId != block.chainid) {
-            revert BroadcastDestinationMismatch(b.destChainId);
+        if (destChainId != block.chainid) {
+            revert BroadcastDestinationMismatch(destChainId);
         }
+    }
 
+    /// @dev The ONE V2 apply/replay implementation (#1434 P2-w1 refactor —
+    ///      body unchanged). The V3 ingress hands its nested `v2` struct
+    ///      here verbatim, so the two wire generations can never apply the
+    ///      shared fields differently. Takes `memory` because the V3 path
+    ///      passes a struct member; the V2 external path pays one
+    ///      calldata→memory copy for the privilege of there being exactly
+    ///      one implementation.
+    function _applyBroadcastV2Core(
+        LibVaipakam.Storage storage s,
+        RewardBroadcastV2 memory b
+    ) private {
         uint32 selfId = uint32(block.chainid);
         if (s.broadcastV2Applied[b.dayId]) {
             // Codex #1430 r4 — complete a reservation a PRE-d3 application of
@@ -623,7 +648,7 @@ contract RewardReporterFacet is
     ///      dependent fields).
     function _capFamilyMatches(
         LibVaipakam.Storage storage s,
-        RewardBroadcastV2 calldata b
+        RewardBroadcastV2 memory b
     ) private view returns (bool) {
         if (b.capMode == uint8(LibVaipakam.CapMode.ShareOfPool)) {
             return s.dayCapMode[b.dayId] == LibVaipakam.CapMode.ShareOfPool
@@ -632,6 +657,145 @@ contract RewardReporterFacet is
                     == b.capPayloadBorrower;
         }
         return s.dayCapThreshold18[b.dayId] == b.capPayloadLender;
+    }
+
+    // ─── #1434 P2-w1 — V3 (kind-10) ingress: the frozen day clock ───────────
+
+    /// @notice #1434 P2-w1 — this day's frozen lapse clock was installed
+    ///         from an authenticated V3 broadcast. `backfilled` marks the
+    ///         migration branch (clock added to a day whose figures were
+    ///         applied via kind-5 before the upgrade) — the inventory signal
+    ///         design §1.1's 12b gate asks for.
+    /// @custom:event-category informational/reward-clock
+    event DayClockInstalled(
+        uint256 indexed dayId,
+        uint64 finalizedAt,
+        uint32 scheduleVersion,
+        bool deliberatelyZeroed,
+        address indexed era,
+        bool backfilled
+    );
+
+    /**
+     * @notice #1434 P2-w1 — trusted ingress for the per-destination V3
+     *         broadcast: the full kind-5 semantics plus the day's FROZEN
+     *         lapse-clock facts. Applies, in order:
+     *
+     *      1. The shared trust + destination-binding gates (as kind-5).
+     *      2. Fail-closed clock presence — a zero `finalizedAt` is rejected
+     *         (an honest Base broadcasts clockless pre-upgrade days on the
+     *         V2 wire instead), so the packet stays a failed, re-executable
+     *         CCIP message rather than installing a meaningless clock.
+     *      3. Era binding (§2h constraint 20) — a packet naming a different
+     *         `baseDeployment` than the day's recorded era is rejected: a
+     *         delayed broadcast from a retired Base deployment must never
+     *         install its clock, schedule or zeroed marker into the new
+     *         era, where a new-era compensation could combine with it.
+     *      4. CLOCK BACKFILL (the 12b migration branch) — an already-applied
+     *         day with no clock verifies day identity, destination, era and
+     *         the immutable global pair ONLY, then writes ONLY the V3
+     *         fields. It deliberately does NOT compare the halves or
+     *         inclusion-derived fields (`backfillDayInclusion` legitimately
+     *         mutates a destination's halves after the first send, so a full
+     *         V2-field comparison would make the one supported migration
+     *         sequence unhealable) and never re-applies them — adding the
+     *         clock is the branch's only write.
+     *      5. Otherwise the shared V2 core runs (fresh apply, or the full
+     *         replay-divergence check), then the clock is installed
+     *         first-time or verified: a re-delivered packet must match every
+     *         frozen clock fact (finalizedAt, schedule version, inline
+     *         parameters, zeroed marker). `armedFromDay` stays OUTSIDE the
+     *         comparison, exactly as on the V2 path (first-apply-only).
+     */
+    function onRewardBroadcastV3Received(RewardBroadcastV3 calldata b)
+        external
+    {
+        LibVaipakam.Storage storage s =
+            _broadcastIngressGates(b.v2.destChainId);
+        uint256 dayId = b.v2.dayId;
+        if (b.finalizedAt == 0) revert BroadcastClockMissing(dayId);
+        address era = s.dayClockEra[dayId];
+        if (era != address(0) && era != b.baseDeployment) {
+            revert BroadcastEraMismatch(dayId, era, b.baseDeployment);
+        }
+
+        if (
+            s.broadcastV2Applied[dayId]
+                && s.dayLapseClock[dayId].finalizedAt == 0
+        ) {
+            // Clock backfill — immutable pair only (see natspec item 4).
+            if (
+                !s.knownGlobalSet[dayId]
+                    || s.knownGlobalLenderInterestNumeraire18[dayId]
+                        != b.v2.globalLenderNumeraire18
+                    || s.knownGlobalBorrowerInterestNumeraire18[dayId]
+                        != b.v2.globalBorrowerNumeraire18
+            ) {
+                revert KnownGlobalAlreadySet();
+            }
+            _installDayClock(s, b, /* backfilled */ true);
+            return;
+        }
+
+        _applyBroadcastV2Core(s, b.v2);
+
+        LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
+        if (c.finalizedAt == 0) {
+            _installDayClock(s, b, /* backfilled */ false);
+        } else if (
+            c.finalizedAt != b.finalizedAt
+                || c.scheduleVersion != b.lapseScheduleVersion
+                || c.lapseWindowSeconds != b.lapseWindowSeconds
+                || c.dispatchCutoffGap != b.dispatchCutoffGap
+                || s.dayDeliberatelyZeroed[dayId] != b.zeroedForDest
+        ) {
+            revert BroadcastClockDivergence(dayId);
+        }
+    }
+
+    /// @dev The V3 fields' ONLY writer: the packed clock, the era record,
+    ///      and this destination's zeroed marker — atomically, so a day can
+    ///      never hold a clock without its era (the compensation ingress
+    ///      that w2 adds keys its remitter check on the era).
+    function _installDayClock(
+        LibVaipakam.Storage storage s,
+        RewardBroadcastV3 calldata b,
+        bool backfilled
+    ) private {
+        uint256 dayId = b.v2.dayId;
+        s.dayLapseClock[dayId] = LibVaipakam.DayLapseClock({
+            finalizedAt: b.finalizedAt,
+            scheduleVersion: b.lapseScheduleVersion,
+            lapseWindowSeconds: b.lapseWindowSeconds,
+            dispatchCutoffGap: b.dispatchCutoffGap
+        });
+        s.dayClockEra[dayId] = b.baseDeployment;
+        s.dayDeliberatelyZeroed[dayId] = b.zeroedForDest;
+        emit DayClockInstalled(
+            dayId,
+            b.finalizedAt,
+            b.lapseScheduleVersion,
+            b.zeroedForDest,
+            b.baseDeployment,
+            backfilled
+        );
+    }
+
+    /// @notice #1434 P2-w1 — the Base deployment that installed this day's
+    ///         clock on this mirror (zero = no clock installed yet).
+    function getDayClockEra(uint256 dayId) external view returns (address) {
+        return LibVaipakam.storageSlot().dayClockEra[dayId];
+    }
+
+    /// @notice #1434 P2-w1 — whether the V3 broadcast marked this day
+    ///         deliberately zeroed for THIS chain (R1: the chain's interest
+    ///         was zeroed out of the day's finalized denominator).
+    function getDayDeliberatelyZeroed(uint256 dayId)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().dayDeliberatelyZeroed[dayId];
     }
 
     // ─── Admin ──────────────────────────────────────────────────────────────

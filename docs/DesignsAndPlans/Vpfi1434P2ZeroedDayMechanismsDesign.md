@@ -33,6 +33,10 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
 - `finalizedAt` (`uint64`) — Base's `block.timestamp` at
   `_finalizeAndWrite`, **frozen in new per-day storage at finalization**
   (`dayFinalizedAt[dayId]`), never read live at send.
+  *(w1 implementation note: the four frozen scalars — `finalizedAt`,
+  `scheduleVersion` and the two inline parameters — live packed in one
+  per-day slot, `dayLapseClock[dayId]`, on both sides; the doc's
+  per-fact names below map onto its fields.)*
 - `lapseScheduleVersion` (`uint32`) — the version of the lapse-window /
   cutoff-gap parameter set under which this day's clocks are evaluated,
   **frozen per day at finalization** (`dayLapseScheduleVersion[dayId]`).
@@ -131,7 +135,11 @@ schedule copies both halves:
   (implementation may inline the two bounded values per packet instead of a
   side table — 2 words, simpler, no first-appearance tracking; the
   implementer picks, the requirement is only that the day's *applicable
-  parameters* are mirror-known from authenticated Base data).
+  parameters* are mirror-known from authenticated Base data). *(w1 took
+  the inline option: the two bounded values ride every V3 packet and are
+  frozen per day in `dayLapseClock[dayId]`; there is no mirror-side
+  version table. `MSG_TYPE_BROADCAST_V3` landed as kind 10 — kinds 8/9
+  were taken by the #1568 repatriation wire.)*
 
 ### 1.3 R4b — the applicable expiry rides the remit too
 
