@@ -72,8 +72,16 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
   and a true era rotation — a second, different nonzero ground truth —
   permanently retires the legacy wires' fresh applies
   (`LegacyBroadcastRetired`; replays stay idempotent). Arming ships in
-  the standard `ConfigureRewardReporter` spell + deploy wrappers; the
-  rotation ceremony is recorded in CcipCutoverRunbook §8.)*
+  the standard `ConfigureRewardReporter` spell + deploy wrappers (the
+  mainnet wrapper enforces it on the transaction-producing configure
+  phase itself, #1632 r3); the rotation ceremony is recorded in
+  CcipCutoverRunbook §8. Third strengthening, #1632 r3: a rotated
+  mirror also refuses V3 clock facts for days with prior state but
+  UNKNOWN era (applied before arming — the pre-arming inventory), which
+  the ceremony therefore heals BEFORE rotating; and the heal's standing
+  predicate includes the frozen `dayZeroedForDest` marker, so
+  reconciliation clearing the live flag never strands a zeroed
+  destination's heal.)*
 
 **Why frozen-at-finalization is load-bearing (R2a).** A re-broadcast today
 is NOT byte-identical by construction — `broadcastGlobal` reads everything

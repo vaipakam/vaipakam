@@ -96,11 +96,19 @@ abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
         messenger.setBroadcastDestinations(dests);
     }
 
-    function _configureMirror(uint32 localChainId) internal {
+    /// @dev Mirror config WITHOUT the era ground truth — the pre-arming
+    ///      state a live mirror sits in between the facet upgrade and the
+    ///      arming step (V3 ingress dark; kind-5/kind-2 still apply,
+    ///      without provenance).
+    function _configureMirrorUnarmed(uint32 localChainId) internal {
         vm.chainId(localChainId);
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(false);
         _rep().setRewardMessenger(address(messenger));
+    }
+
+    function _configureMirror(uint32 localChainId) internal {
+        _configureMirrorUnarmed(localChainId);
         // #1632 r1 — arm the era ground truth: without it the V3 ingress
         // is deliberately dark (fail-closed).
         _rep().setBaseRewardDeployment(ERA_BASE);
@@ -524,6 +532,33 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         assertTrue(zeroed, "frozen zeroed marker rides the heal");
     }
 
+    /// Codex #1632 r3 P1 — standing must survive RECONCILIATION: the live
+    /// remit-ineligible flag is operator-clearable, and a zeroed
+    /// destination that was reconciled and then removed from the current
+    /// list is the exact chain the heal exists for. The FROZEN marker
+    /// (which never clears) is what keeps it heal-eligible.
+    function testHealSurvivesReconciliationOfZeroedDest() public {
+        _configureCanonical();
+        _com().setLapseSchedule(7 days, 24 hours);
+        uint256 dayId = _armAndFinalizeWithOpZeroed();
+
+        RewardCommitmentFacet(address(diamond))
+            .reconcileCommitmentRemitEligibility(dayId, CHAIN_OP);
+        uint256[] memory only = new uint256[](1);
+        only[0] = CHAIN_ARB;
+        messenger.setBroadcastDestinations(only); // OP off the list too
+
+        vm.prank(alice);
+        _agg().broadcastGlobalTo(dayId, CHAIN_OP);
+        assertEq(
+            messenger.broadcastV3SingleCount(),
+            1,
+            "frozen zeroed marker preserved the heal standing"
+        );
+        (, bool zeroed) = messenger.lastV3SingleDest();
+        assertTrue(zeroed, "and the frozen marker rides the heal");
+    }
+
     function testHealRevertsWithoutStanding() public {
         _configureCanonical();
         _com().setLapseSchedule(7 days, 24 hours);
@@ -720,11 +755,7 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
     /// era ground truth rejects EVERY V3 (the packet stays a failed,
     /// re-executable CCIP message — healable after arming).
     function testV3IngressDarkUntilEraGroundTruthArmed() public {
-        vm.chainId(CHAIN_ARB);
-        _rep().setBaseChainId(CHAIN_BASE);
-        _rep().setIsCanonicalRewardChain(false);
-        _rep().setRewardMessenger(address(messenger));
-        // Deliberately NO setBaseRewardDeployment.
+        _configureMirrorUnarmed(CHAIN_ARB);
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -807,6 +838,60 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
 
         (uint64 at, , , ) = _com().getDayLapseClock(3);
         assertEq(at, 0, "no cross-era clock was smuggled in");
+    }
+
+    /// Codex #1632 r3 P1 — the PRE-ARMING inventory: days applied before
+    /// the era ground truth existed carry no provenance (`era == 0`).
+    /// After a ROTATION the mirror can no longer tell which era supplied
+    /// their figures, so it refuses to attach V3 clock facts to them —
+    /// via the backfill branch (kind-5-applied) AND the mixed-generation
+    /// full apply (kind-2 pair). Such days belong to the pre-rotation
+    /// drain/heal ceremony.
+    function testEraUnknownDaysUnhealableAfterRotation() public {
+        _configureMirrorUnarmed(CHAIN_ARB);
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // day 3, era 0
+        messenger.deliverBroadcast(7, 9e18, 4e18, type(uint256).max); // kind-2
+        assertEq(_rep().getDayClockEra(3), address(0), "no provenance");
+
+        _rep().setBaseRewardDeployment(ERA_BASE); // first arming
+        _rep().setBaseRewardDeployment(address(0xE2)); // rotation
+
+        RewardBroadcastV3 memory b3 = _v3Packet(CHAIN_ARB);
+        b3.baseDeployment = address(0xE2);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BroadcastEraMismatch.selector, 3, address(0), address(0xE2)
+            )
+        );
+        messenger.deliverBroadcastV3(b3);
+
+        RewardBroadcastV3 memory b7 = _v3Packet(CHAIN_ARB);
+        b7.v2.dayId = 7;
+        b7.v2.globalLenderNumeraire18 = 9e18;
+        b7.v2.globalBorrowerNumeraire18 = 4e18;
+        b7.baseDeployment = address(0xE2);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BroadcastEraMismatch.selector, 7, address(0), address(0xE2)
+            )
+        );
+        messenger.deliverBroadcastV3(b7);
+    }
+
+    /// The counterpart that keeps the LIVE MIGRATION healable: on a mirror
+    /// that has NEVER rotated, era-unknown days (applied before arming)
+    /// heal freely — a single era in the mirror's history leaves nothing
+    /// to confuse them with.
+    function testEraUnknownDayHealsOnNeverRotatedMirror() public {
+        _configureMirrorUnarmed(CHAIN_ARB);
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // day 3, era 0
+
+        _rep().setBaseRewardDeployment(ERA_BASE); // first arming only
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+
+        (uint64 at, , , ) = _com().getDayLapseClock(3);
+        assertEq(at, 1_700_000_000, "pre-arming day healed");
+        assertEq(_rep().getDayClockEra(3), ERA_BASE, "era recorded");
     }
 
     // ════════════════════════════════════════════════════════════════════════

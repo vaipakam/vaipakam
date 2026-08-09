@@ -45,9 +45,15 @@ channel is shut — an armed mirror records era provenance on every
 old-wire apply, and a genuine era rotation permanently retires the old
 wires' fresh applies (their packets carry no sender identity, so after a
 rotation only the clock-bearing wire can introduce new days). The
-rotation ceremony — drain old-era broadcasts, rotate every mirror's
-ground truth, heal old-era days by ceremony — is recorded in the CCIP
-cutover runbook.
+rotation ceremony — drain old-era broadcasts, heal era-unknown days,
+rotate every mirror's ground truth, heal old-era days by ceremony — is
+recorded in the CCIP cutover runbook. The review's third round closed
+the last three gaps in that family: a rotated mirror also refuses clock
+facts for days applied before it ever armed (their era cannot be told),
+the heal's standing test consults the frozen zeroed marker so an
+operator reconciliation never strands a zeroed destination, and the
+mainnet deploy enforces era arming on the transaction-producing phase
+itself rather than only in preflight.
 A new permissionless single-destination re-broadcast heals a clockless
 day even for a mirror that has been removed from the current broadcast
 destination list, admitted on the destination's day-scoped historical

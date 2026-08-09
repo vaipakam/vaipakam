@@ -339,7 +339,13 @@ flight, in this order when **lowering**:
   1. **Drain the old era's broadcasts first**: let (or force) every
      in-flight kind-5/kind-10 delivery from the old Base land — or
      accept their loss — BEFORE step 2. Order matters because step 2
-     is one-way.
+     is one-way. **Also heal every era-UNKNOWN day now** (#1632 r3):
+     days applied before the mirror's first arming carry no era
+     provenance, and a rotated mirror permanently refuses to attach V3
+     clock facts to them (it can no longer tell which era supplied
+     their figures) — run `broadcastGlobalTo(dayId, mirror)` for each
+     while the old era is still current, or accept them staying
+     clockless forever.
   2. On every mirror: `RewardReporterFacet.setBaseRewardDeployment(newBaseDiamond)`.
      A second, DIFFERENT nonzero value is detected as a rotation and
      **permanently retires the legacy broadcast wires' fresh applies**

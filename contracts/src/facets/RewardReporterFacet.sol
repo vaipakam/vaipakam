@@ -777,6 +777,24 @@ contract RewardReporterFacet is
         if (era != address(0) && era != b.baseDeployment) {
             revert BroadcastEraMismatch(dayId, era, b.baseDeployment);
         }
+        // Codex #1632 r3 P1 — a ROTATED mirror refuses to attach V3 clock
+        // facts to any day with PRIOR state but UNKNOWN era provenance
+        // (`dayClockEra == 0`): days applied before arming (kind-5) or
+        // seeded by a pre-arming kind-2 pair predate the provenance stamp,
+        // and after a rotation the mirror can no longer tell WHICH era
+        // supplied their figures — stamping the new era onto them is the
+        // cross-era combination this whole gate family exists to prevent.
+        // On a NEVER-rotated mirror the same days heal freely: with a
+        // single era in the mirror's entire history there is nothing to
+        // confuse them with (the live-migration case). Rotated-away
+        // era-unknown days belong to the drain/heal ceremony — heal them
+        // BEFORE rotating (CcipCutoverRunbook §8).
+        if (
+            s.rewardEraRotated && era == address(0)
+                && (s.broadcastV2Applied[dayId] || s.knownGlobalSet[dayId])
+        ) {
+            revert BroadcastEraMismatch(dayId, address(0), b.baseDeployment);
+        }
 
         if (
             s.broadcastV2Applied[dayId]

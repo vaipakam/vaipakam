@@ -1653,10 +1653,17 @@ contract RewardAggregatorFacet is
             uint32 dest = uint32(destChainId);
             LibVaipakam.ChainDayCommitments storage c =
                 s.chainDayCommitments[dayId][dest];
+            // Codex #1632 r3 P1 — the FROZEN zeroed marker is part of the
+            // standing predicate: `remitIneligible` is operator-clearable
+            // (reconciliation), so a zeroed destination that was reconciled
+            // and then removed from the destination list would otherwise
+            // lose its heal eligibility — the exact chain the heal exists
+            // for. The frozen copy never clears, so standing survives.
             if (
                 s.chainDailyIncluded[dayId][dest] || c.complete
                     || c.remitIneligible || c.liabilityLender18 != 0
                     || c.liabilityBorrower18 != 0
+                    || s.dayZeroedForDest[dayId][dest]
             ) {
                 return;
             }
