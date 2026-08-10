@@ -3729,27 +3729,64 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
-    /// @dev With progressive risk access ENABLED the consent regime the spec
-    ///      mandates for illiquid-backed positions is in force
-    ///      (`ProjectDetailsREADME` §320 — the incoming buyer is gated against
-    ///      the assets of the loan being sold), so this classifier steps aside
-    ///      and lets that gate decide rather than refusing outright. Asserts
-    ///      the classifier's own answer, because the buyer here is default-tier
-    ///      and the risk gate refuses them for its OWN reason — proving the
-    ///      classifier no longer returns code 6 would be invisible from the
-    ///      revert alone.
-    function test_saleAdmission_unpriceableDefersToConsentRegimeWhenGateEnabled() public {
+    /// @dev Codex #1635 r8 — the refusal must NOT depend on the
+    ///      progressive-risk-access switch. An earlier revision admitted
+    ///      unpriceable positions when the gate was on, on the theory that the
+    ///      buyer-consent gate would then decide. It does not: that ladder
+    ///      classifies assets by identity and depth class, not by whether they
+    ///      can currently be priced.
+    function test_saleAdmission_unpriceableRefusedRegardlessOfTheRiskGate() public {
         mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
 
         (uint8 codeGateOff, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
-        assertEq(codeGateOff, 6, "gate off: refused for want of a consent surface");
+        assertEq(codeGateOff, 6, "gate off: unmeasurable, so refused");
 
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
         (uint8 codeGateOn, uint256 a, uint256 b) =
             RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
-        assertEq(codeGateOn, 0, "gate on: the buyer-consent gate governs, not this classifier");
-        assertEq(a, 0, "no figure to report either way");
-        assertEq(b, 0, "no figure to report either way");
+        assertEq(codeGateOn, 6, "gate on: still refused - the ladder cannot consent to this");
+        assertEq(a, 0, "collateral leg named");
+        assertEq(b, 0, "no figure to report: nothing was measured");
+    }
+
+    /// @dev Codex #1635 r8, the concrete case that killed the switch-dependent
+    ///      branch — and the sharpest finding of the round, because it defeats
+    ///      the argument rather than the code.
+    ///
+    ///      `LibRiskAccess._isBlueChip` returns true for WETH and every
+    ///      configured PAA asset by IDENTITY, with no liquidity read, so
+    ///      `_assetRequiredLevel` yields `BlueChipOnly` — the level every vault
+    ///      holds by default. A blue-chip leg whose feed has gone stale (or
+    ///      whose sequencer check fails) is therefore unpriceable AND still
+    ///      blue-chip: the consent gate requires no opt-up and no pair consent,
+    ///      so deferring to it would hand an unmeasurable position to a
+    ///      DEFAULT-TIER buyer on both sale paths. This is the shape a
+    ///      "the switch can only add a gate" argument misses.
+    function test_sale_unpriceableBlueChipLegRefusedEvenWithConsentGateOn() public {
+        // Make the loan's existing collateral blue-chip by IDENTITY, which is
+        // the whole mechanism: `_isBlueChip` short-circuits on
+        // `asset == s.wethContract` without reading liquidity at all.
+        TestMutatorFacet(address(diamond)).setWethContractRaw(mockCollateralERC20);
+        (uint8 before, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(
+            before,
+            0,
+            "fixture must be admissible BEFORE the feed degrades, or it proves nothing"
+        );
+
+        // Consent regime ON — the state the superseded branch treated as
+        // sufficient on its own.
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        // The feed goes stale, so the live classifier calls it unpriceable
+        // while its blue-chip standing is unchanged.
+        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+
+        (uint8 code, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(
+            code,
+            6,
+            "an unpriceable blue-chip leg must be refused: the consent ladder never reads liquidity"
+        );
     }
 
     // ─── Inherited risk snapshots (design item 11, second requirement) ──────

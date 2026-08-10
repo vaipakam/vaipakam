@@ -43,13 +43,14 @@ import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
  *         latter, which needs no new consent surface.
  *
  *         For the unpriceable case the design reserves the policy for the
- *         contract owners and rules out both extremes as a default. So the
- *         answer follows the regime actually in force: with progressive risk
- *         access enabled, the buyer-consent gate the spec mandates for
- *         illiquid-backed positions decides (`ProjectDetailsREADME` §320);
- *         with it disabled — the default — there is no consent surface, and
- *         the sale is refused rather than silently admitted. See the note on
- *         `saleAdmission`.
+ *         contract owners; this takes the Phase-1 EXCLUSION, and takes it
+ *         unconditionally. The progressive-risk-access consent ladder is not a
+ *         substitute: it classifies assets by identity and depth class, so a
+ *         blue-chip leg with a stale feed is unpriceable while still requiring
+ *         no opt-up or pair consent, and deferring to it would wave exactly
+ *         that position through (Codex #1635 r8). Refusing here is not the
+ *         "silent blocking" the design doc rules out — the refusal names the
+ *         condition and the leg. See the note on `saleAdmission`.
  *
  *         The logic itself lives on `RiskPreviewFacet.saleAdmission` — it owns the
  *         health factor and every parameter consulted, and both calling
@@ -92,8 +93,9 @@ library LibSaleSolvency {
 
     /// @notice One of the position's legs is not priceable by protocol policy
     ///         RIGHT NOW, so there is no figure to admit an incoming lender
-    ///         against — and progressive risk access is disabled, so no consent
-    ///         regime is in force to admit it on an acknowledgement instead.
+    ///         against. Raised regardless of the progressive-risk-access
+    ///         switch — that ladder gates on what an asset IS, not on whether
+    ///         it can currently be priced, so it cannot consent to this.
     ///         `which`: 0 collateral, 1 principal. Carries no figures on
     ///         purpose: the refusal is for want of a measurement, and quoting a
     ///         health factor for a position that has none is the dishonest

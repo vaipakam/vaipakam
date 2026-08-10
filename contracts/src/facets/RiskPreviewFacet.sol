@@ -528,12 +528,12 @@ contract RiskPreviewFacet {
      *         2/3/4 inherited risk terms weaker than current — admission
      *         health floor, liquidation LTV, init-LTV cap respectively;
      *         5 live LTV above the cap a fresh admission would allow;
-     *         6 a leg is not priceable today AND no consent regime is in force
-     *         to admit it, so nothing can be measured and nothing consents
+     *         6 a leg is not priceable today, so nothing below can be measured
      *         (#1655) — note this REFUSES, where the superseded
-     *         snapshot-based carve-out returned 0 for the same shape.
-     *         With progressive risk access enabled an unpriceable position
-     *         returns 0 instead and its buyer-consent gate governs.
+     *         snapshot-based carve-out returned 0 for the same shape, and that
+     *         it refuses UNCONDITIONALLY: the progressive-risk-access consent
+     *         ladder classifies assets by identity and depth, never by live
+     *         priceability, so it cannot be deferred to here (Codex r8).
      * @return a The position's figure for the failing check (0 when code 0),
      *         except code 6, where it names the unpriceable leg — 0 collateral,
      *         1 principal — because a refusal for want of a measurement has no
@@ -603,37 +603,36 @@ contract RiskPreviewFacet {
         ) {
             // An unpriceable leg cannot be measured: health factor is a ratio
             // of oracle-priced values and REVERTS here rather than returning a
-            // conservative number, so none of the checks below can run. The
-            // design doc puts the policy for these positions in the contract
-            // owners' hands and rules out both extremes as a default — silently
-            // admitting an unpriceable position because the guard could not
-            // run, or silently blocking one because the guard reverted
-            // (`LenderEarlyWithdrawalUXDesign.md` 717-736). So the answer
-            // follows whichever regime is actually in force:
+            // conservative number, so none of the checks below can run. This is
+            // the design doc's Phase-1 exclusion for these positions
+            // (`LenderEarlyWithdrawalUXDesign.md` 717-736), and the refusal is
+            // UNCONDITIONAL — it does not consult the progressive-risk-access
+            // switch.
             //
-            //   * Progressive risk access ENABLED — the consent regime the
-            //     spec mandates for this case is live. `ProjectDetailsREADME`
-            //     §320: the exiting seller is exempt, the incoming buyer is
-            //     gated against the assets of the loan being sold, and a
-            //     default-tier buyer cannot acquire an illiquid-backed lender
-            //     position without opting into its risk. That gate runs on both
-            //     sale paths already — `_assertBuyerRiskAccess` on the direct
-            //     sale, the accept-time check on the listing path — and it is
-            //     the surface that can express informed consent, which this
-            //     classifier cannot. Step aside and let it decide.
-            //   * Progressive risk access DISABLED (the default) — there is no
-            //     consent surface in force, so admitting is the silent-admission
-            //     failure: on a default deployment an unpriceable, worst-case
-            //     worthless position would be assignable to a generic standing
-            //     offer with no loan-specific or pair consent. REFUSE, and say
-            //     that a leg is unpriceable rather than inventing a health
-            //     figure for a position that has none.
+            // An earlier revision of this branch DID consult it, admitting
+            // unpriceable positions when the gate was on so the buyer-consent
+            // gate could decide. That was wrong, and the reason generalises
+            // (Codex #1635 r8): **the consent ladder classifies assets, not
+            // measurements.** `LibRiskAccess._isBlueChip` returns true for WETH
+            // and every configured PAA asset by IDENTITY, with no liquidity
+            // read, so `_assetRequiredLevel` yields `BlueChipOnly` — the level
+            // every vault holds by default. A WETH leg whose ETH/numeraire feed
+            // has gone stale, or whose sequencer check fails, is therefore
+            // unpriceable AND still blue-chip: the gate requires no opt-up and
+            // no pair consent, and would wave the position through to a
+            // default-tier buyer on both sale paths.
             //
-            // Note this is the one branch whose answer a governance switch
-            // changes, and deliberately so: the switch does not relax a check
-            // here, it supplies the consent machinery that makes admission
-            // meaningful. Enabling it can only ADD a gate to this path.
-            if (LibVaipakam.cfgRiskAccessGateEnabled()) return (0, 0, 0);
+            // So the ladder cannot stand in for this check. It answers "how
+            // risky is this class of asset", which is a property of the asset;
+            // measurability is a property of the oracle's state right now, and
+            // there is nothing for a buyer to consent to when the protocol
+            // cannot say what the position is worth. Deferring to a gate on the
+            // assumption that it recognises a condition it never reads is the
+            // failure mode, not the switch itself.
+            //
+            // Refusing is not the "silent blocking" the design doc rules out:
+            // that objection is to a guard that reverts without saying why.
+            // This names the condition and the leg.
             return (
                 6,
                 collLiq != LibVaipakam.LiquidityStatus.Liquid ? 0 : 1,

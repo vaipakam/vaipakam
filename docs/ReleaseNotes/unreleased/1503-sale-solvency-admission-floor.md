@@ -63,11 +63,21 @@ when the loan was opened, which is never refreshed: a market that had degraded
 since origination previously let a position be sold on the strength of prices
 the platform no longer accepts, without ever being recognised as unpriceable.
 Fixing only that would have routed *more* positions into the pass-through, so
-the pass-through is gone: where a leg cannot be measured and no consent regime
-is in force, the sale is now refused. Where progressive risk access is enabled,
-the buyer's own risk-access gate governs instead — the mechanism the platform
-already specifies for illiquid-backed pairs, which is the one surface that can
-express an informed acknowledgement.
+the pass-through is gone: where a leg cannot be measured, the sale is refused.
+
+That refusal is unconditional, and an intermediate version of this change got it
+wrong in an instructive way. It deferred to the platform's buyer-consent regime
+whenever that regime was switched on, reasoning that consent is the right
+mechanism for a position carrying no price-based safety net. But that regime
+grades an asset by what it *is* — its identity and the depth class of its market
+— while measurability is a property of the pricing oracle right now, and the two
+come apart exactly where it matters. The platform's own reference and quote
+assets are classed as lowest-risk **by identity**, needing no opt-up and no
+per-pair agreement; one of them with a stale price feed is therefore
+unpriceable and exempt from every consent step at once. Deferring would have
+handed such a position to a buyer who had agreed to nothing. A regime that never
+consults liquidity cannot consent to an unpriceable position, so it is not
+treated as a substitute for measuring.
 
 A leg counts as measurable only when the live determination and the loan's own
 record agree. That is not belt-and-braces: the record is what decides whether
