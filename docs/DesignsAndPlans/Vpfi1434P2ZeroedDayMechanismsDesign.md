@@ -578,9 +578,15 @@ terminate on a bounded clock, record the loss.
 > `_creditCompensation` reading the PRE-credit shortfall; with no
 > standing quote yet the qualifying test is vacuously false and the
 > absolute clock alone runs — the conservative direction. (5) The
-> supplemental enforces the same frozen-clock + R3 cutoff discipline as
-> the manual path, and the per-side cumulative lives Base-side
-> (`compFunded*`), stamped by both dispatchers. (6) Fitting w4 required
+> supplemental checks clock PRESENCE only — deliberately NOT the manual
+> path's R3 cutoff (#1656 r3): a compensated-and-open day is inside its
+> §2.5 remediation window, whose deadline supersedes the original
+> expiry, and the mirror ingress correspondingly exempts
+> already-compensated days from the raw-expiry quarantine (the terminal
+> FLAGS govern supplements). The cutoff's guaranteed-quarantine premise
+> holds only for FIRST compensations, where it stays. The per-side
+> cumulative lives Base-side (`compFunded*`), stamped by both
+> dispatchers and declared→received-reconciled at the authentic ACK. (6) Fitting w4 required
 > the EIP-170 triple split: `RewardRemittanceLensFacet` (22 ledger
 > views), `RewardCompensationDispatchFacet` (manual + supplemental),
 > `LibRewardRemitDispatch` (the shared dispatch tail / net headroom /
