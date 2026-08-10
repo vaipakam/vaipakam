@@ -512,6 +512,14 @@ phase_preflight() {
   if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_REWARD_DEPLOYMENT:-}" ]; then
     MISSING+=("BASE_REWARD_DEPLOYMENT  (REQUIRED on mirror chains — canonical Base DIAMOND address, the V3 broadcast era ground truth)")
   fi
+  # #1434 P2-w3 (#1636 r4) — the reciprocal on CANONICAL Base: the
+  # per-mirror Diamond registry the kind-11 compensation-quote ingress
+  # is fail-closed against. HARD-FAIL on mainnet: a canonical deploy
+  # without it leaves zeroed-day compensation unreachable on every lane
+  # until a post-handover governance transaction repairs each one.
+  if [ "$IS_CANONICAL" = "1" ] && [ -z "${MIRROR_REWARD_DEPLOYMENTS:-}" ]; then
+    MISSING+=("MIRROR_REWARD_DEPLOYMENTS  (REQUIRED on canonical Base — per-mirror Diamond registry, format \"42161:0x...,10:0x...\"; the kind-11 quote-ingress era ground truth)")
+  fi
   if [ ${#MISSING[@]} -ne 0 ]; then
     echo "FAIL: required env vars missing in .env:"
     for v in "${MISSING[@]}"; do echo "    - $v"; done
@@ -1118,6 +1126,50 @@ ingress stays fail-closed dark on this mirror and the P2 lapse
 machinery can never arm. Set it in .env (or export it) and re-run.
 EOF
     exit 1
+  fi
+  # #1434 P2-w3 (#1636 r4) — the reciprocal gate on CANONICAL Base,
+  # enforced on the same transaction-producing path for the same reason
+  # (the spell itself only warns; a phase marker landing over the warn
+  # would carry the deploy to handover with every lane's zeroed-day
+  # compensation unreachable).
+  if [ "$IS_CANONICAL" = "1" ] && [ -z "${MIRROR_REWARD_DEPLOYMENTS:-}" ]; then
+    cat >&2 <<'EOF'
+FAIL: MIRROR_REWARD_DEPLOYMENTS is required on canonical Base before
+the configure phase. It is the per-mirror Diamond registry (format
+"42161:0xMirrorDiamond,10:0xMirrorDiamond") — the era ground truth the
+kind-11 compensation-quote ingress authenticates every arrival against
+(ConfigureRewardReporter → setMirrorRewardDeployment). Without it every
+mirror's quotes revert CompQuoteMirrorEraUnset and zeroed-day
+compensation is unreachable. Set it in .env (or export it) and re-run.
+EOF
+    exit 1
+  fi
+  # #1636 r5 — nonemptiness is not coverage: the registry must name
+  # EXACTLY the expected mirror set (REWARD_EXPECTED_SOURCE_CHAIN_IDS
+  # minus canonical Base itself), with no omissions and no duplicates —
+  # an omitted lane's quotes revert CompQuoteMirrorEraUnset forever while
+  # the phase marker reads success.
+  if [ "$IS_CANONICAL" = "1" ]; then
+    if [ -z "${REWARD_EXPECTED_SOURCE_CHAIN_IDS:-}" ]; then
+      echo "FAIL: REWARD_EXPECTED_SOURCE_CHAIN_IDS is required on canonical Base (the mirror-registry coverage reference)." >&2
+      exit 1
+    fi
+    MIRROR_IDS=$(echo "$MIRROR_REWARD_DEPLOYMENTS" | tr ',' '\n' | cut -d: -f1 | sort -n)
+    DUP_IDS=$(echo "$MIRROR_IDS" | uniq -d)
+    if [ -n "$DUP_IDS" ]; then
+      echo "FAIL: MIRROR_REWARD_DEPLOYMENTS contains duplicate chain id(s): $(echo "$DUP_IDS" | tr '\n' ' ')" >&2
+      exit 1
+    fi
+    EXPECTED_MIRROR_IDS=$(echo "$REWARD_EXPECTED_SOURCE_CHAIN_IDS" | tr ',' '\n' | grep -v "^${BASE_CHAIN_ID}\$" | sort -n)
+    if [ "$MIRROR_IDS" != "$EXPECTED_MIRROR_IDS" ]; then
+      {
+        echo "FAIL: MIRROR_REWARD_DEPLOYMENTS chain set does not match the expected mirror set"
+        echo "  registry ids: $(echo "$MIRROR_IDS" | tr '\n' ' ')"
+        echo "  expected ids: $(echo "$EXPECTED_MIRROR_IDS" | tr '\n' ' ')  (REWARD_EXPECTED_SOURCE_CHAIN_IDS minus ${BASE_CHAIN_ID})"
+      } >&2
+      exit 1
+    fi
+    echo "  ✓ Mirror-registry coverage matches the expected source set"
   fi
   # DeployCrosschain records the reward contract under `.rewardMessenger`.
   # Hand ConfigureRewardReporter that address explicitly via the legacy

@@ -369,6 +369,79 @@ interface IVaipakamErrors {
         uint256 dayId, uint256 expiry, uint64 dispatchCutoffGap
     );
 
+    // ─── #1434 P2-w3 — the compensation quote (§1.4) ────────────────────────
+
+    /// @notice The quote surfaces only exist for a deliberately-zeroed day
+    ///         (the V3 marker — §1.1).
+    error CompQuoteDayNotZeroed(uint256 dayId);
+    /// @notice R1d (§2.3) — the day's LOCAL interest close has not run;
+    ///         zero totals would be ambiguous (unfolded vs genuinely
+    ///         zero). `closeDay` is permissionless: anyone can produce the
+    ///         missing fact and retry.
+    error CompQuoteLocalCloseMissing(uint256 dayId);
+    /// @notice The day has lapsed (or short-lapsed) — the compensation
+    ///         window is over; the loss was recorded at the lapse.
+    error CompQuoteDayLapsed(uint256 dayId);
+    /// @notice Accumulation is closed: the quote was already dispatched
+    ///         (its inputs are frozen, so there is nothing to
+    ///         re-accumulate — re-DISPATCH is the retry lever).
+    error CompQuoteAlreadyDispatched(uint256 dayId);
+    /// @notice The side's conservation sum does not equal the day's folded
+    ///         side total — the accumulation has not covered every entry.
+    error CompQuoteIncomplete(
+        uint256 dayId, uint8 side, uint256 conservation18, uint256 total18
+    );
+    /// @notice A quote arrived for a day Base has not finalized.
+    error CompQuoteDayNotFinalized(uint256 dayId);
+    /// @notice A quote arrived for a chain-day that was never zeroed out of
+    ///         the denominator (and holds no prior quote record).
+    error CompQuoteDayNotIneligible(uint256 dayId, uint32 chainId);
+    /// @notice A re-quote arrived AFTER the day was funded — the funded
+    ///         amount was bounded by the quote standing at dispatch, which
+    ///         is the receipt-bound obligation supplements top up against.
+    error CompQuoteDayAlreadyFunded(uint256 dayId, uint32 chainId);
+    /// @notice #1434 P2-w3 — a manual compensation needs a STANDING quote:
+    ///         the sizing evidence is the mirror's authenticated
+    ///         counterfactual share, never operator judgment alone.
+    error CompensationNotQuoted(uint256 dayId, uint32 chainId);
+    /// @notice #1434 P2-w3 — the per-side amounts exceed the standing
+    ///         quote (each side separately — an aggregate bound would
+    ///         admit overfunding one side while shorting the other).
+    error CompensationExceedsQuote(
+        uint256 lenderAmount18,
+        uint256 borrowerAmount18,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
+    );
+    /// @notice #1434 P2-w3 (#1636 r1) — the quote surface needs the day's
+    ///         frozen pool stamp (the Δq numerator); pricing without it
+    ///         would quote (0,0) and wrongly resolve a demand-carrying day
+    ///         to zero.
+    error CompQuoteDayPoolStampMissing(uint256 dayId);
+    /// @notice #1434 P2-w3 (#1636 r1) — a re-delivered quote's sending
+    ///         Diamond diverges from the era the standing quote is bound
+    ///         to; a stale-era wire must not overwrite newer evidence.
+    error CompQuoteEraMismatch(
+        uint256 dayId,
+        uint32 chainId,
+        address boundEra,
+        address arrivedEra
+    );
+    /// @notice #1434 P2-w3 (#1636 r2) — the quote ingress is FAIL-CLOSED
+    ///         until the operator registers the sending chain's current
+    ///         mirror Diamond: without a configured ground truth, a
+    ///         delayed retired-era wire could be the FIRST arrival and
+    ///         bind (or zero-clear) the day unchallenged.
+    error CompQuoteMirrorEraUnset(uint32 chainId);
+    /// @notice #1434 P2-w3 (#1636 r4) — a resolved-zero standing quote is
+    ///         TERMINAL and refuses the era-rotation clear: its (0,0)
+    ///         ingress already retired the day's manual-funding anchor,
+    ///         deleting the record would strand the chain-day outside
+    ///         every admission path, and a re-quote under ANY era is
+    ///         deterministically (0,0) again — there is nothing to
+    ///         restate.
+    error CompQuoteResolvedZeroFinal(uint256 dayId, uint32 chainId);
+
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by
     ///         governance. Exit paths (repay / liquidate / claim / withdraw)

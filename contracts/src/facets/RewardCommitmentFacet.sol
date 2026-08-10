@@ -4,6 +4,7 @@ pragma solidity 0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibCommitmentReport} from "../libraries/LibCommitmentReport.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -466,5 +467,471 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         uint32 destChainId
     ) external view returns (bool) {
         return LibVaipakam.storageSlot().dayZeroedForDest[dayId][destChainId];
+    }
+
+    // ─── #1434 P2-w3 — the zeroed-day compensation QUOTE (§1.4) ──────────────
+
+    /// @notice #1434 P2-w3 — one quote-accumulation batch landed.
+    /// @custom:event-category informational/reward-compensation
+    event CompQuoteBatchAccumulated(
+        uint256 indexed dayId,
+        uint8 indexed side,
+        uint256 accumulated18,
+        uint256 conservation18
+    );
+
+    /// @notice #1434 P2-w3 — the day's quote was dispatched toward Base.
+    ///         `resolvedZero` marks the both-sides-zero terminal (§2.3): the
+    ///         day was marked resolved MIRROR-LOCALLY before dispatch, so
+    ///         the suppression gate releases it regardless of delivery.
+    /// @custom:event-category informational/reward-compensation
+    event CompQuoteDispatched(
+        uint256 indexed dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        bool resolvedZero,
+        bytes32 messageId
+    );
+
+    /// @notice #1434 P2-w3 — Base stored (or refreshed) a chain-day quote.
+    /// @custom:event-category informational/reward-compensation
+    event CompQuoteStored(
+        uint256 indexed dayId,
+        uint32 indexed sourceChainId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
+    );
+
+    /// @notice #1434 P2-w3 (§2.3) — a (0,0) quote resolved the chain-day:
+    ///         remit-ineligibility cleared, funding bounded to zero.
+    /// @custom:event-category informational/reward-compensation
+    event CompQuoteResolvedZero(uint256 indexed dayId, uint32 indexed chainId);
+
+    /// @dev The shared quote-surface preconditions (§1.4 + R1d §2.3).
+    function _assertQuotableDay(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) private view {
+        if (!s.dayDeliberatelyZeroed[dayId]) {
+            revert CompQuoteDayNotZeroed(dayId);
+        }
+        // R1d — "this day's local interest close HAS RUN": zero totals
+        // alone are ambiguous (unfolded vs genuinely zero); the close
+        // stamp is not.
+        if (s.chainReportSentAt[dayId] == 0) {
+            revert CompQuoteLocalCloseMissing(dayId);
+        }
+        // #1636 r1 P1 — Δq's numerator is the day's frozen pool stamp
+        // (the broadcast installs it together with the zeroed marker, so
+        // an honest flow always has it). Pricing without it would quote
+        // (0,0) and wrongly resolve a demand-carrying day to zero — fail
+        // closed instead.
+        if (!s.dayPoolStamp[dayId].stamped) {
+            revert CompQuoteDayPoolStampMissing(dayId);
+        }
+        if (s.dayLapsed[dayId] || s.dayShortLapsed[dayId]) {
+            revert CompQuoteDayLapsed(dayId);
+        }
+    }
+
+    /**
+     * @notice #1434 P2-w3 — accumulate one bounded batch of this day's
+     *         quote (§1.4's checkpointed accumulator — a busy day's single
+     *         scan could exceed block gas and make compensation
+     *         unreachable). PERMISSIONLESS: anyone advances the cursor;
+     *         the quote dispatches when {quoteZeroedDayCompensation} finds
+     *         the accumulation complete.
+     * @dev    The `LibCommitmentReport.accumulateBatch` template, priced at
+     *         Δq instead of Δ_d: strictly-ascending entry ids (each entry
+     *         at most once, duplicate-free by construction), per-entry
+     *         side/coverage validation, `min(perDay × Δq_s / 1e18, C_side)`
+     *         with the day's stamped per-side ceiling, and a conservation
+     *         sum whose equality with the folded side total is the
+     *         completeness proof. Accumulation closes at dispatch — the
+     *         quote is deterministic from frozen inputs, so there is
+     *         nothing to re-accumulate.
+     */
+    function accumulateCompQuoteBatch(
+        uint256 dayId,
+        LibVaipakam.RewardSide side,
+        uint256[] calldata entryIds
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertQuotableDay(s, dayId);
+        if (s.compQuoteSentAt[dayId] != 0) {
+            revert CompQuoteAlreadyDispatched(dayId);
+        }
+
+        // §1.4 — Δq from THE shared implementation
+        // ({LibInteractionRewards.compQuoteDelta}): the pricing ladder and
+        // the payment path read the same function, so the quoted figure and
+        // the priced figure cannot diverge.
+        uint256 delta = LibInteractionRewards.compQuoteDelta(s, side, dayId);
+        uint8 sideKey = uint8(side);
+        uint256 cursor = s.compQuoteEntryCursor[dayId][sideKey];
+
+        uint256 quoteAdd;
+        uint256 conservationAdd;
+        uint256 n = entryIds.length;
+        for (uint256 i; i < n; ) {
+            uint256 id = entryIds[i];
+            if (id <= cursor) {
+                revert CommitmentEntriesNotAscending(id);
+            }
+            cursor = id;
+
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+            uint256 start = e.startDay == 0 ? 1 : e.startDay;
+            if (e.side != side || dayId < start || dayId >= e.endDay) {
+                revert CommitmentEntryMismatch(id);
+            }
+
+            // #1636 r1 P1 — the quote is the UNCAPPED fair-share sum
+            // (per-entry `perDay × Δq`, no per-entry ceiling). It must
+            // UPPER-BOUND every settlement path the fold's funding gate
+            // protects, and the bulk paths are deliberately cap-free
+            // where the walk is not: a forfeited entry's window prices
+            // uncapped by design (#1353 — the ceiling bounds reward paid
+            // to a user, never a forfeit), and bulk window pricing skips
+            // the per-(user,day) ceiling entirely. A capped quote would
+            // open the gate below that liability and let a forfeit sweep
+            // absorb undelivered value. Caps still apply at PAYMENT time
+            // per each path's own rules; the delivered-minus-paid residue
+            // on cap-binding days is delivered fresh awaiting its entry's
+            // settlement (a later forfeit absorbs it in full).
+            uint256 perDay = e.perDayNumeraire18;
+            conservationAdd += perDay;
+            // #1636 r6 — CEIL, not floor: bulk window settlement floors
+            // ONCE over an entry's whole summed delta window
+            // (`_entryWindowSplitFrom`), so for an entry spanning this
+            // compensated day plus other priced days,
+            // `floor(a) + floor(b) < floor(a + b)` — a floored per-entry
+            // quote could under-cover the combined settlement by a wei
+            // per entry and let a forfeiture consume unrelated custody.
+            // Rounding up keeps the quote a true upper bound; the ≤1-wei
+            // over-delivery per entry joins the ordinary
+            // delivered-minus-paid residue.
+            quoteAdd += (perDay * delta + 1e18 - 1) / 1e18;
+            unchecked {
+                ++i;
+            }
+        }
+
+        s.compQuoteEntryCursor[dayId][sideKey] = cursor;
+        s.compQuoteAccum18[dayId][sideKey] += quoteAdd;
+        s.compQuoteConservation18[dayId][sideKey] += conservationAdd;
+        emit CompQuoteBatchAccumulated(
+            dayId,
+            sideKey,
+            s.compQuoteAccum18[dayId][sideKey],
+            s.compQuoteConservation18[dayId][sideKey]
+        );
+    }
+
+    /// @notice #1434 P2-w3 (#1636 r1) — a `(dayId, side)` quote
+    ///         accumulation was wiped so it can be resubmitted from
+    ///         scratch.
+    /// @custom:event-category informational/reward-compensation
+    event CompQuoteAccumulationReset(
+        uint256 indexed dayId,
+        uint8 indexed side
+    );
+
+    /// @notice Wipe `(dayId, side)`'s quote accumulation (cursor + both
+    ///         accumulators) so the full ascending set can be resubmitted.
+    /// @dev ADMIN-only and only while the quote has not been dispatched —
+    ///      the same recovery valve {resetCommitmentAccumulation} gives
+    ///      the commitment accumulator (#1636 r1 P1: the accumulator is
+    ///      PERMISSIONLESS, so any caller could submit one high-id entry
+    ///      and park the cursor past the covering set; without a reset the
+    ///      conservation proof could never complete and the day's
+    ///      compensation would be permanently wedged).
+    function resetCompQuoteAccumulation(
+        uint256 dayId,
+        uint8 side
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.compQuoteSentAt[dayId] != 0) {
+            revert CompQuoteAlreadyDispatched(dayId);
+        }
+        // Enum bounds-check reverts a side outside {0,1}.
+        uint8 sideKey = uint8(LibVaipakam.RewardSide(side));
+        s.compQuoteEntryCursor[dayId][sideKey] = 0;
+        s.compQuoteAccum18[dayId][sideKey] = 0;
+        s.compQuoteConservation18[dayId][sideKey] = 0;
+        emit CompQuoteAccumulationReset(dayId, sideKey);
+    }
+
+    /**
+     * @notice #1434 P2-w3 — FINALIZE + dispatch this day's compensation
+     *         quote toward Base (§1.4). PERMISSIONLESS and RE-SENDABLE:
+     *         the figures are deterministic from frozen inputs, so a
+     *         re-send carries the identical quote (the lost-message retry
+     *         lever, like day reports); the caller pays the CCIP fee.
+     * @dev    Completeness proof per side: the conservation sum over
+     *         accumulated entries must equal the day's folded side total —
+     *         a zero side is trivially complete with no batches (L_s == 0
+     *         ⇒ conservation 0 == 0). BOTH sides zero is the resolved-zero
+     *         terminal (§2.3): `dayResolvedZero` is set MIRROR-LOCALLY
+     *         BEFORE dispatch (Base clearing its flag changes nothing
+     *         here), the suppression gate releases the day, and it prices
+     *         zero through the ordinary walk — correctly, since no entry
+     *         accrued that day.
+     */
+    function quoteZeroedDayCompensation(
+        uint256 dayId,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertQuotableDay(s, dayId);
+
+        uint256 lTotal = s.totalLenderInterestNumeraire18[dayId];
+        uint256 bTotal = s.totalBorrowerInterestNumeraire18[dayId];
+        uint8 lKey = uint8(LibVaipakam.RewardSide.Lender);
+        uint8 bKey = uint8(LibVaipakam.RewardSide.Borrower);
+        if (s.compQuoteConservation18[dayId][lKey] != lTotal) {
+            revert CompQuoteIncomplete(
+                dayId, lKey, s.compQuoteConservation18[dayId][lKey], lTotal
+            );
+        }
+        if (s.compQuoteConservation18[dayId][bKey] != bTotal) {
+            revert CompQuoteIncomplete(
+                dayId, bKey, s.compQuoteConservation18[dayId][bKey], bTotal
+            );
+        }
+
+        uint256 quotedL = s.compQuoteAccum18[dayId][lKey];
+        uint256 quotedB = s.compQuoteAccum18[dayId][bKey];
+        bool resolvedZero = quotedL == 0 && quotedB == 0;
+        if (resolvedZero && !s.dayResolvedZero[dayId]) {
+            // §2.3 — terminal on the MIRROR, before dispatch.
+            s.dayResolvedZero[dayId] = true;
+        }
+        if (s.compQuoteSentAt[dayId] == 0) {
+            s.compQuoteSentAt[dayId] = uint64(block.timestamp);
+        }
+
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
+        messageId = IRewardMessenger(messenger).sendCompQuote{
+            value: msg.value
+        }(dayId, quotedL, quotedB, refundAddress);
+
+        emit CompQuoteDispatched(
+            dayId, quotedL, quotedB, resolvedZero, messageId
+        );
+    }
+
+    /**
+     * @notice #1434 P2-w3 — Base-side trusted ingress for a mirror's
+     *         compensation quote. Stores EVIDENCE, never funding: the
+     *         manual compensation dispatch is bounded per side by the
+     *         standing quote. A (0,0) quote is the resolved-zero signal —
+     *         it clears the chain-day's remit-ineligibility (§2.3; nothing
+     *         to compensate) and bounds funding to zero.
+     * @dev    Messenger-gated + canonical-only. A re-delivered or re-sent
+     *         quote OVERWRITES while the day is unfunded (idempotent for
+     *         identical figures — the honest case, since the mirror's
+     *         inputs are frozen) and is REJECTED once funded: the funded
+     *         amount was bounded by the quote standing at dispatch, which
+     *         is the receipt-bound obligation the w4 supplemental tops up
+     *         against.
+     */
+    function onCompQuoteReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address sourceEra
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0))
+        {
+            revert NotAuthorizedRewardMessenger();
+        }
+        if (!s.isCanonicalRewardChain) revert NotCanonicalRewardChain();
+        if (!s.dailyGlobalFinalized[dayId]) {
+            revert CompQuoteDayNotFinalized(dayId);
+        }
+        LibVaipakam.CompQuote storage q = s.compQuote[dayId][sourceChainId];
+        // Only a chain-day zeroed out of the denominator has anything to
+        // quote; an existing record admits re-delivery after the (0,0)
+        // path cleared the live flag.
+        if (
+            !s.chainDayCommitments[dayId][sourceChainId].remitIneligible
+                && q.receivedAt == 0
+        ) {
+            revert CompQuoteDayNotIneligible(dayId, sourceChainId);
+        }
+        if (s.dayClosedByRemitId[sourceChainId][dayId] != 0) {
+            revert CompQuoteDayAlreadyFunded(dayId, sourceChainId);
+        }
+        // #1636 r1+r2 — two-layer era authentication, mirroring the V3
+        // broadcast's own gate family. LAYER 1 (r2, the ground truth):
+        // the CONFIGURED current mirror Diamond for this chain — the
+        // reciprocal of the mirror-side `baseRewardDeployment` — checked
+        // on EVERY arrival including the first, fail-closed while unset.
+        // Without it, a delayed retired-era wire arriving FIRST (or first
+        // after a {clearCompQuote}) would bind unchallenged, and a stale
+        // (0,0) would clear the day's manual-funding anchor permanently.
+        // LAYER 2 (r1, the standing-evidence record): the era the quote
+        // was bound to at storage — protects a standing quote across a
+        // registry rotation (new-era wires diverge from the old record
+        // until the operator clears it deliberately via {clearCompQuote}).
+        // Same-era re-delivery refreshes (the honest lost-message retry).
+        {
+            address expected = s.mirrorRewardDeployment[sourceChainId];
+            if (expected == address(0)) {
+                revert CompQuoteMirrorEraUnset(sourceChainId);
+            }
+            if (sourceEra != expected) {
+                revert CompQuoteEraMismatch(
+                    dayId, sourceChainId, expected, sourceEra
+                );
+            }
+        }
+        if (q.receivedAt != 0 && q.era != sourceEra) {
+            revert CompQuoteEraMismatch(
+                dayId, sourceChainId, q.era, sourceEra
+            );
+        }
+
+        q.lender18 = quotedLender18;
+        q.borrower18 = quotedBorrower18;
+        q.receivedAt = uint64(block.timestamp);
+        q.era = sourceEra;
+        emit CompQuoteStored(
+            dayId, sourceChainId, quotedLender18, quotedBorrower18
+        );
+
+        if (
+            quotedLender18 == 0 && quotedBorrower18 == 0
+                && s.chainDayCommitments[dayId][sourceChainId].remitIneligible
+        ) {
+            // §2.3 — the genuinely-zero day: nothing to compensate, the
+            // flag's manual-funding anchor is retired. Same clearing the
+            // operator reconcile performs, driven by authenticated mirror
+            // evidence instead.
+            s.chainDayCommitments[dayId][sourceChainId].remitIneligible =
+                false;
+            emit CompQuoteResolvedZero(dayId, sourceChainId);
+        }
+    }
+
+    /// @notice #1434 P2-w3 (#1636 r2) — the operator registered (or
+    ///         rotated) a chain's current mirror Diamond — the quote
+    ///         ingress's era ground truth.
+    /// @custom:event-category informational/reward-compensation
+    event MirrorRewardDeploymentSet(
+        uint32 indexed chainId,
+        address indexed deployment
+    );
+
+    /// @notice Register the CURRENT mirror Diamond for `chainId` — the
+    ///         fail-closed ground truth the quote ingress authenticates
+    ///         every arrival's era word against (#1636 r2; the reciprocal
+    ///         of the mirror-side `setBaseRewardDeployment`).
+    /// @dev ADMIN-only. Part of the mirror-rotation ceremony: update this,
+    ///      then {clearCompQuote} any quote standing under the retired era.
+    function setMirrorRewardDeployment(
+        uint32 chainId,
+        address deployment
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.storageSlot().mirrorRewardDeployment[chainId] =
+            deployment;
+        emit MirrorRewardDeploymentSet(chainId, deployment);
+    }
+
+    /// @notice #1434 P2-w3 (#1636 r2) — the configured current mirror
+    ///         Diamond for `chainId` (zero = quote ingress fail-closed).
+    function getMirrorRewardDeployment(
+        uint32 chainId
+    ) external view returns (address) {
+        return LibVaipakam.storageSlot().mirrorRewardDeployment[chainId];
+    }
+
+    /// @notice #1434 P2-w3 (#1636 r1) — an operator cleared a chain-day's
+    ///         standing quote (mirror era rotated; the new era re-quotes).
+    /// @custom:event-category informational/reward-compensation
+    event CompQuoteCleared(uint256 indexed dayId, uint32 indexed chainId);
+
+    /// @notice Clear a chain-day's standing quote so a rotated mirror era
+    ///         can quote afresh.
+    /// @dev ADMIN-only, and only while the day is UNFUNDED — once funded,
+    ///      the quote that stood at dispatch is the receipt-bound
+    ///      obligation and must stay on record. This is the operator
+    ///      escape for the era binding above: without it, a mirror
+    ///      redeploy would wedge the day behind a stale-era quote that
+    ///      every honest re-delivery diverges from. Clearing does NOT
+    ///      restore a `remitIneligible` flag a stale (0,0) may have
+    ///      cleared — the first-arrival window is the accepted residual,
+    ///      exactly the w2 provisional-credit posture.
+    function clearCompQuote(
+        uint256 dayId,
+        uint32 chainId
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.dayClosedByRemitId[chainId][dayId] != 0) {
+            revert CompQuoteDayAlreadyFunded(dayId, chainId);
+        }
+        LibVaipakam.CompQuote storage q = s.compQuote[dayId][chainId];
+        // #1636 r4 — a RESOLVED-ZERO record is terminal, not clearable:
+        // its (0,0) ingress already retired `remitIneligible`, so a
+        // deleted record leaves `receivedAt == 0 && !remitIneligible` —
+        // outside every admission path, with no production route back.
+        // Nothing is lost by refusing: the quote is deterministic from
+        // frozen inputs, so a re-quote under ANY era is (0,0) again —
+        // the day is genuinely zero, and this record is its receipt.
+        if (
+            q.receivedAt != 0 && q.lender18 == 0 && q.borrower18 == 0
+                && !s.chainDayCommitments[dayId][chainId].remitIneligible
+        ) {
+            revert CompQuoteResolvedZeroFinal(dayId, chainId);
+        }
+        delete s.compQuote[dayId][chainId];
+        emit CompQuoteCleared(dayId, chainId);
+    }
+
+    /// @notice #1434 P2-w3 — a chain-day's standing quote on Base.
+    function getCompQuote(
+        uint256 dayId,
+        uint32 chainId
+    ) external view returns (LibVaipakam.CompQuote memory) {
+        return LibVaipakam.storageSlot().compQuote[dayId][chainId];
+    }
+
+    /// @notice #1434 P2-w3 — the mirror-side quote accumulation state.
+    function getCompQuoteAccum(uint256 dayId)
+        external
+        view
+        returns (
+            uint256 cursorLender,
+            uint256 cursorBorrower,
+            uint256 accumLender18,
+            uint256 accumBorrower18,
+            uint256 conservationLender18,
+            uint256 conservationBorrower18,
+            uint64 sentAt
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint8 lKey = uint8(LibVaipakam.RewardSide.Lender);
+        uint8 bKey = uint8(LibVaipakam.RewardSide.Borrower);
+        return (
+            s.compQuoteEntryCursor[dayId][lKey],
+            s.compQuoteEntryCursor[dayId][bKey],
+            s.compQuoteAccum18[dayId][lKey],
+            s.compQuoteAccum18[dayId][bKey],
+            s.compQuoteConservation18[dayId][lKey],
+            s.compQuoteConservation18[dayId][bKey],
+            s.compQuoteSentAt[dayId]
+        );
+    }
+
+    /// @notice #1434 P2-w3 — whether this day is resolved-zero on this
+    ///         mirror (§2.3: quoted zero on both sides; prices zero through
+    ///         the ordinary walk).
+    function getDayResolvedZero(uint256 dayId) external view returns (bool) {
+        return LibVaipakam.storageSlot().dayResolvedZero[dayId];
     }
 }

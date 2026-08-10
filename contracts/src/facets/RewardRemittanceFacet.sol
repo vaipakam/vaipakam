@@ -1799,6 +1799,40 @@ contract RewardRemittanceFacet is
                 );
             }
         }
+        // #1434 P2-w3 — funding is EVIDENCE-BOUNDED (§1.4): a STANDING
+        // mirror quote is required (the authenticated counterfactual fair
+        // share — obtainable permissionlessly on the mirror via the
+        // batched accumulator + dispatch, so requiring it blocks no honest
+        // flow), and each side is bounded SEPARATELY (the §2.5 rule: an
+        // aggregate bound admits overfunding one side while shorting the
+        // other). A (0,0) quote bounds funding to zero, which composes
+        // with the resolved-zero clearing — nothing to compensate.
+        {
+            LibVaipakam.CompQuote storage q = s.compQuote[dayId][dstChainId];
+            if (q.receivedAt == 0) {
+                revert CompensationNotQuoted(dayId, dstChainId);
+            }
+            // #1636 r5 — the funding path holds the SAME era ground truth
+            // the ingress does: after a registry rotation, an unfunded
+            // quote standing under the RETIRED mirror must not fund the
+            // current one (its state did not produce the evidence) — the
+            // operator clears it and the new era re-quotes. Also fails
+            // closed while the registry is unset for this chain.
+            {
+                address expected = s.mirrorRewardDeployment[dstChainId];
+                if (q.era != expected || expected == address(0)) {
+                    revert CompQuoteEraMismatch(
+                        dayId, dstChainId, expected, q.era
+                    );
+                }
+            }
+            if (lenderAmount18 > q.lender18 || borrowerAmount18 > q.borrower18)
+            {
+                revert CompensationExceedsQuote(
+                    lenderAmount18, borrowerAmount18, q.lender18, q.borrower18
+                );
+            }
+        }
 
         // r6 — NET headroom; a manual send retires no commitment (the
         // zeroed chain's share was never committed at finalize).

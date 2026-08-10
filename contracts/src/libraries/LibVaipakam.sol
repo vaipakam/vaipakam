@@ -6284,6 +6284,68 @@ library LibVaipakam {
         //   branch is deliberately unreachable.
         mapping(uint256 => bool) dayLapsed;
         mapping(uint256 => bool) dayShortLapsed;
+        // ─── #1434 P2-w3 — the conversion quote + resolved-zero ──────────
+        // MIRROR-ONLY: a zeroed day whose quote came out zero on BOTH sides
+        //   (no local interest after fold) — terminal on the mirror AT
+        //   QUOTE TIME (§1.4: Base clearing `remitIneligible` changes no
+        //   mirror-local flag, so without this the suppression gate would
+        //   defer the day forever). A resolved-zero day prices zero through
+        //   the ordinary walk, which is correct: L_s == 0 means no entry
+        //   accrued on that side that day.
+        mapping(uint256 => bool) dayResolvedZero;
+        // MIRROR-ONLY: the quote accumulation (the `accumulateBatch`
+        //   pattern, per §1.4's bounded-batches requirement — a busy day's
+        //   single-scan quote could exceed block gas and make compensation
+        //   unreachable). Keyed [dayId][sideKey]: strictly-ascending entry
+        //   cursor, the capped per-side quote accumulator, and the
+        //   conservation sum (Σ perDay of accumulated entries) whose
+        //   equality with the day's folded side total is the completeness
+        //   proof the finalize step requires.
+        mapping(uint256 => mapping(uint8 => uint256)) compQuoteEntryCursor;
+        mapping(uint256 => mapping(uint8 => uint256)) compQuoteAccum18;
+        mapping(uint256 => mapping(uint8 => uint256)) compQuoteConservation18;
+        // MIRROR-ONLY: when this day's quote was dispatched (0 = never).
+        //   The quote is deterministic from frozen inputs, so there is no
+        //   re-accumulation path — re-dispatch of the SAME figures is the
+        //   lost-message retry lever, exactly like day reports.
+        mapping(uint256 => uint64) compQuoteSentAt;
+        // BASE-ONLY: the standing quote evidence per (day, chain) — the
+        //   authenticated sizing bound the manual compensation dispatch is
+        //   held to (§1.4: the funding step stays the operator's, but
+        //   becomes evidence-bounded). Overwritable while the day is
+        //   unfunded; frozen once `dayClosedByRemitId` marks it funded.
+        mapping(uint256 => mapping(uint32 => CompQuote)) compQuote;
+        // BASE-ONLY (#1636 r2) — the configured CURRENT mirror Diamond per
+        //   chain: the quote ingress's era ground truth, the reciprocal of
+        //   the mirror-side `baseRewardDeployment`. FAIL-CLOSED: while
+        //   unset for a chain, that chain's quotes are refused (a failed,
+        //   re-executable CCIP message) — so a delayed retired-era wire
+        //   can never be the FIRST arrival that binds the standing quote
+        //   or spuriously clears a day's manual-funding anchor. Updated by
+        //   the operator as part of the mirror-rotation ceremony
+        //   (CcipCutoverRunbook §8), alongside {clearCompQuote} for any
+        //   quote standing under the retired era.
+        mapping(uint32 => address) mirrorRewardDeployment;
+    }
+
+    /// @notice #1434 P2-w3 — one chain-day's standing compensation quote on
+    ///         Base (per-side, 1e18): the mirror-computed counterfactual
+    ///         fair share `Σ min(perDay_e × Δq_s, C_side)`, delivered over
+    ///         the kind-11 wire. A (0,0) quote is the resolved-zero signal
+    ///         (§2.3) — it clears the day's remit-ineligibility and bounds
+    ///         funding to zero.
+    struct CompQuote {
+        uint256 lender18;
+        uint256 borrower18;
+        uint64 receivedAt;
+        /// @dev #1434 P2-w3 (#1636 r1) — the sending mirror Diamond the
+        ///      standing quote is bound to (stamped by the messenger from
+        ///      its own paired-diamond state, so it is authenticated).
+        ///      While the day is unfunded, only the SAME era may refresh
+        ///      the quote; a divergent era reverts. Like the w2
+        ///      provisional-credit posture, the FIRST arrival cannot be
+        ///      era-verified — the binding defends every arrival after it.
+        address era;
     }
 
     /// @notice #1434 P2-w2 — one quarantined compensation arrival (§2.2's

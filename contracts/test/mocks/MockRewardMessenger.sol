@@ -10,6 +10,7 @@ import {
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RepatriationFacet} from "../../src/facets/RepatriationFacet.sol";
+import {RewardCommitmentFacet} from "../../src/facets/RewardCommitmentFacet.sol";
 
 /// @title MockRewardMessenger
 /// @notice Test double for the production CCIP-backed reward messenger
@@ -534,6 +535,64 @@ contract MockRewardMessenger is IRewardMessenger {
         RewardReporterFacet(diamond).onRewardBroadcastV3Received(b);
     }
 
+    // ─── #1434 P2-w3 — compensation-quote surface ─────────────────────────
+
+    uint256 public lastCompQuoteDay;
+    uint256 public lastCompQuoteLender18;
+    uint256 public lastCompQuoteBorrower18;
+    uint256 public compQuoteSendCount;
+
+    function sendCompQuote(
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address payable
+    ) external payable override returns (bytes32) {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (revertOnSend) revert("MockMessenger: send revert");
+        lastCompQuoteDay = dayId;
+        lastCompQuoteLender18 = quotedLender18;
+        lastCompQuoteBorrower18 = quotedBorrower18;
+        compQuoteSendCount += 1;
+        return bytes32(uint256(0xC0117E));
+    }
+
+    function quoteSendCompQuote(
+        uint256,
+        uint256,
+        uint256
+    ) external view override returns (uint256) {
+        return quoteNative;
+    }
+
+    /// @notice #1434 P2-w3 — simulate a kind-11 delivery landing on the
+    ///         canonical commitment-facet ingress.
+    function deliverCompQuote(
+        uint32 srcChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
+    ) external {
+        // Default era = this mock (the "sending diamond" a real messenger
+        // would stamp); era-divergence tests use the explicit overload.
+        RewardCommitmentFacet(diamond).onCompQuoteReceived(
+            srcChainId, dayId, quotedLender18, quotedBorrower18, address(this)
+        );
+    }
+
+    /// @dev #1636 r1 — era-explicit delivery for the binding tests.
+    function deliverCompQuoteFromEra(
+        uint32 srcChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address era
+    ) external {
+        RewardCommitmentFacet(diamond).onCompQuoteReceived(
+            srcChainId, dayId, quotedLender18, quotedBorrower18, era
+        );
+    }
+
     // ─── #1568 C2 — repatriation instruction surfaces ─────────────────────
 
     uint256 public lastRepatDst;
@@ -709,6 +768,30 @@ contract MockRewardMessenger is IRewardMessenger {
             0,
             0,
             0
+        );
+    }
+
+    /// @dev #1636 r2 — legacy kind-2 delivery carrying the full frozen
+    ///      tuple, for mixed-generation consistency tests: a V3 for the
+    ///      same day must agree on the day-pool figures (production sends
+    ///      the SAME finalize-frozen values on both wires).
+    function deliverBroadcastFull(
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
+    ) external {
+        RewardReporterFacet(diamond).onRewardBroadcastReceived(
+            dayId,
+            globalLenderNumeraire18,
+            globalBorrowerNumeraire18,
+            capThreshold18,
+            scheduleFloorHalf,
+            recycledHalf,
+            armedFromDay
         );
     }
 

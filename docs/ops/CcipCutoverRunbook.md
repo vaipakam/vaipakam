@@ -362,6 +362,31 @@ flight, in this order when **lowering**:
      are the drain/heal ceremony's job, not silent overwrite.
   The first arming (zero → nonzero) is NOT a rotation; a disarm/re-arm
   cycle of the same address is not one either.
+- **Mirror-era registry on Base** (#1434 P2-w3, Codex #1636 r2/r3) —
+  the RECIPROCAL registration: Base's compensation-quote (kind-11)
+  ingress authenticates every arriving quote's sending-Diamond word
+  against `RewardCommitmentFacet.setMirrorRewardDeployment(chainId,
+  mirrorDiamond)` and is FAIL-CLOSED per chain until that registration
+  exists (`CompQuoteMirrorEraUnset`; deliveries stay failed-but-
+  re-executable).
+  1. **Initial setup** — register every mirror's Diamond on Base as
+     part of the reward-mesh configuration.
+     `ConfigureRewardReporter.s.sol` does this on canonical chains from
+     `MIRROR_REWARD_DEPLOYMENTS` (format
+     `"42161:0xMirrorDiamond,10:0xMirrorDiamond"`); leaving it unset
+     logs a loud warning and leaves zeroed-day compensation quoting
+     unreachable for the unregistered lanes.
+  2. **When a MIRROR Diamond rotates**: on Base, run
+     `setMirrorRewardDeployment(chainId, newMirrorDiamond)`, then
+     `clearCompQuote(dayId, chainId)` for any NONZERO quote still
+     standing under the retired mirror. Two record classes refuse the
+     clear by design (#1636 r4): funded days (their standing quote is
+     the receipt-bound obligation) and RESOLVED-ZERO records
+     (`CompQuoteResolvedZeroFinal` — the (0,0) ingress already retired
+     the day's funding anchor, the day is terminally zero, and a
+     re-quote under any era is deterministically (0,0) again; the
+     record stays as the receipt). The new era then re-quotes the
+     cleared days permissionlessly from the mirror side.
 
 ---
 

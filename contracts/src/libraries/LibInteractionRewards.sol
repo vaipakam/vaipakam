@@ -974,6 +974,226 @@ library LibInteractionRewards {
         return (halfPoolForDay(d), 0, false);
     }
 
+    /// @notice #1434 P2-w3 (§1.4) — Δq for side `s` on day `d`: the
+    ///         counterfactual fair-share delta `halfPool_s × 1e18 /
+    ///         (G_s + L_s)`, from FROZEN inputs only.
+    /// @dev    The numerator is the DAY-level finalize-snapshotted funded
+    ///         half — `dayPoolStamp[d].scheduleFloor / 2`, the broadcast's
+    ///         floor-half stored by the mirror's apply — NOT this chain's
+    ///         per-(day,chain) funding slice (#1636 r1 P1: a deliberately
+    ///         zeroed destination's slice is stamped ZERO by
+    ///         `_perDestFields`, so reading it here would quote (0,0) for
+    ///         a demand-carrying day and wrongly resolve it to zero; and
+    ///         not the raw schedule half either, which overstates what
+    ///         finalization funded near 69M exhaustion). `G_s` is the
+    ///         frozen global denominator that EXCLUDES this chain; `L_s`
+    ///         is the mirror's own folded side total. NOT the day's Δ_d,
+    ///         whose excluded denominator is zero on the constraint-17
+    ///         side. `G_s + L_s == 0` (or an unstamped/zero pool) ⇒ zero —
+    ///         the genuinely-zero side (the quote surface separately
+    ///         REFUSES an unstamped day, so the zero here cannot be a
+    ///         missing-stamp artifact on the quoted path). The ONE Δq
+    ///         implementation: the quote accumulator, the pricing ladder
+    ///         and the payment path all read it, so the quoted figure and
+    ///         the priced figure can never diverge.
+    function compQuoteDelta(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    ) internal view returns (uint256) {
+        LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[d];
+        if (!p.stamped) return 0;
+        uint256 halfPool = uint256(p.scheduleFloor) / 2;
+        (uint256 g, uint256 l) = side == LibVaipakam.RewardSide.Lender
+            ? (
+                s.knownGlobalLenderInterestNumeraire18[d],
+                s.totalLenderInterestNumeraire18[d]
+            )
+            : (
+                s.knownGlobalBorrowerInterestNumeraire18[d],
+                s.totalBorrowerInterestNumeraire18[d]
+            );
+        uint256 denom = g + l;
+        if (denom == 0 || halfPool == 0) return 0;
+        return (halfPool * 1e18) / denom;
+    }
+
+    /**
+     * @dev #1434 P2-w3 — the per-day P2 STATE LADDER + delta derivation
+     *      (§2.1 precedence, §1.5 pricing): the ONE implementation every
+     *      per-day-delta site consumes — both cumulative folds, the
+     *      commitment twin, and the payment path — so the ladder can never
+     *      diverge between pricing, reporting and paying.
+     *
+     *      The ladder governs only DELIBERATELY-ZEROED days (the marker
+     *      exists only on armed mirror days), and its states BYPASS the
+     *      blanket armed-mirror halt in {_dayPoolHalves} deliberately:
+     *      they are the per-day replacements §2.1 defines, and each is
+     *      individually safe against the halt's two standing
+     *      prerequisites. Prerequisite 1 (no delivered-funding bound on
+     *      mirror fresh) is satisfied by the FUNDING GATE below: the
+     *      compensated arm crosses only once the side's delivered pool
+     *      covers the side's own quoted sum, keyed on the AMOUNT present
+     *      (the standing constraint in {_dayPoolHalves}'s natspec), never
+     *      on a message arrival. Prerequisite 2 (zero-retirement of
+     *      compensable entries) is exactly what the defer arm prevents,
+     *      while the w4 lapse terminal is the deliberate reopening.
+     *      Unflagged armed mirror days keep the blanket halt unchanged
+     *      until P1-b.
+     *
+     *      Crossing is LOAD-BEARING for both payment paths at once: the
+     *      cum fold writes this day's row, and `_rpnReady` (walk) plus the
+     *      cursor gate in {_entryPriceCore} (bulk window pricing of
+     *      spanning entries) both key on the cursor having crossed. So the
+     *      gate here is THE delivered-value bound for the day — by the
+     *      time any entry can price a compensated day, its side pool
+     *      covers that side's entire quoted liability, and no per-day
+     *      debit is needed downstream. The pools in {DayCompensation} are
+     *      therefore a funding RECORD, not a draining remainder.
+     *
+     *      States (precedence order):
+     *        - lapsed            → (0, 0) no halt: the day retires at zero
+     *                              through the ordinary machinery — the
+     *                              loss was recorded at the lapse (w4).
+     *        - shortLapsed OR
+     *          compensated       → funded ⇒ (Δq, 0) no halt,
+     *                              `compensated = true`: §1.5's
+     *                              local-denominator pricing, funded by
+     *                              the delivered pool. Underfunded ⇒
+     *                              DEFER: the w2 manual remit is
+     *                              once-per-day (`RemitDayAlreadyClosed`),
+     *                              so an underfunded day stays deferred
+     *                              until w4's supplemental remit or its
+     *                              short-lapse terminal resolves it — the
+     *                              gate mis-prices nothing in the interim.
+     *                              A crossed day can never un-fund
+     *                              (`_creditCompensation` only adds, and a
+     *                              confirmed credit no longer demotes). A
+     *                              PROVISIONAL credit does not price — the
+     *                              day defers until its V3 broadcast
+     *                              settles which era governs.
+     *                              (`dayShortLapsed` is unreachable until
+     *                              the w4 terminal ships its setter; w4
+     *                              owns the underfunded-terminal
+     *                              truncation refinement.)
+     *        - resolvedZero      → (0, 0) no halt: the genuinely-zero day
+     *                              prices zero — no entry accrued.
+     *        - zeroed-and-open   → DEFER (halt): compensation is still
+     *                              possible; the cursor waits before the
+     *                              day (the anti-zero-retirement gate).
+     *
+     *      A compensated day's Δq deliberately flows into ALL FOUR
+     *      cumulative series exactly like an ordinary armed day's delta —
+     *      including `cumMinArmed*`. Its only consumer is
+     *      {_entryWindowSplitFrom}'s decomposition, where excluding Δq
+     *      would misclassify the value as pre-`D*` legacy fresh: paid
+     *      outside the loan-side `C*` cap and without `consumeArmedFresh`
+     *      retirement, while `_creditCompensation` already counted the
+     *      delivered value into `rewardBudgetArmedFreshReceived` —
+     *      consumption must mirror that counting.
+     */
+    function _p2DayDeltas(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    )
+        private
+        view
+        returns (
+            bool governed,
+            uint256 freshDaily,
+            uint256 recycledDaily,
+            bool halt,
+            bool compensated
+        )
+    {
+        if (!s.dayDeliberatelyZeroed[d]) {
+            return (false, 0, 0, false, false);
+        }
+        if (s.dayLapsed[d]) return (true, 0, 0, false, false);
+        LibVaipakam.DayCompensation storage dc = s.dayCompensation[d];
+        if (s.dayShortLapsed[d] || (dc.compensated && !dc.provisional)) {
+            // #1636 r5 — the quoted sums are trustworthy ONLY once the
+            // quote DISPATCHED: dispatch is where the conservation proof
+            // runs, so an undispatched `compQuoteAccum18` is either a
+            // partial sum (mid-accumulation — comparing against it would
+            // open the gate below the real liability) or zero (a pre-w3
+            // compensated day, where a zero quote would declare ANY w2
+            // operator-sized remit "fully funded" and let settlement
+            // consume unrelated custody). Defer until the day's quote
+            // evidence is complete — permissionlessly healable on a
+            // pre-w3 day by running the accumulator + dispatch (the
+            // wire's Base-side fate is irrelevant to mirror pricing).
+            if (s.compQuoteSentAt[d] == 0) return (true, 0, 0, true, false);
+            // The funding gate: this side's delivered pool must cover this
+            // side's own quoted sum (the accumulator's capped Σ rawPay,
+            // complete by the dispatch-time conservation proof). Base's
+            // remit is quote-bounded above, so an exact-quote remit crosses
+            // exactly; a partial remit defers (w4's supplemental remit or
+            // short-lapse terminal resolves it — no supplement path exists
+            // before then, the manual remit being once-per-day).
+            (uint256 sidePool, uint256 sideQuoted) =
+                side == LibVaipakam.RewardSide.Lender
+                    ? (
+                        uint256(dc.lenderPool18),
+                        s.compQuoteAccum18[d][
+                            uint8(LibVaipakam.RewardSide.Lender)
+                        ]
+                    )
+                    : (
+                        uint256(dc.borrowerPool18),
+                        s.compQuoteAccum18[d][
+                            uint8(LibVaipakam.RewardSide.Borrower)
+                        ]
+                    );
+            if (sidePool < sideQuoted) return (true, 0, 0, true, false);
+            return (true, compQuoteDelta(s, side, d), 0, false, true);
+        }
+        if (s.dayResolvedZero[d]) return (true, 0, 0, false, false);
+        return (true, 0, 0, true, false);
+    }
+
+    /// @dev The per-day DAILY DELTAS, P2-ladder-aware — the shared
+    ///      derivation behind the folds, the commitment twin and the
+    ///      payment path. Ordinary days derive from {_dayPoolHalves} over
+    ///      the frozen global exactly as before; ladder-governed days
+    ///      return their state's deltas directly (Δq never goes through
+    ///      the halves/global shape: G_s is zero in exactly the
+    ///      constraint-17 case).
+    function _dayDeltas(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardSide side,
+        uint256 d
+    )
+        private
+        view
+        returns (
+            uint256 freshDaily,
+            uint256 recycledDaily,
+            bool halt,
+            bool compensated
+        )
+    {
+        {
+            (bool governed, uint256 fD, uint256 rD, bool h, bool comp) =
+                _p2DayDeltas(s, side, d);
+            if (governed) return (fD, rD, h, comp);
+        }
+        (uint256 freshHalf, uint256 recycledHalf, bool h2) =
+            _dayPoolHalves(s, side, d);
+        if (h2) return (0, 0, true, false);
+        uint256 globalTotal = side == LibVaipakam.RewardSide.Lender
+            ? s.knownGlobalLenderInterestNumeraire18[d]
+            : s.knownGlobalBorrowerInterestNumeraire18[d];
+        if (globalTotal == 0) return (0, 0, false, false);
+        if (freshHalf != 0) {
+            freshDaily = (freshHalf * 1e18) / globalTotal;
+        }
+        if (recycledHalf != 0) {
+            recycledDaily = (recycledHalf * 1e18) / globalTotal;
+        }
+    }
+
     /// @notice #1222 M3 B2-d1 — the day-`d` per-side RPN delta Δ_d computed
     ///         HALT-INDEPENDENTLY from this chain's OWN funding stamp, for the
     ///         mirror→Base commitment REPORT.
@@ -999,6 +1219,17 @@ library LibInteractionRewards {
         uint256 d
     ) internal view returns (uint256 delta, bool priceable) {
         if (!_isArmedDay(s, d)) return (0, false);
+        // #1434 P2-w3 lockstep — a ladder-governed (deliberately-zeroed)
+        // day reports its RESOLVED state's delta, matching what the claim
+        // path will pay: lapsed / resolved-zero report 0, a funded
+        // compensated day reports Δq, and an unresolved day is NOT
+        // priceable (a 0 report for a day later compensated at Δq would
+        // under-commit — the report must wait like the cursor does).
+        {
+            (bool governed, uint256 fD, uint256 rD, bool halted, ) =
+                _p2DayDeltas(s, side, d);
+            if (governed) return halted ? (0, false) : (fD + rD, true);
+        }
         LibVaipakam.ChainDayFunding storage f =
             s.chainDayRecycledFunding[d][uint32(block.chainid)];
         if (!f.stamped) return (0, false);
@@ -1039,20 +1270,17 @@ library LibInteractionRewards {
             cursor == 0 ? 0 : s.cumMinArmedLenderRpn18[cursor];
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
-            (uint256 freshHalf, uint256 recycledHalf, bool halt) =
-                _dayPoolHalves(s, LibVaipakam.RewardSide.Lender, d);
+            // #1434 P2-w3 — the per-day deltas come from the shared
+            // {_dayDeltas} ladder: ordinary days derive from the halves +
+            // frozen global exactly as before; ladder-governed
+            // (deliberately-zeroed) days price their resolved state
+            // directly, and an unresolved one halts here — which parks the
+            // cursor BEFORE the day, keeping `_rpnReady` and the
+            // {_entryPriceCore} cursor gate closed over it (the
+            // anti-zero-retirement gate).
+            (uint256 freshDaily, uint256 recycledDaily, bool halt, ) =
+                _dayDeltas(s, LibVaipakam.RewardSide.Lender, d);
             if (halt) break;
-            uint256 globalTotal = s.knownGlobalLenderInterestNumeraire18[d];
-            uint256 freshDaily;
-            uint256 recycledDaily;
-            if (globalTotal != 0) {
-                if (freshHalf != 0) {
-                    freshDaily = (freshHalf * 1e18) / globalTotal;
-                }
-                if (recycledHalf != 0) {
-                    recycledDaily = (recycledHalf * 1e18) / globalTotal;
-                }
-            }
             uint256 daily = freshDaily + recycledDaily; // Δ_d in RPN units
             uint256 next = prev + daily;
             s.cumLenderRpn18[d] = next;
@@ -1105,20 +1333,10 @@ library LibInteractionRewards {
             cursor == 0 ? 0 : s.cumMinArmedBorrowerRpn18[cursor];
         for (uint256 d = cursor + 1; d <= through; ) {
             if (!s.knownGlobalSet[d]) break;
-            (uint256 freshHalf, uint256 recycledHalf, bool halt) =
-                _dayPoolHalves(s, LibVaipakam.RewardSide.Borrower, d);
+            // #1434 P2-w3 — shared {_dayDeltas} ladder; see the lender fold.
+            (uint256 freshDaily, uint256 recycledDaily, bool halt, ) =
+                _dayDeltas(s, LibVaipakam.RewardSide.Borrower, d);
             if (halt) break;
-            uint256 globalTotal = s.knownGlobalBorrowerInterestNumeraire18[d];
-            uint256 freshDaily;
-            uint256 recycledDaily;
-            if (globalTotal != 0) {
-                if (freshHalf != 0) {
-                    freshDaily = (freshHalf * 1e18) / globalTotal;
-                }
-                if (recycledHalf != 0) {
-                    recycledDaily = (recycledHalf * 1e18) / globalTotal;
-                }
-            }
             uint256 daily = freshDaily + recycledDaily;
             uint256 next = prev + daily;
             s.cumBorrowerRpn18[d] = next;
@@ -3530,10 +3748,14 @@ library LibInteractionRewards {
         LibVaipakam.RewardEntry storage e,
         uint256 d
     ) private view returns (uint256) {
-        uint256 global = e.side == LibVaipakam.RewardSide.Lender
-            ? s.knownGlobalLenderInterestNumeraire18[d]
-            : s.knownGlobalBorrowerInterestNumeraire18[d];
-        if (global == 0) return 0;
+        // #1636 r1 P1 — price from the STORED row alone; no global-zero
+        // short-circuit. On an ordinary zero-global day the fold already
+        // wrote Δ_d = 0, so the row is zero and the old guard was
+        // redundant; on a compensated constraint-17 day (global == 0, row
+        // = Δq) the guard DISCARDED the materialized delta — the walk
+        // priced 0, `rawPay == 0` advanced terminally, and the entries
+        // retired unpaid while bulk window pricing could still pay from
+        // the same row. One row, one truth, both paths.
         return (e.perDayNumeraire18 * _uncappedDelta(s, e.side, d)) / 1e18;
     }
 
@@ -3650,19 +3872,13 @@ library LibInteractionRewards {
         view
         returns (uint256 freshDaily, uint256 recycledDaily, bool halt)
     {
-        (uint256 freshHalf, uint256 recycledHalf, bool h) =
-            _dayPoolHalves(s, side, d);
-        if (h) return (0, 0, true);
-        uint256 globalTotal = side == LibVaipakam.RewardSide.Lender
-            ? s.knownGlobalLenderInterestNumeraire18[d]
-            : s.knownGlobalBorrowerInterestNumeraire18[d];
-        if (globalTotal == 0) return (0, 0, false);
-        if (freshHalf != 0) {
-            freshDaily = (freshHalf * 1e18) / globalTotal;
-        }
-        if (recycledHalf != 0) {
-            recycledDaily = (recycledHalf * 1e18) / globalTotal;
-        }
+        // #1434 P2-w3 — one derivation with the cumulative accumulator BY
+        // CONSTRUCTION now: both read {_dayDeltas}, so a ladder-governed
+        // (compensated) day decomposes here exactly as the fold stored it —
+        // Δq as fresh, zero recycled. The `compensated` flag is discarded
+        // deliberately: past the fold's funding gate the day pays through
+        // the ordinary armed-fresh machinery with no special-casing.
+        (freshDaily, recycledDaily, halt, ) = _dayDeltas(s, side, d);
     }
 
     /// @dev Attribute one leg's VPFI total to its funding sources using the

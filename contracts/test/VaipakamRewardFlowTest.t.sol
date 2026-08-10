@@ -111,6 +111,30 @@ contract MockRewardDiamond {
         return lastV3Stored;
     }
 
+    // #1434 P2-w3 — compensation-quote ingress spy (the production
+    // diamond's `RewardCommitmentFacet.onCompQuoteReceived`).
+    uint32 public lastQuoteSrcChain;
+    uint256 public lastQuoteDay;
+    uint256 public lastQuoteLender;
+    uint256 public lastQuoteBorrower;
+    address public lastQuoteEra;
+    uint256 public quoteCount;
+
+    function onCompQuoteReceived(
+        uint32 srcChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address sourceEra
+    ) external {
+        lastQuoteSrcChain = srcChainId;
+        lastQuoteDay = dayId;
+        lastQuoteLender = quotedLender18;
+        lastQuoteBorrower = quotedBorrower18;
+        lastQuoteEra = sourceEra;
+        ++quoteCount;
+    }
+
     // T-087 Sub 2.C — mirror-side tier ingress capture. The mock simply
     // records the most-recent call so tests can assert the messenger
     // forwarded the right args; the production Diamond's
@@ -484,6 +508,10 @@ contract VaipakamRewardFlowTest is Test {
     /// #1222 M3 B1 — a five-word report is neither the legacy nor the current
     /// shape: rejected as a padded/truncated packet.
     function test_Report_FiveWordShape_Rejected() public {
+        // 5 words is now a VALID union length (#1434 P2-w3 claimed it for
+        // the comp quote), so a padded REPORT reaches its own per-kind
+        // check and is rejected there — the kind tag disambiguates, never
+        // the length.
         bytes memory padded = abi.encode(
             REPORT, uint256(42), uint256(1 ether), uint256(1 ether), uint256(1 ether)
         );
@@ -492,7 +520,7 @@ contract VaipakamRewardFlowTest is Test {
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
                 uint256(5 * 32),
-                uint256(6 * 32)
+                uint256(8 * 32)
             )
         );
         rewardBase.onCrossChainMessage(
@@ -708,7 +736,9 @@ contract VaipakamRewardFlowTest is Test {
             finalizedAt: 1_700_000_000,
             lapseScheduleVersion: 2,
             lapseWindowSeconds: 7 days,
-            dispatchCutoffGap: 24 hours
+            dispatchCutoffGap: 24 hours,
+            dayScheduleFloorHalf: 20e18,
+            dayRecycledBudgetHalf: 10e18
         });
     }
 
@@ -877,6 +907,62 @@ contract VaipakamRewardFlowTest is Test {
         rewardMirror.sendChainReport{value: fee}(1, 0, 0, 0, 0, payable(owner));
     }
 
+    /// @dev #1434 P2-w3 — the quote send is Diamond-only like every other
+    ///      mirror-side dispatch (the Diamond enforces the zeroed-day +
+    ///      completeness preconditions).
+    function test_SendCompQuote_RevertWhen_NotDiamond() public {
+        vm.deal(address(this), 1 ether);
+        vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
+        rewardMirror.sendCompQuote{value: fee}(1, 0, 0, payable(owner));
+    }
+
+    /// @dev #1434 P2-w3 — kind 11 end to end: mirror dispatch → CCIP →
+    ///      Base messenger → the diamond's comp-quote ingress, args intact.
+    function test_CompQuote_FullFlow_MirrorToBase() public {
+        vm.prank(address(diamondMirror));
+        rewardMirror.sendCompQuote{value: fee}(
+            42, 5e18, 2e18, payable(address(diamondMirror))
+        );
+        assertEq(router.pendingCount(), 1, "quote captured");
+
+        router.deliver(0, SEL_MIRROR);
+
+        assertEq(diamondBase.quoteCount(), 1, "Base ingress fired");
+        assertEq(
+            uint256(diamondBase.lastQuoteSrcChain()),
+            MIRROR,
+            "source chain preserved"
+        );
+        assertEq(diamondBase.lastQuoteDay(), 42, "day");
+        assertEq(diamondBase.lastQuoteLender(), 5e18, "lender quote");
+        assertEq(diamondBase.lastQuoteBorrower(), 2e18, "borrower quote");
+        // #1636 r1 — the messenger stamped its own paired diamond as the
+        // era word.
+        assertEq(
+            diamondBase.lastQuoteEra(),
+            address(diamondMirror),
+            "sending-era stamp"
+        );
+    }
+
+    /// @dev #1434 P2-w3 — a quote-kind payload delivered to a MIRROR
+    ///      instance is refused (canonical-only, like every mirror→Base
+    ///      kind).
+    function test_Receive_RevertWhen_CompQuoteOnMirror() public {
+        vm.prank(address(messengerMirror));
+        vm.expectRevert(VaipakamRewardMessenger.ReportOnMirror.selector);
+        rewardMirror.onCrossChainMessage(
+            BASE,
+            address(rewardBase),
+            // 5 words (#1636 r1 era word) so the size pin passes and the
+            // canonical-only check is what fires.
+            abi.encode(
+                uint8(11), uint256(1), uint256(0), uint256(0), address(0)
+            ),
+            _empty()
+        );
+    }
+
     function test_BroadcastGlobal_RevertWhen_NotDiamond() public {
         vm.deal(address(this), 1 ether);
         vm.expectRevert(VaipakamRewardMessenger.OnlyDiamond.selector);
@@ -950,19 +1036,20 @@ contract VaipakamRewardFlowTest is Test {
     }
 
     function test_Receive_RevertWhen_UnknownMessageType() public {
-        // Kind 11 is the lowest unassigned kind (9 became the repatriation
-        // cancel in #1568 C2, 10 the V3 broadcast in #1434 P2-w1 — this
-        // test must track the next free constant).
+        // Kind 12 is the lowest unassigned kind (9 became the repatriation
+        // cancel in #1568 C2, 10 the V3 broadcast in #1434 P2-w1, 11 the
+        // compensation quote in #1434 P2-w3 — this test must track the
+        // next free constant).
         vm.prank(address(messengerBase));
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaipakamRewardMessenger.UnknownMessageType.selector, uint8(11)
+                VaipakamRewardMessenger.UnknownMessageType.selector, uint8(12)
             )
         );
         rewardBase.onCrossChainMessage(
             MIRROR,
             address(rewardMirror),
-            abi.encode(uint8(11), uint256(1), uint256(0), uint256(0)),
+            abi.encode(uint8(12), uint256(1), uint256(0), uint256(0)),
             _empty()
         );
     }
@@ -972,6 +1059,10 @@ contract VaipakamRewardFlowTest is Test {
     function test_Quotes() public view {
         assertEq(
             rewardMirror.quoteSendChainReport(1, 0, 0, 0, 0), fee, "report quote"
+        );
+        // #1434 P2-w3 — the compensation-quote dispatch fee.
+        assertEq(
+            rewardMirror.quoteSendCompQuote(1, 0, 0), fee, "comp-quote fee"
         );
         // Codex #1413 r2 — the legacy three-argument quote overload stays
         // callable for old-ABI callers during the rollout window.
@@ -1159,23 +1250,31 @@ contract VaipakamRewardFlowTest is Test {
     }
 
     function test_Receive_RevertOnInvalidSize() public {
-        // A 5-word payload — not in the accepted union {2, 3, 4, 6, 8, 15,
-        // 21}. The outer size gate catches it before decode. (This test
-        // used a 3-word payload until #1568 C2 claimed 3 words for the
-        // repatriation cancel; #1434 P2-w1 claimed 21 for the V3
+        // A 7-word payload — not in the accepted union {2, 3, 4, 5, 6, 8,
+        // 15, 21}. The outer size gate catches it before decode. (This
+        // test used a 3-word payload until #1568 C2 claimed 3 words for
+        // the repatriation cancel, then a 5-word one until #1434 P2-w3
+        // claimed 5 for the comp quote; #1434 P2-w1 claimed 21 for the V3
         // broadcast.)
-        bytes memory fiveWords =
-            abi.encode(REPORT, uint256(1), uint256(2), uint256(3), uint256(4));
+        bytes memory sevenWords = abi.encode(
+            REPORT,
+            uint256(1),
+            uint256(2),
+            uint256(3),
+            uint256(4),
+            uint256(5),
+            uint256(6)
+        );
         vm.prank(address(messengerMirror));
         vm.expectRevert(
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
-                fiveWords.length,
+                sevenWords.length,
                 uint256(6 * 32)
             )
         );
         rewardMirror.onCrossChainMessage(
-            BASE, address(rewardBase), fiveWords, _empty()
+            BASE, address(rewardBase), sevenWords, _empty()
         );
     }
 

@@ -65,6 +65,32 @@ struct RewardBroadcastV3 {
     // The sending deployment's identity (§2h constraint 20 era binding),
     // stamped by the messenger from its own Diamond binding.
     address baseDeployment;
+    // #1636 r2 — the DAY-LEVEL funded pool halves frozen at finalization
+    // (Base's `dayPoolStamp` figures). The Δq quote numerator: a zeroed
+    // destination's own per-chain slice is deliberately zero, so the
+    // day-level figure must travel — the V2 wire never carried it (only
+    // the legacy kind-2 did), which left mirror-side quoting unreachable
+    // on the V3 production path.
+    uint256 dayScheduleFloorHalf;
+    uint256 dayRecycledBudgetHalf;
+}
+
+/// @notice #1434 P2-w3 — Base-side Diamond ingress for an inbound mirror
+///         compensation QUOTE (`RewardCommitmentFacet.onCompQuoteReceived`):
+///         the zeroed chain's authenticated per-side counterfactual fair
+///         share — evidence the manual compensation dispatch is bounded by.
+interface ICompQuoteIngress {
+    function onCompQuoteReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        // #1636 r1 — the sending mirror Diamond, stamped by the messenger
+        // from its own binding (the reciprocal of `baseDeployment` above):
+        // Base binds the standing quote to it and rejects divergent
+        // re-deliveries.
+        address sourceEra
+    ) external;
 }
 
 /// @notice #1434 P2-w1 — mirror-side Diamond ingress for an inbound V3
@@ -410,6 +436,10 @@ interface IRewardMessenger {
         uint32 lapseScheduleVersion;
         uint64 lapseWindowSeconds;
         uint64 dispatchCutoffGap;
+        // #1636 r2 — day-level funded pool halves (the Δq numerator
+        // transport; see {RewardBroadcastV3}).
+        uint256 dayScheduleFloorHalf;
+        uint256 dayRecycledBudgetHalf;
     }
 
     /// @notice One destination's V3 figures: the V2 per-destination fields
@@ -460,5 +490,25 @@ interface IRewardMessenger {
         BroadcastV2Shared calldata shared,
         BroadcastV3Extras calldata extras,
         BroadcastV3PerDest calldata dest
+    ) external view returns (uint256 nativeFee);
+
+    // ─── #1434 P2-w3 — mirror → Base compensation quote (kind 11) ───────────
+
+    /// @notice Send a mirror's zeroed-day compensation QUOTE to Base
+    ///         (§1.4): the authenticated per-side counterfactual fair
+    ///         share — evidence bounding the manual compensation, never
+    ///         funding. Diamond-only; re-sendable idempotently.
+    function sendCompQuote(
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+
+    /// @notice Quote the native CCIP fee for a {sendCompQuote}.
+    function quoteSendCompQuote(
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
     ) external view returns (uint256 nativeFee);
 }

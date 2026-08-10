@@ -1797,16 +1797,23 @@ contract RewardAggregatorFacet is
 
     /// @dev #1434 P2-w1 — the day's frozen clock facts, read back verbatim
     ///      from the finalization-time freeze (never recomputed — R2a).
+    ///      #1636 r2 — plus the day-level funded pool halves from the same
+    ///      freeze (`dayPoolStamp`, written by finalize): the Δq quote
+    ///      numerator, which a zeroed destination cannot derive from its
+    ///      own deliberately-zero slice.
     function _dayExtras(
         LibVaipakam.Storage storage s,
         uint256 dayId
     ) private view returns (IRewardMessenger.BroadcastV3Extras memory) {
         LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
+        LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[dayId];
         return IRewardMessenger.BroadcastV3Extras({
             finalizedAt: c.finalizedAt,
             lapseScheduleVersion: c.scheduleVersion,
             lapseWindowSeconds: c.lapseWindowSeconds,
-            dispatchCutoffGap: c.dispatchCutoffGap
+            dispatchCutoffGap: c.dispatchCutoffGap,
+            dayScheduleFloorHalf: uint256(p.scheduleFloor) / 2,
+            dayRecycledBudgetHalf: uint256(p.recycledBudget) / 2
         });
     }
 

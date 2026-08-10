@@ -90,6 +90,12 @@ contract RewardRemitLedgerTest is SetupTest {
         chainIds[2] = CHAIN_OP;
         RewardAggregatorFacet(address(diamond)).setExpectedSourceChainIds(chainIds);
 
+        // #1636 r2 — the quote ingress is FAIL-CLOSED until the mirror era
+        // is registered; the mock stamps itself as the sending diamond.
+        RewardCommitmentFacet(address(diamond)).setMirrorRewardDeployment(
+            CHAIN_ARB, address(rewardMessenger)
+        );
+
         vm.deal(address(this), 10 ether);
         vm.deal(stranger, 10 ether);
     }
@@ -610,6 +616,8 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Manual_FundsThroughTheLedger() public {
         _finalizeDay(1);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        // #1434 P2-w3 — the standing mirror quote the funding is bounded by.
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
 
         // #1434 P2-w2 — the manual path is sized PER SIDE on the wire.
         uint256 amount = 5e18;
@@ -686,6 +694,179 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
+    /// @dev #1434 P2-w3 — funding is EVIDENCE-BOUNDED (§1.4): no standing
+    ///      mirror quote, no manual compensation.
+    function test_Manual_RequiresStandingQuote() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationNotQuoted.selector, 1, CHAIN_ARB
+            )
+        );
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+    }
+
+    /// @dev #1434 P2-w3 — each side is bounded SEPARATELY by the standing
+    ///      quote (§2.5: an aggregate bound admits overfunding one side
+    ///      while shorting the other). Under-quote per side is allowed —
+    ///      partial funding defers on the mirror until w4's supplemental /
+    ///      short-lapse terminal resolves it.
+    function test_Manual_BoundedPerSideByQuote() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+
+        // Aggregate below the quoted sum, but the LENDER side over its
+        // bound — must still refuse.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationExceedsQuote.selector,
+                4e18,
+                1e18,
+                3e18,
+                2e18
+            )
+        );
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 4e18, 1e18);
+
+        // Borrower side over its bound.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationExceedsQuote.selector,
+                1e18,
+                4e18,
+                3e18,
+                2e18
+            )
+        );
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 4e18);
+
+        // Per-side under-quote is allowed.
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+    }
+
+    /// @dev #1636 r4 — a resolved-zero standing quote is TERMINAL: its
+    ///      (0,0) ingress retired the day's manual-funding anchor, so the
+    ///      era-rotation clear refuses it (deleting would strand the
+    ///      chain-day outside every admission path, and any era's
+    ///      re-quote is deterministically (0,0) again).
+    function test_Quote_ResolvedZeroRecordRefusesClear() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        RewardCommitmentFacet com = RewardCommitmentFacet(address(diamond));
+
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 0, 0);
+        assertFalse(
+            com.getChainDayCommitments(1, CHAIN_ARB).remitIneligible,
+            "zero quote retired the funding anchor"
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteResolvedZeroFinal.selector,
+                1,
+                CHAIN_ARB
+            )
+        );
+        com.clearCompQuote(1, CHAIN_ARB);
+    }
+
+    /// @dev #1636 r1+r2 — the full two-layer era lifecycle: the FAIL-CLOSED
+    ///      registry ground truth authenticates every arrival (including
+    ///      the first), the standing-quote binding protects evidence
+    ///      across a registry rotation, the ADMIN clear releases a stale
+    ///      binding, and a funded day rejects both re-quote and clear.
+    function test_Quote_EraBindingAndClear() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        RewardCommitmentFacet com = RewardCommitmentFacet(address(diamond));
+        address eraA = makeAddr("mirrorDiamondA");
+        address eraB = makeAddr("mirrorDiamondB");
+
+        // LAYER 1 — registry ground truth. Unset (fail-closed): even a
+        // FIRST arrival is refused, so a delayed retired-era wire can
+        // never bind unchallenged.
+        com.setMirrorRewardDeployment(CHAIN_ARB, address(0));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteMirrorEraUnset.selector, CHAIN_ARB
+            )
+        );
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraA);
+
+        // Registered era A: A's quote lands; same-era re-delivery
+        // refreshes (the honest lost-message retry).
+        com.setMirrorRewardDeployment(CHAIN_ARB, eraA);
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraA);
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 4e18, 2e18, eraA);
+        LibVaipakam.CompQuote memory q = com.getCompQuote(1, CHAIN_ARB);
+        assertEq(q.lender18, 4e18, "same-era refresh applied");
+        assertEq(q.era, eraA, "bound era recorded");
+
+        // A non-registered era is refused by the ground truth.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteEraMismatch.selector,
+                1,
+                CHAIN_ARB,
+                eraA,
+                eraB
+            )
+        );
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 9e18, 9e18, eraB);
+
+        // LAYER 2 — the rotation ceremony: registry moves to B, but the
+        // STANDING quote is still bound to A — B's wire diverges from the
+        // record until the operator clears it deliberately.
+        com.setMirrorRewardDeployment(CHAIN_ARB, eraB);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteEraMismatch.selector,
+                1,
+                CHAIN_ARB,
+                eraA,
+                eraB
+            )
+        );
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
+        // #1636 r5 — the FUNDING path holds the same ground truth: the
+        // retired era's standing quote must not fund the current mirror
+        // during the rotation window (expected = eraB, standing = eraA).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteEraMismatch.selector,
+                1,
+                CHAIN_ARB,
+                eraB,
+                eraA
+            )
+        );
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        com.clearCompQuote(1, CHAIN_ARB);
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
+        assertEq(com.getCompQuote(1, CHAIN_ARB).era, eraB, "re-bound");
+
+        // Fund the day — both re-quote and clear are now rejected: the
+        // quote standing at dispatch is the receipt-bound obligation.
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteDayAlreadyFunded.selector,
+                1,
+                CHAIN_ARB
+            )
+        );
+        rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteDayAlreadyFunded.selector,
+                1,
+                CHAIN_ARB
+            )
+        );
+        com.clearCompQuote(1, CHAIN_ARB);
+    }
+
     /// @dev #1634 r2 — a clockless day cannot dispatch a P2 compensation:
     ///      it can never emit the settling V3 broadcast (the V2-permanent
     ///      fallback), so the mirror credit would sit provisional forever.
@@ -719,6 +900,9 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
 
         uint256 expiry = uint256(frozenAt) + 7 days;
+        // #1434 P2-w3 — quote first, so the boundary probe below reaches
+        // the cutoff gate (which runs before the quote gate).
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         // One second INSIDE the cutoff window.
         vm.warp(expiry - 24 hours + 1);
         vm.expectRevert(
@@ -755,6 +939,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         vm.warp(block.timestamp + 3 days);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
 
         (
