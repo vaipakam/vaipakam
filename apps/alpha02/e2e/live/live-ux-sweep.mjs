@@ -18,6 +18,9 @@
  * they are judgements a reviewer makes from the artifacts. A route that
  * never loaded is not a judgement: there is no artifact to read, and a
  * PASS row in the batch would claim coverage the run does not have.
+ * "Never loaded" covers both a thrown navigation AND a document served
+ * with a 4xx/5xx — the second resolves normally in Playwright and would
+ * otherwise be counted as a clean visit.
  *
  * Timeouts count, and that was argued. The case against: a 45 s budget
  * against a live testnet makes some timeouts environmental, and turning
@@ -533,14 +536,36 @@ for (const pass of session.passes) {
     const started = Date.now();
     routesAttempted += 1;
     let navError = null;
+    let httpStatus = null;
     try {
-      await page.goto(`${SITE}${route}`, { waitUntil: 'load', timeout: 45_000 });
+      const resp = await page.goto(`${SITE}${route}`, { waitUntil: 'load', timeout: 45_000 });
+      httpStatus = resp?.status() ?? null;
       // Let data views settle: brief idle wait, tolerant of the polls.
       await page.waitForLoadState('networkidle', { timeout: 12_000 }).catch(() => {});
       await page.waitForTimeout(1_500);
     } catch (e) {
       navError = String(e).slice(0, 300);
     }
+    // A THROW is not the only way a route can fail to load: `page.goto`
+    // RESOLVES for an HTTP error document, so a 404 from a broken route
+    // or a 502 from the CDN would otherwise be recorded as a clean visit
+    // and counted toward the "loaded" tally (Codex #1648 r1 P1 — the
+    // shared `visit()` helper has always made this distinction).
+    //
+    // Kept SEPARATE from `navError` rather than folded into it, because
+    // the two differ in what evidence survives: a throw may leave the
+    // PREVIOUS page on screen, so its artifacts must be nulled, whereas
+    // an error document IS the page and its screenshot is exactly what a
+    // reviewer needs. Both count as "did not load".
+    //
+    // No false positive on `/definitely-not-a-page`: alpha02's Worker
+    // runs `not_found_handling: "single-page-application"`, so an
+    // unknown path serves index.html with a 200 and the app's own
+    // NotFound surface renders under it.
+    const httpError =
+      navError === null && typeof httpStatus === 'number' && httpStatus >= 400
+        ? `HTTP ${httpStatus}`
+        : null;
     const loadMs = Date.now() - started;
     // A failed navigation may never have committed — the previous
     // route would still be loaded, so screenshot/landmarks/devtools
@@ -587,19 +612,21 @@ for (const pass of session.passes) {
       shotError,
       loadMs,
       navError,
+      httpStatus,
+      httpError,
       landmarks,
       devtools,
       console: sink.console,
       pageErrors: sink.pageErrors,
       network: sink.network,
     });
-    if (navError !== null) {
+    if (navError !== null || httpError !== null) {
       allNavFailures.push({
         session: session.key,
         pass: pass.name,
         route,
         loadMs,
-        error: navError,
+        error: navError ?? `${httpError} — the route served an error document`,
       });
     }
     // eslint-disable-next-line no-console
@@ -610,8 +637,11 @@ for (const pass of session.passes) {
         // Say it HERE too, not only in the end-of-run tally. A failed
         // route otherwise reads as a fast, quiet, clean visit in the
         // live stream — "18ms, 0 responses, 0 errors" — which is the
-        // opposite of what happened.
-        (navError === null ? '' : ' — DID NOT LOAD'),
+        // opposite of what happened. An HTTP error document reads even
+        // more innocently: it is a fast, fully-successful-looking visit.
+        (navError === null && httpError === null
+          ? ''
+          : ` — DID NOT LOAD${httpError === null ? '' : ` (${httpError})`}`),
     );
     sink = null;
   }
@@ -685,9 +715,10 @@ if (allBlockedRequests.length > 0 || allNavFailures.length > 0) {
     // eslint-disable-next-line no-console
     console.error(
       `NAVIGATION FAILURES: ${allNavFailures.length} of ${routesAttempted} route visit(s)` +
-        ` never loaded — see navigationFailures in the report. Those routes have NO` +
-        ` screenshot, landmarks or devtools evidence, so the sweep cannot claim to have` +
-        ` covered them.`,
+        ` never loaded — see navigationFailures in the report. A thrown navigation` +
+        ` leaves NO screenshot, landmarks or devtools evidence at all; an HTTP error` +
+        ` document leaves evidence OF THE ERROR PAGE. Either way the surface itself` +
+        ` went unreviewed, so the sweep cannot claim to have covered it.`,
     );
   }
   process.exit(1);

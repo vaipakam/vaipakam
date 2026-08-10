@@ -22,6 +22,18 @@ and exits with the failure code if the count is non-zero. It still
 carries on to the remaining routes after one fails — stopping at the
 first bad route would throw away the evidence the sweep exists to gather.
 
+"Never loaded" covers two shapes, not one. The obvious case is a
+navigation that throws — a timeout, a refused connection. The one that
+would have slipped through is a route whose document comes back with a
+404 or a 502: the browser reports that as a perfectly successful
+navigation, so it would have been counted among the loaded routes and
+shown up in the log as a fast, quiet, clean visit. Both now count. They
+are tracked separately behind the scenes because they differ in what
+evidence survives — a thrown navigation may leave the previous page on
+screen, so its screenshot is deliberately discarded, whereas an error
+document is a real page worth capturing — but either way the surface the
+sweep was asked to review went unreviewed.
+
 Two choices are worth recording. The failure is reported as FAIL rather
 than BLOCKED, and is checked before the session-setup branch, on the same
 precedence the read-only violation already follows: something the run
