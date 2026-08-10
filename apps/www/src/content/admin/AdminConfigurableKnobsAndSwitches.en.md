@@ -553,7 +553,7 @@ asset, protocol seizes the borrower's collateral at a per-tier
 discount and delivers it to a liquidator-supplied recipient (typically
 funded via a same-tx flash-loan from Aave V3 `flashLoanSimple` or
 Balancer V2 `flashLoan`). See
-[`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) for
+[`docs/ops/FlashLoanLiquidatorRollout.md`](https://github.com/vaipakam/vaipakam/blob/main/docs/ops/FlashLoanLiquidatorRollout.md) for
 the per-chain operational rollout.
 
 ### Master kill-switch — `discountPathEnabled`
