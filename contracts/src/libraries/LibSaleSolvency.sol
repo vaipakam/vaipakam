@@ -35,7 +35,7 @@ import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
  *         OR requiring compatibility with current parameters; this takes the
  *         latter, which needs no new consent surface.
  *
- *         The logic itself lives on `RiskFacet.saleAdmission` — it owns the
+ *         The logic itself lives on `RiskPreviewFacet.saleAdmission` — it owns the
  *         health factor and every parameter consulted, and both calling
  *         facets were already at the EIP-170 ceiling. This library is only
  *         the mapping from that classification onto the errors, which stay
