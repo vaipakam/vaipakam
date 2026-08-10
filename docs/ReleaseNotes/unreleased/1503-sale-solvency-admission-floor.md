@@ -47,18 +47,43 @@ from the revert; the contract-side guard holds either way. It is deliberately no
 re-checked at sale completion, where a refusal would strand a buyer whose
 principal has already settled — the same reasoning the maturity gate follows.
 
-Positions whose legs are not price-discoverable are currently passed through
-this check rather than judged by it: a health factor is a ratio of priced
-values, so there is no floor to measure. The intent was that they stay governed
-by the explicit both-parties-consent regime for illiquid assets — but that
-regime's enforcement is behind a switch that is off by default, so on a default
-deployment such a position is in practice admitted without a loan-specific
-consent. The design reserves the choice between excluding illiquid-leg loans
-from both sale paths and admitting them on that standing consent, and it is not
-settled here; treat this release as not yet closing the unpriceable case. The guard fails closed in
-the other direction — if a position claims to be priceable but the oracle
-cannot price it, the sale is refused rather than admitted against an
-unverifiable figure.
+Positions whose legs are not price-discoverable now get an answer of their own
+rather than a free pass. Previously they were waved through this check on the
+reasoning that a health factor is a ratio of priced values, so there was no
+floor to measure, and that the platform's separate consent regime for illiquid
+assets would govern them. That regime's enforcement sits behind a switch that is
+off by default, so on a default deployment the practical effect was that an
+unpriceable — in the worst case worthless — position could be handed to whoever
+had authored a standing offer, with no loan-specific or pair-level agreement
+anywhere in the flow.
+
+Two things changed together, and neither would have been safe alone. Liquidity
+is now judged **as of the sale** instead of being read from the record written
+when the loan was opened, which is never refreshed: a market that had degraded
+since origination previously let a position be sold on the strength of prices
+the platform no longer accepts, without ever being recognised as unpriceable.
+Fixing only that would have routed *more* positions into the pass-through, so
+the pass-through is gone: where a leg cannot be measured and no consent regime
+is in force, the sale is now refused. Where progressive risk access is enabled,
+the buyer's own risk-access gate governs instead — the mechanism the platform
+already specifies for illiquid-backed pairs, which is the one surface that can
+express an informed acknowledgement.
+
+A leg counts as measurable only when the live determination and the loan's own
+record agree. That is not belt-and-braces: the record is what decides whether
+risk arithmetic runs for a loan at all, so a position recorded as illiquid has
+no health factor to compare regardless of what its market has since done, and
+consulting only the live value would surface an opaque internal failure from the
+health calculation where the honest answer is that the position is unpriceable.
+
+A refusal says which leg is not priceable and carries no figures, because there
+is no measurement to report. The buyer-facing preview reports the same case as a
+plain block rather than as a health shortfall — the platform should never show a
+health figure for a position that has none.
+
+The guard fails closed in the other direction too — if a position claims to be
+priceable but the oracle cannot price it, the sale is refused rather than
+admitted against an unverifiable figure.
 
 Where that failed price read is concerned, the two surfaces now also agree on
 the stated reason, not just on the refusal. Previously the buyer-facing preview

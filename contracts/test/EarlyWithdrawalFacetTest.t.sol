@@ -3605,29 +3605,151 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
-    /// @dev Documented carve-out: Health Factor is a ratio of oracle-priced
-    ///      values, so an illiquid leg has no floor to measure against —
-    ///      `calculateHealthFactor` reverts for those. Illiquid positions stay
-    ///      governed by the explicit both-parties-consent regime; the guard
-    ///      must step aside rather than refuse every illiquid sale.
-    function test_sale_illiquidPositionIsOutOfScopeForTheFloor() public {
-        // Collateral goes illiquid AND worthless — the shape that would fail
-        // the floor hardest if the floor applied to it.
-        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        ld.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
-        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+    // ─── Unpriceable legs (#1655) ───────────────────────────────────────────
+    //
+    // Liquidity is read LIVE for sale admission, never from the loan's
+    // origination snapshot, and an unpriceable leg is REFUSED unless the
+    // progressive-risk-access consent regime is in force to admit it. The four
+    // tests below pin both axes independently: which source is consulted
+    // (live vs snapshot, in each direction), and what the answer is on each
+    // side of the master switch.
+
+    /// @dev The silently-admitting case `LenderEarlyWithdrawalUXDesign.md`
+    ///      717-736 rejects. On a default deployment `riskAccessGateEnabled` is
+    ///      off, so `_assertBuyerRiskAccess` returns without checking anything —
+    ///      leaving NO consent gate on the direct sale. An unpriceable, here
+    ///      near-worthless, position must not be assignable to a generic
+    ///      standing offer against a figure nobody can compute.
+    function test_sale_refusedWhenCollateralLegIsCurrentlyUnpriceable() public {
+        assertFalse(
+            ConfigFacet(address(diamond)).getRiskAccessGateEnabled(),
+            "fixture must run on the DEFAULT deployment shape (gate off)"
+        );
+        // Live classification degrades; the loan's own snapshot is untouched
+        // and still says Liquid, so only a live read can see this.
+        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
         mockPrice(mockCollateralERC20, 0.01e8, 8);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleLegUnpriceable.selector,
+                activeLoanId,
+                uint8(0) // collateral leg
+            )
+        );
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
-        assertEq(
-            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
-            newLender,
-            "illiquid positions are out of the floor's scope, not blocked by it"
+    }
+
+    /// @dev The principal leg is judged too, and names itself — `which == 1`.
+    ///      A test that only covered collateral would pass against code that
+    ///      checked one leg twice.
+    function test_sale_refusedWhenPrincipalLegIsCurrentlyUnpriceable() public {
+        mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleLegUnpriceable.selector,
+                activeLoanId,
+                uint8(1) // principal leg
+            )
         );
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The staleness half of #1655, in the direction that used to let a
+    ///      sale through. `Loan.collateralLiquidity` is written once at
+    ///      origination and never refreshed, so a loan whose market has since
+    ///      degraded still reads `Liquid`. Reading the snapshot would clear
+    ///      every check below against prices the protocol no longer accepts
+    ///      and never reach the illiquid branch at all. This fixture makes the
+    ///      snapshot say Liquid EXPLICITLY, so it fails if the source reverts
+    ///      to the snapshot.
+    function test_sale_staleLiquidSnapshotDoesNotAdmitADegradedMarket() public {
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        ld.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).collateralLiquidity),
+            uint8(LibVaipakam.LiquidityStatus.Liquid),
+            "fixture's whole point: the SNAPSHOT still says Liquid"
+        );
+
+        // The market underneath it has degraded.
+        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleLegUnpriceable.selector,
+                activeLoanId,
+                uint8(0)
+            )
+        );
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The mirror direction, and the reason the snapshot is still read.
+    ///      `RiskFacet.calculateHealthFactor` gates on the SNAPSHOT and reverts
+    ///      `IlliquidLoanNoRiskMath`, so a loan carrying an illiquid snapshot
+    ///      has no health factor to compare no matter how liquid its market is
+    ///      today — it is genuinely unmeasurable, not merely stale. What this
+    ///      pins is that the refusal is the HONEST one: `SaleLegUnpriceable`,
+    ///      naming the leg, rather than the opaque `IlliquidLoanNoRiskMath` a
+    ///      live-only rule would surface by walking into the health read.
+    function test_sale_staleIlliquidSnapshotRefusesHonestlyNotOpaquely() public {
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+        // The live reading stays Liquid (set in setUp), so the snapshot is the
+        // only thing objecting — and it objects for a reason that matters.
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleLegUnpriceable.selector,
+                activeLoanId,
+                uint8(0)
+            )
+        );
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev With progressive risk access ENABLED the consent regime the spec
+    ///      mandates for illiquid-backed positions is in force
+    ///      (`ProjectDetailsREADME` §320 — the incoming buyer is gated against
+    ///      the assets of the loan being sold), so this classifier steps aside
+    ///      and lets that gate decide rather than refusing outright. Asserts
+    ///      the classifier's own answer, because the buyer here is default-tier
+    ///      and the risk gate refuses them for its OWN reason — proving the
+    ///      classifier no longer returns code 6 would be invisible from the
+    ///      revert alone.
+    function test_saleAdmission_unpriceableDefersToConsentRegimeWhenGateEnabled() public {
+        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+
+        (uint8 codeGateOff, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(codeGateOff, 6, "gate off: refused for want of a consent surface");
+
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        (uint8 codeGateOn, uint256 a, uint256 b) =
+            RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(codeGateOn, 0, "gate on: the buyer-consent gate governs, not this classifier");
+        assertEq(a, 0, "no figure to report either way");
+        assertEq(b, 0, "no figure to report either way");
     }
 
     // ─── Inherited risk snapshots (design item 11, second requirement) ──────
@@ -3752,6 +3874,29 @@ contract EarlyWithdrawalFacetTest is Test {
             uint8(p.errorCode),
             uint8(OfferAcceptFacet.AcceptError.SaleAdmissionBlocked),
             "preview must name the inherited-terms reason, not the health floor"
+        );
+    }
+
+    /// @dev #1655 — an unpriceable leg must reach the buyer as the neutral
+    ///      blocked result, never as a health-factor shortfall. The design doc
+    ///      is explicit that the surface must "never show a health figure for a
+    ///      position that has none", and code 6 carries no figures precisely so
+    ///      the preview cannot invent one.
+    function test_previewAccept_flagsUnpriceableLegAsNeutralBlock() public {
+        uint256 saleOfferId = _listSaleOffer();
+        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+
+        OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
+            .previewAccept(saleOfferId, makeAddr("unpriceableLegBuyer"));
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleAdmissionBlocked),
+            "an unpriceable leg is a neutral block, not a measured health shortfall"
+        );
+        assertTrue(
+            uint8(p.errorCode) !=
+                uint8(OfferAcceptFacet.AcceptError.SalePositionBelowSolvencyFloor),
+            "must not claim a health figure for a position that has none"
         );
     }
 

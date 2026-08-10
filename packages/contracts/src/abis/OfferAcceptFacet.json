@@ -2302,6 +2302,22 @@
   },
   {
     "type": "error",
+    "name": "SaleLegUnpriceable",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "which",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleLoanPastMaturity",
     "inputs": []
   },

@@ -16,8 +16,8 @@ import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
  *         accrued interest, figures that say nothing about a shortfall.
  *
  *         A sale is an ADMISSION, not a hand-off of already-accepted risk:
- *         the incoming lender never underwrote this loan. Two things follow,
- *         and the second is easy to miss:
+ *         the incoming lender never underwrote this loan. Three things follow,
+ *         and only the first is obvious:
  *
  *           1. The position must clear the health floor its own origination
  *              required.
@@ -30,10 +30,26 @@ import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
  *              point than they could be sold today. A fill-time health read
  *              cannot see this — the position is perfectly solvent against
  *              its own old terms.
+ *           3. Liquidity is judged TODAY, on the live classifier rather than
+ *              the loan's origination snapshot. Every figure the first two
+ *              rules compare is oracle-derived, so a position the protocol can
+ *              no longer price cannot be measured at all — and a snapshot that
+ *              still says `Liquid` for a market that has degraded would have
+ *              those rules compare prices the protocol no longer accepts
+ *              (#1655).
  *
  *         The design permits binding those snapshots into the buyer's consent
  *         OR requiring compatibility with current parameters; this takes the
  *         latter, which needs no new consent surface.
+ *
+ *         For the unpriceable case the design reserves the policy for the
+ *         contract owners and rules out both extremes as a default. So the
+ *         answer follows the regime actually in force: with progressive risk
+ *         access enabled, the buyer-consent gate the spec mandates for
+ *         illiquid-backed positions decides (`ProjectDetailsREADME` §320);
+ *         with it disabled — the default — there is no consent surface, and
+ *         the sale is refused rather than silently admitted. See the note on
+ *         `saleAdmission`.
  *
  *         The logic itself lives on `RiskPreviewFacet.saleAdmission` — it owns the
  *         health factor and every parameter consulted, and both calling
@@ -47,8 +63,10 @@ library LibSaleSolvency {
     ///         selector not being routed at all. NOT a measured refusal: it
     ///         says "not admissible, and the reason was not measurable", which
     ///         is a different statement from any of the classifier's codes.
-    ///         Deliberately outside the classifier's 0-5 range so a new code
-    ///         can never collide with it (Codex #1635 r5).
+    ///         Deliberately `type(uint8).max` rather than the next free number,
+    ///         so extending the classifier's range — 0-5 when this was written,
+    ///         0-6 since #1655 added the unpriceable-leg refusal — can never
+    ///         collide with it (Codex #1635 r5).
     uint8 internal constant SALE_ADMISSION_UNAVAILABLE = type(uint8).max;
 
     /// @notice The position's live Health Factor is below the floor its own
@@ -71,6 +89,19 @@ library LibSaleSolvency {
         uint256 inherited,
         uint256 current
     );
+
+    /// @notice One of the position's legs is not priceable by protocol policy
+    ///         RIGHT NOW, so there is no figure to admit an incoming lender
+    ///         against — and progressive risk access is disabled, so no consent
+    ///         regime is in force to admit it on an acknowledgement instead.
+    ///         `which`: 0 collateral, 1 principal. Carries no figures on
+    ///         purpose: the refusal is for want of a measurement, and quoting a
+    ///         health factor for a position that has none is the dishonest
+    ///         surface `LenderEarlyWithdrawalUXDesign.md` 717-736 rules out.
+    ///         Judged on the live `OracleFacet.checkLiquidity` reading rather
+    ///         than the loan's origination snapshot — see the note on
+    ///         `saleAdmission` (#1655).
+    error SaleLegUnpriceable(uint256 loanId, uint8 which);
 
     /// @notice The position's LIVE loan-to-value exceeds the cap a fresh
     ///         admission would allow, so it could not be originated today at
@@ -97,6 +128,10 @@ library LibSaleSolvency {
         if (code == 0) return;
         if (code == 1) revert SalePositionBelowSolvencyFloor(loanId, a, b);
         if (code == 5) revert SaleLtvAboveAdmissionCap(loanId, a, b);
+        // 6 carries the unpriceable leg in `a` (0 collateral, 1 principal)
+        // rather than a pair of figures — there is no measurement to report,
+        // which is the whole point of the refusal.
+        if (code == 6) revert SaleLegUnpriceable(loanId, uint8(a));
         // 2/3/4 map onto which = 0/1/2.
         revert SaleInheritsWeakerRiskTerms(loanId, code - 2, a, b);
     }

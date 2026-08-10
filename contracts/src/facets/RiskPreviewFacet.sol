@@ -523,13 +523,23 @@ contract RiskPreviewFacet {
      *         cannot price a position REVERTS out of here, which the guard
      *         treats as fail-closed and the preview as not-admissible.
      *
-     * @return code 0 admissible (including illiquid, which is out of scope);
+     * @return code 0 admissible;
      *         1 live health factor below the loan's own admission floor;
      *         2/3/4 inherited risk terms weaker than current — admission
      *         health floor, liquidation LTV, init-LTV cap respectively;
-     *         5 live LTV above the cap a fresh admission would allow.
-     * @return a The position's figure for the failing check (0 when code 0).
-     * @return b The figure it is required to meet (0 when code 0).
+     *         5 live LTV above the cap a fresh admission would allow;
+     *         6 a leg is not priceable today AND no consent regime is in force
+     *         to admit it, so nothing can be measured and nothing consents
+     *         (#1655) — note this REFUSES, where the superseded
+     *         snapshot-based carve-out returned 0 for the same shape.
+     *         With progressive risk access enabled an unpriceable position
+     *         returns 0 instead and its buyer-consent gate governs.
+     * @return a The position's figure for the failing check (0 when code 0),
+     *         except code 6, where it names the unpriceable leg — 0 collateral,
+     *         1 principal — because a refusal for want of a measurement has no
+     *         figure to report.
+     * @return b The figure it is required to meet (0 when code 0, and 0 for
+     *         code 6 for the same reason).
      */
     function saleAdmission(uint256 loanId)
         external
@@ -539,13 +549,97 @@ contract RiskPreviewFacet {
         LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = st.loans[loanId];
 
-        // Health factor is a ratio of oracle-priced values, so an illiquid leg
-        // has no floor to measure against; those positions stay governed by
-        // the explicit both-parties-consent regime instead.
+        // Liquidity is judged RIGHT NOW, the same way origination judges it —
+        // `OracleFacet.checkLiquidity`, the live fail-closed classifier
+        // `LoanFacet` calls before stamping a loan, and the one
+        // `AddCollateralFacet` already consults rather than the snapshot when
+        // admitting new value into a live loan.
+        //
+        // Deliberately NOT `loan.collateralLiquidity` / `loan.principalLiquidity`:
+        // those are written once at origination and never refreshed, so they
+        // describe the market as it was, not as it is. A snapshot saying
+        // `Liquid` on a market that has since degraded would pass every check
+        // below against prices the protocol no longer considers usable, and
+        // never reach the illiquid branch at all (#1655). The same reasoning
+        // `FeeEntitlementFacet` records for the offer-creation snapshot, one
+        // level further out: the snapshot is right for the question it was
+        // taken to answer, and this is a different question.
+        //
+        // The snapshots remain right for what they are FOR: the existing loan's
+        // own lifecycle (`RiskFacet`, `RepayFacet`, the default and liquidation
+        // routing) is governed by the bargain struck at origination, and a
+        // market moving underneath it must not rewrite that. Sale admission is
+        // the one question asked about today rather than about origination.
+        // A leg is measurable only if BOTH sources say so, and that is not a
+        // redundant belt: they answer different questions and each can block on
+        // its own.
+        //
+        //   * The LIVE reading is whether the market can be priced today. Only
+        //     it can catch a snapshot that has gone stale in the dangerous
+        //     direction — still `Liquid` for a market that has degraded.
+        //   * The SNAPSHOT is whether risk math is available for this loan AT
+        //     ALL: `RiskFacet.calculateHealthFactor` gates on
+        //     `loan.collateralLiquidity` / `loan.principalLiquidity` and reverts
+        //     `IlliquidLoanNoRiskMath` when either is not `Liquid`. So a loan
+        //     carrying an illiquid snapshot has no health factor to compare,
+        //     whatever the market has since done.
+        //
+        // Requiring both is therefore the accurate statement of "the protocol
+        // can produce a figure for this position", not an arbitrary ratchet.
+        // Reading only the live value would send a stale-`Illiquid` loan into
+        // the health read and surface an opaque `IlliquidLoanNoRiskMath` where
+        // the honest answer is that the position is unpriceable.
+        LibVaipakam.LiquidityStatus collLiq = _measurable(
+            loan.collateralAsset,
+            loan.collateralLiquidity
+        );
+        LibVaipakam.LiquidityStatus prinLiq = _measurable(
+            loan.principalAsset,
+            loan.principalLiquidity
+        );
         if (
-            loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
-            loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
-        ) return (0, 0, 0);
+            collLiq != LibVaipakam.LiquidityStatus.Liquid ||
+            prinLiq != LibVaipakam.LiquidityStatus.Liquid
+        ) {
+            // An unpriceable leg cannot be measured: health factor is a ratio
+            // of oracle-priced values and REVERTS here rather than returning a
+            // conservative number, so none of the checks below can run. The
+            // design doc puts the policy for these positions in the contract
+            // owners' hands and rules out both extremes as a default — silently
+            // admitting an unpriceable position because the guard could not
+            // run, or silently blocking one because the guard reverted
+            // (`LenderEarlyWithdrawalUXDesign.md` 717-736). So the answer
+            // follows whichever regime is actually in force:
+            //
+            //   * Progressive risk access ENABLED — the consent regime the
+            //     spec mandates for this case is live. `ProjectDetailsREADME`
+            //     §320: the exiting seller is exempt, the incoming buyer is
+            //     gated against the assets of the loan being sold, and a
+            //     default-tier buyer cannot acquire an illiquid-backed lender
+            //     position without opting into its risk. That gate runs on both
+            //     sale paths already — `_assertBuyerRiskAccess` on the direct
+            //     sale, the accept-time check on the listing path — and it is
+            //     the surface that can express informed consent, which this
+            //     classifier cannot. Step aside and let it decide.
+            //   * Progressive risk access DISABLED (the default) — there is no
+            //     consent surface in force, so admitting is the silent-admission
+            //     failure: on a default deployment an unpriceable, worst-case
+            //     worthless position would be assignable to a generic standing
+            //     offer with no loan-specific or pair consent. REFUSE, and say
+            //     that a leg is unpriceable rather than inventing a health
+            //     figure for a position that has none.
+            //
+            // Note this is the one branch whose answer a governance switch
+            // changes, and deliberately so: the switch does not relax a check
+            // here, it supplies the consent machinery that makes admission
+            // meaningful. Enabling it can only ADD a gate to this path.
+            if (LibVaipakam.cfgRiskAccessGateEnabled()) return (0, 0, 0);
+            return (
+                6,
+                collLiq != LibVaipakam.LiquidityStatus.Liquid ? 0 : 1,
+                0
+            );
+        }
 
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
         uint256 floor = LibVaipakam.effectiveLoanMinHealthFactor(
@@ -605,6 +699,48 @@ contract RiskPreviewFacet {
         if (liveLtv > inheritedCap) return (5, liveLtv, inheritedCap);
 
         return (0, 0, 0);
+    }
+
+    /// @dev Whether one leg is measurable for sale admission: `Liquid` only
+    ///      when the live classification AND the loan's own snapshot both say
+    ///      so. See the note in `saleAdmission` for why both are load-bearing.
+    ///      Collapses to `Illiquid` — the refusing value — rather than
+    ///      reporting which source objected, since the caller's answer is the
+    ///      same either way and the leg index is what a consumer needs.
+    function _measurable(
+        address asset,
+        LibVaipakam.LiquidityStatus snapshot
+    ) private view returns (LibVaipakam.LiquidityStatus) {
+        if (snapshot != LibVaipakam.LiquidityStatus.Liquid) {
+            return LibVaipakam.LiquidityStatus.Illiquid;
+        }
+        return _liveLiquidity(asset);
+    }
+
+    /// @dev The live liquidity classification for one leg, read through the
+    ///      same entry point `LoanFacet` uses at origination so the two agree
+    ///      by construction rather than by inspection.
+    ///
+    ///      Degrades to `Illiquid` — the REFUSING value — when the call fails,
+    ///      rather than bubbling. `checkLiquidity` reverts `InvalidAsset` only
+    ///      for `address(0)`, which a live loan cannot carry (origination calls
+    ///      this on both legs and would itself have reverted), so this is a
+    ///      belt-and-braces path; if it is ever reached, an unanswerable
+    ///      liquidity question must refuse the sale, never pass it. Note the
+    ///      asymmetry with the health and LTV reads below, which are left to
+    ///      revert: those are measurements of a position we have already
+    ///      established is priceable, and a guard that cannot obtain one must
+    ///      stop the sale loudly rather than convert it into a classification.
+    function _liveLiquidity(address asset)
+        private
+        view
+        returns (LibVaipakam.LiquidityStatus)
+    {
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, asset)
+        );
+        if (!ok || ret.length < 32) return LibVaipakam.LiquidityStatus.Illiquid;
+        return abi.decode(ret, (LibVaipakam.LiquidityStatus));
     }
 
     /// @dev Mirrors `LoanFacet._snapshotRiskCaps`'s tier lookup, fallback and
