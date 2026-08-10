@@ -1051,7 +1051,18 @@ the bounds are the design's actual commitment.
    > and the terminal return (`declaredUnwound`) — a released
    > reservation's late-returning message must not subtract the same
    > contribution twice and erase a replacement's funding recorded
-   > while the terminal chunk was in flight.
+   > while the terminal chunk was in flight. Round 5 finished the
+   > evidence ladder: the ACK WIRE carries the receipt's full
+   > CLASSIFICATION (consumed / quarantined / provisional) instead of a
+   > collapsed consumed bit, Base stamps `quarantineAcked` /
+   > `consumedAcked` per reservation (including on the Released ack
+   > branch — released-alone is message-state, not classification
+   > evidence), and B1 eligibility is the QUARANTINE attestation
+   > specifically — an Acked-non-consumed state can be a PROVISIONAL
+   > receipt that later confirms as consumed. And the manual dispatch
+   > bound became CUMULATIVE per side (funded-so-far + request ≤
+   > quote), because a terminal return can re-open a day that retains a
+   > successor supplement's funding.
 
 
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —

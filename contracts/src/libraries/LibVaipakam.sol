@@ -6696,6 +6696,12 @@ library LibVaipakam {
         // subtract the same contribution twice and erase a replacement's
         // funding.
         bool declaredUnwound;
+        // #1660 r5 - the ack specifically attested classification
+        // QUARANTINED: the B1 return's eligibility evidence. Distinct
+        // from the absence of `consumedAcked` - a non-consumed ack can
+        // also describe a PROVISIONAL receipt that later confirms as
+        // consumed, and only true quarantine is terminal mirror-side.
+        bool quarantineAcked;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

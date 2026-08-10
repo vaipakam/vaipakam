@@ -128,9 +128,9 @@
         "internalType": "address"
       },
       {
-        "name": "consumed",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "classification",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [],

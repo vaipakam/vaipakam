@@ -1553,17 +1553,20 @@ contract RewardRemittanceFacet is
         // r3/r4 — echo the receipt's PAYLOAD-recorded remitter so the
         // canonical ingress can verify the ack names ITSELF (remit ids are
         // per-deployment; see {LibVaipakam.ReceivedRemit.remitter}).
-        // #1656 r8 - the wire says whether the delivery was CONSUMED
-        // (credited; provisional confirmed): only a consumption ack may
-        // clear the Base R6 gate - a quarantined or still-provisional
-        // delivery's value is not finally consumed, and its clearing
-        // evidence is the w5 return (or the confirm, after which this
-        // ack re-presents as consumed).
+        // #1656 r8 / #1660 r5 - the wire carries the receipt's full
+        // CLASSIFICATION (0 consumed / 1 quarantined / 2 provisional),
+        // not a collapsed consumed bit: only a consumption ack clears
+        // the Base R6 gate, and only a QUARANTINE ack is B1-return
+        // evidence - an Acked-non-consumed state alone could be a
+        // PROVISIONAL receipt that later confirms as consumed, so Base
+        // must be able to tell the two apart. Re-presentable: after the
+        // confirm/demote the stored classification changes and the ack
+        // re-presents with the new value.
         messageId = IRewardMessenger(messenger).sendRemitAck{value: msg.value}(
             remitId,
             rec.amount,
             rec.remitter,
-            rec.classification == 0,
+            rec.classification,
             refundAddress
         );
         emit RemitAckDispatched(remitId, messageId, rec.amount);
@@ -1610,10 +1613,14 @@ contract RewardRemittanceFacet is
         uint256 remitId,
         uint256 amountReceived,
         address remitter,
-        // #1656 r8 - mirror-attested consumption (receipt classification
-        // == credited). Gates the R6 clear + the compFunded
-        // reconciliation.
-        bool consumed
+        // #1656 r8 / #1660 r5 - the mirror-attested receipt
+        // CLASSIFICATION (0 consumed / 1 quarantined / 2 provisional).
+        // Consumption gates the R6 clear + compFunded reconciliation;
+        // QUARANTINE is the B1 return's eligibility evidence - a
+        // provisional attestation stamps neither (it can still confirm
+        // as consumed, and treating it as quarantine would let a faulty
+        // mirror return value ahead of that confirmation).
+        uint8 classification
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0))
@@ -1632,6 +1639,8 @@ contract RewardRemittanceFacet is
             revert RemitAckSenderMismatch(remitId, remitter);
         }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        bool consumed = classification == 0;
+        bool quarantined = classification == 1;
         if (r.status == 2) {
             if (r.dstChainId == sourceChainId) {
                 // #1656 r3 - a FORCED finalization preserved declared
@@ -1643,6 +1652,7 @@ contract RewardRemittanceFacet is
                 // post-force must not burn the flag before the consumed
                 // re-presentation can reconcile.
                 if (consumed) r.consumedAcked = true;
+                if (quarantined) r.quarantineAcked = true;
                 if (r.forcedFinalized && consumed) {
                     r.forcedFinalized = false;
                     _reconcileCompFunded(s, r, amountReceived);
@@ -1674,6 +1684,17 @@ contract RewardRemittanceFacet is
             return;
         }
         if (r.status == 3) {
+            // #1660 r5 - a RELEASED reservation's late ack still records
+            // its classification EVIDENCE (nothing else): the B1 return
+            // requires a quarantine attestation even for released
+            // reservations - released-alone says the MESSAGE was deemed
+            // dead, not what the delivery became if it executed after
+            // all (it could have been consumed, and a return against
+            // consumed lineage is the r4/r5 bypass).
+            if (r.dstChainId == sourceChainId) {
+                if (consumed) r.consumedAcked = true;
+                if (quarantined) r.quarantineAcked = true;
+            }
             emit RemitAckAfterRelease(remitId, sourceChainId, amountReceived);
             return;
         }
@@ -1681,7 +1702,9 @@ contract RewardRemittanceFacet is
         if (r.dstChainId != sourceChainId) {
             revert RemitAckChainMismatch(remitId, r.dstChainId, sourceChainId);
         }
-        _finalizeReservation(s, r, remitId, amountReceived, false, consumed);
+        _finalizeReservation(
+            s, r, remitId, amountReceived, false, consumed, quarantined
+        );
     }
 
     /**
@@ -1701,7 +1724,7 @@ contract RewardRemittanceFacet is
         // #1656 r8 - the forced finalize is the operator's consumption
         // attestation (same evidenced mould as the ACK), so it clears
         // the gate.
-        _finalizeReservation(s, r, remitId, 0, true, true);
+        _finalizeReservation(s, r, remitId, 0, true, true, false);
     }
 
     /**
@@ -1843,7 +1866,10 @@ contract RewardRemittanceFacet is
         // evidence), but the R6 gate HOLDS - SS5.1's clearing evidence
         // is CONSUMPTION, and a stranded delivery settles via the w5
         // return.
-        bool consumed
+        bool consumed,
+        // #1660 r5 - the ack specifically attested QUARANTINE (the B1
+        // return's eligibility evidence; provisional stamps neither).
+        bool quarantined
     ) private {
         r.status = 2;
         uint32 dst = r.dstChainId;
@@ -1864,6 +1890,7 @@ contract RewardRemittanceFacet is
         // dispatch's cap lineage). Stamped whether or not the gate
         // still names this remit.
         if (consumed) r.consumedAcked = true;
+        else if (quarantined) r.quarantineAcked = true;
         if (consumed && s.compensationOutstanding[dst] == remitId) {
             LibRewardRemitDispatch.clearCompensationGate(s, dst);
             // #1656 r2 - AUTHENTIC ACKs only: the forced finalize passes

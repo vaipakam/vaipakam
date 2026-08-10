@@ -1867,6 +1867,9 @@ contract TestMutatorFacet {
         // split stamped): the B1 ingress refuses anything else.
         r.fresh = total;
         r.declaredLender18 = total;
+        // #1660 r5 - the raw models a QUARANTINE-ACKED receipt (the B1
+        // eligibility evidence).
+        r.quarantineAcked = true;
         uint256[] memory one = new uint256[](1);
         one[0] = dayId;
         r.dayIds = one;

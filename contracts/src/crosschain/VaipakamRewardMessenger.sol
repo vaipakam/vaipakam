@@ -930,7 +930,7 @@ contract VaipakamRewardMessenger is
         uint256 remitId,
         uint256 amountReceived,
         address remitter,
-        bool consumed,
+        uint8 classification,
         address payable refundAddress
     )
         external
@@ -948,7 +948,7 @@ contract VaipakamRewardMessenger is
             remitId,
             amountReceived,
             remitter,
-            consumed
+            uint256(classification)
         );
         messageId = _dispatch(baseChainId, payload, msg.value, refundAddress);
 
@@ -967,7 +967,7 @@ contract VaipakamRewardMessenger is
             remitId,
             amountReceived,
             remitter,
-            true
+            uint256(0)
         );
         nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
             baseChainId, payload, _noTokens(), destGasLimit
@@ -1926,9 +1926,9 @@ contract VaipakamRewardMessenger is
                 uint256 remitId,
                 uint256 amountReceived,
                 address remitter,
-                bool consumed
+                uint256 classification
             ) = abi.decode(
-                payload, (uint8, uint256, uint256, address, bool)
+                payload, (uint8, uint256, uint256, address, uint256)
             );
             emit RemitAckReceived(sourceChainId, remitId, amountReceived);
             IRewardRemitAckIngress(diamond).onRemitAckReceived(
@@ -1936,7 +1936,7 @@ contract VaipakamRewardMessenger is
                 remitId,
                 amountReceived,
                 remitter,
-                consumed
+                uint8(classification)
             );
         } else if (msgType == MSG_TYPE_REPAT_INSTRUCTION) {
             // #1568 C2 — Base → mirror repatriation instruction. Mirror-only.

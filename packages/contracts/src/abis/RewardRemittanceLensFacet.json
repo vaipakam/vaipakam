@@ -475,6 +475,11 @@
             "name": "declaredUnwound",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "quarantineAcked",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

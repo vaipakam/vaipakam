@@ -228,10 +228,20 @@ contract RewardCompensationDispatchFacet is
                     );
                 }
             }
-            if (lenderAmount18 > q.lender18 || borrowerAmount18 > q.borrower18)
-            {
+            // #1660 r5 — CUMULATIVE per side, exactly like the
+            // supplemental bound: a day can be re-opened by a terminal
+            // return while a successor supplement's funding is retained
+            // in the cumulative, and a fresh-request-only bound would
+            // let a full-quote dispatch stack on top of it and overfund
+            // the mirror. For a virgin day the cumulative is zero and
+            // the bound is unchanged.
+            uint256 cumL0 =
+                s.compFundedLender18[dstChainId][dayId] + lenderAmount18;
+            uint256 cumB0 =
+                s.compFundedBorrower18[dstChainId][dayId] + borrowerAmount18;
+            if (cumL0 > q.lender18 || cumB0 > q.borrower18) {
                 revert CompensationExceedsQuote(
-                    lenderAmount18, borrowerAmount18, q.lender18, q.borrower18
+                    cumL0, cumB0, q.lender18, q.borrower18
                 );
             }
         }
@@ -623,18 +633,17 @@ contract RewardCompensationDispatchFacet is
         if (r.consumedAcked) {
             revert StrandedReturnConsumedReceipt(remitId);
         }
-        // #1660 r4 — POSITIVE non-consumption evidence, not mere absence
-        // of a consumed stamp: the transport executes out of order, so a
-        // faulty mirror could deliver the return BEFORE its consumed
-        // attestation and the credit could not be revoked once
-        // re-dispatched. The return therefore requires the receipt's ack
-        // to have LANDED as non-consumed (status 2 with no consumed
-        // stamp; the ack is permissionlessly re-presentable, so an
-        // honest quarantined receipt can always satisfy this first) or
-        // the reservation RELEASED (terminal message state — the value
-        // coming home IS the recovery). A Pending return stays
-        // re-executable until the ack lands.
-        if (r.status != 2 && r.status != 3) {
+        // #1660 r4/r5 — POSITIVE QUARANTINE evidence, not mere absence
+        // of a consumed stamp and not Acked-non-consumed alone: the
+        // transport executes out of order, and a non-consumed ack can
+        // also describe a PROVISIONAL receipt that later confirms as
+        // consumed — so the ack must have specifically attested
+        // classification QUARANTINED (`quarantineAcked`, stamped for
+        // Pending, Acked, and Released reservations alike; the ack is
+        // permissionlessly re-presentable, so an honest quarantined
+        // receipt always satisfies this first). A return arriving
+        // before that attestation stays re-executable.
+        if (!r.quarantineAcked) {
             revert StrandedReturnAwaitingAck(remitId, r.status);
         }
         if (sourceChainId != r.dstChainId) {

@@ -232,7 +232,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _remitDay1ToArb();
         vm.prank(stranger);
         vm.expectRevert(IVaipakamErrors.NotAuthorizedRewardMessenger.selector);
-        remit.onRemitAckReceived(CHAIN_ARB, 1, 1e18, address(diamond), true);
+        remit.onRemitAckReceived(CHAIN_ARB, 1, 1e18, address(diamond), 0);
     }
 
     function test_ForceFinalize_AdminValve() public {
@@ -3170,6 +3170,89 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
+    /// #1660 r5 - a PROVISIONAL attestation is not quarantine evidence:
+    /// the receipt can still confirm as consumed, so the return waits for
+    /// a true quarantine ack - and after the consumed confirmation, the
+    /// consumed stamp refuses it outright.
+    function test_Recovery_ProvisionalAckNotReturnEvidence() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        // The mirror credited PROVISIONALLY (compensation overtook V3);
+        // its ack attests classification 2.
+        rewardMessenger.deliverRemitAckWithClassification(CHAIN_ARB, 1, 3e18, 2);
+        _armReturnIngressNoAck();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.StrandedReturnAwaitingAck.selector, 1, 2
+            )
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
+        );
+        // The V3 confirm settled the credit CONSUMED; the re-presented
+        // ack stamps it and the return is refused outright.
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.StrandedReturnConsumedReceipt.selector, 1
+            )
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
+        );
+    }
+
+    /// #1660 r5 - the re-opened manual path holds the CUMULATIVE per-side
+    /// quote bound: a successor supplement's retained funding plus the
+    /// fresh request can never pass the quote, so a re-opened day cannot
+    /// be overfunded on top of a successful supplement.
+    function test_Recovery_ReopenedDayKeepsCumulativeQuoteBound() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
+        _armReturnIngressNoAck();
+        // Non-terminal chunk clears the gate; a supplement tops the day
+        // up to the full quote while the terminal chunk is in flight.
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
+            2e18
+        );
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 1e18, 1e18
+        );
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 2, 2e18); // consumed
+        // The original's terminal chunk re-opens the day (its declared
+        // unwinds; the supplement's funding is retained).
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
+        );
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "supplement funding retained");
+        assertEq(fb, 1e18, "supplement funding retained");
+        // A full-quote re-dispatch on top would overfund: refused on the
+        // CUMULATIVE bound.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationExceedsQuote.selector,
+                4e18,
+                3e18,
+                3e18,
+                2e18
+            )
+        );
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        // The legitimate remainder passes.
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 3e18, "cumulative lands exactly at quote");
+        assertEq(fb, 2e18, "cumulative lands exactly at quote");
+    }
+
     /// #1660 r4 - POSITIVE non-consumption evidence is required: a return
     /// arriving before the receipt's ack refuses (re-executable), so an
     /// out-of-order faulty mirror cannot credit ahead of its consumed
@@ -3213,6 +3296,10 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.releaseRemitReservation(1);
         (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
         assertEq(fl + fb, 0, "release unwound the declared split");
+        // #1660 r5 - the quarantine ack is still presentable on the
+        // RELEASED reservation and records the B1 eligibility evidence
+        // (released-alone is not classification evidence).
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
         // ...but it executes after all, quarantines mirror-side, and
         // returns CHUNKED: the first chunk clears the gate (status 3 is
         // return-eligible - the value coming home IS the recovery).
