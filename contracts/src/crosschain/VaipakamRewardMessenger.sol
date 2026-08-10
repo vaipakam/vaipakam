@@ -322,7 +322,9 @@ contract VaipakamRewardMessenger is
     ///         tag, never the length (the standing rule). Canonical-gated on
     ///         receive; kind-7 pre-dates any deployment, so there is no
     ///         legacy 3-word shape to dual-decode.
-    uint256 internal constant REMIT_ACK_PAYLOAD_SIZE = 4 * 32;
+    // #1656 r8 - 5 words: kind, remitId, amountReceived, remitter,
+    // consumed (the mirror's consumption attestation the R6 gate keys on).
+    uint256 internal constant REMIT_ACK_PAYLOAD_SIZE = 5 * 32;
     /// @notice #1568 C2 — repatriation INSTRUCTION payload:
     ///         `abi.encode(uint8, address issuingBase, uint256 authId,
     ///         uint256 amount)`. Same length as the legacy report / remit
@@ -913,6 +915,7 @@ contract VaipakamRewardMessenger is
         uint256 remitId,
         uint256 amountReceived,
         address remitter,
+        bool consumed,
         address payable refundAddress
     )
         external
@@ -929,7 +932,8 @@ contract VaipakamRewardMessenger is
             MSG_TYPE_REMIT_ACK,
             remitId,
             amountReceived,
-            remitter
+            remitter,
+            consumed
         );
         messageId = _dispatch(baseChainId, payload, msg.value, refundAddress);
 
@@ -947,7 +951,8 @@ contract VaipakamRewardMessenger is
             MSG_TYPE_REMIT_ACK,
             remitId,
             amountReceived,
-            remitter
+            remitter,
+            true
         );
         nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
             baseChainId, payload, _noTokens(), destGasLimit
@@ -1900,14 +1905,22 @@ contract VaipakamRewardMessenger is
             if (sourceChainId > type(uint32).max) {
                 revert ChainIdTooLarge(sourceChainId);
             }
-            (, uint256 remitId, uint256 amountReceived, address remitter) =
-                abi.decode(payload, (uint8, uint256, uint256, address));
+            (
+                ,
+                uint256 remitId,
+                uint256 amountReceived,
+                address remitter,
+                bool consumed
+            ) = abi.decode(
+                payload, (uint8, uint256, uint256, address, bool)
+            );
             emit RemitAckReceived(sourceChainId, remitId, amountReceived);
             IRewardRemitAckIngress(diamond).onRemitAckReceived(
                 SafeCast.toUint32(sourceChainId),
                 remitId,
                 amountReceived,
-                remitter
+                remitter,
+                consumed
             );
         } else if (msgType == MSG_TYPE_REPAT_INSTRUCTION) {
             // #1568 C2 — Base → mirror repatriation instruction. Mirror-only.

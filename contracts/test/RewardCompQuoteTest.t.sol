@@ -760,7 +760,11 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         _com().lapseZeroedDay(DAY);
         LibVaipakam.LapsedDayLoss memory loss = _com().getLapsedDayLoss(DAY);
         assertEq(loss.lender18, 20e18, "accumulator progress recorded");
-        assertTrue(loss.partialFigure, "flagged partial - no dispatch proof");
+        // #1656 r8 - completeness comes from the conservation identities:
+        // a fully-accumulated, never-dispatched day is EXACT, not partial
+        // (dispatch is refused after the lapse, so a stamp-based flag
+        // could never clear).
+        assertFalse(loss.partialFigure, "conservation-complete = exact");
     }
 
     function test_shortLapse_scaledCrossingAndLoss() public {
@@ -1051,6 +1055,28 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         _com().lapseShortCompensatedDay(DAY);
         vm.warp(block.timestamp + 7 days + 1);
         _com().lapseShortCompensatedDay(DAY);
+    }
+
+    function test_receiptClassificationLifecycle() public {
+        // #1656 r8 — the receipt carries the arrival's classification so
+        // the ACK wire can attest consumption: provisional = 2, demote =
+        // 1 (stranded), confirm = 0 (consumed).
+        _configureMirror();
+        _zeroedDayG0();
+        _accumulateAllLender();
+        _dispatchQuote();
+        _armIngress();
+        address era = makeAddr("baseDiamond");
+        _credit(11, 1e18, 0); // state-unknown -> provisional
+        assertEq(
+            uint256(
+                RewardRemittanceLensFacet(address(diamond))
+                    .getReceivedRemit(era, 11)
+                    .classification
+            ),
+            2,
+            "provisional"
+        );
     }
 
     // ═══ Mirror: commitment-twin lockstep ════════════════════════════════════

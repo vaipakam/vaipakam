@@ -231,7 +231,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _remitDay1ToArb();
         vm.prank(stranger);
         vm.expectRevert(IVaipakamErrors.NotAuthorizedRewardMessenger.selector);
-        remit.onRemitAckReceived(CHAIN_ARB, 1, 1e18, address(diamond));
+        remit.onRemitAckReceived(CHAIN_ARB, 1, 1e18, address(diamond), true);
     }
 
     function test_ForceFinalize_AdminValve() public {
@@ -1147,6 +1147,32 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.remitSupplementalBudget{value: 0.01 ether}(
             CHAIN_ARB, 1, 2e18, 1.5e18
         );
+    }
+
+    /// @dev #1656 r8 — a NON-consumption ack (quarantined / still-
+    ///      provisional delivery) finalizes the reservation but HOLDS the
+    ///      R6 gate (§5.1: the clearing evidence is CONSUMPTION; a
+    ///      stranded delivery settles via the w5 return) and skips the
+    ///      compFunded reconciliation.
+    function test_Supplemental_NonConsumedAckHoldsGate() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1.5e18, false);
+        assertEq(
+            uint256(rlens.getRemitReservation(1).status),
+            2,
+            "reservation finalized (delivery evidence)"
+        );
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            1,
+            "gate HELD - not a consumption ack"
+        );
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "no reconciliation on a stranded delivery");
+        assertEq(fb, 1e18, "no reconciliation on a stranded delivery");
     }
 
     /// @dev #1636 r4 — a resolved-zero standing quote is TERMINAL: its

@@ -1768,7 +1768,8 @@ contract TestMutatorFacet {
             srcChainId: uint32(block.chainid),
             receivedAt: uint64(block.timestamp),
             amount: amount,
-            remitter: remitter
+            remitter: remitter,
+            classification: 0
         });
     }
 

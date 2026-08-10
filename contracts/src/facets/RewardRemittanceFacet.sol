@@ -1247,6 +1247,11 @@ contract RewardRemittanceFacet is
             dc.provisionalEra = era;
         }
         dc.remitId = remitId;
+        // #1656 r8 - receipt classification: era == the payload remitter
+        // on both credit paths (the known-state ladder requires the
+        // match; the provisional branch DEFINES era := remitter).
+        s.receivedRemits[_receiptKey(era, remitId)].classification =
+            provisional ? 2 : 0;
 
         uint256 armedFrom = s.governorCommitArmedFromDay;
         if (armedFrom != 0 && dayId >= armedFrom) {
@@ -1313,6 +1318,9 @@ contract RewardRemittanceFacet is
         sr.dayId = dayId;
         if (sr.reservedAt == 0) sr.reservedAt = uint64(block.timestamp);
         sr.reason = reason;
+        // #1656 r8 - the receipt carries the classification so the ACK
+        // wire can say "not consumed" and hold the R6 gate.
+        s.receivedRemits[_receiptKey(remitter, remitId)].classification = 1;
         emit CompensationQuarantined(dayId, remitter, remitId, amount, reason);
     }
 
@@ -1342,6 +1350,11 @@ contract RewardRemittanceFacet is
 
         if (dc.provisionalEra == baseDeployment && zeroedForDest) {
             dc.provisional = false;
+            // #1656 r8 - the settled credit is CONSUMED: its receipt's
+            // ack may now clear the R6 gate.
+            s.receivedRemits[
+                _receiptKey(dc.provisionalEra, dc.remitId)
+            ].classification = 0;
             // #1634 r3 — reclassify against the NOW-installed D*: the same
             // core call that delivered this confirming broadcast installs
             // `armedFromDay` BEFORE this hook runs, so a compensation that
@@ -1386,6 +1399,11 @@ contract RewardRemittanceFacet is
         sr.dayId = dayId;
         if (sr.reservedAt == 0) sr.reservedAt = uint64(block.timestamp);
         sr.reason = reason;
+        // #1656 r8 - demoted = stranded: the receipt's ack must not
+        // clear the R6 gate any more.
+        s.receivedRemits[
+            _receiptKey(dc.provisionalEra, dc.remitId)
+        ].classification = 1;
         delete s.dayCompensation[dayId];
         // #1656 r1 - the demoted credit's receipt clocks go with it: a
         // later CURRENT-era compensation must get its own full bounded
@@ -1496,8 +1514,18 @@ contract RewardRemittanceFacet is
         // r3/r4 — echo the receipt's PAYLOAD-recorded remitter so the
         // canonical ingress can verify the ack names ITSELF (remit ids are
         // per-deployment; see {LibVaipakam.ReceivedRemit.remitter}).
+        // #1656 r8 - the wire says whether the delivery was CONSUMED
+        // (credited; provisional confirmed): only a consumption ack may
+        // clear the Base R6 gate - a quarantined or still-provisional
+        // delivery's value is not finally consumed, and its clearing
+        // evidence is the w5 return (or the confirm, after which this
+        // ack re-presents as consumed).
         messageId = IRewardMessenger(messenger).sendRemitAck{value: msg.value}(
-            remitId, rec.amount, rec.remitter, refundAddress
+            remitId,
+            rec.amount,
+            rec.remitter,
+            rec.classification == 0,
+            refundAddress
         );
         emit RemitAckDispatched(remitId, messageId, rec.amount);
     }
@@ -1542,7 +1570,11 @@ contract RewardRemittanceFacet is
         uint32 sourceChainId,
         uint256 remitId,
         uint256 amountReceived,
-        address remitter
+        address remitter,
+        // #1656 r8 - mirror-attested consumption (receipt classification
+        // == credited). Gates the R6 clear + the compFunded
+        // reconciliation.
+        bool consumed
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0))
@@ -1569,7 +1601,9 @@ contract RewardRemittanceFacet is
             // chain-checked like the live path.
             if (r.forcedFinalized && r.dstChainId == sourceChainId) {
                 r.forcedFinalized = false;
-                _reconcileCompFunded(s, r, amountReceived);
+                if (consumed) {
+                    _reconcileCompFunded(s, r, amountReceived);
+                }
                 emit RemitAckAfterForcedFinalize(
                     remitId, sourceChainId, amountReceived
                 );
@@ -1584,7 +1618,7 @@ contract RewardRemittanceFacet is
         if (r.dstChainId != sourceChainId) {
             revert RemitAckChainMismatch(remitId, r.dstChainId, sourceChainId);
         }
-        _finalizeReservation(s, r, remitId, amountReceived, false);
+        _finalizeReservation(s, r, remitId, amountReceived, false, consumed);
     }
 
     /**
@@ -1601,7 +1635,10 @@ contract RewardRemittanceFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
         if (r.status != 1) revert RemitReservationNotPending(remitId);
-        _finalizeReservation(s, r, remitId, 0, true);
+        // #1656 r8 - the forced finalize is the operator's consumption
+        // attestation (same evidenced mould as the ACK), so it clears
+        // the gate.
+        _finalizeReservation(s, r, remitId, 0, true, true);
     }
 
     /**
@@ -1734,7 +1771,13 @@ contract RewardRemittanceFacet is
         LibVaipakam.RemitReservation storage r,
         uint256 remitId,
         uint256 amountReceived,
-        bool forced
+        bool forced,
+        // #1656 r8 - false for a quarantined / still-provisional
+        // delivery's ack: the reservation still finalizes (delivery
+        // evidence), but the R6 gate HOLDS - SS5.1's clearing evidence
+        // is CONSUMPTION, and a stranded delivery settles via the w5
+        // return.
+        bool consumed
     ) private {
         r.status = 2;
         uint32 dst = r.dstChainId;
@@ -1749,7 +1792,7 @@ contract RewardRemittanceFacet is
         // mould). A cancel/release does NOT come through here — it
         // records terminal message state while the gate HOLDS (ratified),
         // pending the w5 return / w6 recovery settlements.
-        if (s.compensationOutstanding[dst] == remitId) {
+        if (consumed && s.compensationOutstanding[dst] == remitId) {
             LibRewardRemitDispatch.clearCompensationGate(s, dst);
             // #1656 r2 - AUTHENTIC ACKs only: the forced finalize passes
             // amountReceived = 0 as a sentinel, and reading it as a real

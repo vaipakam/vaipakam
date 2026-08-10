@@ -1046,7 +1046,21 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         } else {
             lossL = qL;
             lossB = qB;
-            partialFigure = s.compQuoteSentAt[dayId] == 0;
+            // #1656 r8 - completeness from the CONSERVATION identities,
+            // not the dispatch stamp: a fully-accumulated but never-
+            // dispatched day has an exact figure (and no refinement
+            // hook left to clear a false partial - dispatch is refused
+            // after the lapse).
+            partialFigure = !(
+                s.compQuoteConservation18[
+                    dayId
+                ][uint8(LibVaipakam.RewardSide.Lender)]
+                    == s.totalLenderInterestNumeraire18[dayId]
+                    && s.compQuoteConservation18[
+                        dayId
+                    ][uint8(LibVaipakam.RewardSide.Borrower)]
+                        == s.totalBorrowerInterestNumeraire18[dayId]
+            );
         }
         s.lapsedDayLoss[dayId] = LibVaipakam.LapsedDayLoss({
             lender18: lossL,

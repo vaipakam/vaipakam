@@ -232,6 +232,11 @@
             "name": "remitter",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "classification",
+            "type": "uint8",
+            "internalType": "uint8"
           }
         ]
       }

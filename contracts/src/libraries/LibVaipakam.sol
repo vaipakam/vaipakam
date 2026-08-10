@@ -6639,6 +6639,15 @@ library LibVaipakam {
         // rotated deployment (receipts key by (remitter, remitId), so
         // different deployments' receipts co-exist).
         address remitter;
+        // #1656 r8 - the arrival's CLASSIFICATION (0 = credited /
+        //   consumed, 1 = quarantined into the stranded-recovery
+        //   reservation, 2 = provisionally credited awaiting its era
+        //   broadcast). The ACK wire carries `consumed = (this == 0)` so
+        //   the R6 gate clears only on CONSUMPTION acks (SS5.1's ratified
+        //   evidence) - a stranded delivery's clearing evidence is the w5
+        //   return, never its own delivery ack. Updated by the confirm /
+        //   demote hook when a provisional credit settles.
+        uint8 classification;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition
