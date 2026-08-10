@@ -47,10 +47,15 @@ from the revert; the contract-side guard holds either way. It is deliberately no
 re-checked at sale completion, where a refusal would strand a buyer whose
 principal has already settled — the same reasoning the maturity gate follows.
 
-Positions whose legs are not price-discoverable are out of scope rather than
-silently admitted: a health factor is a ratio of priced values, so there is
-no floor to measure, and those positions stay governed by the explicit
-both-parties-consent regime for illiquid assets. The guard fails closed in
+Positions whose legs are not price-discoverable are currently passed through
+this check rather than judged by it: a health factor is a ratio of priced
+values, so there is no floor to measure. The intent was that they stay governed
+by the explicit both-parties-consent regime for illiquid assets — but that
+regime's enforcement is behind a switch that is off by default, so on a default
+deployment such a position is in practice admitted without a loan-specific
+consent. The design reserves the choice between excluding illiquid-leg loans
+from both sale paths and admitting them on that standing consent, and it is not
+settled here; treat this release as not yet closing the unpriceable case. The guard fails closed in
 the other direction — if a position claims to be priceable but the oracle
 cannot price it, the sale is refused rather than admitted against an
 unverifiable figure.
