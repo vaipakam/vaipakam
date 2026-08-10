@@ -77,6 +77,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -480,6 +481,41 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                         newImplP2
                     );
                 }
+            }
+        }
+
+        // ─── #1434 P2-w4 (#1656 r10) — reward MESSENGER generation probe ──
+        //
+        // The refreshed facets call the messenger's GENERATION-2 surface
+        // (5-word consumption ACK, kind-11 quotes, 23-word V3); a proxy
+        // still on generation 1 reverts every one of those sends — acks
+        // never reach Base, compensation gates stay held, ordinary
+        // reservations sit Pending. Same durable-constant posture as the
+        // receiver probe above; idempotent on rerun. EVERY chain has a
+        // messenger, so a missing artifact is always a hard stop.
+        {
+            address rewardMsgr = _readAddrOptional(".rewardMessenger");
+            require(
+                rewardMsgr != address(0),
+                "P2-w4: refresh needs .rewardMessenger in addresses.json"
+            );
+            uint256 mgen = 0;
+            (bool mok, bytes memory mret) = rewardMsgr.staticcall(
+                abi.encodeWithSignature("WIRE_GENERATION()")
+            );
+            if (mok && mret.length == 32) mgen = abi.decode(mret, (uint256));
+            if (mgen < REWARD_MESSENGER_WIRE_GENERATION) {
+                address newMsgrImpl = address(new VaipakamRewardMessenger());
+                UUPSUpgradeable(rewardMsgr).upgradeToAndCall(newMsgrImpl, "");
+                Deployments.writeAddress(
+                    ".rewardMessengerImpl", newMsgrImpl
+                );
+                console.log(
+                    "P2-w4: upgraded VaipakamRewardMessenger (wire gen",
+                    mgen,
+                    "-> 2) impl:",
+                    newMsgrImpl
+                );
             }
         }
 

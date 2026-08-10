@@ -156,6 +156,16 @@ interface IRepatriationInstructionIngress {
  *      and any remainder is returned to the caller-supplied refund
  *      address.
  */
+/// @dev #1656 r10 - the reward messenger's WIRE GENERATION, file-level
+///      so the refresh script imports the same durable constant the
+///      contract publishes (the receiver's REMIT_RECEIVER_WIRE_GENERATION
+///      pattern). Generation 2 = the P2-w3/w4 wire set: kind-11 comp
+///      quotes (5 words, era-bound), the 23-word V3 broadcast carrying
+///      the day-pool halves, and the 5-word consumption-attested ACK. A
+///      proxy without the selector is generation 1 and predates all
+///      three.
+uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 2;
+
 contract VaipakamRewardMessenger is
     Initializable,
     Ownable2StepUpgradeable,
@@ -193,6 +203,11 @@ contract VaipakamRewardMessenger is
     ///         `remitId` a delivered reward-budget remittance carried,
     ///         finalizing Base's delivered-backing reservation. Data-only —
     ///         the value moved on the token channel; this is its receipt.
+    /// @notice #1656 r10 - the durable upgrade probe the refresh script
+    ///         generation-gates on.
+    uint256 public constant WIRE_GENERATION =
+        REWARD_MESSENGER_WIRE_GENERATION;
+
     uint8 internal constant MSG_TYPE_REMIT_ACK = 7;
     /// @notice #1568 C2 — Base → ONE mirror Mode-A repatriation INSTRUCTION:
     ///         directs the mirror to move `amount` of its recycled surplus

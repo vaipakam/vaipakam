@@ -617,7 +617,14 @@ terminate on a bounded clock, record the loss.
 > short delivery seeds at received); and the operator-evidenced forced
 > finalize preserves declared funding (its zero received-amount is a
 > sentinel — the authentic ACK is permissionlessly re-presentable when
-> reconciliation is wanted).)*
+> reconciliation is wanted). Round 10 closed the last two seams of that
+> state machine: the forced-finalize one-shot is spent only by a
+> CONSUMED ack — a provisional (non-consumed) ack arriving post-force
+> leaves the flag standing so the consumed re-presentation can still
+> reconcile — and the in-place refresh script generation-gates the
+> reward MESSENGER proxy the same way it gates the receiver
+> (`WIRE_GENERATION`), since the refreshed facets speak the 5-word
+> consumption ACK that a generation-1 messenger rejects.)*
 
 ---
 

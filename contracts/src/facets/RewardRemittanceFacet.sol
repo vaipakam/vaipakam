@@ -1609,11 +1609,13 @@ contract RewardRemittanceFacet is
                 // funding with no received figure; the FIRST authentic
                 // ACK that lands afterwards carries it. One-shot (the
                 // flag clears).
-                if (r.forcedFinalized) {
+                // #1656 r10 - the one-shot survives NON-consumed acks:
+                // a provisional ack dispatched pre-confirm but arriving
+                // post-force must not burn the flag before the consumed
+                // re-presentation can reconcile.
+                if (r.forcedFinalized && consumed) {
                     r.forcedFinalized = false;
-                    if (consumed) {
-                        _reconcileCompFunded(s, r, amountReceived);
-                    }
+                    _reconcileCompFunded(s, r, amountReceived);
                     emit RemitAckAfterForcedFinalize(
                         remitId, sourceChainId, amountReceived
                     );

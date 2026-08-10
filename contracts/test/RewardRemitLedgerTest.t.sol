@@ -1149,6 +1149,36 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
+    /// @dev #1656 r10 — the forced-finalize one-shot survives a NON-
+    ///      consumed ack: a provisional ack dispatched pre-confirm but
+    ///      arriving post-force must not burn `forcedFinalized` before
+    ///      the consumed re-presentation can reconcile the declared
+    ///      split down to what was actually received.
+    function test_Supplemental_NonConsumedAckPreservesForcedOneShot()
+        public
+    {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        remit.finalizeRemitReservation(1); // forced — declared preserved
+        // A provisional (non-consumed) ack lands AFTER the force: no
+        // reconciliation, and the one-shot is NOT burned.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1.5e18, false);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "declared preserved through non-consumed ack");
+        assertEq(fb, 1e18, "declared preserved through non-consumed ack");
+        // The consumed re-presentation reconciles via the preserved flag.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1.5e18, true);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "consumed re-ack reconciled to received");
+        assertEq(fb, 0.5e18, "consumed re-ack reconciled to received");
+        // One-shot spent: replays inert.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1, true);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "replay inert after reconciliation");
+    }
+
     /// @dev #1656 r8 — a NON-consumption ack (quarantined / still-
     ///      provisional delivery) finalizes the reservation but HOLDS the
     ///      R6 gate (§5.1: the clearing evidence is CONSUMPTION; a
