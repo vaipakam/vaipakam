@@ -12,13 +12,18 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 
 /**
  * @title ReplaceStaleFacets
- * @notice Redeploys OfferFacet, OracleFacet and VaultFactoryFacet and Replaces
- *         every selector they own. Targets the createOffer failure surfacing
+ * @notice Redeploys a curated facet set — OfferCreate, OfferAccept, Oracle,
+ *         VaultFactory, Config, NumeraireConfig, OracleAdmin, and (since #1649)
+ *         RiskPreview + OfferPreview — and re-cuts every selector they own,
+ *         choosing Add or Replace per selector from the target Diamond's live
+ *         routing. Originally targeted the createOffer failure surfacing
  *         `CrossFacetCallFailed(string)` (0x573c3147) on Sepolia — that legacy
  *         error is only reachable through the non-typed `LibRevert.bubbleOnFailure`
  *         path, which current source no longer uses. Replacing these three
@@ -51,8 +56,19 @@ contract ReplaceStaleFacets is Script {
         // Same env-var-prefix normalisation as RedeployFacets — read
         // from deployments/<chain>/addresses.json with chain-prefixed
         // env fallback rather than the bare DIAMOND_ADDRESS.
-        address diamond = Deployments.readDiamond();
+        runWith(Deployments.readDiamond(), deployerKey);
+    }
 
+    /**
+     * @notice Parameterised entry — same body as {run}, with the target and the
+     *         signer passed in rather than read from the environment.
+     *
+     * @dev    #1649. See the twin on `RedeployFacets`: this exists so the
+     *         partial-refresh routing test can drive the REAL cut assembly
+     *         against an in-process Diamond without `vm.setEnv`, which writes
+     *         the process environment shared across parallel test threads.
+     */
+    function runWith(address diamond, uint256 deployerKey) public {
         console.log("Diamond:", diamond);
 
         vm.startBroadcast(deployerKey);
@@ -68,6 +84,20 @@ contract ReplaceStaleFacets is Script {
         // They must be cut to THIS facet's address, not ConfigFacet's, or they
         // misroute to ConfigFacet bytecode that no longer implements them.
         NumeraireConfigFacet numeraireConfigFacet = new NumeraireConfigFacet();
+        // #1649 — #1503 gave the sale branch of `OfferAcceptFacet.acceptOffer`
+        // (the binding check for a resting sale listing) a cross-facet call to
+        // `RiskPreviewFacet.saleAdmission`, a NEW selector. Refreshing
+        // OfferAcceptFacet without routing it installs an accept path that
+        // calls an unrouted selector, so every listing accept reverts
+        // `FunctionDoesNotExist` through the fallback — new code live and
+        // broken. Deploy the classifier's host alongside; its selectors are
+        // partitioned by live routing below.
+        RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
+        // #1649 — the read side of the same change. Refreshing the accept path
+        // alone leaves `previewAccept` on bytecode that does not know about the
+        // sale block, so it quotes an accept as fine and the transaction
+        // reverts — the preview/accept divergence #1503 exists to remove.
+        OfferPreviewFacet offerPreviewFacet = new OfferPreviewFacet();
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
         console.log("OracleFacet:         ", address(oracleFacet));
@@ -75,6 +105,8 @@ contract ReplaceStaleFacets is Script {
         console.log("ConfigFacet:         ", address(configFacet));
         console.log("NumeraireConfigFacet:", address(numeraireConfigFacet));
         console.log("OracleAdminFacet:    ", address(oracleAdminFacet));
+        console.log("RiskPreviewFacet:    ", address(riskPreviewFacet));
+        console.log("OfferPreviewFacet:   ", address(offerPreviewFacet));
 
         // T-068: RewardReporterFacet is intentionally NOT refreshed here.
         // The LayerZero→CCIP migration changed its selector SET (removed
@@ -84,77 +116,129 @@ contract ReplaceStaleFacets is Script {
         // pre-T-068 diamond gets via the dedicated CCIP deploy/migration
         // path, not this one-off bytecode-refresh script.
 
+        // #1649 — EVERY facet is now cut through one routing-partitioned
+        // builder. Previously the script mixed unconditional `Replace` cuts
+        // (OfferCreate / Oracle / Config-existing / OracleAdmin-existing) with
+        // unconditional `Add` cuts (Config-missing / OracleAdmin-missing /
+        // Numeraire), which hard-coded ONE target Diamond's shape — the
+        // pre-split Sepolia deployment this script was originally written for.
+        // Run against a CURRENT Diamond, those Adds reverted the whole cut with
+        // "Can't add function that already exists", so the script was unusable
+        // on any Diamond built by today's `DeployDiamond`.
+        //
+        // The `Existing`/`Missing` selector helpers below are kept because
+        // together they enumerate each facet's full surface (a `Replace` must
+        // carry the whole routed surface, #778/#779), but the split between them
+        // no longer decides the ACTION — the live loupe does. Their union is
+        // what matters now.
+        //
+        // Nine facets, so at most two cuts each; empty partitions are skipped
+        // and the staging array is trimmed to what was actually used (a
+        // zero-selector cut reverts).
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](18);
+        uint256 n;
+        n = _appendPartitioned(
+            staging, n, diamond, address(offerCreateFacet), _offerCreateSelectors()
+        );
+        n = _appendPartitioned(
+            staging, n, diamond, address(oracleFacet), _oracleSelectors()
+        );
         // RL-1 (Codex #1302 P2) — the shared `FacetSelectors.vaultFactory()`
-        // list now grows over time (it gained `vaultCreditFromDiamondERC20`),
-        // and a blanket `Replace` of the full list reverts on any diamond
-        // that doesn't route a newly-added selector yet. Partition by live
-        // routing (the `RedeployFacets` pattern) so routed selectors get a
-        // Replace and not-yet-routed ones get an Add — the script stays
-        // correct for every future addition to the shared list.
-        (bytes4[] memory vfAdd, bytes4[] memory vfReplace) =
-            _partitionByRouting(diamond, _vaultFactorySelectors());
-
-        // #1352 (Codex P2) — the offer-accept "missing" list now mixes
+        // list grows over time (it gained `vaultCreditFromDiamondERC20`), so a
+        // blanket Replace would revert on a Diamond that does not route a
+        // newly-added selector yet.
+        n = _appendPartitioned(
+            staging, n, diamond, address(vaultFactoryFacet), _vaultFactorySelectors()
+        );
+        n = _appendPartitioned(
+            staging,
+            n,
+            diamond,
+            address(configFacet),
+            _concat(_configFacetExistingSelectors(), _configFacetMissingSelectors())
+        );
+        n = _appendPartitioned(
+            staging,
+            n,
+            diamond,
+            address(oracleAdminFacet),
+            _concat(_oracleAdminExistingSelectors(), _oracleAdminMissingSelectors())
+        );
+        // #1352 (Codex P2) — the offer-accept "missing" list mixes
         // already-routed selectors (`calculateTransactionValueNumeraire` /
         // `verifyAndBindAccept`, live since #627/#662) with a genuinely-new one
-        // (`chargeBorrowerLifAndDeliver`, the HoldOnly LIF self-call target). A
-        // blanket `Add` of the whole list reverts on any diamond that already
-        // routes the first two (`LibDiamond.addFunctions` rejects a routed
-        // selector). Partition by live routing exactly like the VaultFactory
-        // path: already-routed missing selectors fold into the offer-accept
-        // Replace (re-point them at the fresh bytecode), only the unrouted ones
-        // get an Add — kept as a conditional tail so an empty Add never reverts.
-        (bytes4[] memory oaAdd, bytes4[] memory oaReplace) =
-            _partitionByRouting(diamond, _offerAcceptMissingSelectors());
-
-        // 9 base cuts + one conditional tail Add per non-empty {vfAdd, oaAdd}:
-        //   3 Replace (OfferCreate / Oracle / VaultFactory bytecode refresh)
-        //   1 Replace + 1 Add (ConfigFacet — existing + protocol-console knobs)
-        //   1 Add (NumeraireConfigFacet — numeraire/PAD/periodic selectors)
-        //   1 Replace + 1 Add (OracleAdminFacet — existing + Pyth/admin getters)
-        //   1 Replace (OfferAcceptFacet — base + already-routed new selectors)
-        //   [+1 Add] (VaultFactoryFacet — selectors not routed yet)
-        //   [+1 Add] (OfferAcceptFacet — genuinely-new selectors not routed yet)
-        uint256 tailCount =
-            (vfAdd.length > 0 ? 1 : 0) + (oaAdd.length > 0 ? 1 : 0);
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](
-            9 + tailCount
-        );
-        cuts[0] = _replace(address(offerCreateFacet), _offerCreateSelectors());
-        cuts[1] = _replace(address(oracleFacet), _oracleSelectors());
-        cuts[2] = _replace(address(vaultFactoryFacet), vfReplace);
-        cuts[3] = _replace(address(configFacet), _configFacetExistingSelectors());
-        cuts[4] = _add(address(configFacet), _configFacetMissingSelectors());
-        cuts[5] = _replace(address(oracleAdminFacet), _oracleAdminExistingSelectors());
-        cuts[6] = _add(address(oracleAdminFacet), _oracleAdminMissingSelectors());
-        // Re-point the offer-accept base selectors AND any already-routed new
-        // selectors at the fresh bytecode in one Replace.
-        cuts[7] = _replace(
+        // (`chargeBorrowerLifAndDeliver`, the HoldOnly LIF self-call target),
+        // which is exactly what the partition sorts out.
+        n = _appendPartitioned(
+            staging,
+            n,
+            diamond,
             address(offerAcceptFacet),
-            _concat(_offerAcceptSelectors(), oaReplace)
+            _concat(_offerAcceptSelectors(), _offerAcceptMissingSelectors())
         );
-        // #394 (Codex #647 round-3) — Add the carved-out numeraire/PAD/periodic
-        // selectors to the NumeraireConfigFacet address (NOT ConfigFacet).
-        cuts[8] = _add(address(numeraireConfigFacet), _getNumeraireConfigSelectors());
-        uint256 t = 9;
-        if (vfAdd.length > 0) {
-            cuts[t++] = _add(address(vaultFactoryFacet), vfAdd);
-        }
-        // #627 / #1352 — the genuinely-unrouted offer-accept selectors (KYC-value
-        // view + HoldOnly LIF self-call target). A Replace would revert on these
-        // (not yet routed); Add is correct.
-        if (oaAdd.length > 0) {
-            cuts[t++] = _add(address(offerAcceptFacet), oaAdd);
+        // #394 (Codex #647 round-3) — the carved-out numeraire/PAD/periodic
+        // selectors go to the NumeraireConfigFacet address, NOT ConfigFacet's:
+        // routing them to ConfigFacet would point them at bytecode that no
+        // longer implements them.
+        n = _appendPartitioned(
+            staging,
+            n,
+            diamond,
+            address(numeraireConfigFacet),
+            _getNumeraireConfigSelectors()
+        );
+        // #1649 — the sale classifier the refreshed accept path cross-calls. On
+        // a pre-#1503 Diamond the seven older preview selectors are routed
+        // (Replace) and `saleAdmission` is not (Add); the Add is the half that
+        // keeps the refreshed `OfferAcceptFacet`'s sale branch from reverting.
+        n = _appendPartitioned(
+            staging, n, diamond, address(riskPreviewFacet), FacetSelectors.riskPreview()
+        );
+        // #1649 — `previewAccept` was carved out of OfferAcceptFacet in #980, so
+        // on a pre-#980 Diamond it is routed to the OLD host and this re-points
+        // it; on a current one it is already this facet's selector.
+        n = _appendPartitioned(
+            staging, n, diamond, address(offerPreviewFacet), FacetSelectors.offerPreview()
+        );
+
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](n);
+        for (uint256 i; i < n; ++i) {
+            cuts[i] = staging[i];
         }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
 
-        console.log(
-            "DiamondCut applied: facets replaced; missing selectors added (VF + offer-accept):",
-            vfAdd.length + oaAdd.length
-        );
+        console.log("DiamondCut applied; cuts:", n);
+    }
+
+    /**
+     * @notice Append the Replace and/or Add cuts needed to point `selectors` at
+     *         `facet`, choosing each action from the target Diamond's LIVE
+     *         routing.
+     *
+     * @dev    #1649. The diamond library rejects both wrong guesses — `Add` on
+     *         an already-routed selector and `Replace` on an unrouted one — and
+     *         a cut carrying zero selectors also reverts, so an empty partition
+     *         must be skipped rather than appended. Returns the new write index.
+     */
+    function _appendPartitioned(
+        IDiamondCut.FacetCut[] memory staging,
+        uint256 n,
+        address diamond,
+        address facet,
+        bytes4[] memory selectors
+    ) internal view returns (uint256) {
+        (bytes4[] memory toAdd, bytes4[] memory toReplace) =
+            _partitionByRouting(diamond, selectors);
+        if (toReplace.length > 0) {
+            staging[n++] = _replace(facet, toReplace);
+        }
+        if (toAdd.length > 0) {
+            staging[n++] = _add(facet, toAdd);
+        }
+        return n;
     }
 
     /// @dev Concatenate two selector lists (base Replace set + already-routed

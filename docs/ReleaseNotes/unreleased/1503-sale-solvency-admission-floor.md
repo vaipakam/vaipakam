@@ -60,12 +60,48 @@ the other direction — if a position claims to be priceable but the oracle
 cannot price it, the sale is refused rather than admitted against an
 unverifiable figure.
 
+The admission test is a cross-component read, and that has a consequence for
+upgrades rather than for users. Two of the operator scripts that refresh an
+already-deployed contract set in place reinstall a sale entry point without
+having installed the component the new check reads, so running either against
+an existing deployment would have left sales failing outright — the new code
+live, and every attempt refused for a reason that has nothing to do with the
+position. Both scripts now install that component and register the check
+alongside whatever they refresh, choosing per entry point whether it is new or
+merely being repointed by reading what the live deployment currently routes,
+so one script is correct against an older deployment and a current one alike.
+
+Two related problems on that path were found and fixed in the same pass. One
+of the two scripts could not run against a current deployment at all: it
+assumed a specific historical shape and tried to register entry points that
+were already present, which aborts the whole operation. Its every step now
+reads live state instead of assuming a version — which also means the sale
+fix is genuinely reachable through it rather than masked by the script failing
+first. The second: that script refreshes the acceptance path but had left the
+read-only preview beside it untouched, so the preview would have gone on
+quoting a sale as fine while the acceptance refused it — the exact
+preview-versus-outcome divergence this change exists to remove, reintroduced
+by a partial refresh. The preview is now refreshed with the path it previews.
+
 Verified beyond unit tests: each new test was confirmed to fail when the
 guard is removed, and the behaviour was driven end-to-end against a real
 Diamond deployed on a local chain — full facet routing, real oracle wiring,
 no mocking — where a position was pushed under its floor by a collateral
 price move, the sale refused with the specific error, and the very same sale
 then settled once the price recovered.
+
+The upgrade path was rehearsed the same way rather than argued from a
+successful compile, because a compile cannot see this class of mistake at all:
+an existing local deployment was reduced to the shape a pre-change one
+presents, the sale was confirmed to fail there for exactly the routing reason
+described, each refresh script was then run against it, and the sale was
+driven again to confirm it completes. The same sequence is pinned as an
+automated test, including an assertion that the starting fixture really does
+reproduce the failure — without it the test could pass against a fixture that
+was never broken. Each script is also run twice in a row, because the first
+pass exercises the register-as-new branch and the second the repoint branch,
+and the underlying operation rejects either one applied in the wrong
+situation.
 
 This is the first half of PR-E. Item 21 (sale paths rejecting or binding
 active borrower close-out state) is not included: rejecting an active
