@@ -121,8 +121,13 @@ contract RewardRemittanceLensFacet {
                 uint256 d = r.dayIds[0];
                 if (
                     s.dayZeroedForDest[d][r.dstChainId]
-                        && s.compFundedLender18[r.dstChainId][d] == 0
-                        && s.compFundedBorrower18[r.dstChainId][d] == 0
+                        // #1656 r3 — the EXISTENCE flag, never the value
+                        // pair: a post-w4 day whose severe short delivery
+                        // reconciled both sides to zero is a recorded
+                        // compensation, not a legacy hit (and it could
+                        // never be cleared — Acked reservations cannot
+                        // release and the seed refuses recorded days).
+                        && !s.compFundedRecorded[r.dstChainId][d]
                 ) {
                     buf[n] = id;
                     unchecked { ++n; }

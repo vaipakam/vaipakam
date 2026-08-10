@@ -349,18 +349,18 @@ contract RewardCompensationDispatchFacet is
         // Same frozen-clock + R3 cutoff discipline as the manual path: a
         // supplement dispatched inside the cutoff window could arrive
         // past expiry and quarantine after the terminal.
-        LibVaipakam.DayLapseClock storage clk = s.dayLapseClock[dayId];
-        if (clk.finalizedAt == 0) {
+        // #1656 r3 — clock PRESENCE only, no R3 cutoff: the cutoff's
+        // premise (a past-expiry arrival is a GUARANTEED quarantine) does
+        // not hold for supplements — the mirror admits a top-up on a
+        // compensated-and-open day until its §2.5 remediation deadline,
+        // which is mirror-local state Base cannot read. A supplement
+        // racing the short-lapse terminal quarantines token-safely and
+        // returns via w5; refusing here instead would strand every AGED
+        // migrated day's re-opened headroom behind an expiry its
+        // remediation window replaced. The MANUAL path (first
+        // compensation) keeps the full cutoff.
+        if (s.dayLapseClock[dayId].finalizedAt == 0) {
             revert CompensationDayHasNoClock(dayId);
-        }
-        if (clk.scheduleVersion != 0) {
-            uint256 expiry =
-                uint256(clk.finalizedAt) + clk.lapseWindowSeconds;
-            if (block.timestamp + clk.dispatchCutoffGap > expiry) {
-                revert CompensationDispatchPastCutoff(
-                    dayId, expiry, clk.dispatchCutoffGap
-                );
-            }
         }
         // R6 — one in flight per chain.
         {

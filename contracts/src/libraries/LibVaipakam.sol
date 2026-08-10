@@ -6614,6 +6614,11 @@ library LibVaipakam {
         // the supplemental headroom the short delivery left.
         uint256 declaredLender18;
         uint256 declaredBorrower18;
+        // #1656 r3 - finalization was FORCED (operator-evidenced, no
+        // received figure): the FIRST authentic ACK that later arrives
+        // may still run the declared-to-received reconciliation exactly
+        // once, then clears this.
+        bool forcedFinalized;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

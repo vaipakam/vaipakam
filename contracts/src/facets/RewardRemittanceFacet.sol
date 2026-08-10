@@ -213,6 +213,16 @@ contract RewardRemittanceFacet is
         uint256 amountReceived
     );
 
+    /// @notice #1656 r3 - a forced-finalized compensation reservation's
+    ///         authentic ACK arrived later and ran the one-shot
+    ///         declared-to-received reconciliation.
+    /// @custom:event-category informational/reward-compensation
+    event RemitAckAfterForcedFinalize(
+        uint256 indexed remitId,
+        uint32 indexed sourceChainId,
+        uint256 amountReceived
+    );
+
     /// @notice #1222 M3 B2-d2 — a mirror dispatched its remit ack toward Base.
     /// @custom:event-category informational/reward-transport
     event RemitAckDispatched(
@@ -1073,10 +1083,24 @@ contract RewardRemittanceFacet is
             else if (!s.dayDeliberatelyZeroed[dayId]) reason = 1;
             else if (
                 s.dayLapsed[dayId] || s.dayShortLapsed[dayId]
-                    || _pastExpiry(
-                        s.dayLapseClock[dayId].finalizedAt,
-                        s.dayLapseClock[dayId].scheduleVersion,
-                        s.dayLapseClock[dayId].lapseWindowSeconds
+                    // #1656 r3 — the raw-expiry test governs FIRST
+                    // compensations only: a compensated-and-open day is
+                    // inside its §2.5 REMEDIATION window (the short-lapse
+                    // deadline supersedes the original expiry for
+                    // supplements — §2.5: "a supplemental arriving after
+                    // the state is set is quarantined", i.e. the terminal
+                    // FLAGS govern, and they are tested above). Without
+                    // this, an aged migrated day's re-opened supplemental
+                    // headroom would be unreachable — every top-up would
+                    // quarantine against a clock its remediation window
+                    // replaced.
+                    || (
+                        !s.dayCompensation[dayId].compensated
+                            && _pastExpiry(
+                                s.dayLapseClock[dayId].finalizedAt,
+                                s.dayLapseClock[dayId].scheduleVersion,
+                                s.dayLapseClock[dayId].lapseWindowSeconds
+                            )
                     )
             ) {
                 // Codex #1634 r1 — the flags alone are the w4 TERMINALS'
@@ -1537,7 +1561,21 @@ contract RewardRemittanceFacet is
             revert RemitAckSenderMismatch(remitId, remitter);
         }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        if (r.status == 2) return;
+        if (r.status == 2) {
+            // #1656 r3 - a FORCED finalization preserved declared funding
+            // with no received figure; the FIRST authentic ACK that lands
+            // afterwards carries it, and this is the one reconciliation
+            // pass the r2 posture promised. One-shot (the flag clears),
+            // chain-checked like the live path.
+            if (r.forcedFinalized && r.dstChainId == sourceChainId) {
+                r.forcedFinalized = false;
+                _reconcileCompFunded(s, r, amountReceived);
+                emit RemitAckAfterForcedFinalize(
+                    remitId, sourceChainId, amountReceived
+                );
+            }
+            return;
+        }
         if (r.status == 3) {
             emit RemitAckAfterRelease(remitId, sourceChainId, amountReceived);
             return;
@@ -1637,6 +1675,35 @@ contract RewardRemittanceFacet is
         );
     }
 
+    /// @dev #1656 r2/r3 - the declared-to-received reconciliation of the
+    ///      per-side funded cumulative for a COMPENSATION reservation
+    ///      (single-day by construction): a short delivery re-opens
+    ///      exactly the supplemental headroom it left. Pro-rata over the
+    ///      reservation's declared split; the mirror's receiver scales
+    ///      its credited shares the same way, and rounding skew is
+    ///      absorbed by the saturating subtraction + the per-side quote
+    ///      bound.
+    function _reconcileCompFunded(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RemitReservation storage r,
+        uint256 amountReceived
+    ) private {
+        uint256 total = r.total;
+        if (amountReceived >= total || total == 0 || r.dayIds.length != 1) {
+            return;
+        }
+        uint32 dst = r.dstChainId;
+        uint256 d = r.dayIds[0];
+        uint256 redL = r.declaredLender18
+            - (r.declaredLender18 * amountReceived) / total;
+        uint256 redB = r.declaredBorrower18
+            - (r.declaredBorrower18 * amountReceived) / total;
+        uint256 curL = s.compFundedLender18[dst][d];
+        uint256 curB = s.compFundedBorrower18[dst][d];
+        s.compFundedLender18[dst][d] = curL > redL ? curL - redL : 0;
+        s.compFundedBorrower18[dst][d] = curB > redB ? curB - redB : 0;
+    }
+
     /// @dev Shared ack/force finalize: Pending → Acked, pending → acked
     ///      aggregates rolled.
     function _finalizeReservation(
@@ -1661,38 +1728,17 @@ contract RewardRemittanceFacet is
         // pending the w5 return / w6 recovery settlements.
         if (s.compensationOutstanding[dst] == remitId) {
             LibRewardRemitDispatch.clearCompensationGate(s, dst);
-            // #1656 r1 — reconcile the per-side funded cumulative from
-            // DECLARED down to RECEIVED: a fee-on-transfer / partial-burn
-            // shortfall re-opens exactly the supplemental headroom the
-            // short delivery left — otherwise the supplemental bound
-            // reads the full declared figure and rejects the very top-up
-            // the path exists for. Pro-rata over the reservation's
-            // declared split (the mirror's receiver scales its credited
-            // shares the same way; a wei of rounding skew is absorbed by
-            // the saturating subtraction + the per-side quote bound).
-            if (
-                // #1656 r2 — AUTHENTIC ACKs only: the forced finalize
-                // passes `amountReceived = 0` as a sentinel, and reading
-                // it as a real zero-token delivery would subtract the
-                // whole declared split and let the same obligation fund
-                // twice. Forced finalization preserves declared funding —
-                // the mirror's `sendRemitAck` is permissionless and
-                // re-presentable (R6b), so the authentic figure can
-                // always be re-sent when reconciliation is wanted.
-                !forced && amountReceived < total && total != 0
-                    && r.dayIds.length == 1
-            ) {
-                uint256 d = r.dayIds[0];
-                uint256 redL = r.declaredLender18
-                    - (r.declaredLender18 * amountReceived) / total;
-                uint256 redB = r.declaredBorrower18
-                    - (r.declaredBorrower18 * amountReceived) / total;
-                uint256 curL = s.compFundedLender18[dst][d];
-                uint256 curB = s.compFundedBorrower18[dst][d];
-                s.compFundedLender18[dst][d] =
-                    curL > redL ? curL - redL : 0;
-                s.compFundedBorrower18[dst][d] =
-                    curB > redB ? curB - redB : 0;
+            // #1656 r2 - AUTHENTIC ACKs only: the forced finalize passes
+            // amountReceived = 0 as a sentinel, and reading it as a real
+            // zero-token delivery would subtract the whole declared split
+            // and let the same obligation fund twice. A forced
+            // finalization preserves declared funding and MARKS the
+            // reservation (#1656 r3), so the first authentic ACK that
+            // later arrives can still reconcile it exactly once.
+            if (forced) {
+                r.forcedFinalized = true;
+            } else {
+                _reconcileCompFunded(s, r, amountReceived);
             }
         }
         emit RemitReservationAcked(remitId, dst, total, amountReceived, forced);

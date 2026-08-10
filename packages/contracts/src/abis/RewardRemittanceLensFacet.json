@@ -408,6 +408,11 @@
             "name": "declaredBorrower18",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "forcedFinalized",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

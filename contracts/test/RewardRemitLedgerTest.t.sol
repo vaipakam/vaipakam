@@ -1064,6 +1064,65 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1, 0);
     }
 
+    /// @dev #1656 r3 — a supplemental dispatches past the day's ORIGINAL
+    ///      frozen expiry: the mirror admits top-ups on a compensated-and-
+    ///      open day until its remediation deadline, so the R3 cutoff's
+    ///      guaranteed-quarantine premise does not hold for supplements.
+    function test_Supplemental_DispatchesPastOriginalExpiry() public {
+        RewardCommitmentFacet(address(diamond)).setLapseSchedule(
+            7 days, 24 hours
+        );
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1.5e18);
+        vm.warp(block.timestamp + 30 days); // far past the frozen expiry
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 1e18, 1e18
+        );
+    }
+
+    /// @dev #1656 r3 — a rounded-to-zero post-w4 day is NOT a legacy
+    ///      inventory hit (the existence flag governs, not the values).
+    function test_LegacyInventory_RoundedZeroRecordNotListed() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1); // rounds to 0/0
+        mutator.setDayZeroedForDestRaw(1, CHAIN_ARB, true);
+        (uint256[] memory ids, ) = rlens.getLegacyManualReservations(1, 10);
+        assertEq(ids.length, 0, "recorded day never lists as legacy");
+    }
+
+    /// @dev #1656 r3 — a forced-finalized compensation's LATE authentic
+    ///      ACK runs the declared-to-received reconciliation exactly once.
+    function test_Supplemental_LateAckAfterForcedFinalizeReconciles()
+        public
+    {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        remit.finalizeRemitReservation(1); // forced — declared preserved
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "declared preserved at force");
+        // The delayed authentic ACK arrives: HALF was received.
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1.5e18);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "reconciled to received");
+        assertEq(fb, 0.5e18, "reconciled to received");
+        // One-shot: a replayed ACK changes nothing.
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "replay is inert");
+        // The re-opened headroom is usable.
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1.5e18
+        );
+    }
+
     /// @dev #1636 r4 — a resolved-zero standing quote is TERMINAL: its
     ///      (0,0) ingress retired the day's manual-funding anchor, so the
     ///      era-rotation clear refuses it (deleting would strand the
