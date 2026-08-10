@@ -584,9 +584,22 @@ terminate on a bounded clock, record the loss.
 > expiry, and the mirror ingress correspondingly exempts
 > already-compensated days from the raw-expiry quarantine (the terminal
 > FLAGS govern supplements). The cutoff's guaranteed-quarantine premise
-> holds only for FIRST compensations, where it stays. The per-side
-> cumulative lives Base-side (`compFunded*`), stamped by both
-> dispatchers and declared→received-reconciled at the authentic ACK. (6) Fitting w4 required
+> holds only for FIRST compensations, where it stays. Two precise
+> qualifications (#1656 r5): the remediation deadline is NOT an
+> enforced ingress cutoff — the mirror rejects only once a terminal
+> FLAG is set, and the flag is set by the permissionless terminal
+> TRANSACTION, so a supplemental landing after the effective deadline
+> but before that transaction is still credited, and a full top-up in
+> that ordering window prevents the terminal (a bounded, benign race:
+> the day ends fully funded — the outcome the terminal exists to
+> approximate). And the declared→received reconciliation of the
+> per-side cumulative (`compFunded*`, stamped by both dispatchers)
+> runs on PENDING acks and on the FIRST ack after a forced
+> finalization only — a RELEASED reservation's late-executing ack is
+> recorded (`RemitAckAfterRelease`) but does not reconcile, because a
+> release already deleted the day markers it owned and re-funding
+> flows through the release/recovery ceremony, not the supplemental
+> bound. (6) Fitting w4 required
 > the EIP-170 triple split: `RewardRemittanceLensFacet` (22 ledger
 > views), `RewardCompensationDispatchFacet` (manual + supplemental),
 > `LibRewardRemitDispatch` (the shared dispatch tail / net headroom /
