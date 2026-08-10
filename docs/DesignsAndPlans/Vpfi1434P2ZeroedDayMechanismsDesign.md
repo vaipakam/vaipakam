@@ -596,10 +596,13 @@ terminate on a bounded clock, record the loss.
 > per-side cumulative (`compFunded*`, stamped by both dispatchers)
 > runs on PENDING acks and on the FIRST ack after a forced
 > finalization only — a RELEASED reservation's late-executing ack is
-> recorded (`RemitAckAfterRelease`) but does not reconcile, because a
-> release already deleted the day markers it owned and re-funding
-> flows through the release/recovery ceremony, not the supplemental
-> bound. (6) Fitting w4 required
+> recorded (`RemitAckAfterRelease`) but does not reconcile — instead
+> the RELEASE ITSELF subtracts the reservation's declared per-side
+> split from the funded cumulative (#1656 r6): the released tokens
+> never funded the obligation, and leaving them counted would make the
+> recovery ceremony's re-dispatch impossible against the per-side
+> bound. Contributions from other reservations on the day remain
+> counted. (6) Fitting w4 required
 > the EIP-170 triple split: `RewardRemittanceLensFacet` (22 ledger
 > views), `RewardCompensationDispatchFacet` (manual + supplemental),
 > `LibRewardRemitDispatch` (the shared dispatch tail / net headroom /

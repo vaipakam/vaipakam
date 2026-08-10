@@ -1658,6 +1658,29 @@ contract RewardRemittanceFacet is
                 ++i;
             }
         }
+        // #1656 r6 - a released COMPENSATION reservation takes its
+        // DECLARED per-side contribution out of the funded cumulative:
+        // the release means those tokens never funded the obligation
+        // (the reservation can never execute), and leaving them counted
+        // would make the recovery ceremony's re-dispatch impossible -
+        // the per-side bound would reject the replacement as exceeding
+        // the quote. Saturating; contributions from OTHER reservations
+        // on the same day (the original under a released supplemental,
+        // or vice versa) remain counted, correctly.
+        if (
+            n == 1
+                && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
+        ) {
+            uint256 cd = closed[0];
+            uint256 curL = s.compFundedLender18[dst][cd];
+            uint256 curB = s.compFundedBorrower18[dst][cd];
+            s.compFundedLender18[dst][cd] = curL > r.declaredLender18
+                ? curL - r.declaredLender18
+                : 0;
+            s.compFundedBorrower18[dst][cd] = curB > r.declaredBorrower18
+                ? curB - r.declaredBorrower18
+                : 0;
+        }
         // Codex #1426 r4 — the FRESH counters stay UN-restored, exactly
         // like the recycled bucket: the sent VPFI is physically outside
         // Diamond custody (locked in the CCIP pool), so re-opening 69M

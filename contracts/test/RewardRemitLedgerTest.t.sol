@@ -923,6 +923,20 @@ contract RewardRemitLedgerTest is SetupTest {
             3e18,
             "funded scalar record intact"
         );
+        // #1656 r6 - the released supplemental's declared split leaves
+        // the funded cumulative with it, so the post-recovery replacement
+        // fits the per-side bound. The R6 gate itself correctly HOLDS
+        // (SS5.1: a release records terminal message state, and only the
+        // w6 recovery settlement clears it), so the replacement dispatch
+        // is the recovery ceremony's proof, not this one's.
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "back to the original's contribution");
+        assertEq(fb, 1e18, "back to the original's contribution");
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            suppId,
+            "gate held pending recovery settlement"
+        );
     }
 
     /// @dev #1656 r1 — a pre-w4 P2 compensation has no per-side funded
