@@ -584,7 +584,18 @@ terminate on a bounded clock, record the loss.
 > the EIP-170 triple split: `RewardRemittanceLensFacet` (22 ledger
 > views), `RewardCompensationDispatchFacet` (manual + supplemental),
 > `LibRewardRemitDispatch` (the shared dispatch tail / net headroom /
-> gate pair — one source, inlined per facet).)*
+> gate pair — one source, inlined per facet). Review round 2 (#1656)
+> hardened the upgrade seams: the terminals ship DARK behind a one-shot
+> ADMIN `armLapseTerminals` (the §8 activation gate as on-chain state —
+> a permissionless lapse cannot race the legacy migration); the funded
+> record's existence is a dedicated flag (`compFundedRecorded`), never
+> the (0,0) value pair (a severe short delivery's reconciliation can
+> round both sides to zero and the day must stay supplementable); the
+> migration seed records AT MOST the declared scalar (an already-ACKed
+> short delivery seeds at received); and the operator-evidenced forced
+> finalize preserves declared funding (its zero received-amount is a
+> sentinel — the authentic ACK is permissionlessly re-presentable when
+> reconciliation is wanted).)*
 
 ---
 

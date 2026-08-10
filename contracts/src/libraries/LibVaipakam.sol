@@ -6361,6 +6361,20 @@ library LibVaipakam {
         //   shorting the other).
         mapping(uint32 => mapping(uint256 => uint256)) compFundedLender18;
         mapping(uint32 => mapping(uint256 => uint256)) compFundedBorrower18;
+        // BASE-ONLY (#1656 r2) — the funded record EXISTS for this
+        //   chain-day (manual dispatch / supplemental / migration seed).
+        //   A dedicated flag, never the (0,0) value pair: a severe short
+        //   delivery's ACK reconciliation can legitimately round both
+        //   sides to zero, and that day must stay supplementable.
+        mapping(uint32 => mapping(uint256 => bool)) compFundedRecorded;
+        // MIRROR-ONLY (#1656 r2) — the lapse terminals' ARMING flag: the
+        //   §8 activation precondition (Base's legacy inventory reading
+        //   empty + every delivered legacy receipt stamped) becomes
+        //   enforceable on-chain state instead of ceremony discipline.
+        //   One-shot ADMIN arm; both permissionless terminals refuse
+        //   while false, so an upgrade window's expired days cannot be
+        //   lapsed out from under an unstamped legacy delivery.
+        bool lapseTerminalsArmed;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

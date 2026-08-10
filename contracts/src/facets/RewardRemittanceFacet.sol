@@ -1671,7 +1671,15 @@ contract RewardRemittanceFacet is
             // shares the same way; a wei of rounding skew is absorbed by
             // the saturating subtraction + the per-side quote bound).
             if (
-                amountReceived < total && total != 0
+                // #1656 r2 — AUTHENTIC ACKs only: the forced finalize
+                // passes `amountReceived = 0` as a sentinel, and reading
+                // it as a real zero-token delivery would subtract the
+                // whole declared split and let the same obligation fund
+                // twice. Forced finalization preserves declared funding —
+                // the mirror's `sendRemitAck` is permissionless and
+                // re-presentable (R6b), so the authentic figure can
+                // always be re-sent when reconciliation is wanted.
+                !forced && amountReceived < total && total != 0
                     && r.dayIds.length == 1
             ) {
                 uint256 d = r.dayIds[0];

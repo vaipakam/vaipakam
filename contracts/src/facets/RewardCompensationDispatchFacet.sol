@@ -221,6 +221,7 @@ contract RewardCompensationDispatchFacet is
         // bound's base term) + the R6 gate.
         s.compFundedLender18[dstChainId][dayId] += lenderAmount18;
         s.compFundedBorrower18[dstChainId][dayId] += borrowerAmount18;
+        s.compFundedRecorded[dstChainId][dayId] = true;
         LibRewardRemitDispatch.setCompensationGate(s, dstChainId, remitId);
         s.rewardBudgetRemittedGlobal += amount;
         s.rewardBudgetRemittedTotal[dstChainId] += amount;
@@ -315,10 +316,7 @@ contract RewardCompensationDispatchFacet is
         // a pre-w4 P2 compensation predates the stamps (both zero), and
         // treating that as zero funding would admit a second full quote.
         // The ADMIN seed ({seedCompFunded}) backfills it first.
-        if (
-            s.compFundedLender18[dstChainId][dayId] == 0
-                && s.compFundedBorrower18[dstChainId][dayId] == 0
-        ) {
+        if (!s.compFundedRecorded[dstChainId][dayId]) {
             revert SupplementalFundedRecordMissing(dayId, dstChainId);
         }
         // The day must be a QUOTED compensation day under the CURRENT
@@ -387,6 +385,7 @@ contract RewardCompensationDispatchFacet is
         s.remitPendingTotal[dstChainId] += amount;
         s.compFundedLender18[dstChainId][dayId] += lenderAmount18;
         s.compFundedBorrower18[dstChainId][dayId] += borrowerAmount18;
+        s.compFundedRecorded[dstChainId][dayId] = true;
         LibRewardRemitDispatch.setCompensationGate(s, dstChainId, remitId);
         {
             LibVaipakam.RemitReservation storage r =
@@ -450,16 +449,19 @@ contract RewardCompensationDispatchFacet is
         if (s.dayClosedByRemitId[dstChainId][dayId] == 0) {
             revert SupplementalDayNotClosed(dayId, dstChainId);
         }
-        if (
-            s.compFundedLender18[dstChainId][dayId] != 0
-                || s.compFundedBorrower18[dstChainId][dayId] != 0
-        ) {
+        // #1656 r2 — one-shot on the EXISTENCE flag, never the value
+        // pair (a rounded-to-zero reconciliation is a real record).
+        if (s.compFundedRecorded[dstChainId][dayId]) {
             revert CompFundedSeedInvalid(dayId, dstChainId);
         }
         LibVaipakam.CompQuote storage q = s.compQuote[dayId][dstChainId];
+        // #1656 r2 — the seed records what was CREDITED mirror-side: at
+        // most the declared scalar (an already-ACKed short delivery seeds
+        // at the RECEIVED figure, re-opening exactly the supplemental
+        // headroom the shortfall left), each side within the quote.
         if (
             lenderAmount18 + borrowerAmount18
-                != s.rewardBudgetRemitted[dstChainId][dayId]
+                > s.rewardBudgetRemitted[dstChainId][dayId]
                 || lenderAmount18 > q.lender18
                 || borrowerAmount18 > q.borrower18
         ) {
@@ -467,6 +469,7 @@ contract RewardCompensationDispatchFacet is
         }
         s.compFundedLender18[dstChainId][dayId] = lenderAmount18;
         s.compFundedBorrower18[dstChainId][dayId] = borrowerAmount18;
+        s.compFundedRecorded[dstChainId][dayId] = true;
         emit CompFundedSeeded(
             dstChainId, dayId, lenderAmount18, borrowerAmount18
         );

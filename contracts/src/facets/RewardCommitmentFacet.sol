@@ -1076,6 +1076,11 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     function lapseZeroedDay(uint256 dayId) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertMirror(s);
+        // #1656 r2 — DARK until the ADMIN arms (the constraint-19
+        // activation gate, enforced on-chain): an upgrade window's
+        // expired day must not be lapsed out from under an unstamped
+        // legacy delivery by a permissionless caller.
+        if (!s.lapseTerminalsArmed) revert LapseTerminalsNotArmed();
         if (!s.dayDeliberatelyZeroed[dayId]) {
             revert LapseDayNotZeroed(dayId);
         }
@@ -1125,6 +1130,8 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     function lapseShortCompensatedDay(uint256 dayId) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertMirror(s);
+        // #1656 r2 — same activation gate as the full lapse.
+        if (!s.lapseTerminalsArmed) revert LapseTerminalsNotArmed();
         LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
         if (!dc.compensated || dc.provisional) {
             revert ShortLapseNotCompensated(dayId);
@@ -1262,6 +1269,34 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
             s.lastQualifyingCompReceiptAt[dayId] = uint64(block.timestamp);
         }
         emit LegacyCompensationStamped(dayId, key, lenderShare, borrowerShare);
+    }
+
+    /// @notice #1434 P2-w4 (#1656 r2) — the lapse terminals were armed
+    ///         (the constraint-19 activation attestation).
+    /// @custom:event-category informational/reward-compensation
+    event LapseTerminalsArmed();
+
+    /// @notice ADMIN, one-shot, MIRROR — arm the two permissionless lapse
+    ///         terminals. The §8 activation checklist runs FIRST: Base's
+    ///         legacy inventory reads empty and every delivered legacy
+    ///         receipt is stamped ({stampLegacyCompensation}); this call
+    ///         is that checklist's on-chain attestation, so the terminals
+    ///         cannot race the migration on an upgrade window.
+    function armLapseTerminals()
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        if (s.lapseTerminalsArmed) revert LapseTerminalsAlreadyArmed();
+        s.lapseTerminalsArmed = true;
+        emit LapseTerminalsArmed();
+    }
+
+    /// @notice #1434 P2-w4 (#1656 r2) — whether the lapse terminals are
+    ///         armed on this mirror.
+    function getLapseTerminalsArmed() external view returns (bool) {
+        return LibVaipakam.storageSlot().lapseTerminalsArmed;
     }
 
     /// @notice #1434 P2-w4 (#1656 r1) — a pre-upgrade compensated day's

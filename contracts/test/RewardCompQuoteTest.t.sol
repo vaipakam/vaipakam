@@ -117,6 +117,9 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         // T_d unset would floor the capped cumulative at zero; production
         // freezes it at finalize, so stage "cap disabled".
         _mut().setDayCapThreshold18(DAY, type(uint256).max);
+        // #1656 r2 — arm the lapse terminals (the activation gate; the
+        // unarmed posture has its own probe test).
+        _com().armLapseTerminals();
     }
 
     /// @dev Lender-side entries covering `DAY` (per-day 60/25/15, cap 15e18):
@@ -946,6 +949,32 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         vm.prank(stranger);
         vm.expectRevert();
         _com().stampLegacyCompensation(DAY, stranger, 9);
+    }
+
+    function test_lapse_terminalsDarkUntilArmed() public {
+        // #1656 r2 — both permissionless terminals are DARK until the
+        // ADMIN arms them (the constraint-19 activation gate on-chain):
+        // an upgrade window's expired day cannot be lapsed out from
+        // under an unstamped legacy delivery.
+        _configureMirror();
+        _mut().setGovernorCommitArmedFromDayRaw(DAY);
+        _mut().setDayPoolStampRaw(DAY, 40e18, 20e18);
+        _mut().setChainReportSentAtRaw(DAY, uint64(block.timestamp));
+        _mut().setDayDeliberatelyZeroedRaw(DAY, true);
+        uint64 t0 = uint64(block.timestamp);
+        _mut().setDayLapseClockRaw(DAY, t0, 1, 7 days, 24 hours);
+        vm.warp(uint256(t0) + 7 days + 1);
+
+        vm.expectRevert(LapseTerminalsNotArmed.selector);
+        _com().lapseZeroedDay(DAY);
+        vm.expectRevert(LapseTerminalsNotArmed.selector);
+        _com().lapseShortCompensatedDay(DAY);
+
+        _com().armLapseTerminals();
+        vm.expectRevert(LapseTerminalsAlreadyArmed.selector);
+        _com().armLapseTerminals();
+        assertTrue(_com().getLapseTerminalsArmed(), "armed");
+        _com().lapseZeroedDay(DAY); // now live
     }
 
     function test_lapse_partialLossRefinesAfterTheTerminal() public {

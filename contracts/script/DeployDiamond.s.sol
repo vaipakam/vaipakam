@@ -2238,7 +2238,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](31);
+        s = new bytes4[](33);
         s[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2272,6 +2272,9 @@ contract DeployDiamond is Script {
         s[29] = RewardCommitmentFacet.getShortLapseDeadline.selector;
         // #1656 r1 — the pre-upgrade clock armer.
         s[30] = RewardCommitmentFacet.armShortLapseClock.selector;
+        // #1656 r2 — the activation gate pair.
+        s[31] = RewardCommitmentFacet.armLapseTerminals.selector;
+        s[32] = RewardCommitmentFacet.getLapseTerminalsArmed.selector;
         s[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         s[2] = RewardCommitmentFacet.isChainDayCommitmentsComplete.selector;
         // #1222 M3 B2-d1 — mirror commitment-report surface.

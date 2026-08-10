@@ -946,13 +946,14 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 0);
 
-        // Seed must reproduce the recorded scalar exactly.
+        // Seed may not EXCEED the recorded scalar (#1656 r2: at-most,
+        // so an already-ACKed short delivery seeds at received).
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.CompFundedSeedInvalid.selector, 1, CHAIN_ARB
             )
         );
-        comp.seedCompFunded(CHAIN_ARB, 1, 1e18, 1e18); // sums to 2, not 3
+        comp.seedCompFunded(CHAIN_ARB, 1, 3e18, 0.5e18); // sums past 3
         comp.seedCompFunded(CHAIN_ARB, 1, 2e18, 1e18);
         (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
         assertEq(fl, 2e18, "seeded");
@@ -985,6 +986,82 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.releaseRemitReservation(1);
         (ids, ) = rlens.getLegacyManualReservations(1, 10);
         assertEq(ids.length, 0, "released hit drops from the inventory");
+    }
+
+    /// @dev #1656 r2 — a severe short delivery whose reconciliation
+    ///      rounds both funded sides to ZERO is still a RECORDED day: the
+    ///      supplemental admits it (the existence flag, never the value
+    ///      pair, is the record).
+    function test_Supplemental_RoundedToZeroRecordStillSupplementable()
+        public
+    {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        // Near-total loss: 1 wei arrives; both shares floor to zero.
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 0, "lender share floors to zero");
+        assertEq(fb, 0, "borrower share floors to zero");
+        // Still supplementable — nearly the whole quote re-opened.
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 2e18
+        );
+    }
+
+    /// @dev #1656 r2 — the migration seed records the CREDITED figure: an
+    ///      already-ACKed short delivery seeds at received (≤ the declared
+    ///      scalar), re-opening the shortfall's supplemental headroom.
+    function test_Supplemental_SeedAtReceivedBelowDeclared() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
+        // Pre-w4 shape (no record) whose historical ACK reported HALF.
+        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
+        // Above the declared scalar still refuses…
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompFundedSeedInvalid.selector, 1, CHAIN_ARB
+            )
+        );
+        comp.seedCompFunded(CHAIN_ARB, 1, 3e18, 1e18);
+        // …but seeding at the RECEIVED figure (below declared) works.
+        comp.seedCompFunded(CHAIN_ARB, 1, 1e18, 0.5e18);
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1.5e18
+        );
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 3e18, "back at quote");
+        assertEq(fb, 2e18, "back at quote");
+    }
+
+    /// @dev #1656 r2 — the FORCED finalize preserves declared funding:
+    ///      its zero amountReceived is a sentinel, not a delivery figure,
+    ///      and reconciling on it would let the obligation fund twice.
+    function test_Supplemental_ForcedFinalizePreservesDeclared() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        remit.finalizeRemitReservation(1); // forced, amountReceived = 0
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 3e18, "declared preserved");
+        assertEq(fb, 2e18, "declared preserved");
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0, "gate clear");
+        // No headroom re-opened: any supplement exceeds the quote.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationExceedsQuote.selector,
+                3e18 + 1,
+                2e18,
+                3e18,
+                2e18
+            )
+        );
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1, 0);
     }
 
     /// @dev #1636 r4 — a resolved-zero standing quote is TERMINAL: its

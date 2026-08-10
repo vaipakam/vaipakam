@@ -1795,6 +1795,11 @@ contract TestMutatorFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.compFundedLender18[chainId][dayId] = lender18;
         s.compFundedBorrower18[chainId][dayId] = borrower18;
+        // #1656 r2 — the existence flag follows the staged values: (0,0)
+        // stages the PRE-w4 shape (no record), nonzero stages a recorded
+        // one. Flag-true-with-zero-values arises only via the real
+        // ACK-reconciliation path.
+        s.compFundedRecorded[chainId][dayId] = lender18 != 0 || borrower18 != 0;
     }
 
     /// @notice #1434 P2-w3 test-only — the commitment twin's verdict for day

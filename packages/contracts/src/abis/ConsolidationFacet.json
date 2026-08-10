@@ -1077,6 +1077,16 @@
   },
   {
     "type": "error",
+    "name": "LapseTerminalsAlreadyArmed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LapseTerminalsNotArmed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LapseWindowOutOfBounds",
     "inputs": [
       {

@@ -24,6 +24,13 @@
   },
   {
     "type": "function",
+    "name": "armLapseTerminals",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "armShortLapseClock",
     "inputs": [
       {
@@ -338,6 +345,19 @@
         "name": "dispatchCutoffGap",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getLapseTerminalsArmed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -1003,6 +1023,12 @@
         "internalType": "uint64"
       }
     ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "LapseTerminalsArmed",
+    "inputs": [],
     "anonymous": false
   },
   {
@@ -2053,6 +2079,16 @@
         "internalType": "uint64"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "LapseTerminalsAlreadyArmed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LapseTerminalsNotArmed",
+    "inputs": []
   },
   {
     "type": "error",

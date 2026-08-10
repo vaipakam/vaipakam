@@ -2189,7 +2189,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31);
+        selectors = new bytes4[](33);
         selectors[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2232,6 +2232,10 @@ contract HelperTest {
             RewardCommitmentFacet.getShortLapseDeadline.selector;
         // #1656 r1 — the pre-upgrade clock armer.
         selectors[30] = RewardCommitmentFacet.armShortLapseClock.selector;
+        // #1656 r2 — the activation gate pair.
+        selectors[31] = RewardCommitmentFacet.armLapseTerminals.selector;
+        selectors[32] =
+            RewardCommitmentFacet.getLapseTerminalsArmed.selector;
         selectors[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         selectors[2] = RewardCommitmentFacet
             .isChainDayCommitmentsComplete

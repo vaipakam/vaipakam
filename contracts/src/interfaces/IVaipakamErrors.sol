@@ -499,6 +499,13 @@ interface IVaipakamErrors {
     /// @notice #1434 P2-w4 (#1656 r1) — the seed's figures must fit the
     ///         day's recorded scalar funding and the standing quote.
     error CompFundedSeedInvalid(uint256 dayId, uint32 chainId);
+    /// @notice #1434 P2-w4 (#1656 r2) — the lapse terminals are DARK until
+    ///         the ADMIN arms them (the constraint-19 activation gate,
+    ///         on-chain): arming attests the legacy inventory read empty
+    ///         and every delivered legacy receipt was stamped.
+    error LapseTerminalsNotArmed();
+    /// @notice The terminals arm once.
+    error LapseTerminalsAlreadyArmed();
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by
