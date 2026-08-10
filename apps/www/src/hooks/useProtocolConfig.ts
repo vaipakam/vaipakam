@@ -82,6 +82,11 @@ const DOCS_CHAIN_ID = Number(env?.VITE_DOCS_CONFIG_CHAIN_ID ?? '84532');
  */
 const FRESH_WINDOW_SECONDS = 24 * 3600;
 
+/** How far ahead of the reader's clock a snapshot may be stamped before
+ *  it is treated as wrong rather than merely new. Browsers' clocks are
+ *  routinely a few minutes out; nothing legitimate is hours ahead. */
+const CLOCK_SKEW_TOLERANCE_SECONDS = 5 * 60;
+
 /** VPFI is 18 decimals on every deploy — required by the bridge spec,
  *  and the connected app's own fallback when its `decimals()` read
  *  fails. Reading it live would need the chain client this file exists
@@ -122,11 +127,27 @@ function asBigInt(value: unknown): bigint | null {
   return null;
 }
 
+/**
+ * Narrow a bigint to a `number` ONLY where the cast is exact.
+ *
+ * `asBigInt` happily accepts an arbitrarily long decimal string — that
+ * is correct for a bigint and wrong for what happens next. `Number(…)`
+ * on a large one silently rounds, and past ~1.8e308 yields `Infinity`,
+ * which `bpsAsPct` would render as `∞%` with a `published` provenance
+ * badge on it. A value that cannot survive the cast is a malformed
+ * payload, and malformed payloads take the bundled default.
+ */
+function toSafeNumber(v: bigint | null): number | null {
+  if (v === null) return null;
+  const n = Number(v);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
 function asBpsQuad(value: unknown): [number, number, number, number] | null {
   if (!Array.isArray(value) || value.length !== 4) return null;
-  const out = value.map(asBigInt);
+  const out = value.map((v) => toSafeNumber(asBigInt(v)));
   if (out.some((v) => v === null)) return null;
-  return out.map((v) => Number(v)) as [number, number, number, number];
+  return out as [number, number, number, number];
 }
 
 function asTokenQuad(value: unknown): [number, number, number, number] | null {
@@ -137,7 +158,9 @@ function asTokenQuad(value: unknown): [number, number, number, number] | null {
   // 10n ** 18n)` silently rounds past 2^53; dividing first keeps the
   // whole-token figure exact, which is the one a reader sees.
   const scale = 10n ** VPFI_DECIMALS;
-  return out.map((v) => Number(v! / scale)) as [number, number, number, number];
+  const tokens = out.map((v) => toSafeNumber(v! / scale));
+  if (tokens.some((v) => v === null)) return null;
+  return tokens as [number, number, number, number];
 }
 
 /** Map a display bundle onto the knobs the docs quote, or `null` if any
@@ -148,8 +171,8 @@ export function decodeMarketingConfig(
   bundle: unknown,
 ): MarketingProtocolConfig | null {
   if (!Array.isArray(bundle) || bundle.length < 9) return null;
-  const treasuryFeeBps = asBigInt(bundle[0]);
-  const loanInitiationFeeBps = asBigInt(bundle[1]);
+  const treasuryFeeBps = toSafeNumber(asBigInt(bundle[0]));
+  const loanInitiationFeeBps = toSafeNumber(asBigInt(bundle[1]));
   const tierThresholdsTokens = asTokenQuad(bundle[7]);
   const tierDiscountBps = asBpsQuad(bundle[8]);
   if (
@@ -161,8 +184,8 @@ export function decodeMarketingConfig(
     return null;
   }
   return {
-    treasuryFeeBps: Number(treasuryFeeBps),
-    loanInitiationFeeBps: Number(loanInitiationFeeBps),
+    treasuryFeeBps,
+    loanInitiationFeeBps,
     tierThresholdsTokens,
     tierDiscountBps,
   };
@@ -170,10 +193,18 @@ export function decodeMarketingConfig(
 
 /** Exported for the render guard: the freshness rule, stated once. */
 export function snapshotFresh(updatedAt: unknown): boolean {
-  return (
-    typeof updatedAt === 'number' &&
-    Date.now() / 1000 - updatedAt < FRESH_WINDOW_SECONDS
-  );
+  if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) return false;
+  const ageSeconds = Date.now() / 1000 - updatedAt;
+  // A NEGATIVE age is not "very fresh", it is a broken clock or a
+  // timestamp emitted in the wrong unit — milliseconds instead of
+  // seconds puts `updatedAt` ~55,000 years ahead, and `age < WINDOW`
+  // would then be true forever, pinning a wedged row as `published`
+  // permanently. That is the precise failure this window exists to
+  // prevent, so a future-dated row is refused rather than trusted.
+  // The small tolerance absorbs ordinary clock skew between the
+  // indexer and the reader's machine.
+  if (ageSeconds < -CLOCK_SKEW_TOLERANCE_SECONDS) return false;
+  return ageSeconds < FRESH_WINDOW_SECONDS;
 }
 
 // ─── Module-level store ───────────────────────────────────────────────
