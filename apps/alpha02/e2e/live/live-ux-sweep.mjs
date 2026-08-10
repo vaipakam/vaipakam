@@ -16,11 +16,24 @@
  * to visit actually loaded. Console errors, slow responses, heavy
  * payloads and overflow probes stay evidence and do not fail the run —
  * they are judgements a reviewer makes from the artifacts. A route that
- * never loaded is not a judgement: there is no artifact to read, and a
- * PASS row in the batch would claim coverage the run does not have.
- * "Never loaded" covers both a thrown navigation AND a document served
- * with a 4xx/5xx — the second resolves normally in Playwright and would
- * otherwise be counted as a clean visit.
+ * never loaded is not a judgement: the surface under review was never
+ * shown, so a PASS row in the batch would claim coverage the run does
+ * not have.
+ *
+ * "Never loaded" is three shapes, not one, because only the first of
+ * them looks like a failure at the time:
+ *   1. the navigation THREW — a timeout, a refused connection. Nothing
+ *      committed, the previous page may still be on screen, so this
+ *      route's screenshot / landmarks / devtools probe are deliberately
+ *      recorded as null;
+ *   2. the document came back 4xx/5xx. `page.goto` resolves for an
+ *      error document, so this would otherwise count as a clean visit.
+ *      Its artifacts ARE captured and kept — the error page is a real
+ *      page and its screenshot is what a reviewer wants (Codex #1648 r2
+ *      P2: only shape 1 has no artifact);
+ *   3. the route redirected away, server-side (the committed URL moved)
+ *      or client-side (the app navigated on mount). The final page
+ *      answers 200 and captures cleanly — of something else.
  *
  * Timeouts count, and that was argued. The case against: a 45 s budget
  * against a live testnet makes some timeouts environmental, and turning
@@ -288,6 +301,25 @@ function slugOf(route) {
   return route === '/' ? 'home' : route.replace(/^\//, '').replace(/[/:]/g, '-');
 }
 
+/**
+ * The comparable part of a URL: origin + pathname, trailing slash
+ * normalised away. Query and hash are dropped deliberately — the app
+ * adds and removes both on its own (deep links, tab state), and a
+ * redirect that only changes them has not moved the reader off the
+ * route under review. Returns null for anything unparseable so a caller
+ * treats "unknown" as "no evidence of a redirect" rather than as one.
+ */
+function pathOf(url) {
+  if (typeof url !== 'string' || url === '') return null;
+  try {
+    const u = new URL(url);
+    const p = u.pathname.length > 1 ? u.pathname.replace(/\/+$/, '') : u.pathname;
+    return `${u.origin}${p === '' ? '/' : p}`;
+  } catch {
+    return null;
+  }
+}
+
 /** Harvest a real loan-detail route from the RENDERED /positions page
  *  instead of querying the indexer with a wallets-file-derived address
  *  (CodeQL js/file-data-in-outbound-network-request — and honestly the
@@ -537,12 +569,19 @@ for (const pass of session.passes) {
     routesAttempted += 1;
     let navError = null;
     let httpStatus = null;
+    let servedPath = null;
+    let landedPath = null;
     try {
       const resp = await page.goto(`${SITE}${route}`, { waitUntil: 'load', timeout: 45_000 });
       httpStatus = resp?.status() ?? null;
+      servedPath = pathOf(resp?.url());
       // Let data views settle: brief idle wait, tolerant of the polls.
       await page.waitForLoadState('networkidle', { timeout: 12_000 }).catch(() => {});
       await page.waitForTimeout(1_500);
+      // Read AFTER the settle waits, so a client-side redirect that runs
+      // on mount (an alias route, a guard bouncing an ineligible page)
+      // has happened by the time this is sampled.
+      landedPath = pathOf(page.url());
     } catch (e) {
       navError = String(e).slice(0, 300);
     }
@@ -566,6 +605,33 @@ for (const pass of session.passes) {
       navError === null && typeof httpStatus === 'number' && httpStatus >= 400
         ? `HTTP ${httpStatus}`
         : null;
+    // Nor is a 200 proof the REQUESTED route rendered. A route
+    // redirected away — server-side to a login/holding page, or
+    // client-side by a guard on mount — answers 200 from wherever it
+    // landed, so status alone would count it as covered while the
+    // surface under review was never shown (Codex #1648 r2 P1).
+    //
+    // Both hops are checked because they fail differently and the sweep
+    // sees them at different moments: `servedPath` is the URL the
+    // document was committed at (a Worker / CDN redirect), `landedPath`
+    // is where the app sat after the settle waits (a React Router
+    // redirect, which does not move the response URL at all).
+    //
+    // The route list is canonical by construction — App.tsx's alias
+    // routes (`/earn`, `/loans`, …) are deliberately excluded — so a
+    // redirect from a swept route is a regression. An operator who
+    // names an alias through `UX_SWEEP_ROUTES` will see this fire; the
+    // message prints where it landed, which makes that case
+    // self-explanatory rather than mysterious.
+    const wantPath = pathOf(`${SITE}${route}`);
+    const redirectedTo =
+      navError !== null || httpError !== null
+        ? null
+        : servedPath !== null && servedPath !== wantPath
+          ? servedPath
+          : landedPath !== null && landedPath !== wantPath
+            ? landedPath
+            : null;
     const loadMs = Date.now() - started;
     // A failed navigation may never have committed — the previous
     // route would still be loaded, so screenshot/landmarks/devtools
@@ -614,19 +680,26 @@ for (const pass of session.passes) {
       navError,
       httpStatus,
       httpError,
+      servedPath,
+      landedPath,
+      redirectedTo,
       landmarks,
       devtools,
       console: sink.console,
       pageErrors: sink.pageErrors,
       network: sink.network,
     });
-    if (navError !== null || httpError !== null) {
+    if (navError !== null || httpError !== null || redirectedTo !== null) {
       allNavFailures.push({
         session: session.key,
         pass: pass.name,
         route,
         loadMs,
-        error: navError ?? `${httpError} — the route served an error document`,
+        error:
+          navError ??
+          (httpError !== null
+            ? `${httpError} — the route served an error document`
+            : `redirected to ${redirectedTo} — the requested route never rendered`),
       });
     }
     // eslint-disable-next-line no-console
@@ -637,11 +710,17 @@ for (const pass of session.passes) {
         // Say it HERE too, not only in the end-of-run tally. A failed
         // route otherwise reads as a fast, quiet, clean visit in the
         // live stream — "18ms, 0 responses, 0 errors" — which is the
-        // opposite of what happened. An HTTP error document reads even
-        // more innocently: it is a fast, fully-successful-looking visit.
-        (navError === null && httpError === null
+        // opposite of what happened. An HTTP error document and a
+        // redirect read even more innocently: both are fast,
+        // fully-successful-looking visits.
+        (navError === null && httpError === null && redirectedTo === null
           ? ''
-          : ` — DID NOT LOAD${httpError === null ? '' : ` (${httpError})`}`),
+          : ' — DID NOT LOAD' +
+            (httpError !== null
+              ? ` (${httpError})`
+              : redirectedTo !== null
+                ? ` (redirected to ${redirectedTo})`
+                : '')),
     );
     sink = null;
   }
@@ -715,10 +794,12 @@ if (allBlockedRequests.length > 0 || allNavFailures.length > 0) {
     // eslint-disable-next-line no-console
     console.error(
       `NAVIGATION FAILURES: ${allNavFailures.length} of ${routesAttempted} route visit(s)` +
-        ` never loaded — see navigationFailures in the report. A thrown navigation` +
-        ` leaves NO screenshot, landmarks or devtools evidence at all; an HTTP error` +
-        ` document leaves evidence OF THE ERROR PAGE. Either way the surface itself` +
-        ` went unreviewed, so the sweep cannot claim to have covered it.`,
+        ` never loaded — see navigationFailures in the report. What evidence exists` +
+        ` differs by shape: a THROWN navigation leaves no screenshot, landmarks or` +
+        ` devtools capture at all, while an HTTP error document or a redirect` +
+        ` captures cleanly — of the error page or of wherever it landed. In every` +
+        ` case the surface under review went unseen, so the sweep cannot claim to` +
+        ` have covered it.`,
     );
   }
   process.exit(1);

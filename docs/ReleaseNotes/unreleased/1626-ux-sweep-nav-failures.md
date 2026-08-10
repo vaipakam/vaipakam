@@ -22,17 +22,34 @@ and exits with the failure code if the count is non-zero. It still
 carries on to the remaining routes after one fails — stopping at the
 first bad route would throw away the evidence the sweep exists to gather.
 
-"Never loaded" covers two shapes, not one. The obvious case is a
-navigation that throws — a timeout, a refused connection. The one that
-would have slipped through is a route whose document comes back with a
-404 or a 502: the browser reports that as a perfectly successful
-navigation, so it would have been counted among the loaded routes and
-shown up in the log as a fast, quiet, clean visit. Both now count. They
-are tracked separately behind the scenes because they differ in what
-evidence survives — a thrown navigation may leave the previous page on
-screen, so its screenshot is deliberately discarded, whereas an error
-document is a real page worth capturing — but either way the surface the
-sweep was asked to review went unreviewed.
+"Never loaded" turns out to be three shapes, and only the first of them
+looks like a failure at the time. The obvious case is a navigation that
+throws — a timeout, a refused connection. The second is a route whose
+document comes back with a 404 or a 502: the browser reports that as a
+perfectly successful navigation, so it would have been counted among the
+loaded routes and logged as a fast, quiet, clean visit. The third is a
+route that redirects away, either because the server sends the reader
+somewhere else or because the application itself navigates on load — the
+page that finally answers is a healthy one, captures perfectly, and is
+simply not the page under review. All three now count, and the wording
+throughout is careful about the difference in what evidence each leaves:
+only the thrown case has nothing to look at, because nothing committed
+and a screenshot would show the previous page; the other two leave a
+perfectly good record of the wrong thing.
+
+Catching the redirect case exposed a quieter problem in the shared
+launcher every live review driver uses. To work around a sandbox whose
+gateway interferes with browser traffic, the launcher intercepts each
+page request, fetches it itself, and hands the result back to the
+browser. Its fetch was following redirects internally and returning the
+final content — which was then served to the browser under the
+originally requested address. The effect was that a redirect became
+completely invisible: the page displayed another route's content while
+both the address bar and the recorded response still read as the route
+that had been asked for. No driver could have detected a redirect, and
+the new check could never have fired. The launcher now hands the
+redirect back to the browser and lets it follow, which is what would
+have happened with no interception at all.
 
 Two choices are worth recording. The failure is reported as FAIL rather
 than BLOCKED, and is checked before the session-setup branch, on the same
