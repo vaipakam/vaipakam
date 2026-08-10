@@ -37,6 +37,24 @@ contract RedeploySelectorParityTest is Test {
         _assertParity("ProfileFacet", FacetSelectors.profile());
     }
 
+    /// @dev #1649 — the curated scripts cut this facet not for its own sake but
+    ///      because the sale hosts they refresh (`EarlyWithdrawalFacet` in
+    ///      `RedeployFacets`, `OfferAcceptFacet` in `ReplaceStaleFacets`)
+    ///      cross-call `saleAdmission`. Pin the list so a preview selector added
+    ///      to the facet cannot be silently left out of the curated refresh: the
+    ///      omission would not fail a compile, it would fail a live sale.
+    function test_RiskPreviewSelectors_MatchCompiledAbi() public view {
+        _assertParity("RiskPreviewFacet", FacetSelectors.riskPreview());
+    }
+
+    /// @dev #1649 — `ReplaceStaleFacets` refreshes `OfferAcceptFacet`, which
+    ///      after #1503 refuses a sale that fails admission. The preview must be
+    ///      refreshed with it or a partial refresh reintroduces the
+    ///      preview-says-fine / accept-reverts divergence.
+    function test_OfferPreviewSelectors_MatchCompiledAbi() public view {
+        _assertParity("OfferPreviewFacet", FacetSelectors.offerPreview());
+    }
+
     /// @dev #1123 wires the fail-closed movement gate INLINE into
     ///      `transferFrom`/`safeTransferFrom`, so the curated redeploy re-cuts
     ///      this facet from `FacetSelectors.vaipakamNFT()`. Pin that list to the

@@ -1060,7 +1060,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](8);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1068,6 +1068,9 @@ contract HelperTest {
         selectors[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3
         selectors[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3
         selectors[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b
+        // #1503 PR-E — sale admission classification (live health floor +
+        // inherited-risk-terms compatibility), read by LibSaleSolvency.
+        selectors[7] = RiskPreviewFacet.saleAdmission.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
