@@ -88,7 +88,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](152);
+        selectors = new bytes4[](159);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -390,6 +390,22 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.seedCumBorrowerDayRaw.selector;
         selectors[n++] = TestMutatorFacet.setRewardEntryEndDayRaw.selector;
         selectors[n++] = TestMutatorFacet.userSideDayPaidRaw.selector;
+        // #1434 P2-w1 — erase a day's frozen lapse clock to reproduce a day
+        // finalized BEFORE the upgrade (the V2-wire fallback path).
+        selectors[n++] = TestMutatorFacet.clearDayLapseClockRaw.selector;
+        // #1434 P2-w2 — drive the post-lapse quarantine branch before its
+        // w4 production writers exist.
+        selectors[n++] = TestMutatorFacet.setDayLapsedRaw.selector;
+        // #1434 P2-w3 — compensation-quote / pricing-ladder fixtures: stage
+        // zeroed + compensated day state, drive the internal fold, and read
+        // the stored cumulative rows + the commitment twin's verdict.
+        selectors[n++] =
+            TestMutatorFacet.setDayDeliberatelyZeroedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDayCompensationRaw.selector;
+        selectors[n++] = TestMutatorFacet.advanceCumThroughRaw.selector;
+        selectors[n++] = TestMutatorFacet.getCumStateRaw.selector;
+        selectors[n++] =
+            TestMutatorFacet.dailyDeltaForCommitmentRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -1973,11 +1989,20 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](17);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
         selectors[11] = RewardReporterFacet.onRewardBroadcastV2Received.selector;
+        // #1434 P2-w1 — V3 (kind-10) ingress + the mirror-side clock reads
+        // + the era ground truth (#1632 r1).
+        selectors[12] =
+            RewardReporterFacet.onRewardBroadcastV3Received.selector;
+        selectors[13] = RewardReporterFacet.getDayClockEra.selector;
+        selectors[14] =
+            RewardReporterFacet.getDayDeliberatelyZeroed.selector;
+        selectors[15] = RewardReporterFacet.setBaseRewardDeployment.selector;
+        selectors[16] = RewardReporterFacet.getBaseRewardDeployment.selector;
         selectors[2] = RewardReporterFacet.setRewardMessenger.selector;
         // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
         selectors[3] = RewardReporterFacet.setBaseChainId.selector;
@@ -1997,7 +2022,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31);
+        selectors = new bytes4[](33);
+        // #1434 P2-w1 — the V3 broadcast heal (single-destination). The
+        // lapse-schedule setter + day-clock reads live on
+        // RewardCommitmentFacet (EIP-170 headroom).
+        selectors[31] = RewardAggregatorFacet.broadcastGlobalTo.selector;
+        selectors[32] = RewardAggregatorFacet.quoteBroadcastGlobalTo.selector;
         // #1222 M3 B3 — the per-chain mesh ledger reads MOVED here from
         // ConfigFacet (which hit the EIP-170 ceiling).
         selectors[26] =
@@ -2074,7 +2104,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](30);
+        selectors = new bytes4[](35);
+        // #1434 P2-w2 — the classifying compensation ingress + the
+        // broadcast-arrival hook + the reservation reads.
+        selectors[30] =
+            RewardRemittanceFacet.onCompensationBudgetReceived.selector;
+        selectors[31] =
+            RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
+        selectors[32] = RewardRemittanceFacet.getDayCompensation.selector;
+        selectors[33] =
+            RewardRemittanceFacet.getStrandedRecoveryReserved.selector;
+        selectors[34] = RewardRemittanceFacet.getStrandedRecovery.selector;
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2125,10 +2165,38 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](25);
         selectors[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
+        // #1434 P2-w1 — the versioned lapse schedule + frozen day-clock
+        // reads (hosted here for EIP-170 headroom; see the facet natspec).
+        selectors[10] = RewardCommitmentFacet.setLapseSchedule.selector;
+        selectors[11] =
+            RewardCommitmentFacet.getCurrentLapseScheduleVersion.selector;
+        selectors[12] = RewardCommitmentFacet.getLapseSchedule.selector;
+        selectors[13] = RewardCommitmentFacet.getDayLapseClock.selector;
+        selectors[14] = RewardCommitmentFacet.getDayZeroedForDest.selector;
+        // #1434 P2-w3 — the compensation-quote surface: mirror accumulator
+        // + dispatch, Base ingress + evidence views, resolved-zero read.
+        selectors[15] =
+            RewardCommitmentFacet.accumulateCompQuoteBatch.selector;
+        selectors[16] =
+            RewardCommitmentFacet.quoteZeroedDayCompensation.selector;
+        selectors[17] = RewardCommitmentFacet.onCompQuoteReceived.selector;
+        selectors[18] = RewardCommitmentFacet.getCompQuote.selector;
+        selectors[19] = RewardCommitmentFacet.getCompQuoteAccum.selector;
+        selectors[20] = RewardCommitmentFacet.getDayResolvedZero.selector;
+        // #1636 r1 — the accumulation reset valve + the era-rotation
+        // quote clear.
+        selectors[21] =
+            RewardCommitmentFacet.resetCompQuoteAccumulation.selector;
+        selectors[22] = RewardCommitmentFacet.clearCompQuote.selector;
+        // #1636 r2 — the fail-closed mirror-era registry.
+        selectors[23] =
+            RewardCommitmentFacet.setMirrorRewardDeployment.selector;
+        selectors[24] =
+            RewardCommitmentFacet.getMirrorRewardDeployment.selector;
         selectors[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         selectors[2] = RewardCommitmentFacet
             .isChainDayCommitmentsComplete

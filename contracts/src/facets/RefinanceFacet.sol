@@ -400,7 +400,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // `LoanRefinanced` event signature byte-identical — indexers
         // continue to decode the field, just always read 0 post-fix.
 
-        // Treasury fee on interest portion (1% of interest).
+        // Treasury fee on the interest portion, at the old loan's
+        // snapshotted rate.
         // Lender Yield Fee discount (Tokenomics §6): when the old lender has
         // platform-level VPFI-discount consent AND holds >= the required VPFI
         // in vault, the treasury cut is paid in VPFI from the old lender's

@@ -141,7 +141,8 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /**
      * @notice Permissionless auto deduct for NFT rental daily fee.
      * @dev Callable by anyone after each day (checks lastDeductTime + 1 day <= now).
-     *      Deducts one day's fee from prepay to lender (99%) and treasury (1%).
+     *      Deducts one day's fee from prepay and splits it between the
+     *      lender and the treasury at the loan's snapshotted treasury rate.
      *      Updates lastDeductTime, reduces prepayAmount and durationDays by 1.
      *      If insufficient prepay, reverts (default via DefaultedFacet).
      *      No incentive yet (Phase 2: Small bounty from treasury).

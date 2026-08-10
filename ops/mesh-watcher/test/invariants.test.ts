@@ -47,6 +47,7 @@ import {
   isMissingSelector,
   repatDrawUnavailableGap,
   repatPositionUnavailableGap,
+  backingSnapshotUnavailableGap,
 } from '../src/mesh';
 import {
   formatAlert,
@@ -145,6 +146,10 @@ function mirrorLocal(): LocalLedger {
     // #1568 C2 — current deployment, view present, nothing repatriated
     // (undefined would skip composition + derivation suite-wide).
     repatriatedOut: 0n,
+    // #1434 P2-w2 — backing snapshot present with a healthy float and no
+    // quarantine (undefined would skip the recovery-reservation check
+    // suite-wide — the same anti-vacuity rule as repatriatedOut above).
+    backing: { vpfiBalance: 400n * E, strandedRecoveryReserved: 0n },
     observedAt: 1_800_000_000n,
   });
 }
@@ -174,6 +179,8 @@ function canonicalLocal(): LocalLedger {
       isCanonicalRewardChain: true,
     },
     repatriatedOut: 0n,
+    // #1434 P2-w2 — as on the mirror fixture: present, healthy, empty.
+    backing: { vpfiBalance: 1_000n * E, strandedRecoveryReserved: 0n },
     observedAt: 1_800_000_000n,
   });
 }
@@ -216,6 +223,11 @@ type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
   isCanonicalRewardChain?: boolean;
   /** `null` = the newer view could not be read on this chain. */
   composition?: null;
+  /** #1434 P2-w2 — explicit pair, or `null` = snapshot unreadable.
+   *  Omitted: derived from the (possibly overridden) bucket so a
+   *  bucket-raising test cannot trip the recovery-reservation check by
+   *  fixture incoherence (the #1618 r-fixture lesson). */
+  backingOverride?: { vpfiBalance: bigint; strandedRecoveryReserved: bigint } | null;
 };
 
 function coherent(
@@ -228,9 +240,24 @@ function coherent(
     accountingSeeded,
     isCanonicalRewardChain,
     composition,
+    backingOverride,
     ...rest
   } = over;
   const l = { ...base, ...rest };
+  // #1434 P2-w2 — keep the backing snapshot coherent with the (possibly
+  // overridden) bucket: balance = bucket + reserved + a healthy float,
+  // unless a test states the pair (or its absence) explicitly.
+  if (backingOverride === null) {
+    l.backing = undefined;
+  } else if (backingOverride !== undefined) {
+    l.backing = backingOverride;
+  } else {
+    const reserved = base.backing?.strandedRecoveryReserved ?? 0n;
+    l.backing = {
+      vpfiBalance: l.bucket + reserved + 200n * E,
+      strandedRecoveryReserved: reserved,
+    };
+  }
   if (composition === null) {
     return { ...l, composition: undefined };
   }
@@ -2505,6 +2532,81 @@ describe('bucket coverage on a STALE snapshot — a same-chain check', () => {
 
 
 // ── #1568 C2 ────────────────────────────────────────────────────────────
+describe('recovery-reservation backing (#1434 P2-w2, §4.1)', () => {
+  function obsWith(local: Omit<LocalLedger, FRESH>) {
+    return {
+      canonicalChainId: CANONICAL,
+      expectedChainIds: [CANONICAL, MIRROR],
+      books: [canonicalBooks(), mirrorBooks()],
+      freshLocals: new Map(),
+      allLocals: new Map([[MIRROR, local]]),
+      gaps: [],
+    };
+  }
+
+  it('baseline fixtures carry a LIVE backing pair, so the check runs suite-wide', () => {
+    // Anti-vacuity pin (the repatriatedOut precedent): if a refactor made
+    // the baseline `backing` undefined, every test below would silently
+    // become a skip-path test and the check would never run anywhere.
+    expect(mirrorLocal().backing).toBeDefined();
+    expect(canonicalLocal().backing).toBeDefined();
+  });
+
+  it('fires CRITICAL when the balance no longer covers bucket + reservation', () => {
+    // Contract-reachable shape: 300 quarantined (reservation), bucket 200,
+    // but the balance holds only 450 — 50 short of the 500 spoken for.
+    // Something spent tokens the ledger says are earmarked.
+    const local = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 450n * E,
+        strandedRecoveryReserved: 300n * E,
+      },
+    });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    const hits = findings.filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe('critical');
+    expect(hits[0]?.detail).toContain('spoken for');
+  });
+
+  it('a healthy reservation does not fire', () => {
+    const local = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 500n * E,
+        strandedRecoveryReserved: 300n * E,
+      },
+    });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    expect(
+      findings.filter((f) => f.code === 'recovery-reservation-backing'),
+    ).toHaveLength(0);
+  });
+
+  it('SKIPS (never substitutes zero) when the snapshot is unreadable', () => {
+    // A shortfall exists in reality, but the view could not be read: the
+    // check must skip — paging from a substituted zero would be a guess,
+    // and the unreadable view is already a coverage gap.
+    const local = coherent(mirrorLocal(), { backingOverride: null });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    expect(
+      findings.filter((f) => f.code === 'recovery-reservation-backing'),
+    ).toHaveLength(0);
+  });
+
+  it('the unreadable-snapshot gap names the shape widening', () => {
+    const gap = backingSnapshotUnavailableGap(
+      42161,
+      new Error('execution reverted'),
+    );
+    expect(gap.reason).toBe('view-unavailable');
+    expect(gap.source).toBe('own-ledger-backing');
+    expect(gap.detail).toContain('getRecycleBackingSnapshot');
+    expect(gap.detail).toContain('did NOT run');
+  });
+});
+
 describe('repat gap builders + the pre-C2/unknown discrimination', () => {
   /** An error `classify` marks `contract-revert` — a missing selector. */
   const REVERT = () => new Error('execution reverted');

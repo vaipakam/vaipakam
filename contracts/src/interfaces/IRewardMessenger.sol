@@ -32,6 +32,75 @@ interface IRewardReporterIngressV2 {
     ) external;
 }
 
+/// @notice #1434 P2-w1 — one destination's V3 broadcast as encoded on the
+///         kind-10 wire (after the `uint8` kind tag). A NEW kind, not a
+///         widened kind-5 (the B2-d5 rule): an old in-flight kind-5 packet
+///         cannot self-identify against a widened decoder, so V3 rides its
+///         own kind and the kind-5 branch is kept unchanged.
+/// @dev    Nests the V2 struct VERBATIM rather than flattening: the encoded
+///         layout of a static nested struct is identical to the flat field
+///         list, and the nesting lets the mirror ingress hand `v2` straight
+///         to the shared V2 apply core — no hand-transcribed field mapping
+///         to drift. The six appended fields are the P2 day-clock facts,
+///         all FROZEN at Base finalization (never read live at send) so
+///         every re-broadcast of a day is byte-identical by construction
+///         (R2a).
+struct RewardBroadcastV3 {
+    RewardBroadcastV2 v2;
+    // Base's block.timestamp at `_finalizeAndWrite` — the authenticated
+    // clock every P2 lapse/pricing machine gates on. Never zero on the
+    // wire: Base broadcasts a pre-upgrade-finalized day (which has no
+    // authentic clock) on the V2 wire instead.
+    uint64 finalizedAt;
+    // The lapse-schedule version the day's clocks are evaluated under
+    // (0 = frozen before any schedule was set — not lapse-eligible).
+    uint32 lapseScheduleVersion;
+    // The versioned parameter pair, inline (design §1.2 implementer pick):
+    // both domains derive the same expiry from the same frozen words.
+    uint64 lapseWindowSeconds;
+    uint64 dispatchCutoffGap;
+    // The R1 zeroed marker for THIS destination, frozen at finalization
+    // (the live `remitIneligible` flag is operator-clearable).
+    bool zeroedForDest;
+    // The sending deployment's identity (§2h constraint 20 era binding),
+    // stamped by the messenger from its own Diamond binding.
+    address baseDeployment;
+    // #1636 r2 — the DAY-LEVEL funded pool halves frozen at finalization
+    // (Base's `dayPoolStamp` figures). The Δq quote numerator: a zeroed
+    // destination's own per-chain slice is deliberately zero, so the
+    // day-level figure must travel — the V2 wire never carried it (only
+    // the legacy kind-2 did), which left mirror-side quoting unreachable
+    // on the V3 production path.
+    uint256 dayScheduleFloorHalf;
+    uint256 dayRecycledBudgetHalf;
+}
+
+/// @notice #1434 P2-w3 — Base-side Diamond ingress for an inbound mirror
+///         compensation QUOTE (`RewardCommitmentFacet.onCompQuoteReceived`):
+///         the zeroed chain's authenticated per-side counterfactual fair
+///         share — evidence the manual compensation dispatch is bounded by.
+interface ICompQuoteIngress {
+    function onCompQuoteReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        // #1636 r1 — the sending mirror Diamond, stamped by the messenger
+        // from its own binding (the reciprocal of `baseDeployment` above):
+        // Base binds the standing quote to it and rejects divergent
+        // re-deliveries.
+        address sourceEra
+    ) external;
+}
+
+/// @notice #1434 P2-w1 — mirror-side Diamond ingress for an inbound V3
+///         broadcast (`RewardReporterFacet.onRewardBroadcastV3Received`).
+interface IRewardReporterIngressV3 {
+    function onRewardBroadcastV3Received(
+        RewardBroadcastV3 calldata b
+    ) external;
+}
+
 /// @notice #1222 M3 B2-d1 — Base-side Diamond ingress for an inbound mirror→Base
 ///         commitment REPORT (`RewardAggregatorFacet.onCommitmentReportReceived`).
 ///         Delivers a mirror's day-`D` per-side claimable-liability aggregate,
@@ -354,4 +423,92 @@ interface IRewardMessenger {
         external
         view
         returns (uint256[] memory);
+
+    // ─── #1434 P2-w1 — per-destination broadcast V3 (kind-10) ───────────────
+
+    /// @notice The day-shared P2 clock facts of a V3 broadcast — identical
+    ///         for every destination, all frozen at Base finalization.
+    ///         `baseDeployment` is deliberately absent: the messenger stamps
+    ///         it from its own Diamond binding so a caller bug can never
+    ///         mislabel the sending era.
+    struct BroadcastV3Extras {
+        uint64 finalizedAt;
+        uint32 lapseScheduleVersion;
+        uint64 lapseWindowSeconds;
+        uint64 dispatchCutoffGap;
+        // #1636 r2 — day-level funded pool halves (the Δq numerator
+        // transport; see {RewardBroadcastV3}).
+        uint256 dayScheduleFloorHalf;
+        uint256 dayRecycledBudgetHalf;
+    }
+
+    /// @notice One destination's V3 figures: the V2 per-destination fields
+    ///         plus the destination's frozen R1 zeroed marker. The marker
+    ///         rides INSIDE the per-destination struct (not a parallel
+    ///         array) so it stays bound to `base.destChainId` under the
+    ///         order-free destination matching.
+    struct BroadcastV3PerDest {
+        BroadcastV2PerDest base;
+        bool zeroedForDest;
+    }
+
+    /// @notice Broadcast day `shared.dayId` as one kind-10 payload per
+    ///         configured destination — the V2 semantics plus the frozen
+    ///         P2 day-clock facts. Same set-coverage contract as
+    ///         {broadcastDayV2}.
+    function broadcastDayV3(
+        BroadcastV2Shared calldata shared,
+        BroadcastV3Extras calldata extras,
+        BroadcastV3PerDest[] calldata dests,
+        address payable refundAddress
+    ) external payable;
+
+    /// @notice Quote the native CCIP fee SUM for a {broadcastDayV3}.
+    function quoteBroadcastDayV3(
+        BroadcastV2Shared calldata shared,
+        BroadcastV3Extras calldata extras,
+        BroadcastV3PerDest[] calldata dests
+    ) external view returns (uint256 nativeFee);
+
+    /// @notice Send day `shared.dayId` as ONE kind-10 payload to
+    ///         `dest.base.destChainId` only — the clock-backfill heal path
+    ///         (`RewardAggregatorFacet.broadcastGlobalTo`). Deliberately
+    ///         exempt from the configured-set coverage rule: a mirror
+    ///         removed from the destination list after its kind-5 apply
+    ///         must remain reachable for its V3 clock backfill (design
+    ///         §1.1). The lane itself must still exist on the underlying
+    ///         CCIP messenger — a torn-down lane reverts there.
+    function broadcastDayV3Single(
+        BroadcastV2Shared calldata shared,
+        BroadcastV3Extras calldata extras,
+        BroadcastV3PerDest calldata dest,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+
+    /// @notice Quote the native CCIP fee for a {broadcastDayV3Single}.
+    function quoteBroadcastDayV3Single(
+        BroadcastV2Shared calldata shared,
+        BroadcastV3Extras calldata extras,
+        BroadcastV3PerDest calldata dest
+    ) external view returns (uint256 nativeFee);
+
+    // ─── #1434 P2-w3 — mirror → Base compensation quote (kind 11) ───────────
+
+    /// @notice Send a mirror's zeroed-day compensation QUOTE to Base
+    ///         (§1.4): the authenticated per-side counterfactual fair
+    ///         share — evidence bounding the manual compensation, never
+    ///         funding. Diamond-only; re-sendable idempotently.
+    function sendCompQuote(
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
+
+    /// @notice Quote the native CCIP fee for a {sendCompQuote}.
+    function quoteSendCompQuote(
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
+    ) external view returns (uint256 nativeFee);
 }

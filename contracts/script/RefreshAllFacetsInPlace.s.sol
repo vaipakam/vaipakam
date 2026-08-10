@@ -83,7 +83,10 @@ import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 // proxy, not a Diamond facet; the B2-d5 block below upgrades it in step
 // with the widened ingress so an un-upgraded receiver cannot silently
 // decode the new payload as the legacy shape.
-import {RewardRemittanceReceiver} from "../src/crosschain/RewardRemittanceReceiver.sol";
+import {
+    RewardRemittanceReceiver,
+    REMIT_RECEIVER_WIRE_GENERATION
+} from "../src/crosschain/RewardRemittanceReceiver.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 /// @dev Minimal ERC-173 view to pre-flight the diamond owner.
@@ -420,6 +423,96 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             console.log(
                 "remit ingress: removed retired onRewardBudgetReceived selectors (6-arg #1222 B2-d5 / 7-arg #1434 P1-a)"
             );
+        }
+
+        // ─── #1434 P2-w2 (Codex #1634 r1) — receiver wire-generation probe ──
+        //
+        // The B2-d5 block above gates its receiver upgrade on the RETIRED
+        // Diamond selectors still being routed — its own durable migration
+        // marker. A deployment already past that migration routes neither,
+        // so the block is (correctly) skipped there — but that also skipped
+        // the RECEIVER upgrade for every LATER wire generation: the P2
+        // compensation tag would hit a receiver that reads the keccak-sized
+        // tag as a legacy array offset and reverts every delivery, while
+        // Base has already closed the day and holds the reservation Pending.
+        //
+        // The durable gate for this and every future generation is the
+        // receiver's OWN `WIRE_GENERATION` constant: a missing selector
+        // (pre-P2 implementation) or a lower value means the proxy needs
+        // the upgrade. Idempotent — a rerun (or a same-run pass after the
+        // B2-d5 block already upgraded) reads the new implementation's
+        // value and skips.
+        {
+            address remitReceiverP2 =
+                _readAddrOptional(".rewardRemittanceReceiver");
+            // #1634 r2 — the SAME fail-closed posture as the B2-d5 block:
+            // `_readAddrOptional` returns zero for a missing / stale /
+            // malformed artifact as well as for a chain that genuinely has
+            // no receiver, and a MIRROR silently skipping here would ship
+            // the P2 Diamond ingress with a receiver that cannot decode
+            // the P2 tag — every manual compensation failing while Base
+            // has closed the day. Only the canonical chain legitimately
+            // has no receiver.
+            (, , , bool isCanonicalRewardP2, ) =
+                RewardReporterFacet(diamond).getRewardReporterConfig();
+            require(
+                remitReceiverP2 != address(0) || isCanonicalRewardP2,
+                "P2-w2: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
+            );
+            if (remitReceiverP2 != address(0)) {
+                uint256 gen = 0;
+                (bool ok, bytes memory ret) = remitReceiverP2.staticcall(
+                    abi.encodeWithSignature("WIRE_GENERATION()")
+                );
+                if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+                if (gen < REMIT_RECEIVER_WIRE_GENERATION) {
+                    address newImplP2 = address(new RewardRemittanceReceiver());
+                    UUPSUpgradeable(remitReceiverP2).upgradeToAndCall(
+                        newImplP2, ""
+                    );
+                    Deployments.writeRewardRemittanceReceiverImpl(newImplP2);
+                    console.log(
+                        "P2-w2: upgraded RewardRemittanceReceiver (wire gen",
+                        gen,
+                        "-> 3) impl:",
+                        newImplP2
+                    );
+                }
+            }
+        }
+
+        // ─── #1434 P2-w2 (#1634 r2) — retire the 3-arg manual remit ─────────
+        //
+        // `remitManualBudget` changed from (uint32,uint256,uint256) to the
+        // per-side (uint32,uint256,uint256,uint256) shape, so its SELECTOR
+        // changed — and this script Replaces/Adds but never Removes (SCOPE
+        // note above). The retired selector would stay routed to the OLD
+        // facet bytecode: an admin on stale tooling could still close a
+        // day and dispatch the legacy d5 ordinary-remit payload, which the
+        // upgraded mirror books through `onRewardBudgetReceived` instead
+        // of the compensation classifier — no compensated pools, no
+        // recovery reservation, while Base considers the compensation
+        // sent. Remove it so stale tooling FAILS CLOSED. Gated on the old
+        // selector being routed (the standing idempotent-rerun pattern).
+        {
+            bytes4 oldManualRemit3 = bytes4(
+                keccak256("remitManualBudget(uint32,uint256,uint256)")
+            );
+            if (loupe.facetAddress(oldManualRemit3) != address(0)) {
+                bytes4[] memory rmManual = new bytes4[](1);
+                rmManual[0] = oldManualRemit3;
+                IDiamondCut.FacetCut[] memory rmManualCut =
+                    new IDiamondCut.FacetCut[](1);
+                rmManualCut[0] = IDiamondCut.FacetCut({
+                    facetAddress: address(0),
+                    action: IDiamondCut.FacetCutAction.Remove,
+                    functionSelectors: rmManual
+                });
+                IDiamondCut(diamond).diamondCut(rmManualCut, address(0), "");
+                console.log(
+                    "P2-w2: removed retired remitManualBudget(uint32,uint256,uint256) selector"
+                );
+            }
         }
 
         // ─── #1503 PR-A — listing lifecycle: retire the 3-arg selector ──────

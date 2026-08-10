@@ -33,6 +33,10 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
 - `finalizedAt` (`uint64`) — Base's `block.timestamp` at
   `_finalizeAndWrite`, **frozen in new per-day storage at finalization**
   (`dayFinalizedAt[dayId]`), never read live at send.
+  *(w1 implementation note: the four frozen scalars — `finalizedAt`,
+  `scheduleVersion` and the two inline parameters — live packed in one
+  per-day slot, `dayLapseClock[dayId]`, on both sides; the doc's
+  per-fact names below map onto its fields.)*
 - `lapseScheduleVersion` (`uint32`) — the version of the lapse-window /
   cutoff-gap parameter set under which this day's clocks are evaluated,
   **frozen per day at finalization** (`dayLapseScheduleVersion[dayId]`).
@@ -52,7 +56,32 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
   compensation ingress (§2.2) accepts a compensation for a day only from
   the remitter matching the day's recorded era, and a V3 packet whose
   `baseDeployment` differs from an already-recorded era for that day is
-  rejected.
+  rejected. *(w1 strengthening, Codex #1632 r1 P1: the recorded-era check
+  alone cannot defend a day's FIRST install — nothing is recorded yet,
+  and the CCIP lane authenticates the shared remote messenger, not the
+  Diamond generation behind it, so a retired deployment's in-flight
+  packet would win the race after a rotation. The mirror therefore holds
+  an explicit ADMIN-set ground truth, `baseRewardDeployment`, that every
+  V3 packet must name; while unset the V3 ingress is dark (fail-closed,
+  packets stay re-executable), and rotation belongs to the same ceremony
+  that rotates the Base deployment. Second strengthening, #1632 r2: the
+  identity-less LEGACY wires are the remaining cross-era channel — a
+  retired era's kind-5 landing around a rotation could create applied
+  state a new-era V3 would then backfill its clock onto. So an armed
+  mirror stamps era PROVENANCE (`dayClockEra`) on every legacy apply,
+  and a true era rotation — a second, different nonzero ground truth —
+  permanently retires the legacy wires' fresh applies
+  (`LegacyBroadcastRetired`; replays stay idempotent). Arming ships in
+  the standard `ConfigureRewardReporter` spell + deploy wrappers (the
+  mainnet wrapper enforces it on the transaction-producing configure
+  phase itself, #1632 r3); the rotation ceremony is recorded in
+  CcipCutoverRunbook §8. Third strengthening, #1632 r3: a rotated
+  mirror also refuses V3 clock facts for days with prior state but
+  UNKNOWN era (applied before arming — the pre-arming inventory), which
+  the ceremony therefore heals BEFORE rotating; and the heal's standing
+  predicate includes the frozen `dayZeroedForDest` marker, so
+  reconciliation clearing the live flag never strands a zeroed
+  destination's heal.)*
 
 **Why frozen-at-finalization is load-bearing (R2a).** A re-broadcast today
 is NOT byte-identical by construction — `broadcastGlobal` reads everything
@@ -131,7 +160,28 @@ schedule copies both halves:
   (implementation may inline the two bounded values per packet instead of a
   side table — 2 words, simpler, no first-appearance tracking; the
   implementer picks, the requirement is only that the day's *applicable
-  parameters* are mirror-known from authenticated Base data).
+  parameters* are mirror-known from authenticated Base data). *(w1 took
+  the inline option: the two bounded values ride every V3 packet and are
+  frozen per day in `dayLapseClock[dayId]`; there is no mirror-side
+  version table. `MSG_TYPE_BROADCAST_V3` landed as kind 10 — kinds 8/9
+  were taken by the #1568 repatriation wire.)*
+
+> *(w2 implementation notes: `REMIT_WIRE_TAG_P2` landed as specified —
+> single-day, per-side amounts, frozen `finalizedAt` + schedule version
+> inline; fresh-only (no `recycledShare` field). The §2.2 classification
+> is ERA-FIRST: with `broadcastV2Applied && dayClockEra != 0` the known-
+> state ladder runs (era match → zeroed → not lapsed → credit; any
+> failure quarantines with a reason code); otherwise the provisional
+> branch. The provisional confirm/demote hook rides every ACCEPTED V3
+> broadcast. §4.1's reservation landed as `strandedRecoveryReserved` +
+> receipt-keyed `strandedRecoveries` records; the `backingPosition`
+> natspec rule was narrowed to "no balance-OWNER subtractions" since the
+> reservation is a protocol LEDGER like the bucket. The R3 dispatch
+> cutoff shipped IN w2 after review (#1634 r3): the ingress evaluates
+> expiry from the frozen words already, so a late dispatch could arrive
+> quarantined after Base closed the day — the cutoff and the evaluation
+> must travel together. Clockless days refuse dispatch outright (r2);
+> all four clock words ride the wire (r1).)*
 
 ### 1.3 R4b — the applicable expiry rides the remit too
 
@@ -249,6 +299,82 @@ construction. The walk recognises a compensated day by a mirror-local
 stamp written at compensation ingress (`dayCompensated[dayId] =
 receiptKey`) and prices it from the compensated pool instead of the
 broadcast halves.
+
+> *(w3 implementation notes — three recorded deviations, each toward the
+> stricter shape. (1) **No second marker**: the walk recognises a
+> compensated day by w2's own record (`dayCompensation[d].compensated &&
+> !provisional`), not a separate `dayCompensated` stamp — one fact, one
+> flag. (2) **The deferral ceiling moved from per-entry to the day
+> CROSSING**: scouting found the cumulative cursor exposes a crossed day
+> to TWO payment paths — the per-day walk AND the entry path's bulk
+> window pricing of spanning entries (`_entryWindowSplitFrom`), which a
+> walk-level per-entry bound cannot protect. So the §2.1 ladder's
+> compensated arm crosses only when the side's delivered pool covers the
+> side's own quoted sum (`compQuoteAccum18`, complete by the dispatch
+> conservation proof) — keyed on the AMOUNT present per the standing
+> B2-d4 constraint — and an underfunded day defers WHOLE (§2g's
+> never-trim holds; per-entry ceilings are vacuous on a crossed day by
+> construction). Under-quote partial funding therefore waits for w4's
+> supplemental remit or short-lapse terminal (the w2 manual remit is
+> once-per-day). (3) **Resolved-zero is a ladder arm, not "ordinary
+> walk"**: pre-P1-b the ordinary walk IS the blanket mirror halt, so the
+> ladder returns the zero-delta crossing itself. The ladder landed as ONE
+> shared per-day derivation (`_dayDeltas`) consumed by both cumulative
+> folds, the commitment twin (a governed-open day is NOT priceable — a
+> zero report for a later-compensated day would under-commit), and the
+> walk's own decomposition; Δq itself is the one shared
+> `LibInteractionRewards.compQuoteDelta` the quote accumulator also
+> reads, so quoted figure and priced figure cannot diverge. A compensated
+> day's Δq stays in `cumMinArmed*` so the window split classifies it
+> armed-fresh — matching w2's counting of the credit into
+> `rewardBudgetArmedFreshReceived` — and carries zero recycled component.
+> `MSG_TYPE_COMP_QUOTE` landed as kind 11; Base ingress admits a
+> re-delivery refresh only while the day is unfunded, and a `(0,0)` quote
+> clears `remitIneligible` (nothing to compensate) while bounding funding
+> to zero. `remitManualBudget` enforces the §2.5 PER-SIDE bound, stricter
+> than the aggregate wording here.
+>
+> Review round 1 (#1636) added four more deviations, all accepted: (4)
+> **Δq's numerator is `dayPoolStamp[d].scheduleFloor / 2`** exactly as
+> §1.4 above prescribes — the first implementation wrongly read the
+> chain's own `chainDayRecycledFunding` slice, which `_perDestFields`
+> stamps ZERO for a zeroed destination, so it would have quoted (0,0)
+> and resolved a demand-carrying day; the quote surface now also REFUSES
+> an unstamped day. (5) **The quote is UNCAPPED** (`Σ perDay × Δq`, no
+> `C_side` min): forfeit settlement prices without the per-user ceiling
+> by design (#1353), and bulk window pricing skips the per-(user,day)
+> ceiling, so a capped quote would open the funding gate below the real
+> settlement liability; caps still apply at payment time per path. (6)
+> An ADMIN **reset valve** (`resetCompQuoteAccumulation`) mirrors the
+> commitment accumulator's — the permissionless accumulator's cursor can
+> be parked past the covering set by a single high-id submission. (7)
+> The wire carries the **sending diamond as an era word** (stamped by
+> the messenger) and Base BINDS the standing quote to it: same-era
+> re-delivery refreshes, divergence reverts, ADMIN `clearCompQuote`
+> releases a stale binding after a mirror redeploy (funded days refuse
+> both). The `_contribFor` global-zero short-circuit was removed — the
+> stored cumulative row is the one pricing truth for walk and bulk
+> alike.
+>
+> Round 2 added two more: (8) **the V3 broadcast carries the day-level
+> funded pool halves** (2 new wire words, 21 → 23): the V2 wire never
+> transported the day-level figure (only per-chain slices, zero for a
+> zeroed dest) and the legacy kind-2 ingress that installed
+> `dayPoolStamp` retires at rotation — without the transport, mirror-side
+> quoting was unreachable on the V3 production path. The V3 apply
+> installs the stamp (divergence-checked against any standing one, the
+> broadcast consensus family), including on replays, so pre-r2 V3 days
+> heal by the same permissionless re-send that backfills clocks. (9)
+> **Base holds a FAIL-CLOSED mirror-era registry**
+> (`setMirrorRewardDeployment`, the reciprocal of the mirror-side
+> `setBaseRewardDeployment`): the quote ingress authenticates EVERY
+> arrival — including the first — against it, closing the
+> first-arrival window the r1 standing-quote binding alone could not
+> defend (a delayed retired-era wire arriving first would have bound
+> unchallenged, and a stale (0,0) would have cleared the
+> manual-funding anchor permanently). Rotation ceremony: update the
+> registry, then `clearCompQuote` any quote standing under the retired
+> era.)*
 
 ---
 

@@ -583,7 +583,6 @@ contract RewardRemittanceFacet is
         RemitDispatch memory d
     ) private returns (bytes32 messageId) {
         uint256 total = d.total;
-        IERC20(vpfi).forceApprove(messenger, total);
 
         // r4 — the payload carries THIS deployment's identity (immutable
         // message data): receipts key by (remitter, remitId) and the ack
@@ -609,6 +608,80 @@ contract RewardRemittanceFacet is
             address(this),
             d.recycledShare
         );
+        messageId =
+            _dispatchRemitTail(s, vpfi, messenger, dstChainId, payload, total, d.remitId);
+    }
+
+    /**
+     * @dev #1434 P2-w2 — the MANUAL-COMPENSATION dispatch (design §1.3):
+     *      one zeroed day, authenticated PER-SIDE amounts (R1/R1b), and the
+     *      day's FROZEN expiry inputs (R4b) read back from the w1
+     *      finalization-time freeze — never live state, so a re-send after
+     *      a schedule bump carries identical classification facts. Leads
+     *      with {RemitWire.REMIT_WIRE_TAG_P2}; the tag + single-day shape
+     *      ARE the compensation marker the mirror ingress classifies on
+     *      (§2.2). Zero clock words (a day finalized before the clock
+     *      machinery) travel as zeros — such a day is not lapse-eligible,
+     *      so they are honest, not a fallback.
+     */
+    function _sendCompensationPayload(
+        LibVaipakam.Storage storage s,
+        address vpfi,
+        address messenger,
+        uint32 dstChainId,
+        uint256 dayId,
+        uint256 remitId,
+        uint256 lenderAmount18,
+        uint256 borrowerAmount18
+    ) private returns (bytes32 messageId) {
+        LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
+        // Codex #1634 r1 — ALL FOUR frozen clock words ride the wire, not
+        // just the timestamp + version number: w1 chose inline schedule
+        // parameters over a mirror-side version table, so the version
+        // number alone is underivable there, and the mirror's ingress-time
+        // expiry classification (the R4b promise) needs the window itself.
+        bytes memory payload = abi.encode(
+            RemitWire.REMIT_WIRE_TAG_P2,
+            dayId,
+            lenderAmount18 + borrowerAmount18,
+            remitId,
+            address(this),
+            lenderAmount18,
+            borrowerAmount18,
+            uint256(c.finalizedAt),
+            uint256(c.scheduleVersion),
+            uint256(c.lapseWindowSeconds),
+            uint256(c.dispatchCutoffGap)
+        );
+        messageId = _dispatchRemitTail(
+            s,
+            vpfi,
+            messenger,
+            dstChainId,
+            payload,
+            lenderAmount18 + borrowerAmount18,
+            remitId
+        );
+    }
+
+    /**
+     * @dev The ONE token-bearing remit dispatch tail (d5 batch/manual + P2
+     *      compensation): approve exactly `total`, quote + send over the
+     *      CCIP token path, annotate the reservation with the returned
+     *      message id, refund the fee surplus. Shared so the two wire
+     *      generations can never diverge on fee handling or the messageId
+     *      binding.
+     */
+    function _dispatchRemitTail(
+        LibVaipakam.Storage storage s,
+        address vpfi,
+        address messenger,
+        uint32 dstChainId,
+        bytes memory payload,
+        uint256 total,
+        uint256 remitId
+    ) private returns (bytes32 messageId) {
+        IERC20(vpfi).forceApprove(messenger, total);
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);
         tokens[0] =
@@ -633,8 +706,8 @@ contract RewardRemittanceFacet is
         // Deliberate write-after-call: records the send's OWN returned id
         // (unknowable earlier); messenger is the admin-wired CCIP adapter and
         // every caller is nonReentrant.
-        s.remitReservations[d.remitId].ccipMessageId = messageId;
-        s.remitIdByCcipMessageId[messageId] = d.remitId;
+        s.remitReservations[remitId].ccipMessageId = messageId;
+        s.remitIdByCcipMessageId[messageId] = remitId;
         // slither-disable-end reentrancy-no-eth,reentrancy-benign
 
         // Refund any fee overpayment to the caller (operator/keeper EOA).
@@ -926,6 +999,414 @@ contract RewardRemittanceFacet is
             sourceChainId, token, amount, dayIds, remitId, recycledShare,
             freshShare
         );
+    }
+
+    // ─── #1434 P2-w2 — the classifying COMPENSATION ingress (§2.2) ────────
+
+    /// @notice A P2 compensation was credited to a zeroed day's per-side
+    ///         pools (payable at w3's repricing). `provisional` marks the
+    ///         overtake case — the day's V3 broadcast had not landed, so
+    ///         the payload's authenticated remitter stands as the assumed
+    ///         era until the broadcast confirms or demotes it.
+    /// @custom:event-category informational/reward-compensation
+    event CompensationCredited(
+        uint256 indexed dayId,
+        uint256 lenderShare18,
+        uint256 borrowerShare18,
+        bool provisional,
+        address era
+    );
+
+    /// @notice A P2 compensation arrival was QUARANTINED into the
+    ///         stranded-recovery reservation (§2.2's token-safe rejection —
+    ///         tokens accepted, never payable here; the R4 return takes it
+    ///         from the reservation). `reason`: 1 = day not deliberately
+    ///         zeroed, 2 = era mismatch, 3 = past the day's expiry (lapse
+    ///         flags or the frozen clock words, installed or wire-carried),
+    ///         4 = a second arrival while a provisional credit is already
+    ///         held (one provisional receipt binding per day), 5 = the day
+    ///         is permanently V3-unhealable on this rotated mirror (prior
+    ///         state, no recorded era — the confirm/demote hook could never
+    ///         run), 6 = clockless payload (zero finalizedAt — an honest
+    ///         Base refuses such a dispatch, so this is stale or hostile
+    ///         and could never settle).
+    /// @custom:event-category informational/reward-compensation
+    event CompensationQuarantined(
+        uint256 indexed dayId,
+        address indexed remitter,
+        uint256 remitId,
+        uint256 amount,
+        uint8 reason
+    );
+
+    /// @notice A provisional compensation was CONFIRMED in place by the
+    ///         day's V3 broadcast (matching era, day genuinely zeroed).
+    /// @custom:event-category informational/reward-compensation
+    event CompensationConfirmed(uint256 indexed dayId, address era);
+
+    /// @notice A provisional compensation was DEMOTED to the
+    ///         stranded-recovery reservation by the day's V3 broadcast
+    ///         (era mismatch, or the day turned out not to be zeroed).
+    /// @custom:event-category informational/reward-compensation
+    event CompensationDemoted(
+        uint256 indexed dayId, uint256 amount, uint8 reason
+    );
+
+    /**
+     * @notice #1434 P2-w2 — trusted ingress for a P2 MANUAL-COMPENSATION
+     *         delivery (design §2.2): classify the arrival against the
+     *         day's mirror-local state and either credit the per-side
+     *         compensated pools or quarantine the value into the arrival
+     *         reservation. NEVER reverts on a classification failure — a
+     *         revert is re-executable into the same revert forever (§2h
+     *         R6d), so the token-safe form accepts the tokens and records
+     *         why they are not payable.
+     * @dev    Receiver-gated (the receiver already moved the VPFI in and
+     *         scaled both shares to what physically landed). Cases, era
+     *         first:
+     *
+     *         KNOWN state (day applied AND era recorded): a remitter that
+     *         does not match the day's era quarantines (reason 2 — §1.1's
+     *         compensation-side era binding); a day not deliberately
+     *         zeroed quarantines (reason 1 — there is nothing to
+     *         compensate); a lapsed / short-lapsed day quarantines
+     *         (reason 3 — the loss was already recorded at lapse;
+     *         unreachable until the w4 terminals ship). Otherwise the
+     *         pools credit CONFIRMED.
+     *
+     *         UNKNOWN state (day not applied, or applied without an era —
+     *         the compensation OVERTOOK the V3 broadcast, §2.2 case b):
+     *         credit PROVISIONALLY under the payload's authenticated
+     *         remitter as the assumed era. The V3 arrival later confirms
+     *         in place or demotes to the reservation
+     *         ({RewardReporterFacet.onRewardBroadcastV3Received} calls
+     *         {onCompensationDayBroadcastArrived}). Never waits: the
+     *         expiry inputs rode the remit itself (R4b).
+     *
+     *         In EVERY case the receipt is recorded exactly like an
+     *         ordinary delivery (first write wins), so the ACK path is
+     *         unchanged, and `rewardBudgetReceivedTotal` records the
+     *         arrival. The armed-fresh counter advances only for CREDITED
+     *         pools (quarantined value is recorded uncounted instead), and
+     *         what was counted is stored so a demotion can move it —
+     *         counted + uncounted always reconciles against what Base
+     *         sent.
+     */
+    function onCompensationBudgetReceived(
+        address token,
+        uint256 amount,
+        uint256 dayId,
+        uint256 sourceChainId,
+        uint256 remitId,
+        address remitter,
+        uint256 lenderShare18,
+        uint256 borrowerShare18,
+        uint64 finalizedAt,
+        uint32 lapseScheduleVersion,
+        uint64 lapseWindowSeconds,
+        uint64 /* dispatchCutoffGap — Base-side input (the R3 refusal);
+                  carried for symmetry + w4's gates, unused here */
+    ) external nonReentrant whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (msg.sender != s.rewardRemittanceReceiver) {
+            revert NotRewardRemittanceReceiver(msg.sender);
+        }
+        if (token != s.vpfiToken) {
+            revert RewardBudgetTokenMismatch(s.vpfiToken, token);
+        }
+        if (lenderShare18 + borrowerShare18 > amount) {
+            revert CompensationSharesExceedDelivery(
+                lenderShare18, borrowerShare18, amount
+            );
+        }
+
+        s.rewardBudgetReceivedTotal += amount;
+        // Receipt exactly as the ordinary ingress records it — the ACK
+        // path reads this record and nothing else.
+        if (remitId != 0 && remitter != address(0)) {
+            bytes32 rKey = _receiptKey(remitter, remitId);
+            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[rKey];
+            if (rec.receivedAt == 0) {
+                rec.srcChainId = SafeCast.toUint32(sourceChainId);
+                rec.receivedAt = uint64(block.timestamp);
+                rec.amount = amount;
+                rec.remitter = remitter;
+            }
+        }
+
+        address era = s.dayClockEra[dayId];
+        bool stateKnown = s.broadcastV2Applied[dayId] && era != address(0);
+        if (stateKnown) {
+            uint8 reason = 0;
+            if (remitter != era) reason = 2;
+            else if (!s.dayDeliberatelyZeroed[dayId]) reason = 1;
+            else if (
+                s.dayLapsed[dayId] || s.dayShortLapsed[dayId]
+                    || _pastExpiry(
+                        s.dayLapseClock[dayId].finalizedAt,
+                        s.dayLapseClock[dayId].scheduleVersion,
+                        s.dayLapseClock[dayId].lapseWindowSeconds
+                    )
+            ) {
+                // Codex #1634 r1 — the flags alone are the w4 TERMINALS'
+                // record; the INSTALLED clock itself already decides "past
+                // the applicable expiry" (§2.2's fourth case tests the
+                // clock, not just the flags), so an arrival after the true
+                // expiry quarantines even before any terminal has run.
+                reason = 3;
+            }
+            if (reason != 0) {
+                _quarantineCompensation(
+                    s, dayId, remitter, remitId, amount, reason
+                );
+                return;
+            }
+            _creditCompensation(
+                s,
+                dayId,
+                remitId,
+                lenderShare18,
+                borrowerShare18,
+                amount,
+                /* provisional */ false,
+                era
+            );
+            return;
+        }
+
+        // Codex #1634 r1 — two arrivals that must NOT go provisional:
+        //
+        // (a) A day the w1 rotation gate has made permanently V3-unhealable
+        //     (rotated mirror + prior state + no recorded era): its
+        //     provisional credit could never reach the confirm/demote hook,
+        //     leaving the value outside the reservation forever. Quarantine
+        //     at ingress instead — the same three conjuncts the V3 ingress
+        //     refuses on, threaded verbatim.
+        if (
+            s.rewardEraRotated && era == address(0)
+                && (s.broadcastV2Applied[dayId] || s.knownGlobalSet[dayId])
+        ) {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 5);
+            return;
+        }
+        // (b) A SECOND compensation while one is already provisional: the
+        //     day holds one provisional receipt binding (era + remitId),
+        //     and overwriting it would demote BOTH packets' pools under the
+        //     last receipt key — the receipt-bounded return could then
+        //     recover at most that one reservation's entitlement, stranding
+        //     the earlier packet. One provisional credit per day;
+        //     conflicting arrivals hold their own receipt-keyed reservation
+        //     until the day's broadcast settles which era governs.
+        LibVaipakam.DayCompensation storage dcPrior = s.dayCompensation[dayId];
+        if (dcPrior.provisional) {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 4);
+            return;
+        }
+        // (c) A CLOCKLESS payload (zero finalizedAt) cannot settle: an
+        //     honest Base refuses such a dispatch outright (#1634 r2 —
+        //     {CompensationDayHasNoClock}), so one arriving here is stale
+        //     or hostile, and a provisional credit for it would wait on a
+        //     V3 broadcast that can never carry a matching clock. The
+        //     token-safe mirror of the Base-side refusal (reason 6).
+        if (finalizedAt == 0) {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 6);
+            return;
+        }
+        // (d) The overtake case can still be PAST ITS TRUE EXPIRY: the wire
+        //     carries the full frozen clock words (R4b), so the ingress
+        //     evaluates them even with no broadcast state — a delivery
+        //     arriving after the day's expiry must never be provisionally
+        //     credited only to lapse at confirmation.
+        if (_pastExpiry(finalizedAt, lapseScheduleVersion, lapseWindowSeconds))
+        {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 3);
+            return;
+        }
+        _creditCompensation(
+            s,
+            dayId,
+            remitId,
+            lenderShare18,
+            borrowerShare18,
+            amount,
+            /* provisional */ true,
+            remitter
+        );
+    }
+
+    /// @dev §2.4 — expiry from FROZEN words only, both sourced from Base's
+    ///      finalization-time freeze (the installed clock on a stamped day,
+    ///      the wire's duplicated words on an unstamped one). Version 0 =
+    ///      no schedule frozen ⇒ never expired (a zero window must not
+    ///      read as "lapse immediately" — the w1 rule).
+    function _pastExpiry(
+        uint64 finalizedAt,
+        uint32 scheduleVersion,
+        uint64 lapseWindowSeconds
+    ) private view returns (bool) {
+        return finalizedAt != 0 && scheduleVersion != 0
+            && block.timestamp > uint256(finalizedAt) + lapseWindowSeconds;
+    }
+
+    /// @dev Credit the per-side pools (+ the armed-fresh counter when the
+    ///      day is armed-attributable), recording what was counted so a
+    ///      later demotion can move exactly that.
+    function _creditCompensation(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 remitId,
+        uint256 lenderShare18,
+        uint256 borrowerShare18,
+        uint256 amount,
+        bool provisional,
+        address era
+    ) private {
+        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
+        dc.lenderPool18 += SafeCast.toUint128(lenderShare18);
+        dc.borrowerPool18 += SafeCast.toUint128(borrowerShare18);
+        dc.creditedAmount += SafeCast.toUint128(amount);
+        dc.compensated = true;
+        if (provisional) {
+            dc.provisional = true;
+            dc.provisionalEra = era;
+        }
+        dc.remitId = remitId;
+
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        if (armedFrom != 0 && dayId >= armedFrom) {
+            s.rewardBudgetArmedFreshReceived += amount;
+            dc.armedFreshCounted += SafeCast.toUint128(amount);
+        } else {
+            s.rewardBudgetFreshUncounted += amount;
+        }
+        emit CompensationCredited(
+            dayId, lenderShare18, borrowerShare18, provisional, era
+        );
+    }
+
+    /// @dev The token-safe rejection: the whole arrival enters the
+    ///      stranded-recovery reservation (backing excluded from ordinary
+    ///      claims via {LibVpfiRecycle.backingPosition}), its fresh value
+    ///      recorded UNCOUNTED, and the receipt-keyed record names it for
+    ///      the R4 return (w5).
+    function _quarantineCompensation(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        address remitter,
+        uint256 remitId,
+        uint256 amount,
+        uint8 reason
+    ) private {
+        s.strandedRecoveryReserved += amount;
+        s.rewardBudgetFreshUncounted += amount;
+        LibVaipakam.StrandedRecovery storage sr =
+            s.strandedRecoveries[_receiptKey(remitter, remitId)];
+        sr.amount += amount;
+        sr.dayId = dayId;
+        if (sr.reservedAt == 0) sr.reservedAt = uint64(block.timestamp);
+        sr.reason = reason;
+        emit CompensationQuarantined(dayId, remitter, remitId, amount, reason);
+    }
+
+    /**
+     * @notice #1434 P2-w2 — the V3-broadcast arrival hook for a day
+     *         holding a PROVISIONAL compensation: CONFIRM it in place when
+     *         the broadcast's deployment matches the assumed era AND the
+     *         day is genuinely deliberately-zeroed; DEMOTE the whole
+     *         credit to the stranded-recovery reservation otherwise (the
+     *         confirmed era's state governs).
+     * @dev    Diamond-internal: callable only through the Diamond itself
+     *         ({RewardReporterFacet.onRewardBroadcastV3Received} invokes it
+     *         via `address(this)` after installing/verifying the day's
+     *         clock). No-op for a day with no provisional credit.
+     */
+    function onCompensationDayBroadcastArrived(
+        uint256 dayId,
+        address baseDeployment,
+        bool zeroedForDest
+    ) external {
+        if (msg.sender != address(this)) {
+            revert CompensationHookNotSelf(msg.sender);
+        }
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
+        if (!dc.provisional) return;
+
+        if (dc.provisionalEra == baseDeployment && zeroedForDest) {
+            dc.provisional = false;
+            // #1634 r3 — reclassify against the NOW-installed D*: the same
+            // core call that delivered this confirming broadcast installs
+            // `armedFromDay` BEFORE this hook runs, so a compensation that
+            // overtook the arming broadcast (credited while the chain was
+            // still unarmed, counted as zero) moves to the armed-fresh
+            // ledger here — otherwise the delivered-fresh bound would
+            // defer this day's claims despite their backing having landed.
+            uint256 armedFrom = s.governorCommitArmedFromDay;
+            if (
+                dc.armedFreshCounted == 0 && armedFrom != 0
+                    && dayId >= armedFrom
+            ) {
+                uint256 credited = dc.creditedAmount;
+                s.rewardBudgetArmedFreshReceived += credited;
+                uint256 unc = s.rewardBudgetFreshUncounted;
+                s.rewardBudgetFreshUncounted =
+                    unc > credited ? unc - credited : 0;
+                dc.armedFreshCounted = SafeCast.toUint128(credited);
+            }
+            emit CompensationConfirmed(dayId, baseDeployment);
+            return;
+        }
+        // Demote: era mismatch (2) or the day was never zeroed (1). The
+        // reservation takes the CREDITED amount, wholesale (#1634 r3) —
+        // the pool sum can floor a wei below it on a scaled delivery, and
+        // the design promises the demotion moves the arrival, not the sum.
+        uint8 reason = dc.provisionalEra == baseDeployment ? 1 : 2;
+        uint256 pools = dc.creditedAmount;
+        uint256 counted = dc.armedFreshCounted;
+        s.strandedRecoveryReserved += pools;
+        // Move the counted portion back to uncounted so the
+        // counted + uncounted reconciliation identity holds.
+        if (counted != 0) {
+            uint256 af = s.rewardBudgetArmedFreshReceived;
+            s.rewardBudgetArmedFreshReceived = af > counted ? af - counted : 0;
+            s.rewardBudgetFreshUncounted += counted;
+        }
+        LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[
+            _receiptKey(dc.provisionalEra, dc.remitId)
+        ];
+        sr.amount += pools;
+        sr.dayId = dayId;
+        if (sr.reservedAt == 0) sr.reservedAt = uint64(block.timestamp);
+        sr.reason = reason;
+        delete s.dayCompensation[dayId];
+        emit CompensationDemoted(dayId, pools, reason);
+    }
+
+    /// @notice #1434 P2-w2 — a day's compensation state (pools payable at
+    ///         w3's repricing; `provisional` = awaiting its V3 broadcast).
+    function getDayCompensation(uint256 dayId)
+        external
+        view
+        returns (LibVaipakam.DayCompensation memory)
+    {
+        return LibVaipakam.storageSlot().dayCompensation[dayId];
+    }
+
+    /// @notice #1434 P2-w2 — the arrival reservation: Σ quarantined
+    ///         compensation value awaiting the R4 return, excluded from
+    ///         ordinary-claim backing.
+    function getStrandedRecoveryReserved() external view returns (uint256) {
+        return LibVaipakam.storageSlot().strandedRecoveryReserved;
+    }
+
+    /// @notice #1434 P2-w2 — one receipt's quarantine record.
+    function getStrandedRecovery(
+        address remitter,
+        uint256 remitId
+    ) external view returns (LibVaipakam.StrandedRecovery memory) {
+        return LibVaipakam.storageSlot().strandedRecoveries[
+            _receiptKey(remitter, remitId)
+        ];
     }
 
     /**
@@ -1250,7 +1731,8 @@ contract RewardRemittanceFacet is
     function remitManualBudget(
         uint32 dstChainId,
         uint256 dayId,
-        uint256 amount
+        uint256 lenderAmount18,
+        uint256 borrowerAmount18
     )
         external
         payable
@@ -1261,6 +1743,14 @@ contract RewardRemittanceFacet is
         returns (bytes32 messageId)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1434 P2-w2 (R1/R1b) — the compensation is sized PER SIDE on the
+        // wire: payout is `localInterest × Δ` per side and Base does not
+        // hold the mirror's day interest, so a single scalar would leave
+        // the mirror solving for a side — the exact operator-solve trap
+        // constraint 17 names. The declared total is their sum by
+        // construction, so the R1b sum-vs-total validation cannot fail
+        // between honest endpoints.
+        uint256 amount = lenderAmount18 + borrowerAmount18;
         if (amount == 0) revert NothingToRemit();
         if (!s.dailyGlobalFinalized[dayId]) {
             revert RewardDayNotFinalized(dayId);
@@ -1278,6 +1768,71 @@ contract RewardRemittanceFacet is
         if (vpfi == address(0)) revert VPFITokenNotSet();
         address messenger = s.crossChainMessenger;
         if (messenger == address(0)) revert RewardBudgetMessengerNotSet();
+
+        // #1634 r2 — a clockless day can never emit the V3 broadcast that
+        // settles the mirror's classification: `_broadcastDayV3` falls back
+        // to the V2 wire permanently for it, V2 installs neither the zeroed
+        // marker nor the era, and the compensation hook never fires — so
+        // the credit would sit provisional forever, outside the recovery
+        // reservation. Fail closed HERE, where the operator can act: a
+        // post-w1 day heals its clock first (permissionless
+        // {RewardAggregatorFacet.broadcastGlobalTo}); a pre-w1 day belongs
+        // to the w4 legacy-compensation migration.
+        LibVaipakam.DayLapseClock storage clk = s.dayLapseClock[dayId];
+        if (clk.finalizedAt == 0) {
+            revert CompensationDayHasNoClock(dayId);
+        }
+        // #1634 r3 — the R3 dispatch cutoff, enforced NOW rather than with
+        // the w4 terminals: the mirror already evaluates expiry from these
+        // same frozen words (the r1 fix), so a dispatch inside the cutoff
+        // window could arrive quarantined (reason 3) after Base closed the
+        // day and consumed headroom — no payable compensation, no return
+        // until w5. Refusing here is the explicit CCIP delivery budget R3
+        // ratified. Version 0 = not lapse-eligible = no cutoff, matching
+        // the never-expired rule at the ingress.
+        if (clk.scheduleVersion != 0) {
+            uint256 expiry =
+                uint256(clk.finalizedAt) + clk.lapseWindowSeconds;
+            if (block.timestamp + clk.dispatchCutoffGap > expiry) {
+                revert CompensationDispatchPastCutoff(
+                    dayId, expiry, clk.dispatchCutoffGap
+                );
+            }
+        }
+        // #1434 P2-w3 — funding is EVIDENCE-BOUNDED (§1.4): a STANDING
+        // mirror quote is required (the authenticated counterfactual fair
+        // share — obtainable permissionlessly on the mirror via the
+        // batched accumulator + dispatch, so requiring it blocks no honest
+        // flow), and each side is bounded SEPARATELY (the §2.5 rule: an
+        // aggregate bound admits overfunding one side while shorting the
+        // other). A (0,0) quote bounds funding to zero, which composes
+        // with the resolved-zero clearing — nothing to compensate.
+        {
+            LibVaipakam.CompQuote storage q = s.compQuote[dayId][dstChainId];
+            if (q.receivedAt == 0) {
+                revert CompensationNotQuoted(dayId, dstChainId);
+            }
+            // #1636 r5 — the funding path holds the SAME era ground truth
+            // the ingress does: after a registry rotation, an unfunded
+            // quote standing under the RETIRED mirror must not fund the
+            // current one (its state did not produce the evidence) — the
+            // operator clears it and the new era re-quotes. Also fails
+            // closed while the registry is unset for this chain.
+            {
+                address expected = s.mirrorRewardDeployment[dstChainId];
+                if (q.era != expected || expected == address(0)) {
+                    revert CompQuoteEraMismatch(
+                        dayId, dstChainId, expected, q.era
+                    );
+                }
+            }
+            if (lenderAmount18 > q.lender18 || borrowerAmount18 > q.borrower18)
+            {
+                revert CompensationExceedsQuote(
+                    lenderAmount18, borrowerAmount18, q.lender18, q.borrower18
+                );
+            }
+        }
 
         // r6 — NET headroom; a manual send retires no commitment (the
         // zeroed chain's share was never committed at finalize).
@@ -1306,18 +1861,23 @@ contract RewardRemittanceFacet is
             r.dayIds = one;
         }
 
-        uint256[] memory fundedDays = new uint256[](1);
-        fundedDays[0] = dayId;
-        messageId = _sendRemitPayload(
+        // #1434 P2-w2 — the manual-compensation path now dispatches the P2
+        // wire shape (tag + single day + per-side amounts + the day's
+        // frozen expiry inputs) so the mirror ingress can CLASSIFY the
+        // arrival (§2.2) instead of booking it as an ordinary delivery.
+        // Still fresh-only (see `r.fresh = amount` above). The R3 dispatch
+        // cutoff is enforced above (#1634 r3) — the ingress evaluates
+        // expiry from the same frozen words, so a late dispatch could
+        // otherwise arrive quarantined after this day was closed.
+        messageId = _sendCompensationPayload(
             s,
             vpfi,
             messenger,
             dstChainId,
-            fundedDays,
-            // B2-d5 — the manual-budget path is FRESH-ONLY (see the
-            // `r.fresh = amount` reservation above), so it relocates no
-            // recycled custody.
-            RemitDispatch({total: amount, remitId: remitId, recycledShare: 0})
+            dayId,
+            remitId,
+            lenderAmount18,
+            borrowerAmount18
         );
 
         emit ManualRewardBudgetRemitted(dstChainId, dayId, amount, remitId);

@@ -3,7 +3,8 @@ pragma solidity ^0.8.29;
 
 import {
     IRewardMessenger,
-    RewardBroadcastV2
+    RewardBroadcastV2,
+    RewardBroadcastV3
 } from "../../src/interfaces/IRewardMessenger.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
@@ -228,6 +229,10 @@ contract MeshBusMessenger is IRewardMessenger {
         }
         for (uint256 i; i < n; ++i) {
             broadcasts.push(_compose(shared, _findDest(perDest, dests[i])));
+            // #1434 P2-w1 — keep the V3 queue index-aligned: a V2-
+            // generation send has no V3 form (zero `finalizedAt` marks
+            // the hole, and {deliverBroadcastV3} refuses it).
+            broadcastsV3.push();
         }
     }
 
@@ -311,6 +316,125 @@ contract MeshBusMessenger is IRewardMessenger {
     ) private pure returns (IRewardMessenger.BroadcastV2PerDest calldata) {
         for (uint256 i; i < perDest.length; ++i) {
             if (perDest[i].destChainId == destChainId) return perDest[i];
+        }
+        revert DestinationNotFunded(destChainId);
+    }
+
+    // ─── #1434 P2-w1 — V3 broadcast surface ────────────────────────────────
+    //
+    // The bus stays a transparent transport: the V3 send queues the SAME
+    // nested V2 form into `broadcasts` (so every existing mesh-accounting
+    // sequence — ordering, duplication, drops — keeps operating on the one
+    // queue) and records the appended clock facts beside it in
+    // `broadcastsV3`, index-aligned. `deliverBroadcast(i)` still delivers
+    // the V2 form (a legitimate lane behaviour — the kind-5 ingress branch
+    // is kept in production precisely for old in-flight packets);
+    // `deliverBroadcastV3(i)` delivers the full V3 form. Clock/wire-framing
+    // correctness itself is CrossChainRewardPlumbingTest's scope.
+
+    /// @notice Index-aligned V3 forms (`finalizedAt == 0` ⇒ the entry was
+    ///         queued by a V2-generation send and has no V3 form).
+    RewardBroadcastV3[] internal broadcastsV3;
+
+    function broadcastV3At(uint256 i)
+        external
+        view
+        returns (RewardBroadcastV3 memory)
+    {
+        return broadcastsV3[i];
+    }
+
+    function broadcastDayV3(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV3Extras calldata extras,
+        IRewardMessenger.BroadcastV3PerDest[] calldata perDest,
+        address payable
+    ) external payable override {
+        if (msg.sender != baseDiamond) revert NotBase(msg.sender);
+        uint256 n = dests.length;
+        if (perDest.length != n) {
+            revert DestinationSetMismatch(perDest.length, n);
+        }
+        for (uint256 i; i < n; ++i) {
+            _queueV3(shared, extras, _findDestV3(perDest, dests[i]));
+        }
+    }
+
+    function broadcastDayV3Single(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV3Extras calldata extras,
+        IRewardMessenger.BroadcastV3PerDest calldata dest,
+        address payable
+    ) external payable override returns (bytes32) {
+        if (msg.sender != baseDiamond) revert NotBase(msg.sender);
+        _queueV3(shared, extras, dest);
+        return bytes32(uint256(0xB3515));
+    }
+
+    function quoteBroadcastDayV3(
+        IRewardMessenger.BroadcastV2Shared calldata,
+        IRewardMessenger.BroadcastV3Extras calldata,
+        IRewardMessenger.BroadcastV3PerDest[] calldata
+    ) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function quoteBroadcastDayV3Single(
+        IRewardMessenger.BroadcastV2Shared calldata,
+        IRewardMessenger.BroadcastV3Extras calldata,
+        IRewardMessenger.BroadcastV3PerDest calldata
+    ) external pure override returns (uint256) {
+        return 0;
+    }
+
+    /// @notice Deliver queued broadcast `i` in its V3 form to its
+    ///         destination diamond (same chain-id-warp contract as
+    ///         {deliverBroadcast}).
+    function deliverBroadcastV3(uint256 i) external {
+        RewardBroadcastV3 memory b = broadcastsV3[i];
+        require(b.finalizedAt != 0, "MeshBus: entry has no V3 form");
+        broadcastDeliveries[i] += 1;
+        RewardReporterFacet(diamondOf[b.v2.destChainId])
+            .onRewardBroadcastV3Received(b);
+    }
+
+    /// @dev Queue both forms, index-aligned: the nested V2 into the one
+    ///      shared queue, the full V3 beside it. `baseDeployment` is
+    ///      stamped from `baseDiamond`, mirroring the production
+    ///      messenger's stamp of its own Diamond binding.
+    function _queueV3(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV3Extras calldata extras,
+        IRewardMessenger.BroadcastV3PerDest calldata d
+    ) private {
+        RewardBroadcastV2 memory v2 = _compose(shared, d.base);
+        broadcasts.push(v2);
+        broadcastsV3.push(RewardBroadcastV3({
+            v2: v2,
+            finalizedAt: extras.finalizedAt,
+            lapseScheduleVersion: extras.lapseScheduleVersion,
+            lapseWindowSeconds: extras.lapseWindowSeconds,
+            dispatchCutoffGap: extras.dispatchCutoffGap,
+            zeroedForDest: d.zeroedForDest,
+            baseDeployment: baseDiamond,
+            dayScheduleFloorHalf: extras.dayScheduleFloorHalf,
+            dayRecycledBudgetHalf: extras.dayRecycledBudgetHalf
+        }));
+    }
+
+    /// @dev V3 twin of {_findDest}.
+    function _findDestV3(
+        IRewardMessenger.BroadcastV3PerDest[] calldata perDest,
+        uint256 destChainId
+    )
+        private
+        pure
+        returns (IRewardMessenger.BroadcastV3PerDest calldata)
+    {
+        for (uint256 i; i < perDest.length; ++i) {
+            if (perDest[i].base.destChainId == destChainId) {
+                return perDest[i];
+            }
         }
         revert DestinationNotFunded(destChainId);
     }
@@ -407,6 +531,27 @@ contract MeshBusMessenger is IRewardMessenger {
         override
         returns (uint256)
     {
+        return 0;
+    }
+
+    // #1434 P2-w3 — inert on the bus (the quote flow is covered at the
+    // facet/wire layers; the mesh-accounting harness has no zeroed-day
+    // scenario yet). Concrete rather than absent so the bus keeps
+    // satisfying the interface.
+    function sendCompQuote(
+        uint256,
+        uint256,
+        uint256,
+        address payable
+    ) external payable override returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function quoteSendCompQuote(
+        uint256,
+        uint256,
+        uint256
+    ) external pure override returns (uint256) {
         return 0;
     }
 

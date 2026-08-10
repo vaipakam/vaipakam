@@ -6191,6 +6191,240 @@ library LibVaipakam {
         //   endpoints); the registry itself is permanent Chainlink
         //   chain infrastructure, the one address that never rotates.
         address repatriationTokenAdminRegistry;
+        // ─── #1434 P2-w1 — V3 broadcast day clock + versioned lapse schedule ─
+        // BOTH SIDES: the day's frozen lapse clock. Base writes it ONCE inside
+        //   `_finalizeAndWrite` (never read live at send — R2a: two sends of
+        //   the same finalized day must carry byte-identical clock facts); a
+        //   mirror installs it only from an authenticated V3 broadcast
+        //   (`RewardReporterFacet.onRewardBroadcastV3Received`), including the
+        //   clock-backfill branch for a day applied via kind-5 before the
+        //   upgrade. `finalizedAt == 0` ⇒ no clock: the day is neither
+        //   lapse-eligible nor priceable as a zeroed day (design §1.1 — both
+        //   P2 machines gate on it), and Base keeps broadcasting such a day on
+        //   the V2 wire (a pre-upgrade-finalized day has no authentic
+        //   finalization timestamp to freeze, and inventing one would forge
+        //   the very evidence the permissionless lapse trusts).
+        mapping(uint256 => DayLapseClock) dayLapseClock;
+        // BASE-ONLY: frozen per-(day, destination) R1 zeroed marker — the
+        //   value of `chainDayCommitments[d][dest].remitIneligible` AT
+        //   finalization. The live flag is operator-clearable
+        //   (`reconcileCommitmentRemitEligibility`), so re-broadcast
+        //   determinism requires this frozen copy: a reconcile between two
+        //   sends of the same day must not change what the wire says.
+        mapping(uint256 => mapping(uint32 => bool)) dayZeroedForDest;
+        // MIRROR-ONLY: this chain's R1 zeroed marker as delivered by the V3
+        //   broadcast (`zeroedForDest` for THIS destination).
+        mapping(uint256 => bool) dayDeliberatelyZeroed;
+        // MIRROR-ONLY: the Base deployment whose V3 broadcast installed this
+        //   day's clock (§2h constraint 20 era binding — the d2 ACK
+        //   precedent). A V3 packet naming a different `baseDeployment` for a
+        //   day with a recorded era is rejected: a delayed broadcast from a
+        //   retired Base deployment must never install its clock, schedule or
+        //   zeroed marker into the new era.
+        mapping(uint256 => address) dayClockEra;
+        // BASE-ONLY: the current lapse-schedule version (R5). 0 = no schedule
+        //   has ever been set; days finalized under version 0 freeze a
+        //   zero-parameter clock and are NOT lapse-eligible (the w4 lapse
+        //   terminals additionally gate on a nonzero frozen version — a zero
+        //   `lapseWindowSeconds` must never read as "lapse immediately").
+        uint32 lapseScheduleCurrentVersion;
+        // BASE-ONLY: version → parameter set. Append-only: a change is a NEW
+        //   version, never an edit in place — a finalized day prices its
+        //   clocks under its frozen `scheduleVersion` forever (the R5 race:
+        //   a later parameter change must not retroactively move an
+        //   already-finalized day's expiry).
+        mapping(uint32 => LapseScheduleParams) lapseSchedules;
+        // MIRROR-ONLY (#1632 r1 P1): the CURRENT Base deployment this
+        //   mirror accepts V3 clock facts from — the explicit era ground
+        //   truth. The per-day `dayClockEra` record alone cannot defend the
+        //   FIRST install: nothing is recorded yet, and the CCIP lane
+        //   authenticates the shared remote MESSENGER, not the Diamond
+        //   generation behind it — so after a Base rotation, a retired
+        //   deployment's in-flight packet would win the race and poison the
+        //   day's era permanently. Zero = V3 ingress is DARK on this mirror
+        //   (fail-closed; packets stay failed-but-re-executable CCIP
+        //   messages until the operator arms this, exactly the repatriation
+        //   endpoint posture). Rotated by the same ceremony that rotates
+        //   the Base deployment.
+        address baseRewardDeployment;
+        // MIRROR-ONLY (#1632 r2): the last NONZERO era ever configured,
+        //   and whether a true era ROTATION has occurred (a second,
+        //   different nonzero value). One-way: once rotated, the LEGACY
+        //   broadcast wires (kind-5 / kind-2) refuse FRESH applies forever
+        //   — those packets carry no deployment identity, so a retired
+        //   era's in-flight or manually re-executed delivery is
+        //   indistinguishable from a legitimate one, and after a rotation
+        //   the only legitimate sender speaks V3. Replays of
+        //   already-applied days stay idempotent. Tracked against the last
+        //   NONZERO value (not the live config) so a disarm/re-arm cycle
+        //   cannot smuggle a rotation past the detector.
+        address rewardEraLastNonzero;
+        bool rewardEraRotated;
+        // ─── #1434 P2-w2 — compensation ingress + arrival reservation ────
+        // MIRROR-ONLY: Σ of quarantined compensation arrivals (§2.2's
+        //   token-safe rejection + §4.1). The ONE ratified subtrahend added
+        //   to `LibVpfiRecycle.backingPosition`: quarantined tokens sit in
+        //   the Diamond's balance awaiting the R4 return (w5), and without
+        //   the reservation an ordinary fresh claim could spend them first.
+        //   A protocol-maintained LEDGER like `recycleBucket` — NOT another
+        //   entry in the balance-owner enumeration #1555 forbade.
+        uint256 strandedRecoveryReserved;
+        // MIRROR-ONLY: per-receipt quarantine records, keyed exactly like
+        //   receipts (`keccak256(remitter, remitId)`) so the R4 return can
+        //   name what it repatriates.
+        mapping(bytes32 => StrandedRecovery) strandedRecoveries;
+        // MIRROR-ONLY: per-day compensation state (§2.2 cases b/c). The
+        //   per-side pools are the day's payable compensated obligation —
+        //   PRICED by w3's repricing, never by the ordinary walk before it.
+        mapping(uint256 => DayCompensation) dayCompensation;
+        // MIRROR-ONLY: the two lapse terminals' flags (§2.1/§2.5).
+        //   DECLARED in w2 so the ingress's post-lapse quarantine branch
+        //   (§2.2 case d) exists from day one; their ONLY writers are the
+        //   w4 lapse terminals — until those ship, both stay false and the
+        //   branch is deliberately unreachable.
+        mapping(uint256 => bool) dayLapsed;
+        mapping(uint256 => bool) dayShortLapsed;
+        // ─── #1434 P2-w3 — the conversion quote + resolved-zero ──────────
+        // MIRROR-ONLY: a zeroed day whose quote came out zero on BOTH sides
+        //   (no local interest after fold) — terminal on the mirror AT
+        //   QUOTE TIME (§1.4: Base clearing `remitIneligible` changes no
+        //   mirror-local flag, so without this the suppression gate would
+        //   defer the day forever). A resolved-zero day prices zero through
+        //   the ordinary walk, which is correct: L_s == 0 means no entry
+        //   accrued on that side that day.
+        mapping(uint256 => bool) dayResolvedZero;
+        // MIRROR-ONLY: the quote accumulation (the `accumulateBatch`
+        //   pattern, per §1.4's bounded-batches requirement — a busy day's
+        //   single-scan quote could exceed block gas and make compensation
+        //   unreachable). Keyed [dayId][sideKey]: strictly-ascending entry
+        //   cursor, the capped per-side quote accumulator, and the
+        //   conservation sum (Σ perDay of accumulated entries) whose
+        //   equality with the day's folded side total is the completeness
+        //   proof the finalize step requires.
+        mapping(uint256 => mapping(uint8 => uint256)) compQuoteEntryCursor;
+        mapping(uint256 => mapping(uint8 => uint256)) compQuoteAccum18;
+        mapping(uint256 => mapping(uint8 => uint256)) compQuoteConservation18;
+        // MIRROR-ONLY: when this day's quote was dispatched (0 = never).
+        //   The quote is deterministic from frozen inputs, so there is no
+        //   re-accumulation path — re-dispatch of the SAME figures is the
+        //   lost-message retry lever, exactly like day reports.
+        mapping(uint256 => uint64) compQuoteSentAt;
+        // BASE-ONLY: the standing quote evidence per (day, chain) — the
+        //   authenticated sizing bound the manual compensation dispatch is
+        //   held to (§1.4: the funding step stays the operator's, but
+        //   becomes evidence-bounded). Overwritable while the day is
+        //   unfunded; frozen once `dayClosedByRemitId` marks it funded.
+        mapping(uint256 => mapping(uint32 => CompQuote)) compQuote;
+        // BASE-ONLY (#1636 r2) — the configured CURRENT mirror Diamond per
+        //   chain: the quote ingress's era ground truth, the reciprocal of
+        //   the mirror-side `baseRewardDeployment`. FAIL-CLOSED: while
+        //   unset for a chain, that chain's quotes are refused (a failed,
+        //   re-executable CCIP message) — so a delayed retired-era wire
+        //   can never be the FIRST arrival that binds the standing quote
+        //   or spuriously clears a day's manual-funding anchor. Updated by
+        //   the operator as part of the mirror-rotation ceremony
+        //   (CcipCutoverRunbook §8), alongside {clearCompQuote} for any
+        //   quote standing under the retired era.
+        mapping(uint32 => address) mirrorRewardDeployment;
+    }
+
+    /// @notice #1434 P2-w3 — one chain-day's standing compensation quote on
+    ///         Base (per-side, 1e18): the mirror-computed counterfactual
+    ///         fair share `Σ min(perDay_e × Δq_s, C_side)`, delivered over
+    ///         the kind-11 wire. A (0,0) quote is the resolved-zero signal
+    ///         (§2.3) — it clears the day's remit-ineligibility and bounds
+    ///         funding to zero.
+    struct CompQuote {
+        uint256 lender18;
+        uint256 borrower18;
+        uint64 receivedAt;
+        /// @dev #1434 P2-w3 (#1636 r1) — the sending mirror Diamond the
+        ///      standing quote is bound to (stamped by the messenger from
+        ///      its own paired-diamond state, so it is authenticated).
+        ///      While the day is unfunded, only the SAME era may refresh
+        ///      the quote; a divergent era reverts. Like the w2
+        ///      provisional-credit posture, the FIRST arrival cannot be
+        ///      era-verified — the binding defends every arrival after it.
+        address era;
+    }
+
+    /// @notice #1434 P2-w2 — one quarantined compensation arrival (§2.2's
+    ///         token-safe rejection): the tokens were ACCEPTED into the
+    ///         arrival reservation (never reverted — a revert is
+    ///         re-executable into the same revert forever) and await the R4
+    ///         return (w5). `reason` names the quarantine branch for the
+    ///         return's evidence: 1 = not-a-zeroed-day (§2.2 case a),
+    ///         2 = era mismatch (at ingress, or a provisional credit whose
+    ///         V3 broadcast named a different deployment), 3 = past the
+    ///         day's expiry (terminal flags, the installed clock, or the
+    ///         wire-carried frozen words — §2.2 case d), 4 = a second
+    ///         arrival while a provisional credit was already held (one
+    ///         provisional receipt binding per day — #1634 r1), 5 = the
+    ///         day is permanently V3-unhealable on a rotated mirror
+    ///         (#1634 r1; the confirm/demote hook could never run), 6 =
+    ///         clockless payload (#1634 r2; an honest Base refuses such a
+    ///         dispatch — stale or hostile, could never settle).
+    struct StrandedRecovery {
+        uint256 amount;
+        uint256 dayId;
+        uint64 reservedAt;
+        uint8 reason;
+    }
+
+    /// @notice #1434 P2-w2 — one zeroed day's compensation state on a
+    ///         mirror. The per-side pools are the day's payable compensated
+    ///         obligation (credited by the §2.2 ingress, sized by the
+    ///         authenticated per-side wire amounts); w3's repricing prices
+    ///         claims from them. `provisional` marks the unstamped-arrival
+    ///         case (§2.2 case b): the compensation OVERTOOK the day's V3
+    ///         broadcast, so `provisionalEra` records the payload's
+    ///         authenticated remitter as the assumed era — the V3 arrival
+    ///         later CONFIRMS it in place (matching deployment) or DEMOTES
+    ///         the whole credit to the stranded-recovery reservation
+    ///         (mismatch: the confirmed era's state governs).
+    struct DayCompensation {
+        uint128 lenderPool18;
+        uint128 borrowerPool18;
+        // What this day's credits added to `rewardBudgetArmedFreshReceived`
+        // — stored, not recomputed, so a demotion moves EXACTLY what was
+        // counted even if the arming day changed in between.
+        uint128 armedFreshCounted;
+        // The ACTUAL credited delivery total (#1634 r3): the per-side pools
+        // each floor when a fee-on-transfer delivery scales, so their sum
+        // can sit a wei below what physically arrived and was counted — a
+        // demotion reserves THIS figure, wholesale, never the pool sum.
+        uint128 creditedAmount;
+        bool compensated;
+        bool provisional;
+        address provisionalEra;
+        // The crediting receipt's id — with `provisionalEra` (= the
+        // payload's authenticated remitter) it reconstructs the receipt
+        // key a demotion records the quarantine under.
+        uint256 remitId;
+    }
+
+    /// @notice #1434 P2-w1 — one day's frozen lapse clock (design §1.1's
+    ///         `dayFinalizedAt[d]` / `dayLapseScheduleVersion[d]` plus the
+    ///         inline schedule parameters, packed into a single slot).
+    /// @dev    Written once at Base finalization; installed on a mirror only
+    ///         from an authenticated V3 broadcast. The schedule parameters
+    ///         are duplicated INLINE per day (design §1.2 grants the
+    ///         implementer this pick over a mirror-side version table): both
+    ///         sides then derive the same expiry from the same frozen words,
+    ///         with no first-appearance tracking and no cross-packet table
+    ///         consistency to defend. 64+32+64+64 = 224 bits — one slot.
+    struct DayLapseClock {
+        uint64 finalizedAt;
+        uint32 scheduleVersion;
+        uint64 lapseWindowSeconds;
+        uint64 dispatchCutoffGap;
+    }
+
+    /// @notice #1434 P2-w1 (R5) — one lapse-schedule version's parameter
+    ///         pair. Stored under its version number, append-only.
+    struct LapseScheduleParams {
+        uint64 lapseWindowSeconds;
+        uint64 dispatchCutoffGap;
     }
 
     /// @notice #1568 C2 Mode A — one planned-surplus repatriation

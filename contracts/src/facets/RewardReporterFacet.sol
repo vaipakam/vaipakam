@@ -8,8 +8,19 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {
     IRewardMessenger,
-    RewardBroadcastV2
+    RewardBroadcastV2,
+    RewardBroadcastV3
 } from "../interfaces/IRewardMessenger.sol";
+
+/// @dev #1434 P2-w2 — the remittance facet's compensation hook, reached
+///      through the Diamond's own fallback (standard cross-facet call).
+interface ICompensationDayHook {
+    function onCompensationDayBroadcastArrived(
+        uint256 dayId,
+        address baseDeployment,
+        bool zeroedForDest
+    ) external;
+}
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -420,6 +431,13 @@ contract RewardReporterFacet is
             return;
         }
 
+        // #1632 r2 — same rotation retirement as the kind-5 wire: a fresh
+        // kind-2 write after an era rotation could install a retired era's
+        // consensus pair, which would then wedge the day against the new
+        // era's V3 (mixed-generation comparison). Replays above stay
+        // idempotent.
+        if (s.rewardEraRotated) revert LegacyBroadcastRetired(dayId);
+
         s.knownGlobalLenderInterestNumeraire18[dayId] = globalLenderNumeraire18;
         s.knownGlobalBorrowerInterestNumeraire18[dayId] = globalBorrowerNumeraire18;
         // #1008 (S13) — store the CANONICAL threshold from Base; mirrors never
@@ -511,15 +529,40 @@ contract RewardReporterFacet is
     function onRewardBroadcastV2Received(RewardBroadcastV2 calldata b)
         external
     {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Storage storage s = _broadcastIngressGates(b.destChainId);
+        _applyBroadcastV2Core(s, b, /* legacyWire */ true);
+    }
+
+    /// @dev #1434 P2-w1 — the trust + destination-binding gates shared by
+    ///      the kind-5 and kind-10 ingresses (messenger-gated; the packet's
+    ///      embedded `destChainId` must equal `block.chainid`).
+    function _broadcastIngressGates(uint256 destChainId)
+        private
+        view
+        returns (LibVaipakam.Storage storage s)
+    {
+        s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0))
         {
             revert NotAuthorizedRewardMessenger();
         }
-        if (b.destChainId != block.chainid) {
-            revert BroadcastDestinationMismatch(b.destChainId);
+        if (destChainId != block.chainid) {
+            revert BroadcastDestinationMismatch(destChainId);
         }
+    }
 
+    /// @dev The ONE V2 apply/replay implementation (#1434 P2-w1 refactor —
+    ///      body unchanged). The V3 ingress hands its nested `v2` struct
+    ///      here verbatim, so the two wire generations can never apply the
+    ///      shared fields differently. Takes `memory` because the V3 path
+    ///      passes a struct member; the V2 external path pays one
+    ///      calldata→memory copy for the privilege of there being exactly
+    ///      one implementation.
+    function _applyBroadcastV2Core(
+        LibVaipakam.Storage storage s,
+        RewardBroadcastV2 memory b,
+        bool legacyWire
+    ) private {
         uint32 selfId = uint32(block.chainid);
         if (s.broadcastV2Applied[b.dayId]) {
             // Codex #1430 r4 — complete a reservation a PRE-d3 application of
@@ -546,6 +589,16 @@ contract RewardReporterFacet is
                 revert KnownGlobalAlreadySet();
             }
             return;
+        }
+
+        // #1632 r2 — after an era ROTATION, the identity-less kind-5 wire
+        // refuses FRESH applies (see {LegacyBroadcastRetired}). Placed
+        // AFTER the replay branch above, so already-applied days replay
+        // idempotently forever. The V3 caller passes `legacyWire = false`:
+        // it reaches this core only having authenticated its era against
+        // the configured ground truth.
+        if (legacyWire && s.rewardEraRotated) {
+            revert LegacyBroadcastRetired(b.dayId);
         }
 
         // Mixed-generation same-day: a legacy kind-2 delivery may already
@@ -611,6 +664,23 @@ contract RewardReporterFacet is
         _reserveMirrorCommitOnce(s, b.dayId, b.recycleConsume);
 
         s.broadcastV2Applied[b.dayId] = true;
+
+        // #1632 r2 — PROVENANCE: an ARMED mirror stamps the era it is
+        // configured for at apply time, so a later V3 for this day can
+        // only backfill or verify against the era that actually delivered
+        // its figures (the identity-less kind-5 wire cannot carry this
+        // itself; the ceremony rule that arming precedes any rotation is
+        // what makes the stamp truthful, and the rotation gate above
+        // closes the wire once that stops holding). On the V3 path this
+        // pre-stamp is overwritten by {_installDayClock} with the packet's
+        // own — already-authenticated — identity, the same value.
+        if (
+            s.baseRewardDeployment != address(0)
+                && s.dayClockEra[b.dayId] == address(0)
+        ) {
+            s.dayClockEra[b.dayId] = s.baseRewardDeployment;
+        }
+
         emit RewardBroadcastV2Applied(b.dayId, b.recycleConsume);
         emit KnownGlobalInterestSet(
             b.dayId,
@@ -623,7 +693,7 @@ contract RewardReporterFacet is
     ///      dependent fields).
     function _capFamilyMatches(
         LibVaipakam.Storage storage s,
-        RewardBroadcastV2 calldata b
+        RewardBroadcastV2 memory b
     ) private view returns (bool) {
         if (b.capMode == uint8(LibVaipakam.CapMode.ShareOfPool)) {
             return s.dayCapMode[b.dayId] == LibVaipakam.CapMode.ShareOfPool
@@ -632,6 +702,313 @@ contract RewardReporterFacet is
                     == b.capPayloadBorrower;
         }
         return s.dayCapThreshold18[b.dayId] == b.capPayloadLender;
+    }
+
+    // ─── #1434 P2-w1 — V3 (kind-10) ingress: the frozen day clock ───────────
+
+    /// @notice #1434 P2-w1 — this day's frozen lapse clock was installed
+    ///         from an authenticated V3 broadcast. `backfilled` marks the
+    ///         migration branch (clock added to a day whose figures were
+    ///         applied via kind-5 before the upgrade) — the inventory signal
+    ///         design §1.1's 12b gate asks for.
+    /// @custom:event-category informational/reward-clock
+    event DayClockInstalled(
+        uint256 indexed dayId,
+        uint64 finalizedAt,
+        uint32 scheduleVersion,
+        bool deliberatelyZeroed,
+        address indexed era,
+        bool backfilled
+    );
+
+    /**
+     * @notice #1434 P2-w1 — trusted ingress for the per-destination V3
+     *         broadcast: the full kind-5 semantics plus the day's FROZEN
+     *         lapse-clock facts. Applies, in order:
+     *
+     *      1. The shared trust + destination-binding gates (as kind-5).
+     *      2. Fail-closed clock presence — a zero `finalizedAt` is rejected
+     *         (an honest Base broadcasts clockless pre-upgrade days on the
+     *         V2 wire instead), so the packet stays a failed, re-executable
+     *         CCIP message rather than installing a meaningless clock.
+     *      3. Era binding (§2h constraint 20), TWO layers (Codex #1632 r1):
+     *         the packet's `baseDeployment` must equal the mirror's
+     *         CONFIGURED current Base deployment ({setBaseRewardDeployment}
+     *         — the explicit ground truth; fail-closed while unset, since
+     *         the per-day record cannot defend a day's FIRST install), and
+     *         must match the day's recorded era where one exists: a delayed
+     *         broadcast from a retired Base deployment must never install
+     *         its clock, schedule or zeroed marker into the new era, where
+     *         a new-era compensation could combine with it.
+     *      4. CLOCK BACKFILL (the 12b migration branch) — an already-applied
+     *         day with no clock verifies day identity, destination, era and
+     *         the immutable global pair ONLY, then writes ONLY the V3
+     *         fields. It deliberately does NOT compare the halves or
+     *         inclusion-derived fields (`backfillDayInclusion` legitimately
+     *         mutates a destination's halves after the first send, so a full
+     *         V2-field comparison would make the one supported migration
+     *         sequence unhealable) and never re-applies them — adding the
+     *         clock is the branch's only write.
+     *      5. Otherwise the shared V2 core runs (fresh apply, or the full
+     *         replay-divergence check), then the clock is installed
+     *         first-time or verified: a re-delivered packet must match every
+     *         frozen clock fact (finalizedAt, schedule version, inline
+     *         parameters, zeroed marker). `armedFromDay` stays OUTSIDE the
+     *         comparison, exactly as on the V2 path (first-apply-only).
+     */
+    function onRewardBroadcastV3Received(RewardBroadcastV3 calldata b)
+        external
+    {
+        LibVaipakam.Storage storage s =
+            _broadcastIngressGates(b.v2.destChainId);
+        uint256 dayId = b.v2.dayId;
+        if (b.finalizedAt == 0) revert BroadcastClockMissing(dayId);
+        // Codex #1632 r1 P1 — the era ground truth is the CONFIGURED
+        // current Base deployment, not the packet: the per-day record
+        // below cannot defend the FIRST install (nothing is recorded
+        // yet, and the CCIP lane authenticates the shared remote
+        // messenger, not the Diamond generation behind it), so without
+        // this gate a retired deployment's in-flight packet after a Base
+        // rotation would win the race and poison the day's era
+        // permanently. Fail-closed while unarmed: a V3 to a mirror whose
+        // operator has not set {setBaseRewardDeployment} stays a failed,
+        // re-executable CCIP message.
+        address expectedEra = s.baseRewardDeployment;
+        if (expectedEra == address(0) || b.baseDeployment != expectedEra) {
+            revert BroadcastEraUnauthenticated(
+                dayId, expectedEra, b.baseDeployment
+            );
+        }
+        // The per-day RECORD still binds a day to the era that installed
+        // its clock: after a rotation bumps the config, a day recorded
+        // under the previous era rejects new-era re-deliveries (the
+        // drain/heal ceremony owns cross-era days, not silent overwrite).
+        address era = s.dayClockEra[dayId];
+        if (era != address(0) && era != b.baseDeployment) {
+            revert BroadcastEraMismatch(dayId, era, b.baseDeployment);
+        }
+        // Codex #1632 r3 P1 — a ROTATED mirror refuses to attach V3 clock
+        // facts to any day with PRIOR state but UNKNOWN era provenance
+        // (`dayClockEra == 0`): days applied before arming (kind-5) or
+        // seeded by a pre-arming kind-2 pair predate the provenance stamp,
+        // and after a rotation the mirror can no longer tell WHICH era
+        // supplied their figures — stamping the new era onto them is the
+        // cross-era combination this whole gate family exists to prevent.
+        // On a NEVER-rotated mirror the same days heal freely: with a
+        // single era in the mirror's entire history there is nothing to
+        // confuse them with (the live-migration case). Rotated-away
+        // era-unknown days belong to the drain/heal ceremony — heal them
+        // BEFORE rotating (CcipCutoverRunbook §8).
+        if (
+            s.rewardEraRotated && era == address(0)
+                && (s.broadcastV2Applied[dayId] || s.knownGlobalSet[dayId])
+        ) {
+            revert BroadcastEraMismatch(dayId, address(0), b.baseDeployment);
+        }
+
+        if (
+            s.broadcastV2Applied[dayId]
+                && s.dayLapseClock[dayId].finalizedAt == 0
+        ) {
+            // Clock backfill — immutable pair only (see natspec item 4).
+            if (
+                !s.knownGlobalSet[dayId]
+                    || s.knownGlobalLenderInterestNumeraire18[dayId]
+                        != b.v2.globalLenderNumeraire18
+                    || s.knownGlobalBorrowerInterestNumeraire18[dayId]
+                        != b.v2.globalBorrowerNumeraire18
+            ) {
+                revert KnownGlobalAlreadySet();
+            }
+            // Codex #1632 r1 P1 — the pre-d3 reservation repair the V2
+            // replay path performs must survive this branch: a day applied
+            // by a PRE-d3 receiver has `broadcastV2Applied` set without its
+            // reservation, and returning early here would leave the heal
+            // looking complete while the mirror stays under-reserved
+            // against the local share Base already booked and netted.
+            // Idempotent (its own flag), and it reserves the STORED applied
+            // figure — never the packet's halves, which this branch
+            // deliberately does not trust (`backfillDayInclusion` may have
+            // mutated them on Base after the original send).
+            _reserveMirrorCommitOnce(
+                s,
+                dayId,
+                s.chainDayRecycledFunding[dayId][uint32(block.chainid)]
+                    .recycleConsume
+            );
+            // #1636 r2 — the day-pool stamp backfills alongside the clock
+            // (a pre-r2 V3 day has neither; both are finalize-frozen facts
+            // healed by the same re-send).
+            _installDayPoolStampV3(s, b);
+            _installDayClock(s, b, /* backfilled */ true);
+            _notifyCompensationHook(b);
+            return;
+        }
+
+        _applyBroadcastV2Core(s, b.v2, /* legacyWire */ false);
+        // #1636 r2 — install (or verify) the day-level funded pool stamp
+        // from the V3 packet. The V2 core deliberately does not write it
+        // (the V2 wire never carried the day-level figure — only per-chain
+        // slices, which are ZERO for a zeroed dest), yet Δq's numerator
+        // and the quote surface's stamp gate both need it mirror-side; the
+        // legacy kind-2 ingress that used to install it retires at
+        // rotation. Runs on replays too, so any pre-r2 V3 day heals by a
+        // permissionless re-send.
+        _installDayPoolStampV3(s, b);
+
+        LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
+        if (c.finalizedAt == 0) {
+            _installDayClock(s, b, /* backfilled */ false);
+        } else if (
+            c.finalizedAt != b.finalizedAt
+                || c.scheduleVersion != b.lapseScheduleVersion
+                || c.lapseWindowSeconds != b.lapseWindowSeconds
+                || c.dispatchCutoffGap != b.dispatchCutoffGap
+                || s.dayDeliberatelyZeroed[dayId] != b.zeroedForDest
+        ) {
+            revert BroadcastClockDivergence(dayId);
+        }
+        _notifyCompensationHook(b);
+    }
+
+    /// @dev #1434 P2-w2 — every ACCEPTED clock-bearing broadcast settles
+    ///      any PROVISIONAL compensation the day holds (§2.2 case b): the
+    ///      packet's authenticated era + zeroed marker are exactly the two
+    ///      facts the provisional credit assumed. Routed through the
+    ///      Diamond's own fallback (the standard cross-facet path) to the
+    ///      remittance facet's self-gated hook; a no-op for days without a
+    ///      provisional credit.
+    function _notifyCompensationHook(RewardBroadcastV3 calldata b) private {
+        ICompensationDayHook(address(this)).onCompensationDayBroadcastArrived(
+            b.v2.dayId, b.baseDeployment, b.zeroedForDest
+        );
+    }
+
+    /// @dev #1636 r2 — install (first V3 for the day) or VERIFY (replay /
+    ///      mixed-generation) the day-level funded pool stamp from the V3
+    ///      packet's day-pool words. Divergence joins the broadcast
+    ///      consensus family (`KnownGlobalAlreadySet`), matching the
+    ///      legacy kind-2 ingress's own stamp-divergence rule. Stored
+    ///      doubled, read halved — byte-compatible with every existing
+    ///      `dayPoolStamp` consumer (the kind-2 write at
+    ///      {onRewardBroadcastReceived} uses the identical convention).
+    function _installDayPoolStampV3(
+        LibVaipakam.Storage storage s,
+        RewardBroadcastV3 calldata b
+    ) private {
+        LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[b.v2.dayId];
+        if (p.stamped) {
+            if (
+                uint256(p.scheduleFloor) != b.dayScheduleFloorHalf * 2
+                    || uint256(p.recycledBudget) != b.dayRecycledBudgetHalf * 2
+            ) {
+                revert KnownGlobalAlreadySet();
+            }
+            return;
+        }
+        s.dayPoolStamp[b.v2.dayId] = LibVaipakam.DayPoolStamp({
+            scheduleFloor: SafeCast.toUint128(b.dayScheduleFloorHalf * 2),
+            recycledBudget: SafeCast.toUint128(b.dayRecycledBudgetHalf * 2),
+            aBarAtFinalize: 0,
+            marginBpsAtFinalize: 0,
+            stamped: true
+        });
+    }
+
+    /// @dev The V3 fields' writer: the packed clock, the era record, and
+    ///      this destination's zeroed marker — atomically, so a day can
+    ///      never hold a clock without its era (the compensation ingress
+    ///      that w2 adds keys its remitter check on the era). One other
+    ///      site touches `dayClockEra` alone: the shared apply core's
+    ///      provenance PRE-stamp on an armed mirror (#1632 r2), which this
+    ///      function overwrites with the packet's own authenticated
+    ///      identity — the same value by construction (the configured-era
+    ///      gate admitted the packet).
+    function _installDayClock(
+        LibVaipakam.Storage storage s,
+        RewardBroadcastV3 calldata b,
+        bool backfilled
+    ) private {
+        uint256 dayId = b.v2.dayId;
+        s.dayLapseClock[dayId] = LibVaipakam.DayLapseClock({
+            finalizedAt: b.finalizedAt,
+            scheduleVersion: b.lapseScheduleVersion,
+            lapseWindowSeconds: b.lapseWindowSeconds,
+            dispatchCutoffGap: b.dispatchCutoffGap
+        });
+        s.dayClockEra[dayId] = b.baseDeployment;
+        s.dayDeliberatelyZeroed[dayId] = b.zeroedForDest;
+        emit DayClockInstalled(
+            dayId,
+            b.finalizedAt,
+            b.lapseScheduleVersion,
+            b.zeroedForDest,
+            b.baseDeployment,
+            backfilled
+        );
+    }
+
+    /// @notice #1434 P2-w1 — the Base deployment that installed this day's
+    ///         clock on this mirror (zero = no clock installed yet).
+    function getDayClockEra(uint256 dayId) external view returns (address) {
+        return LibVaipakam.storageSlot().dayClockEra[dayId];
+    }
+
+    /// @notice #1434 P2-w1 — whether the V3 broadcast marked this day
+    ///         deliberately zeroed for THIS chain (R1: the chain's interest
+    ///         was zeroed out of the day's finalized denominator).
+    function getDayDeliberatelyZeroed(uint256 dayId)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().dayDeliberatelyZeroed[dayId];
+    }
+
+    /// @notice #1632 r1 — emitted when the mirror's era ground truth is
+    ///         set or rotated.
+    /// @custom:event-category informational/reward-clock
+    event BaseRewardDeploymentSet(address baseDeployment);
+
+    /// @notice Set (or rotate) the CURRENT Base deployment this mirror
+    ///         accepts V3 clock facts from — the explicit era ground truth
+    ///         (Codex #1632 r1: the per-day era record cannot defend the
+    ///         FIRST install, and the CCIP lane authenticates the shared
+    ///         messenger, not the Diamond generation behind it).
+    /// @dev    ADMIN. Zero disables the V3 ingress entirely (fail-closed —
+    ///         packets stay failed, re-executable CCIP messages until
+    ///         re-armed). Rotation belongs to the same ceremony that
+    ///         rotates the Base deployment; days whose clocks were
+    ///         installed under the PREVIOUS era keep rejecting new-era
+    ///         re-deliveries via their per-day record (drain/heal owns
+    ///         cross-era days).
+    function setBaseRewardDeployment(address baseDeployment)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (baseDeployment != address(0)) {
+            // #1632 r2 — rotation detection against the last NONZERO era
+            // (never the live config, so disarm/re-arm cannot smuggle a
+            // rotation past it). A true rotation permanently retires the
+            // LEGACY broadcast wires' fresh-apply paths: kind-5/kind-2
+            // packets carry no deployment identity, so post-rotation a
+            // retired era's delayed or re-executed delivery cannot be
+            // told apart from a legitimate one — and the new era only
+            // ever speaks V3.
+            address last = s.rewardEraLastNonzero;
+            if (last != address(0) && baseDeployment != last) {
+                s.rewardEraRotated = true;
+            }
+            s.rewardEraLastNonzero = baseDeployment;
+        }
+        s.baseRewardDeployment = baseDeployment;
+        emit BaseRewardDeploymentSet(baseDeployment);
+    }
+
+    /// @notice The configured era ground truth (0 = V3 ingress dark).
+    function getBaseRewardDeployment() external view returns (address) {
+        return LibVaipakam.storageSlot().baseRewardDeployment;
     }
 
     // ─── Admin ──────────────────────────────────────────────────────────────

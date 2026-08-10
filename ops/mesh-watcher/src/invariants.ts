@@ -131,6 +131,16 @@ export interface LocalLedger {
    * pages a false over-credit CRITICAL.
    */
   repatriatedOut?: bigint;
+  /**
+   * #1434 P2-w2 — the backing snapshot pair the arrival-reservation check
+   * compares: the Diamond's physical VPFI balance and the
+   * stranded-recovery reservation (quarantined compensation value awaiting
+   * the R4 return). `undefined` means UNKNOWN — any read failure, incl. a
+   * pre-P2-w2 lens whose 6-output shape decodes short — and the
+   * recovery-reservation check SKIPS for this chain (substituting zero in
+   * either slot pages falsely or silences truly).
+   */
+  backing?: { vpfiBalance: bigint; strandedRecoveryReserved: bigint };
   outstandingFresh: bigint;
   armedFromDay: bigint;
   paidOutRecycled: bigint;
@@ -779,6 +789,41 @@ export function checkHardInvariants(
         `  shortfall     = ${fmt(shortfall)}\n` +
         `  tolerance     = ${fmt(bucketToleranceWei)}\n` +
         `  (of which relocated custody = ${fmt(local.custodyRelocated)})`,
+    }));
+  }
+
+  // ── Recovery-reservation backing (#1434 P2-w2, §4.1) ───────────────
+  // The Diamond's physical balance must cover the bucket PLUS the
+  // arrival reservation: quarantined compensation tokens await their R4
+  // return inside the same balance, and `backingPosition` excludes them
+  // from ordinary-claim backing — so balance dropping below
+  // `bucket + reserved` means something ALREADY spent tokens the ledger
+  // says are spoken for (the exact fresh-claim leak the reservation
+  // exists to alarm on). Skipped, with a coverage gap, when the backing
+  // snapshot could not be read (pre-P2-w2 lens or transport failure).
+  for (const local of obs.allLocals.values()) {
+    if (!local.backing) continue;
+    const spoken = local.bucket + local.backing.strandedRecoveryReserved;
+    if (local.backing.vpfiBalance + bucketToleranceWei >= spoken) continue;
+    out.push(makeFinding({
+      code: 'recovery-reservation-backing',
+      variant: 'balance-below-earmarks',
+      identity: [
+        local.backing.vpfiBalance,
+        local.bucket,
+        local.backing.strandedRecoveryReserved,
+      ],
+      severity: 'critical',
+      chainId: local.chainId,
+      title: 'Balance no longer covers bucket + arrival reservation',
+      detail:
+        `balance + tolerance < bucket + strandedRecoveryReserved — tokens the ledger says are spoken for (recycle backing or quarantined compensation awaiting return) have been spent\n` +
+        `  balance     = ${fmt(local.backing.vpfiBalance)}\n` +
+        `  bucket      = ${fmt(local.bucket)}\n` +
+        `  reserved    = ${fmt(local.backing.strandedRecoveryReserved)}\n` +
+        `  spoken-for  = ${fmt(spoken)}\n` +
+        `  shortfall   = ${fmt(spoken - local.backing.vpfiBalance)}\n` +
+        `  tolerance   = ${fmt(bucketToleranceWei)}`,
     }));
   }
 

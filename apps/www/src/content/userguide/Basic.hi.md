@@ -167,8 +167,10 @@ acceptance के समय protocol borrower की तरफ़ एक सु�
 इनमें से कोई offer स्वीकार करने वाला lender loan को fund करता
 है: lender का asset borrower को जाता है, lender lender-of-record
 बनता है, और अवधि भर offer के तय rate पर ब्याज कमाता है। ब्याज
-का छोटा हिस्सा (1%) settlement के समय protocol treasury में
+का छोटा हिस्सा (`{liveValue:treasuryFeeBps}`%) settlement के समय protocol treasury में
 जाता है।
+यह rate loan बनते समय तय हो जाता है, इसलिए protocol fee में बाद का कोई
+बदलाव पहले से खुले loan को उसी rate पर छोड़ देता है जिस पर वह शुरू हुआ था।
 
 ---
 
@@ -346,7 +348,7 @@ tabs बताती हैं कि हर claim किस तरह की �
 #### यदि आप lender हैं
 
 आपका lender claim loan का principal और accrued interest लौटाता
-है, ब्याज वाले हिस्से पर 1% treasury cut घटाकर। loan settle होते
+है, ब्याज वाले हिस्से पर `{liveValue:treasuryFeeBps}`% treasury cut घटाकर। loan settle होते
 ही — repay, default या liquidation के बाद — यह claimable हो जाता
 है। claim आपके lender position NFT को atomically consume करता है
 — transaction land होते ही loan का वह पक्ष पूरी तरह close हो
@@ -536,7 +538,7 @@ available नहीं हैं वे greyed out रहेंगे, और to
 
 - **Claim** — loan settle होने के बाद (repay, default या
   liquidation), principal और interest unlock करता है, ब्याज पर
-  1% treasury cut घटाकर। यह आपके lender NFT को consume करता है।
+  `{liveValue:treasuryFeeBps}`% treasury cut घटाकर। यह आपके lender NFT को consume करता है।
 - **Initiate Early Withdrawal** — मध्य-loan में किसी और
   ख़रीदार को बेचने के लिए अपना lender NFT लिस्ट करें।
   ख़रीदार आपका पक्ष ले लेता है; आप sale की रकम लेकर निकल

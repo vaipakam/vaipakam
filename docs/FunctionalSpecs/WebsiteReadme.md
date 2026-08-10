@@ -87,6 +87,22 @@ Public-navigation requirements:
   figure, while the public marketing pages read no chain state at all
   and show the figure shipped with the build — current as of the last
   deploy, and never to be described to a reader as read live
+- the exception is a page documenting a governance knob's DEFAULT, which
+  states a plain number rather than a reference. The two look identical
+  on the page and are different claims: "the fee is X%" describes what
+  the protocol charges today, while "the default is X%" describes where
+  the knob starts before anyone tunes it. A reference resolves to the
+  first, so using one for the second would silently rewrite the
+  documented default every time the live figure moved — and an operator
+  reading that page is trying to learn exactly what a retune would be
+  departing from
+- and a rate a reader is told applies to THEIR position is the rate that
+  position was opened at, not the one the protocol charges today. The
+  fee is snapshotted when a loan is created precisely so a later retune
+  cannot change the economics of a loan already running, so a page that
+  quotes the current rate to a holder of an older loan is telling them
+  the wrong number. Documentation that names the fee in the context of
+  an individual position must say that the rate is fixed at origination
 - where such a figure offers a provenance affordance, that affordance
   must name the source it actually has. On a surface that makes no
   chain read, describing the figure as a fallback awaiting a read —

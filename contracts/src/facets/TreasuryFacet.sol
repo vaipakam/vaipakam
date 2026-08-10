@@ -24,7 +24,8 @@ import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
  * @author Vaipakam Developer Team
  * @notice This facet manages treasury fee accumulation and claims for the Vaipakam platform.
  * @dev Part of Diamond Standard (EIP-2535). Uses shared LibVaipakam storage for balances.
- *      Fees (TREASURY_FEE_BPS = 1% of interest + late fees) accumulate in the
+ *      Fees (the loan's snapshotted treasury rate, applied to interest +
+ *      late fees) accumulate in the
  *      diamond proxy at settlement time. LibSettlement is the single source
  *      of truth for the fee split across all settlement paths (repay,
  *      preclose, refinance, partial withdraw).

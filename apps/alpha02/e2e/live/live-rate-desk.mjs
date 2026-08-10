@@ -90,12 +90,16 @@ import { fileURLToPath } from 'node:url';
 import { pad, parseUnits, toEventSelector } from 'viem';
 import {
   addressOf,
+  blockedSync,
   chooseMenuValue,
   clientsFor,
   ensureConnected,
   launch,
+  LivePreconditionError,
   SITE,
+  precondition,
   requireSigningRole,
+  visit,
 } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -105,25 +109,80 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // driver can never drift from the app's own address/ABI source. ------
 const CONTRACTS_SRC = path.resolve(HERE, '../../../../packages/contracts/src');
 
+// Every read below is a PRECONDITION: the shipped bundle supplies the
+// addresses and the event shapes this drive asserts against, so a stale
+// or half-exported bundle means the desk went UNREVIEWED — it is not
+// evidence the desk regressed. All of it therefore exits BLOCKED, where
+// it used to throw and be reported as a Rate Desk FAIL (#1581).
 function loadDiamondAbi() {
   const dir = path.join(CONTRACTS_SRC, 'abis');
   const out = [];
-  for (const f of fs.readdirSync(dir)) {
-    if (!f.endsWith('.json') || f.startsWith('_')) continue;
-    const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-    if (Array.isArray(parsed)) out.push(...parsed);
+  // Per FILE, not just in total (Codex #1621 r1). A whole-bundle
+  // emptiness check passes a HALF-exported bundle: one truncated facet
+  // JSON among 70 healthy ones still leaves `out.length` large, and the
+  // reads that needed that facet then fail inside viem with exit 1 —
+  // a stale artifact reported as a desk regression. Every facet in this
+  // bundle currently exports at least one entry, so "parses to a
+  // non-empty array" is a true invariant rather than a guess.
+  const empty = [];
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json') || f.startsWith('_')) continue;
+      const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        empty.push(f);
+        continue;
+      }
+      out.push(...parsed);
+    }
+  } catch (err) {
+    blockedSync(`cannot read the per-facet ABI bundle\n  dir: ${dir}\n  ${err.message}`);
+  }
+  if (empty.length) {
+    blockedSync(
+      `the per-facet ABI bundle is half-exported — ${empty.length} file(s)` +
+        ` carry no ABI entries: ${empty.slice(0, 8).join(', ')}` +
+        `\n  dir: ${dir}\n  → re-run contracts/script/exportFrontendAbis.sh`,
+    );
+  }
+  if (out.length === 0) {
+    blockedSync(
+      `the per-facet ABI bundle is empty — nothing to decode this drive's` +
+        ` events with.\n  dir: ${dir}\n  → run contracts/script/exportFrontendAbis.sh`,
+    );
   }
   return out;
 }
 
 const CHAIN_ID = 84532;
-const deployment = JSON.parse(
-  fs.readFileSync(path.join(CONTRACTS_SRC, 'deployments.json'), 'utf8'),
-)[String(CHAIN_ID)];
-const DIAMOND = deployment.diamond;
-const WETH = deployment.weth;
-const TLIQ = deployment.testnetMocks?.liquidToken;
-if (!WETH || !TLIQ) throw new Error('bundle missing weth/testnetMocks.liquidToken');
+function loadDeployment() {
+  const file = path.join(CONTRACTS_SRC, 'deployments.json');
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'))[String(CHAIN_ID)] ?? {};
+  } catch (err) {
+    blockedSync(`cannot read the deployments bundle\n  path: ${file}\n  ${err.message}`);
+  }
+}
+const deployment = loadDeployment();
+// Validated as ADDRESSES, not merely present (Codex #1621 r1). A
+// truthiness check accepts a non-empty but malformed value, and the
+// decimals/market reads a few lines below hand it straight to viem —
+// which throws at top level with exit 1, so a corrupt bundle was still
+// reported as a desk regression. `asAddress` below is the taint barrier
+// for outbound probe URLs and runs far too late to be this check.
+const DIAMOND = requireAddress(deployment.diamond, 'diamond');
+const WETH = requireAddress(deployment.weth, 'weth');
+const TLIQ = requireAddress(deployment.testnetMocks?.liquidToken, 'testnetMocks.liquidToken');
+function requireAddress(value, field) {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
+    blockedSync(
+      `the deployments bundle's ${field} for chain ${CHAIN_ID} is not a` +
+        ` 0x-40-hex address: ${JSON.stringify(value)} — no usable market to` +
+        ` drive the desk with.`,
+    );
+  }
+  return value;
+}
 const ABI = loadDiamondAbi();
 const { pub } = clientsFor(CHAIN_ID);
 
@@ -155,6 +214,24 @@ const erc20Read = (token, functionName, args = []) =>
 // dispatcher swap driver.mjs performs at import time, so the probes
 // work wherever the page traffic does.
 const INDEXER = process.env.INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com';
+// An operator override that is not an absolute http(s) origin never
+// reaches a server: `fetch` rejects on URL parsing, the drive catch
+// records it, and the batch reports an unusable CONFIG as a product FAIL
+// (Codex #1621 r10). Validated here, where exiting is free.
+{
+  let parsed = null;
+  try {
+    parsed = new URL(INDEXER);
+  } catch {
+    /* reported just below */
+  }
+  if (!parsed || !/^https?:$/.test(parsed.protocol)) {
+    blockedSync(
+      `INDEXER_ORIGIN is not an absolute http(s) origin: ${JSON.stringify(INDEXER)}` +
+        ' — the indexer probes this drive asserts against could never be reached.',
+    );
+  }
+}
 
 /** GET an indexer route; returns { status, body } with the body parsed
  *  leniently (null on non-JSON) — status/shape asserts are the
@@ -173,11 +250,14 @@ async function indexerGet(url) {
  *  numerically before it may enter a probe URL (CodeQL
  *  js/file-data-in-outbound-network-request): the returned string is
  *  derived from the parsed integer value, not the file bytes, so a
- *  corrupted bundle can only throw here — never smuggle URL syntax
- *  into an outbound request. */
+ *  corrupted bundle can only stop the run here — never smuggle URL
+ *  syntax into an outbound request. The numeric rebuild is the taint
+ *  barrier; the shape check only decides how the run ends, and a
+ *  corrupt bundle is a missing PRECONDITION, so it ends BLOCKED
+ *  (#1581). */
 function asAddress(value, label) {
   if (typeof value !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value)) {
-    throw new Error(`${label} is not a 0x-40-hex address: "${value}"`);
+    blockedSync(`${label} is not a 0x-40-hex address: "${value}"`);
   }
   return `0x${BigInt(value).toString(16).padStart(40, '0')}`;
 }
@@ -210,10 +290,15 @@ const ZERO_CREATOR = /^0x0{40}$/i;
 // from the live probes below (Codex #1590 r4).
 requireSigningRole('lender');
 
-const [WETH_DECIMALS, TLIQ_DECIMALS] = await Promise.all([
-  erc20Read(WETH, 'decimals'),
-  erc20Read(TLIQ, 'decimals'),
-]);
+// A PRECONDITION read, like the funding probe below (Codex #1621 r1):
+// it resolves the token scale the drive's expected amounts are built
+// from, before any browser exists. Left unwrapped it was the FIRST thing
+// a dead RPC hit, so wrapping only the later balance probe would have
+// fixed the symptom one line past where it actually surfaced.
+const [WETH_DECIMALS, TLIQ_DECIMALS] = await precondition(
+  'reading the market tokens\u2019 decimals',
+  () => Promise.all([erc20Read(WETH, 'decimals'), erc20Read(TLIQ, 'decimals')]),
+);
 const EXPECTED_AMOUNT_MAX = parseUnits(AMOUNT_WETH, WETH_DECIMALS);
 const EXPECTED_AMOUNT_MIN_PARTIAL =
   EXPECTED_AMOUNT_MAX / 10n > 0n ? EXPECTED_AMOUNT_MAX / 10n : 1n;
@@ -229,13 +314,45 @@ function record(name, status, detail = '') {
 }
 
 // ---- chain read helpers --------------------------------------------
+/**
+ * The ABI member a call is about to use, or BLOCKED if the bundle does
+ * not carry it (Codex #1621 r2).
+ *
+ * Checked at the POINT OF USE rather than against a list of "functions
+ * this driver requires". A list is a second thing to maintain, and one
+ * that goes stale exactly when someone adds a read and forgets it —
+ * reintroducing the gap it was added to close. This asks the question
+ * about whatever the driver actually calls, so it cannot drift.
+ *
+ * A half-exported bundle is a stale ARTIFACT, not a desk regression:
+ * viem's own "function not found" throw exits 1 and reads as a product
+ * defect.
+ */
+function requireAbiMember(name, kind) {
+  const found = ABI.some((e) => e.type === kind && e.name === name);
+  if (!found) {
+    // THROWN, not exited (Codex #1621 r4): this can fire after the
+    // drive has posted something, and `process.exit` skips the
+    // `finally` that cancels it. The drive maps this type to exit 2
+    // at the end, so the verdict is still BLOCKED — but the cleanup
+    // runs first and no testnet funds are stranded.
+    throw new LivePreconditionError(
+      `the bundled ABI has no ${kind} "${name}" — the export is stale or` +
+        ` half-written, so this drive cannot reach the surface it reviews.` +
+        `\n  → re-run contracts/script/exportFrontendAbis.sh`,
+    );
+  }
+  return ABI.find((e) => e.type === kind && e.name === name);
+}
+
+/** Diamond read that fails BLOCKED on a missing ABI member. */
+function diamondRead(functionName, args) {
+  requireAbiMember(functionName, 'function');
+  return pub.readContract({ address: DIAMOND, abi: ABI, functionName, args });
+}
+
 async function getOffer(offerId) {
-  return pub.readContract({
-    address: DIAMOND,
-    abi: ABI,
-    functionName: 'getOffer',
-    args: [offerId],
-  });
+  return diamondRead('getOffer', [offerId]);
 }
 
 /** Length of `creator`'s LIFETIME offer index. getUserOffersPaginated
@@ -243,12 +360,7 @@ async function getOffer(offerId) {
  *  append-only `userOfferIds[user]` array — a limit-0 read is a cheap
  *  total-only probe. */
 async function offerIndexTotal(creator) {
-  const [, total] = await pub.readContract({
-    address: DIAMOND,
-    abi: ABI,
-    functionName: 'getUserOffersPaginated',
-    args: [creator, 0n, 0n],
-  });
+  const [, total] = await diamondRead('getUserOffersPaginated', [creator, 0n, 0n]);
   return total;
 }
 
@@ -263,12 +375,7 @@ async function offerIdsAppendedSince(creator, beforeTotal) {
   const out = [];
   const PAGE = 200n;
   for (let offset = beforeTotal; ; ) {
-    const [ids, total] = await pub.readContract({
-      address: DIAMOND,
-      abi: ABI,
-      functionName: 'getUserOffersPaginated',
-      args: [creator, offset, PAGE],
-    });
+    const [ids, total] = await diamondRead('getUserOffersPaginated', [creator, offset, PAGE]);
     out.push(...ids);
     offset += BigInt(ids.length);
     if (ids.length === 0 || offset >= total) return out;
@@ -313,12 +420,7 @@ async function noncesSettled(address, { timeoutMs = 120_000, intervalMs = 5_000 
  *  now (the ranked view is active-only); falls back to the least-
  *  populated bucket if every one is taken. */
 async function pickTenor() {
-  const [rankings] = await pub.readContract({
-    address: DIAMOND,
-    abi: ABI,
-    functionName: 'getActiveOffersByAssetPairRanked',
-    args: [WETH, TLIQ],
-  });
+  const [rankings] = await diamondRead('getActiveOffersByAssetPairRanked', [WETH, TLIQ]);
   const counts = new Map();
   for (const r of rankings) {
     const d = Number(r.durationDays);
@@ -385,8 +487,79 @@ async function selectTenor(page, days) {
 
 // ---------------------------------------------------------------------
 const lenderAddr = addressOf('lender');
-const startBlock = await pub.getBlockNumber();
-const { days: tenor, empty: tenorEmpty } = await pickTenor();
+// Funding preflight — BLOCKED, not FAIL (#1581), and BEFORE the browser
+// so an underfunded run wastes nothing.
+//
+// The create pulls the escrow out of the WALLET, and step 3b asserts the
+// balance fell by exactly EXPECTED_AMOUNT_MAX — so that is precisely what
+// the drive requires, which is why gating on it cannot block a run that
+// would otherwise pass. Without the gate an underfunded wallet failed
+// mid-post and the batch reported "top up the lender" as a Rate Desk
+// regression. (The mirror check in live-signed-book.mjs reads the VAULT
+// free balance instead: the gasless path funds fills from there.)
+// The probe itself is a precondition too (Codex #1621 r1): it exists
+// only to establish whether the wallet can fund the drive, and runs
+// before any browser or product observation, so an RPC that cannot
+// answer it must not be reported as a Rate Desk regression.
+const walletWeth = await precondition('reading the lender wallet WETH balance', () =>
+  erc20Read(WETH, 'balanceOf', [lenderAddr]),
+);
+if (walletWeth < EXPECTED_AMOUNT_MAX) {
+  blockedSync(
+    `lender wallet WETH ${walletWeth} < the ${EXPECTED_AMOUNT_MAX} this drive ` +
+      'escrows — top up the wallet (or shrink AMOUNT_WETH) before running',
+  );
+}
+// Native gas for the WHOLE mutation arc, before any escrow moves (Codex
+// #1621 r15). WETH funds the ESCROW; it does not pay for the transactions.
+// This drive posts an offer (escrowing real WETH), amends it, waits out
+// the 300s cooldown and cancels — and the `finally` sweep uses the same
+// EOA. A wallet that can afford the post but not the cancel therefore
+// leaves a LIVE offer with escrow held on a shared testnet, which is the
+// same harm as publishing a gasless order that cannot be retracted; the
+// verdict is the lesser problem. Read at the PENDING block so an aborted
+// earlier run's un-mined spend counts, and refuse outright on a dirty
+// mempool, matching live-signed-book.mjs and live-risk-access.mjs.
+await precondition('reserving native gas for the post, amend and cancel', async () => {
+  const [bal, fees, pendingNonce, latestNonce] = await Promise.all([
+    pub.getBalance({ address: lenderAddr, blockTag: 'pending' }),
+    pub.estimateFeesPerGas().catch(() => ({})),
+    pub.getTransactionCount({ address: lenderAddr, blockTag: 'pending' }),
+    pub.getTransactionCount({ address: lenderAddr, blockTag: 'latest' }),
+  ]);
+  if (pendingNonce !== latestNonce) {
+    throw new Error(
+      `lender has ${pendingNonce - latestNonce} transaction(s) still pending;` +
+        ' their spend is invisible to this reserve check',
+    );
+  }
+  const perGas = fees.maxFeePerGas ?? fees.gasPrice ?? (await pub.getGasPrice());
+  if (!perGas) throw new Error('chain returned no usable gas price');
+  // approve + post + amend + cancel, plus the finally sweep, at a 2x pad.
+  const need = perGas * 250_000n * 5n * 2n;
+  if (bal < need) {
+    throw new Error(
+      `lender native balance ${bal} wei is under the ~${need} wei needed to post,` +
+        ' amend AND cancel — refusing to escrow WETH behind an offer this run' +
+        ' could not take back',
+    );
+  }
+});
+
+// The rest of the pre-browser preflight, under the same precondition
+// (Codex #1621 r2). Wrapping individual reads left a moving target: an
+// RPC that answered the balance probe and then failed still exited 1
+// here. The whole preflight is setup — nothing has been observed yet —
+// so it is one guarded block rather than a growing list of wrapped
+// calls.
+const { startBlock, tenor, tenorEmpty } = await precondition(
+  'reading the pre-drive chain state (head block + tenor selection)',
+  async () => {
+    const head = await pub.getBlockNumber();
+    const picked = await pickTenor();
+    return { startBlock: head, tenor: picked.days, tenorEmpty: picked.empty };
+  },
+);
 console.log(
   `run: lender=${lenderAddr} market=WETH/tLIQ tenor=${tenor}d` +
     `${tenorEmpty ? ' (verified live-empty)' : ' (least-populated fallback)'} site=${SITE}` +
@@ -400,6 +573,7 @@ let offerId = null;
 let offerCreatedAt = 0;
 let cancelled = false;
 let failed = false;
+let driveError = null;
 // True once the ticket's Post button has actually been clicked (Codex
 // round-2 P2 #1) — from that moment a create tx may exist even if
 // unmined, so an empty cleanup sweep no longer proves "nothing
@@ -432,7 +606,10 @@ try {
   // ---- step 1: initial /desk state — markets summary ASSERTED healthy
   // (Codex round-2 P2 #3: production carries real markets data since
   // the 2026-07-10 D1 migrations, so this is PASS/FAIL, not observed.)
-  await page.goto(`${SITE}/desk`, { waitUntil: 'domcontentloaded' });
+  // BLOCKED if the site never answers (#1581). Safe ahead of the
+  // cleanup boundary: nothing is posted yet, so the finally block below
+  // has nothing to unwind.
+  await visit(page, '/desk');
   await page
     .getByRole('heading', { name: 'Rate Desk', level: 1 })
     .waitFor({ timeout: 30_000 });
@@ -816,8 +993,7 @@ try {
   // (Codex round-1 P2 #6) — the event OfferMutateFacet emits on every
   // mutation entry point, with `offerId` as topic1, so getLogs can
   // filter server-side over this short block range.
-  const offerModifiedAbi = ABI.find((e) => e.type === 'event' && e.name === 'OfferModified');
-  if (!offerModifiedAbi) throw new Error('OfferModified event missing from the bundled ABI');
+  const offerModifiedAbi = requireAbiMember('OfferModified', 'event');
   const modLogs = await pollChain(
     `the OfferModified log for offer #${offerId}`,
     async () => {
@@ -1049,6 +1225,10 @@ try {
   );
 } catch (err) {
   failed = true;
+  // Remembered so the exit below can tell a stale-artifact precondition
+  // from a product defect — AFTER the finally has unwound anything this
+  // run created (Codex #1621 r4).
+  driveError = err;
   record('drive', 'FAIL', err.message);
   await snap('rate-desk-99-failure').catch(() => {});
   const body = await page
@@ -1114,10 +1294,7 @@ try {
       let createLogCount = null;
       if (postAttempted && prePostBlock !== null) {
         try {
-          const offerCreatedAbi = ABI.find(
-            (e) => e.type === 'event' && e.name === 'OfferCreated',
-          );
-          if (!offerCreatedAbi) throw new Error('OfferCreated event missing from the bundled ABI');
+          const offerCreatedAbi = requireAbiMember('OfferCreated', 'event');
           const createLogs = await pub.getLogs({
             address: DIAMOND,
             event: offerCreatedAbi,
@@ -1306,5 +1483,24 @@ if (consoleErrors.length) {
 }
 
 const ok = !failed && steps.every((s) => s.status !== 'FAIL') && (offerId === null || cancelled);
+// A precondition that surfaced mid-drive is BLOCKED, not FAIL — but only
+// now, once the `finally` above has cancelled whatever this run posted.
+// Exiting at the point of discovery would have left it resting (r4).
+// BLOCKED only if the precondition is the ONLY thing wrong (Codex #1621
+// r5). If the cleanup ALSO failed — the cancel reverted, the RPC dropped,
+// a CLEANUP-UNKNOWN was recorded — this run may have left a live offer
+// with WETH escrowed, and that is actionable in a way "verified nothing"
+// is not. Reporting BLOCKED there buries funds still exposed behind a
+// re-run-later verdict.
+const onlyDriveFailed = steps.every((s) => s.status !== 'FAIL' || s.name === 'drive');
+if (
+  !ok &&
+  driveError instanceof LivePreconditionError &&
+  onlyDriveFailed &&
+  (offerId === null || cancelled)
+) {
+  console.log('BLOCKED — a precondition failed mid-drive; cleanup completed first');
+  process.exit(2);
+}
 console.log(ok ? 'PASS — Rate Desk live review complete' : 'FAIL — see steps above');
 process.exit(ok ? 0 : 1);

@@ -227,8 +227,10 @@ Active offers जहाँ creator उधार देने को तैया
 borrower accept करता है। initiation पर hard gate है: borrower
 की collateral basket को lender के principal request के against
 कम से कम 1.5 Health Factor बनाना होगा। HF math protocol का
-अपना है — gate bypass नहीं किया जा सकता। ब्याज पर 1% treasury
+अपना है — gate bypass नहीं किया जा सकता। ब्याज पर `{liveValue:treasuryFeeBps}`% treasury
 cut terminal settlement पर debit होती है, upfront नहीं।
+यह rate loan बनते समय तय हो जाता है, इसलिए protocol fee में बाद का कोई
+बदलाव पहले से खुले loan को उसी rate पर छोड़ देता है जिस पर वह शुरू हुआ था।
 
 <a id="offer-book.borrower-offers"></a>
 
@@ -392,7 +394,7 @@ timelock-gated हैं, और assets move नहीं कर सकते।
 - **Liquidation slippage** — 4-DEX failover जो सबसे अच्छा
   execution मिल सके वहाँ route करता है, लेकिन कोई specific
   price guarantee नहीं कर सकता। Recovery slippage और interest
-  पर 1% treasury cut के बाद net होती है।
+  पर `{liveValue:treasuryFeeBps}`% treasury cut के बाद net होती है।
 - **Illiquid-collateral defaults** — default time पर पूरा
   collateral आपके पास transfer हो जाता है। यदि asset principal
   plus accrued interest से कम value का है, तो आपके पास कोई
@@ -683,7 +685,7 @@ transfer करना नए holder को collect करने का अधि
 Lender claim वापस देता है:
 
 - आपका principal, इस chain पर आपके wallet में वापस।
-- accrued interest minus 1% treasury cut। consent on होने पर वह
+- accrued interest minus `{liveValue:treasuryFeeBps}`% treasury cut। consent on होने पर वह
   cut आपके time-weighted VPFI fee-discount accumulator
   द्वारा कम होती है।
 
@@ -977,7 +979,7 @@ actions:
 #### यदि आप lender हैं
 
 - **Claim as lender** — सिर्फ़ terminal states में। Principal plus
-  interest minus 1% treasury cut लौटाता है (consent on होने पर
+  interest minus `{liveValue:treasuryFeeBps}`% treasury cut लौटाता है (consent on होने पर
   time-weighted VPFI yield-fee discount से और कम)। Lender
   position NFT को burn करता है।
 - **Initiate early withdrawal** — चुनी गई asking price पर

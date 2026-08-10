@@ -781,7 +781,13 @@ contract InteractionRewardsLensFacet {
             uint256 unearmarked,
             uint256 outstandingRecycled,
             uint256 paidOutRecycled,
-            uint256 keeperBudget
+            uint256 keeperBudget,
+            // #1434 P2-w2 — the arrival reservation (§4.1): quarantined
+            // compensation value awaiting the R4 return, already
+            // SUBTRACTED inside `unearmarked` and published here so the
+            // watcher's backing figures can alarm on a fresh claim
+            // spending recovery-reserved tokens.
+            uint256 strandedRecoveryReserved
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -789,5 +795,6 @@ contract InteractionRewardsLensFacet {
         outstandingRecycled = s.outstandingCommitRecycled;
         paidOutRecycled = s.paidOutRecycled;
         keeperBudget = s.recycleKeeperBudget;
+        strandedRecoveryReserved = s.strandedRecoveryReserved;
     }
 }
