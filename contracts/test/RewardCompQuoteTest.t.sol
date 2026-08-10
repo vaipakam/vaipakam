@@ -210,6 +210,41 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         assertEq(accL, 20e18, "uncapped: 12 + 5 + 3 despite the ceiling");
     }
 
+    function test_accumulate_ceilsNonExactShares() public {
+        // #1636 r6 — the quote CEILS each entry's share: bulk window
+        // settlement floors once over an entry's summed delta window, so
+        // a floored per-entry quote can under-cover the combined
+        // settlement by a wei per entry. A 7-wei demand against the
+        // 20e18 pool half divides inexactly on every term.
+        _configureMirror();
+        _mut().setGovernorCommitArmedFromDayRaw(DAY);
+        _mut().setDayPoolStampRaw(DAY, 40e18, 20e18);
+        _mut().setChainDayFundingRaw(DAY, uint32(block.chainid), 0, 0);
+        _mut().setChainReportSentAtRaw(DAY, uint64(block.timestamp));
+        _mut().setDayDeliberatelyZeroedRaw(DAY, true);
+        _mut().setDailyLenderInterest(DAY, u1, 7, 7);
+        _mut().setKnownGlobalDailyInterest(DAY, 0, 0, true);
+        _mut().setDayCapThreshold18(DAY, type(uint256).max);
+        _mut().setDayUserSideCapRaw(DAY, type(uint256).max);
+        uint256 e1 = _mut().pushRewardEntry(
+            u1, 1, LibVaipakam.RewardSide.Lender, 7, 1
+        );
+        _mut().setRewardEntryEndDayRaw(e1, 10);
+
+        uint256[] memory one = new uint256[](1);
+        one[0] = e1;
+        _com().accumulateCompQuoteBatch(
+            DAY, LibVaipakam.RewardSide.Lender, one
+        );
+
+        (, , uint256 accL, , , , ) = _com().getCompQuoteAccum(DAY);
+        uint256 dq = (uint256(20e18) * 1e18) / 7;
+        uint256 raw = 7 * dq; // not a multiple of 1e18
+        assertEq(accL, (raw + 1e18 - 1) / 1e18, "ceiling applied");
+        assertTrue(accL * 1e18 >= raw, "quote upper-bounds the product");
+        assertEq(accL, raw / 1e18 + 1, "one wei above the floored share");
+    }
+
     function test_accumulate_refusesUnstampedDay() public {
         // #1636 r1 P1 — no frozen pool stamp, no quote: pricing without
         // the Dq numerator would quote (0,0) and wrongly resolve a

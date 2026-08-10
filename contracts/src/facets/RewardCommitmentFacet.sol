@@ -601,7 +601,17 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
             // settlement (a later forfeit absorbs it in full).
             uint256 perDay = e.perDayNumeraire18;
             conservationAdd += perDay;
-            quoteAdd += (perDay * delta) / 1e18;
+            // #1636 r6 — CEIL, not floor: bulk window settlement floors
+            // ONCE over an entry's whole summed delta window
+            // (`_entryWindowSplitFrom`), so for an entry spanning this
+            // compensated day plus other priced days,
+            // `floor(a) + floor(b) < floor(a + b)` — a floored per-entry
+            // quote could under-cover the combined settlement by a wei
+            // per entry and let a forfeiture consume unrelated custody.
+            // Rounding up keeps the quote a true upper bound; the ≤1-wei
+            // over-delivery per entry joins the ordinary
+            // delivered-minus-paid residue.
+            quoteAdd += (perDay * delta + 1e18 - 1) / 1e18;
             unchecked {
                 ++i;
             }
