@@ -6326,6 +6326,88 @@ library LibVaipakam {
         //   (CcipCutoverRunbook §8), alongside {clearCompQuote} for any
         //   quote standing under the retired era.
         mapping(uint32 => address) mirrorRewardDeployment;
+        // ─── #1434 P2-w4 — lapse terminals + R6 gate + supplemental ───────
+        // MIRROR-ONLY: the R6a loss observable each lapse terminal writes
+        //   (§5.2 — best figure available at lapse time, NEVER an inline
+        //   scan; overwritable by later accumulator completion;
+        //   non-blocking: state + event, gating nothing).
+        mapping(uint256 => LapsedDayLoss) lapsedDayLoss;
+        // MIRROR-ONLY (§2.5): the short-compensated deadline inputs —
+        //   first compensation credit for the day, and the last
+        //   QUALIFYING one (a supplement that cut the remaining per-side
+        //   shortfall by ≥ 1/4; smaller top-ups credit but never move
+        //   the clock). effectiveDeadline = min(lastQualifying + window,
+        //   first + 3 × window) over the day's FROZEN clock words.
+        mapping(uint256 => uint64) firstCompReceiptAt;
+        mapping(uint256 => uint64) lastQualifyingCompReceiptAt;
+        // MIRROR-ONLY (constraint-19): a legacy (pre-P2 d5) receipt spent
+        //   by {stampLegacyCompensation} — one receipt stamps one day.
+        mapping(bytes32 => bool) legacyReceiptStamped;
+        // BASE-ONLY (§5.1 R6): one compensation reservation in flight per
+        //   chain — the manual/supplemental remitId (0 = none). Set at
+        //   dispatch; cleared by the consumption ACK (w4), return
+        //   settlement (w5), or recovery settlement (w6); a cancel holds
+        //   it.
+        mapping(uint32 => uint256) compensationOutstanding;
+        // BASE-ONLY (§5.4 R6e): the enumerable outstanding-chain index —
+        //   pushed on gate-set, swap-removed on clear. A mapping alone
+        //   cannot back the rotation inventory, and the MUTABLE
+        //   destination list would omit a chain removed from it.
+        uint32[] compensationOutstandingChains;
+        // BASE-ONLY (§2.5): cumulative PER-SIDE compensation funded per
+        //   (chain, day) — original manual remit + every supplement. The
+        //   supplemental bound is per side against the standing quote
+        //   (an aggregate bound admits overfunding one side while
+        //   shorting the other).
+        mapping(uint32 => mapping(uint256 => uint256)) compFundedLender18;
+        mapping(uint32 => mapping(uint256 => uint256)) compFundedBorrower18;
+        // BASE-ONLY (#1656 r2) — the funded record EXISTS for this
+        //   chain-day (manual dispatch / supplemental / migration seed).
+        //   A dedicated flag, never the (0,0) value pair: a severe short
+        //   delivery's ACK reconciliation can legitimately round both
+        //   sides to zero, and that day must stay supplementable.
+        mapping(uint32 => mapping(uint256 => bool)) compFundedRecorded;
+        // MIRROR-ONLY (#1656 r2) — the lapse terminals' ARMING flag: the
+        //   §8 activation precondition (Base's legacy inventory reading
+        //   empty + every delivered legacy receipt stamped) becomes
+        //   enforceable on-chain state instead of ceremony discipline.
+        //   One-shot ADMIN arm; both permissionless terminals refuse
+        //   while false, so an upgrade window's expired days cannot be
+        //   lapsed out from under an unstamped legacy delivery.
+        bool lapseTerminalsArmed;
+        // MIRROR-ONLY (#1656 r11) — how many entries each side's quote
+        //   accumulation walked for the day. The short-lapse scaled arm
+        //   shaves this off the delivered pool before scaling Δq:
+        //   `_entryWindowSplitFrom` floors ONCE over an entry's whole
+        //   window, so the lapsed day's marginal can round UP by ≤1 wei
+        //   independently per covering entry — aggregate settlement is
+        //   bounded by `scaled + count` wei, and only `pool − count` in
+        //   the numerator keeps it ≤ pool. Maintained by the batch
+        //   accumulator from the feature's genesis (no deployment ever
+        //   ran the w3 accumulator without it), zeroed by reset.
+        mapping(uint256 => mapping(uint8 => uint256)) compQuoteEntryCount;
+    }
+
+    /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
+    ///         best per-side figure available AT THE TERMINAL, written by
+    ///         {lapseZeroedDay} (full loss — nothing was compensated) and
+    ///         {lapseShortCompensatedDay} (the funded-vs-quoted shortfall).
+    ///         `partial` marks a figure taken from an incomplete quote
+    ///         accumulation (or none); the permissionless accumulator may
+    ///         complete afterwards and overwrite it — the record gates
+    ///         NOTHING (R6a ratifies the exact figure may not gate
+    ///         retirement).
+    struct LapsedDayLoss {
+        uint256 lender18;
+        uint256 borrower18;
+        // A figure taken from an incomplete quote accumulation (or none).
+        bool partialFigure;
+        // True when written by the SHORT-compensated terminal (a funded
+        // day that terminated below quote), false for the full lapse.
+        bool shortLapse;
+        // Set once either terminal wrote the record (a genuine zero loss
+        // must be distinguishable from "never lapsed").
+        bool recorded;
     }
 
     /// @notice #1434 P2-w3 — one chain-day's standing compensation quote on
@@ -6536,6 +6618,18 @@ library LibVaipakam {
         uint256 armedFreshFull;
         uint256 recycledFull;
         uint256[] dayIds;
+        // #1434 P2-w4 (#1656 r1) — the DECLARED per-side split of a
+        // COMPENSATION reservation (zero for ordinary batch remits): the
+        // ACK reconciles `compFunded*` from declared down to received
+        // using these, so a fee-on-transfer shortfall re-opens exactly
+        // the supplemental headroom the short delivery left.
+        uint256 declaredLender18;
+        uint256 declaredBorrower18;
+        // #1656 r3 - finalization was FORCED (operator-evidenced, no
+        // received figure): the FIRST authentic ACK that later arrives
+        // may still run the declared-to-received reconciliation exactly
+        // once, then clears this.
+        bool forcedFinalized;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered
@@ -6556,6 +6650,15 @@ library LibVaipakam {
         // rotated deployment (receipts key by (remitter, remitId), so
         // different deployments' receipts co-exist).
         address remitter;
+        // #1656 r8 - the arrival's CLASSIFICATION (0 = credited /
+        //   consumed, 1 = quarantined into the stranded-recovery
+        //   reservation, 2 = provisionally credited awaiting its era
+        //   broadcast). The ACK wire carries `consumed = (this == 0)` so
+        //   the R6 gate clears only on CONSUMPTION acks (SS5.1's ratified
+        //   evidence) - a stranded delivery's clearing evidence is the w5
+        //   return, never its own delivery ack. Updated by the confirm /
+        //   demote hook when a provisional credit settles.
+        uint8 classification;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

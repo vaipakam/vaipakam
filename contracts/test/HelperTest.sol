@@ -75,6 +75,8 @@ import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensF
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -88,7 +90,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](159);
+        selectors = new bytes4[](165);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -406,6 +408,13 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.getCumStateRaw.selector;
         selectors[n++] =
             TestMutatorFacet.dailyDeltaForCommitmentRaw.selector;
+        // #1434 P2-w4 — lapse-terminal / legacy-stamp fixtures.
+        selectors[n++] = TestMutatorFacet.setDayLapseClockRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDayClockEraRaw.selector;
+        selectors[n++] = TestMutatorFacet.setCompReceiptClockRaw.selector;
+        selectors[n++] = TestMutatorFacet.setReceivedRemitRaw.selector;
+        selectors[n++] = TestMutatorFacet.setDayZeroedForDestRaw.selector;
+        selectors[n++] = TestMutatorFacet.setCompFundedRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2104,57 +2113,72 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](35);
-        // #1434 P2-w2 — the classifying compensation ingress + the
-        // broadcast-arrival hook + the reservation reads.
-        selectors[30] =
-            RewardRemittanceFacet.onCompensationBudgetReceived.selector;
-        selectors[31] =
-            RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
-        selectors[32] = RewardRemittanceFacet.getDayCompensation.selector;
-        selectors[33] =
-            RewardRemittanceFacet.getStrandedRecoveryReserved.selector;
-        selectors[34] = RewardRemittanceFacet.getStrandedRecovery.selector;
-        selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
-        selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
-        selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
-        selectors[3] = RewardRemittanceFacet.getRewardBudgetRemitted.selector;
-        selectors[4] = RewardRemittanceFacet.getRewardBudgetRemittedTotal.selector;
-        selectors[5] = RewardRemittanceFacet.getRewardBudgetRemittedGlobal.selector;
-        selectors[6] = RewardRemittanceFacet.getRewardRemittanceKeeper.selector;
-        selectors[7] = RewardRemittanceFacet.setRewardRemittanceReceiver.selector;
-        selectors[8] = RewardRemittanceFacet.onRewardBudgetReceived.selector;
-        selectors[9] = RewardRemittanceFacet.getRewardRemittanceReceiver.selector;
-        selectors[10] = RewardRemittanceFacet.getRewardBudgetReceivedTotal.selector;
-        selectors[11] = RewardRemittanceFacet.quoteRemittanceFee.selector;
-        // #1222 M3 B2-d2 — delivered-backing ledger surface.
-        selectors[12] = RewardRemittanceFacet.sendRemitAck.selector;
-        selectors[13] = RewardRemittanceFacet.quoteRemitAckFee.selector;
-        selectors[14] = RewardRemittanceFacet.onRemitAckReceived.selector;
-        selectors[15] = RewardRemittanceFacet.finalizeRemitReservation.selector;
-        selectors[16] = RewardRemittanceFacet.releaseRemitReservation.selector;
-        selectors[17] = RewardRemittanceFacet.remitManualBudget.selector;
-        selectors[18] = RewardRemittanceFacet.getRemitReservation.selector;
-        selectors[19] = RewardRemittanceFacet.getRemitIdByMessageId.selector;
-        selectors[20] = RewardRemittanceFacet.getRemitReservationNonce.selector;
-        // #1448 r3 — one-time stranded-cumulative seed.
-        selectors[26] =
-            RewardRemittanceFacet.seedReleasedRemitStranded.selector;
-        // #1448 r8 — restart lever after a detected seed race.
-        selectors[27] =
-            RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
-        // #1448 r10 — the ceremony's own state, so "has it already run?" has
-        // an answer that is not the published figure.
-        selectors[28] =
-            RewardRemittanceFacet.getReleasedRemitStrandedSeedState.selector;
-        selectors[29] =
-            RewardRemittanceFacet.getDeliveredFreshPosition.selector;
-        selectors[21] = RewardRemittanceFacet.getRemitPendingTotal.selector;
-        selectors[22] = RewardRemittanceFacet.getRemitAckedTotal.selector;
-        selectors[23] = RewardRemittanceFacet.getDayClosedByRemitId.selector;
-        selectors[24] = RewardRemittanceFacet.getReceivedRemit.selector;
-        selectors[25] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
-        return selectors;
+        selectors = new bytes4[](16);
+        selectors[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
+        selectors[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
+        selectors[2] = RewardRemittanceFacet.remitRewardBudget.selector;
+        selectors[3] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
+        selectors[4] = RewardRemittanceFacet.quoteRewardBudget.selector;
+        selectors[5] = RewardRemittanceFacet.setRewardRemittanceReceiver.selector;
+        selectors[6] = RewardRemittanceFacet.onRewardBudgetReceived.selector;
+        selectors[7] = RewardRemittanceFacet.quoteRemittanceFee.selector;
+        selectors[8] = RewardRemittanceFacet.sendRemitAck.selector;
+        selectors[9] = RewardRemittanceFacet.quoteRemitAckFee.selector;
+        selectors[10] = RewardRemittanceFacet.onRemitAckReceived.selector;
+        selectors[11] = RewardRemittanceFacet.finalizeRemitReservation.selector;
+        selectors[12] = RewardRemittanceFacet.releaseRemitReservation.selector;
+        selectors[13] = RewardRemittanceFacet.seedReleasedRemitStranded.selector;
+        selectors[14] = RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
+        selectors[15] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+    }
+
+    /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
+    function getRewardCompensationDispatchFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
+        selectors[0] =
+            RewardCompensationDispatchFacet.remitManualBudget.selector;
+        selectors[1] =
+            RewardCompensationDispatchFacet.remitSupplementalBudget.selector;
+        // #1656 r1 — the pre-w4 funded-record seed.
+        selectors[2] =
+            RewardCompensationDispatchFacet.seedCompFunded.selector;
+    }
+
+    /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
+    /// `DeployDiamond._getRewardRemittanceLensSelectors` (SelectorCoverageTest
+    /// asserts the match).
+    function getRewardRemittanceLensFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](22);
+        selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
+        selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
+        selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
+        selectors[3] = RewardRemittanceLensFacet.getCompensationOutstanding.selector;
+        selectors[4] = RewardRemittanceLensFacet.getCompensationOutstandingChains.selector;
+        selectors[5] = RewardRemittanceLensFacet.getCompFunded.selector;
+        selectors[6] = RewardRemittanceLensFacet.getLegacyManualReservations.selector;
+        selectors[7] = RewardRemittanceLensFacet.getRemitReservation.selector;
+        selectors[8] = RewardRemittanceLensFacet.getRemitIdByMessageId.selector;
+        selectors[9] = RewardRemittanceLensFacet.getRemitReservationNonce.selector;
+        selectors[10] = RewardRemittanceLensFacet.getReleasedRemitStrandedSeedState.selector;
+        selectors[11] = RewardRemittanceLensFacet.getRemitPendingTotal.selector;
+        selectors[12] = RewardRemittanceLensFacet.getRemitAckedTotal.selector;
+        selectors[13] = RewardRemittanceLensFacet.getDayClosedByRemitId.selector;
+        selectors[14] = RewardRemittanceLensFacet.getReceivedRemit.selector;
+        selectors[15] = RewardRemittanceLensFacet.getRewardBudgetRemitted.selector;
+        selectors[16] = RewardRemittanceLensFacet.getRewardBudgetRemittedTotal.selector;
+        selectors[17] = RewardRemittanceLensFacet.getRewardBudgetRemittedGlobal.selector;
+        selectors[18] = RewardRemittanceLensFacet.getRewardRemittanceKeeper.selector;
+        selectors[19] = RewardRemittanceLensFacet.getRewardRemittanceReceiver.selector;
+        selectors[20] = RewardRemittanceLensFacet.getRewardBudgetReceivedTotal.selector;
+        selectors[21] = RewardRemittanceLensFacet.getDeliveredFreshPosition.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
@@ -2165,7 +2189,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](33);
         selectors[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2197,6 +2221,21 @@ contract HelperTest {
             RewardCommitmentFacet.setMirrorRewardDeployment.selector;
         selectors[24] =
             RewardCommitmentFacet.getMirrorRewardDeployment.selector;
+        // #1434 P2-w4 — the lapse terminals + legacy stamp + loss views.
+        selectors[25] = RewardCommitmentFacet.lapseZeroedDay.selector;
+        selectors[26] =
+            RewardCommitmentFacet.lapseShortCompensatedDay.selector;
+        selectors[27] =
+            RewardCommitmentFacet.stampLegacyCompensation.selector;
+        selectors[28] = RewardCommitmentFacet.getLapsedDayLoss.selector;
+        selectors[29] =
+            RewardCommitmentFacet.getShortLapseDeadline.selector;
+        // #1656 r1 — the pre-upgrade clock armer.
+        selectors[30] = RewardCommitmentFacet.armShortLapseClock.selector;
+        // #1656 r2 — the activation gate pair.
+        selectors[31] = RewardCommitmentFacet.armLapseTerminals.selector;
+        selectors[32] =
+            RewardCommitmentFacet.getLapseTerminalsArmed.selector;
         selectors[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         selectors[2] = RewardCommitmentFacet
             .isChainDayCommitmentsComplete

@@ -558,6 +558,94 @@ credited but does not move the clock. The absolute 3× cap holds regardless
 This is R2's principle applied to R1c's state: pay what is backed,
 terminate on a bounded clock, record the loss.
 
+> *(w4 implementation notes — deviations recorded: (1) **§2.1's
+> "truncate-at-remaining" landed as PRO-RATA SCALING AT THE CROSSING** —
+> the short-lapsed day's ladder arm prices `Δq × pool_s / quoted_s` per
+> side rather than paying entries in order until the pool exhausts. The
+> w3 lesson governs: bulk window pricing settles from the cumulative
+> rows with no payment-path budget, so an order-dependent truncation
+> cannot bound it — the scaled crossing bounds every path at once, is
+> order-independent, and Σ floored payments ≤ pool by construction.
+> (2) **`stampLegacyCompensation` is ADMIN-evidenced, not
+> permissionless**: `ReceivedRemit` predates any day binding, so the
+> receipt↔day association is verifiable only against Base's
+> `RemitReservation.dayIds` — operator-side evidence; a permissionless
+> surface could bind any legacy receipt to any zeroed day. Pre-live
+> there are ZERO legacy receipts on any deployment. (3) The R6 gate
+> clears on the operator-evidenced **forced finalize too** (same
+> consumption semantics, same mould as the ACK); cancels/releases hold
+> it as ratified. (4) The deadline's qualifying stamps live in
+> `_creditCompensation` reading the PRE-credit shortfall; with no
+> standing quote yet the qualifying test is vacuously false and the
+> absolute clock alone runs — the conservative direction. (5) The
+> supplemental checks clock PRESENCE only — deliberately NOT the manual
+> path's R3 cutoff (#1656 r3): a compensated-and-open day is inside its
+> §2.5 remediation window, whose deadline supersedes the original
+> expiry, and the mirror ingress correspondingly exempts
+> already-compensated days from the raw-expiry quarantine (the terminal
+> FLAGS govern supplements). The cutoff's guaranteed-quarantine premise
+> holds only for FIRST compensations, where it stays. Two precise
+> qualifications (#1656 r5): the remediation deadline is NOT an
+> enforced ingress cutoff — the mirror rejects only once a terminal
+> FLAG is set, and the flag is set by the permissionless terminal
+> TRANSACTION, so a supplemental landing after the effective deadline
+> but before that transaction is still credited, and a full top-up in
+> that ordering window prevents the terminal (a bounded, benign race:
+> the day ends fully funded — the outcome the terminal exists to
+> approximate). And the declared→received reconciliation of the
+> per-side cumulative (`compFunded*`, stamped by both dispatchers)
+> runs on PENDING acks and on the FIRST ack after a forced
+> finalization only — a RELEASED reservation's late-executing ack is
+> recorded (`RemitAckAfterRelease`) but does not reconcile — instead
+> the RELEASE ITSELF subtracts the reservation's declared per-side
+> split from the funded cumulative (#1656 r6): the released tokens
+> never funded the obligation, and leaving them counted would make the
+> recovery ceremony's re-dispatch impossible against the per-side
+> bound. Contributions from other reservations on the day remain
+> counted. (6) Fitting w4 required
+> the EIP-170 triple split: `RewardRemittanceLensFacet` (22 ledger
+> views), `RewardCompensationDispatchFacet` (manual + supplemental),
+> `LibRewardRemitDispatch` (the shared dispatch tail / net headroom /
+> gate pair — one source, inlined per facet). Review round 2 (#1656)
+> hardened the upgrade seams: the terminals ship DARK behind a one-shot
+> ADMIN `armLapseTerminals` (the §8 activation gate as on-chain state —
+> a permissionless lapse cannot race the legacy migration); the funded
+> record's existence is a dedicated flag (`compFundedRecorded`), never
+> the (0,0) value pair (a severe short delivery's reconciliation can
+> round both sides to zero and the day must stay supplementable); the
+> migration seed records AT MOST the declared scalar (an already-ACKed
+> short delivery seeds at received); and the operator-evidenced forced
+> finalize preserves declared funding (its zero received-amount is a
+> sentinel — the authentic ACK is permissionlessly re-presentable when
+> reconciliation is wanted). Round 10 closed the last two seams of that
+> state machine: the forced-finalize one-shot is spent only by a
+> CONSUMED ack — a provisional (non-consumed) ack arriving post-force
+> leaves the flag standing so the consumed re-presentation can still
+> reconcile — and the in-place refresh script generation-gates the
+> reward MESSENGER proxy the same way it gates the receiver
+> (`WIRE_GENERATION`), since the refreshed facets speak the 5-word
+> consumption ACK that a generation-1 messenger rejects. Round 11
+> hardened three more edges. First, the short-lapse scaled delta shaves
+> the side's covering-entry count off the delivered pool before scaling
+> (`Δq × (pool − n) / quoted`): bulk settlement floors once over an
+> entry's whole window, so the lapsed day's marginal can round UP by a
+> wei per covering entry, and the unshaved scaling could pay a few wei
+> more than was delivered out of unrelated custody — the same
+> "upper bound must dominate every rounding regime" lesson the quote's
+> per-entry ceiling encodes, now applied to the terminal's arm. The
+> accumulator counts entries from the feature's genesis (no deployment
+> ever ran the w3 accumulator without the count), so the count is never
+> stale for a real quoted day. Second, a PROVISIONAL compensation stamps
+> no remediation clocks — they start when its V3 broadcast confirms the
+> credit, because only from confirmation can Base's supplemental path
+> run at all; a delayed broadcast would otherwise burn the bounded
+> window while remediation was impossible and let the terminal fire the
+> moment `provisional` cleared. Third, an EXACT lapse-loss record
+> (conservation proved) freezes its accumulation — the admin reset valve
+> refuses, since a wiped accumulator could never refresh figures the
+> refinement hook no longer touches; partial records stay resettable,
+> which is precisely the parked-cursor recovery the valve exists for.)*
+
 ---
 
 ## 3. R2 — the lapse terminal, and R2a stated at its true width

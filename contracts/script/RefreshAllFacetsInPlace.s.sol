@@ -76,6 +76,9 @@ import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
+import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
@@ -160,7 +163,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 70;
+    uint256 internal constant EXPECTED_FACETS = 72;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -481,6 +484,41 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
         }
 
+        // ─── #1434 P2-w4 (#1656 r10) — reward MESSENGER generation probe ──
+        //
+        // The refreshed facets call the messenger's GENERATION-2 surface
+        // (5-word consumption ACK, kind-11 quotes, 23-word V3); a proxy
+        // still on generation 1 reverts every one of those sends — acks
+        // never reach Base, compensation gates stay held, ordinary
+        // reservations sit Pending. Same durable-constant posture as the
+        // receiver probe above; idempotent on rerun. EVERY chain has a
+        // messenger, so a missing artifact is always a hard stop.
+        {
+            address rewardMsgr = _readAddrOptional(".rewardMessenger");
+            require(
+                rewardMsgr != address(0),
+                "P2-w4: refresh needs .rewardMessenger in addresses.json"
+            );
+            uint256 mgen = 0;
+            (bool mok, bytes memory mret) = rewardMsgr.staticcall(
+                abi.encodeWithSignature("WIRE_GENERATION()")
+            );
+            if (mok && mret.length == 32) mgen = abi.decode(mret, (uint256));
+            if (mgen < REWARD_MESSENGER_WIRE_GENERATION) {
+                address newMsgrImpl = address(new VaipakamRewardMessenger());
+                UUPSUpgradeable(rewardMsgr).upgradeToAndCall(newMsgrImpl, "");
+                Deployments.writeAddress(
+                    ".rewardMessengerImpl", newMsgrImpl
+                );
+                console.log(
+                    "P2-w4: upgraded VaipakamRewardMessenger (wire gen",
+                    mgen,
+                    "-> 2) impl:",
+                    newMsgrImpl
+                );
+            }
+        }
+
         // ─── #1434 P2-w2 (#1634 r2) — retire the 3-arg manual remit ─────────
         //
         // `remitManualBudget` changed from (uint32,uint256,uint256) to the
@@ -742,6 +780,21 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "rewardRemittanceFacet",
             address(new RewardRemittanceFacet()),
             _getRewardRemittanceSelectors()
+        );
+        // #1434 P2-w4 — the remittance lens: `_split` re-points the
+        // RELOCATED view selectors (routed to the mutating facet on a live
+        // Diamond) via Replace and adds the new w4 views.
+        items[70] = Item(
+            "rewardRemittanceLensFacet",
+            address(new RewardRemittanceLensFacet()),
+            _getRewardRemittanceLensSelectors()
+        );
+        // #1434 P2-w4 — the compensation dispatch pair: `_split` re-points
+        // the relocated manual selector via Replace + adds the supplemental.
+        items[71] = Item(
+            "rewardCompensationDispatchFacet",
+            address(new RewardCompensationDispatchFacet()),
+            _getRewardCompensationDispatchSelectors()
         );
         items[62] = Item("offerPreviewFacet", address(new OfferPreviewFacet()), _getOfferPreviewSelectors());
         // #1104 — RiskPreviewFacet split off RiskAccessFacet (items[60]).

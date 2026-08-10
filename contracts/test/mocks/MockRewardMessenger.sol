@@ -295,6 +295,7 @@ contract MockRewardMessenger is IRewardMessenger {
     // ─── #1222 M3 B2-d2 — remit-ack surface ───────────────────────────────
 
     uint256 public lastAckRemitId;
+    bool public lastAckConsumed;
     uint256 public lastAckAmount;
     address public lastAckRefund;
     uint256 public lastAckValue;
@@ -312,8 +313,10 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 remitId,
         uint256 amountReceived,
         address remitter,
+        bool consumed,
         address payable refundAddress
     ) external payable override returns (bytes32 messageId) {
+        lastAckConsumed = consumed;
         require(msg.sender == diamond, "MockMessenger: only diamond");
         if (revertOnSend) revert("MockMessenger: send revert");
         lastAckRemitId = remitId;
@@ -343,7 +346,19 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 amountReceived
     ) external {
         IRewardRemitAckIngress(diamond).onRemitAckReceived(
-            sourceChainId, remitId, amountReceived, diamond
+            sourceChainId, remitId, amountReceived, diamond, true
+        );
+    }
+
+    /// @dev #1656 r8 - consumption-explicit delivery for the R6 gate tests.
+    function deliverRemitAckWithConsumed(
+        uint32 sourceChainId,
+        uint256 remitId,
+        uint256 amountReceived,
+        bool consumed
+    ) external {
+        IRewardRemitAckIngress(diamond).onRemitAckReceived(
+            sourceChainId, remitId, amountReceived, diamond, consumed
         );
     }
 
@@ -356,7 +371,7 @@ contract MockRewardMessenger is IRewardMessenger {
         address remitter
     ) external {
         IRewardRemitAckIngress(diamond).onRemitAckReceived(
-            sourceChainId, remitId, amountReceived, remitter
+            sourceChainId, remitId, amountReceived, remitter, true
         );
     }
 
