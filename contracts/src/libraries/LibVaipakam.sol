@@ -3060,7 +3060,19 @@ library LibVaipakam {
         ///      stability; never read or written.
         uint32 localEidLegacyDoNotUse;
         /// @dev EVM chain id of the canonical (Base) reward chain.
-        ///      Mirrors send chain reports here; zero on Base itself.
+        ///      Mirrors send chain reports here, and
+        ///      {MirrorTierReceiverFacet} rejects any inbound push whose
+        ///      source chain is not this value.
+        ///
+        ///      Set to Base's chain id on EVERY chain, canonical
+        ///      included — `deploy-mainnet.sh` exports `BASE_CHAIN_ID`
+        ///      unconditionally and `ConfigureRewardReporter` writes it,
+        ///      so a configuration audit should expect 8453 (84532 on
+        ///      testnet) here even on Base. It used to say "zero on Base
+        ///      itself", which made a correct deployment read as drift
+        ///      (#1641). Canonical-vs-mirror is decided by
+        ///      `isCanonicalRewardChain`, not by this field being zero —
+        ///      see {isMirrorRewardChain}, which requires BOTH.
         uint32 baseChainId;
         /// @dev Authorized cross-chain messenger address on this chain
         ///      (`VaipakamRewardMessenger`, CCIP-backed post-T-068). Only
@@ -3137,10 +3149,6 @@ library LibVaipakam {
         ///      with zero global interest" from "day `D` not yet
         ///      broadcast here".
         mapping(uint256 => bool) knownGlobalSet;
-        // ─── Bridged Fixed-Rate VPFI Buy (spec §: Early Fixed-Rate ──────
-        // Purchase Program, cross-chain extension) ─────────────────────────
-        // Base is the SOLE seller of the fixed-rate VPFI. Non-Base chains
-        // get a "bridged buy" UX via VPFIBuyAdapter: user pays native ETH
         // ─── l2 Sequencer Uptime Circuit Breaker ────────────────────────
         // On L2s (Base/Arb/OP/etc.) we must not consume Chainlink prices
         // while the sequencer has been down — users can't submit txs, so
@@ -4214,12 +4222,24 @@ library LibVaipakam {
         // `srcChainId == s.baseChainId` (NOT the CCIP selector; the
         // messenger already translates per Codex round-9 P1 #4).
         //
-        // Mirror-side authenticated business peer — the Base
-        // diamond / messenger contract address whose `TierUpdated`
-        // payloads we accept. Validated via the messenger's
-        // existing `channelPeer` mapping (Codex round-4 P1 #4 +
-        // round-9 P1 #4 — `Any2EVMMessage.sender` is always the
-        // local CCIP adapter, never the business peer).
+        // Mirror-side authenticated business peer — the Base diamond /
+        // messenger contract address whose `TierUpdated` payloads we
+        // accept.
+        //
+        // NOT WIRED UP as of #1641: no code reads or writes this slot.
+        // The comment here used to say it was "validated via the
+        // messenger's existing `channelPeer` mapping"; neither half
+        // holds. `CcipMessenger.channelPeerOf` is routing metadata whose
+        // receive path only asserts the entry is non-zero — it never
+        // compares it to the sender (#1631) — and no handler compares it
+        // either. What actually authenticates an inbound `TierUpdated`
+        // on a mirror today is {MirrorTierReceiverFacet}:
+        // `msg.sender == s.rewardMessenger` (the local, owner-registered
+        // messenger) plus `sourceChainId == s.baseChainId`. That is a
+        // real boundary; the business-peer leg the design doc describes
+        // (CrossChainRewardSystem.md "Sender authentication") is simply
+        // absent. Whether to build it or retire it is #1650; the slot is
+        // kept for storage-layout stability either way.
         address baseAuthorizedMessenger;
         // ── Cross-chain buyback custody (Base) ──────────────────────────
         //

@@ -88,11 +88,12 @@ interface ICrossChainMessenger {
 /**
  * @title ICrossChainMessageRecipient — the inbound half of the port
  *
- * A Vaipakam domain contract (e.g. the VPFI buy receiver, the reward
- * messenger) implements this and registers with the adapter for a channel.
- * The adapter calls {onCrossChainMessage} when a message for that channel
- * arrives — after the adapter has authenticated the source (provider
- * verification + the source-sender allowlist) and forwarded any tokens.
+ * A Vaipakam domain contract (e.g. the reward messenger, the reward /
+ * buyback remittance receivers) implements this and registers with the
+ * adapter for a channel. The adapter calls {onCrossChainMessage} when a
+ * message for that channel arrives — after the adapter has authenticated
+ * the source (provider verification plus the adapter's per-chain REMOTE
+ * MESSENGER allowlist) and forwarded any tokens.
  */
 interface ICrossChainMessageRecipient {
     /**
@@ -104,9 +105,17 @@ interface ICrossChainMessageRecipient {
      *      decide outcomes from its own authoritative local state, never
      *      solely from the payload (see the migration design §5).
      * @param sourceChainId EVM chain id the message originated on.
-     * @param sourceSender  The source-chain contract that sent it (the
-     *                      adapter has already checked it against the
-     *                      per-channel allowlist).
+     * @param sourceSender  The channel peer the adapter has CONFIGURED
+     *                      for `sourceChainId` — routing metadata, not a
+     *                      verified sender. The adapter only asserts the
+     *                      entry is non-zero; it never compares it to the
+     *                      address that actually sent the message, so a
+     *                      misconfigured peer arrives here looking
+     *                      authoritative (#1631). An implementer that
+     *                      wants peer-level authentication must perform
+     *                      the comparison itself; none does today, and
+     *                      whether the adapter should do it once for all
+     *                      channels is #1650.
      * @param payload       The exact bytes the sender passed to
      *                      {ICrossChainMessenger.sendMessage}.
      * @param tokens        Tokens delivered with the message, now held by

@@ -126,9 +126,27 @@ contract CcipMessenger is
     mapping(address => bytes32) public channelOf;
 
     /// @notice channelId → remote chain id → the channel's domain contract
-    ///         on that remote chain. Surfaced to the local handler as the
-    ///         inbound `sourceSender`; the handler does its own equality
-    ///         check against the peer it expects. Zero = unconfigured.
+    ///         on that remote chain. Zero = unconfigured, and an inbound
+    ///         message on an unconfigured (channel, chain) pair reverts
+    ///         {NoChannelPeer}.
+    ///
+    ///         This is ROUTING METADATA, not an authentication check
+    ///         (#1631). It is surfaced to the local handler as the
+    ///         inbound `sourceSender`, but no handler shipping today
+    ///         compares it against anything — three of them comment the
+    ///         parameter out entirely, and the remittance receivers bind
+    ///         deployment identity from the payload instead. The receive
+    ///         path here likewise only asserts the entry is non-zero, so
+    ///         a peer pointing at the WRONG non-zero address is caught by
+    ///         nothing. Do not read this map as a forgery guard.
+    ///
+    ///         The authentication that does hold is one layer up: the
+    ///         CCIP router authenticates the cross-chain sender, and
+    ///         {_ccipReceive} requires it to be the messenger this chain
+    ///         allowlisted for the source chain via {setRemoteMessenger}
+    ///         (else {UnauthorizedSourceMessenger}). Whether the peer map
+    ///         should ALSO be enforced there is an open design question —
+    ///         see #1650.
     mapping(bytes32 => mapping(uint256 => address)) public channelPeerOf;
 
     /// @dev Reserved storage for upgrade-safe appends. 6 slots used above.

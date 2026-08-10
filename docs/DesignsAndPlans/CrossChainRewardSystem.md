@@ -185,6 +185,19 @@ This is the EAGER version broadcast that closes the lazy-adoption gap from round
 
 **Re-send semantics for failed deliveries (Codex round-2 P1 #2)**: if the CCIP auto-broadcast send doesn't reach the mirror (router accepts but executor fails permanently), the mirror's cache stays at the pre-failure value while Base's `userTierLastPushedNonce` shows the send was attempted. Recovery is via `forceResendTierUpdate(user, dests)` — a SEPARATE caller-funded entry point that bypasses the de-dup check and re-sends regardless of `userTierLastPushedNonce`. Keepers monitor CCIP delivery status off-chain and call this when they observe a permanent execution failure; the caller pays `msg.value` for CCIP fees per the round-6 P1 #6 constraint. The protocol broadcast budget is NEVER touched on this path.
 
+> **NOT IMPLEMENTED as of 2026-08-10 (#1650).** The business-peer half
+> of the paragraph below was designed, allocated its storage slot
+> (`baseAuthorizedMessenger`) and shipped that slot — and then never
+> built. Nothing in the tree reads or writes it, `CcipMessenger` asserts
+> only that its channel-peer entry is non-zero rather than comparing it
+> to the sender, and no handler compares it either. What actually
+> authenticates a mirror `TierUpdated` today is `MirrorTierReceiverFacet`:
+> `msg.sender == s.rewardMessenger` plus `sourceChainId == s.baseChainId`,
+> on top of the CCIP router's sender authentication and the adapter's
+> per-chain remote-messenger allowlist. That is a real boundary — but it
+> is ONE layer, not the two described here. Read the paragraph below as
+> the design intent under decision in #1650, not as shipped behaviour.
+
 **Sender authentication (round-1 P1 #2 + round-4 P1 #4)**: the mirror inbound handler validates the **business-peer mapping** that `VaipakamRewardMessenger` already exposes for REPORT/BROADCAST messages — NOT the raw `Any2EVMMessage.sender` field. Codex caught that in the existing CCIP adapter, `Any2EVMMessage.sender` is the *remote `CcipMessenger`*, not the business peer; the messenger resolves the actual peer through its channel-peer mapping before forwarding the decoded payload to the diamond. The tier-update inbound path mirrors that pattern exactly: the messenger validates `channelPeer[srcChainSelector] == decodedBusinessPeer` and forwards a `(payload, srcChainId, businessPeer)` triple to the diamond — where `srcChainId` is the EVM chain id (the messenger's existing translation step from CCIP selector → EVM chain id, per Codex round-9 P1 #4). The diamond then checks `srcChainId == s.baseChainId` AND `businessPeer == s.baseAuthorizedMessenger`. Using `Any2EVMMessage.sender` directly would reject every legitimate tier update because the address would always be the local `CcipMessenger` adapter, not the Base business peer.
 
 **Reward-messenger payload-size gate update (Codex round-4 P1 #5 + round-9 P1 #1)**: the existing `VaipakamRewardMessenger` rejects every inbound payload whose ABI length doesn't match the current 4-word REPORT/BROADCAST shape. The new `TierUpdated` payload is **8 ABI words** (`kind`, `user`, `effectiveTier`, `computedAt`, `nonce`, `tierExpirySec`, `tierTableVersion`). Sub 2 MUST extend the messenger's payload-size gate to accept both the existing 4-word shape AND the new 8-word `TierUpdated` shape — without that change, every mirror tier update will revert at the messenger's pre-decode length check before reaching the new decode branch. The messenger's existing dispatch-by-kind pattern handles the actual branching; this is purely a size-check update.

@@ -115,14 +115,19 @@ contract OracleAdminFacet {
      *        `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`. **MUST set
      *        the bridged-WETH9**, never WPOL.
      *
-     *      The VPFIBuyAdapter's payment-token policy already enforces
-     *      this for the cross-chain buy lane (CLAUDE.md "VPFIBuyAdapter
-     *      — payment-token mode by chain"); this setter is the
-     *      equivalent operator-responsibility surface for the
-     *      OracleFacet liquidity / tier classification path. There's no
-     *      runtime contract check that the address is WETH-shaped —
-     *      operator must verify against the chain's official bridge
-     *      registry. CLAUDE.md tracks the canonical addresses.
+     *      Nothing in the protocol enforces this — it is purely an
+     *      operator responsibility, and the addresses listed above are
+     *      the reference. There is no runtime check that the address is
+     *      WETH-shaped, so verify against the chain's official bridge
+     *      registry before setting it.
+     *
+     *      This note previously deferred the guarantee to "the
+     *      VPFIBuyAdapter's payment-token policy", which was removed in
+     *      the #687-A legal excision along with the cross-chain buy lane
+     *      it governed — so the check this setter leans on had no
+     *      enforcer left anywhere (#1641). It also pointed at a CLAUDE.md
+     *      section that no longer exists; the canonical addresses live in
+     *      this comment.
      *
      * @param weth The bridged-WETH9 ERC-20 contract address on the active
      *             network (NOT the wrapped-native on non-ETH-gas chains).

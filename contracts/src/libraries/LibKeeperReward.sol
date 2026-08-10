@@ -30,8 +30,12 @@ library LibKeeperReward {
 
     /// @dev Phase 0 fixed rate: 1 VPFI (in 18-dec base units) costs
     ///      0.001 ETH = 1e15 wei. So `vpfiUnits = weiAmount * 1e18 /
-    ///      RATE`. Same rate as `cfgVpfiBuyRate` for parity with the
-    ///      buy flow.
+    ///      RATE`. This is now the ONLY place the rate is stated: it used
+    ///      to be described as matching `cfgVpfiBuyRate` "for parity with
+    ///      the buy flow", but the fixed-rate VPFI buy surface was
+    ///      removed in the #687-A legal excision and there is nothing
+    ///      left to be in parity with (#1641). The constant stays because
+    ///      keeper gas reimbursement still needs a wei→VPFI conversion.
     uint256 internal constant FIXED_VPFI_PER_ETH_RATE_WEI = 1e15;
     /// @dev Codex round-1 P1 — VPFI scaling factor (18 decimals). The
     ///      conversion `(wei * VPFI_DECIMALS_SCALE) / RATE` produces
