@@ -1579,25 +1579,6 @@ contract RewardRemittanceFacet is
         emit RemitAckDispatched(remitId, messageId, rec.amount);
     }
 
-    /// @notice Quote the CCIP native fee a {sendRemitAck} for `remitId` costs.
-    function quoteRemitAckFee(
-        uint256 remitId,
-        address remitter
-    ) external view returns (uint256 fee) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address messenger = s.rewardMessenger;
-        if (messenger == address(0)) revert RewardMessengerNotSet();
-        LibVaipakam.ReceivedRemit storage rec =
-            s.receivedRemits[_receiptKey(remitter, remitId)];
-        if (rec.receivedAt == 0) revert ReceivedRemitNotFound(remitId);
-        // Codex #1426 r2 — mirror the send's stale-receipt rejection.
-        if (rec.srcChainId != s.baseChainId) {
-            revert ReceivedRemitStale(remitId, rec.srcChainId);
-        }
-        fee = IRewardMessenger(messenger).quoteSendRemitAck(
-            remitId, rec.amount, rec.remitter
-        );
-    }
 
     // ─── #1222 M3 B2-d2 — Base-side ack ingress + operator valves ─────────
 
@@ -1665,9 +1646,12 @@ contract RewardRemittanceFacet is
                 // a provisional ack dispatched pre-confirm but arriving
                 // post-force must not burn the flag before the consumed
                 // re-presentation can reconcile.
-                if (consumed) r.consumedAcked = true;
-                if (quarantined) r.quarantineAcked = true;
-                if (r.forcedFinalized && consumed) {
+                bool ackConflict;
+                if (consumed) {
+                    ackConflict = _stampConsumedAck(s, r, remitId);
+                }
+                if (quarantined) _stampQuarantineAck(r, remitId);
+                if (r.forcedFinalized && consumed && !ackConflict) {
                     r.forcedFinalized = false;
                     _reconcileCompFunded(s, r, amountReceived);
                     emit RemitAckAfterForcedFinalize(
@@ -1682,7 +1666,7 @@ contract RewardRemittanceFacet is
                 // cross-chain ordering, not an error path. Idempotent:
                 // once cleared, the gate no longer names this remit.
                 if (
-                    consumed
+                    consumed && !ackConflict
                         && s.compensationOutstanding[r.dstChainId]
                             == remitId
                 ) {
@@ -1706,8 +1690,12 @@ contract RewardRemittanceFacet is
             // all (it could have been consumed, and a return against
             // consumed lineage is the r4/r5 bypass).
             if (r.dstChainId == sourceChainId) {
-                if (consumed) r.consumedAcked = true;
-                if (quarantined) r.quarantineAcked = true;
+                if (consumed) {
+                    // conflict claw runs here too; released reservations
+                    // have no consumed-ack privileges to withhold.
+                    _stampConsumedAck(s, r, remitId);
+                }
+                if (quarantined) _stampQuarantineAck(r, remitId);
             }
             emit RemitAckAfterRelease(remitId, sourceChainId, amountReceived);
             return;
@@ -1869,6 +1857,62 @@ contract RewardRemittanceFacet is
 
     /// @dev Shared ack/force finalize: Pending → Acked, pending → acked
     ///      aggregates rolled.
+    /// @notice #1660 r8 - contradictory terminal classifications landed
+    ///         for one receipt (an honest mirror can never produce both:
+    ///         quarantined never transitions to consumed, nor consumed to
+    ///         quarantined). The still-unspent slice of any return credit
+    ///         is clawed into the overage quarantine; what a re-dispatch
+    ///         already consumed is unrecoverable on-chain and becomes the
+    ///         recovery ceremony's evidence.
+    /// @custom:event-category state-change/reward-compensation
+    event RemitAckClassificationConflict(
+        uint256 indexed remitId,
+        uint256 clawedToOverage,
+        uint256 unrecoverable
+    );
+
+    /// @dev #1660 r8 - stamp a CONSUMED attestation. Returns true when it
+    ///      CONTRADICTS a prior quarantine attestation: the caller must
+    ///      then withhold the consumed-ack privileges (gate clear +
+    ///      reconciliation) - a mirror contradicting itself gets no
+    ///      further trust extended. The conflict freezes the receipt's
+    ///      return credit: the unspent slice moves to the overage
+    ///      quarantine (not claimable, not re-dispatchable), and
+    ///      `consumedAcked` blocks every further B1 credit.
+    function _stampConsumedAck(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RemitReservation storage r,
+        uint256 remitId
+    ) private returns (bool conflict) {
+        conflict = r.quarantineAcked;
+        r.consumedAcked = true;
+        if (conflict) {
+            uint256 rec = s.remitRecoveredForReceipt[remitId];
+            uint256 avail = s.rewardBudgetRecovered
+                - s.rewardBudgetRedispatched;
+            uint256 claw = rec < avail ? rec : avail;
+            if (claw != 0) {
+                s.rewardBudgetRecovered -= claw;
+                s.strandedReturnOverage += claw;
+            }
+            emit RemitAckClassificationConflict(remitId, claw, rec - claw);
+        }
+    }
+
+    /// @dev #1660 r8 - stamp a QUARANTINE attestation; refused (with the
+    ///      conflict surfaced) when a consumed attestation already stands
+    ///      - B1 eligibility must never be forged onto a consumed receipt.
+    function _stampQuarantineAck(
+        LibVaipakam.RemitReservation storage r,
+        uint256 remitId
+    ) private {
+        if (r.consumedAcked) {
+            emit RemitAckClassificationConflict(remitId, 0, 0);
+            return;
+        }
+        r.quarantineAcked = true;
+    }
+
     function _finalizeReservation(
         LibVaipakam.Storage storage s,
         LibVaipakam.RemitReservation storage r,
@@ -1903,9 +1947,10 @@ contract RewardRemittanceFacet is
         // pools as claim backing; a return against it would reuse the
         // dispatch's cap lineage). Stamped whether or not the gate
         // still names this remit.
-        if (consumed) r.consumedAcked = true;
-        else if (quarantined) r.quarantineAcked = true;
-        if (consumed && s.compensationOutstanding[dst] == remitId) {
+        bool ackConflict;
+        if (consumed) ackConflict = _stampConsumedAck(s, r, remitId);
+        else if (quarantined) _stampQuarantineAck(r, remitId);
+        if (consumed && !ackConflict && s.compensationOutstanding[dst] == remitId) {
             LibRewardRemitDispatch.clearCompensationGate(s, dst);
             // #1656 r2 - AUTHENTIC ACKs only: the forced finalize passes
             // amountReceived = 0 as a sentinel, and reading it as a real

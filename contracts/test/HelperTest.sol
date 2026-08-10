@@ -2117,7 +2117,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](15);
         selectors[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
         selectors[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
         selectors[2] = RewardRemittanceFacet.remitRewardBudget.selector;
@@ -2127,13 +2127,12 @@ contract HelperTest {
         selectors[6] = RewardRemittanceFacet.onRewardBudgetReceived.selector;
         selectors[7] = RewardRemittanceFacet.quoteRemittanceFee.selector;
         selectors[8] = RewardRemittanceFacet.sendRemitAck.selector;
-        selectors[9] = RewardRemittanceFacet.quoteRemitAckFee.selector;
-        selectors[10] = RewardRemittanceFacet.onRemitAckReceived.selector;
-        selectors[11] = RewardRemittanceFacet.finalizeRemitReservation.selector;
-        selectors[12] = RewardRemittanceFacet.releaseRemitReservation.selector;
-        selectors[13] = RewardRemittanceFacet.seedReleasedRemitStranded.selector;
-        selectors[14] = RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
-        selectors[15] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        selectors[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
+        selectors[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
+        selectors[11] = RewardRemittanceFacet.releaseRemitReservation.selector;
+        selectors[12] = RewardRemittanceFacet.seedReleasedRemitStranded.selector;
+        selectors[13] = RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
+        selectors[14] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
@@ -2168,7 +2167,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](26);
+        selectors = new bytes4[](27);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2200,6 +2199,8 @@ contract HelperTest {
             .selector;
         selectors[25] =
             RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
+        // #1660 r8 - moved off the mutating facet for EIP-170 headroom.
+        selectors[26] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

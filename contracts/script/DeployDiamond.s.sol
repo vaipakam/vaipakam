@@ -2702,7 +2702,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](16);
+        s = new bytes4[](15);
         s[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
         s[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
         s[2] = RewardRemittanceFacet.remitRewardBudget.selector;
@@ -2712,13 +2712,12 @@ contract DeployDiamond is Script {
         s[6] = RewardRemittanceFacet.onRewardBudgetReceived.selector;
         s[7] = RewardRemittanceFacet.quoteRemittanceFee.selector;
         s[8] = RewardRemittanceFacet.sendRemitAck.selector;
-        s[9] = RewardRemittanceFacet.quoteRemitAckFee.selector;
-        s[10] = RewardRemittanceFacet.onRemitAckReceived.selector;
-        s[11] = RewardRemittanceFacet.finalizeRemitReservation.selector;
-        s[12] = RewardRemittanceFacet.releaseRemitReservation.selector;
-        s[13] = RewardRemittanceFacet.seedReleasedRemitStranded.selector;
-        s[14] = RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
-        s[15] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        s[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
+        s[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
+        s[11] = RewardRemittanceFacet.releaseRemitReservation.selector;
+        s[12] = RewardRemittanceFacet.seedReleasedRemitStranded.selector;
+        s[13] = RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
+        s[14] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.
@@ -2749,7 +2748,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](26);
+        s = new bytes4[](27);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2781,6 +2780,8 @@ contract DeployDiamond is Script {
             .selector;
         s[25] =
             RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
+        // #1660 r8 - moved off the mutating facet for EIP-170 headroom.
+        s[26] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

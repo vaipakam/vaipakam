@@ -1190,7 +1190,11 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
-        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1.5e18, false);
+        // #1660 r8 - the non-consumed-then-consumed ordering is the
+        // PROVISIONAL receipt's flow (classification 3): a QUARANTINED
+        // receipt never becomes consumed - that ordering is now the
+        // classification-conflict case with its own regression.
+        rewardMessenger.deliverRemitAckWithClassification(CHAIN_ARB, 1, 1.5e18, 3);
         assertEq(
             uint256(rlens.getRemitReservation(1).status),
             2,
@@ -1480,7 +1484,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(rec.amount, 7e18, "amount");
         assertGt(rec.receivedAt, 0, "stamped");
 
-        uint256 fee = remit.quoteRemitAckFee(42, address(0xBA5E));
+        uint256 fee = rlens.quoteRemitAckFee(42, address(0xBA5E));
         remit.sendRemitAck{value: fee}(42, address(0xBA5E), payable(address(this)));
         assertEq(rewardMessenger.lastAckRemitId(), 42, "echoed id");
         assertEq(rewardMessenger.lastAckAmount(), 7e18, "mirror-computed amount");
@@ -1544,7 +1548,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 CHAIN_BASE
             )
         );
-        remit.quoteRemitAckFee(42, address(0xBA5E));
+        rlens.quoteRemitAckFee(42, address(0xBA5E));
     }
 
     /// @dev Codex r3 — an ack naming a sender other than THIS deployment is
@@ -3167,6 +3171,57 @@ contract RewardRemitLedgerTest is SetupTest {
             rlens.getCompensationOutstanding(CHAIN_ARB),
             0,
             "gate settles on the short delivery too"
+        );
+    }
+
+    /// #1660 r8 - CONTRADICTORY classifications freeze the return credit:
+    /// a consumed ack landing after quarantine eligibility (impossible for
+    /// an honest mirror) claws the receipt's unspent credit into the
+    /// overage quarantine; what a re-dispatch already consumed is reported
+    /// unrecoverable, and every further B1 credit is blocked.
+    function test_Recovery_ClassificationConflictFreezesCredit() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
+        _armReturnIngressNoAck();
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
+        );
+        // 2e18 of the credit is already re-dispatched (spent).
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 1.5e18, 0.5e18
+        );
+        // The contradicting consumed ack lands: the unspent 1e18 is clawed
+        // into the overage quarantine; 2e18 is unrecoverable on-chain.
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
+        (uint256 recovered, uint256 redispatched, uint256 overage) =
+            rlens.getRecoveryPosition();
+        assertEq(recovered, 2e18, "unspent credit clawed out");
+        assertEq(redispatched, 2e18, "spent slice untouched");
+        assertEq(overage, 1e18, "clawed slice quarantined");
+        // Position balance (recovered - redispatched) is zero: no further
+        // uncharged capacity exists.
+    }
+
+    /// #1660 r8 - the reverse contradiction: a quarantine ack after a
+    /// consumed one never forges B1 eligibility.
+    function test_Recovery_QuarantineAfterConsumedNeverEligible() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18); // consumed
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
+        _armReturnIngressNoAck();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.StrandedReturnConsumedReceipt.selector, 1
+            )
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
         );
     }
 

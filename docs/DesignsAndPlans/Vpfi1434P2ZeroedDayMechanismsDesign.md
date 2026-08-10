@@ -1075,7 +1075,17 @@ the bounds are the design's actual commitment.
    > would silently skip the refresh probe and every facet ack call
    > would revert), and the messenger validates the classification
    > word on the RAW uint256 BEFORE narrowing (uint8(258) == 2 would
-   > forge quarantine evidence from a malformed peer packet).
+   > forge quarantine evidence from a malformed peer packet). Round 8
+   > made contradictory terminal classifications a CONFLICT: a consumed
+   > attestation landing after quarantine eligibility (impossible for an
+   > honest mirror — quarantined never transitions to consumed) claws
+   > the receipt's still-unspent return credit into the overage
+   > quarantine, reports the re-dispatched slice unrecoverable, and
+   > withholds every consumed-ack privilege (gate clear,
+   > reconciliation) from the contradicting mirror; the reverse order
+   > never forges B1 eligibility. Fitting the conflict logic pushed the
+   > mutating remittance facet past EIP-170, resolved by moving the
+   > helper-free `quoteRemitAckFee` view to the lens facet.
 
 
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —

@@ -2694,6 +2694,17 @@
   },
   {
     "type": "error",
+    "name": "RemitAckClassificationInvalid",
+    "inputs": [
+      {
+        "name": "classification",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemitAckSenderMismatch",
     "inputs": [
       {

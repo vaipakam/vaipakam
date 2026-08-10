@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 
 /**
  * @title RewardRemittanceLensFacet — the remittance ledger's READ surface.
@@ -355,6 +356,32 @@ contract RewardRemittanceLensFacet {
     ///         by the R4 stranded return.
     function getStrandedReturnedCumulative() external view returns (uint256) {
         return LibVaipakam.storageSlot().strandedReturnedCumulative;
+    }
+
+    /// @dev Local twins of the mutating facet's errors (same selectors).
+    error RewardMessengerNotSet();
+    error ReceivedRemitNotFound(uint256 remitId);
+    error ReceivedRemitStale(uint256 remitId, uint32 srcChainId);
+
+    /// @notice Quote the CCIP native fee a {RewardRemittanceFacet.sendRemitAck}
+    ///         for `remitId` costs. (#1660 r8 — moved here for EIP-170
+    ///         headroom on the mutating facet; helper-free, view-only.)
+    function quoteRemitAckFee(
+        uint256 remitId,
+        address remitter
+    ) external view returns (uint256 fee) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
+        LibVaipakam.ReceivedRemit storage rec =
+            s.receivedRemits[_receiptKey(remitter, remitId)];
+        if (rec.receivedAt == 0) revert ReceivedRemitNotFound(remitId);
+        if (rec.srcChainId != s.baseChainId) {
+            revert ReceivedRemitStale(remitId, rec.srcChainId);
+        }
+        fee = IRewardMessenger(messenger).quoteSendRemitAck(
+            remitId, rec.amount, rec.remitter
+        );
     }
 
     /// @notice #1660 r1 — this receipt's recorded B1 transport shortfall
