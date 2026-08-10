@@ -51,6 +51,27 @@ included, because the mainnet deploy script exports it unconditionally —
 the wrong description had already caused a correct deployment to be
 written up as configuration drift.
 
+Review found that three of these claims had each been copied a second
+time, which is the point of the exercise rather than a footnote to it.
+The channel-peer claim also sat in the buyback remittance receiver's own
+header, asserting a validation the messenger does not perform — and that
+receiver, unlike its reward-side sibling, binds no sending identity at
+all: its whole payload is a declared token cross-checked against the
+delivered one, which proves the delivery is self-consistent and nothing
+about who sent it. The "zero on Base" claim appeared in the setter and,
+more consequentially, in a guard elsewhere that cited the wording as its
+reason for reading the chain's own identity instead of the field. That
+guard is still correct, but for a stronger reason than the one recorded:
+the field is admin-settable, so a check reading it to decide "am I the
+canonical chain?" could be switched off by a governance write, whatever
+the deploy happens to configure. Both restatements are corrected, along
+with the test commentary that repeated the original reasoning and the
+operator runbook paragraph that described the struct comment as still
+wrong. And the keeper-reward constant is now described as the
+keeper-specific anchor rather than the only place the rate is stated,
+because two other constants express the same relationship for different
+features and none of the three reads the others.
+
 A repository-wide sweep for the removed purchase surface found more
 residue outside the contracts — including two app-side filters that skip
 knobs targeting a facet that no longer exists — plus the guard that would

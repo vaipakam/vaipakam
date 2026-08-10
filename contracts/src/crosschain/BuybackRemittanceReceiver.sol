@@ -31,14 +31,24 @@ interface ITreasuryBuybackIngress {
  * the buyback channel and forwards the delivered tokens into the
  * Vaipakam Diamond's treasury, then calls
  * `TreasuryFacet.absorbRemittance` to credit the consolidated buyback
- * budget. Each mirror chain's Diamond is the source-sender on its end;
- * the {CcipMessenger} on Base validates the channel-peer identity
- * before forwarding to this contract.
+ * budget. Each mirror chain's Diamond is the source-sender on its end.
  *
  * Trust + behaviour:
  *   - `onCrossChainMessage` is callable only by the registered
- *     {messenger}. The messenger has already authenticated the CCIP
- *     source chain + channel peer.
+ *     {messenger}, which has authenticated the CCIP source chain and
+ *     the remote MESSENGER (the per-chain `setRemoteMessenger`
+ *     allowlist, on top of the CCIP router's own sender
+ *     authentication).
+ *   - It has NOT authenticated the channel peer, and this contract does
+ *     not either — the header used to say the messenger "validates the
+ *     channel-peer identity before forwarding", which is not what
+ *     {CcipMessenger.channelPeerOf} does: that map is routing metadata
+ *     whose entry is only asserted non-zero (#1631). Nothing here binds
+ *     the sending DEPLOYMENT: `sourceSender` is ignored, and the payload
+ *     is a declared token address cross-checked against the delivered
+ *     one, which proves the delivery is self-consistent and nothing
+ *     about who sent it. The messenger allowlist is the boundary that
+ *     holds; see #1650 for whether a peer-level one should exist too.
  *   - Token-bearing only: exactly one `TokenAmount` per delivery.
  *     Multi-token deliveries are rejected (round-8 P2 #6) to avoid
  *     ambiguous accounting + double-credit risk.

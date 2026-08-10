@@ -477,9 +477,13 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
   deploy exports it unconditionally ("whether this chain is the
   canonical itself or a mirror") and `ConfigureRewardReporter` writes
   it, so an audit reading `8453` on Base is reading a correctly
-  configured Diamond, not drift. (The struct comment in `LibVaipakam`
-  still says "zero on Base itself", describing a field the canonical
-  chain does not consult rather than the value it is given.) Note this
+  configured Diamond, not drift. (Three contract comments said "zero on
+  Base" until #1641 corrected them — the struct field, its setter, and a
+  guard in `RewardAggregatorFacet` that cited the wording as its reason
+  for reading `block.chainid`. That guard is still right, for a stronger
+  reason: `baseChainId` is admin-settable, so a check reading it to
+  answer "am I the canonical chain?" could be turned off by a governance
+  write. Canonical-vs-mirror is `isCanonicalRewardChain`.) Note this
   is a chain id, NOT a CCIP chain
   selector: since T-068 the reward flow identifies chains by
   `block.chainid` and leaves selector translation to the messenger. The

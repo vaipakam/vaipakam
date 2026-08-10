@@ -1038,7 +1038,21 @@ contract RewardReporterFacet is
     // `localEidLegacyDoNotUse` for layout stability.
 
     /// @notice Set the canonical (Base) reward chain's EVM chain id —
-    ///         the destination for mirror-side chain reports. Zero on Base.
+    ///         the destination for mirror-side chain reports.
+    /// @dev    Written on EVERY chain, canonical included: both deploy
+    ///         scripts export `BASE_CHAIN_ID` unconditionally (mainnet
+    ///         always 8453; testnet uses this chain's own id when it IS
+    ///         the canonical) and `ConfigureRewardReporter` writes it. So
+    ///         a configuration audit should expect Base's chain id here
+    ///         even on Base. This used to say "Zero on Base", which made
+    ///         a correct deployment read as drift (#1641) — and
+    ///         {RewardAggregatorFacet.getChainSurplusPosition} cited that
+    ///         wording as its reason for reading `block.chainid`. Its
+    ///         choice is still right, for the general reason
+    ///         `RewardReporterFacet` states above: a chain's own identity
+    ///         is `block.chainid`, read directly. Canonical-vs-mirror is
+    ///         decided by `isCanonicalRewardChain`, never by this field
+    ///         being zero.
     /// @param chainId EVM chain id of the canonical reward chain.
     function setBaseChainId(
         uint32 chainId

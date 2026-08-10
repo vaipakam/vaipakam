@@ -30,12 +30,24 @@ library LibKeeperReward {
 
     /// @dev Phase 0 fixed rate: 1 VPFI (in 18-dec base units) costs
     ///      0.001 ETH = 1e15 wei. So `vpfiUnits = weiAmount * 1e18 /
-    ///      RATE`. This is now the ONLY place the rate is stated: it used
-    ///      to be described as matching `cfgVpfiBuyRate` "for parity with
-    ///      the buy flow", but the fixed-rate VPFI buy surface was
-    ///      removed in the #687-A legal excision and there is nothing
-    ///      left to be in parity with (#1641). The constant stays because
-    ///      keeper gas reimbursement still needs a wei→VPFI conversion.
+    ///      RATE`. This is the KEEPER-SPECIFIC anchor. It used to be
+    ///      described as matching `cfgVpfiBuyRate` "for parity with the
+    ///      buy flow", but that surface was removed in the #687-A legal
+    ///      excision and there is nothing left to be in parity with
+    ///      (#1641). The constant stays because keeper gas reimbursement
+    ///      still needs a wei→VPFI conversion.
+    ///
+    ///      Two OTHER `1e15` anchors express the same 1 VPFI = 0.001 ETH
+    ///      relationship for different features, and none of the three
+    ///      reads the others — changing one does NOT move the rest:
+    ///        - `LibVaipakam.VPFI_PER_ETH_FIXED_PHASE1` — the documented
+    ///          Phase-1 peg, dormant since Recycling M1 (#1346).
+    ///        - `VPFIDiscountFacet.setVPFIDiscountRate`'s default — the
+    ///          fee-discount quote's price anchor, and unlike these two
+    ///          it is governance-settable at runtime.
+    ///      Named here rather than left implicit so an audit or a repeg
+    ///      that starts from this constant sees the other two (Codex
+    ///      #1653 r1 P2).
     uint256 internal constant FIXED_VPFI_PER_ETH_RATE_WEI = 1e15;
     /// @dev Codex round-1 P1 — VPFI scaling factor (18 decimals). The
     ///      conversion `(wei * VPFI_DECIMALS_SCALE) / RATE` produces

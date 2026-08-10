@@ -133,10 +133,16 @@ contract CcipMessenger is
     ///         This is ROUTING METADATA, not an authentication check
     ///         (#1631). It is surfaced to the local handler as the
     ///         inbound `sourceSender`, but no handler shipping today
-    ///         compares it against anything — three of them comment the
-    ///         parameter out entirely, and the remittance receivers bind
-    ///         deployment identity from the payload instead. The receive
-    ///         path here likewise only asserts the entry is non-zero, so
+    ///         compares it against anything — four of them comment the
+    ///         parameter out entirely. What each does instead varies, and
+    ///         only one of them binds identity at all (Codex #1653 r1
+    ///         P2): {RewardRemittanceReceiver} reads a `remitter` — the
+    ///         sending deployment's own address, embedded in the message
+    ///         at send — from its payload, while
+    ///         {BuybackRemittanceReceiver}'s whole payload is a declared
+    ///         token address cross-checked against the delivered one,
+    ///         which proves nothing about WHO sent it. The receive path
+    ///         here likewise only asserts the entry is non-zero, so
     ///         a peer pointing at the WRONG non-zero address is caught by
     ///         nothing. Do not read this map as a forgery guard.
     ///

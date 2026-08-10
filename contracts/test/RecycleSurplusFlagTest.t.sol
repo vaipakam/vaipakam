@@ -356,10 +356,20 @@ contract RecycleSurplusFlagTest is SetupTest {
 
     /// **The guard must key on `block.chainid`, never on `s.baseChainId`.**
     ///
-    /// `setBaseChainId` documents itself as the destination for MIRROR-side
-    /// reports and "Zero on Base", so a REAL canonical Diamond legitimately
-    /// runs with `baseChainId == 0`. A guard reading that field passes the
-    /// exact call it exists to reject.
+    /// The original reason recorded here was that `setBaseChainId` documented
+    /// itself as "Zero on Base", so a real canonical Diamond would run with
+    /// `baseChainId == 0` and a guard reading that field would pass the exact
+    /// call it exists to reject. That premise was WRONG — both deploy scripts
+    /// export `BASE_CHAIN_ID` unconditionally, so a real canonical Diamond
+    /// holds Base's own chain id (#1641).
+    ///
+    /// The rule still holds, for the stronger reason: `baseChainId` is
+    /// ADMIN-SETTABLE, so a guard reading it can be turned off by a
+    /// governance write, whatever the deploy happens to configure. A chain's
+    /// own identity is `block.chainid` and nothing else. This test keeps
+    /// `baseChainId == 0` because that is the configuration under which a
+    /// field-reading guard visibly fails; it is a probe of the guard, not a
+    /// claim about what canonical deployments look like.
     ///
     /// This is the configuration the rest of the suite does NOT exercise:
     /// `setUp` calls `setBaseChainId(CHAIN_BASE)`, which is a mirror-shaped
@@ -367,8 +377,10 @@ contract RecycleSurplusFlagTest is SetupTest {
     /// precisely how the first version of this fix shipped green while not
     /// working (Codex #1579 r2).
     function test_CanonicalGuard_HoldsWhenBaseChainIdIsUnset() public {
-        // The genuine canonical shape: own identity from `block.chainid`,
-        // `baseChainId` left at its documented zero.
+        // Force the field to zero. NOT because a real canonical Diamond
+        // looks like this — it does not (#1641) — but because zero is where
+        // a `s.baseChainId` guard would silently pass, so it is the shape
+        // that catches the bug.
         _rep().setBaseChainId(0);
         assertEq(
             LibVaipakam.storageSlot().baseChainId,
