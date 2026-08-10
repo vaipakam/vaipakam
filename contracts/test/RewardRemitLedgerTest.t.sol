@@ -947,8 +947,20 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        // #1656 r7 - a PENDING closure cannot be seeded (it delivered
+        // nothing; its remedy is release or resolution).
+        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SupplementalReservationNotAcked.selector,
+                1,
+                uint8(1)
+            )
+        );
+        comp.seedCompFunded(CHAIN_ARB, 1, 2e18, 1e18);
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
-        // Stage the pre-w4 shape: funded scalar present, per-side zero.
+        // Stage the pre-w4 shape: funded scalar present, per-side zero
+        // (the ACK's reconciliation re-stamped values; clear them again).
         mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
 
         vm.expectRevert(

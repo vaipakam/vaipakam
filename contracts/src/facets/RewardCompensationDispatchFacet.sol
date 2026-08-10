@@ -446,8 +446,22 @@ contract RewardCompensationDispatchFacet is
         uint256 borrowerAmount18
     ) external onlyCanonical onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.dayClosedByRemitId[dstChainId][dayId] == 0) {
-            revert SupplementalDayNotClosed(dayId, dstChainId);
+        {
+            uint256 closingId = s.dayClosedByRemitId[dstChainId][dayId];
+            if (closingId == 0) {
+                revert SupplementalDayNotClosed(dayId, dstChainId);
+            }
+            // #1656 r7 - the seed records what was CREDITED mirror-side,
+            // so the closing reservation must be ACKED: a Pending
+            // reservation delivered nothing (its remedy is release or
+            // resolution), and seeding it would leave a stale
+            // contribution the r6 release-unwind cannot see (pre-w4
+            // reservations carry zero declared fields) - the replacement
+            // dispatch would then double-count past the quote.
+            uint8 status = s.remitReservations[closingId].status;
+            if (status != 2) {
+                revert SupplementalReservationNotAcked(closingId, status);
+            }
         }
         // #1656 r2 — one-shot on the EXISTENCE flag, never the value
         // pair (a rounded-to-zero reconciliation is a real record).
