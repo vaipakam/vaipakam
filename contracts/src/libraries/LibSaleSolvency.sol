@@ -63,6 +63,16 @@ library LibSaleSolvency {
         uint256 current
     );
 
+    /// @notice The position's LIVE loan-to-value exceeds the cap a fresh
+    ///         admission would allow, so it could not be originated today at
+    ///         this collateralisation even though its health factor clears the
+    ///         floor.
+    error SaleLtvAboveAdmissionCap(
+        uint256 loanId,
+        uint256 liveLtvBps,
+        uint256 capBps
+    );
+
     /**
      * @notice Reverts unless `loanId` may admit a new lender by sale.
      *
@@ -77,6 +87,7 @@ library LibSaleSolvency {
             RiskPreviewFacet(address(this)).saleAdmission(loanId);
         if (code == 0) return;
         if (code == 1) revert SalePositionBelowSolvencyFloor(loanId, a, b);
+        if (code == 5) revert SaleLtvAboveAdmissionCap(loanId, a, b);
         // 2/3/4 map onto which = 0/1/2.
         revert SaleInheritsWeakerRiskTerms(loanId, code - 2, a, b);
     }

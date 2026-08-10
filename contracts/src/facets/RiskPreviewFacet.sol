@@ -526,7 +526,8 @@ contract RiskPreviewFacet {
      * @return code 0 admissible (including illiquid, which is out of scope);
      *         1 live health factor below the loan's own admission floor;
      *         2/3/4 inherited risk terms weaker than current — admission
-     *         health floor, liquidation LTV, init-LTV cap respectively.
+     *         health floor, liquidation LTV, init-LTV cap respectively;
+     *         5 live LTV above the cap a fresh admission would allow.
      * @return a The position's figure for the failing check (0 when code 0).
      * @return b The figure it is required to meet (0 when code 0).
      */
@@ -586,6 +587,22 @@ contract RiskPreviewFacet {
             curCap
         );
         if (inheritedCap > curCap) return (4, inheritedCap, curCap);
+
+        // The LIVE LTV, not just the cap snapshots. Equal caps say nothing
+        // about where the position actually sits: accrued interest or
+        // principal appreciation can carry a loan above its init cap while
+        // the health factor stays above the floor. The tiered regime makes
+        // that stark — floor 1e18, Tier-3 init cap 73%, liquidation
+        // threshold 90% — so a position near 90% LTV would otherwise be
+        // assignable even though `LoanFacet._checkInitialLtvAndHf` would
+        // reject the same collateralisation as a fresh admission, which is
+        // the standard a sale is meant to meet.
+        //
+        // Bound by `inheritedCap`, which the gate above has already proven
+        // is the stricter of the two, so this satisfies both the loan's own
+        // terms and today's.
+        uint256 liveLtv = RiskFacet(address(this)).calculateLTV(loanId);
+        if (liveLtv > inheritedCap) return (5, liveLtv, inheritedCap);
 
         return (0, 0, 0);
     }

@@ -2307,6 +2307,27 @@
   },
   {
     "type": "error",
+    "name": "SaleLtvAboveAdmissionCap",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liveLtvBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SalePositionBelowSolvencyFloor",
     "inputs": [
       {

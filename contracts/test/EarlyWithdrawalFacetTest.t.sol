@@ -3700,6 +3700,40 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev Equal cap snapshots say nothing about where the position actually
+    ///      sits. A loan can drift above its init-LTV cap while its health
+    ///      factor still clears the floor, and `LoanFacet._checkInitialLtvAndHf`
+    ///      would reject that collateralisation as a fresh admission — which is
+    ///      the standard a sale must meet.
+    function test_sale_refusedWhenLiveLtvExceedsTheAdmissionCap() public {
+        // Baseline is 1000 borrowed against 2000 collateral at 1:1 = 50% LTV,
+        // inside the 8000 bps cap. Halving the collateral price takes it to
+        // ~100% while HF stays at 1.7 * 0.5 = 0.85... which trips the FLOOR
+        // first, so instead shrink the cap to just under the live LTV: the
+        // position is unchanged and healthy, only the admission bar moved.
+        vm.prank(owner);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 4000, 300, 1000);
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.initLtvCapBpsAtInit = 4000; // compatible with current, still under live LTV
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        (uint8 code, uint256 liveLtv, uint256 cap) =
+            RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(code, 5, "live LTV over the admission cap must be classified");
+        assertGt(liveLtv, cap, "reported figures must show the breach");
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleLtvAboveAdmissionCap.selector,
+                activeLoanId,
+                liveLtv,
+                cap
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
     /// @dev The preview must agree with the accept. A preview that checked only
     ///      the health floor would quote this sale as fine and let the buyer
     ///      discover the inherited-terms gate by burning gas.
