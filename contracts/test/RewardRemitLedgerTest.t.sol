@@ -1173,6 +1173,23 @@ contract RewardRemitLedgerTest is SetupTest {
         (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
         assertEq(fl, 2e18, "no reconciliation on a stranded delivery");
         assertEq(fb, 1e18, "no reconciliation on a stranded delivery");
+
+        // #1656 r9 - the V3 confirm settles the credit mirror-side and
+        // the re-presented ack is now CONSUMED: the first one clears the
+        // held gate and reconciles (a normal cross-chain ordering).
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1.5e18, true);
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "late-consumption ack clears the gate"
+        );
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "reconciled to received");
+        assertEq(fb, 0.5e18, "reconciled to received");
+        // Replays inert - the gate no longer names this remit.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1, true);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "replay inert");
     }
 
     /// @dev #1636 r4 — a resolved-zero standing quote is TERMINAL: its

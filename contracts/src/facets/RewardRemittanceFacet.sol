@@ -223,6 +223,16 @@ contract RewardRemittanceFacet is
         uint256 amountReceived
     );
 
+    /// @notice #1656 r9 - an early non-consumed ack held the R6 gate on
+    ///         an Acked reservation; the first CONSUMED re-presentation
+    ///         (post-confirm) cleared it and reconciled.
+    /// @custom:event-category informational/reward-compensation
+    event RemitAckLateConsumption(
+        uint256 indexed remitId,
+        uint32 indexed sourceChainId,
+        uint256 amountReceived
+    );
+
     /// @notice #1222 M3 B2-d2 — a mirror dispatched its remit ack toward Base.
     /// @custom:event-category informational/reward-transport
     event RemitAckDispatched(
@@ -1594,19 +1604,40 @@ contract RewardRemittanceFacet is
         }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
         if (r.status == 2) {
-            // #1656 r3 - a FORCED finalization preserved declared funding
-            // with no received figure; the FIRST authentic ACK that lands
-            // afterwards carries it, and this is the one reconciliation
-            // pass the r2 posture promised. One-shot (the flag clears),
-            // chain-checked like the live path.
-            if (r.forcedFinalized && r.dstChainId == sourceChainId) {
-                r.forcedFinalized = false;
-                if (consumed) {
-                    _reconcileCompFunded(s, r, amountReceived);
+            if (r.dstChainId == sourceChainId) {
+                // #1656 r3 - a FORCED finalization preserved declared
+                // funding with no received figure; the FIRST authentic
+                // ACK that lands afterwards carries it. One-shot (the
+                // flag clears).
+                if (r.forcedFinalized) {
+                    r.forcedFinalized = false;
+                    if (consumed) {
+                        _reconcileCompFunded(s, r, amountReceived);
+                    }
+                    emit RemitAckAfterForcedFinalize(
+                        remitId, sourceChainId, amountReceived
+                    );
                 }
-                emit RemitAckAfterForcedFinalize(
-                    remitId, sourceChainId, amountReceived
-                );
+                // #1656 r9 - the LATE-CONSUMPTION settle: an early
+                // NON-consumed ack (provisional delivery, ack before the
+                // V3 confirm) Acked the reservation while the R6 gate
+                // held. The first CONSUMED re-presentation after the
+                // confirm clears the gate and reconciles - a normal
+                // cross-chain ordering, not an error path. Idempotent:
+                // once cleared, the gate no longer names this remit.
+                if (
+                    consumed
+                        && s.compensationOutstanding[r.dstChainId]
+                            == remitId
+                ) {
+                    LibRewardRemitDispatch.clearCompensationGate(
+                        s, r.dstChainId
+                    );
+                    _reconcileCompFunded(s, r, amountReceived);
+                    emit RemitAckLateConsumption(
+                        remitId, sourceChainId, amountReceived
+                    );
+                }
             }
             return;
         }

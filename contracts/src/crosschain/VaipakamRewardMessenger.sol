@@ -1679,8 +1679,9 @@ contract VaipakamRewardMessenger is
         if (tokens.length != 0) revert UnexpectedTokens(tokens.length);
 
         // The inbound shape gate accepts the union of valid word counts:
-        // 6 (REPORT, #1222 B1), 4 (legacy REPORT / REMIT_ACK #1222 B2-d2 /
-        // REPAT_INSTRUCTION #1568 C2 — disambiguated by the kind tag below),
+        // 6 (REPORT, #1222 B1), 4 (legacy REPORT / REPAT_INSTRUCTION
+        // #1568 C2 — disambiguated by the kind tag below; REMIT_ACK moved
+        // to 5 words with the #1656 r8 consumed flag),
         // 8 (REPORT #1222 B3 / legacy BROADCAST / TierUpdated), 2
         // (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3 (REPAT_CANCEL,
         // #1568 C2), 23 (BROADCAST_V3, #1434 P2-w1's 21 + the two #1636 r2
