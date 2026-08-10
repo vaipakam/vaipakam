@@ -3155,6 +3155,84 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
+    /// #1660 r3 - a CONSUMED receipt is not B1-recoverable: its consumed
+    /// ack attested the value entered mirror claim backing, so a return
+    /// against it would reuse the dispatch's cap lineage.
+    function test_Recovery_ConsumedReceiptRefused() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18); // consumed
+        _armReturnIngress();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.StrandedReturnConsumedReceipt.selector, 1
+            )
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
+        );
+    }
+
+    /// #1660 r3 - loss closure is ORDER-INDEPENDENT: the configured
+    /// transport executes out of order, so a partial chunk landing AFTER
+    /// the terminal one must shrink the loss it just recovered.
+    function test_Recovery_OutOfOrderChunkRecomputesLoss() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        _armReturnIngress();
+        // Terminal chunk (2e18, remainder 0) arrives FIRST: residual 1e18
+        // reads as loss at that moment.
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
+        );
+        assertEq(rlens.getStrandedReturnShortfall(1), 1e18);
+        // The delayed earlier chunk (1e18) lands: the loss shrinks to 0.
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
+            2e18
+        );
+        assertEq(
+            rlens.getStrandedReturnShortfall(1),
+            0,
+            "recovered value no longer recorded as loss"
+        );
+        (uint256 recovered, , ) = rlens.getRecoveryPosition();
+        assertEq(recovered, 3e18);
+    }
+
+    /// #1660 r3 - the terminal return RE-OPENS the obligation: day markers
+    /// unwind and the declared funding leaves the cumulative, so the
+    /// position can fund the SAME day again - no release required.
+    function test_Recovery_TerminalReturnReopensDayNoRelease() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        // Quarantined mirror-side: the non-consumed ack Acks the
+        // reservation (delivery evidence) while the gate holds.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
+        _armReturnIngress();
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
+        );
+        assertEq(
+            rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "day re-opened"
+        );
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 0, "declared funding unwound");
+        assertEq(fb, 0, "declared funding unwound");
+        // The replacement funds the SAME day from the position - the
+        // Acked reservation needs no release.
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1e18
+        );
+        assertTrue(rlens.getRemitReservation(2).fundedFromRecovery);
+    }
+
     /// #1660 r2 - the reported day must be the reservation's own single
     /// day: settlement and loss evidence bind to the authoritative
     /// obligation, never a wire-supplied one.
@@ -3241,10 +3319,10 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1.5e18);
         // A separate stranded return (another chain-day's failed remit)
         // seeded the position.
-        mutator.setRemitReservationCompRaw(90, CHAIN_ARB, 2, 2e18);
+        mutator.setRemitReservationCompRaw(90, CHAIN_ARB, 2, 2e18, 4);
         _armReturnIngress();
         comp.onStrandedReturnReceived(
-            address(diamond), 90, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
+            address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
         );
         comp.remitSupplementalBudgetFromRecovery{value: 0.01 ether}(
             CHAIN_ARB, 1, 1e18, 0.5e18

@@ -612,6 +612,17 @@ contract RewardCompensationDispatchFacet is
         if (dayId != r.dayIds[0]) {
             revert StrandedReturnWrongDay(dayId, r.dayIds[0]);
         }
+        // #1660 r3 — a CONSUMED receipt is not recoverable: its consumed
+        // ack (or the operator-forced equivalent) attests the delivered
+        // value entered the mirror's compensated pools as claim backing,
+        // so crediting a return against it would reuse the original
+        // dispatch's cap lineage while that value still backs claims. An
+        // honest mirror only ever B1-returns QUARANTINED receipts (whose
+        // acks say non-consumed); a consumed-ack-then-return sequence is
+        // a faulty or compromised mirror, refused fail-closed.
+        if (r.consumedAcked) {
+            revert StrandedReturnConsumedReceipt(remitId);
+        }
         if (sourceChainId != r.dstChainId) {
             revert StrandedReturnWrongSourceChain(
                 sourceChainId, r.dstChainId
@@ -645,16 +656,39 @@ contract RewardCompensationDispatchFacet is
         if (shortfall != 0) {
             s.strandedReturnShortfall[remitId] += shortfall;
         }
-        // #1660 r2 — the TERMINAL chunk (mirror remainder zero) closes the
-        // receipt's loss evidence at the full residual: entitlement minus
-        // everything that physically arrived. This folds in the FIRST-leg
-        // deficit (a compensation that arrived short Base-to-mirror left
-        // the mirror quarantining less than the reservation dispatched) —
-        // value that was never on the mirror to return and must read as
-        // loss, not recoverable headroom. Assignment, not increment:
-        // idempotent under replays, and self-correcting if a replayed
-        // terminal chunk delivers value a prior one lost in transport.
-        if (remainingAfter == 0) {
+        // #1660 r3 — the FIRST terminal chunk unwinds the closure, exactly
+        // once: the mirror's record is fully retired, so the compensation
+        // definitively never funded the obligation — the day markers
+        // re-open (ownership-guarded, the release mould: a supplemental's
+        // return must not erase the original's closure) and the declared
+        // per-side contribution leaves the funded cumulative (saturating),
+        // so a replacement — manual from the recovery position, or
+        // supplemental under the re-opened quote headroom — can fund the
+        // SAME obligation. Reservation STATUS stays untouched (the ack
+        // lifecycle remains independent and re-presentable).
+        if (remainingAfter == 0 && !s.strandedReturnTerminalized[remitId]) {
+            s.strandedReturnTerminalized[remitId] = true;
+            if (s.dayClosedByRemitId[sourceChainId][dayId] == remitId) {
+                delete s.rewardBudgetRemitted[sourceChainId][dayId];
+                delete s.dayClosedByRemitId[sourceChainId][dayId];
+            }
+            uint256 curL = s.compFundedLender18[sourceChainId][dayId];
+            uint256 curB = s.compFundedBorrower18[sourceChainId][dayId];
+            s.compFundedLender18[sourceChainId][dayId] =
+                curL > r.declaredLender18 ? curL - r.declaredLender18 : 0;
+            s.compFundedBorrower18[sourceChainId][dayId] =
+                curB > r.declaredBorrower18 ? curB - r.declaredBorrower18 : 0;
+        }
+        // #1660 r2/r3 — loss-evidence closure at the full residual:
+        // entitlement minus everything that physically arrived, folding in
+        // the FIRST-leg deficit (a compensation that arrived short
+        // Base-to-mirror left the mirror quarantining less than the
+        // reservation dispatched). Assignment, not increment — idempotent
+        // under replays — and recomputed on EVERY chunk once a terminal
+        // was observed (r3: the configured transport executes out of
+        // order, so a partial chunk may land AFTER the terminal one and
+        // must shrink the recorded loss it just recovered).
+        if (remainingAfter == 0 || s.strandedReturnTerminalized[remitId]) {
             uint256 recoveredNow = s.remitRecoveredForReceipt[remitId];
             s.strandedReturnShortfall[remitId] =
                 entitlement > recoveredNow ? entitlement - recoveredNow : 0;

@@ -1855,7 +1855,8 @@ contract TestMutatorFacet {
         uint256 remitId,
         uint32 dstChainId,
         uint8 status,
-        uint256 total
+        uint256 total,
+        uint256 dayId
     ) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
@@ -1867,7 +1868,7 @@ contract TestMutatorFacet {
         r.fresh = total;
         r.declaredLender18 = total;
         uint256[] memory one = new uint256[](1);
-        one[0] = 1;
+        one[0] = dayId;
         r.dayIds = one;
     }
 

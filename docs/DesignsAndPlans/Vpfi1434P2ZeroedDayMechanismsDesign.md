@@ -1026,7 +1026,20 @@ the bounds are the design's actual commitment.
    > obligation); and the refresh script's satellite probes read the
    > LIVE endpoints from the Diamond (`getRepatriationPosition`) with
    > the artifact as fallback — the artifact file is not the authority
-   > on whether a satellite is armed.
+   > on whether a satellite is armed. Round 3 closed the lifecycle
+   > seams: a CONSUMED receipt (consumed ack or forced equivalent,
+   > stamped on the reservation) is not B1-recoverable — its value
+   > entered mirror claim backing, and a return against it would reuse
+   > the dispatch's cap lineage while that value still backs claims;
+   > the FIRST terminal chunk unwinds the closure exactly once (day
+   > markers ownership-guarded + declared funding out of the cumulative,
+   > the release mould) so the recovery position can fund the SAME
+   > obligation without a release; loss closure recomputes on every
+   > chunk once a terminal was observed (the transport executes out of
+   > order — a partial landing after the terminal must shrink the loss
+   > it just recovered); and the satellite probes prefer the LIVE
+   > endpoint with a distinct artifact address upgraded as well (a
+   > stale artifact must never shadow the active proxy).
 
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —
    carries the FunctionalSpec amendment if (a) is ratified.

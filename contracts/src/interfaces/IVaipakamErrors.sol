@@ -425,6 +425,11 @@ interface IVaipakamErrors {
     ///         authoritative obligation, never a wire-supplied one.
     error StrandedReturnWrongDay(uint256 got, uint256 want);
 
+    /// @notice #1660 r3 - the receipt was CONSUMED (consumed ack or its
+    ///         forced equivalent): its value backs mirror claims, so a
+    ///         return against it would reuse the dispatch cap lineage.
+    error StrandedReturnConsumedReceipt(uint256 remitId);
+
     /// @notice A from-recovery dispatch exceeds the recovery position
     ///         balance (recovered − redispatched).
     error RecoveryPositionInsufficient(uint256 requested, uint256 available);

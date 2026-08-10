@@ -465,6 +465,11 @@
             "name": "fundedFromRecovery",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "consumedAcked",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

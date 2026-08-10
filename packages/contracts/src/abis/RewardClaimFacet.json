@@ -1828,6 +1828,17 @@
   },
   {
     "type": "error",
+    "name": "StrandedReturnConsumedReceipt",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "StrandedReturnDeliveryInvalid",
     "inputs": []
   },

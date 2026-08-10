@@ -6426,6 +6426,12 @@ library LibVaipakam {
         //   and so the residual entitlement is readable as transport loss
         //   (the R6d loss ceremony's evidence), not as recoverable value.
         mapping(uint256 => uint256) strandedReturnShortfall;
+        // BASE-ONLY (#1660 r3) - a TERMINAL B1 chunk was observed for
+        //   this receipt (mirror remainder zero): loss-evidence closure
+        //   recomputes on every later chunk (out-of-order transport is
+        //   configured - allowOutOfOrderExecution), and the closure
+        //   unwind (day markers + funded contribution) runs exactly once.
+        mapping(uint256 => bool) strandedReturnTerminalized;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -6676,6 +6682,13 @@ library LibVaipakam {
         // for it; the R6d ceremony reads this to route a physical
         // recovery back to the position rather than the cap.
         bool fundedFromRecovery;
+        // #1660 r3 - a CONSUMED acknowledgement (or its operator-forced
+        // equivalent) settled this receipt: the delivered value entered
+        // the mirror's compensated pools as claim backing. A consumed
+        // receipt is NOT B1-recoverable - crediting a return against it
+        // would reuse the original dispatch's cap lineage while the
+        // consumed value still backs claims (a 69M bypass).
+        bool consumedAcked;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

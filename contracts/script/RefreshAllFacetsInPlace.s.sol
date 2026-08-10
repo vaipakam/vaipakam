@@ -544,49 +544,18 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address liveReceiver;
             (, liveSender, liveReceiver, ) =
                 RepatriationFacet(diamond).getRepatriationPosition();
-            address rsend = _readAddrOptional(".vpfiReturnSender");
-            if (rsend == address(0)) rsend = liveSender;
-            if (rsend != address(0)) {
-                uint256 sgen = 0;
-                (bool sok, bytes memory sret) = rsend.staticcall(
-                    abi.encodeWithSignature("WIRE_GENERATION()")
-                );
-                if (sok && sret.length == 32) {
-                    sgen = abi.decode(sret, (uint256));
-                }
-                if (sgen < VPFI_RETURN_SENDER_WIRE_GENERATION) {
-                    address newSendImpl = address(new VpfiReturnSender());
-                    UUPSUpgradeable(rsend).upgradeToAndCall(newSendImpl, "");
-                    Deployments.writeVpfiReturnSenderImpl(newSendImpl);
-                    console.log(
-                        "P2-w5: upgraded VpfiReturnSender (wire gen",
-                        sgen,
-                        "-> 2) impl:",
-                        newSendImpl
-                    );
-                }
-            }
-            address rrecv = _readAddrOptional(".vpfiReturnReceiver");
-            if (rrecv == address(0)) rrecv = liveReceiver;
-            if (rrecv != address(0)) {
-                uint256 rgen = 0;
-                (bool rok, bytes memory rret) = rrecv.staticcall(
-                    abi.encodeWithSignature("WIRE_GENERATION()")
-                );
-                if (rok && rret.length == 32) {
-                    rgen = abi.decode(rret, (uint256));
-                }
-                if (rgen < VPFI_RETURN_RECEIVER_WIRE_GENERATION) {
-                    address newRecvImpl = address(new VpfiReturnReceiver());
-                    UUPSUpgradeable(rrecv).upgradeToAndCall(newRecvImpl, "");
-                    Deployments.writeVpfiReturnReceiverImpl(newRecvImpl);
-                    console.log(
-                        "P2-w5: upgraded VpfiReturnReceiver (wire gen",
-                        rgen,
-                        "-> 2) impl:",
-                        newRecvImpl
-                    );
-                }
+            // #1660 r3 - LIVE endpoint first (the Diamond is the
+            // authority on which proxy is armed); the artifact covers a
+            // dark-but-deployed satellite, and BOTH are upgraded when
+            // they name distinct proxies (a stale artifact must never
+            // shadow the active sender).
+            address rsendArt = _readAddrOptional(".vpfiReturnSender");
+            _probeUpgradeReturnSender(liveSender);
+            if (rsendArt != liveSender) _probeUpgradeReturnSender(rsendArt);
+            address rrecvArt = _readAddrOptional(".vpfiReturnReceiver");
+            _probeUpgradeReturnReceiver(liveReceiver);
+            if (rrecvArt != liveReceiver) {
+                _probeUpgradeReturnReceiver(rrecvArt);
             }
         }
 
@@ -919,6 +888,51 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     }
 
     /// @notice Broadcast one bounded diamondCut for `cuts[start..end)`.
+    /// @dev #1660 r3 — generation-probe + UUPS-upgrade one return-channel
+    ///      SENDER proxy (no-op for zero or already-current). ONE
+    ///      implementation, called for the live endpoint AND a distinct
+    ///      artifact address.
+    function _probeUpgradeReturnSender(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < VPFI_RETURN_SENDER_WIRE_GENERATION) {
+            address newImpl = address(new VpfiReturnSender());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeVpfiReturnSenderImpl(newImpl);
+            console.log(
+                "P2-w5: upgraded VpfiReturnSender (wire gen",
+                gen,
+                "-> 2) impl:",
+                newImpl
+            );
+        }
+    }
+
+    /// @dev #1660 r3 — the RECEIVER twin of the probe above.
+    function _probeUpgradeReturnReceiver(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < VPFI_RETURN_RECEIVER_WIRE_GENERATION) {
+            address newImpl = address(new VpfiReturnReceiver());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeVpfiReturnReceiverImpl(newImpl);
+            console.log(
+                "P2-w5: upgraded VpfiReturnReceiver (wire gen",
+                gen,
+                "-> 2) impl:",
+                newImpl
+            );
+        }
+    }
+
     function _sendBatch(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 start, uint256 end) private {
         IDiamondCut.FacetCut[] memory batch = new IDiamondCut.FacetCut[](end - start);
         uint256 sels;

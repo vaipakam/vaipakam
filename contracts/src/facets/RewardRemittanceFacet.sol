@@ -1642,6 +1642,7 @@ contract RewardRemittanceFacet is
                 // a provisional ack dispatched pre-confirm but arriving
                 // post-force must not burn the flag before the consumed
                 // re-presentation can reconcile.
+                if (consumed) r.consumedAcked = true;
                 if (r.forcedFinalized && consumed) {
                     r.forcedFinalized = false;
                     _reconcileCompFunded(s, r, amountReceived);
@@ -1854,6 +1855,12 @@ contract RewardRemittanceFacet is
         // mould). A cancel/release does NOT come through here — it
         // records terminal message state while the gate HOLDS (ratified),
         // pending the w5 return / w6 recovery settlements.
+        // #1660 r3 - the CONSUMPTION stamp: a consumed receipt is not
+        // B1-recoverable (its value entered the mirror's compensated
+        // pools as claim backing; a return against it would reuse the
+        // dispatch's cap lineage). Stamped whether or not the gate
+        // still names this remit.
+        if (consumed) r.consumedAcked = true;
         if (consumed && s.compensationOutstanding[dst] == remitId) {
             LibRewardRemitDispatch.clearCompensationGate(s, dst);
             // #1656 r2 - AUTHENTIC ACKs only: the forced finalize passes

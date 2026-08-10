@@ -1193,7 +1193,7 @@ contract RepatriationTransportTest is SetupTest {
     /// by exactly this receipt.
     function test_StrandedReturn_BaseCreditsAndClearsGate() public {
         _armBase();
-        _mut().setRemitReservationCompRaw(11, CHAIN_ARB, 2, 4 ether);
+        _mut().setRemitReservationCompRaw(11, CHAIN_ARB, 2, 4 ether, 1);
         _mut().setCompensationGateRaw(CHAIN_ARB, 11);
         vpfi.mint(address(returnReceiver), 5 ether);
         relay.relay(
@@ -1228,7 +1228,7 @@ contract RepatriationTransportTest is SetupTest {
     /// consume another chain's one-shot recovery.
     function test_StrandedReturn_WrongSourceChainRefused() public {
         _armBase();
-        _mut().setRemitReservationCompRaw(11, CHAIN_ARB, 2, 4 ether);
+        _mut().setRemitReservationCompRaw(11, CHAIN_ARB, 2, 4 ether, 1);
         vpfi.mint(address(returnReceiver), 4 ether);
         vm.expectRevert(
             abi.encodeWithSelector(
