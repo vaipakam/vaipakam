@@ -557,7 +557,16 @@ contract RiskPreviewFacet {
         // without this the buyer can inherit a looser collateral-withdrawal
         // floor and a later liquidation point than they could be sold today.
         // One-directional on purpose: STRICTER than current is fine to sell.
-        uint256 currentHf = LibVaipakam.minHealthFactor();
+        // BRANCH-AWARE, mirroring `LoanFacet._snapshotRiskCaps` exactly: the
+        // depth-tiered regime admits at HF_LIQUIDATION_THRESHOLD (1e18) and
+        // only the non-tiered regime uses the tunable knob. Comparing a
+        // tiered-originated loan's 1e18 snapshot against the knob (>=1.2e18,
+        // 1.5e18 by default) would classify EVERY such loan as weaker and
+        // block it from both sale paths, which is a false positive rather
+        // than a tightening.
+        uint256 currentHf = LibVaipakam.cfgDepthTieredLtvEnabled()
+            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
+            : LibVaipakam.minHealthFactor();
         if (floor < currentHf) return (2, floor, currentHf);
 
         uint8 effTier = _effectiveTierOrZero(loan.collateralAsset);

@@ -3676,6 +3676,30 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev The current-floor comparison must mirror `LoanFacet`'s BRANCH-AWARE
+    ///      snapshot: under the depth-tiered regime a fresh loan is admitted at
+    ///      HF_LIQUIDATION_THRESHOLD (1e18), not at the tunable knob. Comparing
+    ///      a tiered loan's 1e18 snapshot against the knob would classify every
+    ///      such loan as weaker (code 2) and block it from both sale paths — a
+    ///      false positive, not a tightening.
+    ///
+    ///      Asserted against the classifier directly, and only on the HF code.
+    ///      Enabling depth-tiering after origination ALSO tightens the LTV cap,
+    ///      which legitimately trips code 4 — correct behaviour, and a
+    ///      different branch's business.
+    function test_saleAdmission_tieredLoanNotFlaggedOnTheHealthFloorBranch() public {
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.minHealthFactorAtInit = uint64(LibVaipakam.HF_LIQUIDATION_THRESHOLD);
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+        TestMutatorFacet(address(diamond)).setDepthTieredLtvEnabledRaw(true);
+
+        (uint8 code, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertTrue(
+            code != 2,
+            "a tiered-originated loan must not be flagged on the admission-floor branch"
+        );
+    }
+
     /// @dev The preview must agree with the accept. A preview that checked only
     ///      the health floor would quote this sale as fine and let the buyer
     ///      discover the inherited-terms gate by burning gas.

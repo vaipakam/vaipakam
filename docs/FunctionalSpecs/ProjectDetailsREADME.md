@@ -38,8 +38,23 @@ for the following platform areas:
   hand a sub-floor (in the worst case immediately liquidatable) position to a
   counterparty whose price was computed from principal and accrued interest,
   figures that say nothing about a collateral shortfall. The floor is read
-  from the loan's own origination snapshot, so a later governance retune never
-  retroactively freezes an open position out of the sale paths.
+  from the loan's own origination snapshot.
+- A sale additionally requires the position's **inherited risk terms to be no
+  weaker than a loan originated today** would carry. Transferring a position
+  changes the lender, not the loan's recorded admission floor, liquidation
+  threshold or initial-LTV cap — so without this a buyer could inherit a looser
+  collateral-withdrawal floor and a later liquidation point than they could be
+  sold today, which a health reading cannot reveal because the position is
+  entirely solvent against its own older terms. The check is one-directional:
+  a position on **stricter** terms than today's stays sellable, since its buyer
+  inherits a better position than a fresh loan would give them.
+- These two rules pull in different directions and the distinction is
+  deliberate. Snapshot semantics continue to govern the **existing** loan's
+  ongoing operation, so a governance retune never retroactively changes the
+  bargain the current lender struck. Admission of a **new** lender is judged
+  against current standards instead. The practical consequence is that a
+  tightening can leave an open position temporarily unsellable while remaining
+  perfectly valid to hold, repay, or liquidate.
 - For a resting sale listing that check is binding **at the moment the buyer's
   value commits**, not at listing: a listing rests while the position keeps
   moving, and only the fill-time reading describes what the buyer actually
