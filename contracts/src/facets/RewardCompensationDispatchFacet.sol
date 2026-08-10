@@ -572,7 +572,8 @@ contract RewardCompensationDispatchFacet is
         uint32 sourceChainId,
         address token,
         uint256 declaredAmount,
-        uint256 actualReceived
+        uint256 actualReceived,
+        uint256 remainingAfter
     ) external nonReentrant whenNotPaused onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         {
@@ -604,6 +605,12 @@ contract RewardCompensationDispatchFacet is
                 || (r.declaredLender18 == 0 && r.declaredBorrower18 == 0)
         ) {
             revert StrandedReturnNotCompensation(remitId);
+        }
+        // #1660 r2 — bind the reported day to the reservation's own single
+        // day: a faulty mirror must not attribute settlement or loss
+        // evidence to a different obligation.
+        if (dayId != r.dayIds[0]) {
+            revert StrandedReturnWrongDay(dayId, r.dayIds[0]);
         }
         if (sourceChainId != r.dstChainId) {
             revert StrandedReturnWrongSourceChain(
@@ -637,6 +644,20 @@ contract RewardCompensationDispatchFacet is
         uint256 shortfall = declaredAmount - actualReceived;
         if (shortfall != 0) {
             s.strandedReturnShortfall[remitId] += shortfall;
+        }
+        // #1660 r2 — the TERMINAL chunk (mirror remainder zero) closes the
+        // receipt's loss evidence at the full residual: entitlement minus
+        // everything that physically arrived. This folds in the FIRST-leg
+        // deficit (a compensation that arrived short Base-to-mirror left
+        // the mirror quarantining less than the reservation dispatched) —
+        // value that was never on the mirror to return and must read as
+        // loss, not recoverable headroom. Assignment, not increment:
+        // idempotent under replays, and self-correcting if a replayed
+        // terminal chunk delivers value a prior one lost in transport.
+        if (remainingAfter == 0) {
+            uint256 recoveredNow = s.remitRecoveredForReceipt[remitId];
+            s.strandedReturnShortfall[remitId] =
+                entitlement > recoveredNow ? entitlement - recoveredNow : 0;
         }
 
         // §5.1 return settlement: clear the R6 gate iff THIS receipt is

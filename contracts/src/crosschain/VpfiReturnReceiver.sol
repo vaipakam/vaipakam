@@ -51,7 +51,8 @@ interface IStrandedReturnIngress {
         uint32 sourceChainId,
         address token,
         uint256 declaredAmount,
-        uint256 actualReceived
+        uint256 actualReceived,
+        uint256 remainingAfter
     ) external;
 }
 
@@ -323,12 +324,20 @@ contract VpfiReturnReceiver is
         bytes calldata payload,
         ICrossChainMessenger.TokenAmount[] calldata tokens
     ) internal {
-        if (payload.length != 5 * 32) {
-            revert PayloadSizeMismatch(payload.length, 5 * 32);
+        if (payload.length != 6 * 32) {
+            revert PayloadSizeMismatch(payload.length, 6 * 32);
         }
         if (tokens.length != 1) revert WrongTokenCount(tokens.length);
-        (, address remitter, uint256 remitId, uint256 dayId, uint256 declaredAmount)
-            = abi.decode(payload, (uint256, address, uint256, uint256, uint256));
+        (
+            ,
+            address remitter,
+            uint256 remitId,
+            uint256 dayId,
+            uint256 declaredAmount,
+            uint256 remainingAfter
+        ) = abi.decode(
+            payload, (uint256, address, uint256, uint256, uint256, uint256)
+        );
 
         address deliveredToken = tokens[0].token;
         uint256 deliveredAmount = tokens[0].amount;
@@ -356,7 +365,8 @@ contract VpfiReturnReceiver is
             sourceChainId,
             deliveredToken,
             declaredAmount,
-            actualReceived
+            actualReceived,
+            remainingAfter
         );
 
         emit StrandedReturnForwarded(

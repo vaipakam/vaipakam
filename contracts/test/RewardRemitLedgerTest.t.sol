@@ -2977,7 +2977,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         _armReturnIngress();
         comp.onStrandedReturnReceived(
-            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
         );
         (uint256 recovered, uint256 redispatched, uint256 overage) =
             rlens.getRecoveryPosition();
@@ -3043,7 +3043,7 @@ contract RewardRemitLedgerTest is SetupTest {
         uint256 globalAfter = rlens.getRewardBudgetRemittedGlobal();
         _armReturnIngress();
         comp.onStrandedReturnReceived(
-            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
         );
         vm.warp(block.timestamp + 7 days);
         remit.releaseRemitReservation(1);
@@ -3074,10 +3074,10 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
         _armReturnIngress();
         comp.onStrandedReturnReceived(
-            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
         );
         comp.onStrandedReturnReceived(
-            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
         );
         (uint256 recovered, , uint256 overage) = rlens.getRecoveryPosition();
         assertEq(recovered, 3e18, "entitlement caps the receipt cumulative");
@@ -3096,7 +3096,7 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         comp.onStrandedReturnReceived(
-            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18, 0
         );
         _armReturnIngress();
         vm.expectRevert(
@@ -3106,7 +3106,7 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         comp.onStrandedReturnReceived(
-            address(diamond), 77, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18
+            address(diamond), 77, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18, 0
         );
     }
 
@@ -3124,7 +3124,7 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         comp.onStrandedReturnReceived(
-            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18, 0
         );
     }
 
@@ -3138,7 +3138,7 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
         _armReturnIngress();
         comp.onStrandedReturnReceived(
-            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 2.5e18
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 2.5e18, 0
         );
         (uint256 recovered, , uint256 overage) = rlens.getRecoveryPosition();
         assertEq(recovered, 2.5e18, "credited at the actual");
@@ -3152,6 +3152,79 @@ contract RewardRemitLedgerTest is SetupTest {
             rlens.getCompensationOutstanding(CHAIN_ARB),
             0,
             "gate settles on the short delivery too"
+        );
+    }
+
+    /// #1660 r2 - the reported day must be the reservation's own single
+    /// day: settlement and loss evidence bind to the authoritative
+    /// obligation, never a wire-supplied one.
+    function test_Recovery_WrongDayRefused() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        _armReturnIngress();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.StrandedReturnWrongDay.selector, 9, 1
+            )
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 9, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
+        );
+    }
+
+    /// #1660 r2 - the TERMINAL chunk closes the receipt's loss evidence at
+    /// the FULL residual, folding in the first-leg deficit: a compensation
+    /// that arrived short Base-to-mirror left the mirror quarantining less
+    /// than the reservation dispatched, and that gap must read as loss.
+    function test_Recovery_TerminalChunkRecordsFirstLegDeficit() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        _armReturnIngress();
+        // The mirror only ever held 2e18 (first leg arrived short); its
+        // one-shot record returns exactly that, remainder zero.
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
+        );
+        (uint256 recovered, , uint256 overage) = rlens.getRecoveryPosition();
+        assertEq(recovered, 2e18, "credited at what physically arrived");
+        assertEq(overage, 0);
+        assertEq(
+            rlens.getStrandedReturnShortfall(1),
+            1e18,
+            "first-leg deficit terminalized as loss, not headroom"
+        );
+    }
+
+    /// #1660 r2 - a NON-terminal chunk leaves the residual entitlement
+    /// open (the remainder is still coming) and records only its own
+    /// transport gap; the terminal chunk then closes the evidence.
+    function test_Recovery_ChunkedReturnAccumulates() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        _armReturnIngress();
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
+            2e18
+        );
+        assertEq(
+            rlens.getStrandedReturnShortfall(1),
+            0,
+            "no loss closed while the remainder is in flight"
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
+        );
+        (uint256 recovered, , ) = rlens.getRecoveryPosition();
+        assertEq(recovered, 3e18, "chunks accumulate to the entitlement");
+        assertEq(rlens.getStrandedReturnShortfall(1), 0, "nothing lost");
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB), 0, "gate settled"
         );
     }
 
@@ -3171,7 +3244,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setRemitReservationCompRaw(90, CHAIN_ARB, 2, 2e18);
         _armReturnIngress();
         comp.onStrandedReturnReceived(
-            address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18
+            address(diamond), 90, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
         );
         comp.remitSupplementalBudgetFromRecovery{value: 0.01 ether}(
             CHAIN_ARB, 1, 1e18, 0.5e18

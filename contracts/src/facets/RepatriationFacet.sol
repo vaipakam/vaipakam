@@ -92,6 +92,7 @@ interface IVpfiReturnSender {
         uint256 remitId,
         uint256 dayId,
         uint256 amount,
+        uint256 remainingAfter,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
 }
@@ -233,6 +234,7 @@ contract RepatriationFacet is
         uint256 indexed remitId,
         uint256 dayId,
         uint256 amount,
+        uint256 remainingAfter,
         bytes32 messageId
     );
 
@@ -317,6 +319,9 @@ contract RepatriationFacet is
     /// @notice #1434 P2-w5 — no stranded-recovery record exists for this
     ///         receipt (never quarantined, or already returned).
     error StrandedReturnNothingRecorded(address remitter, uint256 remitId);
+
+    /// @notice #1660 r2 — zero, or above the record's remaining amount.
+    error StrandedReturnBadAmount(uint256 requested, uint256 recorded);
 
     error RepatriationInstructionWrongState(
         address issuingBase,
@@ -865,13 +870,23 @@ contract RepatriationFacet is
      *         value is already excluded from every spendable position
      *         (`strandedRecoveryReserved`), so the caller contributes only
      *         the CCIP fee (quote via {VpfiReturnSender.quoteStrandedReturn})
-     *         and can neither redirect nor resize the return. Lane capacity
-     *         is checked BEFORE the record retires, so an over-capacity
-     *         return fails retryably with the record intact.
+     *         and can neither redirect nor inflate the return — `amount` is
+     *         bounded by the RECORD, and the record's remainder (not a
+     *         caller figure) rides the wire. CHUNKED deliberately (#1660
+     *         r2): the mirror cannot read Base's INBOUND lane ceiling, and
+     *         a single indivisible send above it would be permanently
+     *         unexecutable on Base with the one-shot record already gone —
+     *         partial retirement keeps the remainder retryable at a size
+     *         the destination lane admits (the operator pairing rule lives
+     *         in the CcipCutoverRunbook §8 capacity ceremony). Mirror-
+     *         outbound capacity is checked per chunk BEFORE the retirement.
+     * @param  amount VPFI to return this call — full or partial, bounded by
+     *         the stranded record's remaining amount.
      */
     function sendStrandedReturn(
         address remitter,
         uint256 remitId,
+        uint256 amount,
         address payable refundAddress
     )
         external
@@ -886,16 +901,28 @@ contract RepatriationFacet is
         if (sender == address(0)) revert RepatriationNotConfigured();
         bytes32 key = keccak256(abi.encode(remitter, remitId));
         LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[key];
-        uint256 amount = sr.amount;
-        if (amount == 0) revert StrandedReturnNothingRecorded(remitter, remitId);
+        uint256 recorded = sr.amount;
+        if (recorded == 0) {
+            revert StrandedReturnNothingRecorded(remitter, remitId);
+        }
+        if (amount == 0 || amount > recorded) {
+            revert StrandedReturnBadAmount(amount, recorded);
+        }
         uint256 dayId = sr.dayId;
 
         uint256 dst = uint256(s.baseChainId);
         _assertWithinLaneCapacity(s, dst, amount, false);
 
-        // CEI: retire the record and release the earmark before the
-        // token movement; any send failure reverts the whole return.
-        delete s.strandedRecoveries[key];
+        // CEI: retire the CHUNK and release its earmark before the token
+        // movement; any send failure reverts the whole return. The
+        // remainder (possibly zero) rides the wire so Base can tell a
+        // partial from the receipt's terminal chunk.
+        uint256 remainingAfter = recorded - amount;
+        if (remainingAfter == 0) {
+            delete s.strandedRecoveries[key];
+        } else {
+            sr.amount = remainingAfter;
+        }
         uint256 reserved = s.strandedRecoveryReserved;
         s.strandedRecoveryReserved =
             reserved > amount ? reserved - amount : 0;
@@ -903,9 +930,9 @@ contract RepatriationFacet is
         IERC20(s.vpfiToken).safeTransfer(sender, amount);
         messageId = IVpfiReturnSender(sender).sendStrandedReturn{
             value: msg.value
-        }(dst, remitter, remitId, dayId, amount, refundAddress);
+        }(dst, remitter, remitId, dayId, amount, remainingAfter, refundAddress);
         emit StrandedReturnDispatched(
-            remitter, remitId, dayId, amount, messageId
+            remitter, remitId, dayId, amount, remainingAfter, messageId
         );
     }
 

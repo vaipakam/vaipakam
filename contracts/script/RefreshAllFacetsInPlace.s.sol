@@ -530,11 +530,22 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // unknown wire kind — re-executable, but stuck until upgraded).
         // Same durable-constant posture as the probes above; idempotent.
         // The satellites are OPTIONAL deployments (the C2 transport is
-        // operator-armed), so a missing artifact is a SKIP, not a hard
-        // stop: a chain without the satellite has no return path to
-        // brick, and a satellite deployed later ships current code.
+        // operator-armed) — but the artifact file is NOT the authority on
+        // whether one is armed (#1660 r2): the DIAMOND's live endpoint
+        // config is. Read both; a LIVE-configured endpoint whose artifact
+        // is missing or stale still gets probed and upgraded (a silent
+        // skip there would ship generation-2 facets against a
+        // generation-1 satellite), and a dark-but-deployed artifact is
+        // upgraded too so a later arming meets current code. Only a chain
+        // with NEITHER a live endpoint NOR an artifact skips — it has no
+        // return path to brick.
         {
+            address liveSender;
+            address liveReceiver;
+            (, liveSender, liveReceiver, ) =
+                RepatriationFacet(diamond).getRepatriationPosition();
             address rsend = _readAddrOptional(".vpfiReturnSender");
+            if (rsend == address(0)) rsend = liveSender;
             if (rsend != address(0)) {
                 uint256 sgen = 0;
                 (bool sok, bytes memory sret) = rsend.staticcall(
@@ -556,6 +567,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 }
             }
             address rrecv = _readAddrOptional(".vpfiReturnReceiver");
+            if (rrecv == address(0)) rrecv = liveReceiver;
             if (rrecv != address(0)) {
                 uint256 rgen = 0;
                 (bool rok, bytes memory rret) = rrecv.staticcall(

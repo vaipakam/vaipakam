@@ -1114,7 +1114,7 @@ contract RepatriationTransportTest is SetupTest {
         ccip.setFee(0.1 ether);
         vm.prank(STRANGER); // permissionless: evidence is the stored record
         _repat().sendStrandedReturn{value: 0.1 ether}(
-            base, 11, payable(STRANGER)
+            base, 11, 5 ether, payable(STRANGER)
         );
         assertEq(
             _rlens().getStrandedRecovery(base, 11).amount,
@@ -1140,7 +1140,8 @@ contract RepatriationTransportTest is SetupTest {
                 base,
                 uint256(11),
                 uint256(7),
-                uint256(5 ether)
+                uint256(5 ether),
+                uint256(0)
             )
         );
         // Retire-once: the record is gone.
@@ -1151,7 +1152,7 @@ contract RepatriationTransportTest is SetupTest {
                 uint256(11)
             )
         );
-        _repat().sendStrandedReturn(base, 11, payable(address(this)));
+        _repat().sendStrandedReturn(base, 11, 1, payable(address(this)));
     }
 
     function test_StrandedReturn_UnknownRecordReverts() public {
@@ -1164,7 +1165,7 @@ contract RepatriationTransportTest is SetupTest {
             )
         );
         _repat().sendStrandedReturn(
-            address(0xBA5E), 99, payable(address(this))
+            address(0xBA5E), 99, 1 ether, payable(address(this))
         );
     }
 
@@ -1175,14 +1176,14 @@ contract RepatriationTransportTest is SetupTest {
         _stranded(base, 11, 40 ether);
         pool.setOutbound(SEL_BASE, true, 10 ether);
         vm.expectRevert();
-        _repat().sendStrandedReturn(base, 11, payable(address(this)));
+        _repat().sendStrandedReturn(base, 11, 40 ether, payable(address(this)));
         assertEq(
             _rlens().getStrandedRecovery(base, 11).amount,
             40 ether,
             "record intact after a failed send"
         );
         pool.setOutbound(SEL_BASE, true, 100 ether);
-        _repat().sendStrandedReturn(base, 11, payable(address(this)));
+        _repat().sendStrandedReturn(base, 11, 40 ether, payable(address(this)));
         assertEq(_rlens().getStrandedRecovery(base, 11).amount, 0);
     }
 
@@ -1203,8 +1204,9 @@ contract RepatriationTransportTest is SetupTest {
                 ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
                 address(diamond),
                 uint256(11),
-                uint256(7),
-                uint256(5 ether)
+                uint256(1),
+                uint256(5 ether),
+                uint256(0)
             ),
             _oneToken(5 ether)
         );
@@ -1243,8 +1245,9 @@ contract RepatriationTransportTest is SetupTest {
                 ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
                 address(diamond),
                 uint256(11),
-                uint256(7),
-                uint256(4 ether)
+                uint256(1),
+                uint256(4 ether),
+                uint256(0)
             ),
             _oneToken(4 ether)
         );
@@ -1270,10 +1273,51 @@ contract RepatriationTransportTest is SetupTest {
                 address(0xDEAD),
                 uint256(11),
                 uint256(7),
-                uint256(1 ether)
+                uint256(1 ether),
+                uint256(0)
             ),
             _oneToken(1 ether)
         );
+    }
+    /// #1660 r2 — returns are CHUNKABLE: partial retirement keeps the
+    /// remainder retryable against a destination lane ceiling the mirror
+    /// cannot read; the wire carries the post-chunk remainder; zero and
+    /// over-record amounts refuse.
+    function test_StrandedReturn_ChunkedPartialRetirement() public {
+        address base = address(0xBA5E);
+        _stranded(base, 11, 5 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.StrandedReturnBadAmount.selector,
+                uint256(6 ether),
+                uint256(5 ether)
+            )
+        );
+        _repat().sendStrandedReturn(base, 11, 6 ether, payable(address(this)));
+
+        _repat().sendStrandedReturn(base, 11, 2 ether, payable(address(this)));
+        assertEq(
+            _rlens().getStrandedRecovery(base, 11).amount,
+            3 ether,
+            "remainder retained"
+        );
+        assertEq(_rlens().getStrandedRecoveryReserved(), 3 ether);
+        assertEq(_rlens().getStrandedReturnedCumulative(), 2 ether);
+        assertEq(
+            ccip.lastPayload(),
+            abi.encode(
+                ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
+                base,
+                uint256(11),
+                uint256(7),
+                uint256(2 ether),
+                uint256(3 ether)
+            )
+        );
+        // The terminal chunk retires the record.
+        _repat().sendStrandedReturn(base, 11, 3 ether, payable(address(this)));
+        assertEq(_rlens().getStrandedRecovery(base, 11).amount, 0);
+        assertEq(_rlens().getStrandedReturnedCumulative(), 5 ether);
     }
 }
 

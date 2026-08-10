@@ -1010,7 +1010,23 @@ the bounds are the design's actual commitment.
    > recorded per receipt as TRANSPORT LOSS (`strandedReturnShortfall`)
    > — the mirror's one-shot record retired at declared, so the gap can
    > never re-arrive and must read as the R6d loss ceremony's evidence,
-   > not as recoverable entitlement.
+   > not as recoverable entitlement. Round 2 hardened the transport
+   > seams: returns are CHUNKABLE (the mirror cannot read Base's INBOUND
+   > lane ceiling, and a single indivisible send above it would be
+   > permanently unexecutable with the one-shot record already gone —
+   > partial retirement keeps the remainder retryable, with the operator
+   > capacity-pairing rule in the runbook's §8 ceremony); the wire
+   > carries the record's post-chunk REMAINDER, and the terminal chunk
+   > (remainder zero) closes the receipt's loss evidence by ASSIGNMENT
+   > at the full residual — folding in the FIRST-leg deficit (a
+   > compensation that arrived short Base→mirror left less on the mirror
+   > than the reservation dispatched), idempotent under replays and
+   > self-correcting; the reported day must equal the reservation's own
+   > single day (settlement evidence binds to the authoritative
+   > obligation); and the refresh script's satellite probes read the
+   > LIVE endpoints from the Diamond (`getRepatriationPosition`) with
+   > the artifact as fallback — the artifact file is not the authority
+   > on whether a satellite is armed.
 
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —
    carries the FunctionalSpec amendment if (a) is ratified.

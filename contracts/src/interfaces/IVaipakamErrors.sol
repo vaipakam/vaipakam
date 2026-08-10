@@ -420,6 +420,11 @@ interface IVaipakamErrors {
     ///         mint uncharged re-dispatch capacity (a 69M bypass).
     error StrandedReturnNotCompensation(uint256 remitId);
 
+    /// @notice #1660 r2 — the reported day is not the reservation's own
+    ///         single day: settlement and loss evidence must bind to the
+    ///         authoritative obligation, never a wire-supplied one.
+    error StrandedReturnWrongDay(uint256 got, uint256 want);
+
     /// @notice A from-recovery dispatch exceeds the recovery position
     ///         balance (recovered − redispatched).
     error RecoveryPositionInsufficient(uint256 requested, uint256 available);

@@ -106,7 +106,8 @@ contract VpfiReturnSender is
         address indexed remitter,
         uint256 indexed remitId,
         uint256 dayId,
-        uint256 amount
+        uint256 amount,
+        uint256 remainingAfter
     );
 
     // ─── Errors ───────────────────────────────────────────────────────
@@ -269,6 +270,7 @@ contract VpfiReturnSender is
         uint256 remitId,
         uint256 dayId,
         uint256 amount,
+        uint256 remainingAfter,
         address payable refundAddress
     )
         external
@@ -288,7 +290,8 @@ contract VpfiReturnSender is
             remitter,
             remitId,
             dayId,
-            amount
+            amount,
+            remainingAfter
         );
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);
@@ -299,7 +302,9 @@ contract VpfiReturnSender is
 
         IERC20(token).forceApprove(messenger, amount);
         messageId = _send(dstChainId, payload, tokens, refundAddress);
-        emit StrandedReturnSent(messageId, remitter, remitId, dayId, amount);
+        emit StrandedReturnSent(
+            messageId, remitter, remitId, dayId, amount, remainingAfter
+        );
     }
 
     // ─── Quotes ───────────────────────────────────────────────────────
@@ -334,14 +339,16 @@ contract VpfiReturnSender is
         address remitter,
         uint256 remitId,
         uint256 dayId,
-        uint256 amount
+        uint256 amount,
+        uint256 remainingAfter
     ) external view returns (uint256 fee) {
         bytes memory payload = abi.encode(
             ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
             remitter,
             remitId,
             dayId,
-            amount
+            amount,
+            remainingAfter
         );
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);

@@ -379,6 +379,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "refundAddress",
         "type": "address",
         "internalType": "address payable"
@@ -728,6 +733,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "remainingAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "messageId",
         "type": "bytes32",
         "indexed": false,
@@ -998,6 +1009,22 @@
         "name": "token",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnBadAmount",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
