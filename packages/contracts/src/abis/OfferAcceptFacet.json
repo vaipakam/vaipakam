@@ -2276,6 +2276,32 @@
   },
   {
     "type": "error",
+    "name": "SaleInheritsWeakerRiskTerms",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "which",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "inherited",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleLoanPastMaturity",
     "inputs": []
   },

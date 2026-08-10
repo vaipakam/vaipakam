@@ -3630,6 +3630,69 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    // ─── Inherited risk snapshots (design item 11, second requirement) ──────
+
+    /// @dev Governance tightening the admission floor AFTER origination leaves
+    ///      the loan on its older, looser snapshot. Selling it would hand the
+    ///      buyer a collateral floor they could not be given on a fresh loan
+    ///      today — the health read alone cannot see this, because the
+    ///      position is perfectly solvent against its own old terms.
+    function test_sale_refusedWhenInheritedHfFloorIsWeakerThanCurrent() public {
+        uint256 inherited = LibVaipakam.MIN_HEALTH_FACTOR; // 1.5e18 at init
+        uint256 tightened = inherited + 0.1e18;
+        vm.prank(owner);
+        RiskFacet(address(diamond)).setMinHealthFactor(tightened);
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleInheritsWeakerRiskTerms.selector,
+                activeLoanId,
+                uint8(0),
+                inherited,
+                tightened
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The gate is one-directional: a loan STRICTER than today's terms is
+    ///      fine to sell, because the buyer inherits a better position than a
+    ///      fresh loan would give them. Guards against a naive `!=` check.
+    function test_sale_admittedWhenInheritedTermsAreStricterThanCurrent() public {
+        // Loosen the live floor below what this loan was admitted under.
+        vm.prank(owner);
+        RiskFacet(address(diamond)).setMinHealthFactor(LibVaipakam.MIN_HEALTH_FACTOR - 0.1e18);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "a position on stricter-than-current terms must stay sellable"
+        );
+    }
+
+    /// @dev The preview must agree with the accept. A preview that checked only
+    ///      the health floor would quote this sale as fine and let the buyer
+    ///      discover the inherited-terms gate by burning gas.
+    function test_previewAccept_flagsWeakerInheritedTerms() public {
+        uint256 saleOfferId = _listSaleOffer();
+        vm.prank(owner);
+        RiskFacet(address(diamond)).setMinHealthFactor(LibVaipakam.MIN_HEALTH_FACTOR + 0.1e18);
+
+        OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
+            .previewAccept(saleOfferId, makeAddr("inheritedTermsBuyer"));
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SalePositionBelowSolvencyFloor),
+            "preview must flag a position whose inherited terms are weaker"
+        );
+    }
+
     /// @dev The buyer must learn this from the preview, not from a burnt-gas
     ///      revert.
     function test_previewAccept_saleVehicle_flagsBelowSolvencyFloor() public {

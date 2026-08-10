@@ -1642,7 +1642,7 @@ contract DeployDiamond is Script {
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
     ///      so both facets keep EIP-170 header room. All 7 are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](8);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1650,6 +1650,9 @@ contract DeployDiamond is Script {
         s[4] = RiskPreviewFacet.acceptMidTierAckPair.selector; // #735 item 3 sale-aware ack pair
         s[5] = RiskPreviewFacet.previewCreatorBlock.selector; // #735 item 3 creator-side gate
         s[6] = RiskPreviewFacet.previewIntent.selector; // #625 WI-2b intent-fill preview
+        // #1503 PR-E — sale admission classification (live health floor +
+        // inherited-risk-terms compatibility), read by LibSaleSolvency.
+        s[7] = RiskPreviewFacet.saleAdmission.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.

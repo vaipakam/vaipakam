@@ -6,6 +6,8 @@ import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
+import {OracleFacet} from "./OracleFacet.sol";
+import {RiskFacet} from "./RiskFacet.sol";
 
 /**
  * @title RiskPreviewFacet
@@ -500,5 +502,95 @@ contract RiskPreviewFacet {
             collTokenId: bo.collateralTokenId,
             prepayAsset: bo.prepayAsset
         });
+    }
+
+    /**
+     * @notice #1503 PR-E (design item 11) — whether `loanId` may admit a NEW
+     *         lender by sale, as a single classification.
+     *
+     * @dev    Lives HERE rather than inlined into the sale facets: both
+     *         `EarlyWithdrawalFacet` and `OfferAcceptFacet` were already at
+     *         the EIP-170 ceiling and the guard pushed each ~650 bytes over
+     *         it, and `RiskFacet` had too little headroom to take it. This
+     *         facet already hosts the risk-domain assert/classify surface the
+     *         mutating paths consult (`assertMatchAllowed`,
+     *         `assertObligationTransferAllowed`), so it is the consistent
+     *         home rather than merely the one with room.
+     *
+     *         Classifies rather than reverts so ONE selector serves both the
+     *         reverting guard and the read-only preview; `LibSaleSolvency`
+     *         maps the code onto the caller-side errors. An oracle that
+     *         cannot price a position REVERTS out of here, which the guard
+     *         treats as fail-closed and the preview as not-admissible.
+     *
+     * @return code 0 admissible (including illiquid, which is out of scope);
+     *         1 live health factor below the loan's own admission floor;
+     *         2/3/4 inherited risk terms weaker than current — admission
+     *         health floor, liquidation LTV, init-LTV cap respectively.
+     * @return a The position's figure for the failing check (0 when code 0).
+     * @return b The figure it is required to meet (0 when code 0).
+     */
+    function saleAdmission(uint256 loanId)
+        external
+        view
+        returns (uint8 code, uint256 a, uint256 b)
+    {
+        LibVaipakam.Storage storage st = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = st.loans[loanId];
+
+        // Health factor is a ratio of oracle-priced values, so an illiquid leg
+        // has no floor to measure against; those positions stay governed by
+        // the explicit both-parties-consent regime instead.
+        if (
+            loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
+            loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
+        ) return (0, 0, 0);
+
+        uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
+        uint256 floor = LibVaipakam.effectiveLoanMinHealthFactor(
+            loan.minHealthFactorAtInit
+        );
+        if (hf < floor) return (1, hf, floor);
+
+        // Inherited snapshots must be no WEAKER than a fresh loan's today.
+        // Migrating the position changes the lender, not the loan's terms, so
+        // without this the buyer can inherit a looser collateral-withdrawal
+        // floor and a later liquidation point than they could be sold today.
+        // One-directional on purpose: STRICTER than current is fine to sell.
+        uint256 currentHf = LibVaipakam.minHealthFactor();
+        if (floor < currentHf) return (2, floor, currentHf);
+
+        uint8 effTier = _effectiveTierOrZero(loan.collateralAsset);
+
+        uint256 curLiqLtv = LibVaipakam.cfgTierLiquidationLtvBps(effTier);
+        if (uint256(loan.liquidationLtvBpsAtInit) > curLiqLtv) {
+            return (3, uint256(loan.liquidationLtvBpsAtInit), curLiqLtv);
+        }
+
+        uint256 curCap = st.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps;
+        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+            if (tierCap < curCap) curCap = tierCap;
+        }
+        uint256 inheritedCap = LibVaipakam.effectiveLoanInitLtvCapBps(
+            loan.initLtvCapBpsAtInit,
+            curCap
+        );
+        if (inheritedCap > curCap) return (4, inheritedCap, curCap);
+
+        return (0, 0, 0);
+    }
+
+    /// @dev Mirrors `LoanFacet._snapshotRiskCaps`'s tier lookup, fallback and
+    ///      all, so the comparison above is like-for-like with what would be
+    ///      stamped on a loan originated right now.
+    function _effectiveTierOrZero(address asset) private view returns (uint8) {
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector,
+                asset
+            )
+        );
+        return ok && ret.length >= 32 ? abi.decode(ret, (uint8)) : 0;
     }
 }
