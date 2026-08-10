@@ -1712,6 +1712,91 @@ contract TestMutatorFacet {
         );
     }
 
+    // ─── #1434 P2-w4 test-only — lapse-terminal / legacy-stamp fixtures ─────
+
+    /// @notice #1434 P2-w4 test-only — the day's era record (production
+    ///         writer: the V3 apply), so the era-KNOWN compensation credit
+    ///         branch can be staged without a broadcast round.
+    function setDayClockEraRaw(uint256 dayId, address era) external {
+        LibVaipakam.storageSlot().dayClockEra[dayId] = era;
+    }
+
+    /// @notice #1434 P2-w4 test-only — freeze a day's lapse clock directly
+    ///         (production writer: `_finalizeAndWrite` → the V3 apply), so
+    ///         terminal tests need no broadcast round.
+    function setDayLapseClockRaw(
+        uint256 dayId,
+        uint64 finalizedAt,
+        uint32 scheduleVersion,
+        uint64 lapseWindowSeconds,
+        uint64 dispatchCutoffGap
+    ) external {
+        LibVaipakam.storageSlot().dayLapseClock[dayId] = LibVaipakam
+            .DayLapseClock({
+            finalizedAt: finalizedAt,
+            scheduleVersion: scheduleVersion,
+            lapseWindowSeconds: lapseWindowSeconds,
+            dispatchCutoffGap: dispatchCutoffGap
+        });
+    }
+
+    /// @notice #1434 P2-w4 test-only — set the short-lapse deadline inputs
+    ///         directly (production writers: `_creditCompensation` +
+    ///         `stampLegacyCompensation`), so deadline-math tests need no
+    ///         full credit round per timestamp.
+    function setCompReceiptClockRaw(
+        uint256 dayId,
+        uint64 firstAt,
+        uint64 lastQualifyingAt
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.firstCompReceiptAt[dayId] = firstAt;
+        s.lastQualifyingCompReceiptAt[dayId] = lastQualifyingAt;
+    }
+
+    /// @notice #1434 P2-w4 test-only — record a delivered remit receipt
+    ///         (production writer: the d5/P2 ingress), for the
+    ///         legacy-stamp tests.
+    function setReceivedRemitRaw(
+        address remitter,
+        uint256 remitId,
+        uint256 amount
+    ) external {
+        LibVaipakam.storageSlot().receivedRemits[
+            keccak256(abi.encode(remitter, remitId))
+        ] = LibVaipakam.ReceivedRemit({
+            srcChainId: uint32(block.chainid),
+            receivedAt: uint64(block.timestamp),
+            amount: amount,
+            remitter: remitter
+        });
+    }
+
+    /// @notice #1434 P2-w4 test-only — the Base-side frozen zeroed marker
+    ///         (production writer: `_finalizeAndWrite`), for the legacy
+    ///         inventory tests.
+    function setDayZeroedForDestRaw(
+        uint256 dayId,
+        uint32 chainId,
+        bool zeroed
+    ) external {
+        LibVaipakam.storageSlot().dayZeroedForDest[dayId][chainId] = zeroed;
+    }
+
+    /// @notice #1434 P2-w4 test-only — the per-side funded cumulative
+    ///         (production writers: the two compensation dispatchers), so
+    ///         the inventory test can stage the pre-w4 legacy shape.
+    function setCompFundedRaw(
+        uint32 chainId,
+        uint256 dayId,
+        uint256 lender18,
+        uint256 borrower18
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.compFundedLender18[chainId][dayId] = lender18;
+        s.compFundedBorrower18[chainId][dayId] = borrower18;
+    }
+
     /// @notice #1434 P2-w3 test-only — the commitment twin's verdict for day
     ///         `d`, so ladder lockstep (fold ↔ report pricing) is directly
     ///         assertable.

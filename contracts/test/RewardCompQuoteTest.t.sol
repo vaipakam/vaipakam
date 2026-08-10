@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
+import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -649,6 +651,313 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         assertEq(ch.toUser.total, 12e18, "e1 pays perDay x Dq = 60 x 0.2");
         assertEq(ch.toUser.armedFresh, 12e18, "classified armed-fresh");
         assertEq(ch.toUser.recycled, 0, "no recycled component");
+    }
+
+    // ═══ Mirror: w4 lapse terminals + legacy stamp ═══════════════════════════
+
+    address internal constant VPFI_DUMMY = address(0xF00D);
+
+    /// @dev Deliver a compensation credit through the REAL receiver-gated
+    ///      ingress (state-unknown ⇒ the provisional branch — the
+    ///      deadline-stamp writer `_creditCompensation` runs either way).
+    function _credit(uint256 remitId, uint256 l, uint256 b) internal {
+        RewardRemittanceFacet(address(diamond)).onCompensationBudgetReceived(
+            VPFI_DUMMY,
+            l + b,
+            DAY,
+            CHAIN_BASE,
+            remitId,
+            makeAddr("baseDiamond"),
+            l,
+            b,
+            uint64(block.timestamp + 30 days),
+            1,
+            uint64(60 days),
+            uint64(1 days)
+        );
+    }
+
+    function _armIngress() internal {
+        _mut().setVpfiTokenRaw(VPFI_DUMMY);
+        RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(
+            address(this)
+        );
+    }
+
+    function test_lapse_fullPreconditionWalkAndLoss() public {
+        _configureMirror();
+        _zeroedDayG0();
+        _accumulateAllLender();
+        _dispatchQuote();
+
+        // Not zeroed.
+        _mut().setDayDeliberatelyZeroedRaw(DAY, false);
+        vm.expectRevert(
+            abi.encodeWithSelector(LapseDayNotZeroed.selector, DAY)
+        );
+        _com().lapseZeroedDay(DAY);
+        _mut().setDayDeliberatelyZeroedRaw(DAY, true);
+
+        // Compensated day never takes the FULL lapse.
+        _mut().setDayCompensationRaw(DAY, 1e18, 0, true, false);
+        vm.expectRevert(
+            abi.encodeWithSelector(LapseDayCompensated.selector, DAY)
+        );
+        _com().lapseZeroedDay(DAY);
+        _mut().setDayCompensationRaw(DAY, 0, 0, false, false);
+
+        // R1d close missing.
+        _mut().setChainReportSentAtRaw(DAY, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(LapseDayLocalCloseMissing.selector, DAY)
+        );
+        _com().lapseZeroedDay(DAY);
+        _mut().setChainReportSentAtRaw(DAY, uint64(block.timestamp));
+
+        // No clock / version 0.
+        vm.expectRevert(
+            abi.encodeWithSelector(LapseDayClockMissing.selector, DAY)
+        );
+        _com().lapseZeroedDay(DAY);
+        _mut().setDayLapseClockRaw(
+            DAY, uint64(block.timestamp), 0, 7 days, 24 hours
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(LapseDayClockMissing.selector, DAY)
+        );
+        _com().lapseZeroedDay(DAY);
+
+        // Not expired.
+        uint64 t0 = uint64(block.timestamp);
+        _mut().setDayLapseClockRaw(DAY, t0, 1, 7 days, 24 hours);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LapseDayNotExpired.selector, DAY, uint256(t0) + 7 days
+            )
+        );
+        _com().lapseZeroedDay(DAY);
+
+        // Past expiry: the terminal fires, the loss is the COMPLETED
+        // quote (dispatch stamped), and the terminal is monotone.
+        vm.warp(uint256(t0) + 7 days + 1);
+        _com().lapseZeroedDay(DAY);
+        LibVaipakam.LapsedDayLoss memory loss = _com().getLapsedDayLoss(DAY);
+        assertTrue(loss.recorded, "loss recorded");
+        assertEq(loss.lender18, 20e18, "full quoted loss");
+        assertEq(loss.borrower18, 0, "borrower side zero");
+        assertFalse(loss.partialFigure, "quote was complete");
+        assertFalse(loss.shortLapse, "full lapse");
+        vm.expectRevert(
+            abi.encodeWithSelector(LapseDayAlreadyTerminal.selector, DAY)
+        );
+        _com().lapseZeroedDay(DAY);
+
+        // The lapsed day crosses the fold at ZERO via the REAL terminal
+        // and the cursor advances past it (§2.1's third conjunct).
+        assertEq(_mut().advanceCumThroughRaw(L, DAY), DAY, "cursor passes");
+        (, uint256 rpn, , , ) = _mut().getCumStateRaw(L, DAY);
+        assertEq(rpn, 0, "prices zero");
+    }
+
+    function test_lapse_partialFigureWithoutDispatch() public {
+        _configureMirror();
+        _zeroedDayG0();
+        _accumulateAllLender(); // complete accumulation, never dispatched
+        uint64 t0 = uint64(block.timestamp);
+        _mut().setDayLapseClockRaw(DAY, t0, 1, 7 days, 24 hours);
+        vm.warp(uint256(t0) + 7 days + 1);
+        _com().lapseZeroedDay(DAY);
+        LibVaipakam.LapsedDayLoss memory loss = _com().getLapsedDayLoss(DAY);
+        assertEq(loss.lender18, 20e18, "accumulator progress recorded");
+        assertTrue(loss.partialFigure, "flagged partial - no dispatch proof");
+    }
+
+    function test_shortLapse_scaledCrossingAndLoss() public {
+        _configureMirror();
+        _zeroedDayG0();
+        _accumulateAllLender();
+        _dispatchQuote(); // quote 20e18 lender
+        // Funded HALF the quote, confirmed.
+        _mut().setDayCompensationRaw(DAY, 10e18, 0, true, false);
+        uint64 t0 = uint64(block.timestamp);
+        _mut().setDayLapseClockRaw(DAY, t0, 1, 7 days, 24 hours);
+        _mut().setCompReceiptClockRaw(DAY, t0, t0);
+
+        // Deadline = min(t0 + 7d, t0 + 21d) = t0 + 7d.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ShortLapseDeadlineNotReached.selector,
+                DAY,
+                uint256(t0) + 7 days
+            )
+        );
+        _com().lapseShortCompensatedDay(DAY);
+
+        vm.warp(uint256(t0) + 7 days + 1);
+        _com().lapseShortCompensatedDay(DAY);
+        LibVaipakam.LapsedDayLoss memory loss = _com().getLapsedDayLoss(DAY);
+        assertEq(loss.lender18, 10e18, "shortfall = quoted - funded");
+        assertTrue(loss.shortLapse, "short terminal");
+
+        // The fold crosses at the POOL-SCALED delta: Δq × pool/quote =
+        // 0.2e18 × 10/20 = 0.1e18 — order-independent, every settlement
+        // path bounded by delivered funding.
+        assertEq(_mut().advanceCumThroughRaw(L, DAY), DAY, "crosses");
+        (, uint256 rpn, , , uint256 minArmed) = _mut().getCumStateRaw(L, DAY);
+        assertEq(rpn, 0.1e18, "scaled delta");
+        assertEq(minArmed, 0.1e18, "armed series carries the scaled delta");
+
+        // The walk pays at the scaled delta too (e1: 60 x 0.1 = 6e18).
+        _mut().setDayCapModeRaw(DAY, 1);
+        _mut().setFeeEntitlementRaw(
+            1,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 30,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: 10_000 ether
+            })
+        );
+        _mut().closeRewardEntryRaw(1, 10);
+        uint256[] memory one = new uint256[](1);
+        one[0] = 1;
+        (LibInteractionRewards.DayCharge memory ch, ) = _mut()
+            .processUserSideDayRaw(
+                u1, DAY, one, type(uint256).max, type(uint256).max
+            );
+        assertTrue(ch.advanced, "day settles");
+        assertEq(ch.toUser.total, 6e18, "pays at the scaled delta");
+    }
+
+    function test_shortLapse_gatesAndAbsoluteCap() public {
+        _configureMirror();
+        _zeroedDayG0();
+        _accumulateAllLender();
+        _dispatchQuote();
+
+        // Not compensated.
+        vm.expectRevert(
+            abi.encodeWithSelector(ShortLapseNotCompensated.selector, DAY)
+        );
+        _com().lapseShortCompensatedDay(DAY);
+        // Provisional defers the terminal too.
+        _mut().setDayCompensationRaw(DAY, 10e18, 0, true, true);
+        vm.expectRevert(
+            abi.encodeWithSelector(ShortLapseNotCompensated.selector, DAY)
+        );
+        _com().lapseShortCompensatedDay(DAY);
+        // Fully funded: nothing short.
+        _mut().setDayCompensationRaw(DAY, 20e18, 0, true, false);
+        vm.expectRevert(
+            abi.encodeWithSelector(ShortLapseNotShort.selector, DAY)
+        );
+        _com().lapseShortCompensatedDay(DAY);
+
+        // Absolute 3× cap: rolling extensions cannot outrun it.
+        _mut().setDayCompensationRaw(DAY, 10e18, 0, true, false);
+        uint64 t0 = uint64(block.timestamp);
+        _mut().setDayLapseClockRaw(DAY, t0, 1, 7 days, 24 hours);
+        _mut().setCompReceiptClockRaw(DAY, t0, t0 + 20 days);
+        // rolling = t0+27d, absolute = t0+21d → deadline = t0+21d.
+        (, , uint256 deadline) = _com().getShortLapseDeadline(DAY);
+        assertEq(deadline, uint256(t0) + 21 days, "absolute cap binds");
+        vm.warp(uint256(t0) + 21 days + 1);
+        _com().lapseShortCompensatedDay(DAY);
+    }
+
+    function test_credit_qualifyingRuleMovesTheClock() public {
+        // #1434 P2-w4 (§2.5) — the REAL credit path stamps the deadline
+        // inputs: the first credit starts both clocks; a dust top-up
+        // (< 1/4 of the remaining per-side shortfall) does NOT move the
+        // rolling clock; a quarter-cutting one does.
+        _configureMirror();
+        _zeroedDayG0();
+        _accumulateAllLender();
+        _dispatchQuote(); // quote 20e18 lender
+        _armIngress();
+        // Era-KNOWN state (applied + era recorded, era == the payload
+        // remitter): every arrival takes the CONFIRMED credit branch —
+        // repeated arrivals on a PROVISIONAL day quarantine (reason 4)
+        // and would never reach the stamp writer.
+        _mut().setBroadcastV2AppliedRaw(DAY, true);
+        _mut().setDayClockEraRaw(DAY, makeAddr("baseDiamond"));
+
+        vm.warp(1000);
+        _credit(1, 1e18, 0);
+        (uint64 f1, uint64 q1, ) = _com().getShortLapseDeadline(DAY);
+        assertEq(f1, 1000, "first credit starts the absolute clock");
+        assertEq(q1, 1000, "and seeds the rolling clock");
+
+        // Shortfall 19e18; 1e18 × 4 < 19e18 — dust, clock unmoved.
+        vm.warp(2000);
+        _credit(2, 1e18, 0);
+        (, uint64 q2, ) = _com().getShortLapseDeadline(DAY);
+        assertEq(q2, 1000, "dust top-up does not move the clock");
+
+        // Shortfall 18e18; 5e18 × 4 = 20e18 ≥ 18e18 — qualifying.
+        vm.warp(3000);
+        _credit(3, 5e18, 0);
+        (, uint64 q3, ) = _com().getShortLapseDeadline(DAY);
+        assertEq(q3, 3000, "quarter-cutting top-up extends the window");
+    }
+
+    function test_legacyStamp_flowAndGates() public {
+        _configureMirror();
+        _zeroedDayG0();
+        address remitter = makeAddr("legacyBase");
+
+        // No receipt.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LegacyReceiptUnusable.selector,
+                keccak256(abi.encode(remitter, uint256(7)))
+            )
+        );
+        _com().stampLegacyCompensation(DAY, remitter, 7);
+
+        _mut().setReceivedRemitRaw(remitter, 7, 10e18);
+
+        // Quote incomplete.
+        vm.expectRevert(
+            abi.encodeWithSelector(LegacyStampQuoteMissing.selector, DAY)
+        );
+        _com().stampLegacyCompensation(DAY, remitter, 7);
+
+        _accumulateAllLender();
+        _dispatchQuote(); // quote 20e18 lender / 0 borrower
+        _com().stampLegacyCompensation(DAY, remitter, 7);
+        LibVaipakam.DayCompensation memory dc = RewardRemittanceLensFacet(
+            address(diamond)
+        ).getDayCompensation(DAY);
+        assertTrue(dc.compensated, "stamped compensated");
+        assertEq(uint256(dc.lenderPool18), 10e18, "pro-rata: all lender");
+        assertEq(uint256(dc.borrowerPool18), 0, "zero-quote side gets none");
+        (uint64 firstAt, , ) = _com().getShortLapseDeadline(DAY);
+        assertEq(firstAt, uint64(block.timestamp), "deadline clock started");
+
+        // One receipt, one day; a compensated day is no longer stampable.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LegacyReceiptUnusable.selector,
+                keccak256(abi.encode(remitter, uint256(7)))
+            )
+        );
+        _com().stampLegacyCompensation(DAY, remitter, 7);
+        _mut().setReceivedRemitRaw(remitter, 8, 1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(LegacyDayNotStampable.selector, DAY)
+        );
+        _com().stampLegacyCompensation(DAY, remitter, 8);
+
+        // ADMIN-only.
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        vm.expectRevert();
+        _com().stampLegacyCompensation(DAY, stranger, 9);
     }
 
     // ═══ Mirror: commitment-twin lockstep ════════════════════════════════════

@@ -76,6 +76,8 @@ import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
@@ -160,7 +162,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 70;
+    uint256 internal constant EXPECTED_FACETS = 72;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -742,6 +744,21 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "rewardRemittanceFacet",
             address(new RewardRemittanceFacet()),
             _getRewardRemittanceSelectors()
+        );
+        // #1434 P2-w4 — the remittance lens: `_split` re-points the
+        // RELOCATED view selectors (routed to the mutating facet on a live
+        // Diamond) via Replace and adds the new w4 views.
+        items[70] = Item(
+            "rewardRemittanceLensFacet",
+            address(new RewardRemittanceLensFacet()),
+            _getRewardRemittanceLensSelectors()
+        );
+        // #1434 P2-w4 — the compensation dispatch pair: `_split` re-points
+        // the relocated manual selector via Replace + adds the supplemental.
+        items[71] = Item(
+            "rewardCompensationDispatchFacet",
+            address(new RewardCompensationDispatchFacet()),
+            _getRewardCompensationDispatchSelectors()
         );
         items[62] = Item("offerPreviewFacet", address(new OfferPreviewFacet()), _getOfferPreviewSelectors());
         // #1104 — RiskPreviewFacet split off RiskAccessFacet (items[60]).

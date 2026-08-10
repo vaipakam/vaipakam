@@ -558,6 +558,34 @@ credited but does not move the clock. The absolute 3× cap holds regardless
 This is R2's principle applied to R1c's state: pay what is backed,
 terminate on a bounded clock, record the loss.
 
+> *(w4 implementation notes — deviations recorded: (1) **§2.1's
+> "truncate-at-remaining" landed as PRO-RATA SCALING AT THE CROSSING** —
+> the short-lapsed day's ladder arm prices `Δq × pool_s / quoted_s` per
+> side rather than paying entries in order until the pool exhausts. The
+> w3 lesson governs: bulk window pricing settles from the cumulative
+> rows with no payment-path budget, so an order-dependent truncation
+> cannot bound it — the scaled crossing bounds every path at once, is
+> order-independent, and Σ floored payments ≤ pool by construction.
+> (2) **`stampLegacyCompensation` is ADMIN-evidenced, not
+> permissionless**: `ReceivedRemit` predates any day binding, so the
+> receipt↔day association is verifiable only against Base's
+> `RemitReservation.dayIds` — operator-side evidence; a permissionless
+> surface could bind any legacy receipt to any zeroed day. Pre-live
+> there are ZERO legacy receipts on any deployment. (3) The R6 gate
+> clears on the operator-evidenced **forced finalize too** (same
+> consumption semantics, same mould as the ACK); cancels/releases hold
+> it as ratified. (4) The deadline's qualifying stamps live in
+> `_creditCompensation` reading the PRE-credit shortfall; with no
+> standing quote yet the qualifying test is vacuously false and the
+> absolute clock alone runs — the conservative direction. (5) The
+> supplemental enforces the same frozen-clock + R3 cutoff discipline as
+> the manual path, and the per-side cumulative lives Base-side
+> (`compFunded*`), stamped by both dispatchers. (6) Fitting w4 required
+> the EIP-170 triple split: `RewardRemittanceLensFacet` (22 ledger
+> views), `RewardCompensationDispatchFacet` (manual + supplemental),
+> `LibRewardRemitDispatch` (the shared dispatch tail / net headroom /
+> gate pair — one source, inlined per facet).)*
+
 ---
 
 ## 3. R2 — the lapse terminal, and R2a stated at its true width

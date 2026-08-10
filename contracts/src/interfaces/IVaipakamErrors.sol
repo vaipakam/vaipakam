@@ -441,6 +441,49 @@ interface IVaipakamErrors {
     ///         deterministically (0,0) again — there is nothing to
     ///         restate.
     error CompQuoteResolvedZeroFinal(uint256 dayId, uint32 chainId);
+    // ─── #1434 P2-w4 — lapse terminals + R6 gate + supplemental ─────────────
+    /// @notice The full-lapse terminal needs a deliberately-zeroed day.
+    error LapseDayNotZeroed(uint256 dayId);
+    /// @notice A compensated day never takes the FULL lapse — its exits
+    ///         are the supplemental top-up or the short-lapse terminal.
+    error LapseDayCompensated(uint256 dayId);
+    /// @notice R1d — no lapse before the day's local interest close ran
+    ///         (a lapse without a fold would retire unfolded demand).
+    error LapseDayLocalCloseMissing(uint256 dayId);
+    /// @notice The day has no frozen clock, or froze under version 0
+    ///         (pre-schedule) — not lapse-eligible; healable by re-broadcast.
+    error LapseDayClockMissing(uint256 dayId);
+    /// @notice The day's frozen expiry has not passed.
+    error LapseDayNotExpired(uint256 dayId, uint256 expiry);
+    /// @notice The day already reached a terminal (lapsed, short-lapsed,
+    ///         or resolved-zero) — terminals are monotone.
+    error LapseDayAlreadyTerminal(uint256 dayId);
+    /// @notice The short-lapse terminal needs a CONFIRMED compensation.
+    error ShortLapseNotCompensated(uint256 dayId);
+    /// @notice The pools cover the standing per-side quotes — nothing is
+    ///         short; the day prices at full Δq already.
+    error ShortLapseNotShort(uint256 dayId);
+    /// @notice §2.5's bounded deadline (min(lastQualifying + window,
+    ///         first + 3×window)) has not passed.
+    error ShortLapseDeadlineNotReached(uint256 dayId, uint256 deadline);
+    /// @notice R6 — one compensation reservation in flight per chain; the
+    ///         standing one must settle (ACK / return / recovery) first.
+    error CompensationGateHeld(uint32 chainId, uint256 outstandingRemitId);
+    /// @notice A supplemental tops up a day a manual remit already CLOSED.
+    error SupplementalDayNotClosed(uint256 dayId, uint32 chainId);
+    /// @notice The closing reservation must be ACKED (value consumed) —
+    ///         for a dead reservation, release is the tool.
+    error SupplementalReservationNotAcked(uint256 remitId, uint8 status);
+    /// @notice Constraint-19 — the legacy stamp needs the day's COMPLETED
+    ///         quote first (the legacy wire carried no per-side split; the
+    ///         stamp cannot invent one).
+    error LegacyStampQuoteMissing(uint256 dayId);
+    /// @notice Constraint-19 — the named receipt does not exist, or was
+    ///         already spent on a day (one receipt stamps one day).
+    error LegacyReceiptUnusable(bytes32 receiptKey);
+    /// @notice Constraint-19 — the day is not stampable: not zeroed,
+    ///         already terminal, or already compensated.
+    error LegacyDayNotStampable(uint256 dayId);
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by
