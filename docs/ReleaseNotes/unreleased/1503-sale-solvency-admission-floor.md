@@ -103,11 +103,21 @@ The upgrade path was rehearsed the same way rather than argued from a
 successful compile, because a compile cannot see this class of mistake at all:
 an existing local deployment was reduced to the shape a pre-change one
 presents, the sale was confirmed to fail there for exactly the routing reason
-described, each refresh script was then run against it, and the sale was
-driven again to confirm it completes. The same sequence is pinned as an
-automated test, including an assertion that the starting fixture really does
-reproduce the failure — without it the test could pass against a fixture that
-was never broken. Each script is also run twice in a row, because the first
+described, and each refresh script was then run against it. For the script
+covering the direct route, the sale was then driven again and completes. For
+the script covering the resting-listing route it does **not** complete — that
+is the separately filed pre-existing defect described further down, and the
+rehearsal is deliberately left failing on it rather than pointed back at a
+route that would pass. An operator should expect that script's rehearsal to
+stop at its final step.
+
+What the automated test pins is narrower than the operator rehearsal, and the
+difference matters: it drives the real cut assembly of both scripts and proves
+every affected function ends up routed to a single live build, including an
+assertion that the starting fixture really does reproduce the failure —
+without which the test could pass against a fixture that was never broken. It
+does not drive a sale to completion, so it cannot stand in for the rehearsal
+on the point above. Each script is also run twice in a row, because the first
 pass exercises the register-as-new branch and the second the repoint branch,
 and the underlying operation rejects either one applied in the wrong
 situation.
