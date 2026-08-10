@@ -844,6 +844,18 @@ contract OfferAcceptFacet is
             uint256 saleLoanId = s.saleOfferToLoanId[offerId];
             if (saleLoanId != 0) {
                 LibVaipakam.Loan storage saleLoan = s.loans[saleLoanId];
+                // The linked position must still EXIST before anything is
+                // measured about it (Codex #1635 r10). `LoanFacet.initiateLoan`
+                // enforces this too, but it runs after the guards below, so a
+                // listing whose loan was HF-liquidated or defaulted before its
+                // stale listing was torn down used to be judged on solvency
+                // first — reporting a health shortfall for a position that no
+                // longer exists. Ordered here so the reason names the real
+                // problem. Same `InvalidOffer` as `LoanFacet` uses for this, so
+                // the two paths speak with one voice.
+                if (saleLoan.status != LibVaipakam.LoanStatus.Active) {
+                    revert InvalidOffer();
+                }
                 if (
                     block.timestamp >=
                     uint256(saleLoan.startTime) +

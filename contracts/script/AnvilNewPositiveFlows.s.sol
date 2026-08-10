@@ -1982,10 +1982,13 @@ contract AnvilNewPositiveFlows is Script {
         vm.stopBroadcast();
 
         // The depth guard can reclassify an asset when the feed moves away
-        // from the mock pool's spot, and an Illiquid leg is OUT OF SCOPE for
-        // the floor — the sale would then be admitted for an entirely
-        // different reason and this scenario would prove nothing. Assert the
-        // leg is still priced before drawing any conclusion from the revert.
+        // from the mock pool's spot. An Illiquid leg is now refused
+        // UNCONDITIONALLY (`SaleLegUnpriceable`, classifier code 6 — #1655), so
+        // if that happened the sale would still revert, but for a completely
+        // different reason and this scenario would prove nothing about the
+        // health floor. Assert the leg is still priced so the revert below can
+        // only be the floor — isolating the two refusals rather than, as this
+        // comment previously claimed, guarding against an admission.
         require(
             OracleFacet(diamond).checkLiquidity(address(weth)) ==
                 LibVaipakam.LiquidityStatus.Liquid,
@@ -2107,9 +2110,11 @@ contract AnvilNewPositiveFlows is Script {
         wethFeedRef.setPrice(1500e8);
         vm.stopBroadcast();
 
-        // Same reasoning as N25: an Illiquid leg is out of scope for the floor,
-        // so the refusal below would prove nothing if the depth guard had
-        // reclassified WETH when the feed moved off the mock pool's spot.
+        // Same reasoning as N25: an Illiquid leg is refused unconditionally for
+        // its OWN reason (`SaleLegUnpriceable`, code 6 — #1655), so if the depth
+        // guard had reclassified WETH when the feed moved off the mock pool's
+        // spot, the refusal below would still happen but would say nothing about
+        // the health floor this scenario exists to drive.
         require(
             OracleFacet(diamond).checkLiquidity(address(weth)) ==
                 LibVaipakam.LiquidityStatus.Liquid,

@@ -105,6 +105,9 @@ export interface DeploymentFacets {
   receiverFacet?: HexAddress;
   repayPeriodicFacet?: HexAddress;
   rewardRemittanceFacet?: HexAddress;
+  // #1434 P2-w4 — the EIP-170 remittance split pair.
+  rewardRemittanceLensFacet?: HexAddress;
+  rewardCompensationDispatchFacet?: HexAddress;
   /** #1222 M3 B2-c — commitment-gate plumbing (reconcile + gate views). */
   rewardCommitmentFacet?: HexAddress;
   /** #1568 C2 — planned-surplus repatriation accounting core (dark until

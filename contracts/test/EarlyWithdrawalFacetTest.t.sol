@@ -3605,6 +3605,43 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev Codex #1635 r10 — ordering. A listing whose loan went terminal
+    ///      (HF-liquidated, defaulted, repaid) before its stale listing was
+    ///      permissionlessly torn down must be refused for THAT reason, not
+    ///      measured for solvency first. The position no longer exists, so a
+    ///      health shortfall is a false statement about it — and the sub-floor
+    ///      price move is exactly what precedes a liquidation, so this is the
+    ///      likely shape rather than a contrived one. Both surfaces are pinned:
+    ///      `_acceptOffer` reverts `InvalidOffer` (what `LoanFacet` already used
+    ///      for this) and the preview classifies `SaleLoanNotActive`.
+    function test_saleAccept_terminalLoanRefusedBeforeSolvencyIsMeasured() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("terminalOrderingBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        // Sub-floor AND terminal — the combination that made the old ordering
+        // report a health shortfall for a position that had already closed.
+        _sinkBelowFloorButSolvent();
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.status = LibVaipakam.LoanStatus.Defaulted;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
+            .previewAccept(saleOfferId, buyer);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleLoanNotActive),
+            "preview must name the terminal loan, not a solvency shortfall"
+        );
+
+        vm.expectRevert(OfferAcceptFacet.InvalidOffer.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
     // ─── Unpriceable legs (#1655) ───────────────────────────────────────────
     //
     // A leg is measurable for sale admission only when the LIVE

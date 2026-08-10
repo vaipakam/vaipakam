@@ -126,7 +126,8 @@ interface IRewardRemitAckIngress {
         uint32 sourceChainId,
         uint256 remitId,
         uint256 amountReceived,
-        address remitter
+        address remitter,
+        bool consumed
     ) external;
 }
 
@@ -346,6 +347,7 @@ interface IRewardMessenger {
         uint256 remitId,
         uint256 amountReceived,
         address remitter,
+        bool consumed,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
 
