@@ -470,6 +470,11 @@
             "name": "consumedAcked",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "declaredUnwound",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
