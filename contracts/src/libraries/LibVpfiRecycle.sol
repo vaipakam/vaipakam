@@ -565,6 +565,21 @@ library LibVpfiRecycle {
         unearmarked = vpfiBalance > bucket ? vpfiBalance - bucket : 0;
         uint256 reserved = s.strandedRecoveryReserved;
         unearmarked = unearmarked > reserved ? unearmarked - reserved : 0;
+        // #1434 P2-w5 — the Base RECOVERY POSITION joins the subtraction,
+        // same protocol-LEDGER class as the two terms above (single
+        // writer set: the authenticated B1 return credits it, the
+        // from-recovery dispatch debits it — never a remembered
+        // balance-owner). Returned tokens sit in this same balance
+        // awaiting their uncharged re-dispatch (§4.2), and an ordinary
+        // fresh claim spending them first would strand the re-dispatch
+        // the position exists to fund. Zero on mirrors (Base-only
+        // writers), so the term is universally safe. The overage
+        // position rides the same earmark: quarantined above-entitlement
+        // value is operator custody, not claimable backing.
+        uint256 position = s.rewardBudgetRecovered
+            - s.rewardBudgetRedispatched
+            + s.strandedReturnOverage;
+        unearmarked = unearmarked > position ? unearmarked - position : 0;
     }
 
     /**

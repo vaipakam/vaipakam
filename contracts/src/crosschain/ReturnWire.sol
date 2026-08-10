@@ -51,4 +51,15 @@ library ReturnWire {
     ///      `uint256(keccak256("vaipakam.return.wire.repat-cancel-ack.a1"))`.
     uint256 internal constant RETURN_WIRE_TAG_REPAT_CANCEL_ACK_A1 =
         uint256(keccak256("vaipakam.return.wire.repat-cancel-ack.a1"));
+
+    /// @notice Leading word of a Mode-B STRANDED-RETURN payload (#1434 R4,
+    ///         P2-w5): `abi.encode(RETURN_WIRE_TAG_STRANDED_B1,
+    ///         address remitter, uint256 remitId, uint256 dayId,
+    ///         uint256 amount)`, carried with exactly one `TokenAmount`
+    ///         (the quarantined mirror VPFI coming home). `remitter` is the
+    ///         Base deployment that dispatched the original compensation —
+    ///         the receipt identity IS the era binding, checked Base-side.
+    /// @dev Value is `uint256(keccak256("vaipakam.return.wire.stranded.b1"))`.
+    uint256 internal constant RETURN_WIRE_TAG_STRANDED_B1 =
+        uint256(keccak256("vaipakam.return.wire.stranded.b1"));
 }

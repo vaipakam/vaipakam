@@ -88,6 +88,14 @@ contract VpfiReturnSender is
         address indexed issuingBase,
         uint256 indexed authId
     );
+    /// @custom:event-category informational/reward-transport
+    event StrandedReturnSent(
+        bytes32 indexed messageId,
+        address indexed remitter,
+        uint256 indexed remitId,
+        uint256 dayId,
+        uint256 amount
+    );
 
     // ─── Errors ───────────────────────────────────────────────────────
 
@@ -232,6 +240,56 @@ contract VpfiReturnSender is
         emit RepatriationCancelAckSent(messageId, issuingBase, authId);
     }
 
+    /// @notice #1434 P2-w5 — send a Mode-B STRANDED RETURN to Base: the
+    ///         quarantined compensation VPFI the Diamond just moved into
+    ///         this escrow, plus the payload binding it to the receipt it
+    ///         settles (`remitter` = the issuing Base deployment,
+    ///         `remitId` = the reservation the return retires).
+    /// @dev    Called by {RepatriationFacet.sendStrandedReturn} in the same
+    ///         transaction that retires the mirror's stranded-recovery
+    ///         record and transfers the tokens here — any failure reverts
+    ///         the whole return (record intact, nothing stranded in
+    ///         escrow). Same exact-approval / whole-tx-atomicity posture as
+    ///         the Mode-A leg above.
+    function sendStrandedReturn(
+        uint256 dstChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 dayId,
+        uint256 amount,
+        address payable refundAddress
+    )
+        external
+        payable
+        whenNotPaused
+        nonReentrant
+        returns (bytes32 messageId)
+    {
+        if (msg.sender != diamond) revert NotDiamond(msg.sender);
+        if (amount == 0) revert ZeroAmount();
+        address token = vpfiToken;
+        uint256 held = IERC20(token).balanceOf(address(this));
+        if (held < amount) revert InsufficientEscrow(amount, held);
+
+        bytes memory payload = abi.encode(
+            ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
+            remitter,
+            remitId,
+            dayId,
+            amount
+        );
+        ICrossChainMessenger.TokenAmount[] memory tokens =
+            new ICrossChainMessenger.TokenAmount[](1);
+        tokens[0] = ICrossChainMessenger.TokenAmount({
+            token: token,
+            amount: amount
+        });
+
+        IERC20(token).forceApprove(messenger, amount);
+        messageId = _send(dstChainId, payload, tokens, refundAddress);
+        emit StrandedReturnSent(messageId, remitter, remitId, dayId, amount);
+    }
+
     // ─── Quotes ───────────────────────────────────────────────────────
 
     /// @notice Fee quote for {sendRepatriationReturn} with these arguments.
@@ -245,6 +303,32 @@ contract VpfiReturnSender is
             ReturnWire.RETURN_WIRE_TAG_REPAT_A1,
             issuingBase,
             authId,
+            amount
+        );
+        ICrossChainMessenger.TokenAmount[] memory tokens =
+            new ICrossChainMessenger.TokenAmount[](1);
+        tokens[0] = ICrossChainMessenger.TokenAmount({
+            token: vpfiToken,
+            amount: amount
+        });
+        return ICrossChainMessenger(messenger).quoteMessageFee(
+            dstChainId, payload, tokens, destGasLimit
+        );
+    }
+
+    /// @notice Fee quote for {sendStrandedReturn} with these arguments.
+    function quoteStrandedReturn(
+        uint256 dstChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 dayId,
+        uint256 amount
+    ) external view returns (uint256 fee) {
+        bytes memory payload = abi.encode(
+            ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
+            remitter,
+            remitId,
+            dayId,
             amount
         );
         ICrossChainMessenger.TokenAmount[] memory tokens =

@@ -961,6 +961,44 @@ the bounds are the design's actual commitment.
 5. **P2-w5 — R4 return over #1568's channel + recovery position +
    uncharged re-dispatch** (§4.2) — downstream of #1568's shared slice,
    before M7 arming (plan §4 `SHAREDWIRE --> MODEBWIRE -.-> ARMGATE`).
+
+   > **Implementation note (P2-w5, 2026-08-10).** Shipped as designed,
+   > with the shapes pinned here. The B1 kind
+   > (`vaipakam.return.wire.stranded.b1`) carries `(remitter, remitId,
+   > dayId, amount)` plus one TokenAmount — `remitter` (the issuing Base
+   > deployment) IS the era binding, checked Base-side against
+   > `address(this)` with a stale era failing closed and re-executable
+   > (the R6e runbook's case). The mirror dispatch is PERMISSIONLESS
+   > payable in the R6b posture: quarantine is terminal mirror-side and
+   > the return its only exit, the stored record is the evidence, and
+   > the caller can neither redirect nor resize (the recorded amount
+   > travels — the two-delta rule's source half). Lane capacity is
+   > checked before the one-shot retire, so over-capacity fails
+   > retryably. Base-side, the entitlement is the reservation's
+   > dispatched `total` with a per-receipt recovered cumulative; the
+   > overage position absorbs the excess token-safely. The gate clears
+   > only when the returning receipt IS the outstanding one. The
+   > reservation's STATUS is deliberately untouched by the return —
+   > delivery evidence (the ack path) and value settlement are
+   > independent lifecycles. Re-dispatch substitution landed as thin
+   > `…FromRecovery` wrappers over the ONE manual/supplemental
+   > implementation (a `fromRecovery` funding-source flag): the position
+   > check replaces the 69M headroom check, `rewardBudgetRedispatched`
+   > replaces the `rewardBudgetRemittedGlobal` charge, and every other
+   > bound (quote, era, clock, cutoff, gate, per-side cumulative) is
+   > shared by construction. Ordinary armed-day BATCH substitution —
+   > which §4.2 also admits — is deliberately deferred: the batch path's
+   > mixed fresh/recycled split interacts with commitment retirement and
+   > deserves its own slice if ever needed. A release of a
+   > recovery-funded reservation restores NEITHER headroom (never
+   > charged) NOR the position (the tokens are physically in transport
+   > custody until the R6d ceremony — which, per the ratified §5.3
+   > unification, credits the SAME position). The Base position joins
+   > `backingPosition`'s subtraction as the second protocol-ledger term
+   > (single writer set: the authenticated ingress credits, the
+   > from-recovery dispatch debits), the transparency snapshot publishes
+   > it as an eighth output, and the mesh watcher's
+   > recovery-reservation check sums it into the spoken-for figure.
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —
    carries the FunctionalSpec amendment if (a) is ratified.
 

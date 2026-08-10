@@ -85,6 +85,15 @@ interface IVpfiReturnSender {
         uint256 authId,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
+
+    function sendStrandedReturn(
+        uint256 dstChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 dayId,
+        uint256 amount,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
 }
 
 /**
@@ -216,6 +225,17 @@ contract RepatriationFacet is
     ///         until the mirror's ACK arrives — dispatching the request is
     ///         not the release (§3.6a constraint 5c).
     /// @custom:event-category informational/reward-transport
+    /// @notice #1434 P2-w5 — a quarantined compensation left this mirror
+    ///         for Base; the stranded-recovery record is retired.
+    /// @custom:event-category state-change/reward-transport
+    event StrandedReturnDispatched(
+        address indexed remitter,
+        uint256 indexed remitId,
+        uint256 dayId,
+        uint256 amount,
+        bytes32 messageId
+    );
+
     event RepatriationCancelDispatched(
         uint256 indexed authId,
         uint32 indexed dstChainId,
@@ -294,6 +314,10 @@ contract RepatriationFacet is
     error RepatriationMessengerNotSet();
     /// @notice The referenced mirror instruction is not in the required
     ///         state for this action.
+    /// @notice #1434 P2-w5 — no stranded-recovery record exists for this
+    ///         receipt (never quarantined, or already returned).
+    error StrandedReturnNothingRecorded(address remitter, uint256 remitId);
+
     error RepatriationInstructionWrongState(
         address issuingBase,
         uint256 authId,
@@ -826,6 +850,63 @@ contract RepatriationFacet is
             value: msg.value
         }(uint256(s.baseChainId), issuingBase, authId, refundAddress);
         emit RepatriationCancelAckDispatched(issuingBase, authId, messageId);
+    }
+
+    /**
+     * @notice #1434 P2-w5 (R4, design §4.2) — return a QUARANTINED
+     *         compensation to Base over the shared channel, Mode B's own
+     *         payload kind. Retires the mirror's stranded-recovery record
+     *         exactly once and sends the RECORDED amount (the two-delta
+     *         rule: the source debit is the stored figure, never a caller
+     *         figure; only the destination credit scales to what arrives).
+     * @dev    PERMISSIONLESS payable (the R6b posture): the record is the
+     *         mirror-authenticated evidence being attested — quarantine is
+     *         terminal mirror-side, the return is its ONLY exit, and the
+     *         value is already excluded from every spendable position
+     *         (`strandedRecoveryReserved`), so the caller contributes only
+     *         the CCIP fee (quote via {VpfiReturnSender.quoteStrandedReturn})
+     *         and can neither redirect nor resize the return. Lane capacity
+     *         is checked BEFORE the record retires, so an over-capacity
+     *         return fails retryably with the record intact.
+     */
+    function sendStrandedReturn(
+        address remitter,
+        uint256 remitId,
+        address payable refundAddress
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyMirror
+        returns (bytes32 messageId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address sender = s.repatriationSender;
+        if (sender == address(0)) revert RepatriationNotConfigured();
+        bytes32 key = keccak256(abi.encode(remitter, remitId));
+        LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[key];
+        uint256 amount = sr.amount;
+        if (amount == 0) revert StrandedReturnNothingRecorded(remitter, remitId);
+        uint256 dayId = sr.dayId;
+
+        uint256 dst = uint256(s.baseChainId);
+        _assertWithinLaneCapacity(s, dst, amount, false);
+
+        // CEI: retire the record and release the earmark before the
+        // token movement; any send failure reverts the whole return.
+        delete s.strandedRecoveries[key];
+        uint256 reserved = s.strandedRecoveryReserved;
+        s.strandedRecoveryReserved =
+            reserved > amount ? reserved - amount : 0;
+        s.strandedReturnedCumulative += amount;
+        IERC20(s.vpfiToken).safeTransfer(sender, amount);
+        messageId = IVpfiReturnSender(sender).sendStrandedReturn{
+            value: msg.value
+        }(dst, remitter, remitId, dayId, amount, refundAddress);
+        emit StrandedReturnDispatched(
+            remitter, remitId, dayId, amount, messageId
+        );
     }
 
     // ── Config ──────────────────────────────────────────────────────────────

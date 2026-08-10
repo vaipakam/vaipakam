@@ -1819,6 +1819,51 @@ contract TestMutatorFacet {
         );
     }
 
+    /// @notice #1434 P2-w5 test-only — install a stranded-recovery record
+    ///         directly (record + reserved sum), the w5 return's input.
+    function setStrandedRecoveryRaw(
+        address remitter,
+        uint256 remitId,
+        uint256 amount,
+        uint256 dayId,
+        uint8 reason
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.StrandedRecovery storage sr =
+            s.strandedRecoveries[keccak256(abi.encode(remitter, remitId))];
+        s.strandedRecoveryReserved =
+            s.strandedRecoveryReserved + amount - sr.amount;
+        sr.amount = amount;
+        sr.dayId = dayId;
+        sr.reservedAt = uint64(block.timestamp);
+        sr.reason = reason;
+    }
+
+    /// @notice #1434 P2-w5 test-only — hold the R6 gate directly.
+    function setCompensationGateRaw(uint32 dstChainId, uint256 remitId)
+        external
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.compensationOutstanding[dstChainId] = remitId;
+        s.compensationOutstandingChains.push(dstChainId);
+    }
+
+    /// @notice #1434 P2-w5 test-only — a minimal reservation row for the
+    ///         B1 ingress paths (dstChainId + status + total are what the
+    ///         ingress reads).
+    function setRemitReservationCompRaw(
+        uint256 remitId,
+        uint32 dstChainId,
+        uint8 status,
+        uint256 total
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        r.dstChainId = dstChainId;
+        r.status = status;
+        r.total = total;
+    }
+
     /// @dev Route `data` back through the diamond fallback (bubbling the raw
     ///      revert) so a routed `onlyDiamondInternal` host sees `msg.sender ==
     ///      address(this)`.

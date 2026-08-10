@@ -104,6 +104,46 @@ contract RewardCompensationDispatchFacet is
         onlyRole(LibAccessControl.ADMIN_ROLE)
         returns (bytes32 messageId)
     {
+        return _remitManualBudget(
+            dstChainId, dayId, lenderAmount18, borrowerAmount18, false
+        );
+    }
+
+    /// @notice ADMIN — the manual-budget path funded from the RECOVERY
+    ///         POSITION (#1434 P2-w5, §4.2): an UNCHARGED re-dispatch of
+    ///         value a stranded return brought home. Identical evidence,
+    ///         era, clock, quote and gate discipline; only the funding
+    ///         source differs — the 69M cap is NOT charged (the parcel's
+    ///         charge happened at its original dispatch) and the draw is
+    ///         bounded by the position balance instead.
+    function remitManualBudgetFromRecovery(
+        uint32 dstChainId,
+        uint256 dayId,
+        uint256 lenderAmount18,
+        uint256 borrowerAmount18
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyCanonical
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        returns (bytes32 messageId)
+    {
+        return _remitManualBudget(
+            dstChainId, dayId, lenderAmount18, borrowerAmount18, true
+        );
+    }
+
+    /// @dev ONE implementation of the manual dispatch — the external
+    ///      wrappers differ only in the funding source flag.
+    function _remitManualBudget(
+        uint32 dstChainId,
+        uint256 dayId,
+        uint256 lenderAmount18,
+        uint256 borrowerAmount18,
+        bool fromRecovery
+    ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // #1434 P2-w2 (R1/R1b) — the compensation is sized PER SIDE on the
         // wire: payout is `localInterest × Δ` per side and Base does not
@@ -198,9 +238,21 @@ contract RewardCompensationDispatchFacet is
 
         // r6 — NET headroom; a manual send retires no commitment (the
         // zeroed chain's share was never committed at finalize).
-        uint256 remaining = LibRewardRemitDispatch.freshHeadroomNet(s, 0);
-        if (amount > remaining) {
-            revert RewardPoolCapExceeded(amount, remaining);
+        // #1434 P2-w5 — a FROM-RECOVERY dispatch is bounded by the
+        // recovery position instead of the 69M cap: the parcel's cap
+        // charge happened at its ORIGINAL dispatch and never repeats
+        // (#1586 ratified).
+        if (fromRecovery) {
+            uint256 position =
+                s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
+            if (amount > position) {
+                revert RecoveryPositionInsufficient(amount, position);
+            }
+        } else {
+            uint256 remaining = LibRewardRemitDispatch.freshHeadroomNet(s, 0);
+            if (amount > remaining) {
+                revert RewardPoolCapExceeded(amount, remaining);
+            }
         }
 
         // #1434 P2-w4 (§5.1 R6) — one compensation reservation in flight
@@ -223,7 +275,11 @@ contract RewardCompensationDispatchFacet is
         s.compFundedBorrower18[dstChainId][dayId] += borrowerAmount18;
         s.compFundedRecorded[dstChainId][dayId] = true;
         LibRewardRemitDispatch.setCompensationGate(s, dstChainId, remitId);
-        s.rewardBudgetRemittedGlobal += amount;
+        // Physical-outflow ledgers accrue for BOTH sources; only the cap
+        // charge is source-dependent (uncharged re-dispatch rides
+        // `rewardBudgetRedispatched`, the third reconciliation term).
+        if (fromRecovery) s.rewardBudgetRedispatched += amount;
+        else s.rewardBudgetRemittedGlobal += amount;
         s.rewardBudgetRemittedTotal[dstChainId] += amount;
         s.remitPendingTotal[dstChainId] += amount;
         {
@@ -241,6 +297,9 @@ contract RewardCompensationDispatchFacet is
             // received-vs-declared reconciliation of `compFunded*`.
             r.declaredLender18 = lenderAmount18;
             r.declaredBorrower18 = borrowerAmount18;
+            // #1434 P2-w5 - no headroom was charged, so no path may
+            // ever restore headroom for this reservation.
+            r.fundedFromRecovery = fromRecovery;
         }
 
         // #1434 P2-w2 — the manual-compensation path now dispatches the P2
@@ -299,6 +358,42 @@ contract RewardCompensationDispatchFacet is
         onlyRole(LibAccessControl.ADMIN_ROLE)
         returns (bytes32 messageId)
     {
+        return _remitSupplementalBudget(
+            dstChainId, dayId, lenderAmount18, borrowerAmount18, false
+        );
+    }
+
+    /// @notice ADMIN — the supplemental top-up funded from the RECOVERY
+    ///         POSITION (#1434 P2-w5, §4.2): the uncharged re-dispatch
+    ///         of returned value into the same receipt-bound obligation.
+    ///         Same bounds and gates as {remitSupplementalBudget}.
+    function remitSupplementalBudgetFromRecovery(
+        uint32 dstChainId,
+        uint256 dayId,
+        uint256 lenderAmount18,
+        uint256 borrowerAmount18
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyCanonical
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        returns (bytes32 messageId)
+    {
+        return _remitSupplementalBudget(
+            dstChainId, dayId, lenderAmount18, borrowerAmount18, true
+        );
+    }
+
+    /// @dev ONE implementation of the supplemental dispatch.
+    function _remitSupplementalBudget(
+        uint32 dstChainId,
+        uint256 dayId,
+        uint256 lenderAmount18,
+        uint256 borrowerAmount18,
+        bool fromRecovery
+    ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 amount = lenderAmount18 + borrowerAmount18;
         if (amount == 0) revert NothingToRemit();
@@ -370,17 +465,27 @@ contract RewardCompensationDispatchFacet is
             }
         }
         // 69M headroom — a supplement retires no commitment, like the
-        // manual send it tops up.
-        uint256 remaining = LibRewardRemitDispatch.freshHeadroomNet(s, 0);
-        if (amount > remaining) {
-            revert RewardPoolCapExceeded(amount, remaining);
+        // manual send it tops up. From-recovery: position-bounded,
+        // uncharged (#1434 P2-w5).
+        if (fromRecovery) {
+            uint256 position =
+                s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
+            if (amount > position) {
+                revert RecoveryPositionInsufficient(amount, position);
+            }
+        } else {
+            uint256 remaining = LibRewardRemitDispatch.freshHeadroomNet(s, 0);
+            if (amount > remaining) {
+                revert RewardPoolCapExceeded(amount, remaining);
+            }
         }
 
         // Effects (CEI) — a NEW reservation with its own lifecycle; the
         // day markers stay untouched (the whole point: funding
         // accumulates against the same obligation).
         uint256 remitId = ++s.remitReservationNonce;
-        s.rewardBudgetRemittedGlobal += amount;
+        if (fromRecovery) s.rewardBudgetRedispatched += amount;
+        else s.rewardBudgetRemittedGlobal += amount;
         s.rewardBudgetRemittedTotal[dstChainId] += amount;
         s.remitPendingTotal[dstChainId] += amount;
         s.compFundedLender18[dstChainId][dayId] += lenderAmount18;
@@ -402,6 +507,7 @@ contract RewardCompensationDispatchFacet is
             // received-vs-declared reconciliation of `compFunded*`.
             r.declaredLender18 = lenderAmount18;
             r.declaredBorrower18 = borrowerAmount18;
+            r.fundedFromRecovery = fromRecovery;
         }
 
         messageId = _sendCompensationPayload(
@@ -417,6 +523,109 @@ contract RewardCompensationDispatchFacet is
 
         emit SupplementalRewardBudgetRemitted(
             dstChainId, dayId, amount, remitId
+        );
+    }
+
+    /// @notice #1434 P2-w5 — an authenticated stranded return settled on
+    ///         Base: `credited` entered the recovery position, `overage`
+    ///         (if any) was quarantined above the receipt's entitlement.
+    /// @custom:event-category state-change/reward-compensation
+    event StrandedReturnSettled(
+        uint256 indexed remitId,
+        uint32 indexed sourceChainId,
+        uint256 dayId,
+        uint256 credited,
+        uint256 overage,
+        bool gateCleared
+    );
+
+    /**
+     * @notice #1434 P2-w5 (design §4.2) — Base ingress for a Mode-B
+     *         STRANDED RETURN. Called ONLY by the configured return-channel
+     *         receiver satellite, which has already forwarded the delivered
+     *         VPFI to the Diamond and reports declared + actual amounts.
+     * @dev    The credit is CHAIN-BOUND and ENTITLEMENT-BOUNDED (Codex
+     *         #1600 r1 P1 ×2, baked into §4.2): the authenticated
+     *         `sourceChainId` must equal the referenced reservation's
+     *         `dstChainId` — otherwise another registered mirror could
+     *         consume a chain's one-shot recovery, clear its gate, and
+     *         strand the genuine return — and the position credit is
+     *         `min(actual, entitlement − already recovered for this
+     *         receipt)` with the excess quarantined token-safe in the
+     *         operator-visible overage position (never credited — a
+     *         compromised mirror could otherwise attach a small valid
+     *         receipt to an arbitrarily large return and mint uncharged
+     *         re-dispatch capacity, a 69M bypass; never reverted — the
+     *         tokens are already home and refusing the message would
+     *         strand the whole delivery behind the wire). The reservation's
+     *         STATUS is deliberately untouched: the mirror's non-consumed
+     *         ACK settles delivery evidence independently and remains
+     *         permissionlessly re-presentable; the return settles VALUE
+     *         and the R6 gate (§5.1's return-settlement arm), each exactly
+     *         once.
+     */
+    function onStrandedReturnReceived(
+        address remitter,
+        uint256 remitId,
+        uint256 dayId,
+        uint32 sourceChainId,
+        address token,
+        uint256 declaredAmount,
+        uint256 actualReceived
+    ) external nonReentrant whenNotPaused onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        {
+            address receiver = s.repatriationReceiver;
+            if (receiver == address(0) || msg.sender != receiver) {
+                revert OnlyStrandedReturnReceiver(msg.sender);
+            }
+        }
+        // Era binding: the receipt identity names the ISSUING deployment.
+        // A stale-era return (pre-rotation dispatch) fails closed and
+        // re-executable — its reservation lives in the old deployment's
+        // storage and settles through the R6e rotation runbook, never by
+        // guessing here.
+        if (remitter != address(this)) {
+            revert StrandedReturnWrongEra(remitter);
+        }
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        if (r.total == 0) revert StrandedReturnUnknownReservation(remitId);
+        if (sourceChainId != r.dstChainId) {
+            revert StrandedReturnWrongSourceChain(
+                sourceChainId, r.dstChainId
+            );
+        }
+        if (
+            token != s.vpfiToken || actualReceived == 0
+                || actualReceived > declaredAmount
+        ) {
+            revert StrandedReturnDeliveryInvalid();
+        }
+
+        // Entitlement-bounded credit; the receipt's cumulative can never
+        // pass the reservation's dispatched total.
+        uint256 already = s.remitRecoveredForReceipt[remitId];
+        uint256 entitlement = r.total;
+        uint256 headroom =
+            entitlement > already ? entitlement - already : 0;
+        uint256 credited =
+            actualReceived < headroom ? actualReceived : headroom;
+        uint256 overage = actualReceived - credited;
+
+        s.remitRecoveredForReceipt[remitId] = already + credited;
+        s.rewardBudgetRecovered += credited;
+        if (overage != 0) s.strandedReturnOverage += overage;
+
+        // §5.1 return settlement: clear the R6 gate iff THIS receipt is
+        // the one holding it (an older receipt's late return must not
+        // clear a successor's gate).
+        bool gateCleared;
+        if (s.compensationOutstanding[sourceChainId] == remitId) {
+            LibRewardRemitDispatch.clearCompensationGate(s, sourceChainId);
+            gateCleared = true;
+        }
+        emit StrandedReturnSettled(
+            remitId, sourceChainId, dayId, credited, overage, gateCleared
         );
     }
 

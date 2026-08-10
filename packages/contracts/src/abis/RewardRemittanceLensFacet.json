@@ -245,6 +245,48 @@
   },
   {
     "type": "function",
+    "name": "getRecoveredForReceipt",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRecoveryPosition",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "recovered",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "redispatched",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "overage",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getReleasedRemitStrandedSeedState",
     "inputs": [],
     "outputs": [
@@ -418,6 +460,11 @@
             "name": "forcedFinalized",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "fundedFromRecovery",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -581,6 +628,19 @@
   {
     "type": "function",
     "name": "getStrandedRecoveryReserved",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getStrandedReturnedCumulative",
     "inputs": [],
     "outputs": [
       {

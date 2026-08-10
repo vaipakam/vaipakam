@@ -326,4 +326,34 @@ contract RewardRemittanceLensFacet {
         counted = s.rewardBudgetArmedFreshReceived;
         uncounted = s.rewardBudgetFreshUncounted;
     }
+
+    /// @notice #1434 P2-w5 (§4.2) — the Base recovery position: lifetime
+    ///         credited returns, lifetime uncharged re-dispatches (their
+    ///         difference is the spendable position balance), and the
+    ///         above-entitlement overage quarantine.
+    function getRecoveryPosition()
+        external
+        view
+        returns (uint256 recovered, uint256 redispatched, uint256 overage)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        recovered = s.rewardBudgetRecovered;
+        redispatched = s.rewardBudgetRedispatched;
+        overage = s.strandedReturnOverage;
+    }
+
+    /// @notice #1434 P2-w5 — how much of this reservation's entitlement a
+    ///         stranded return has already credited (the bound's "already
+    ///         recovered" term).
+    function getRecoveredForReceipt(
+        uint256 remitId
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().remitRecoveredForReceipt[remitId];
+    }
+
+    /// @notice #1434 P2-w5 — this mirror's lifetime VPFI returned to Base
+    ///         by the R4 stranded return.
+    function getStrandedReturnedCumulative() external view returns (uint256) {
+        return LibVaipakam.storageSlot().strandedReturnedCumulative;
+    }
 }

@@ -9,11 +9,13 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {ReturnWire} from "../src/crosschain/ReturnWire.sol";
 import {VpfiReturnSender} from "../src/crosschain/VpfiReturnSender.sol";
 import {VpfiReturnReceiver} from "../src/crosschain/VpfiReturnReceiver.sol";
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {
@@ -1086,4 +1088,192 @@ contract RepatriationTransportTest is SetupTest {
         assertEq(status, 3, "released");
         assertEq(_avail(CHAIN_ARB), 100 ether, "availability restored");
     }
+    // ── #1434 P2-w5: the Mode-B stranded return ─────────────────────────────
+
+    function _rlens() internal view returns (RewardRemittanceLensFacet) {
+        return RewardRemittanceLensFacet(address(diamond));
+    }
+
+    /// Mirror fixture: armed, one stranded record, tokens physically held.
+    function _stranded(
+        address remitter,
+        uint256 remitId,
+        uint256 amount
+    ) internal {
+        _armMirror();
+        vpfi.mint(address(diamond), amount);
+        _mut().setStrandedRecoveryRaw(remitter, remitId, amount, 7, 1);
+    }
+
+    /// §8-5 — the return retires the record EXACTLY ONCE, releases the
+    /// earmark, advances the outflow cumulative, and puts the recorded
+    /// amount (never a caller figure) on the B1 wire.
+    function test_StrandedReturn_RetiresRecordAndSends() public {
+        address base = address(0xBA5E);
+        _stranded(base, 11, 5 ether);
+        ccip.setFee(0.1 ether);
+        vm.prank(STRANGER); // permissionless: evidence is the stored record
+        _repat().sendStrandedReturn{value: 0.1 ether}(
+            base, 11, payable(STRANGER)
+        );
+        assertEq(
+            _rlens().getStrandedRecovery(base, 11).amount,
+            0,
+            "record retired"
+        );
+        assertEq(
+            _rlens().getStrandedRecoveryReserved(), 0, "earmark released"
+        );
+        assertEq(
+            _rlens().getStrandedReturnedCumulative(),
+            5 ether,
+            "outflow recorded"
+        );
+        assertEq(vpfi.balanceOf(address(diamond)), 0, "tokens left custody");
+        assertEq(vpfi.balanceOf(address(returnSender)), 0, "nothing stranded");
+        assertEq(vpfi.balanceOf(address(ccip)), 5 ether, "pulled by CCIP");
+        assertEq(ccip.lastDst(), uint256(CHAIN_BASE));
+        assertEq(
+            ccip.lastPayload(),
+            abi.encode(
+                ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
+                base,
+                uint256(11),
+                uint256(7),
+                uint256(5 ether)
+            )
+        );
+        // Retire-once: the record is gone.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.StrandedReturnNothingRecorded.selector,
+                base,
+                uint256(11)
+            )
+        );
+        _repat().sendStrandedReturn(base, 11, payable(address(this)));
+    }
+
+    function test_StrandedReturn_UnknownRecordReverts() public {
+        _armMirror();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RepatriationFacet.StrandedReturnNothingRecorded.selector,
+                address(0xBA5E),
+                uint256(99)
+            )
+        );
+        _repat().sendStrandedReturn(
+            address(0xBA5E), 99, payable(address(this))
+        );
+    }
+
+    /// Lane capacity is checked BEFORE the one-shot retire: an
+    /// over-capacity return fails retryably with the record intact.
+    function test_StrandedReturn_LaneCapacityRetryable() public {
+        address base = address(0xBA5E);
+        _stranded(base, 11, 40 ether);
+        pool.setOutbound(SEL_BASE, true, 10 ether);
+        vm.expectRevert();
+        _repat().sendStrandedReturn(base, 11, payable(address(this)));
+        assertEq(
+            _rlens().getStrandedRecovery(base, 11).amount,
+            40 ether,
+            "record intact after a failed send"
+        );
+        pool.setOutbound(SEL_BASE, true, 100 ether);
+        _repat().sendStrandedReturn(base, 11, payable(address(this)));
+        assertEq(_rlens().getStrandedRecovery(base, 11).amount, 0);
+    }
+
+    /// Receiver leg: the B1 branch decodes, forwards the tokens to the
+    /// Diamond, and the ingress credits ENTITLEMENT-BOUNDED, quarantining
+    /// the excess in the overage position and clearing the R6 gate held
+    /// by exactly this receipt.
+    function test_StrandedReturn_BaseCreditsAndClearsGate() public {
+        _armBase();
+        _mut().setRemitReservationCompRaw(11, CHAIN_ARB, 2, 4 ether);
+        _mut().setCompensationGateRaw(CHAIN_ARB, 11);
+        vpfi.mint(address(returnReceiver), 5 ether);
+        relay.relay(
+            returnReceiver,
+            CHAIN_ARB,
+            address(0),
+            abi.encode(
+                ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
+                address(diamond),
+                uint256(11),
+                uint256(7),
+                uint256(5 ether)
+            ),
+            _oneToken(5 ether)
+        );
+        (uint256 recovered, uint256 redispatched, uint256 overage) =
+            _rlens().getRecoveryPosition();
+        assertEq(recovered, 4 ether, "credited to entitlement");
+        assertEq(redispatched, 0);
+        assertEq(overage, 1 ether, "excess quarantined, not credited");
+        assertEq(_rlens().getRecoveredForReceipt(11), 4 ether);
+        assertEq(
+            _rlens().getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "return settlement cleared the gate"
+        );
+        assertEq(vpfi.balanceOf(address(diamond)), 5 ether, "tokens home");
+    }
+
+    /// Chain binding: a return authenticated from the WRONG chain cannot
+    /// consume another chain's one-shot recovery.
+    function test_StrandedReturn_WrongSourceChainRefused() public {
+        _armBase();
+        _mut().setRemitReservationCompRaw(11, CHAIN_ARB, 2, 4 ether);
+        vpfi.mint(address(returnReceiver), 4 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.StrandedReturnWrongSourceChain.selector,
+                CHAIN_OP,
+                CHAIN_ARB
+            )
+        );
+        relay.relay(
+            returnReceiver,
+            CHAIN_OP,
+            address(0),
+            abi.encode(
+                ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
+                address(diamond),
+                uint256(11),
+                uint256(7),
+                uint256(4 ether)
+            ),
+            _oneToken(4 ether)
+        );
+    }
+
+    /// Era binding: a stale-era receipt (another issuing deployment)
+    /// fails closed and re-executable — the R6e runbook's case.
+    function test_StrandedReturn_WrongEraRefused() public {
+        _armBase();
+        vpfi.mint(address(returnReceiver), 1 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.StrandedReturnWrongEra.selector,
+                address(0xDEAD)
+            )
+        );
+        relay.relay(
+            returnReceiver,
+            CHAIN_ARB,
+            address(0),
+            abi.encode(
+                ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
+                address(0xDEAD),
+                uint256(11),
+                uint256(7),
+                uint256(1 ether)
+            ),
+            _oneToken(1 ether)
+        );
+    }
 }
+

@@ -18,6 +18,7 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
+import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
@@ -2953,4 +2954,191 @@ contract RewardRemitLedgerTest is SetupTest {
 
     /// @dev Accept ETH refunds from the remit fee path.
     receive() external payable {}
+    // ── #1434 P2-w5: the recovery position + uncharged re-dispatch ────────
+
+    /// Arm this test contract as the Base return-channel "receiver" so it
+    /// can present authenticated B1 settlements to the ingress directly.
+    function _armReturnIngress() internal {
+        RepatriationFacet(address(diamond)).setRepatriationEndpoints(
+            address(0), address(this)
+        );
+    }
+
+    /// §8-5 — the full arc: charged dispatch → authenticated return
+    /// (position credited, gate cleared, NO headroom restored) → release
+    /// re-opens the day → UNCHARGED re-dispatch from the position (cap
+    /// untouched, redispatched advances, reservation stamped).
+    function test_Recovery_ReturnThenUnchargedRedispatch() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        uint256 globalAfter = rlens.getRewardBudgetRemittedGlobal();
+
+        _armReturnIngress();
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18
+        );
+        (uint256 recovered, uint256 redispatched, uint256 overage) =
+            rlens.getRecoveryPosition();
+        assertEq(recovered, 3e18, "position credited");
+        assertEq(redispatched, 0);
+        assertEq(overage, 0);
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "return settlement cleared the gate"
+        );
+        assertEq(
+            rlens.getRewardBudgetRemittedGlobal(),
+            globalAfter,
+            "the return restores NO headroom"
+        );
+
+        // Operator releases the dead reservation; the day re-opens.
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+
+        // Uncharged re-dispatch from the position.
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1e18
+        );
+        assertEq(
+            rlens.getRewardBudgetRemittedGlobal(),
+            globalAfter,
+            "cap untouched by the re-dispatch"
+        );
+        (recovered, redispatched, ) = rlens.getRecoveryPosition();
+        assertEq(redispatched, 3e18, "position consumed");
+        assertTrue(
+            rlens.getRemitReservation(2).fundedFromRecovery,
+            "reservation stamped fundedFromRecovery"
+        );
+
+        // The position is now empty: a further from-recovery draw refuses.
+        // Absolute warp - viaIR CSEs identical block.timestamp reads
+        // across vm.warp within one test frame (the warp-CSE gotcha).
+        vm.warp(30 days);
+        remit.releaseRemitReservation(2);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RecoveryPositionInsufficient.selector,
+                3e18,
+                0
+            )
+        );
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1e18
+        );
+    }
+
+    /// A released FROM-RECOVERY reservation restores neither headroom
+    /// (never charged) nor the position (tokens are physically outside
+    /// custody until the R6d ceremony brings them home).
+    function test_Recovery_ReleaseOfRedispatchRestoresNothing() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        uint256 globalAfter = rlens.getRewardBudgetRemittedGlobal();
+        _armReturnIngress();
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18
+        );
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1e18
+        );
+        vm.warp(30 days); // absolute - the warp-CSE gotcha
+        remit.releaseRemitReservation(2);
+        assertEq(
+            rlens.getRewardBudgetRemittedGlobal(),
+            globalAfter,
+            "release of an uncharged dispatch restores no headroom"
+        );
+        (, uint256 redispatched, ) = rlens.getRecoveryPosition();
+        assertEq(
+            redispatched,
+            3e18,
+            "position NOT restored by release - the ceremony's job"
+        );
+    }
+
+    /// The entitlement bound accumulates per receipt: a duplicate return
+    /// finds no headroom and lands whole in the overage quarantine.
+    function test_Recovery_DuplicateReturnQuarantinesAsOverage() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        _armReturnIngress();
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18
+        );
+        (uint256 recovered, , uint256 overage) = rlens.getRecoveryPosition();
+        assertEq(recovered, 3e18, "entitlement caps the receipt cumulative");
+        assertEq(overage, 3e18, "duplicate quarantined whole");
+        assertEq(rlens.getRecoveredForReceipt(1), 3e18);
+    }
+
+    /// Ingress auth: only the configured receiver satellite may present a
+    /// settlement; unknown reservations refuse.
+    function test_Recovery_IngressAuthAndUnknownReservation() public {
+        _finalizeDay(1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.OnlyStrandedReturnReceiver.selector,
+                address(this)
+            )
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18
+        );
+        _armReturnIngress();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.StrandedReturnUnknownReservation.selector,
+                77
+            )
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 77, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18
+        );
+    }
+
+    /// The supplemental wrapper draws the position under the same per-side
+    /// quote bound as its charged twin.
+    function test_Recovery_SupplementalFromRecovery() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        uint256 globalAfter = rlens.getRewardBudgetRemittedGlobal();
+        // Short delivery: the consumed ack reconciles funding down, and
+        // the day re-opens supplemental headroom.
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1.5e18);
+        // A separate stranded return (another chain-day's failed remit)
+        // seeded the position.
+        mutator.setRemitReservationCompRaw(90, CHAIN_ARB, 2, 2e18);
+        _armReturnIngress();
+        comp.onStrandedReturnReceived(
+            address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18
+        );
+        comp.remitSupplementalBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 1e18, 0.5e18
+        );
+        assertEq(
+            rlens.getRewardBudgetRemittedGlobal(),
+            globalAfter,
+            "supplemental re-dispatch uncharged"
+        );
+        (, uint256 redispatched, ) = rlens.getRecoveryPosition();
+        assertEq(redispatched, 1.5e18);
+        assertTrue(rlens.getRemitReservation(2).fundedFromRecovery);
+    }
+
 }

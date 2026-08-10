@@ -391,6 +391,31 @@ interface IVaipakamErrors {
     ///         (conservation proved), so its completed accumulation may
     ///         not be reset out from under the published record.
     error CompQuoteResetRefusedExactLoss(uint256 dayId);
+
+    // ── #1434 P2-w5 — the R4 stranded return + recovery position ──
+
+    /// @notice The caller is not the configured return-channel receiver.
+    error OnlyStrandedReturnReceiver(address caller);
+
+    /// @notice The return names a reservation issued by ANOTHER Base
+    ///         deployment (pre-rotation dispatch) — settles via the R6e
+    ///         rotation runbook, never here.
+    error StrandedReturnWrongEra(address remitter);
+
+    /// @notice No reservation exists under this remitId.
+    error StrandedReturnUnknownReservation(uint256 remitId);
+
+    /// @notice The authenticated source chain is not the chain this
+    ///         reservation was dispatched to (Codex #1600 r1 P1 — the
+    ///         chain binding).
+    error StrandedReturnWrongSourceChain(uint32 got, uint32 want);
+
+    /// @notice Wrong token, zero actual, or actual above declared.
+    error StrandedReturnDeliveryInvalid();
+
+    /// @notice A from-recovery dispatch exceeds the recovery position
+    ///         balance (recovered − redispatched).
+    error RecoveryPositionInsufficient(uint256 requested, uint256 available);
     /// @notice The side's conservation sum does not equal the day's folded
     ///         side total — the accumulation has not covered every entry.
     error CompQuoteIncomplete(
