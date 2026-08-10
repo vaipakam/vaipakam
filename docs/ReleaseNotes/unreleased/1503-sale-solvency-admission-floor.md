@@ -60,6 +60,15 @@ the other direction — if a position claims to be priceable but the oracle
 cannot price it, the sale is refused rather than admitted against an
 unverifiable figure.
 
+Where that failed price read is concerned, the two surfaces now also agree on
+the stated reason, not just on the refusal. Previously the buyer-facing preview
+turned a price read it could not complete into "this position is below its
+health floor", quoting nought as both the position's figure and the figure it
+had to meet — a measured shortfall that had never been measured, and a
+different reason from the one the sale itself would give. The preview now says
+the position cannot be admitted and that the reason could not be determined,
+which is what actually happened.
+
 The admission test is a cross-component read, and that has a consequence for
 upgrades rather than for users. Two of the operator scripts that refresh an
 already-deployed contract set in place reinstall a sale entry point without

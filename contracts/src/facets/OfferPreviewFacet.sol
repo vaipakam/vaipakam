@@ -190,7 +190,10 @@ contract OfferPreviewFacet {
             // genuinely "health factor below its floor"; 2-5 are weaker
             // inherited terms or a live LTV over the admission cap, and
             // reporting those as a health-factor failure would tell the buyer
-            // something false about their position (Codex #1635 r4).
+            // something false about their position (Codex #1635 r4). The
+            // `SALE_ADMISSION_UNAVAILABLE` sentinel — the classifier could not
+            // be consulted, so nothing was measured — lands on the same neutral
+            // blocked result for exactly that reason (Codex #1635 r5).
             (uint8 _saleCode, , ) = LibSaleSolvency.saleSolvency(_saleLoanId);
             if (_saleCode == 1) {
                 preview.errorCode = OfferAcceptFacet

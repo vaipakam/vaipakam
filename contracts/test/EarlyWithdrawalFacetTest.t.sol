@@ -3768,4 +3768,65 @@ contract EarlyWithdrawalFacetTest is Test {
             "preview must classify the sub-floor position"
         );
     }
+
+    /// @dev Codex #1635 r5 — an UNMEASURABLE position must not be reported as a
+    ///      measured shortfall. When the classifier itself reverts (an oracle
+    ///      that cannot price a leg the loan's flags claim is priceable), the
+    ///      guard bubbles that revert; the preview used to degrade to code 1 and
+    ///      render `SalePositionBelowSolvencyFloor` with 0/0 figures. Both
+    ///      refuse the sale, so a refusal-only assertion passes either way —
+    ///      what this test binds is that they agree on the REASON, and that the
+    ///      preview does not invent a health-factor shortfall it never measured.
+    function test_previewAccept_unpriceablePositionIsNotReportedAsBelowFloor()
+        public
+    {
+        uint256 saleOfferId = _listSaleOffer();
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector),
+            "oracle down"
+        );
+
+        OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
+            .previewAccept(saleOfferId, makeAddr("unpriceableBuyer"));
+
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleAdmissionBlocked),
+            "an unmeasurable position must block neutrally, not claim a measured HF shortfall"
+        );
+        assertTrue(
+            p.errorCode != OfferAcceptFacet.AcceptError.SalePositionBelowSolvencyFloor,
+            "preview must not name the health floor when nothing was measured"
+        );
+    }
+
+    /// @dev The other half of the same guarantee: the ACCEPT path surfaces the
+    ///      classifier's OWN failure rather than the floor error, so the two
+    ///      surfaces cannot disagree about why a sale was refused. Asserting the
+    ///      exact bubbled data — not a bare `expectRevert` — is the point: a
+    ///      bare one would pass even if the guard reported a fabricated
+    ///      health-factor shortfall, which is the bug being excluded.
+    function test_acceptSaleVehicle_unpriceablePositionBubblesClassifierFailure()
+        public
+    {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("unpriceableAcceptBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector),
+            "oracle down"
+        );
+
+        // The classifier's own failure, NOT SalePositionBelowSolvencyFloor: the
+        // guard fails closed without inventing a measured figure.
+        vm.expectRevert(bytes("oracle down"));
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
 }

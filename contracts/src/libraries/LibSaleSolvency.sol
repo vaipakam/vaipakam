@@ -42,6 +42,15 @@ import {RiskPreviewFacet} from "../facets/RiskPreviewFacet.sol";
  *         declared here so they surface in the calling facets' ABIs.
  */
 library LibSaleSolvency {
+    /// @notice Sentinel returned by `saleSolvency` when the classifier itself
+    ///         could not be consulted — an unpriceable position, or the
+    ///         selector not being routed at all. NOT a measured refusal: it
+    ///         says "not admissible, and the reason was not measurable", which
+    ///         is a different statement from any of the classifier's codes.
+    ///         Deliberately outside the classifier's 0-5 range so a new code
+    ///         can never collide with it (Codex #1635 r5).
+    uint8 internal constant SALE_ADMISSION_UNAVAILABLE = type(uint8).max;
+
     /// @notice The position's live Health Factor is below the floor its own
     ///         admission required. Carries both figures so a frontend can
     ///         render "HF 1.21 — sale requires 1.50" without a second read.
@@ -99,10 +108,12 @@ library LibSaleSolvency {
      *         re-derived the rules would eventually quote a sale as fine and
      *         let the accept revert, which is the failure this change exists
      *         to remove, reintroduced one layer down.
-     * @return code  The classifier's code, verbatim — 0 admissible. Returned
-     *         rather than collapsed to a bool so a preview can name the ACTUAL
-     *         reason: reporting "health factor below floor" for what is really
-     *         a weaker-inherited-terms or over-cap refusal would tell the buyer
+     * @return code  The classifier's code, verbatim — 0 admissible — or
+     *         `SALE_ADMISSION_UNAVAILABLE` when the classifier could not be
+     *         consulted at all. Returned rather than collapsed to a bool so a
+     *         preview can name the ACTUAL reason: reporting "health factor
+     *         below floor" for what is really a weaker-inherited-terms refusal,
+     *         an over-cap refusal, or a failed price read would tell the buyer
      *         something false about their own position.
      * @return a The position's figure for the failing check, else 0.
      * @return b The figure it must meet, else 0.
@@ -112,16 +123,23 @@ library LibSaleSolvency {
         view
         returns (uint8 code, uint256 a, uint256 b)
     {
-        // Preview must never revert the caller's whole read, so an unpriceable
-        // position degrades here — reported as NOT admissible, matching what
-        // the guard would do to the transaction (fail closed).
+        // Preview must never revert the caller's whole read, so a classifier
+        // that reverts degrades here rather than taking the surrounding read
+        // down with it.
         (bool ok, bytes memory ret) = address(this).staticcall(
             abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector, loanId)
         );
-        // An unpriceable position that claims to be priceable degrades to code
-        // 1 (below floor) — fail closed, matching what the guard does to the
-        // transaction.
-        if (!ok || ret.length < 96) return (1, 0, 0);
+        // Codex #1635 r5 — this used to degrade to code 1, which the preview
+        // renders as `SalePositionBelowSolvencyFloor`. That was wrong twice
+        // over: it asserted a MEASURED health-factor shortfall (with 0/0 as the
+        // figures) when nothing had been measured, and it diverged from the
+        // guard, which does NOT map an oracle failure onto the floor error —
+        // `assertSaleSolvent` bubbles the classifier's own revert. Both agree
+        // the sale is refused; only the stated reason differed, and the preview
+        // told the buyer something false about their position. The sentinel
+        // keeps "refused" and drops the invented cause: the caller maps it onto
+        // its neutral blocked result.
+        if (!ok || ret.length < 96) return (SALE_ADMISSION_UNAVAILABLE, 0, 0);
         return abi.decode(ret, (uint8, uint256, uint256));
     }
 }
