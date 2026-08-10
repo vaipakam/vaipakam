@@ -1,15 +1,32 @@
 /**
  * live-ux-sweep.mjs — whole-site UI/UX evidence sweep for review sessions.
  *
- * NOT a pass/fail driver: it gathers the raw evidence a UI/UX review
- * needs — full-page screenshots of EVERY route (desktop + mobile in
- * Basic mode, desktop again in Advanced), the console stream, failed /
- * slow / heavy network calls, and basic landmarks (title, h1 count,
- * horizontal-overflow probe) — into e2e/live/shots/ux-sweep/ plus one
- * report.json. A reviewer (human or agent) then reads the artifacts
- * and writes the findings doc (docs/FindingsAndFixes/…). Committing
- * the sweep keeps periodic UX audits reproducible instead of being
- * rebuilt in a scratchpad each time.
+ * Mostly an EVIDENCE generator, with two verdicts. It gathers what a
+ * UI/UX review needs — full-page screenshots of EVERY route (desktop +
+ * mobile in Basic mode, desktop again in Advanced), the console stream,
+ * failed / slow / heavy network calls, and basic landmarks (title, h1
+ * count, horizontal-overflow probe) — into e2e/live/shots/ux-sweep/
+ * plus one report.json. A reviewer (human or agent) then reads the
+ * artifacts and writes the findings doc (docs/FindingsAndFixes/…).
+ * Committing the sweep keeps periodic UX audits reproducible instead of
+ * being rebuilt in a scratchpad each time.
+ *
+ * What a PASS from this drive promises (#1626, owner decision
+ * 2026-08-09): the sweep stayed read-only, AND every route it was asked
+ * to visit actually loaded. Console errors, slow responses, heavy
+ * payloads and overflow probes stay evidence and do not fail the run —
+ * they are judgements a reviewer makes from the artifacts. A route that
+ * never loaded is not a judgement: there is no artifact to read, and a
+ * PASS row in the batch would claim coverage the run does not have.
+ *
+ * Timeouts count, and that was argued. The case against: a 45 s budget
+ * against a live testnet makes some timeouts environmental, and turning
+ * those into batch failures re-creates the habitual-red problem #1581
+ * exists to remove. The case that won: a route that cannot load inside
+ * 45 s is a finding whoever caused it, and burying it in a report
+ * nobody opens is how it stays one. If transient timeouts do become
+ * habitual red, the fix is a smarter wait or an honest budget — not an
+ * exit code that overstates the run.
  *
  * Run (from apps/alpha02/e2e/live/):
  *   TESTNET_WALLETS_FILE=~/secrets/wallets.json node live-ux-sweep.mjs
@@ -325,6 +342,16 @@ report.startedAt = new Date().toISOString();
 // observed yet, so exiting is honest and costs no evidence.
 for (const s of activeSessions) addressOf(s.role);
 const allBlockedRequests = [];
+// Routes that never loaded, across every session and pass. Accumulated
+// as they happen rather than derived from `report` at the end, for the
+// same reason `allBlockedRequests` is: a session that dies part-way
+// still contributes what it saw.
+const allNavFailures = [];
+// Denominator for the route tally. Counted rather than computed from
+// `routes.length × passes` because the route list is per-session (the
+// chain-scoped and disconnected sessions visit fewer) and can grow at
+// runtime when the loan-detail route is harvested.
+let routesAttempted = 0;
 // Sessions whose browser never started. Reported at the end rather than
 // exited on, so a finding from a session that DID run still wins.
 const setupFailures = [];
@@ -504,6 +531,7 @@ for (const pass of session.passes) {
       network: { responses: 0, bytes: 0, errors: [], failed: [], heavy: [] },
     };
     const started = Date.now();
+    routesAttempted += 1;
     let navError = null;
     try {
       await page.goto(`${SITE}${route}`, { waitUntil: 'load', timeout: 45_000 });
@@ -565,11 +593,25 @@ for (const pass of session.passes) {
       pageErrors: sink.pageErrors,
       network: sink.network,
     });
+    if (navError !== null) {
+      allNavFailures.push({
+        session: session.key,
+        pass: pass.name,
+        route,
+        loadMs,
+        error: navError,
+      });
+    }
     // eslint-disable-next-line no-console
     console.log(
       `[${pass.name}] ${route} — ${loadMs}ms, ${sink.network.responses} responses, ` +
         `${sink.network.errors.length} http-errors, ` +
-        `${sink.console.filter((c) => c.level === 'error' && !c.noise).length} real console errors`,
+        `${sink.console.filter((c) => c.level === 'error' && !c.noise).length} real console errors` +
+        // Say it HERE too, not only in the end-of-run tally. A failed
+        // route otherwise reads as a fast, quiet, clean visit in the
+        // live stream — "18ms, 0 responses, 0 errors" — which is the
+        // opposite of what happened.
+        (navError === null ? '' : ' — DID NOT LOAD'),
     );
     sink = null;
   }
@@ -593,12 +635,30 @@ await done().catch(() => {});
 // write; a non-empty list means some surface tried to mutate state
 // during a read-only audit — surface it loudly in report + exit code.
 report.blockedWriteRequests = allBlockedRequests;
+report.navigationFailures = allNavFailures;
+report.routesAttempted = routesAttempted;
 report.backgroundNetwork = backgroundNetworkBySession;
 
 const reportName = PROBE_ONLY ? 'report-devtools.json' : 'report.json';
 fs.writeFileSync(path.join(OUT_DIR, reportName), JSON.stringify(report, null, 2));
 // eslint-disable-next-line no-console
 console.log(`\nSweep complete → ${path.relative(process.cwd(), OUT_DIR)}/${reportName}`);
+// Printed on EVERY run, not only the failing ones. A tally that appears
+// solely when something broke tells the reader nothing about how much a
+// green run actually covered, and "0 did not load" is the line that
+// makes a PASS mean something (#1626).
+// eslint-disable-next-line no-console
+console.log(
+  `Routes: ${routesAttempted - allNavFailures.length}/${routesAttempted} loaded, ` +
+    `${allNavFailures.length} did NOT load`,
+);
+for (const f of allNavFailures) {
+  // eslint-disable-next-line no-console
+  console.error(
+    `  NAV FAIL [${f.session}/${f.pass}] ${f.route} after ${f.loadMs}ms — ` +
+      `${f.error.split('\n')[0]}`,
+  );
+}
 if (allBlockedRequests.length > 0) {
   // eslint-disable-next-line no-console
   console.error(
@@ -615,7 +675,23 @@ if (allBlockedRequests.length > 0) {
 // precedence live-recover-locales.mjs applies: reporting BLOCKED here
 // would discard a proven write attempt because some later session's
 // browser would not start.
-if (allBlockedRequests.length > 0) process.exit(1);
+//
+// A route that never loaded joins that branch (#1626). It is the same
+// kind of verdict for the same reason — the run observed something
+// wrong with the app, and it outranks a session that never started, so
+// it is checked BEFORE the exit-2 branch below.
+if (allBlockedRequests.length > 0 || allNavFailures.length > 0) {
+  if (allNavFailures.length > 0) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `NAVIGATION FAILURES: ${allNavFailures.length} of ${routesAttempted} route visit(s)` +
+        ` never loaded — see navigationFailures in the report. Those routes have NO` +
+        ` screenshot, landmarks or devtools evidence, so the sweep cannot claim to have` +
+        ` covered them.`,
+    );
+  }
+  process.exit(1);
+}
 if (setupFailures.length > 0) {
   console.error(
     `\nBLOCKED: ${setupFailures.length} of ${activeSessions.length} session(s)` +
