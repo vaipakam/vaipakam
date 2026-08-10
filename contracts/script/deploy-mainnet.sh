@@ -1144,6 +1144,33 @@ compensation is unreachable. Set it in .env (or export it) and re-run.
 EOF
     exit 1
   fi
+  # #1636 r5 — nonemptiness is not coverage: the registry must name
+  # EXACTLY the expected mirror set (REWARD_EXPECTED_SOURCE_CHAIN_IDS
+  # minus canonical Base itself), with no omissions and no duplicates —
+  # an omitted lane's quotes revert CompQuoteMirrorEraUnset forever while
+  # the phase marker reads success.
+  if [ "$IS_CANONICAL" = "1" ]; then
+    if [ -z "${REWARD_EXPECTED_SOURCE_CHAIN_IDS:-}" ]; then
+      echo "FAIL: REWARD_EXPECTED_SOURCE_CHAIN_IDS is required on canonical Base (the mirror-registry coverage reference)." >&2
+      exit 1
+    fi
+    MIRROR_IDS=$(echo "$MIRROR_REWARD_DEPLOYMENTS" | tr ',' '\n' | cut -d: -f1 | sort -n)
+    DUP_IDS=$(echo "$MIRROR_IDS" | uniq -d)
+    if [ -n "$DUP_IDS" ]; then
+      echo "FAIL: MIRROR_REWARD_DEPLOYMENTS contains duplicate chain id(s): $(echo "$DUP_IDS" | tr '\n' ' ')" >&2
+      exit 1
+    fi
+    EXPECTED_MIRROR_IDS=$(echo "$REWARD_EXPECTED_SOURCE_CHAIN_IDS" | tr ',' '\n' | grep -v "^${BASE_CHAIN_ID}\$" | sort -n)
+    if [ "$MIRROR_IDS" != "$EXPECTED_MIRROR_IDS" ]; then
+      {
+        echo "FAIL: MIRROR_REWARD_DEPLOYMENTS chain set does not match the expected mirror set"
+        echo "  registry ids: $(echo "$MIRROR_IDS" | tr '\n' ' ')"
+        echo "  expected ids: $(echo "$EXPECTED_MIRROR_IDS" | tr '\n' ' ')  (REWARD_EXPECTED_SOURCE_CHAIN_IDS minus ${BASE_CHAIN_ID})"
+      } >&2
+      exit 1
+    fi
+    echo "  ✓ Mirror-registry coverage matches the expected source set"
+  fi
   # DeployCrosschain records the reward contract under `.rewardMessenger`.
   # Hand ConfigureRewardReporter that address explicitly via the legacy
   # env-var name `REWARD_OAPP_PROXY` (kept for back-compat). Pre-PR-#272

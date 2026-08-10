@@ -829,6 +829,19 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
+        // #1636 r5 — the FUNDING path holds the same ground truth: the
+        // retired era's standing quote must not fund the current mirror
+        // during the rotation window (expected = eraB, standing = eraA).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompQuoteEraMismatch.selector,
+                1,
+                CHAIN_ARB,
+                eraB,
+                eraA
+            )
+        );
+        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
         com.clearCompQuote(1, CHAIN_ARB);
         rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
         assertEq(com.getCompQuote(1, CHAIN_ARB).era, eraB, "re-bound");

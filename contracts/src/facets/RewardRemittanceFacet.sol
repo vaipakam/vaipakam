@@ -1812,6 +1812,20 @@ contract RewardRemittanceFacet is
             if (q.receivedAt == 0) {
                 revert CompensationNotQuoted(dayId, dstChainId);
             }
+            // #1636 r5 — the funding path holds the SAME era ground truth
+            // the ingress does: after a registry rotation, an unfunded
+            // quote standing under the RETIRED mirror must not fund the
+            // current one (its state did not produce the evidence) — the
+            // operator clears it and the new era re-quotes. Also fails
+            // closed while the registry is unset for this chain.
+            {
+                address expected = s.mirrorRewardDeployment[dstChainId];
+                if (q.era != expected || expected == address(0)) {
+                    revert CompQuoteEraMismatch(
+                        dayId, dstChainId, expected, q.era
+                    );
+                }
+            }
             if (lenderAmount18 > q.lender18 || borrowerAmount18 > q.borrower18)
             {
                 revert CompensationExceedsQuote(

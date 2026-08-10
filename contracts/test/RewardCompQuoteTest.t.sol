@@ -138,6 +138,12 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         _mut().setRewardEntryEndDayRaw(e3, 10);
     }
 
+    /// @dev Dispatch the day's quote (stamps `compQuoteSentAt` — the
+    ///      r5 completeness evidence the pricing ladder gates on).
+    function _dispatchQuote() internal {
+        _com().quoteZeroedDayCompensation(DAY, payable(address(this)));
+    }
+
     function _ids3(
         uint256 a,
         uint256 b,
@@ -440,6 +446,7 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         _configureMirror();
         _zeroedDayG0();
         _accumulateAllLender();
+        _dispatchQuote();
         // Funded exactly to the side quote (20e18 lender, 0 borrower).
         _mut().setDayCompensationRaw(DAY, 20e18, 0, true, false);
 
@@ -467,6 +474,7 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         _configureMirror();
         _zeroedDayG0();
         _accumulateAllLender();
+        _dispatchQuote();
         // One wei short of the 20e18 side quote.
         _mut().setDayCompensationRaw(DAY, 20e18 - 1, 0, true, false);
         assertEq(
@@ -474,10 +482,36 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    function test_ladder_undispatchedQuote_defers() public {
+        // #1636 r5 — the quoted sums are trustworthy only once DISPATCH's
+        // conservation proof ran: an undispatched accumulation is partial
+        // (would open the gate below the real liability), and a pre-w3
+        // compensated day has no accumulation at all (a zero quote would
+        // declare any w2 remit "fully funded"). Both defer on the same
+        // evidence gate, fully funded pools notwithstanding.
+        _configureMirror();
+        _zeroedDayG0();
+        _accumulateAllLender(); // complete — but never dispatched
+        _mut().setDayCompensationRaw(DAY, 20e18, 0, true, false);
+        assertEq(
+            _mut().advanceCumThroughRaw(L, DAY),
+            0,
+            "no dispatch stamp, no crossing"
+        );
+        // The pre-w3 shape exactly: compensated with ZERO accumulation.
+        _com().resetCompQuoteAccumulation(DAY, L);
+        assertEq(
+            _mut().advanceCumThroughRaw(L, DAY),
+            0,
+            "pre-w3 compensated day defers until quote evidence exists"
+        );
+    }
+
     function test_ladder_provisionalCompensation_defers() public {
         _configureMirror();
         _zeroedDayG0();
         _accumulateAllLender();
+        _dispatchQuote();
         // Fully funded but era-provisional: not priced until its V3
         // broadcast settles which era governs.
         _mut().setDayCompensationRaw(DAY, 20e18, 0, true, true);
@@ -502,6 +536,7 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         _configureMirror();
         _zeroedDayG0();
         _accumulateAllLender();
+        _dispatchQuote();
         // Day 2: a zeroed day with NO local demand, resolved-zero through
         // the PRODUCTION writer (the (0,0) dispatch).
         uint256 d2 = 2;
@@ -546,6 +581,7 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         _configureMirror();
         _zeroedDayG0();
         (uint256 e1, , ) = _accumulateAllLender();
+        _dispatchQuote();
         _mut().setDayCompensationRaw(DAY, 20e18, 0, true, false);
         assertEq(_mut().advanceCumThroughRaw(L, DAY), DAY, "fold crossed");
 
@@ -594,7 +630,9 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         assertEq(delta, 0, "open: no figure");
         assertFalse(priceable, "open: report must wait");
 
-        // Funded compensation: reports the same Dq the fold prices.
+        // Funded compensation (quote dispatched — the r5 completeness
+        // evidence): reports the same Dq the fold prices.
+        _dispatchQuote();
         _mut().setDayCompensationRaw(DAY, 20e18, 0, true, false);
         (delta, priceable) = _mut().dailyDeltaForCommitmentRaw(L, DAY);
         assertEq(delta, 0.2e18, "funded: Dq");

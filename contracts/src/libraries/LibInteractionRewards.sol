@@ -1113,6 +1113,18 @@ library LibInteractionRewards {
         if (s.dayLapsed[d]) return (true, 0, 0, false, false);
         LibVaipakam.DayCompensation storage dc = s.dayCompensation[d];
         if (s.dayShortLapsed[d] || (dc.compensated && !dc.provisional)) {
+            // #1636 r5 — the quoted sums are trustworthy ONLY once the
+            // quote DISPATCHED: dispatch is where the conservation proof
+            // runs, so an undispatched `compQuoteAccum18` is either a
+            // partial sum (mid-accumulation — comparing against it would
+            // open the gate below the real liability) or zero (a pre-w3
+            // compensated day, where a zero quote would declare ANY w2
+            // operator-sized remit "fully funded" and let settlement
+            // consume unrelated custody). Defer until the day's quote
+            // evidence is complete — permissionlessly healable on a
+            // pre-w3 day by running the accumulator + dispatch (the
+            // wire's Base-side fate is irrelevant to mirror pricing).
+            if (s.compQuoteSentAt[d] == 0) return (true, 0, 0, true, false);
             // The funding gate: this side's delivered pool must cover this
             // side's own quoted sum (the accumulator's capped Σ rawPay,
             // complete by the dispatch-time conservation proof). Base's

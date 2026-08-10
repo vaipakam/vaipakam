@@ -615,6 +615,22 @@
   },
   {
     "type": "error",
+    "name": "CompQuoteResolvedZeroFinal",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CompensationDayHasNoClock",
     "inputs": [
       {
