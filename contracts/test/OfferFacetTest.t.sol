@@ -56,6 +56,8 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -265,6 +267,18 @@ contract OfferFacetTest is Test {
         // not cut RiskFacet, so set it via the test mutator.
         TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockERC20, 8000);
         TestMutatorFacet(address(diamond)).setLoanInitMaxLtvBpsRaw(mockCollateralERC20, 8000);
+        // #1503 PR-E — accepting a SALE VEHICLE now runs the sale-admission
+        // classification (`LibSaleSolvency` → `RiskPreviewFacet`).
+        // This bespoke diamond does not cut it (see the note above), so the
+        // sale-path tests would fail on `FunctionDoesNotExist` rather than on
+        // anything they assert. Mocked healthy — the solvency floor's own
+        // behaviour is covered in `EarlyWithdrawalFacetTest`, and a test added
+        // HERE that expects the floor to BLOCK would need this mock removed.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector),
+            abi.encode(uint8(0), uint256(0), uint256(0))
+        );
 
         console.log("completed Setup Function");
     }

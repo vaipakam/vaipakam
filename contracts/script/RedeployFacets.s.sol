@@ -18,6 +18,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 
@@ -61,8 +62,24 @@ contract RedeployFacets is Script {
         // env fallback. Replaces the previous unprefixed `DIAMOND_ADDRESS`
         // env which was inconsistent with sibling scripts and risked
         // broadcasting against the wrong Diamond if env state was stale.
-        address diamond = Deployments.readDiamond();
+        runWith(Deployments.readDiamond(), deployerKey);
+    }
 
+    /**
+     * @notice Parameterised entry — same body as {run}, with the target and the
+     *         signer passed in rather than read from the environment.
+     *
+     * @dev    #1649. Exists so `PartialRefreshRoutingTest` can drive this script
+     *         against a Diamond it built in-process. The alternative,
+     *         `vm.setEnv`, writes the PROCESS environment shared by every
+     *         parallel test thread, so two tests refreshing different Diamonds
+     *         would clobber each other mid-broadcast — the same race
+     *         `DeployDiamond.runWith` was introduced to avoid. Production
+     *         invocation is unchanged: {run} reads the env and calls straight
+     *         through here, so the test exercises the real cut assembly rather
+     *         than a copy of it.
+     */
+    function runWith(address diamond, uint256 deployerKey) public {
         console.log("Diamond:", diamond);
 
         vm.startBroadcast(deployerKey);
@@ -113,6 +130,15 @@ contract RedeployFacets is Script {
         // old fail-open bytecode while the rest of the movement surface is upgraded.
         VaipakamNFTFacet nftFacet = new VaipakamNFTFacet();
         VaultFactoryFacet vaultFactoryFacet = new VaultFactoryFacet();
+        // #1649 — #1503 gave both `EarlyWithdrawalFacet` sale entry points
+        // (`sellLoanViaBuyOffer`, `createLoanSaleOffer`) a cross-facet call to
+        // `RiskPreviewFacet.saleAdmission`. That selector is NEW, so refreshing
+        // EarlyWithdrawalFacet alone would install sale code that calls an
+        // unrouted selector — every sale reverting `FunctionDoesNotExist`
+        // through the fallback, with the new bytecode live. Deploy the
+        // classifier's host alongside and cut its selectors (partitioned by
+        // routing below), exactly as #658 does for ConsolidationFacet.
+        RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
@@ -125,6 +151,7 @@ contract RedeployFacets is Script {
         console.log("RiskMatchLiquidation: ", address(riskMatchFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
         console.log("ConsolidationFacet:   ", address(consolidationFacet));
+        console.log("RiskPreviewFacet:     ", address(riskPreviewFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -177,6 +204,13 @@ contract RedeployFacets is Script {
             _partitionByRouting(diamond, FacetSelectors.vaipakamNFT());
         (bytes4[] memory vfToAdd, bytes4[] memory vfToReplace) =
             _partitionByRouting(diamond, FacetSelectors.vaultFactory());
+        // #1649 — the sale classifier's host. On a pre-#1503 diamond the seven
+        // older preview selectors are routed (Replace) and `saleAdmission` is
+        // not (Add); on a current one all eight are routed. The partition makes
+        // one script correct against both, and the Add is the half that keeps a
+        // refreshed EarlyWithdrawalFacet's sale paths from reverting.
+        (bytes4[] memory rpToAdd, bytes4[] memory rpToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.riskPreview());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
@@ -185,6 +219,7 @@ contract RedeployFacets is Script {
             (profToAdd.length > 0 ? 1 : 0) + (profToReplace.length > 0 ? 1 : 0) +
             (nftToAdd.length > 0 ? 1 : 0) + (nftToReplace.length > 0 ? 1 : 0) +
             (vfToAdd.length > 0 ? 1 : 0) + (vfToReplace.length > 0 ? 1 : 0) +
+            (rpToAdd.length > 0 ? 1 : 0) + (rpToReplace.length > 0 ? 1 : 0) +
             (profToRemove.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](8 + nExtra);
@@ -256,6 +291,15 @@ contract RedeployFacets is Script {
         if (vfToAdd.length > 0) {
             cuts[idx++] = _add(address(vaultFactoryFacet), vfToAdd);
         }
+        // #1649 — route the sale classifier. The Add branch is the one that
+        // matters on a pre-#1503 diamond: without it the refreshed
+        // EarlyWithdrawalFacet above would be live and every sale would revert.
+        if (rpToReplace.length > 0) {
+            cuts[idx++] = _replace(address(riskPreviewFacet), rpToReplace);
+        }
+        if (rpToAdd.length > 0) {
+            cuts[idx++] = _add(address(riskPreviewFacet), rpToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
@@ -269,6 +313,8 @@ contract RedeployFacets is Script {
         console.log("  Claim selectors added:", claimToAdd.length);
         console.log("  Claim selectors repl.:", claimToReplace.length);
         console.log("  Legacy uint8 keeper selectors removed:", profToRemove.length);
+        console.log("  RiskPreview selectors added: ", rpToAdd.length);
+        console.log("  RiskPreview selectors repl.: ", rpToReplace.length);
     }
 
     function _replace(address facet, bytes4[] memory selectors)

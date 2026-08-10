@@ -806,6 +806,22 @@
   },
   {
     "type": "error",
+    "name": "CompFundedSeedInvalid",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CompQuoteAlreadyDispatched",
     "inputs": [
       {
@@ -967,6 +983,17 @@
   },
   {
     "type": "error",
+    "name": "CompQuoteResetRefusedExactLoss",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CompQuoteResolvedZeroFinal",
     "inputs": [
       {
@@ -1034,6 +1061,22 @@
       },
       {
         "name": "quotedBorrower18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompensationGateHeld",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "outstandingRemitId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1478,6 +1521,77 @@
   },
   {
     "type": "error",
+    "name": "LapseDayAlreadyTerminal",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseDayClockMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseDayCompensated",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseDayLocalCloseMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseDayNotExpired",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiry",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseDayNotZeroed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "LapseScheduleMarginViolated",
     "inputs": [
       {
@@ -1494,6 +1608,16 @@
   },
   {
     "type": "error",
+    "name": "LapseTerminalsAlreadyArmed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LapseTerminalsNotArmed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LapseWindowOutOfBounds",
     "inputs": [
       {
@@ -1506,6 +1630,39 @@
   {
     "type": "error",
     "name": "LegacyBroadcastRetired",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LegacyDayNotStampable",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LegacyReceiptUnusable",
+    "inputs": [
+      {
+        "name": "receiptKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LegacyStampQuoteMissing",
     "inputs": [
       {
         "name": "dayId",
@@ -2127,6 +2284,66 @@
   },
   {
     "type": "error",
+    "name": "ShortLapseClockAlreadyArmed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseClockUnarmed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseDeadlineNotReached",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseNotCompensated",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseNotShort",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SiblingParallelSaleListingLive",
     "inputs": [
       {
@@ -2145,6 +2362,54 @@
     "type": "error",
     "name": "SourceChainIdNotExpected",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SupplementalDayNotClosed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SupplementalFundedRecordMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SupplementalReservationNotAcked",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",

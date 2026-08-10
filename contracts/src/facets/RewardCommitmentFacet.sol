@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibCommitmentReport} from "../libraries/LibCommitmentReport.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -529,6 +530,17 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         if (!s.dayPoolStamp[dayId].stamped) {
             revert CompQuoteDayPoolStampMissing(dayId);
         }
+    }
+
+    /// @dev #1656 r1 — the LAPSE refusal applies to DISPATCH only: a
+    ///      lapsed day's ACCUMULATION stays open so the partial R6a loss
+    ///      record can complete (the natspec's refinability promise);
+    ///      dispatching a lapsed day's quote stays refused — its funding
+    ///      window is over.
+    function _assertNotLapsed(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) private view {
         if (s.dayLapsed[dayId] || s.dayShortLapsed[dayId]) {
             revert CompQuoteDayLapsed(dayId);
         }
@@ -620,6 +632,31 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         s.compQuoteEntryCursor[dayId][sideKey] = cursor;
         s.compQuoteAccum18[dayId][sideKey] += quoteAdd;
         s.compQuoteConservation18[dayId][sideKey] += conservationAdd;
+        // #1656 r11 — the covering-entry count feeds the short-lapse
+        // scaled arm's rounding shave (each covering entry's window-
+        // floored marginal can exceed its exact share by ≤1 wei).
+        s.compQuoteEntryCount[dayId][sideKey] += n;
+        // #1656 r1 — a FULL-lapsed day's partial loss record refines as
+        // the permissionless accumulation completes (the R6a promise):
+        // figures track the accums, and the partial flag clears once the
+        // conservation proof holds on both sides.
+        if (s.dayLapsed[dayId]) {
+            LibVaipakam.LapsedDayLoss storage loss = s.lapsedDayLoss[dayId];
+            if (loss.recorded && loss.partialFigure) {
+                uint8 lKey = uint8(LibVaipakam.RewardSide.Lender);
+                uint8 bKey = uint8(LibVaipakam.RewardSide.Borrower);
+                loss.lender18 = s.compQuoteAccum18[dayId][lKey];
+                loss.borrower18 = s.compQuoteAccum18[dayId][bKey];
+                if (
+                    s.compQuoteConservation18[dayId][lKey]
+                        == s.totalLenderInterestNumeraire18[dayId]
+                        && s.compQuoteConservation18[dayId][bKey]
+                            == s.totalBorrowerInterestNumeraire18[dayId]
+                ) {
+                    loss.partialFigure = false;
+                }
+            }
+        }
         emit CompQuoteBatchAccumulated(
             dayId,
             sideKey,
@@ -654,11 +691,23 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         if (s.compQuoteSentAt[dayId] != 0) {
             revert CompQuoteAlreadyDispatched(dayId);
         }
+        // #1656 r11 — an EXACT lapse loss (conservation proved on both
+        // sides) is final: accumulation is complete, so no parked-cursor
+        // recovery remains to perform, and a reset would orphan the
+        // published record (the refinement hook runs only while the
+        // figure is marked partial). Partial records stay resettable —
+        // that IS the parked-cursor recovery, and the partial flag
+        // labels the transiently-regressing figure approximate.
+        LibVaipakam.LapsedDayLoss storage lossR = s.lapsedDayLoss[dayId];
+        if (lossR.recorded && !lossR.partialFigure) {
+            revert CompQuoteResetRefusedExactLoss(dayId);
+        }
         // Enum bounds-check reverts a side outside {0,1}.
         uint8 sideKey = uint8(LibVaipakam.RewardSide(side));
         s.compQuoteEntryCursor[dayId][sideKey] = 0;
         s.compQuoteAccum18[dayId][sideKey] = 0;
         s.compQuoteConservation18[dayId][sideKey] = 0;
+        s.compQuoteEntryCount[dayId][sideKey] = 0;
         emit CompQuoteAccumulationReset(dayId, sideKey);
     }
 
@@ -684,6 +733,7 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     ) external payable returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertQuotableDay(s, dayId);
+        _assertNotLapsed(s, dayId);
 
         uint256 lTotal = s.totalLenderInterestNumeraire18[dayId];
         uint256 bTotal = s.totalBorrowerInterestNumeraire18[dayId];
@@ -933,5 +983,401 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     ///         the ordinary walk).
     function getDayResolvedZero(uint256 dayId) external view returns (bool) {
         return LibVaipakam.storageSlot().dayResolvedZero[dayId];
+    }
+
+    // ─── #1434 P2-w4 — the lapse terminals (§3, §2.5) + legacy stamp ────────
+
+    /// @notice #1434 P2-w4 (§3 R2) — a never-compensated zeroed day passed
+    ///         its frozen expiry and retired at zero; the loss was recorded.
+    /// @custom:event-category informational/reward-compensation
+    event ZeroedDayLapsed(
+        uint256 indexed dayId,
+        uint256 lossLender18,
+        uint256 lossBorrower18,
+        bool partialFigure
+    );
+
+    /// @notice #1434 P2-w4 (§2.5 R1c) — a funded-below-quote day passed its
+    ///         bounded deadline; pricing switched to the pool-scaled delta.
+    /// @custom:event-category informational/reward-compensation
+    event ShortCompensatedDayLapsed(
+        uint256 indexed dayId,
+        uint256 shortfallLender18,
+        uint256 shortfallBorrower18
+    );
+
+    /// @notice #1434 P2-w4 (constraint-19) — a pre-P2 legacy receipt was
+    ///         allocated pro-rata to the day's quoted sides and stamped as
+    ///         its compensation.
+    /// @custom:event-category informational/reward-compensation
+    event LegacyCompensationStamped(
+        uint256 indexed dayId,
+        bytes32 indexed receiptKey,
+        uint256 lenderShare18,
+        uint256 borrowerShare18
+    );
+
+    /// @dev Shared terminal-standing gate: every w4 terminal is monotone
+    ///      and mutually exclusive with the others (and with resolved-zero,
+    ///      whose "loss" does not exist).
+    function _assertNoTerminal(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) private view {
+        if (
+            s.dayLapsed[dayId] || s.dayShortLapsed[dayId]
+                || s.dayResolvedZero[dayId]
+        ) {
+            revert LapseDayAlreadyTerminal(dayId);
+        }
+    }
+
+    /// @dev §5.2 R6a — record the loss from the best figure available at
+    ///      the terminal, NEVER by scanning inline (an unbounded per-entry
+    ///      scan could exceed the gas limit and make the guaranteed
+    ///      terminal itself revert). Full lapse: the quoted sums when the
+    ///      quote completed (dispatch stamped), else the accumulator's
+    ///      partial progress flagged `partialFigure` (zero-with-flag when
+    ///      nothing accumulated) — completable afterwards through the same
+    ///      permissionless accumulator, whose figure may overwrite via
+    ///      re-invocation of this record being non-blocking state only.
+    ///      Short lapse: the funded-vs-quoted per-side shortfall (the
+    ///      quote is complete by the terminal's own precondition).
+    function _recordLapseLoss(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        bool shortLapse
+    ) private returns (uint256 lossL, uint256 lossB, bool partialFigure) {
+        uint256 qL =
+            s.compQuoteAccum18[dayId][uint8(LibVaipakam.RewardSide.Lender)];
+        uint256 qB =
+            s.compQuoteAccum18[dayId][uint8(LibVaipakam.RewardSide.Borrower)];
+        if (shortLapse) {
+            LibVaipakam.DayCompensation storage dc =
+                s.dayCompensation[dayId];
+            uint256 pL = uint256(dc.lenderPool18);
+            uint256 pB = uint256(dc.borrowerPool18);
+            lossL = qL > pL ? qL - pL : 0;
+            lossB = qB > pB ? qB - pB : 0;
+        } else {
+            lossL = qL;
+            lossB = qB;
+            // #1656 r8 - completeness from the CONSERVATION identities,
+            // not the dispatch stamp: a fully-accumulated but never-
+            // dispatched day has an exact figure (and no refinement
+            // hook left to clear a false partial - dispatch is refused
+            // after the lapse).
+            partialFigure = !(
+                s.compQuoteConservation18[
+                    dayId
+                ][uint8(LibVaipakam.RewardSide.Lender)]
+                    == s.totalLenderInterestNumeraire18[dayId]
+                    && s.compQuoteConservation18[
+                        dayId
+                    ][uint8(LibVaipakam.RewardSide.Borrower)]
+                        == s.totalBorrowerInterestNumeraire18[dayId]
+            );
+        }
+        s.lapsedDayLoss[dayId] = LibVaipakam.LapsedDayLoss({
+            lender18: lossL,
+            borrower18: lossB,
+            partialFigure: partialFigure,
+            shortLapse: shortLapse,
+            recorded: true
+        });
+    }
+
+    /**
+     * @notice #1434 P2-w4 (§3 R2) — the FULL lapse terminal: a
+     *         deliberately-zeroed, never-compensated day whose frozen
+     *         expiry passed retires at zero through the ordinary pricing
+     *         machinery (the §2.1 ladder crosses it at zero and the
+     *         cursor advances past it). PERMISSIONLESS: the terminal is a
+     *         guarantee, not an operator choice; monotone, never
+     *         reopened (constraint 6).
+     * @dev    Every clock input is FROZEN (§2.4): expiry = the day's
+     *         finalization instant + its frozen window; version 0 (frozen
+     *         before any schedule existed) is not lapse-eligible. A
+     *         clockless day is healable by permissionless re-broadcast
+     *         first. A day holding ANY compensation credit — provisional
+     *         included — never takes this terminal: its exits are the
+     *         supplemental top-up or {lapseShortCompensatedDay}.
+     */
+    function lapseZeroedDay(uint256 dayId) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        // #1656 r2 — DARK until the ADMIN arms (the constraint-19
+        // activation gate, enforced on-chain): an upgrade window's
+        // expired day must not be lapsed out from under an unstamped
+        // legacy delivery by a permissionless caller.
+        if (!s.lapseTerminalsArmed) revert LapseTerminalsNotArmed();
+        if (!s.dayDeliberatelyZeroed[dayId]) {
+            revert LapseDayNotZeroed(dayId);
+        }
+        _assertNoTerminal(s, dayId);
+        if (s.dayCompensation[dayId].compensated) {
+            revert LapseDayCompensated(dayId);
+        }
+        // R1d — no lapse before the local interest close: the fold is
+        // what makes "these entries were owed something" a fact, and a
+        // lapse without it would retire unfolded demand silently.
+        if (s.chainReportSentAt[dayId] == 0) {
+            revert LapseDayLocalCloseMissing(dayId);
+        }
+        LibVaipakam.DayLapseClock storage clk = s.dayLapseClock[dayId];
+        if (clk.finalizedAt == 0 || clk.scheduleVersion == 0) {
+            revert LapseDayClockMissing(dayId);
+        }
+        uint256 expiry = uint256(clk.finalizedAt) + clk.lapseWindowSeconds;
+        if (block.timestamp <= expiry) {
+            revert LapseDayNotExpired(dayId, expiry);
+        }
+
+        s.dayLapsed[dayId] = true;
+        (uint256 lossL, uint256 lossB, bool partialFigure) =
+            _recordLapseLoss(s, dayId, false);
+        emit ZeroedDayLapsed(dayId, lossL, lossB, partialFigure);
+    }
+
+    /**
+     * @notice #1434 P2-w4 (§2.5 R1c) — the SHORT-COMPENSATED terminal: a
+     *         confirmed-compensated day still funded below its per-side
+     *         quotes after the bounded deadline switches from
+     *         defer-on-shortfall to the pool-scaled pricing (§2.1's
+     *         shortLapsed arm), so what IS backed pays out and the
+     *         cursor advances. PERMISSIONLESS — the ADMIN supplemental
+     *         alone is not a terminal (an operator who never supplements
+     *         would otherwise park the day, and every later day, behind
+     *         the deferral forever).
+     * @dev    Deadline (§2.5, absolutely bounded):
+     *         `min(lastQualifyingReceipt + window, firstReceipt + 3 ×
+     *         window)` over the day's FROZEN window — a qualifying
+     *         receipt cut the remaining per-side shortfall by ≥ 1/4, so
+     *         dust top-ups cannot extend the clock, and after 3× nothing
+     *         but full funding prevents the terminal. Supplements landing
+     *         after the terminal quarantine (§2.2's lapsed branch).
+     */
+    function lapseShortCompensatedDay(uint256 dayId) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        // #1656 r2 — same activation gate as the full lapse.
+        if (!s.lapseTerminalsArmed) revert LapseTerminalsNotArmed();
+        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
+        if (!dc.compensated || dc.provisional) {
+            revert ShortLapseNotCompensated(dayId);
+        }
+        _assertNoTerminal(s, dayId);
+        // The shortfall is measurable only against a COMPLETED quote
+        // (compensated days are quoted on every honest path — r5's
+        // funding gate — so this is a fail-closed belt).
+        if (s.compQuoteSentAt[dayId] == 0) {
+            revert LegacyStampQuoteMissing(dayId);
+        }
+        {
+            uint256 qL = s.compQuoteAccum18[
+                dayId
+            ][uint8(LibVaipakam.RewardSide.Lender)];
+            uint256 qB = s.compQuoteAccum18[
+                dayId
+            ][uint8(LibVaipakam.RewardSide.Borrower)];
+            if (
+                uint256(dc.lenderPool18) >= qL
+                    && uint256(dc.borrowerPool18) >= qB
+            ) {
+                revert ShortLapseNotShort(dayId);
+            }
+        }
+        LibVaipakam.DayLapseClock storage clk = s.dayLapseClock[dayId];
+        if (clk.finalizedAt == 0 || clk.scheduleVersion == 0) {
+            revert LapseDayClockMissing(dayId);
+        }
+        // #1656 r1 — a compensated day whose receipt clocks predate the
+        // w4 upgrade (both zero) must not read a deadline one window past
+        // the epoch: the terminal waits until {armShortLapseClock} starts
+        // its bounded window.
+        if (s.firstCompReceiptAt[dayId] == 0) {
+            revert ShortLapseClockUnarmed(dayId);
+        }
+        uint256 deadline = _shortLapseDeadline(s, dayId, clk);
+        if (block.timestamp <= deadline) {
+            revert ShortLapseDeadlineNotReached(dayId, deadline);
+        }
+
+        s.dayShortLapsed[dayId] = true;
+        (uint256 lossL, uint256 lossB, ) =
+            _recordLapseLoss(s, dayId, true);
+        emit ShortCompensatedDayLapsed(dayId, lossL, lossB);
+    }
+
+    /// @dev §2.5 — `min(lastQualifying + window, first + 3 × window)`.
+    ///      `firstCompReceiptAt` is stamped at the day's first credit, so
+    ///      it is nonzero for every compensated day.
+    function _shortLapseDeadline(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        LibVaipakam.DayLapseClock storage clk
+    ) private view returns (uint256) {
+        uint256 window = clk.lapseWindowSeconds;
+        uint256 rolling =
+            uint256(s.lastQualifyingCompReceiptAt[dayId]) + window;
+        uint256 absolute =
+            uint256(s.firstCompReceiptAt[dayId]) + 3 * window;
+        return rolling < absolute ? rolling : absolute;
+    }
+
+    /**
+     * @notice #1434 P2-w4 (constraint-19) — stamp a PRE-P2 legacy manual
+     *         remit's delivered value as the day's compensation: the
+     *         legacy wire carried neither the P2 tag nor a per-side
+     *         split, so the upgraded machinery could ACK it and close the
+     *         Base day while the mirror never priced the compensated
+     *         pool. Allocation is deterministic pro-rata over the day's
+     *         COMPLETED quote (`sideShare = amount × quotedSide / (qL +
+     *         qB)`, remainder to the borrower side), bounded by the
+     *         receipt amount; one receipt stamps one day.
+     * @dev    ADMIN-evidenced, deliberately NOT permissionless (design
+     *         deviation, recorded): the mirror's legacy receipt records
+     *         carry no day binding (`ReceivedRemit` predates it), so the
+     *         receipt↔day association is verified operator-side against
+     *         Base's reservation record (`RemitReservation.dayIds`) —
+     *         a permissionless surface could bind any legacy receipt to
+     *         any zeroed day. Pre-live there are ZERO legacy receipts on
+     *         any deployment; this surface exists for the §8 activation
+     *         checklist, whose gate is Base's legacy inventory reading
+     *         empty. No armed-fresh counting here — the value was
+     *         counted at its ORIGINAL d5 ingress; recounting would
+     *         double it.
+     */
+    function stampLegacyCompensation(
+        uint256 dayId,
+        address remitter,
+        uint256 remitId
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        bytes32 key = keccak256(abi.encode(remitter, remitId));
+        LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[key];
+        if (rec.receivedAt == 0 || s.legacyReceiptStamped[key]) {
+            revert LegacyReceiptUnusable(key);
+        }
+        if (!s.dayDeliberatelyZeroed[dayId]) {
+            revert LegacyDayNotStampable(dayId);
+        }
+        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
+        if (
+            dc.compensated || s.dayLapsed[dayId] || s.dayShortLapsed[dayId]
+                || s.dayResolvedZero[dayId]
+        ) {
+            revert LegacyDayNotStampable(dayId);
+        }
+        if (s.compQuoteSentAt[dayId] == 0) {
+            revert LegacyStampQuoteMissing(dayId);
+        }
+        uint256 qL =
+            s.compQuoteAccum18[dayId][uint8(LibVaipakam.RewardSide.Lender)];
+        uint256 qB =
+            s.compQuoteAccum18[dayId][uint8(LibVaipakam.RewardSide.Borrower)];
+        uint256 qSum = qL + qB;
+        // A zero quote is the resolved-zero shape — nothing to stamp
+        // (and the dispatch already marked the day resolved).
+        if (qSum == 0) revert LegacyStampQuoteMissing(dayId);
+
+        uint256 amount = rec.amount;
+        uint256 lenderShare = (amount * qL) / qSum;
+        uint256 borrowerShare = amount - lenderShare;
+
+        s.legacyReceiptStamped[key] = true;
+        dc.lenderPool18 += SafeCast.toUint128(lenderShare);
+        dc.borrowerPool18 += SafeCast.toUint128(borrowerShare);
+        dc.creditedAmount += SafeCast.toUint128(amount);
+        dc.compensated = true;
+        dc.remitId = remitId;
+        // The §2.5 deadline inputs: a legacy stamp is the day's first
+        // (and only pre-supplement) credit.
+        if (s.firstCompReceiptAt[dayId] == 0) {
+            s.firstCompReceiptAt[dayId] = uint64(block.timestamp);
+            s.lastQualifyingCompReceiptAt[dayId] = uint64(block.timestamp);
+        }
+        emit LegacyCompensationStamped(dayId, key, lenderShare, borrowerShare);
+    }
+
+    /// @notice #1434 P2-w4 (#1656 r2) — the lapse terminals were armed
+    ///         (the constraint-19 activation attestation).
+    /// @custom:event-category informational/reward-compensation
+    event LapseTerminalsArmed();
+
+    /// @notice ADMIN, one-shot, MIRROR — arm the two permissionless lapse
+    ///         terminals. The §8 activation checklist runs FIRST: Base's
+    ///         legacy inventory reads empty and every delivered legacy
+    ///         receipt is stamped ({stampLegacyCompensation}); this call
+    ///         is that checklist's on-chain attestation, so the terminals
+    ///         cannot race the migration on an upgrade window.
+    function armLapseTerminals()
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        if (s.lapseTerminalsArmed) revert LapseTerminalsAlreadyArmed();
+        s.lapseTerminalsArmed = true;
+        emit LapseTerminalsArmed();
+    }
+
+    /// @notice #1434 P2-w4 (#1656 r2) — whether the lapse terminals are
+    ///         armed on this mirror.
+    function getLapseTerminalsArmed() external view returns (bool) {
+        return LibVaipakam.storageSlot().lapseTerminalsArmed;
+    }
+
+    /// @notice #1434 P2-w4 (#1656 r1) — a pre-upgrade compensated day's
+    ///         short-lapse window was armed (its receipt clocks were
+    ///         stamped from now).
+    /// @custom:event-category informational/reward-compensation
+    event ShortLapseClockArmed(uint256 indexed dayId);
+
+    /// @notice Start the bounded short-lapse window for a compensated day
+    ///         whose receipt clocks predate the w4 upgrade (both zero).
+    ///         PERMISSIONLESS and one-shot: the window runs from NOW —
+    ///         the fair post-upgrade equivalent of the credit-time stamp
+    ///         every new compensation gets.
+    function armShortLapseClock(uint256 dayId) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
+        if (!dc.compensated || dc.provisional) {
+            revert ShortLapseNotCompensated(dayId);
+        }
+        _assertNoTerminal(s, dayId);
+        if (s.firstCompReceiptAt[dayId] != 0) {
+            revert ShortLapseClockAlreadyArmed(dayId);
+        }
+        s.firstCompReceiptAt[dayId] = uint64(block.timestamp);
+        s.lastQualifyingCompReceiptAt[dayId] = uint64(block.timestamp);
+        emit ShortLapseClockArmed(dayId);
+    }
+
+    /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss.
+    function getLapsedDayLoss(
+        uint256 dayId
+    ) external view returns (LibVaipakam.LapsedDayLoss memory) {
+        return LibVaipakam.storageSlot().lapsedDayLoss[dayId];
+    }
+
+    /// @notice #1434 P2-w4 (§2.5) — the short-compensated deadline inputs
+    ///         and the effective deadline (0 window ⇒ not applicable).
+    function getShortLapseDeadline(
+        uint256 dayId
+    )
+        external
+        view
+        returns (uint64 firstAt, uint64 lastQualifyingAt, uint256 deadline)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        firstAt = s.firstCompReceiptAt[dayId];
+        lastQualifyingAt = s.lastQualifyingCompReceiptAt[dayId];
+        LibVaipakam.DayLapseClock storage clk = s.dayLapseClock[dayId];
+        if (firstAt != 0 && clk.scheduleVersion != 0) {
+            deadline = _shortLapseDeadline(s, dayId, clk);
+        }
     }
 }

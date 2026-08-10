@@ -12,6 +12,7 @@ import {
     InteractionRewardsLensFacet
 } from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
 import {
@@ -133,6 +134,10 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         return RewardRemittanceFacet(address(diamond));
     }
 
+    function _rlens() internal view returns (RewardRemittanceLensFacet) {
+        return RewardRemittanceLensFacet(address(diamond));
+    }
+
     function _lens() internal view returns (InteractionRewardsLensFacet) {
         return InteractionRewardsLensFacet(address(diamond));
     }
@@ -207,7 +212,7 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         _fundViaReceiver(1_000e18);
         assertEq(vpfi.balanceOf(address(diamond)), 1_000e18, "mirror funded");
         assertEq(
-            _remit().getRewardBudgetReceivedTotal(),
+            _rlens().getRewardBudgetReceivedTotal(),
             1_000e18,
             "ingress recorded the funded total"
         );

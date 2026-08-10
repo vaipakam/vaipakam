@@ -6,6 +6,8 @@ import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -31,6 +33,8 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  */
 contract RewardRemitLedgerTest is SetupTest {
     RewardRemittanceFacet internal remit;
+    RewardRemittanceLensFacet rlens;
+    RewardCompensationDispatchFacet comp;
     MockRewardMessenger internal rewardMessenger; // data path (reports + acks)
     MockCrossChainMessenger internal ccip; // value path (token remittance)
     VPFIToken internal vpfiTok;
@@ -75,6 +79,8 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger = new MockRewardMessenger(address(diamond));
         ccip = new MockCrossChainMessenger();
         remit = RewardRemittanceFacet(address(diamond));
+        rlens = RewardRemittanceLensFacet(address(diamond));
+        comp = RewardCompensationDispatchFacet(address(diamond));
         mutator = TestMutatorFacet(address(diamond));
 
         vm.chainId(CHAIN_BASE);
@@ -149,8 +155,8 @@ contract RewardRemitLedgerTest is SetupTest {
         uint256 total = _remitDay1ToArb();
         assertGt(total, 0, "non-zero slice");
 
-        assertEq(remit.getRemitReservationNonce(), 1, "nonce");
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        assertEq(rlens.getRemitReservationNonce(), 1, "nonce");
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertEq(uint256(r.status), 1, "pending");
         assertEq(r.dstChainId, CHAIN_ARB, "dst");
         assertEq(r.total, total, "total");
@@ -162,11 +168,11 @@ contract RewardRemitLedgerTest is SetupTest {
         // messageId annotation + reverse index (mock id is deterministic).
         bytes32 expectedId = keccak256(abi.encode(address(ccip), uint256(0)));
         assertEq(r.ccipMessageId, expectedId, "ccip message id");
-        assertEq(remit.getRemitIdByMessageId(expectedId), 1, "reverse index");
+        assertEq(rlens.getRemitIdByMessageId(expectedId), 1, "reverse index");
 
-        assertEq(remit.getRemitPendingTotal(CHAIN_ARB), total, "pending total");
-        assertEq(remit.getRemitAckedTotal(CHAIN_ARB), 0, "acked 0");
-        assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 1, "day closed by 1");
+        assertEq(rlens.getRemitPendingTotal(CHAIN_ARB), total, "pending total");
+        assertEq(rlens.getRemitAckedTotal(CHAIN_ARB), 0, "acked 0");
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 1, "day closed by 1");
 
         // The widened payload carries the echo remitId.
         (, uint256[] memory pd, uint256 pt, uint256 prid, , ) = abi.decode(
@@ -186,14 +192,14 @@ contract RewardRemitLedgerTest is SetupTest {
         emit RemitReservationAcked(1, CHAIN_ARB, total, total, false);
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
 
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertEq(uint256(r.status), 2, "acked");
-        assertEq(remit.getRemitPendingTotal(CHAIN_ARB), 0, "pending cleared");
-        assertEq(remit.getRemitAckedTotal(CHAIN_ARB), total, "acked total");
+        assertEq(rlens.getRemitPendingTotal(CHAIN_ARB), 0, "pending cleared");
+        assertEq(rlens.getRemitAckedTotal(CHAIN_ARB), total, "acked total");
 
         // Re-delivered ack: exactly-once (no revert, no double count).
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
-        assertEq(remit.getRemitAckedTotal(CHAIN_ARB), total, "still once");
+        assertEq(rlens.getRemitAckedTotal(CHAIN_ARB), total, "still once");
     }
 
     function test_Ack_WrongChain_Reverts() public {
@@ -225,7 +231,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _remitDay1ToArb();
         vm.prank(stranger);
         vm.expectRevert(IVaipakamErrors.NotAuthorizedRewardMessenger.selector);
-        remit.onRemitAckReceived(CHAIN_ARB, 1, 1e18, address(diamond));
+        remit.onRemitAckReceived(CHAIN_ARB, 1, 1e18, address(diamond), true);
     }
 
     function test_ForceFinalize_AdminValve() public {
@@ -239,7 +245,7 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.expectEmit(true, true, false, true, address(diamond));
         emit RemitReservationAcked(1, CHAIN_ARB, total, 0, true);
         remit.finalizeRemitReservation(1);
-        assertEq(uint256(remit.getRemitReservation(1).status), 2, "acked");
+        assertEq(uint256(rlens.getRemitReservation(1).status), 2, "acked");
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -253,7 +259,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Release_RestoresLedgers_and_DayRefunds() public {
         _finalizeDay(1);
         uint256 total = _remitDay1ToArb();
-        assertEq(remit.getRewardBudgetRemittedGlobal(), total, "fresh reserved");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), total, "fresh reserved");
 
         // r5 — the release valve is timeout-gated (§M3): too early reverts.
         vm.expectRevert(
@@ -267,40 +273,40 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.warp(block.timestamp + 7 days);
         remit.releaseRemitReservation(1);
 
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertEq(uint256(r.status), 3, "released");
-        assertEq(remit.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "day re-opened");
-        assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "close cleared");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "day re-opened");
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "close cleared");
         // Codex r4 — the fresh counters stay RESERVED (the sent tokens are
         // physically outside Diamond custody; re-opening 69M headroom would
         // let the re-remit draw commingled custody as "fresh").
-        assertEq(remit.getRewardBudgetRemittedGlobal(), total, "global reserved");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), total, "global reserved");
         assertEq(
-            remit.getRewardBudgetRemittedTotal(CHAIN_ARB),
+            rlens.getRewardBudgetRemittedTotal(CHAIN_ARB),
             total,
             "chain cumulative kept"
         );
-        assertEq(remit.getRemitPendingTotal(CHAIN_ARB), 0, "pending cleared");
+        assertEq(rlens.getRemitPendingTotal(CHAIN_ARB), 0, "pending cleared");
 
         // The re-opened day funds again under a NEW reservation, consuming
         // NEW fresh headroom (two real outflows happened).
         uint256 total2 = _remitDay1ToArb();
         assertEq(total2, total, "same slice re-funds");
         assertEq(
-            remit.getRewardBudgetRemittedGlobal(),
+            rlens.getRewardBudgetRemittedGlobal(),
             total * 2,
             "re-remit consumes new headroom"
         );
-        assertEq(remit.getRemitReservationNonce(), 2, "second reservation");
-        assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 2, "closed by 2");
+        assertEq(rlens.getRemitReservationNonce(), 2, "second reservation");
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 2, "closed by 2");
 
         // A late ack for the RELEASED reservation is surfaced, never
         // re-finalized (the operator released in error — double funding).
         vm.expectEmit(true, true, false, true, address(diamond));
         emit RemitAckAfterRelease(1, CHAIN_ARB, total);
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
-        assertEq(uint256(remit.getRemitReservation(1).status), 3, "still released");
-        assertEq(remit.getRemitAckedTotal(CHAIN_ARB), 0, "not acked");
+        assertEq(uint256(rlens.getRemitReservation(1).status), 3, "still released");
+        assertEq(rlens.getRemitAckedTotal(CHAIN_ARB), 0, "not acked");
     }
 
     function test_Release_RequiresPending() public {
@@ -364,14 +370,14 @@ contract RewardRemitLedgerTest is SetupTest {
         uint256 total = _remitDay1ToArb();
         assertEq(total, liabL + liabB, "sent the clamp");
         assertEq(
-            remit.getRewardBudgetRemitted(CHAIN_ARB, 1),
+            rlens.getRewardBudgetRemitted(CHAIN_ARB, 1),
             liabL + liabB,
             "day marked with the clamped amount"
         );
 
         // The FULL pre-clamp armed fresh retired (remitted + residual are
         // both dead once the day terminally closes).
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertGt(r.armedFreshFull, r.fresh, "residual existed");
         (, uint256 f1, , ) =
             RewardAggregatorFacet(address(diamond)).getGovernorCommitState();
@@ -393,7 +399,7 @@ contract RewardRemitLedgerTest is SetupTest {
         uint256 total = _remitDay1ToArb();
         assertEq(total, liab, "sent the clamp");
 
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertEq(r.recycled, liab, "recycled clamped share");
         assertGt(r.recycledFull, r.recycled, "recycled residual existed");
 
@@ -436,9 +442,9 @@ contract RewardRemitLedgerTest is SetupTest {
 
         assertEq(ccip.sentCount(), sendsBefore, "nothing dispatched");
         assertEq(address(this).balance, balBefore, "full fee refunded");
-        assertEq(remit.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "no amount mark");
-        assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 1, "day CLOSED");
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), 0, "no amount mark");
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 1, "day CLOSED");
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertEq(uint256(r.status), 2, "born terminal");
         assertEq(r.total, 0, "zero total");
 
@@ -471,7 +477,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(feeTotal, quoted, "fee-quote total == quote");
 
         remit.remitRewardBudget{value: 0.01 ether}(CHAIN_ARB, both, 1e24);
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertEq(r.total, quoted, "send == quote");
         assertEq(r.dayIds.length, 2, "both days closed");
     }
@@ -563,7 +569,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         uint256 total = _remitDay1ToArb();
         assertEq(total, quoted, "send matches the per-source clamp");
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertEq(r.recycled, 0, "recycled leg fully covered by local backing");
         assertEq(r.fresh, total, "the remittance is the fresh leg");
     }
@@ -592,7 +598,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         uint256 total = _remitDay1ToArb();
         assertEq(total, quoted, "send matches the per-side clamp");
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         // The split follows the LENDER side's composition (15:3.33), not the
         // day aggregate.
         assertApproxEqAbs(r.fresh, 4.09e18, 2e16, "fresh leg on lender composition");
@@ -610,7 +616,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 CHAIN_ARB
             )
         );
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
     function test_Manual_FundsThroughTheLedger() public {
@@ -621,17 +627,17 @@ contract RewardRemitLedgerTest is SetupTest {
 
         // #1434 P2-w2 — the manual path is sized PER SIDE on the wire.
         uint256 amount = 5e18;
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
 
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertEq(uint256(r.status), 1, "pending");
         assertEq(r.total, amount, "amount");
         assertEq(r.fresh, amount, "fresh-funded");
         assertEq(r.recycled, 0, "no recycled draw");
         assertEq(r.armedFreshFull, 0, "no commitment retired");
-        assertEq(remit.getRewardBudgetRemitted(CHAIN_ARB, 1), amount, "day marked");
-        assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 1, "day closed");
-        assertEq(remit.getRewardBudgetRemittedGlobal(), amount, "69M reserved");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), amount, "day marked");
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 1, "day closed");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), amount, "69M reserved");
 
         // #1434 P2-w2 — the payload is the P2 compensation shape: tag +
         // single day + per-side amounts + the day's frozen expiry inputs.
@@ -672,7 +678,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         // Ack finalizes like any remit.
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, amount);
-        assertEq(uint256(remit.getRemitReservation(1).status), 2, "acked");
+        assertEq(uint256(rlens.getRemitReservation(1).status), 2, "acked");
 
         // A second manual send for the same (chain, day) is blocked.
         vm.expectRevert(
@@ -682,7 +688,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 CHAIN_ARB
             )
         );
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
     function test_Manual_AdminOnly() public {
@@ -691,7 +697,7 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.deal(stranger, 1 ether);
         vm.prank(stranger);
         vm.expectRevert();
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
     /// @dev #1434 P2-w3 — funding is EVIDENCE-BOUNDED (§1.4): no standing
@@ -704,7 +710,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 IVaipakamErrors.CompensationNotQuoted.selector, 1, CHAIN_ARB
             )
         );
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
     /// @dev #1434 P2-w3 — each side is bounded SEPARATELY by the standing
@@ -728,7 +734,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 2e18
             )
         );
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 4e18, 1e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 4e18, 1e18);
 
         // Borrower side over its bound.
         vm.expectRevert(
@@ -740,10 +746,480 @@ contract RewardRemitLedgerTest is SetupTest {
                 2e18
             )
         );
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 4e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 4e18);
 
         // Per-side under-quote is allowed.
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+    }
+
+    /// @dev #1434 P2-w4 — the supplemental lifecycle over the R6 gate:
+    ///      manual sets the gate + per-side funded cumulative; the
+    ///      consumption ACK clears it; a supplemental needs the closed
+    ///      day's reservation ACKED, accumulates per side under the
+    ///      standing quote, holds the gate itself, and its own ACK clears
+    ///      again.
+    function test_Supplemental_LifecycleAndGate() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB), 1, "gate = remit 1"
+        );
+        assertEq(
+            rlens.getCompensationOutstandingChains().length,
+            1,
+            "chain in the R6e inventory"
+        );
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "lender funded cumulative");
+        assertEq(fb, 1e18, "borrower funded cumulative");
+
+        // Gate held: another chain-day's manual is blocked while remit 1
+        // is outstanding for this chain.
+        _finalizeDay(2);
+        mutator.setChainDayRemitIneligibleRaw(2, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 2, 1e18, 1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationGateHeld.selector, CHAIN_ARB, 1
+            )
+        );
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 2, 1e18, 1e18);
+
+        // A supplemental needs the closing reservation ACKED.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SupplementalReservationNotAcked.selector,
+                1,
+                uint8(1)
+            )
+        );
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 0);
+
+        // The consumption ACK clears the gate.
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0, "cleared");
+        assertEq(
+            rlens.getCompensationOutstandingChains().length, 0, "index empty"
+        );
+
+        // Per-side cumulative bound: 2 + 2 = 4 > 3 quoted on the lender
+        // side — refused even though the aggregate stays under 5.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationExceedsQuote.selector,
+                4e18,
+                1e18,
+                3e18,
+                2e18
+            )
+        );
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 0);
+
+        // A within-bound supplement dispatches, re-holds the gate under
+        // its OWN reservation, and its ACK clears again. The day markers
+        // stay untouched (funding accumulates against the same
+        // obligation).
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 1e18, 1e18
+        );
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 3e18, "cumulative at quote");
+        assertEq(fb, 2e18, "cumulative at quote");
+        uint256 suppId = rlens.getCompensationOutstanding(CHAIN_ARB);
+        assertGt(suppId, 1, "own reservation");
+        assertEq(
+            rlens.getDayClosedByRemitId(CHAIN_ARB, 1),
+            1,
+            "day still closed by the ORIGINAL remit"
+        );
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, suppId, 2e18);
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0, "cleared");
+    }
+
+    /// @dev #1434 P2-w4 — a supplemental tops up only a CLOSED day.
+    function test_Supplemental_RequiresClosedDay() public {
+        _finalizeDay(1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SupplementalDayNotClosed.selector,
+                1,
+                CHAIN_ARB
+            )
+        );
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 0);
+    }
+
+    /// @dev #1434 P2-w4 (constraint-19) — the legacy inventory lists only
+    ///      the pre-P2 shape: single-day fresh-only reservations to a
+    ///      frozen-zeroed dest with NO per-side funded record; a post-w4
+    ///      compensation (which always stamps one) never appears.
+    function test_LegacyInventory() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        mutator.setDayZeroedForDestRaw(1, CHAIN_ARB, true);
+
+        (uint256[] memory ids, uint256 next) =
+            rlens.getLegacyManualReservations(1, 10);
+        assertEq(ids.length, 0, "post-w4 compensation is not legacy");
+        assertEq(next, 2, "page advanced past the scanned id");
+
+        // The pre-w4 legacy shape: same reservation, no funded record.
+        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
+        (ids, ) = rlens.getLegacyManualReservations(1, 10);
+        assertEq(ids.length, 1, "legacy shape listed");
+        assertEq(ids[0], 1, "the reservation id");
+    }
+
+    /// @dev #1656 r1 — the ACK reconciles the per-side funded cumulative
+    ///      from DECLARED to RECEIVED, so a short delivery re-opens
+    ///      exactly the supplemental headroom it left.
+    function test_Supplemental_ShortDeliveryReconciliation() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+
+        // Half the declared total arrives (fee-on-transfer shape).
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1.5e18);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "lender funded scaled to received");
+        assertEq(fb, 0.5e18, "borrower funded scaled to received");
+
+        // The supplemental now fits exactly the re-opened headroom.
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1.5e18
+        );
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 3e18, "cumulative back at quote");
+        assertEq(fb, 2e18, "cumulative back at quote");
+    }
+
+    /// @dev #1656 r1 — releasing a failed SUPPLEMENTAL must not erase the
+    ///      original manual remit's day closure (the markers belong to the
+    ///      acknowledged original).
+    function test_Supplemental_ReleaseDoesNotEraseTheClosure() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 1e18);
+        uint256 suppId = rlens.getCompensationOutstanding(CHAIN_ARB);
+
+        vm.warp(block.timestamp + 8 days); // past REMIT_RELEASE_MIN_AGE
+        remit.releaseRemitReservation(suppId);
+        assertEq(
+            rlens.getDayClosedByRemitId(CHAIN_ARB, 1),
+            1,
+            "closure still owned by the ORIGINAL remit"
+        );
+        assertEq(
+            rlens.getRewardBudgetRemitted(CHAIN_ARB, 1),
+            3e18,
+            "funded scalar record intact"
+        );
+        // #1656 r6 - the released supplemental's declared split leaves
+        // the funded cumulative with it, so the post-recovery replacement
+        // fits the per-side bound. The R6 gate itself correctly HOLDS
+        // (SS5.1: a release records terminal message state, and only the
+        // w6 recovery settlement clears it), so the replacement dispatch
+        // is the recovery ceremony's proof, not this one's.
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "back to the original's contribution");
+        assertEq(fb, 1e18, "back to the original's contribution");
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            suppId,
+            "gate held pending recovery settlement"
+        );
+    }
+
+    /// @dev #1656 r1 — a pre-w4 P2 compensation has no per-side funded
+    ///      record: the supplemental refuses until the ADMIN seed
+    ///      backfills it (exactly-sum + per-side-quote validated).
+    function test_Supplemental_SeedBackfillsPreW4Record() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        // #1656 r7 - a PENDING closure cannot be seeded (it delivered
+        // nothing; its remedy is release or resolution).
+        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SupplementalReservationNotAcked.selector,
+                1,
+                uint8(1)
+            )
+        );
+        comp.seedCompFunded(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
+        // Stage the pre-w4 shape: funded scalar present, per-side zero
+        // (the ACK's reconciliation re-stamped values; clear them again).
+        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SupplementalFundedRecordMissing.selector,
+                1,
+                CHAIN_ARB
+            )
+        );
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 0);
+
+        // Seed may not EXCEED the recorded scalar (#1656 r2: at-most,
+        // so an already-ACKed short delivery seeds at received).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompFundedSeedInvalid.selector, 1, CHAIN_ARB
+            )
+        );
+        comp.seedCompFunded(CHAIN_ARB, 1, 3e18, 0.5e18); // sums past 3
+        comp.seedCompFunded(CHAIN_ARB, 1, 2e18, 1e18);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "seeded");
+        assertEq(fb, 1e18, "seeded");
+        // One-shot.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompFundedSeedInvalid.selector, 1, CHAIN_ARB
+            )
+        );
+        comp.seedCompFunded(CHAIN_ARB, 1, 2e18, 1e18);
+        // Supplemental now bounded normally.
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 1e18);
+    }
+
+    /// @dev #1656 r1 — a RELEASED reservation drops from the legacy
+    ///      inventory (the documented pending-hit remedy must converge the
+    ///      empty-inventory activation gate).
+    function test_LegacyInventory_ReleasedDrops() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        mutator.setDayZeroedForDestRaw(1, CHAIN_ARB, true);
+        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0); // legacy shape
+        (uint256[] memory ids, ) = rlens.getLegacyManualReservations(1, 10);
+        assertEq(ids.length, 1, "listed while pending");
+
+        vm.warp(block.timestamp + 8 days);
+        remit.releaseRemitReservation(1);
+        (ids, ) = rlens.getLegacyManualReservations(1, 10);
+        assertEq(ids.length, 0, "released hit drops from the inventory");
+    }
+
+    /// @dev #1656 r2 — a severe short delivery whose reconciliation
+    ///      rounds both funded sides to ZERO is still a RECORDED day: the
+    ///      supplemental admits it (the existence flag, never the value
+    ///      pair, is the record).
+    function test_Supplemental_RoundedToZeroRecordStillSupplementable()
+        public
+    {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        // Near-total loss: 1 wei arrives; both shares floor to zero.
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 0, "lender share floors to zero");
+        assertEq(fb, 0, "borrower share floors to zero");
+        // Still supplementable — nearly the whole quote re-opened.
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 2e18
+        );
+    }
+
+    /// @dev #1656 r2 — the migration seed records the CREDITED figure: an
+    ///      already-ACKed short delivery seeds at received (≤ the declared
+    ///      scalar), re-opening the shortfall's supplemental headroom.
+    function test_Supplemental_SeedAtReceivedBelowDeclared() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
+        // Pre-w4 shape (no record) whose historical ACK reported HALF.
+        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
+        // Above the declared scalar still refuses…
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompFundedSeedInvalid.selector, 1, CHAIN_ARB
+            )
+        );
+        comp.seedCompFunded(CHAIN_ARB, 1, 3e18, 1e18);
+        // …but seeding at the RECEIVED figure (below declared) works.
+        comp.seedCompFunded(CHAIN_ARB, 1, 1e18, 0.5e18);
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1.5e18
+        );
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 3e18, "back at quote");
+        assertEq(fb, 2e18, "back at quote");
+    }
+
+    /// @dev #1656 r2 — the FORCED finalize preserves declared funding:
+    ///      its zero amountReceived is a sentinel, not a delivery figure,
+    ///      and reconciling on it would let the obligation fund twice.
+    function test_Supplemental_ForcedFinalizePreservesDeclared() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        remit.finalizeRemitReservation(1); // forced, amountReceived = 0
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 3e18, "declared preserved");
+        assertEq(fb, 2e18, "declared preserved");
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0, "gate clear");
+        // No headroom re-opened: any supplement exceeds the quote.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationExceedsQuote.selector,
+                3e18 + 1,
+                2e18,
+                3e18,
+                2e18
+            )
+        );
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1, 0);
+    }
+
+    /// @dev #1656 r3 — a supplemental dispatches past the day's ORIGINAL
+    ///      frozen expiry: the mirror admits top-ups on a compensated-and-
+    ///      open day until its remediation deadline, so the R3 cutoff's
+    ///      guaranteed-quarantine premise does not hold for supplements.
+    function test_Supplemental_DispatchesPastOriginalExpiry() public {
+        RewardCommitmentFacet(address(diamond)).setLapseSchedule(
+            7 days, 24 hours
+        );
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1.5e18);
+        vm.warp(block.timestamp + 30 days); // far past the frozen expiry
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 1e18, 1e18
+        );
+    }
+
+    /// @dev #1656 r3 — a rounded-to-zero post-w4 day is NOT a legacy
+    ///      inventory hit (the existence flag governs, not the values).
+    function test_LegacyInventory_RoundedZeroRecordNotListed() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1); // rounds to 0/0
+        mutator.setDayZeroedForDestRaw(1, CHAIN_ARB, true);
+        (uint256[] memory ids, ) = rlens.getLegacyManualReservations(1, 10);
+        assertEq(ids.length, 0, "recorded day never lists as legacy");
+    }
+
+    /// @dev #1656 r3 — a forced-finalized compensation's LATE authentic
+    ///      ACK runs the declared-to-received reconciliation exactly once.
+    function test_Supplemental_LateAckAfterForcedFinalizeReconciles()
+        public
+    {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        remit.finalizeRemitReservation(1); // forced — declared preserved
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "declared preserved at force");
+        // The delayed authentic ACK arrives: HALF was received.
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1.5e18);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "reconciled to received");
+        assertEq(fb, 0.5e18, "reconciled to received");
+        // One-shot: a replayed ACK changes nothing.
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "replay is inert");
+        // The re-opened headroom is usable.
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1.5e18
+        );
+    }
+
+    /// @dev #1656 r10 — the forced-finalize one-shot survives a NON-
+    ///      consumed ack: a provisional ack dispatched pre-confirm but
+    ///      arriving post-force must not burn `forcedFinalized` before
+    ///      the consumed re-presentation can reconcile the declared
+    ///      split down to what was actually received.
+    function test_Supplemental_NonConsumedAckPreservesForcedOneShot()
+        public
+    {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        remit.finalizeRemitReservation(1); // forced — declared preserved
+        // A provisional (non-consumed) ack lands AFTER the force: no
+        // reconciliation, and the one-shot is NOT burned.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1.5e18, false);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "declared preserved through non-consumed ack");
+        assertEq(fb, 1e18, "declared preserved through non-consumed ack");
+        // The consumed re-presentation reconciles via the preserved flag.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1.5e18, true);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "consumed re-ack reconciled to received");
+        assertEq(fb, 0.5e18, "consumed re-ack reconciled to received");
+        // One-shot spent: replays inert.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1, true);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "replay inert after reconciliation");
+    }
+
+    /// @dev #1656 r8 — a NON-consumption ack (quarantined / still-
+    ///      provisional delivery) finalizes the reservation but HOLDS the
+    ///      R6 gate (§5.1: the clearing evidence is CONSUMPTION; a
+    ///      stranded delivery settles via the w5 return) and skips the
+    ///      compFunded reconciliation.
+    function test_Supplemental_NonConsumedAckHoldsGate() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1.5e18, false);
+        assertEq(
+            uint256(rlens.getRemitReservation(1).status),
+            2,
+            "reservation finalized (delivery evidence)"
+        );
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            1,
+            "gate HELD - not a consumption ack"
+        );
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "no reconciliation on a stranded delivery");
+        assertEq(fb, 1e18, "no reconciliation on a stranded delivery");
+
+        // #1656 r9 - the V3 confirm settles the credit mirror-side and
+        // the re-presented ack is now CONSUMED: the first one clears the
+        // held gate and reconciles (a normal cross-chain ordering).
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1.5e18, true);
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "late-consumption ack clears the gate"
+        );
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "reconciled to received");
+        assertEq(fb, 0.5e18, "reconciled to received");
+        // Replays inert - the gate no longer names this remit.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 1, true);
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "replay inert");
     }
 
     /// @dev #1636 r4 — a resolved-zero standing quote is TERMINAL: its
@@ -841,14 +1317,14 @@ contract RewardRemitLedgerTest is SetupTest {
                 eraA
             )
         );
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
         com.clearCompQuote(1, CHAIN_ARB);
         rewardMessenger.deliverCompQuoteFromEra(CHAIN_ARB, 1, 3e18, 2e18, eraB);
         assertEq(com.getCompQuote(1, CHAIN_ARB).era, eraB, "re-bound");
 
         // Fund the day — both re-quote and clear are now rejected: the
         // quote standing at dispatch is the receipt-bound obligation.
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.CompQuoteDayAlreadyFunded.selector,
@@ -882,7 +1358,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 IVaipakamErrors.CompensationDayHasNoClock.selector, 1
             )
         );
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
     /// @dev #1634 r3 — the R3 dispatch cutoff: a compensation must not
@@ -913,11 +1389,11 @@ contract RewardRemitLedgerTest is SetupTest {
                 uint64(24 hours)
             )
         );
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
 
         // Exactly AT the boundary (now + gap == expiry) is allowed.
         vm.warp(expiry - 24 hours);
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
     }
 
     /// @dev #1434 P2-w2 — the P2 payload's expiry inputs are the day's
@@ -940,7 +1416,7 @@ contract RewardRemitLedgerTest is SetupTest {
         vm.warp(block.timestamp + 3 days);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
-        remit.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 3e18, 2e18);
 
         (
             ,
@@ -998,7 +1474,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 42, address(0xBA5E), 0
         , 0);
         LibVaipakam.ReceivedRemit memory rec =
-            remit.getReceivedRemit(address(0xBA5E), 42);
+            rlens.getReceivedRemit(address(0xBA5E), 42);
         assertEq(rec.srcChainId, CHAIN_BASE, "src");
         assertEq(rec.amount, 7e18, "amount");
         assertGt(rec.receivedAt, 0, "stamped");
@@ -1024,7 +1500,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(vpfiTok), 7e18, _days(3), CHAIN_BASE, 0, address(0xBA5E), 0
         , 0);
         assertEq(
-            remit.getReceivedRemit(address(0xBA5E), 0).receivedAt,
+            rlens.getReceivedRemit(address(0xBA5E), 0).receivedAt,
             0,
             "no receipt for 0"
         );
@@ -1085,7 +1561,7 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         rewardMessenger.deliverRemitAckFrom(CHAIN_ARB, 1, total, address(0x0DD));
-        assertEq(uint256(remit.getRemitReservation(1).status), 1, "still pending");
+        assertEq(uint256(rlens.getRemitReservation(1).status), 1, "still pending");
     }
 
     /// @dev Codex r3/r4 — receipts key by (remitter, remitId): different
@@ -1102,12 +1578,12 @@ contract RewardRemitLedgerTest is SetupTest {
             address(vpfiTok), 9e18, _days(4), CHAIN_BASE, 42, address(0x2EF), 0
         , 0);
         assertEq(
-            remit.getReceivedRemit(address(0x01D), 42).amount,
+            rlens.getReceivedRemit(address(0x01D), 42).amount,
             7e18,
             "old-era receipt intact"
         );
         assertEq(
-            remit.getReceivedRemit(address(0x2EF), 42).amount,
+            rlens.getReceivedRemit(address(0x2EF), 42).amount,
             9e18,
             "new-era receipt co-exists"
         );
@@ -1116,7 +1592,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(vpfiTok), 1e18, _days(5), CHAIN_BASE, 42, address(0x2EF), 0
         , 0);
         assertEq(
-            remit.getReceivedRemit(address(0x2EF), 42).amount,
+            rlens.getReceivedRemit(address(0x2EF), 42).amount,
             9e18,
             "first-wins per key"
         );
@@ -1146,7 +1622,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(total, liab, "first remit clamped");
         vm.warp(block.timestamp + 7 days);
         remit.releaseRemitReservation(1);
-        assertEq(remit.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "day re-opened");
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "day re-opened");
 
         // Backing gone (stranded in the CCIP pool): the day is NOT
         // actionable at any planning site — no close, no quote, no remit.
@@ -1389,7 +1865,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setOutstandingCommitRaw(0, 1_000e18);
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
-        LibVaipakam.RemitReservation memory r = remit.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertGt(r.recycledFull, r.recycled, "fixture: residual must exist");
         return (r.recycledFull, r.recycled);
     }
@@ -1607,7 +2083,7 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      says which reservations to count — and both relations reconcile.
     function test_Seed_DerivesTheStrandedTotalAndReconciles() public {
         uint256 sent = _preUpgradeReleasedState();
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
 
         (, uint256 stranded, , , uint256 bucket, , uint256 paidOut, uint256 outstanding) =
             _composition();
@@ -1627,10 +2103,10 @@ contract RewardRemitLedgerTest is SetupTest {
             vm.warp(block.timestamp + 7 days);
             remit.releaseRemitReservation(1);
             mutator.setReleasedRemitStrandedRaw(0);
-            r = remit.getRemitReservation(1);
+            r = rlens.getRemitReservation(1);
             assertGt(recycledFull, r.recycled, "fixture: residual exists");
         }
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
         assertEq(stranded, r.recycled, "sent share");
         assertLt(stranded, r.recycledFull, "NOT the pre-clamp total");
@@ -1640,7 +2116,7 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      already recorded some — would double-count.
     function test_Seed_RefusesWhenAlreadySeeded() public {
         _preUpgradeReleasedState();
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
         uint256 seedTo = 2;
         vm.expectRevert(
@@ -1667,18 +2143,18 @@ contract RewardRemitLedgerTest is SetupTest {
         // A second remit of the re-opened day, released in turn.
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
-        LibVaipakam.RemitReservation memory r2 = remit.getRemitReservation(2);
+        LibVaipakam.RemitReservation memory r2 = rlens.getRemitReservation(2);
         // 8 days, not another 7: two IDENTICAL `vm.warp(block.timestamp + N)`
         // expressions get common-subexpression-eliminated under viaIR and the
         // second is a no-op, so the release would revert RemitReleaseTooEarly.
         vm.warp(block.timestamp + 8 days);
         remit.releaseRemitReservation(2);
 
-        assertEq(remit.getRemitReservationNonce(), 2, "fixture: two reservations");
+        assertEq(rlens.getRemitReservationNonce(), 2, "fixture: two reservations");
         assertGt(r2.recycled, 0, "fixture: the second stranded something too");
         mutator.setReleasedRemitStrandedRaw(0);
 
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
         assertEq(stranded, sentA + r2.recycled, "summed BOTH releases");
         assertGt(stranded, sentA, "not just the first");
@@ -1689,8 +2165,8 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Seed_IgnoresReservationsThatWereNotReleased() public {
         _finalizeDay(1);
         _remitDay1ToArb();
-        assertEq(uint256(remit.getRemitReservation(1).status), 1, "pending");
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        assertEq(uint256(rlens.getRemitReservation(1).status), 1, "pending");
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
         assertEq(stranded, 0, "a pending reservation stranded nothing");
     }
@@ -1704,7 +2180,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // An unexplained shortfall on top of the historical one: the seed
         // cannot account for this, so it must not be applied at all.
         mutator.setRecycleBucketRaw(0);
-        uint256 seedTo = remit.getRemitReservationNonce();
+        uint256 seedTo = rlens.getRemitReservationNonce();
         vm.expectRevert(
             RewardRemittanceFacet.SeedDoesNotReconcile.selector
         );
@@ -1729,7 +2205,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // Now a SECOND release lands organically, before the ceremony runs.
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
-        LibVaipakam.RemitReservation memory r2 = remit.getRemitReservation(2);
+        LibVaipakam.RemitReservation memory r2 = rlens.getRemitReservation(2);
         vm.warp(block.timestamp + 8 days);
         remit.releaseRemitReservation(2);
 
@@ -1737,7 +2213,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(before, r2.recycled, "only the NEW release is recorded");
         assertGt(before, 0, "so the value-based guard would have refused");
 
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
 
         (, uint256 after_, , , , , , ) = _composition();
         assertEq(after_, sentA + r2.recycled, "seed subsumes BOTH");
@@ -1755,7 +2231,7 @@ contract RewardRemitLedgerTest is SetupTest {
         (, uint256 before, , , , , , ) = _composition();
         assertEq(before, sent, "recorded organically");
 
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
         (, uint256 after_, , , , , , ) = _composition();
         assertEq(after_, sent, "assigned, not added");
     }
@@ -1764,9 +2240,9 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      even though the value is unchanged.
     function test_Seed_AppliedFlagIsWhatBlocksASecondRun() public {
         _preUpgradeReleasedState();
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
-        uint256 seedTo = remit.getRemitReservationNonce();
+        uint256 seedTo = rlens.getRemitReservationNonce();
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardRemittanceFacet.ReleasedRemitStrandedAlreadySeeded.selector,
@@ -1787,7 +2263,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setRecycleBucketRaw(
             ConfigFacet(address(diamond)).getRecycleBucket() + 50e18
         );
-        uint256 seedTo = remit.getRemitReservationNonce();
+        uint256 seedTo = rlens.getRemitReservationNonce();
         vm.expectRevert(RewardRemittanceFacet.SeedDoesNotReconcile.selector);
         remit.seedReleasedRemitStranded(seedTo);
     }
@@ -1854,11 +2330,11 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.releaseRemitReservation(1);
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
-        LibVaipakam.RemitReservation memory r2 = remit.getRemitReservation(2);
+        LibVaipakam.RemitReservation memory r2 = rlens.getRemitReservation(2);
         vm.warp(block.timestamp + 8 days);
         remit.releaseRemitReservation(2);
         mutator.setReleasedRemitStrandedRaw(0);
-        assertEq(remit.getRemitReservationNonce(), 2, "fixture: two ids");
+        assertEq(rlens.getRemitReservationNonce(), 2, "fixture: two ids");
 
         // Range 1 of 2 — NOTHING is published yet, so every relation over the
         // ledger is exactly as it was. A partial total would make bucket
@@ -1905,7 +2381,7 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      list had.
     function test_Seed_RejectsNonAdvancingOrOverrunningRanges() public {
         _preUpgradeReleasedState();
-        uint256 target = remit.getRemitReservationNonce();
+        uint256 target = rlens.getRemitReservationNonce();
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1931,7 +2407,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // A new reservation appears after the ceremony started.
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
-        assertEq(remit.getRemitReservationNonce(), 2, "nonce moved");
+        assertEq(rlens.getRemitReservationNonce(), 2, "nonce moved");
         // Completion is judged against the pinned target of 1, not the new
         // nonce, so the ceremony is already finished and refuses a re-run.
         (, uint256 stranded, , , , , , ) = _composition();
@@ -1972,11 +2448,11 @@ contract RewardRemitLedgerTest is SetupTest {
 
         // Reset re-pins from the CURRENT state and the ceremony completes.
         remit.resetReleasedRemitStrandedSeed();
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
 
         (, uint256 finalTotal, , , , , , ) = _composition();
-        LibVaipakam.RemitReservation memory r1 = remit.getRemitReservation(1);
-        LibVaipakam.RemitReservation memory r2 = remit.getRemitReservation(2);
+        LibVaipakam.RemitReservation memory r1 = rlens.getRemitReservation(1);
+        LibVaipakam.RemitReservation memory r2 = rlens.getRemitReservation(2);
         assertEq(
             finalTotal,
             r1.recycled + r2.recycled,
@@ -1988,7 +2464,7 @@ contract RewardRemitLedgerTest is SetupTest {
     ///      ceremony or edit the published figure.
     function test_Seed_ResetRefusesOnceApplied() public {
         _preUpgradeReleasedState();
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
         (, uint256 stranded, , , , , , ) = _composition();
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -2015,7 +2491,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // Fixture: one released reservation, plus a pending one, so nonce > count.
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
-        uint256 nonce = remit.getRemitReservationNonce();
+        uint256 nonce = rlens.getRemitReservationNonce();
         assertEq(nonce, 2, "fixture: 2 reservations, only 1 released");
 
         vm.recordLogs();
@@ -2065,7 +2541,7 @@ contract RewardRemitLedgerTest is SetupTest {
         remit.seedReleasedRemitStranded(1);
         (, uint256 valueMid, , , , , , ) = _composition();
         (, , , , , uint256 countMid) =
-            remit.getReleasedRemitStrandedSeedState();
+            rlens.getReleasedRemitStrandedSeedState();
 
         // Release it, then rewind the value so the counter reads exactly as
         // it would after a release that stranded nothing.
@@ -2075,7 +2551,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         (, uint256 valueAfter, , , , , , ) = _composition();
         (, , , , , uint256 countAfter) =
-            remit.getReleasedRemitStrandedSeedState();
+            rlens.getReleasedRemitStrandedSeedState();
         assertEq(
             valueAfter,
             valueMid,
@@ -2086,7 +2562,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         // The guard must still fire, on the count. `seedTo` is hoisted: a
         // nested getter would be "the next call" and eat the expectRevert.
-        uint256 seedTo = remit.getRemitReservationNonce();
+        uint256 seedTo = rlens.getRemitReservationNonce();
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardRemittanceFacet.SeedRaceDetected.selector,
@@ -2116,7 +2592,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // The role moves AFTER the history exists.
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(false);
 
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
 
         (, uint256 stranded, , , , , , ) = _composition();
         assertEq(
@@ -2143,14 +2619,14 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Seed_StateIsExternallyReadable() public {
         _preUpgradeReleasedState();
         (bool appliedBefore, uint256 targetBefore, , , , ) =
-            remit.getReleasedRemitStrandedSeedState();
+            rlens.getReleasedRemitStrandedSeedState();
         assertFalse(appliedBefore, "not yet run");
         assertEq(targetBefore, 0, "none in flight");
 
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
 
         (bool appliedAfter, , , uint256 accum, uint256 counted, ) =
-            remit.getReleasedRemitStrandedSeedState();
+            rlens.getReleasedRemitStrandedSeedState();
         assertTrue(appliedAfter, "one-shot is visibly spent");
         assertGt(accum, 0, "and what it recovered is readable");
         assertEq(counted, 1, "one release behind it");
@@ -2173,18 +2649,18 @@ contract RewardRemitLedgerTest is SetupTest {
         // Precondition: the shape this exists for. One release is real and
         // recorded in the reservation, but the lifetime counter cannot see it.
         (, , , , , uint256 countBefore) =
-            remit.getReleasedRemitStrandedSeedState();
+            rlens.getReleasedRemitStrandedSeedState();
         assertEq(countBefore, 0, "precondition: appended slot reads zero");
         assertEq(
-            uint256(remit.getRemitReservation(1).status),
+            uint256(rlens.getRemitReservation(1).status),
             3,
             "precondition: yet the release itself is real and Released"
         );
 
-        remit.seedReleasedRemitStranded(remit.getRemitReservationNonce());
+        remit.seedReleasedRemitStranded(rlens.getRemitReservationNonce());
 
         (bool applied, , , , uint256 counted, uint256 lifetime) =
-            remit.getReleasedRemitStrandedSeedState();
+            rlens.getReleasedRemitStrandedSeedState();
         assertTrue(applied, "ceremony completed");
         assertEq(counted, 1, "the scan found the historical release");
         assertEq(
@@ -2205,7 +2681,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _preUpgradeReleasedState();
         mutator.setRemitReleasedCountRaw(5);
 
-        uint256 seedTo = remit.getRemitReservationNonce();
+        uint256 seedTo = rlens.getRemitReservationNonce();
         vm.expectRevert(
             abi.encodeWithSelector(
                 RewardRemittanceFacet.SeedWouldShrinkReleasedCount.selector,
@@ -2274,7 +2750,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(0xBA5E), 0, 7e18
         );
 
-        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 7e18, "armed-day delivery counts in full");
         assertEq(uncounted, 0, "nothing was refused");
     }
@@ -2298,7 +2774,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(0xBA5E), 0, 0
         );
 
-        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 0, "unknown composition contributes no fresh");
         assertEq(uncounted, 7e18, "and is recorded, not discarded");
     }
@@ -2322,7 +2798,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(vpfiTok), 3e18, _days(dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 3e18
         );
-        (uint256 counted, ) = remit.getDeliveredFreshPosition();
+        (uint256 counted, ) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 3e18, "fixture counts armed deliveries");
 
         // A day before the cutover -> refused, same everything else.
@@ -2332,7 +2808,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
 
         uint256 uncounted;
-        (counted, uncounted) = remit.getDeliveredFreshPosition();
+        (counted, uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 3e18, "pre-arming funding did not enter");
         assertEq(uncounted, 100e18, "it is visible as uncounted");
     }
@@ -2352,7 +2828,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(0xBA5E), 0, 8e18
         );
 
-        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 0, "one unarmed day refuses the whole batch");
         assertEq(uncounted, 8e18, "and the shortfall is visible");
 
@@ -2362,7 +2838,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(vpfiTok), 8e18, _days2(dStar, dStar + 1), CHAIN_BASE, 43,
             address(0xBA5E), 0, 8e18
         );
-        (counted, ) = remit.getDeliveredFreshPosition();
+        (counted, ) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 8e18, "an all-armed batch counts");
     }
 
@@ -2379,7 +2855,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(vpfiTok), 5e18, _days(9), CHAIN_BASE, 42,
             address(0xBA5E), 0, 5e18
         );
-        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 0, "unarmed chain counts nothing");
         assertEq(uncounted, 5e18, "recorded");
 
@@ -2390,7 +2866,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(vpfiTok), 6e18, new uint256[](0), CHAIN_BASE, 43,
             address(0xBA5E), 0, 6e18
         );
-        (counted, uncounted) = remit.getDeliveredFreshPosition();
+        (counted, uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 0, "empty day set counts nothing");
         assertEq(uncounted, 11e18, "both refusals accumulate");
     }
@@ -2412,7 +2888,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(0xBA5E), 4e18, 6e18
         );
 
-        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         assertEq(counted, 6e18, "10 delivered, 4 recycled -> 6 fresh");
         assertEq(uncounted, 0, "the remainder was fully attributed");
     }
@@ -2441,7 +2917,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(0xBA5E), 4e18, 5e18
         );
 
-        (uint256 counted, uint256 uncounted) = remit.getDeliveredFreshPosition();
+        (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
         // 7 counted + 5 refused + 5 counted = 12 counted, 5 uncounted; the
         // 4e18 recycled leg belongs to the bucket, not to either counter.
         assertEq(counted, 12e18, "both armed deliveries counted");
