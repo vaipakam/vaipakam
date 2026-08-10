@@ -1918,7 +1918,14 @@ contract OfferAcceptFacet is
         // priceable but the oracle cannot price it. Surfaced so the UI can
         // show the live HF against the floor instead of letting the buyer
         // discover it by burning gas. APPENDED — prior values stay stable.
-        SalePositionBelowSolvencyFloor
+        SalePositionBelowSolvencyFloor,
+        // #1503 PR-E (Codex #1635 r4) — the sale is refused for an admission
+        // reason OTHER than the health floor: inherited risk terms weaker than
+        // current parameters, or a live LTV above the cap a fresh admission
+        // would allow. Distinct from the floor code so a surface never tells a
+        // buyer their health factor is short when it is not. APPENDED — prior
+        // values stay stable.
+        SaleAdmissionBlocked
     }
 
     /// @notice Projection of the loan that would land if the supplied

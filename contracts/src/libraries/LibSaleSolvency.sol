@@ -99,15 +99,18 @@ library LibSaleSolvency {
      *         re-derived the rules would eventually quote a sale as fine and
      *         let the accept revert, which is the failure this change exists
      *         to remove, reintroduced one layer down.
-     * @return admissible True when a sale would be allowed (including the
-     *         out-of-scope illiquid case).
-     * @return hf    The position's figure for the failing check, else 0.
-     * @return floor The figure it must meet, else 0.
+     * @return code  The classifier's code, verbatim — 0 admissible. Returned
+     *         rather than collapsed to a bool so a preview can name the ACTUAL
+     *         reason: reporting "health factor below floor" for what is really
+     *         a weaker-inherited-terms or over-cap refusal would tell the buyer
+     *         something false about their own position.
+     * @return a The position's figure for the failing check, else 0.
+     * @return b The figure it must meet, else 0.
      */
     function saleSolvency(uint256 loanId)
         internal
         view
-        returns (bool admissible, uint256 hf, uint256 floor)
+        returns (uint8 code, uint256 a, uint256 b)
     {
         // Preview must never revert the caller's whole read, so an unpriceable
         // position degrades here — reported as NOT admissible, matching what
@@ -115,8 +118,10 @@ library LibSaleSolvency {
         (bool ok, bytes memory ret) = address(this).staticcall(
             abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector, loanId)
         );
-        if (!ok || ret.length < 96) return (false, 0, 0);
-        (uint8 code, uint256 a, uint256 b) = abi.decode(ret, (uint8, uint256, uint256));
-        return (code == 0, a, b);
+        // An unpriceable position that claims to be priceable degrades to code
+        // 1 (below floor) — fail closed, matching what the guard does to the
+        // transaction.
+        if (!ok || ret.length < 96) return (1, 0, 0);
+        return abi.decode(ret, (uint8, uint256, uint256));
     }
 }

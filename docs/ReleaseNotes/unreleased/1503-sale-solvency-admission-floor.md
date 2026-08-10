@@ -15,9 +15,26 @@ A sale is an admission rather than a hand-off of already-accepted risk — the
 incoming lender never underwrote this loan — so both paths now require the
 position to clear the same health-factor floor its own origination required.
 The floor comes from the loan's origination snapshot rather than the live
-protocol setting, so a later governance retune cannot retroactively freeze
-open positions out of the sale paths, which is the rule every other
-post-origination health check already follows. For a resting listing the
+protocol setting, which is the rule every other post-origination health check
+follows.
+
+A sale must clear a second bar as well, and the two pull in different
+directions on purpose. Transferring a position changes the lender, not the
+loan's recorded admission floor, liquidation threshold or initial-LTV cap — so
+where governance has tightened since origination, a buyer would silently
+inherit looser collateral bounds and a later liquidation point than they could
+be sold today, which no health reading reveals because the position is entirely
+solvent against its own older terms. Sale admission therefore also requires
+those inherited terms, and the position's live loan-to-value, to be compatible
+with current parameters.
+
+So the honest statement about a governance retune is narrower than "it changes
+nothing for open positions". Snapshot semantics still govern the existing
+loan's ongoing operation, so the current lender's bargain is never rewritten.
+But a tightening can leave an otherwise valid open position temporarily
+unsellable while it remains perfectly valid to hold, repay or liquidate. That
+is a deliberate consequence of treating a sale as the admission of a new
+lender rather than a hand-off of accepted risk. For a resting listing the
 binding check is at the moment the buyer's value commits: a listing sits
 still while the position keeps moving, and only the fill-time reading
 describes what the buyer actually inherits. Listing creation runs the same

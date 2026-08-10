@@ -186,11 +186,22 @@ contract OfferPreviewFacet {
             // #1503 PR-E (design item 11) — mirror the accept-time solvency
             // admission floor. Classified rather than reverted so the buyer
             // sees "this position is below its sale floor" on the card.
-            (bool _solvent, , ) = LibSaleSolvency.saleSolvency(_saleLoanId);
-            if (!_solvent) {
+            // The classifier's code is preserved, not collapsed. Code 1 is
+            // genuinely "health factor below its floor"; 2-5 are weaker
+            // inherited terms or a live LTV over the admission cap, and
+            // reporting those as a health-factor failure would tell the buyer
+            // something false about their position (Codex #1635 r4).
+            (uint8 _saleCode, , ) = LibSaleSolvency.saleSolvency(_saleLoanId);
+            if (_saleCode == 1) {
                 preview.errorCode = OfferAcceptFacet
                     .AcceptError
                     .SalePositionBelowSolvencyFloor;
+                return preview;
+            }
+            if (_saleCode != 0) {
+                preview.errorCode = OfferAcceptFacet
+                    .AcceptError
+                    .SaleAdmissionBlocked;
                 return preview;
             }
         }

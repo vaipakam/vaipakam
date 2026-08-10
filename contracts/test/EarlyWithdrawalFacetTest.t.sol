@@ -3744,10 +3744,14 @@ contract EarlyWithdrawalFacetTest is Test {
 
         OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
             .previewAccept(saleOfferId, makeAddr("inheritedTermsBuyer"));
+        // SaleAdmissionBlocked, NOT the health-floor code: this position's HF
+        // is fine and only its inherited terms are stale. Reporting the floor
+        // code here would tell the buyer something false about their position
+        // (Codex #1635 r4) — the assertion this test originally made.
         assertEq(
             uint8(p.errorCode),
-            uint8(OfferAcceptFacet.AcceptError.SalePositionBelowSolvencyFloor),
-            "preview must flag a position whose inherited terms are weaker"
+            uint8(OfferAcceptFacet.AcceptError.SaleAdmissionBlocked),
+            "preview must name the inherited-terms reason, not the health floor"
         );
     }
 
