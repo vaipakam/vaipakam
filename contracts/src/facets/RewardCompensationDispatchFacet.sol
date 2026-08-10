@@ -623,6 +623,20 @@ contract RewardCompensationDispatchFacet is
         if (r.consumedAcked) {
             revert StrandedReturnConsumedReceipt(remitId);
         }
+        // #1660 r4 — POSITIVE non-consumption evidence, not mere absence
+        // of a consumed stamp: the transport executes out of order, so a
+        // faulty mirror could deliver the return BEFORE its consumed
+        // attestation and the credit could not be revoked once
+        // re-dispatched. The return therefore requires the receipt's ack
+        // to have LANDED as non-consumed (status 2 with no consumed
+        // stamp; the ack is permissionlessly re-presentable, so an
+        // honest quarantined receipt can always satisfy this first) or
+        // the reservation RELEASED (terminal message state — the value
+        // coming home IS the recovery). A Pending return stays
+        // re-executable until the ack lands.
+        if (r.status != 2 && r.status != 3) {
+            revert StrandedReturnAwaitingAck(remitId, r.status);
+        }
         if (sourceChainId != r.dstChainId) {
             revert StrandedReturnWrongSourceChain(
                 sourceChainId, r.dstChainId
@@ -672,12 +686,21 @@ contract RewardCompensationDispatchFacet is
                 delete s.rewardBudgetRemitted[sourceChainId][dayId];
                 delete s.dayClosedByRemitId[sourceChainId][dayId];
             }
-            uint256 curL = s.compFundedLender18[sourceChainId][dayId];
-            uint256 curB = s.compFundedBorrower18[sourceChainId][dayId];
-            s.compFundedLender18[sourceChainId][dayId] =
-                curL > r.declaredLender18 ? curL - r.declaredLender18 : 0;
-            s.compFundedBorrower18[sourceChainId][dayId] =
-                curB > r.declaredBorrower18 ? curB - r.declaredBorrower18 : 0;
+            // #1660 r4 — once, whichever unwind path ran first: a
+            // RELEASED reservation's release already removed the declared
+            // contribution, and subtracting again would erase funding a
+            // replacement recorded in the meantime (a non-terminal chunk
+            // clears the gate, so a replacement can dispatch while the
+            // terminal chunk is still in flight).
+            if (!r.declaredUnwound) {
+                r.declaredUnwound = true;
+                uint256 curL = s.compFundedLender18[sourceChainId][dayId];
+                uint256 curB = s.compFundedBorrower18[sourceChainId][dayId];
+                s.compFundedLender18[sourceChainId][dayId] = curL
+                    > r.declaredLender18 ? curL - r.declaredLender18 : 0;
+                s.compFundedBorrower18[sourceChainId][dayId] = curB
+                    > r.declaredBorrower18 ? curB - r.declaredBorrower18 : 0;
+            }
         }
         // #1660 r2/r3 — loss-evidence closure at the full residual:
         // entitlement minus everything that physically arrived, folding in

@@ -430,6 +430,14 @@ interface IVaipakamErrors {
     ///         return against it would reuse the dispatch cap lineage.
     error StrandedReturnConsumedReceipt(uint256 remitId);
 
+    /// @notice #1660 r4 - the return arrived before the receipt's ack:
+    ///         positive NON-consumption evidence (an Acked-non-consumed
+    ///         or Released reservation) is required before any credit,
+    ///         because out-of-order transport could otherwise land a
+    ///         faulty mirror's return ahead of its consumed attestation.
+    ///         Re-executable once the permissionless ack lands.
+    error StrandedReturnAwaitingAck(uint256 remitId, uint8 status);
+
     /// @notice A from-recovery dispatch exceeds the recovery position
     ///         balance (recovered − redispatched).
     error RecoveryPositionInsufficient(uint256 requested, uint256 available);

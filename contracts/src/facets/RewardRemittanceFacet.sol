@@ -1770,7 +1770,10 @@ contract RewardRemittanceFacet is
         if (
             n == 1
                 && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
+                // #1660 r4 - once, whichever unwind path ran first.
+                && !r.declaredUnwound
         ) {
+            r.declaredUnwound = true;
             uint256 cd = closed[0];
             uint256 curL = s.compFundedLender18[dst][cd];
             uint256 curB = s.compFundedBorrower18[dst][cd];

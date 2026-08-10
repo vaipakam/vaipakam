@@ -1039,7 +1039,20 @@ the bounds are the design's actual commitment.
    > order — a partial landing after the terminal must shrink the loss
    > it just recovered); and the satellite probes prefer the LIVE
    > endpoint with a distinct artifact address upgraded as well (a
-   > stale artifact must never shadow the active proxy).
+   > stale artifact must never shadow the active proxy). Round 4
+   > made both exclusions order-independent: the return requires
+   > POSITIVE non-consumption evidence (an Acked-non-consumed or
+   > Released reservation) rather than mere absence of a consumed
+   > stamp — out-of-order transport could land a faulty mirror's
+   > return ahead of its consumed attestation, and a credited
+   > re-dispatch cannot be revoked; an early return stays
+   > re-executable until the permissionless ack lands. And the
+   > declared-funding unwind is a ONE-flag operation shared by release
+   > and the terminal return (`declaredUnwound`) — a released
+   > reservation's late-returning message must not subtract the same
+   > contribution twice and erase a replacement's funding recorded
+   > while the terminal chunk was in flight.
+
 
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —
    carries the FunctionalSpec amendment if (a) is ratified.

@@ -6689,6 +6689,13 @@ library LibVaipakam {
         // would reuse the original dispatch's cap lineage while the
         // consumed value still backs claims (a 69M bypass).
         bool consumedAcked;
+        // #1660 r4 - the declared per-side contribution has been unwound
+        // from `compFunded*` (by release OR by the B1 terminal-return
+        // unwind - whichever ran first). One flag, both writers guarded:
+        // a released reservation's late-returning message must not
+        // subtract the same contribution twice and erase a replacement's
+        // funding.
+        bool declaredUnwound;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

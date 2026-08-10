@@ -2964,6 +2964,14 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
+    /// Same arming, named for tests that deliberately present NO ack
+    /// first (the r4 refusal paths).
+    function _armReturnIngressNoAck() internal {
+        RepatriationFacet(address(diamond)).setRepatriationEndpoints(
+            address(0), address(this)
+        );
+    }
+
     /// §8-5 — the full arc: charged dispatch → authenticated return
     /// (position credited, gate cleared, NO headroom restored) → release
     /// re-opens the day → UNCHARGED re-dispatch from the position (cap
@@ -2974,6 +2982,8 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
         uint256 globalAfter = rlens.getRewardBudgetRemittedGlobal();
+        // #1660 r4 - positive non-consumption evidence precedes credit.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
 
         _armReturnIngress();
         comp.onStrandedReturnReceived(
@@ -2995,9 +3005,11 @@ contract RewardRemitLedgerTest is SetupTest {
             "the return restores NO headroom"
         );
 
-        // Operator releases the dead reservation; the day re-opens.
-        vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        // #1660 r3/r4 - the terminal return itself re-opened the day
+        // (closure unwound); no release needed - and none possible, the
+        // reservation is Acked (statuses partition: return needs 2/3,
+        // release needs 1).
+        assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0);
 
         // Uncharged re-dispatch from the position.
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
@@ -3041,12 +3053,13 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
         uint256 globalAfter = rlens.getRewardBudgetRemittedGlobal();
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
         );
-        vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        // (terminal return re-opened the day - no release of the Acked
+        // reservation needed or possible)
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
             CHAIN_ARB, 1, 2e18, 1e18
         );
@@ -3072,6 +3085,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
@@ -3136,6 +3150,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 2.5e18, 0
@@ -3152,6 +3167,78 @@ contract RewardRemitLedgerTest is SetupTest {
             rlens.getCompensationOutstanding(CHAIN_ARB),
             0,
             "gate settles on the short delivery too"
+        );
+    }
+
+    /// #1660 r4 - POSITIVE non-consumption evidence is required: a return
+    /// arriving before the receipt's ack refuses (re-executable), so an
+    /// out-of-order faulty mirror cannot credit ahead of its consumed
+    /// attestation.
+    function test_Recovery_PendingReturnRefusedUntilAck() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        _armReturnIngressNoAck();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.StrandedReturnAwaitingAck.selector, 1, 1
+            )
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
+        );
+        // The permissionless non-consumed ack lands; the re-executed
+        // return now settles.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
+        );
+        (uint256 recovered, , ) = rlens.getRecoveryPosition();
+        assertEq(recovered, 3e18);
+    }
+
+    /// #1660 r4 - a RELEASED reservation's late return must not unwind the
+    /// declared contribution twice: release already removed it, and a
+    /// second subtraction would erase the funding a replacement recorded
+    /// while the terminal chunk was still in flight.
+    function test_Recovery_ReleasedReturnNoDoubleUnwind() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        // The message never executes; the operator releases (declared
+        // unwound, day re-opened, gate still HELD).
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl + fb, 0, "release unwound the declared split");
+        // ...but it executes after all, quarantines mirror-side, and
+        // returns CHUNKED: the first chunk clears the gate (status 3 is
+        // return-eligible - the value coming home IS the recovery).
+        _armReturnIngressNoAck();
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
+            2e18
+        );
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0);
+        // A replacement funds the day from the position meanwhile.
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 0.6e18, 0.4e18
+        );
+        // The released reservation's TERMINAL chunk lands: the declared
+        // subtraction must SKIP (already unwound at release) - the
+        // replacement's funding survives.
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
+        );
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 0.6e18, "replacement funding survives the late terminal");
+        assertEq(fb, 0.4e18, "replacement funding survives the late terminal");
+        assertEq(
+            rlens.getDayClosedByRemitId(CHAIN_ARB, 1),
+            2,
+            "replacement closure untouched (ownership guard)"
         );
     }
 
@@ -3183,6 +3270,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
         _armReturnIngress();
         // Terminal chunk (2e18, remainder 0) arrives FIRST: residual 1e18
         // reads as loss at that moment.
@@ -3241,6 +3329,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
         _armReturnIngress();
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -3261,6 +3350,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
         _armReturnIngress();
         // The mirror only ever held 2e18 (first leg arrived short); its
         // one-shot record returns exactly that, remainder zero.
@@ -3285,6 +3375,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
         _armReturnIngress();
         comp.onStrandedReturnReceived(
             address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
