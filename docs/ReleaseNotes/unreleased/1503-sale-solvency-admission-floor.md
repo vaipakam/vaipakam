@@ -137,3 +137,18 @@ asserts every function of every refreshed component ends up on a single build.
 The equivalent staleness in the other refresh script is filed separately and
 untouched here; its sale-path fix, which is what this release needed, is
 complete and covered.
+
+One more gap in the rehearsal itself came out of that review, and closing it
+found something. The rehearsal drove the direct sale route for both refresh
+scripts, but one of the two refreshes the *resting-listing* route instead — so
+for that script the rehearsal was exercising a path it does not touch, and would
+have stayed green with the refreshed listing check broken or absent. Each script
+is now rehearsed against the route it actually refreshes. Pointing it at the
+right route immediately exposed a real defect, and not one this release
+introduced: on a partially-refreshed deployment, completing a sale through a
+resting listing fails outright while the direct route completes normally, and it
+fails the same way against the previous version of the refresh script. It is
+filed with its diagnostic trace and the partial-refresh path should be treated
+as unsafe for the listing route until it is understood. Correct routing turned
+out to be necessary but not sufficient, which is the sort of thing only a real
+rehearsal can tell you.

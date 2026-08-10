@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -131,6 +132,8 @@ contract AnvilNewPositiveFlows is Script {
         if (bytes(only).length != 0) {
             if (keccak256(bytes(only)) == keccak256("N25")) {
                 _scenarioN25SaleSolvencyFloor();
+            } else if (keccak256(bytes(only)) == keccak256("N26")) {
+                _scenarioN26SaleAdmissionOnAcceptBranch();
             } else if (keccak256(bytes(only)) == keccak256("N15")) {
                 _scenarioN15SellLoanViaBuyOffer();
             } else {
@@ -161,10 +164,11 @@ contract AnvilNewPositiveFlows is Script {
         _scenarioN22MasterFlagDormancy();
         _scenarioN15SellLoanViaBuyOffer();
         _scenarioN25SaleSolvencyFloor();
+        _scenarioN26SaleAdmissionOnAcceptBranch();
 
         console.log("");
         console.log("============================================");
-        console.log("  WAVE 1+2+3a+3b+3c+3d+3e (N3, N4, N7, N1, N5, N6, N8, N9, N11, N12, N10, N13, N14, N18, N19, N20, N22, N15, N25) PASSED");
+        console.log("  WAVE 1+2+3a+3b+3c+3d+3e (N3, N4, N7, N1, N5, N6, N8, N9, N11, N12, N10, N13, N14, N18, N19, N20, N22, N15, N25, N26) PASSED");
         console.log("");
         console.log("  Skipped on Anvil --broadcast (chain time cannot be advanced from inside the script):");
         console.log("    N16 HF liquidation       -> covered by RiskFacetTest.t.sol unit tests + Phase 7a LibSwap*Test.t.sol");
@@ -2027,6 +2031,131 @@ contract AnvilNewPositiveFlows is Script {
         console.log("Same sale settles once the position is back over its floor");
 
         console.log(">>> N25 PASSED <<<");
+    }
+
+    // ─── N26: Sale Admission Floor on the LISTING ACCEPT branch ─────────
+
+    /// @dev Codex #1635 r5. N25 drives the floor through
+    ///      `EarlyWithdrawalFacet.sellLoanViaBuyOffer` — the DIRECT sale. That
+    ///      leaves the other guarded path unexercised on chain: the sale-vehicle
+    ///      branch of `OfferAcceptFacet.acceptOffer`, which is where a resting
+    ///      listing's binding check lives.
+    ///
+    ///      This matters specifically for the upgrade rehearsal.
+    ///      `ReplaceStaleFacets` is the script that reinstalls
+    ///      `OfferAcceptFacet`, so rehearsing it against N25 proved the wrong
+    ///      thing: N25's only `acceptOffer` call originates an ordinary loan and
+    ///      never reaches the sale branch, so breaking or dropping the refreshed
+    ///      sale guard would have left that rehearsal green. The rehearsal picks
+    ///      the scenario per script for this reason.
+    ///
+    ///      Same fixture logic as N25 — under the admission floor but above the
+    ///      liquidation trigger, so what is proved is the ADMISSION standard and
+    ///      not "not liquidatable yet" — driven through listing + accept:
+    ///        - newLender lends to newBorrower, then LISTS the position.
+    ///        - Collateral falls; bob's accept of the listing must be refused.
+    ///        - Price recovers; the same accept must settle, moving the lender.
+    function _scenarioN26SaleAdmissionOnAcceptBranch() internal {
+        console.log("");
+        console.log("=== N26: Sale Admission Floor (listing accept branch) ===");
+
+        vm.startBroadcast(newLenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT);
+        uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
+        vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t26 =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId, true, 0);
+        bytes memory _sig26 = LibAcceptTestSigner.sign(diamond, _t26, newBorrowerKey);
+        vm.startBroadcast(newBorrowerKey);
+        weth.approve(diamond, COLLATERAL_AMOUNT);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t26, _sig26);
+        vm.stopBroadcast();
+        console.log("loan initiated:", loanId);
+
+        // The lender lists the position while it is healthy — the listing-rests
+        // -while-collateral-falls case the accept-time check exists for.
+        vm.recordLogs();
+        vm.startBroadcast(newLenderKey);
+        EarlyWithdrawalFacet(diamond).createLoanSaleOffer(loanId, 500, true, 7 days);
+        vm.stopBroadcast();
+        uint256 saleOfferId;
+        {
+            Vm.Log[] memory logs = vm.getRecordedLogs();
+            bytes32 linkedSig = keccak256("LoanSaleOfferLinked(uint256,uint256)");
+            for (uint256 i; i < logs.length; i++) {
+                if (logs[i].topics[0] == linkedSig) {
+                    saleOfferId = uint256(logs[i].topics[2]);
+                }
+            }
+        }
+        require(saleOfferId != 0, "N26: sale listing was not created");
+        console.log("sale listing:", saleOfferId);
+
+        uint256 hfHealthy = RiskFacet(diamond).calculateHealthFactor(loanId);
+        require(
+            hfHealthy >= LibVaipakam.MIN_HEALTH_FACTOR,
+            "N26: fixture must start above the floor"
+        );
+
+        // Buyer signs terms BEFORE the drift, which is the real sequence: the
+        // signature commits to the loan's shape, not to its health.
+        LibAcceptTerms.AcceptTerms memory _ts26 =
+            LibAcceptTestSigner.buildSaleTerms(diamond, vm.addr(lenderKey), saleOfferId, true, loanId);
+        bytes memory _ssig26 = LibAcceptTestSigner.sign(diamond, _ts26, lenderKey);
+
+        vm.startBroadcast(deployerKey);
+        wethFeedRef.setPrice(1500e8);
+        vm.stopBroadcast();
+
+        // Same reasoning as N25: an Illiquid leg is out of scope for the floor,
+        // so the refusal below would prove nothing if the depth guard had
+        // reclassified WETH when the feed moved off the mock pool's spot.
+        require(
+            OracleFacet(diamond).checkLiquidity(address(weth)) ==
+                LibVaipakam.LiquidityStatus.Liquid,
+            "N26: WETH must stay Liquid or the floor is not what is being tested"
+        );
+        uint256 hfSunk = RiskFacet(diamond).calculateHealthFactor(loanId);
+        console.log("HF at $1500 collateral:", hfSunk);
+        require(hfSunk < LibVaipakam.MIN_HEALTH_FACTOR, "N26: must sit below the floor");
+        require(
+            hfSunk > LibVaipakam.HF_LIQUIDATION_THRESHOLD,
+            "N26: and above the liquidation trigger"
+        );
+
+        vm.startBroadcast(lenderKey);
+        usdc.approve(diamond, LOAN_AMOUNT * 2);
+        vm.stopBroadcast();
+
+        // Simulated so a deliberate revert does not abort the run; still the
+        // real deployed bytecode against real chain state.
+        vm.prank(vm.addr(lenderKey));
+        (bool ok, bytes memory ret) = diamond.call(
+            abi.encodeWithSelector(
+                OfferAcceptFacet.acceptOffer.selector, saleOfferId, _ts26, _ssig26
+            )
+        );
+        require(!ok, "N26: a sub-floor listing must NOT be acceptable");
+        require(
+            bytes4(ret) == LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+            "N26: refused, but not for the solvency reason"
+        );
+        console.log("Sub-floor listing accept refused with SalePositionBelowSolvencyFloor");
+
+        vm.startBroadcast(deployerKey);
+        wethFeedRef.setPrice(2000e8);
+        vm.stopBroadcast();
+
+        vm.startBroadcast(lenderKey);
+        OfferAcceptFacet(diamond).acceptOffer(saleOfferId, _ts26, _ssig26);
+        vm.stopBroadcast();
+        require(
+            LoanFacet(diamond).getLoanDetails(loanId).lender == vm.addr(lenderKey),
+            "N26: recovered position must sell through the accept branch"
+        );
+        console.log("Same listing accept settles once the position is back over its floor");
+
+        console.log(">>> N26 PASSED <<<");
     }
 
     // ─── Offer-param helpers ─────────────────────────────────────────────

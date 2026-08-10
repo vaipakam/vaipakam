@@ -29,14 +29,15 @@
 #
 #   1. Fresh anvil (chain-id 31337) + full `anvil-bootstrap.sh` playground.
 #   2. Reduces that Diamond to the pre-#1503 shape by REMOVING `saleAdmission`.
-#   3. Asserts the break: scenario N25's sale must fail there, and the failure
+#   3. Asserts the break: the script's mapped sale scenario must fail there,
+#      and the failure
 #      must be the routing one. Without this step the rehearsal could "pass"
 #      against a fixture that was never broken.
 #   4. Runs the refresh script under test with `--broadcast`.
 #   5. Asserts every `RiskPreviewFacet` selector routes, and all to ONE host —
 #      a partition bug that split them across old and new addresses would leave
 #      the Diamond routed but running two builds of the same facet.
-#   6. Drives scenario N25 with `--broadcast`: a real sale refused under its
+#   6. Drives that same scenario with `--broadcast`: a real sale refused under its
 #      floor, then the SAME sale settling once the price recovers.
 #
 # USAGE
@@ -85,12 +86,33 @@ RISK_PREVIEW_SELECTORS=(
   0x2c87c1a3  # saleAdmission
 )
 
+# KNOWN FAILURE — ReplaceStaleFacets currently fails at step 6, and the failure
+# is REAL, not a flaw in this script. Once the rehearsal was pointed at the
+# listing-accept branch this script actually refreshes (N26, per the mapping
+# below), the post-refresh sale reverted `ERC721InsufficientApproval` from inside
+# `completeLoanSaleInternal`. The same scenario passes on a chain that has NOT
+# been partially refreshed, and it fails identically against the pre-#1649
+# version of the refresh script, so it predates the routing work and is not
+# caused by it. Tracked as #1659 with the full trace. Do not "fix" this by
+# pointing the rehearsal back at N25 — that is precisely the blind spot that hid
+# the defect (Codex #1635 r5).
 fail() { echo "REHEARSAL FAILED: $*" >&2; exit 1; }
 step() { echo; echo "--- $*"; }
 
-# The scenario-driver env. N25 is the sale-admission scenario; ONLY_SCENARIO
-# skips the earlier scenarios, which matters because the flow script cannot
-# currently reach its broadcast pass from the top (#1646, pre-existing).
+# The scenario-driver env. ONLY_SCENARIO skips the earlier scenarios, which
+# matters because the flow script cannot currently reach its broadcast pass from
+# the top (#1646, pre-existing).
+#
+# WHICH scenario is chosen per refresh script, and that is load-bearing (Codex
+# #1635 r5). Each script reinstalls a DIFFERENT guarded sale path, and a
+# scenario that does not traverse the path a given script refreshes would stay
+# green with that script's guard broken or dropped:
+#
+#   RedeployFacets     -> EarlyWithdrawalFacet -> N25 (direct sellLoanViaBuyOffer)
+#   ReplaceStaleFacets -> OfferAcceptFacet     -> N26 (resting-listing accept)
+#
+# Rehearsing ReplaceStaleFacets against N25 was exactly that mistake: N25's only
+# acceptOffer call originates an ordinary loan and never reaches the sale branch.
 export DEPLOYER_PRIVATE_KEY="$DEPLOYER_KEY"
 export ADMIN_PRIVATE_KEY="$ADMIN_KEY"
 export ADMIN_ADDRESS="$ADMIN_ADDR"
@@ -137,8 +159,19 @@ assert_risk_preview_routed() {
   echo "    all ${#RISK_PREVIEW_SELECTORS[@]} selectors -> $host"
 }
 
+# Which scenario exercises the sale path each script refreshes.
+scenario_for() {
+  case "$1" in
+    RedeployFacets) echo N25 ;;
+    ReplaceStaleFacets) echo N26 ;;
+    *) fail "no sale scenario mapped for $1 - add one rather than reusing another script's" ;;
+  esac
+}
+
 rehearse() {
   local refresh_script="$1"
+  local scen
+  scen="$(scenario_for "$refresh_script")"
   echo
   echo "================================================================"
   echo "  Rehearsing: $refresh_script"
@@ -173,13 +206,13 @@ rehearse() {
     || fail "saleAdmission still routed to $routed - fixture did not take"
   echo "    saleAdmission unrouted"
 
-  step "3/6  assert the break: N25's sale must fail for the ROUTING reason"
-  if ONLY_SCENARIO=N25 forge script script/AnvilNewPositiveFlows.s.sol \
+  step "3/6  assert the break: $scen's sale must fail for the ROUTING reason"
+  if ONLY_SCENARIO="$scen" forge script script/AnvilNewPositiveFlows.s.sol \
        --rpc-url "$RPC" > "$WORKDIR/pre.log" 2>&1; then
-    fail "N25 succeeded on the pre-#1503 fixture - the break was not reproduced"
+    fail "$scen succeeded on the pre-#1503 fixture - the break was not reproduced"
   fi
   grep -q "FunctionDoesNotExist" "$WORKDIR/pre.log" \
-    || { tail -30 "$WORKDIR/pre.log"; fail "N25 failed, but not with FunctionDoesNotExist"; }
+    || { tail -30 "$WORKDIR/pre.log"; fail "$scen failed, but not with FunctionDoesNotExist"; }
   echo "    sale reverted FunctionDoesNotExist, as the finding describes"
 
   step "4/6  run $refresh_script --broadcast"
@@ -194,14 +227,14 @@ rehearse() {
   step "5/6  assert routing"
   assert_risk_preview_routed "$diamond"
 
-  step "6/6  drive a real sale: N25 --broadcast"
-  ONLY_SCENARIO=N25 forge script script/AnvilNewPositiveFlows.s.sol \
+  step "6/6  drive a real sale: $scen --broadcast"
+  ONLY_SCENARIO="$scen" forge script script/AnvilNewPositiveFlows.s.sol \
     --rpc-url "$RPC" --broadcast > "$WORKDIR/post.log" 2>&1 \
-    || { tail -30 "$WORKDIR/post.log"; fail "N25 broadcast failed after refresh"; }
-  grep -q "N25 PASSED" "$WORKDIR/post.log" \
-    || { tail -30 "$WORKDIR/post.log"; fail "N25 did not report PASSED"; }
+    || { tail -30 "$WORKDIR/post.log"; fail "$scen broadcast failed after refresh"; }
+  grep -q "$scen PASSED" "$WORKDIR/post.log" \
+    || { tail -30 "$WORKDIR/post.log"; fail "$scen did not report PASSED"; }
   grep -q "ONCHAIN EXECUTION COMPLETE" "$WORKDIR/post.log" \
-    || { tail -30 "$WORKDIR/post.log"; fail "N25 simulated but did not execute on chain"; }
+    || { tail -30 "$WORKDIR/post.log"; fail "$scen simulated but did not execute on chain"; }
   echo "    sale refused under its floor, then settled once recovered - on chain"
 
   kill "$ANVIL_PID" 2>/dev/null || true
