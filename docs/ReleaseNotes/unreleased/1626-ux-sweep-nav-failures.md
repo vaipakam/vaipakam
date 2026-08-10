@@ -1,4 +1,4 @@
-## Thread — The UX sweep now fails when a route never loaded (PR #1646)
+## Thread — The UX sweep now fails when a route never loaded (PR #1648)
 
 The whole-site UX sweep in the live review tier is mostly an evidence
 generator: it visits every route in three passes, captures full-page
