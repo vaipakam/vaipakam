@@ -1360,6 +1360,34 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         );
     }
 
+    /// #1656 r11 — a provisional credit stamps NO remediation clocks: the
+    /// bounded short-lapse window must not burn while the credit awaits
+    /// its V3 confirmation (Base's supplemental path is unreachable until
+    /// confirm → consumed-ACK round trip), so the clocks start at
+    /// confirmation time — even when the broadcast is delayed past the
+    /// whole lapse window.
+    function testProvisionalClocksStartAtConfirmation() public {
+        _configureCompMirror();
+        _deliverComp(3, REMITTER, 3e18, 2e18);
+        (uint64 f0, uint64 q0, ) = _com().getShortLapseDeadline(3);
+        assertEq(f0, 0, "provisional stamps no clocks");
+        assertEq(q0, 0, "provisional stamps no rolling clock");
+
+        // The confirming broadcast arrives 8 days late — past the 7-day
+        // window had it run from the receipt. Absolute warp + literal
+        // assertions: viaIR CSEs `block.timestamp` reads across
+        // `vm.warp` within one test frame (the warp-CSE gotcha), so a
+        // post-warp `block.timestamp` here can read the cached pre-warp
+        // value.
+        vm.warp(8 days + 1000);
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.zeroedForDest = true;
+        messenger.deliverBroadcastV3(b);
+        (uint64 f1, uint64 q1, ) = _com().getShortLapseDeadline(3);
+        assertEq(f1, uint64(8 days + 1000), "clock starts at confirm");
+        assertEq(q1, uint64(8 days + 1000), "rolling clock too");
+    }
+
     /// #1634 r3 — a fee-on-transfer delivery's per-side shares each floor,
     /// so their sum can sit below the credited amount; the demotion
     /// reserves the CREDITED amount wholesale, never the pool sum.

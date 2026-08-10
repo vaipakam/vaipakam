@@ -624,7 +624,27 @@ terminate on a bounded clock, record the loss.
 > reconcile — and the in-place refresh script generation-gates the
 > reward MESSENGER proxy the same way it gates the receiver
 > (`WIRE_GENERATION`), since the refreshed facets speak the 5-word
-> consumption ACK that a generation-1 messenger rejects.)*
+> consumption ACK that a generation-1 messenger rejects. Round 11
+> hardened three more edges. First, the short-lapse scaled delta shaves
+> the side's covering-entry count off the delivered pool before scaling
+> (`Δq × (pool − n) / quoted`): bulk settlement floors once over an
+> entry's whole window, so the lapsed day's marginal can round UP by a
+> wei per covering entry, and the unshaved scaling could pay a few wei
+> more than was delivered out of unrelated custody — the same
+> "upper bound must dominate every rounding regime" lesson the quote's
+> per-entry ceiling encodes, now applied to the terminal's arm. The
+> accumulator counts entries from the feature's genesis (no deployment
+> ever ran the w3 accumulator without the count), so the count is never
+> stale for a real quoted day. Second, a PROVISIONAL compensation stamps
+> no remediation clocks — they start when its V3 broadcast confirms the
+> credit, because only from confirmation can Base's supplemental path
+> run at all; a delayed broadcast would otherwise burn the bounded
+> window while remediation was impossible and let the terminal fire the
+> moment `provisional` cleared. Third, an EXACT lapse-loss record
+> (conservation proved) freezes its accumulation — the admin reset valve
+> refuses, since a wiped accumulator could never refresh figures the
+> refinement hook no longer touches; partial records stay resettable,
+> which is precisely the parked-cursor recovery the valve exists for.)*
 
 ---
 

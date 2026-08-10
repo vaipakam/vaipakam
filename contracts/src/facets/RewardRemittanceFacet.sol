@@ -1238,15 +1238,29 @@ contract RewardRemittanceFacet is
         // "short", the qualifying test is vacuously false, and only the
         // first-credit stamp lands — the deadline then runs on the
         // absolute clock, which is the conservative direction.
-        if (s.firstCompReceiptAt[dayId] == 0) {
-            s.firstCompReceiptAt[dayId] = uint64(block.timestamp);
-            s.lastQualifyingCompReceiptAt[dayId] = uint64(block.timestamp);
-        } else if (
-            _cutsShortfallByQuarter(
-                s, dayId, lenderShare18, borrowerShare18
-            )
-        ) {
-            s.lastQualifyingCompReceiptAt[dayId] = uint64(block.timestamp);
+        //
+        // #1656 r11 — a PROVISIONAL credit stamps NO clocks: it awaits
+        // its V3 confirmation, and until that lands Base holds the
+        // compensation gate (a supplemental needs a consumed ACK's
+        // round trip first), so no remediation interval exists yet. A
+        // delayed broadcast would otherwise burn the whole window while
+        // supplementing was impossible and let the short-lapse terminal
+        // fire the moment `provisional` clears. The confirm hook stamps
+        // the clocks at confirmation time instead; the demote path
+        // deletes any stamped clocks with the credit (r1).
+        if (!provisional) {
+            if (s.firstCompReceiptAt[dayId] == 0) {
+                s.firstCompReceiptAt[dayId] = uint64(block.timestamp);
+                s.lastQualifyingCompReceiptAt[dayId] =
+                    uint64(block.timestamp);
+            } else if (
+                _cutsShortfallByQuarter(
+                    s, dayId, lenderShare18, borrowerShare18
+                )
+            ) {
+                s.lastQualifyingCompReceiptAt[dayId] =
+                    uint64(block.timestamp);
+            }
         }
         dc.lenderPool18 += SafeCast.toUint128(lenderShare18);
         dc.borrowerPool18 += SafeCast.toUint128(borrowerShare18);
@@ -1360,6 +1374,21 @@ contract RewardRemittanceFacet is
 
         if (dc.provisionalEra == baseDeployment && zeroedForDest) {
             dc.provisional = false;
+            // #1656 r11 — the remediation clock starts NOW, not at the
+            // provisional receipt: only from confirmation can Base's
+            // supplemental path ever run (gate → consumed ACK → gate
+            // clear), so the bounded window must not have been burning
+            // while the credit sat unconfirmed. First-stamp only: a
+            // provisional can exist solely on a day with no known
+            // broadcast state, and every credited (clock-stamping)
+            // receipt flows through the known-state branch — a non-zero
+            // clock here is an unreachable ordering left untouched
+            // defensively (the absolute 3× cap governs regardless).
+            if (s.firstCompReceiptAt[dayId] == 0) {
+                s.firstCompReceiptAt[dayId] = uint64(block.timestamp);
+                s.lastQualifyingCompReceiptAt[dayId] =
+                    uint64(block.timestamp);
+            }
             // #1656 r8 - the settled credit is CONSUMED: its receipt's
             // ack may now clear the R6 gate.
             s.receivedRemits[

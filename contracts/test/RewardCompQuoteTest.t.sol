@@ -765,6 +765,17 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         // (dispatch is refused after the lapse, so a stamp-based flag
         // could never clear).
         assertFalse(loss.partialFigure, "conservation-complete = exact");
+
+        // #1656 r11 - the exact record is FINAL: the completed
+        // accumulation cannot be reset out from under it (a wiped
+        // accumulator could never refresh figures the refinement hook
+        // no longer touches).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CompQuoteResetRefusedExactLoss.selector, DAY
+            )
+        );
+        _com().resetCompQuoteAccumulation(DAY, L);
     }
 
     function test_shortLapse_scaledCrossingAndLoss() public {
@@ -794,15 +805,19 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         assertEq(loss.lender18, 10e18, "shortfall = quoted - funded");
         assertTrue(loss.shortLapse, "short terminal");
 
-        // The fold crosses at the POOL-SCALED delta: Δq × pool/quote =
-        // 0.2e18 × 10/20 = 0.1e18 — order-independent, every settlement
-        // path bounded by delivered funding.
+        // The fold crosses at the POOL-SCALED delta with the r11
+        // rounding shave: Δq × (pool − n)/quote = 0.2e18 × (10e18−3)/20e18
+        // = 0.1e18 − 1 wei (n = 3 covering entries — each entry's
+        // window-floored marginal can round up a wei, so only the shaved
+        // numerator keeps Σ payouts ≤ the delivered pool). Reverting the
+        // shave prices exactly 0.1e18 and fails these assertions.
         assertEq(_mut().advanceCumThroughRaw(L, DAY), DAY, "crosses");
         (, uint256 rpn, , , uint256 minArmed) = _mut().getCumStateRaw(L, DAY);
-        assertEq(rpn, 0.1e18, "scaled delta");
-        assertEq(minArmed, 0.1e18, "armed series carries the scaled delta");
+        assertEq(rpn, 0.1e18 - 1, "scaled delta (entry-count shaved)");
+        assertEq(minArmed, 0.1e18 - 1, "armed series carries the shave");
 
-        // The walk pays at the scaled delta too (e1: 60 x 0.1 = 6e18).
+        // The walk pays at the shaved delta too (e1: 60e18 × (0.1e18−1)
+        // / 1e18 = 6e18 − 60 wei).
         _mut().setDayCapModeRaw(DAY, 1);
         _mut().setFeeEntitlementRaw(
             1,
@@ -825,7 +840,7 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
                 u1, DAY, one, type(uint256).max, type(uint256).max
             );
         assertTrue(ch.advanced, "day settles");
-        assertEq(ch.toUser.total, 6e18, "pays at the scaled delta");
+        assertEq(ch.toUser.total, 6e18 - 60, "pays at the shaved delta");
     }
 
     function test_shortLapse_gatesAndAbsoluteCap() public {
@@ -999,6 +1014,14 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         LibVaipakam.LapsedDayLoss memory loss = _com().getLapsedDayLoss(DAY);
         assertEq(loss.lender18, 12e18, "prefix figure at the terminal");
         assertTrue(loss.partialFigure, "flagged partial");
+
+        // #1656 r11 - a PARTIAL record stays resettable (that IS the
+        // parked-cursor recovery valve); re-walk the prefix and the
+        // refinement below completes as before.
+        _com().resetCompQuoteAccumulation(DAY, L);
+        _com().accumulateCompQuoteBatch(
+            DAY, LibVaipakam.RewardSide.Lender, one
+        );
 
         // Completing the accumulation refines the record in place.
         uint256[] memory rest = new uint256[](2);

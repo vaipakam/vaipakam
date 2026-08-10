@@ -386,6 +386,11 @@ interface IVaipakamErrors {
     ///         (its inputs are frozen, so there is nothing to
     ///         re-accumulate — re-DISPATCH is the retry lever).
     error CompQuoteAlreadyDispatched(uint256 dayId);
+
+    /// @notice #1656 r11 — the day's lapse loss is recorded EXACT
+    ///         (conservation proved), so its completed accumulation may
+    ///         not be reset out from under the published record.
+    error CompQuoteResetRefusedExactLoss(uint256 dayId);
     /// @notice The side's conservation sum does not equal the day's folded
     ///         side total — the accumulation has not covered every entry.
     error CompQuoteIncomplete(

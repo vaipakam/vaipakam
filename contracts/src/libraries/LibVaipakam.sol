@@ -6375,6 +6375,17 @@ library LibVaipakam {
         //   while false, so an upgrade window's expired days cannot be
         //   lapsed out from under an unstamped legacy delivery.
         bool lapseTerminalsArmed;
+        // MIRROR-ONLY (#1656 r11) — how many entries each side's quote
+        //   accumulation walked for the day. The short-lapse scaled arm
+        //   shaves this off the delivered pool before scaling Δq:
+        //   `_entryWindowSplitFrom` floors ONCE over an entry's whole
+        //   window, so the lapsed day's marginal can round UP by ≤1 wei
+        //   independently per covering entry — aggregate settlement is
+        //   bounded by `scaled + count` wei, and only `pool − count` in
+        //   the numerator keeps it ≤ pool. Maintained by the batch
+        //   accumulator from the feature's genesis (no deployment ever
+        //   ran the w3 accumulator without it), zeroed by reset.
+        mapping(uint256 => mapping(uint8 => uint256)) compQuoteEntryCount;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

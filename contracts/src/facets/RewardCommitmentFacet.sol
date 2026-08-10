@@ -632,6 +632,10 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         s.compQuoteEntryCursor[dayId][sideKey] = cursor;
         s.compQuoteAccum18[dayId][sideKey] += quoteAdd;
         s.compQuoteConservation18[dayId][sideKey] += conservationAdd;
+        // #1656 r11 — the covering-entry count feeds the short-lapse
+        // scaled arm's rounding shave (each covering entry's window-
+        // floored marginal can exceed its exact share by ≤1 wei).
+        s.compQuoteEntryCount[dayId][sideKey] += n;
         // #1656 r1 — a FULL-lapsed day's partial loss record refines as
         // the permissionless accumulation completes (the R6a promise):
         // figures track the accums, and the partial flag clears once the
@@ -687,11 +691,23 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         if (s.compQuoteSentAt[dayId] != 0) {
             revert CompQuoteAlreadyDispatched(dayId);
         }
+        // #1656 r11 — an EXACT lapse loss (conservation proved on both
+        // sides) is final: accumulation is complete, so no parked-cursor
+        // recovery remains to perform, and a reset would orphan the
+        // published record (the refinement hook runs only while the
+        // figure is marked partial). Partial records stay resettable —
+        // that IS the parked-cursor recovery, and the partial flag
+        // labels the transiently-regressing figure approximate.
+        LibVaipakam.LapsedDayLoss storage lossR = s.lapsedDayLoss[dayId];
+        if (lossR.recorded && !lossR.partialFigure) {
+            revert CompQuoteResetRefusedExactLoss(dayId);
+        }
         // Enum bounds-check reverts a side outside {0,1}.
         uint8 sideKey = uint8(LibVaipakam.RewardSide(side));
         s.compQuoteEntryCursor[dayId][sideKey] = 0;
         s.compQuoteAccum18[dayId][sideKey] = 0;
         s.compQuoteConservation18[dayId][sideKey] = 0;
+        s.compQuoteEntryCount[dayId][sideKey] = 0;
         emit CompQuoteAccumulationReset(dayId, sideKey);
     }
 

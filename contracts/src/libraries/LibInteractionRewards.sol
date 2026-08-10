@@ -1142,10 +1142,31 @@ library LibInteractionRewards {
                 // Fully funded by the terminal's own precondition failing
                 // only later credits (impossible — quarantined) — price
                 // the plain Δq; kept as a closed-form fallback rather
-                // than an assumed-unreachable revert.
+                // than an assumed-unreachable revert. Rounding-safe
+                // without a shave: each entry's window-floored marginal
+                // is ≤ its ceiled quote share, so Σ marginals ≤ quoted
+                // ≤ pool.
                 return (true, dq, 0, false, true);
             }
-            return (true, Math.mulDiv(dq, pool, quoted), 0, false, true);
+            // #1656 r11 — shave the covering-entry count off the pool
+            // before scaling: `_entryWindowSplitFrom` floors once over
+            // each entry's WHOLE window, so the lapsed day's marginal
+            // can round UP by ≤1 wei per covering entry (difference of
+            // floors), and plain `Δq × pool / quoted` preserves those
+            // rounded-up marginals — aggregate settlement could exceed
+            // the delivered pool and consume unrelated fresh custody.
+            // With Δq' = ⌊Δq × (pool − n) / quoted⌋:
+            //   Σ marginals ≤ Σ share·Δq'/Δq + n ≤ (pool − n) + n = pool.
+            // The count is maintained from the accumulator's genesis
+            // (no deployment ever ran w3 without it), so count == 0 ⟺
+            // quoted == 0 and the subtraction is never against an
+            // unwalked accumulation. A pool at or under n wei prices
+            // zero — the dust joins the delivered-minus-paid residue.
+            uint256 nCnt = s.compQuoteEntryCount[d][sideKey];
+            if (pool <= nCnt) return (true, 0, 0, false, true);
+            return (
+                true, Math.mulDiv(dq, pool - nCnt, quoted), 0, false, true
+            );
         }
         if (dc.compensated && !dc.provisional) {
             // #1636 r5 — the quoted sums are trustworthy ONLY once the
