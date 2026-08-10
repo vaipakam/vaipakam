@@ -333,22 +333,10 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         );
         _mut().setChainReportSentAtRaw(DAY, uint64(block.timestamp));
 
-        // Lapsed (either flavour) is terminal for the quote surface.
-        _mut().setDayLapsedRaw(DAY, true, false);
-        vm.expectRevert(
-            abi.encodeWithSelector(CompQuoteDayLapsed.selector, DAY)
-        );
-        _com().accumulateCompQuoteBatch(
-            DAY, LibVaipakam.RewardSide.Lender, _ids3(e1, e2, e3)
-        );
-        _mut().setDayLapsedRaw(DAY, false, true);
-        vm.expectRevert(
-            abi.encodeWithSelector(CompQuoteDayLapsed.selector, DAY)
-        );
-        _com().accumulateCompQuoteBatch(
-            DAY, LibVaipakam.RewardSide.Lender, _ids3(e1, e2, e3)
-        );
-        _mut().setDayLapsedRaw(DAY, false, false);
+        // #1656 r1 — a lapsed day's ACCUMULATION stays open (the partial
+        // loss record must be able to complete); the lapse refusal moved
+        // to DISPATCH, covered in
+        // {test_lapse_partialLossRefinesAfterTheTerminal}.
 
         // Non-ascending ids (duplicate re-submission).
         _com().accumulateCompQuoteBatch(
@@ -958,6 +946,82 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         vm.prank(stranger);
         vm.expectRevert();
         _com().stampLegacyCompensation(DAY, stranger, 9);
+    }
+
+    function test_lapse_partialLossRefinesAfterTheTerminal() public {
+        // #1656 r1 — accumulation stays OPEN on a lapsed day so the
+        // partial R6a record can complete; dispatch stays refused.
+        _configureMirror();
+        _zeroedDayG0();
+        (uint256 e1, uint256 e2, uint256 e3) = _seedLenderEntries();
+        uint256[] memory one = new uint256[](1);
+        one[0] = e1;
+        _com().accumulateCompQuoteBatch(
+            DAY, LibVaipakam.RewardSide.Lender, one
+        );
+        uint64 t0 = uint64(block.timestamp);
+        _mut().setDayLapseClockRaw(DAY, t0, 1, 7 days, 24 hours);
+        vm.warp(uint256(t0) + 7 days + 1);
+        _com().lapseZeroedDay(DAY);
+        LibVaipakam.LapsedDayLoss memory loss = _com().getLapsedDayLoss(DAY);
+        assertEq(loss.lender18, 12e18, "prefix figure at the terminal");
+        assertTrue(loss.partialFigure, "flagged partial");
+
+        // Completing the accumulation refines the record in place.
+        uint256[] memory rest = new uint256[](2);
+        rest[0] = e2;
+        rest[1] = e3;
+        _com().accumulateCompQuoteBatch(
+            DAY, LibVaipakam.RewardSide.Lender, rest
+        );
+        loss = _com().getLapsedDayLoss(DAY);
+        assertEq(loss.lender18, 20e18, "refined to the full figure");
+        assertFalse(loss.partialFigure, "conservation proof completed");
+
+        // Dispatch of a lapsed day's quote stays refused.
+        vm.expectRevert(
+            abi.encodeWithSelector(CompQuoteDayLapsed.selector, DAY)
+        );
+        _com().quoteZeroedDayCompensation(DAY, payable(address(this)));
+    }
+
+    function test_shortLapse_unarmedClockRefusesUntilArmed() public {
+        // #1656 r1 — a pre-w4 compensated day (zero receipt clocks) must
+        // not read a deadline one window past the epoch: the terminal
+        // refuses until the permissionless armer starts the window NOW.
+        _configureMirror();
+        _zeroedDayG0();
+        _accumulateAllLender();
+        _dispatchQuote();
+        _mut().setDayCompensationRaw(DAY, 10e18, 0, true, false);
+        uint64 t0 = uint64(block.timestamp);
+        _mut().setDayLapseClockRaw(DAY, t0, 1, 7 days, 24 hours);
+        // clocks deliberately UNSTAMPED (the pre-upgrade shape)
+
+        vm.warp(uint256(t0) + 30 days); // far past any epoch-shaped deadline
+        vm.expectRevert(
+            abi.encodeWithSelector(ShortLapseClockUnarmed.selector, DAY)
+        );
+        _com().lapseShortCompensatedDay(DAY);
+
+        _com().armShortLapseClock(DAY);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ShortLapseClockAlreadyArmed.selector, DAY
+            )
+        );
+        _com().armShortLapseClock(DAY);
+        // The window now runs from the ARM, not the epoch.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ShortLapseDeadlineNotReached.selector,
+                DAY,
+                block.timestamp + 7 days
+            )
+        );
+        _com().lapseShortCompensatedDay(DAY);
+        vm.warp(block.timestamp + 7 days + 1);
+        _com().lapseShortCompensatedDay(DAY);
     }
 
     // ═══ Mirror: commitment-twin lockstep ════════════════════════════════════

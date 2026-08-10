@@ -236,6 +236,10 @@ contract RewardCompensationDispatchFacet is
             uint256[] memory one = new uint256[](1);
             one[0] = dayId;
             r.dayIds = one;
+            // #1656 r1 — the declared per-side split, for the ACK-time
+            // received-vs-declared reconciliation of `compFunded*`.
+            r.declaredLender18 = lenderAmount18;
+            r.declaredBorrower18 = borrowerAmount18;
         }
 
         // #1434 P2-w2 — the manual-compensation path now dispatches the P2
@@ -306,6 +310,16 @@ contract RewardCompensationDispatchFacet is
             if (status != 2) {
                 revert SupplementalReservationNotAcked(closingId, status);
             }
+        }
+        // #1656 r1 — the per-side funded record is the bound's base term;
+        // a pre-w4 P2 compensation predates the stamps (both zero), and
+        // treating that as zero funding would admit a second full quote.
+        // The ADMIN seed ({seedCompFunded}) backfills it first.
+        if (
+            s.compFundedLender18[dstChainId][dayId] == 0
+                && s.compFundedBorrower18[dstChainId][dayId] == 0
+        ) {
+            revert SupplementalFundedRecordMissing(dayId, dstChainId);
         }
         // The day must be a QUOTED compensation day under the CURRENT
         // mirror era (the same evidence + era discipline as the manual
@@ -385,6 +399,10 @@ contract RewardCompensationDispatchFacet is
             uint256[] memory one = new uint256[](1);
             one[0] = dayId;
             r.dayIds = one;
+            // #1656 r1 — the declared per-side split, for the ACK-time
+            // received-vs-declared reconciliation of `compFunded*`.
+            r.declaredLender18 = lenderAmount18;
+            r.declaredBorrower18 = borrowerAmount18;
         }
 
         messageId = _sendCompensationPayload(
@@ -402,6 +420,58 @@ contract RewardCompensationDispatchFacet is
             dstChainId, dayId, amount, remitId
         );
     }
+
+    /// @notice #1434 P2-w4 (#1656 r1) — the per-side funded record was
+    ///         backfilled for a pre-w4 compensation day.
+    /// @custom:event-category informational/reward-compensation
+    event CompFundedSeeded(
+        uint32 indexed dstChainId,
+        uint256 indexed dayId,
+        uint256 lender18,
+        uint256 borrower18
+    );
+
+    /// @notice ADMIN — backfill the per-side funded cumulative for a day
+    ///         whose P2 manual compensation predates the w4 stamps: the
+    ///         supplemental bound and the legacy inventory both read it.
+    /// @dev The split must reproduce the ORIGINAL dispatch exactly: it
+    ///      must sum to the day's recorded scalar funding, fit the
+    ///      standing quote per side, and the record must currently be
+    ///      empty (one-shot). The operator reads the split from the
+    ///      original dispatch's wire record — the same evidence class as
+    ///      the legacy stamp's day binding.
+    function seedCompFunded(
+        uint32 dstChainId,
+        uint256 dayId,
+        uint256 lenderAmount18,
+        uint256 borrowerAmount18
+    ) external onlyCanonical onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.dayClosedByRemitId[dstChainId][dayId] == 0) {
+            revert SupplementalDayNotClosed(dayId, dstChainId);
+        }
+        if (
+            s.compFundedLender18[dstChainId][dayId] != 0
+                || s.compFundedBorrower18[dstChainId][dayId] != 0
+        ) {
+            revert CompFundedSeedInvalid(dayId, dstChainId);
+        }
+        LibVaipakam.CompQuote storage q = s.compQuote[dayId][dstChainId];
+        if (
+            lenderAmount18 + borrowerAmount18
+                != s.rewardBudgetRemitted[dstChainId][dayId]
+                || lenderAmount18 > q.lender18
+                || borrowerAmount18 > q.borrower18
+        ) {
+            revert CompFundedSeedInvalid(dayId, dstChainId);
+        }
+        s.compFundedLender18[dstChainId][dayId] = lenderAmount18;
+        s.compFundedBorrower18[dstChainId][dayId] = borrowerAmount18;
+        emit CompFundedSeeded(
+            dstChainId, dayId, lenderAmount18, borrowerAmount18
+        );
+    }
+
 
     /**
      * @dev #1434 P2-w2 — the MANUAL-COMPENSATION dispatch (design §1.3):

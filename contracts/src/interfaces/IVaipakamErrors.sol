@@ -484,6 +484,21 @@ interface IVaipakamErrors {
     /// @notice Constraint-19 — the day is not stampable: not zeroed,
     ///         already terminal, or already compensated.
     error LegacyDayNotStampable(uint256 dayId);
+    /// @notice #1434 P2-w4 (#1656 r1) — a compensated day whose receipt
+    ///         clocks predate the w4 upgrade (both zero) is not
+    ///         short-lapse-eligible until {armShortLapseClock} starts its
+    ///         bounded window — without this, the deadline formula would
+    ///         read one window past the epoch and fire immediately.
+    error ShortLapseClockUnarmed(uint256 dayId);
+    /// @notice The clock armer is one-shot per day.
+    error ShortLapseClockAlreadyArmed(uint256 dayId);
+    /// @notice #1434 P2-w4 (#1656 r1) — the supplemental needs the
+    ///         per-side funded record its bound reads; a pre-w4 funded day
+    ///         has none until the ADMIN seed backfills it.
+    error SupplementalFundedRecordMissing(uint256 dayId, uint32 chainId);
+    /// @notice #1434 P2-w4 (#1656 r1) — the seed's figures must fit the
+    ///         day's recorded scalar funding and the standing quote.
+    error CompFundedSeedInvalid(uint256 dayId, uint32 chainId);
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by

@@ -875,6 +875,118 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(ids[0], 1, "the reservation id");
     }
 
+    /// @dev #1656 r1 — the ACK reconciles the per-side funded cumulative
+    ///      from DECLARED to RECEIVED, so a short delivery re-opens
+    ///      exactly the supplemental headroom it left.
+    function test_Supplemental_ShortDeliveryReconciliation() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+
+        // Half the declared total arrives (fee-on-transfer shape).
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 1.5e18);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 1e18, "lender funded scaled to received");
+        assertEq(fb, 0.5e18, "borrower funded scaled to received");
+
+        // The supplemental now fits exactly the re-opened headroom.
+        comp.remitSupplementalBudget{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1.5e18
+        );
+        (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 3e18, "cumulative back at quote");
+        assertEq(fb, 2e18, "cumulative back at quote");
+    }
+
+    /// @dev #1656 r1 — releasing a failed SUPPLEMENTAL must not erase the
+    ///      original manual remit's day closure (the markers belong to the
+    ///      acknowledged original).
+    function test_Supplemental_ReleaseDoesNotEraseTheClosure() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 1e18);
+        uint256 suppId = rlens.getCompensationOutstanding(CHAIN_ARB);
+
+        vm.warp(block.timestamp + 8 days); // past REMIT_RELEASE_MIN_AGE
+        remit.releaseRemitReservation(suppId);
+        assertEq(
+            rlens.getDayClosedByRemitId(CHAIN_ARB, 1),
+            1,
+            "closure still owned by the ORIGINAL remit"
+        );
+        assertEq(
+            rlens.getRewardBudgetRemitted(CHAIN_ARB, 1),
+            3e18,
+            "funded scalar record intact"
+        );
+    }
+
+    /// @dev #1656 r1 — a pre-w4 P2 compensation has no per-side funded
+    ///      record: the supplemental refuses until the ADMIN seed
+    ///      backfills it (exactly-sum + per-side-quote validated).
+    function test_Supplemental_SeedBackfillsPreW4Record() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18);
+        // Stage the pre-w4 shape: funded scalar present, per-side zero.
+        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SupplementalFundedRecordMissing.selector,
+                1,
+                CHAIN_ARB
+            )
+        );
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 0);
+
+        // Seed must reproduce the recorded scalar exactly.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompFundedSeedInvalid.selector, 1, CHAIN_ARB
+            )
+        );
+        comp.seedCompFunded(CHAIN_ARB, 1, 1e18, 1e18); // sums to 2, not 3
+        comp.seedCompFunded(CHAIN_ARB, 1, 2e18, 1e18);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "seeded");
+        assertEq(fb, 1e18, "seeded");
+        // One-shot.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompFundedSeedInvalid.selector, 1, CHAIN_ARB
+            )
+        );
+        comp.seedCompFunded(CHAIN_ARB, 1, 2e18, 1e18);
+        // Supplemental now bounded normally.
+        comp.remitSupplementalBudget{value: 0.01 ether}(CHAIN_ARB, 1, 1e18, 1e18);
+    }
+
+    /// @dev #1656 r1 — a RELEASED reservation drops from the legacy
+    ///      inventory (the documented pending-hit remedy must converge the
+    ///      empty-inventory activation gate).
+    function test_LegacyInventory_ReleasedDrops() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        mutator.setDayZeroedForDestRaw(1, CHAIN_ARB, true);
+        mutator.setCompFundedRaw(CHAIN_ARB, 1, 0, 0); // legacy shape
+        (uint256[] memory ids, ) = rlens.getLegacyManualReservations(1, 10);
+        assertEq(ids.length, 1, "listed while pending");
+
+        vm.warp(block.timestamp + 8 days);
+        remit.releaseRemitReservation(1);
+        (ids, ) = rlens.getLegacyManualReservations(1, 10);
+        assertEq(ids.length, 0, "released hit drops from the inventory");
+    }
+
     /// @dev #1636 r4 — a resolved-zero standing quote is TERMINAL: its
     ///      (0,0) ingress retired the day's manual-funding anchor, so the
     ///      era-rotation clear refuses it (deleting would strand the

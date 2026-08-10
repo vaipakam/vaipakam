@@ -1363,6 +1363,12 @@ contract RewardRemittanceFacet is
         if (sr.reservedAt == 0) sr.reservedAt = uint64(block.timestamp);
         sr.reason = reason;
         delete s.dayCompensation[dayId];
+        // #1656 r1 - the demoted credit's receipt clocks go with it: a
+        // later CURRENT-era compensation must get its own full bounded
+        // window, not inherit a rejected packet's aged firstCompReceiptAt
+        // (three windows past which it could be short-lapsed on arrival).
+        delete s.firstCompReceiptAt[dayId];
+        delete s.lastQualifyingCompReceiptAt[dayId];
         emit CompensationDemoted(dayId, pools, reason);
     }
 
@@ -1600,8 +1606,16 @@ contract RewardRemittanceFacet is
         uint256 n = closed.length;
         for (uint256 i; i < n; ) {
             uint256 d = closed[i];
-            delete s.rewardBudgetRemitted[dst][d];
-            delete s.dayClosedByRemitId[dst][d];
+            // #1656 r1 - delete the day markers ONLY when this reservation
+            // OWNS the closure: a SUPPLEMENTAL reservation names the same
+            // day for its record/ACK lifecycle, but the closure belongs to
+            // the original acknowledged manual remit - releasing a failed
+            // supplement must not erase it (that would re-open funding on
+            // an already-funded day and free its standing quote).
+            if (s.dayClosedByRemitId[dst][d] == remitId) {
+                delete s.rewardBudgetRemitted[dst][d];
+                delete s.dayClosedByRemitId[dst][d];
+            }
             unchecked {
                 ++i;
             }
@@ -1647,6 +1661,31 @@ contract RewardRemittanceFacet is
         // pending the w5 return / w6 recovery settlements.
         if (s.compensationOutstanding[dst] == remitId) {
             LibRewardRemitDispatch.clearCompensationGate(s, dst);
+            // #1656 r1 — reconcile the per-side funded cumulative from
+            // DECLARED down to RECEIVED: a fee-on-transfer / partial-burn
+            // shortfall re-opens exactly the supplemental headroom the
+            // short delivery left — otherwise the supplemental bound
+            // reads the full declared figure and rejects the very top-up
+            // the path exists for. Pro-rata over the reservation's
+            // declared split (the mirror's receiver scales its credited
+            // shares the same way; a wei of rounding skew is absorbed by
+            // the saturating subtraction + the per-side quote bound).
+            if (
+                amountReceived < total && total != 0
+                    && r.dayIds.length == 1
+            ) {
+                uint256 d = r.dayIds[0];
+                uint256 redL = r.declaredLender18
+                    - (r.declaredLender18 * amountReceived) / total;
+                uint256 redB = r.declaredBorrower18
+                    - (r.declaredBorrower18 * amountReceived) / total;
+                uint256 curL = s.compFundedLender18[dst][d];
+                uint256 curB = s.compFundedBorrower18[dst][d];
+                s.compFundedLender18[dst][d] =
+                    curL > redL ? curL - redL : 0;
+                s.compFundedBorrower18[dst][d] =
+                    curB > redB ? curB - redB : 0;
+            }
         }
         emit RemitReservationAcked(remitId, dst, total, amountReceived, forced);
     }

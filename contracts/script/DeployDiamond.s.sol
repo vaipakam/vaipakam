@@ -2238,7 +2238,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](30);
+        s = new bytes4[](31);
         s[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2270,6 +2270,8 @@ contract DeployDiamond is Script {
         s[27] = RewardCommitmentFacet.stampLegacyCompensation.selector;
         s[28] = RewardCommitmentFacet.getLapsedDayLoss.selector;
         s[29] = RewardCommitmentFacet.getShortLapseDeadline.selector;
+        // #1656 r1 — the pre-upgrade clock armer.
+        s[30] = RewardCommitmentFacet.armShortLapseClock.selector;
         s[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         s[2] = RewardCommitmentFacet.isChainDayCommitmentsComplete.selector;
         // #1222 M3 B2-d1 — mirror commitment-report surface.
@@ -2720,10 +2722,12 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RewardCompensationDispatchFacet.remitManualBudget.selector;
         s[1] =
             RewardCompensationDispatchFacet.remitSupplementalBudget.selector;
+        // #1656 r1 — the pre-w4 funded-record seed.
+        s[2] = RewardCompensationDispatchFacet.seedCompFunded.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).

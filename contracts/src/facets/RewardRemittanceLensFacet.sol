@@ -111,7 +111,11 @@ contract RewardRemittanceLensFacet {
         for (uint256 id = startId; id <= end; ) {
             LibVaipakam.RemitReservation storage r = s.remitReservations[id];
             if (
-                r.status != 0 && r.dayIds.length == 1
+                // #1656 r1 - Pending (1) and Acked (2) only: a RELEASED
+                // reservation (3) is the documented remedy for a pending
+                // legacy hit, and listing it forever would make the
+                // empty-inventory activation gate unreachable.
+                (r.status == 1 || r.status == 2) && r.dayIds.length == 1
                     && r.fresh == r.total && r.total != 0
             ) {
                 uint256 d = r.dayIds[0];

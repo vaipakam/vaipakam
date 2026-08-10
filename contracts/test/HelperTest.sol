@@ -2138,11 +2138,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] =
             RewardCompensationDispatchFacet.remitManualBudget.selector;
         selectors[1] =
             RewardCompensationDispatchFacet.remitSupplementalBudget.selector;
+        // #1656 r1 — the pre-w4 funded-record seed.
+        selectors[2] =
+            RewardCompensationDispatchFacet.seedCompFunded.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
@@ -2186,7 +2189,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](30);
+        selectors = new bytes4[](31);
         selectors[0] = RewardCommitmentFacet
             .reconcileCommitmentRemitEligibility
             .selector;
@@ -2227,6 +2230,8 @@ contract HelperTest {
         selectors[28] = RewardCommitmentFacet.getLapsedDayLoss.selector;
         selectors[29] =
             RewardCommitmentFacet.getShortLapseDeadline.selector;
+        // #1656 r1 — the pre-upgrade clock armer.
+        selectors[30] = RewardCommitmentFacet.armShortLapseClock.selector;
         selectors[1] = RewardCommitmentFacet.getChainDayCommitments.selector;
         selectors[2] = RewardCommitmentFacet
             .isChainDayCommitmentsComplete

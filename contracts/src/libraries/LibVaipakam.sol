@@ -6593,6 +6593,13 @@ library LibVaipakam {
         uint256 armedFreshFull;
         uint256 recycledFull;
         uint256[] dayIds;
+        // #1434 P2-w4 (#1656 r1) — the DECLARED per-side split of a
+        // COMPENSATION reservation (zero for ordinary batch remits): the
+        // ACK reconciles `compFunded*` from declared down to received
+        // using these, so a fee-on-transfer shortfall re-opens exactly
+        // the supplemental headroom the short delivery left.
+        uint256 declaredLender18;
+        uint256 declaredBorrower18;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

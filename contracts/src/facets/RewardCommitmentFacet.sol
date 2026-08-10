@@ -530,6 +530,17 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         if (!s.dayPoolStamp[dayId].stamped) {
             revert CompQuoteDayPoolStampMissing(dayId);
         }
+    }
+
+    /// @dev #1656 r1 — the LAPSE refusal applies to DISPATCH only: a
+    ///      lapsed day's ACCUMULATION stays open so the partial R6a loss
+    ///      record can complete (the natspec's refinability promise);
+    ///      dispatching a lapsed day's quote stays refused — its funding
+    ///      window is over.
+    function _assertNotLapsed(
+        LibVaipakam.Storage storage s,
+        uint256 dayId
+    ) private view {
         if (s.dayLapsed[dayId] || s.dayShortLapsed[dayId]) {
             revert CompQuoteDayLapsed(dayId);
         }
@@ -621,6 +632,27 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         s.compQuoteEntryCursor[dayId][sideKey] = cursor;
         s.compQuoteAccum18[dayId][sideKey] += quoteAdd;
         s.compQuoteConservation18[dayId][sideKey] += conservationAdd;
+        // #1656 r1 — a FULL-lapsed day's partial loss record refines as
+        // the permissionless accumulation completes (the R6a promise):
+        // figures track the accums, and the partial flag clears once the
+        // conservation proof holds on both sides.
+        if (s.dayLapsed[dayId]) {
+            LibVaipakam.LapsedDayLoss storage loss = s.lapsedDayLoss[dayId];
+            if (loss.recorded && loss.partialFigure) {
+                uint8 lKey = uint8(LibVaipakam.RewardSide.Lender);
+                uint8 bKey = uint8(LibVaipakam.RewardSide.Borrower);
+                loss.lender18 = s.compQuoteAccum18[dayId][lKey];
+                loss.borrower18 = s.compQuoteAccum18[dayId][bKey];
+                if (
+                    s.compQuoteConservation18[dayId][lKey]
+                        == s.totalLenderInterestNumeraire18[dayId]
+                        && s.compQuoteConservation18[dayId][bKey]
+                            == s.totalBorrowerInterestNumeraire18[dayId]
+                ) {
+                    loss.partialFigure = false;
+                }
+            }
+        }
         emit CompQuoteBatchAccumulated(
             dayId,
             sideKey,
@@ -685,6 +717,7 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
     ) external payable returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         _assertQuotableDay(s, dayId);
+        _assertNotLapsed(s, dayId);
 
         uint256 lTotal = s.totalLenderInterestNumeraire18[dayId];
         uint256 bTotal = s.totalBorrowerInterestNumeraire18[dayId];
@@ -1121,6 +1154,13 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
         if (clk.finalizedAt == 0 || clk.scheduleVersion == 0) {
             revert LapseDayClockMissing(dayId);
         }
+        // #1656 r1 — a compensated day whose receipt clocks predate the
+        // w4 upgrade (both zero) must not read a deadline one window past
+        // the epoch: the terminal waits until {armShortLapseClock} starts
+        // its bounded window.
+        if (s.firstCompReceiptAt[dayId] == 0) {
+            revert ShortLapseClockUnarmed(dayId);
+        }
         uint256 deadline = _shortLapseDeadline(s, dayId, clk);
         if (block.timestamp <= deadline) {
             revert ShortLapseDeadlineNotReached(dayId, deadline);
@@ -1222,6 +1262,33 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
             s.lastQualifyingCompReceiptAt[dayId] = uint64(block.timestamp);
         }
         emit LegacyCompensationStamped(dayId, key, lenderShare, borrowerShare);
+    }
+
+    /// @notice #1434 P2-w4 (#1656 r1) — a pre-upgrade compensated day's
+    ///         short-lapse window was armed (its receipt clocks were
+    ///         stamped from now).
+    /// @custom:event-category informational/reward-compensation
+    event ShortLapseClockArmed(uint256 indexed dayId);
+
+    /// @notice Start the bounded short-lapse window for a compensated day
+    ///         whose receipt clocks predate the w4 upgrade (both zero).
+    ///         PERMISSIONLESS and one-shot: the window runs from NOW —
+    ///         the fair post-upgrade equivalent of the credit-time stamp
+    ///         every new compensation gets.
+    function armShortLapseClock(uint256 dayId) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _assertMirror(s);
+        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
+        if (!dc.compensated || dc.provisional) {
+            revert ShortLapseNotCompensated(dayId);
+        }
+        _assertNoTerminal(s, dayId);
+        if (s.firstCompReceiptAt[dayId] != 0) {
+            revert ShortLapseClockAlreadyArmed(dayId);
+        }
+        s.firstCompReceiptAt[dayId] = uint64(block.timestamp);
+        s.lastQualifyingCompReceiptAt[dayId] = uint64(block.timestamp);
+        emit ShortLapseClockArmed(dayId);
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss.
