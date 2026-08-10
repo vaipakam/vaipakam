@@ -413,6 +413,13 @@ interface IVaipakamErrors {
     /// @notice Wrong token, zero actual, or actual above declared.
     error StrandedReturnDeliveryInvalid();
 
+    /// @notice #1660 r1 — the named reservation is not a COMPENSATION
+    ///         dispatch (single-day, fresh-only, per-side declared): an
+    ///         ordinary batch reservation's recycled component never
+    ///         charged the lifetime cap, so crediting its total would
+    ///         mint uncharged re-dispatch capacity (a 69M bypass).
+    error StrandedReturnNotCompensation(uint256 remitId);
+
     /// @notice A from-recovery dispatch exceeds the recovery position
     ///         balance (recovered − redispatched).
     error RecoveryPositionInsufficient(uint256 requested, uint256 available);

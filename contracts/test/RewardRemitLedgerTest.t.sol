@@ -3110,6 +3110,51 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
+    /// #1660 r1 — only COMPENSATION reservations are a valid entitlement
+    /// basis: an ordinary batch remit (recycled component never charged
+    /// the cap) is refused, so a faulty mirror cannot mint uncharged
+    /// re-dispatch capacity off a batch receipt.
+    function test_Recovery_BatchReservationRefused() public {
+        _finalizeDay(1);
+        _remitDay1ToArb(); // ordinary batch reservation, remitId 1
+        _armReturnIngress();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.StrandedReturnNotCompensation.selector, 1
+            )
+        );
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18
+        );
+    }
+
+    /// #1660 r1 — a short actual is TRANSPORT LOSS: recorded per receipt
+    /// (the mirror's one-shot record retired at declared and can never
+    /// re-send the gap), credited only at the actual, gate still settles.
+    function test_Recovery_ShortActualRecordsShortfall() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        _armReturnIngress();
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 2.5e18
+        );
+        (uint256 recovered, , uint256 overage) = rlens.getRecoveryPosition();
+        assertEq(recovered, 2.5e18, "credited at the actual");
+        assertEq(overage, 0);
+        assertEq(
+            rlens.getStrandedReturnShortfall(1),
+            0.5e18,
+            "transport loss recorded per receipt"
+        );
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "gate settles on the short delivery too"
+        );
+    }
+
     /// The supplemental wrapper draws the position under the same per-side
     /// quote bound as its charged twin.
     function test_Recovery_SupplementalFromRecovery() public {

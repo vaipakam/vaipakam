@@ -78,6 +78,8 @@ import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
+import {VpfiReturnSender, VPFI_RETURN_SENDER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnSender.sol";
+import {VpfiReturnReceiver, VPFI_RETURN_RECEIVER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnReceiver.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -516,6 +518,63 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                     "-> 2) impl:",
                     newMsgrImpl
                 );
+            }
+        }
+
+        // ─── #1434 P2-w5 (#1660 r1) — return-channel satellite probes ──
+        //
+        // The refreshed facets speak GENERATION-2 surfaces on BOTH
+        // return-channel satellites: the mirror facet calls the sender's
+        // `sendStrandedReturn`, and Base's ingress expects the receiver
+        // to decode the B1 kind (an old receiver rejects it as an
+        // unknown wire kind — re-executable, but stuck until upgraded).
+        // Same durable-constant posture as the probes above; idempotent.
+        // The satellites are OPTIONAL deployments (the C2 transport is
+        // operator-armed), so a missing artifact is a SKIP, not a hard
+        // stop: a chain without the satellite has no return path to
+        // brick, and a satellite deployed later ships current code.
+        {
+            address rsend = _readAddrOptional(".vpfiReturnSender");
+            if (rsend != address(0)) {
+                uint256 sgen = 0;
+                (bool sok, bytes memory sret) = rsend.staticcall(
+                    abi.encodeWithSignature("WIRE_GENERATION()")
+                );
+                if (sok && sret.length == 32) {
+                    sgen = abi.decode(sret, (uint256));
+                }
+                if (sgen < VPFI_RETURN_SENDER_WIRE_GENERATION) {
+                    address newSendImpl = address(new VpfiReturnSender());
+                    UUPSUpgradeable(rsend).upgradeToAndCall(newSendImpl, "");
+                    Deployments.writeVpfiReturnSenderImpl(newSendImpl);
+                    console.log(
+                        "P2-w5: upgraded VpfiReturnSender (wire gen",
+                        sgen,
+                        "-> 2) impl:",
+                        newSendImpl
+                    );
+                }
+            }
+            address rrecv = _readAddrOptional(".vpfiReturnReceiver");
+            if (rrecv != address(0)) {
+                uint256 rgen = 0;
+                (bool rok, bytes memory rret) = rrecv.staticcall(
+                    abi.encodeWithSignature("WIRE_GENERATION()")
+                );
+                if (rok && rret.length == 32) {
+                    rgen = abi.decode(rret, (uint256));
+                }
+                if (rgen < VPFI_RETURN_RECEIVER_WIRE_GENERATION) {
+                    address newRecvImpl = address(new VpfiReturnReceiver());
+                    UUPSUpgradeable(rrecv).upgradeToAndCall(newRecvImpl, "");
+                    Deployments.writeVpfiReturnReceiverImpl(newRecvImpl);
+                    console.log(
+                        "P2-w5: upgraded VpfiReturnReceiver (wire gen",
+                        rgen,
+                        "-> 2) impl:",
+                        newRecvImpl
+                    );
+                }
             }
         }
 

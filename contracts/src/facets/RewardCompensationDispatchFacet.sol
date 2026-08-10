@@ -536,6 +536,7 @@ contract RewardCompensationDispatchFacet is
         uint256 dayId,
         uint256 credited,
         uint256 overage,
+        uint256 shortfall,
         bool gateCleared
     );
 
@@ -590,6 +591,20 @@ contract RewardCompensationDispatchFacet is
         }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
         if (r.total == 0) revert StrandedReturnUnknownReservation(remitId);
+        // #1660 r1 — only a COMPENSATION reservation's total is a valid
+        // entitlement basis: manual/supplemental dispatches are single-
+        // day, fresh-only, with the per-side declared split stamped. An
+        // ordinary batch reservation may carry a recycled component that
+        // never charged `rewardBudgetRemittedGlobal` — crediting its
+        // total would let a faulty mirror mint uncharged re-dispatch
+        // capacity. Batch/stray value settles via release + the R6d
+        // ceremony, never via B1.
+        if (
+            r.dayIds.length != 1 || r.recycled != 0
+                || (r.declaredLender18 == 0 && r.declaredBorrower18 == 0)
+        ) {
+            revert StrandedReturnNotCompensation(remitId);
+        }
         if (sourceChainId != r.dstChainId) {
             revert StrandedReturnWrongSourceChain(
                 sourceChainId, r.dstChainId
@@ -615,6 +630,14 @@ contract RewardCompensationDispatchFacet is
         s.remitRecoveredForReceipt[remitId] = already + credited;
         s.rewardBudgetRecovered += credited;
         if (overage != 0) s.strandedReturnOverage += overage;
+        // #1660 r1 — a short actual is TRANSPORT LOSS, not recoverable
+        // headroom: the mirror's one-shot record retired at the declared
+        // amount, so the gap can never re-arrive. Recorded per receipt
+        // for ledger reconciliation and as the loss ceremony's evidence.
+        uint256 shortfall = declaredAmount - actualReceived;
+        if (shortfall != 0) {
+            s.strandedReturnShortfall[remitId] += shortfall;
+        }
 
         // §5.1 return settlement: clear the R6 gate iff THIS receipt is
         // the one holding it (an older receipt's late return must not
@@ -625,7 +648,8 @@ contract RewardCompensationDispatchFacet is
             gateCleared = true;
         }
         emit StrandedReturnSettled(
-            remitId, sourceChainId, dayId, credited, overage, gateCleared
+            remitId, sourceChainId, dayId, credited, overage, shortfall,
+            gateCleared
         );
     }
 

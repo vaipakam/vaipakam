@@ -356,4 +356,15 @@ contract RewardRemittanceLensFacet {
     function getStrandedReturnedCumulative() external view returns (uint256) {
         return LibVaipakam.storageSlot().strandedReturnedCumulative;
     }
+
+    /// @notice #1660 r1 — this receipt's recorded B1 transport shortfall
+    ///         (declared minus actual, cumulative): value the mirror's
+    ///         retired one-shot record can never re-send — transport
+    ///         loss awaiting the R6d loss ceremony, not recoverable
+    ///         entitlement.
+    function getStrandedReturnShortfall(
+        uint256 remitId
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().strandedReturnShortfall[remitId];
+    }
 }

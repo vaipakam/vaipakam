@@ -6418,6 +6418,14 @@ library LibVaipakam {
         //   debits; the reserved sum is the LIVE earmark, this is the
         //   monotone outflow record).
         uint256 strandedReturnedCumulative;
+        // BASE-ONLY (#1660 r1) — per-receipt transport shortfall of a B1
+        //   return: the mirror retired its one-shot record at the DECLARED
+        //   amount, so a short actual (bridge loss) leaves value that can
+        //   never re-arrive. Recorded so Base's recovery ledger reconciles
+        //   against the mirror's outflow cumulative from on-chain state,
+        //   and so the residual entitlement is readable as transport loss
+        //   (the R6d loss ceremony's evidence), not as recoverable value.
+        mapping(uint256 => uint256) strandedReturnShortfall;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

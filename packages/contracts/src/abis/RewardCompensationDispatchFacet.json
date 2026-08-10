@@ -303,6 +303,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "shortfall",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "gateCleared",
         "type": "bool",
         "indexed": false,
@@ -1991,6 +1997,17 @@
     "type": "error",
     "name": "StrandedReturnDeliveryInvalid",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnNotCompensation",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

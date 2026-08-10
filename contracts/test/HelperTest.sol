@@ -2168,7 +2168,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](25);
+        selectors = new bytes4[](26);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2198,6 +2198,8 @@ contract HelperTest {
         selectors[24] = RewardRemittanceLensFacet
             .getStrandedReturnedCumulative
             .selector;
+        selectors[25] =
+            RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

@@ -998,7 +998,20 @@ the bounds are the design's actual commitment.
    > (single writer set: the authenticated ingress credits, the
    > from-recovery dispatch debits), the transparency snapshot publishes
    > it as an eighth output, and the mesh watcher's
-   > recovery-reservation check sums it into the spoken-for figure.
+   > recovery-reservation check sums it into the spoken-for figure Review
+   > round 1 closed three seams: the entitlement basis requires a
+   > COMPENSATION-shaped reservation (single-day, fresh-only, per-side
+   > declared) — an ordinary batch remit's recycled component never
+   > charged the cap, so crediting its total would mint uncharged
+   > re-dispatch capacity; BOTH return-channel satellites publish
+   > `WIRE_GENERATION` and the in-place refresh script generation-gates
+   > them alongside the receiver and messenger (the w4 lesson applied to
+   > every proxy the refreshed facets speak to); and a short actual is
+   > recorded per receipt as TRANSPORT LOSS (`strandedReturnShortfall`)
+   > — the mirror's one-shot record retired at declared, so the gap can
+   > never re-arrive and must read as the R6d loss ceremony's evidence,
+   > not as recoverable entitlement.
+
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —
    carries the FunctionalSpec amendment if (a) is ratified.
 

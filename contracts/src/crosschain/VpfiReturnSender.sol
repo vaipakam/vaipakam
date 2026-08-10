@@ -41,6 +41,13 @@ import {ICrossChainMessenger} from "./ICrossChainMessenger.sol";
  *
  * @dev UUPS-upgradeable; guardian + owner pause; exact-amount approvals only.
  */
+/// @dev #1660 r1 - this satellite's WIRE GENERATION, file-level so the
+///      in-place refresh script imports the same durable constant the
+///      contract publishes (the receiver/messenger probe pattern).
+///      Generation 2 = the B1 stranded-return send surface (#1434 P2-w5); a proxy
+///      without the selector is generation 1.
+uint256 constant VPFI_RETURN_SENDER_WIRE_GENERATION = 2;
+
 contract VpfiReturnSender is
     Initializable,
     Ownable2StepUpgradeable,
@@ -64,6 +71,11 @@ contract VpfiReturnSender is
     /// @dev Reserved storage for upgrade-safe appends.
     // forge-lint: disable-next-line(mixed-case-variable)
     uint256[46] private __gap;
+
+    /// @notice #1660 r1 - the durable upgrade probe the refresh script
+    ///         generation-gates on.
+    uint256 public constant WIRE_GENERATION =
+        VPFI_RETURN_SENDER_WIRE_GENERATION;
 
     // ─── Events ───────────────────────────────────────────────────────
 

@@ -1862,6 +1862,13 @@ contract TestMutatorFacet {
         r.dstChainId = dstChainId;
         r.status = status;
         r.total = total;
+        // #1660 r1 - COMPENSATION-shaped (single-day, fresh-only, declared
+        // split stamped): the B1 ingress refuses anything else.
+        r.fresh = total;
+        r.declaredLender18 = total;
+        uint256[] memory one = new uint256[](1);
+        one[0] = 1;
+        r.dayIds = one;
     }
 
     /// @dev Route `data` back through the diamond fallback (bubbling the raw
