@@ -39,8 +39,11 @@ binding check is at the moment the buyer's value commits: a listing sits
 still while the position keeps moving, and only the fill-time reading
 describes what the buyer actually inherits. Listing creation runs the same
 test so a seller is told at once instead of after some buyer's transaction
-fails, and the read-only accept preview classifies a sub-floor position so an
-interface can explain the block before anyone signs. It is deliberately not
+fails, and the read-only accept preview classifies a blocked position, naming
+which bar it failed rather than reporting every refusal as a health-factor
+shortfall. Consuming that classification in the acceptance interface is
+separate follow-up work, so today a buyer can still sign and learn of the block
+from the revert; the contract-side guard holds either way. It is deliberately not
 re-checked at sale completion, where a refusal would strand a buyer whose
 principal has already settled — the same reasoning the maturity gate follows.
 
