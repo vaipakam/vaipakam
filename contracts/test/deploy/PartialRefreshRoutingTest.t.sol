@@ -240,7 +240,95 @@ contract PartialRefreshRoutingTest is Test {
         );
     }
 
+    // ─── 5. The WHOLE surface is refreshed, not part of it ────────────
+
+    /// @notice Every selector of every facet `ReplaceStaleFacets` refreshes must
+    ///         end up on ONE address — the freshly deployed one.
+    ///
+    /// @dev    Codex #1635 r5. The routing partition fixed which ACTION each
+    ///         selector gets; it said nothing about the set being complete, and
+    ///         it was not. The script hand-maintained its own lists and they had
+    ///         drifted: 34 of ConfigFacet's 90 selectors, 30 of
+    ///         OracleAdminFacet's 34, 4 of OfferCreateFacet's 7. A refresh
+    ///         re-points only what it names, so the omitted selectors kept
+    ///         resolving to the PREVIOUS facet address — one logical facet
+    ///         serving calls from two different builds, with the script
+    ///         reporting success. Nothing reverted, so no existing test noticed.
+    ///
+    ///         This is the shape of bug the earlier routing tests could not see:
+    ///         they asked "is `saleAdmission` reachable?", which stays true when
+    ///         56 of ConfigFacet's selectors are stale. Asserting a single
+    ///         common host across each facet's FULL authoritative surface is
+    ///         what pins it, and sourcing that surface from the same
+    ///         `DeployDiamond` getters the script now uses means the assertion
+    ///         cannot drift away from the script it guards.
+    function test_ReplaceStaleFacets_RefreshesEachFacetsEntireSurface() public {
+        SelectorSurfaceHarness surface = new SelectorSurfaceHarness();
+
+        ReplaceStaleFacets script = new ReplaceStaleFacets();
+        script.runWith(diamond, DEPLOYER_KEY);
+
+        _assertSingleHost(surface.configSelectors(), "ConfigFacet");
+        _assertSingleHost(surface.oracleAdminSelectors(), "OracleAdminFacet");
+        _assertSingleHost(surface.offerCreateSelectors(), "OfferCreateFacet");
+        _assertSingleHost(surface.offerAcceptSelectors(), "OfferAcceptFacet");
+        _assertSingleHost(surface.oracleSelectors(), "OracleFacet");
+        _assertSingleHost(surface.vaultFactorySelectors(), "VaultFactoryFacet");
+        _assertSingleHost(surface.numeraireConfigSelectors(), "NumeraireConfigFacet");
+        _assertSingleHost(surface.riskPreviewSelectors(), "RiskPreviewFacet");
+        _assertSingleHost(surface.offerPreviewSelectors(), "OfferPreviewFacet");
+    }
+
+    /// @dev Guards the guard: if the authoritative surfaces were ever reduced to
+    ///      the sizes the drifted hand-kept lists had, the test above would
+    ///      still pass while checking almost nothing. Pinning the counts means a
+    ///      silent shrink has to be noticed and deliberately re-pinned.
+    function test_AuthoritativeSurfacesAreNotTriviallySmall() public {
+        SelectorSurfaceHarness surface = new SelectorSurfaceHarness();
+        assertGt(
+            surface.configSelectors().length,
+            34,
+            "ConfigFacet surface must exceed the 34 the drifted list carried"
+        );
+        assertGt(
+            surface.oracleAdminSelectors().length,
+            30,
+            "OracleAdminFacet surface must exceed the 30 the drifted list carried"
+        );
+        assertGt(
+            surface.offerCreateSelectors().length,
+            4,
+            "OfferCreateFacet surface must exceed the 4 the drifted list carried"
+        );
+    }
+
     // ─── Shared assertions ────────────────────────────────────────────
+
+    /// @dev Assert every selector is routed AND they all share one host. A
+    ///      partial refresh shows up here as two distinct non-zero addresses.
+    function _assertSingleHost(bytes4[] memory selectors, string memory facet)
+        internal
+        view
+    {
+        require(selectors.length > 0, "empty surface");
+        address host = IDiamondLoupe(diamond).facetAddress(selectors[0]);
+        assertTrue(host != address(0), string.concat(facet, ": first selector unrouted"));
+        for (uint256 i = 1; i < selectors.length; i++) {
+            address h = IDiamondLoupe(diamond).facetAddress(selectors[i]);
+            assertTrue(
+                h != address(0),
+                string.concat(facet, ": a selector of its surface is unrouted")
+            );
+            assertEq(
+                h,
+                host,
+                string.concat(
+                    facet,
+                    ": surface split across two builds - only part of it was refreshed"
+                )
+            );
+        }
+    }
 
     /// @dev Every one of the facet's selectors routed, and all to the SAME
     ///      address. A partition bug that split the set across the old and new
@@ -277,5 +365,53 @@ contract PartialRefreshRoutingTest is Test {
         );
         // Either outcome is fine; what must not happen is the fallback revert.
         ok; // silence unused-variable lint without weakening the assertion
+    }
+}
+
+/**
+ * @title  SelectorSurfaceHarness
+ * @notice Exposes the AUTHORITATIVE per-facet selector lists to the test.
+ *
+ * @dev    Codex #1635 r5. Deliberately extends `ReplaceStaleFacets` rather than
+ *         re-listing the selectors: the assertion must read the very lists the
+ *         script cuts from, or the guard could pass while the script refreshed
+ *         something narrower. The getters are `internal` on `DeployDiamond`, so
+ *         a thin subclass is how a test reaches them.
+ */
+contract SelectorSurfaceHarness is ReplaceStaleFacets {
+    function configSelectors() external pure returns (bytes4[] memory) {
+        return _getConfigSelectors();
+    }
+
+    function oracleAdminSelectors() external pure returns (bytes4[] memory) {
+        return _getOracleAdminSelectors();
+    }
+
+    function offerCreateSelectors() external pure returns (bytes4[] memory) {
+        return _getOfferCreateSelectors();
+    }
+
+    function offerAcceptSelectors() external pure returns (bytes4[] memory) {
+        return _getOfferAcceptSelectors();
+    }
+
+    function oracleSelectors() external pure returns (bytes4[] memory) {
+        return _getOracleSelectors();
+    }
+
+    function vaultFactorySelectors() external pure returns (bytes4[] memory) {
+        return _getVaultFactorySelectors();
+    }
+
+    function numeraireConfigSelectors() external pure returns (bytes4[] memory) {
+        return _getNumeraireConfigSelectors();
+    }
+
+    function riskPreviewSelectors() external pure returns (bytes4[] memory) {
+        return _getRiskPreviewFacetSelectors();
+    }
+
+    function offerPreviewSelectors() external pure returns (bytes4[] memory) {
+        return _getOfferPreviewSelectors();
     }
 }

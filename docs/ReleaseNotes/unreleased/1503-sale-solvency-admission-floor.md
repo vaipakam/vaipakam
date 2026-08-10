@@ -123,3 +123,17 @@ at all (an earlier scenario's keeper revocation re-simulates as
 already-revoked and aborts the run, reproducible with every later scenario
 disabled), and one test fixture builds a Diamond without the risk facet, so
 sale-path tests in it now need the health read stubbed.
+
+A second, larger flaw in the same script came out of reviewing that fix. It
+kept its own hand-written record of which functions each component owns, and
+that record had fallen a long way behind: for the configuration component it
+listed 34 of the 90 functions actually in service, and two others were
+similarly short. A refresh only re-points the functions it names, so the rest
+carried on being served by the previous build — one component answering calls
+from two different versions of itself, while the script reported success and
+nothing appeared to fail. The script now reads those lists from the same place
+the full deployment does, so the record cannot fall behind, and a new check
+asserts every function of every refreshed component ends up on a single build.
+The equivalent staleness in the other refresh script is filed separately and
+untouched here; its sale-path fix, which is what this release needed, is
+complete and covered.
