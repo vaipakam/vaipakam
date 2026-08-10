@@ -1069,7 +1069,13 @@ the bounds are the design's actual commitment.
    > never be misread — a legacy consumed ack (true = 1) decodes as
    > consumed with identical semantics, and a legacy non-consumed ack
    > (false = 0) fails closed until anyone re-presents it under the
-   > current encoding.
+   > current encoding. Round 7 closed the last two transport seams:
+   > the messenger's WIRE GENERATION bumped to 3 (the classification
+   > word changed `sendRemitAck`'s SELECTOR — a generation-2 proxy
+   > would silently skip the refresh probe and every facet ack call
+   > would revert), and the messenger validates the classification
+   > word on the RAW uint256 BEFORE narrowing (uint8(258) == 2 would
+   > forge quarantine evidence from a malformed peer packet).
 
 
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —

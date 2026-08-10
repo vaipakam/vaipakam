@@ -159,12 +159,14 @@ interface IRepatriationInstructionIngress {
 /// @dev #1656 r10 - the reward messenger's WIRE GENERATION, file-level
 ///      so the refresh script imports the same durable constant the
 ///      contract publishes (the receiver's REMIT_RECEIVER_WIRE_GENERATION
-///      pattern). Generation 2 = the P2-w3/w4 wire set: kind-11 comp
+///      pattern). Generation 3 = the P2-w5 wire set (the ack's
+///      classification word replaced the consumed bool - a NEW
+///      selector; generation 2 was the P2-w3/w4 set): kind-11 comp
 ///      quotes (5 words, era-bound), the 23-word V3 broadcast carrying
 ///      the day-pool halves, and the 5-word consumption-attested ACK. A
 ///      proxy without the selector is generation 1 and predates all
 ///      three.
-uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 2;
+uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 3;
 
 contract VaipakamRewardMessenger is
     Initializable,
@@ -623,6 +625,9 @@ contract VaipakamRewardMessenger is
     error UnknownMessageType(uint8 msgType);
     /// @notice Inbound payload length is not the canonical 4-word shape.
     error PayloadSizeMismatch(uint256 got, uint256 expected);
+    /// @notice #1660 r7 - ack classification word zero or above 3
+    ///         (validated on the raw uint256, BEFORE any narrowing).
+    error AckClassificationOutOfRange(uint256 classification);
 
     /// @notice #1222 M3 B2-b — {broadcastDayV2}'s per-destination array
     ///         must match the configured destination set exactly.
@@ -1930,6 +1935,11 @@ contract VaipakamRewardMessenger is
             ) = abi.decode(
                 payload, (uint8, uint256, uint256, address, uint256)
             );
+            // #1660 r7 - validate BEFORE narrowing: uint8(258) == 2 would
+            // forge quarantine evidence from a malformed word.
+            if (classification == 0 || classification > 3) {
+                revert AckClassificationOutOfRange(classification);
+            }
             emit RemitAckReceived(sourceChainId, remitId, amountReceived);
             IRewardRemitAckIngress(diamond).onRemitAckReceived(
                 SafeCast.toUint32(sourceChainId),

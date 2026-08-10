@@ -405,6 +405,51 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(diamondBase.lastReportRecycledForDay(), 0, "recycled for-day defaults 0");
     }
 
+    /// #1660 r7 — the kind-7 ack's classification word is validated on
+    /// the RAW uint256 before any narrowing: uint8(258) == 2 would forge
+    /// quarantine evidence from a malformed peer packet.
+    function test_RemitAck_OutOfRangeClassificationRejected() public {
+        vm.prank(address(messengerBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.AckClassificationOutOfRange.selector,
+                uint256(258)
+            )
+        );
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(
+                uint8(7),
+                uint256(1),
+                uint256(1 ether),
+                address(0xB0B),
+                uint256(258)
+            ),
+            _empty()
+        );
+        // The retired generation-1 bool-false shape (0) fails closed too.
+        vm.prank(address(messengerBase));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaipakamRewardMessenger.AckClassificationOutOfRange.selector,
+                uint256(0)
+            )
+        );
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(
+                uint8(7),
+                uint256(1),
+                uint256(1 ether),
+                address(0xB0B),
+                uint256(0)
+            ),
+            _empty()
+        );
+    }
+
     /// Codex #1413 r1 — the LEGACY four-argument sender overload stays
     /// callable (a not-yet-upgraded mirror diamond on an upgraded
     /// messenger) and emits the legacy four-word payload, which every Base

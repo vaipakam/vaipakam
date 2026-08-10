@@ -513,9 +513,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                     ".rewardMessengerImpl", newMsgrImpl
                 );
                 console.log(
-                    "P2-w4: upgraded VaipakamRewardMessenger (wire gen",
+                    "P2-w4/w5: upgraded VaipakamRewardMessenger (wire gen",
                     mgen,
-                    "-> 2) impl:",
+                    "-> 3) impl:",
                     newMsgrImpl
                 );
             }
