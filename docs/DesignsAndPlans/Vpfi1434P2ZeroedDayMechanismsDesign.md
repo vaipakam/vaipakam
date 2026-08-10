@@ -1062,7 +1062,14 @@ the bounds are the design's actual commitment.
    > receipt that later confirms as consumed. And the manual dispatch
    > bound became CUMULATIVE per side (funded-so-far + request ≤
    > quote), because a terminal return can re-open a day that retains a
-   > successor supplement's funding.
+   > successor supplement's funding. Round 6 versioned the widened
+   > ack word against its own predecessor: the wire offsets
+   > classification by one (1 consumed / 2 quarantined / 3 provisional,
+   > 0 refused re-executably) so a generation-1 bool ack in flight can
+   > never be misread — a legacy consumed ack (true = 1) decodes as
+   > consumed with identical semantics, and a legacy non-consumed ack
+   > (false = 0) fails closed until anyone re-presents it under the
+   > current encoding.
 
 
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —

@@ -346,7 +346,7 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 amountReceived
     ) external {
         IRewardRemitAckIngress(diamond).onRemitAckReceived(
-            sourceChainId, remitId, amountReceived, diamond, 0
+            sourceChainId, remitId, amountReceived, diamond, 1
         );
     }
 
@@ -361,11 +361,12 @@ contract MockRewardMessenger is IRewardMessenger {
     ) external {
         IRewardRemitAckIngress(diamond).onRemitAckReceived(
             sourceChainId, remitId, amountReceived, diamond,
-            consumed ? 0 : 1
+            consumed ? 1 : 2
         );
     }
 
-    /// @dev #1660 r5 - raw classification delivery (2 = provisional).
+    /// @dev #1660 r5/r6 - raw WIRE-classification delivery (1 consumed /
+    ///      2 quarantined / 3 provisional; 0 = the retired legacy shape).
     function deliverRemitAckWithClassification(
         uint32 sourceChainId,
         uint256 remitId,
@@ -386,7 +387,7 @@ contract MockRewardMessenger is IRewardMessenger {
         address remitter
     ) external {
         IRewardRemitAckIngress(diamond).onRemitAckReceived(
-            sourceChainId, remitId, amountReceived, remitter, 0
+            sourceChainId, remitId, amountReceived, remitter, 1
         );
     }
 

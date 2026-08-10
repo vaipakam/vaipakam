@@ -1562,11 +1562,18 @@ contract RewardRemittanceFacet is
         // must be able to tell the two apart. Re-presentable: after the
         // confirm/demote the stored classification changes and the ack
         // re-presents with the new value.
+        // #1660 r6 - WIRE classification = storage classification + 1:
+        // value 0 is deliberately unassigned so the widened word is
+        // unambiguous against a generation-1 bool ack in flight - a
+        // legacy consumed ack (bool true = 1) decodes as CONSUMED with
+        // identical semantics, and a legacy non-consumed ack (bool
+        // false = 0) decodes as INVALID and stays re-executable until
+        // anyone re-presents it under the current encoding.
         messageId = IRewardMessenger(messenger).sendRemitAck{value: msg.value}(
             remitId,
             rec.amount,
             rec.remitter,
-            rec.classification,
+            rec.classification + 1,
             refundAddress
         );
         emit RemitAckDispatched(remitId, messageId, rec.amount);
@@ -1639,8 +1646,15 @@ contract RewardRemittanceFacet is
             revert RemitAckSenderMismatch(remitId, remitter);
         }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        bool consumed = classification == 0;
-        bool quarantined = classification == 1;
+        // #1660 r6 - the wire offsets classification by one (0 is the
+        // RETIRED generation-1 bool-false shape): 1 consumed /
+        // 2 quarantined / 3 provisional. Zero or out-of-range fails
+        // closed and re-executable - never guessed at.
+        if (classification == 0 || classification > 3) {
+            revert RemitAckClassificationInvalid(classification);
+        }
+        bool consumed = classification == 1;
+        bool quarantined = classification == 2;
         if (r.status == 2) {
             if (r.dstChainId == sourceChainId) {
                 // #1656 r3 - a FORCED finalization preserved declared

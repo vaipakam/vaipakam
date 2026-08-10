@@ -232,7 +232,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _remitDay1ToArb();
         vm.prank(stranger);
         vm.expectRevert(IVaipakamErrors.NotAuthorizedRewardMessenger.selector);
-        remit.onRemitAckReceived(CHAIN_ARB, 1, 1e18, address(diamond), 0);
+        remit.onRemitAckReceived(CHAIN_ARB, 1, 1e18, address(diamond), 1);
     }
 
     function test_ForceFinalize_AdminValve() public {
@@ -3170,6 +3170,33 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
+    /// #1660 r6 - the wire's classification word offsets by one so the
+    /// retired generation-1 bool shape cannot be misread: a legacy
+    /// non-consumed ack (bool false = 0) refuses re-executably, while a
+    /// legacy consumed ack (bool true = 1) decodes as consumed with
+    /// identical semantics (proven by every deliverRemitAck fixture).
+    function test_Recovery_LegacyZeroClassificationRefused() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RemitAckClassificationInvalid.selector, 0
+            )
+        );
+        rewardMessenger.deliverRemitAckWithClassification(CHAIN_ARB, 1, 3e18, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RemitAckClassificationInvalid.selector, 4
+            )
+        );
+        rewardMessenger.deliverRemitAckWithClassification(CHAIN_ARB, 1, 3e18, 4);
+        // The re-presented current-encoding ack settles normally.
+        rewardMessenger.deliverRemitAckWithClassification(CHAIN_ARB, 1, 3e18, 2);
+        assertEq(uint256(rlens.getRemitReservation(1).status), 2);
+    }
+
     /// #1660 r5 - a PROVISIONAL attestation is not quarantine evidence:
     /// the receipt can still confirm as consumed, so the return waits for
     /// a true quarantine ack - and after the consumed confirmation, the
@@ -3181,7 +3208,7 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
         // The mirror credited PROVISIONALLY (compensation overtook V3);
         // its ack attests classification 2.
-        rewardMessenger.deliverRemitAckWithClassification(CHAIN_ARB, 1, 3e18, 2);
+        rewardMessenger.deliverRemitAckWithClassification(CHAIN_ARB, 1, 3e18, 3);
         _armReturnIngressNoAck();
         vm.expectRevert(
             abi.encodeWithSelector(

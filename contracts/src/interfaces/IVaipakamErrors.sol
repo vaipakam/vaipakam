@@ -438,6 +438,11 @@ interface IVaipakamErrors {
     ///         Re-executable once the permissionless ack lands.
     error StrandedReturnAwaitingAck(uint256 remitId, uint8 status);
 
+    /// @notice #1660 r6 - the ack wire's classification word is zero or
+    ///         out of range: zero is the retired generation-1 bool-false
+    ///         shape, refused re-executably rather than misread.
+    error RemitAckClassificationInvalid(uint8 classification);
+
     /// @notice A from-recovery dispatch exceeds the recovery position
     ///         balance (recovered − redispatched).
     error RecoveryPositionInsufficient(uint256 requested, uint256 available);
