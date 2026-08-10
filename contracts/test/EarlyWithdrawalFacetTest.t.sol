@@ -3607,12 +3607,20 @@ contract EarlyWithdrawalFacetTest is Test {
 
     // ─── Unpriceable legs (#1655) ───────────────────────────────────────────
     //
-    // Liquidity is read LIVE for sale admission, never from the loan's
-    // origination snapshot, and an unpriceable leg is REFUSED unless the
-    // progressive-risk-access consent regime is in force to admit it. The four
-    // tests below pin both axes independently: which source is consulted
-    // (live vs snapshot, in each direction), and what the answer is on each
-    // side of the master switch.
+    // A leg is measurable for sale admission only when the LIVE
+    // `checkLiquidity` reading AND the loan's own origination record both say
+    // `Liquid`. Both are load-bearing, for different reasons: only the live
+    // reading catches a record that has gone stale in the permissive direction,
+    // and only the record says whether risk arithmetic runs for this loan at all
+    // (`RiskFacet.calculateHealthFactor` reverts `IlliquidLoanNoRiskMath`
+    // against it). An unmeasurable leg is REFUSED, and refused
+    // UNCONDITIONALLY — the progressive-risk-access consent ladder grades assets
+    // by identity and depth class, never by live priceability, so it cannot be
+    // deferred to (Codex r8).
+    //
+    // The tests below pin both axes independently: which source is consulted,
+    // in each direction, and that the answer does not move with the master
+    // switch.
 
     /// @dev The silently-admitting case `LenderEarlyWithdrawalUXDesign.md`
     ///      717-736 rejects. On a default deployment `riskAccessGateEnabled` is

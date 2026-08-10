@@ -1912,19 +1912,33 @@ contract OfferAcceptFacet is
         // prior values stay stable.
         SaleLoanPastMaturity,
         // #1503 PR-E (design item 11) — the sale vehicle's linked loan is
-        // below the solvency floor its own admission required, so
-        // acceptance would revert `SalePositionBelowSolvencyFloor`. Also
-        // covers the fail-closed case where the position claims to be
-        // priceable but the oracle cannot price it. Surfaced so the UI can
-        // show the live HF against the floor instead of letting the buyer
-        // discover it by burning gas. APPENDED — prior values stay stable.
+        // below the solvency floor its own admission required, so acceptance
+        // would revert `SalePositionBelowSolvencyFloor`. This code means a
+        // MEASURED shortfall and nothing else: it is set only for classifier
+        // code 1, where a health factor was actually read and compared.
+        // Surfaced so the UI can show the live HF against the floor instead of
+        // letting the buyer discover it by burning gas.
+        //
+        // It deliberately does NOT cover a position the oracle could not price
+        // — that used to degrade here and made the surface assert a shortfall
+        // it had never measured, with 0/0 as the figures (Codex #1635 r5). Any
+        // surface built from this vocabulary must show a health figure ONLY for
+        // this code. APPENDED — prior values stay stable.
         SalePositionBelowSolvencyFloor,
-        // #1503 PR-E (Codex #1635 r4) — the sale is refused for an admission
-        // reason OTHER than the health floor: inherited risk terms weaker than
-        // current parameters, or a live LTV above the cap a fresh admission
-        // would allow. Distinct from the floor code so a surface never tells a
-        // buyer their health factor is short when it is not. APPENDED — prior
-        // values stay stable.
+        // #1503 PR-E (Codex #1635 r4/r5/r8) — the sale is refused for an
+        // admission reason OTHER than a measured health shortfall. The neutral
+        // code, carrying every non-floor refusal:
+        //   * inherited risk terms weaker than current parameters (codes 2-4);
+        //   * a live LTV above the cap a fresh admission would allow (code 5);
+        //   * a leg that is not priceable right now (code 6) — refused
+        //     unconditionally, since the risk-access consent ladder grades
+        //     assets by identity, not by live priceability (r8);
+        //   * the classifier being unreachable or reverting at all
+        //     (`LibSaleSolvency.SALE_ADMISSION_UNAVAILABLE`) — refused, reason
+        //     not measurable (r5).
+        // Distinct from the floor code so a surface never tells a buyer their
+        // health factor is short when it is not, and never quotes a figure for
+        // a position that has none. APPENDED — prior values stay stable.
         SaleAdmissionBlocked
     }
 
