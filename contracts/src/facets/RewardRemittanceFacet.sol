@@ -4,6 +4,7 @@ pragma solidity 0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibRewardRemitDispatch} from "../libraries/LibRewardRemitDispatch.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -64,6 +65,13 @@ contract RewardRemittanceFacet is
     ///      the PRE-clamp armed-day fresh (the full finalize-time commitment
     ///      a terminally-closed day retires — remitted + clamp residual);
     ///      `recycledFull` is the pre-clamp recycled likewise.
+    struct RemitDayLists {
+        uint256[] fundedDays;
+        uint256 fundedCount;
+        uint256[] closedDays;
+        uint256 closedCount;
+    }
+
     struct RemitSplitTotals {
         uint256 totalAll;
         uint256 fresh;
@@ -205,6 +213,26 @@ contract RewardRemittanceFacet is
         uint256 amountReceived
     );
 
+    /// @notice #1656 r3 - a forced-finalized compensation reservation's
+    ///         authentic ACK arrived later and ran the one-shot
+    ///         declared-to-received reconciliation.
+    /// @custom:event-category informational/reward-compensation
+    event RemitAckAfterForcedFinalize(
+        uint256 indexed remitId,
+        uint32 indexed sourceChainId,
+        uint256 amountReceived
+    );
+
+    /// @notice #1656 r9 - an early non-consumed ack held the R6 gate on
+    ///         an Acked reservation; the first CONSUMED re-presentation
+    ///         (post-confirm) cleared it and reconciled.
+    /// @custom:event-category informational/reward-compensation
+    event RemitAckLateConsumption(
+        uint256 indexed remitId,
+        uint32 indexed sourceChainId,
+        uint256 amountReceived
+    );
+
     /// @notice #1222 M3 B2-d2 — a mirror dispatched its remit ack toward Base.
     /// @custom:event-category informational/reward-transport
     event RemitAckDispatched(
@@ -213,18 +241,6 @@ contract RewardRemittanceFacet is
         uint256 amount
     );
 
-    /// @notice #1222 M3 B2-d2 — the evidenced manual-budget path funded a
-    ///         `(chain, day)` a force-finalize had zeroed out of the
-    ///         denominator (`remitIneligible` — the flag is the evidence and
-    ///         must still be set). Fresh-funded under the 69M cap; reserves
-    ///         and acks like any remit.
-    /// @custom:event-category informational/reward-transport
-    event ManualRewardBudgetRemitted(
-        uint32 indexed dstChainId,
-        uint256 indexed dayId,
-        uint256 amount,
-        uint256 remitId
-    );
 
     /// @notice Emitted when the optional keeper automation role is set/cleared.
     /// @custom:event-category informational/config
@@ -312,6 +328,33 @@ contract RewardRemittanceFacet is
         }
     }
 
+    /// @dev Thin forwarder to {LibRewardRemitDispatch.freshHeadroomNet} —
+    ///      same viaIR stack-shape rationale as {_tail}.
+    function _headroom(
+        LibVaipakam.Storage storage s,
+        uint256 retires
+    ) private view returns (uint256) {
+        return LibRewardRemitDispatch.freshHeadroomNet(s, retires);
+    }
+
+    /// @dev Thin forwarder to {LibRewardRemitDispatch.dispatchRemitTail} —
+    ///      exists purely to keep the batch-remit loop's viaIR stack frame
+    ///      at its pre-split shape (the inlined library call pushed one
+    ///      variable too deep; a private call restores the frame break).
+    function _tail(
+        LibVaipakam.Storage storage s,
+        address vpfi,
+        address messenger,
+        uint32 dstChainId,
+        bytes memory payload,
+        uint256 total,
+        uint256 remitId
+    ) private returns (bytes32) {
+        return LibRewardRemitDispatch.dispatchRemitTail(
+            s, vpfi, messenger, dstChainId, payload, total, remitId
+        );
+    }
+
     /// @dev The pool lives on Base — remittance is a Base-only action.
     modifier onlyCanonical() {
         _checkCanonical();
@@ -385,16 +428,21 @@ contract RewardRemittanceFacet is
         // the same eligibility + B2-d2 commitment gate + Σcommitments clamp
         // both quote views consume, so quote == send structurally). Every day
         // must be finalized (its denominator is immutable). Collect ONLY the
-        // days that actually contribute VPFI into `fundedDays` (skipping
+        // days that actually contribute VPFI into `dl.fundedDays` (skipping
         // skipped/duplicate/zero days) — that filtered set, not the caller's
         // raw `dayIds`, rides the payload so the mirror's reconciliation
-        // events name exactly the funded days. `closedDays` additionally
+        // events name exactly the funded days. `dl.closedDays` additionally
         // collects every day this batch terminally closes (funded + armed
         // clamped-to-zero) — the reservation records those for release.
-        uint256[] memory fundedDays = new uint256[](dayIds.length);
-        uint256 fundedCount;
-        uint256[] memory closedDays = new uint256[](dayIds.length);
-        uint256 closedCount;
+        // (One memory struct for the four day-list locals — the w4 split
+        // moved this function's compilation shape and four stack slots
+        // became one; same lever as {RemitSplitTotals} below.)
+        RemitDayLists memory dl = RemitDayLists({
+            fundedDays: new uint256[](dayIds.length),
+            fundedCount: 0,
+            closedDays: new uint256[](dayIds.length),
+            closedCount: 0
+        });
         // B2-d2 — reserve the delivered-backing id up front: the day-close
         // markers written in the loop reference it, and the reservation
         // itself is written BEFORE the external send (CEI).
@@ -428,9 +476,9 @@ contract RewardRemittanceFacet is
                 // re-enters {_planDay} and finds the marker, so each day
                 // closes at most once.
                 s.dayClosedByRemitId[dstChainId][dayId] = remitId;
-                closedDays[closedCount] = dayId;
+                dl.closedDays[dl.closedCount] = dayId;
                 unchecked {
-                    ++closedCount;
+                    ++dl.closedCount;
                 }
                 uint256 slice = p.fresh + p.recycled;
                 if (slice > 0) {
@@ -438,9 +486,9 @@ contract RewardRemittanceFacet is
                     st.totalAll += slice;
                     st.fresh += p.fresh;
                     st.recycled += p.recycled;
-                    fundedDays[fundedCount] = dayId;
+                    dl.fundedDays[dl.fundedCount] = dayId;
                     unchecked {
-                        ++fundedCount;
+                        ++dl.fundedCount;
                     }
                 }
                 st.armedFresh += p.armedFreshFull;
@@ -465,14 +513,20 @@ contract RewardRemittanceFacet is
                 ++i;
             }
         }
-        if (closedCount == 0) revert NothingToRemit();
+        if (dl.closedCount == 0) revert NothingToRemit();
         // Trim the collection arrays to their filled lengths (shrink the
         // memory arrays' lengths in place — safe, we only ever reduce them;
         // the annotation keeps solc's memoryguard active so viaIR can spill
         // this function's locals).
-        assembly ("memory-safe") {
-            mstore(fundedDays, fundedCount)
-            mstore(closedDays, closedCount)
+        {
+            uint256[] memory fundedDays_ = dl.fundedDays;
+            uint256 fundedCount_ = dl.fundedCount;
+            uint256[] memory closedDays_ = dl.closedDays;
+            uint256 closedCount_ = dl.closedCount;
+            assembly ("memory-safe") {
+                mstore(fundedDays_, fundedCount_)
+                mstore(closedDays_, closedCount_)
+            }
         }
         if (st.totalAll > perRemittanceCap) {
             revert RemittanceExceedsCap(st.totalAll, perRemittanceCap);
@@ -484,7 +538,7 @@ contract RewardRemittanceFacet is
         // finalize-time commitment already reserved it against `fundable`)
         // and never consumes the fresh cap: at fresh exhaustion recycled
         // remittances keep flowing, the promised steady state.
-        uint256 remaining = _freshHeadroomNet(s, st.armedFresh);
+        uint256 remaining = _headroom(s, st.armedFresh);
         if (st.fresh > remaining) {
             revert RewardPoolCapExceeded(st.fresh, remaining);
         }
@@ -518,7 +572,7 @@ contract RewardRemittanceFacet is
             r.recycled = st.recycled;
             r.armedFreshFull = st.armedFresh;
             r.recycledFull = st.recycledFull;
-            r.dayIds = closedDays;
+            r.dayIds = dl.closedDays;
             if (st.totalAll == 0) {
                 r.status = 2; // Acked — nothing in flight, terminal.
             } else {
@@ -541,7 +595,7 @@ contract RewardRemittanceFacet is
             vpfi,
             messenger,
             dstChainId,
-            fundedDays,
+            dl.fundedDays,
             // B2-d5 — `recycledShare` is this batch's RECYCLED component. The
             // mirror cannot re-derive it (`p.recycled` is computed after
             // Base's Σcommitments clamp, which is Base-global state), so it
@@ -554,7 +608,7 @@ contract RewardRemittanceFacet is
         );
 
         emit RewardBudgetRemitted(
-            dstChainId, st.totalAll, fundedCount, messageId, remitId
+            dstChainId, st.totalAll, dl.fundedCount, messageId, remitId
         );
     }
 
@@ -583,7 +637,6 @@ contract RewardRemittanceFacet is
         RemitDispatch memory d
     ) private returns (bytes32 messageId) {
         uint256 total = d.total;
-        IERC20(vpfi).forceApprove(messenger, total);
 
         // r4 — the payload carries THIS deployment's identity (immutable
         // message data): receipts key by (remitter, remitId) and the ack
@@ -609,40 +662,11 @@ contract RewardRemittanceFacet is
             address(this),
             d.recycledShare
         );
-        ICrossChainMessenger.TokenAmount[] memory tokens =
-            new ICrossChainMessenger.TokenAmount[](1);
-        tokens[0] =
-            ICrossChainMessenger.TokenAmount({token: vpfi, amount: total});
-
-        uint256 fee = ICrossChainMessenger(messenger).quoteMessageFee(
-            dstChainId,
-            payload,
-            tokens,
-            REWARD_BUDGET_DEST_GAS_LIMIT
-        );
-        if (msg.value < fee) revert InsufficientRemittanceFee(msg.value, fee);
-
-        messageId = ICrossChainMessenger(messenger).sendMessage{value: fee}(
-            dstChainId,
-            payload,
-            tokens,
-            REWARD_BUDGET_DEST_GAS_LIMIT
-        );
-
-        // slither-disable-start reentrancy-no-eth,reentrancy-benign
-        // Deliberate write-after-call: records the send's OWN returned id
-        // (unknowable earlier); messenger is the admin-wired CCIP adapter and
-        // every caller is nonReentrant.
-        s.remitReservations[d.remitId].ccipMessageId = messageId;
-        s.remitIdByCcipMessageId[messageId] = d.remitId;
-        // slither-disable-end reentrancy-no-eth,reentrancy-benign
-
-        // Refund any fee overpayment to the caller (operator/keeper EOA).
-        if (msg.value > fee) {
-            (bool ok, ) = payable(msg.sender).call{value: msg.value - fee}("");
-            if (!ok) revert RemittanceRefundFailed();
-        }
+        messageId =
+            _tail(s, vpfi, messenger, dstChainId, payload, total, d.remitId);
     }
+
+
 
     /**
      * @dev #1222 M3 B2-d2 — the SINGLE per-day eligibility + gate + clamp
@@ -928,31 +952,510 @@ contract RewardRemittanceFacet is
         );
     }
 
+    // ─── #1434 P2-w2 — the classifying COMPENSATION ingress (§2.2) ────────
+
+    /// @notice A P2 compensation was credited to a zeroed day's per-side
+    ///         pools (payable at w3's repricing). `provisional` marks the
+    ///         overtake case — the day's V3 broadcast had not landed, so
+    ///         the payload's authenticated remitter stands as the assumed
+    ///         era until the broadcast confirms or demotes it.
+    /// @custom:event-category informational/reward-compensation
+    event CompensationCredited(
+        uint256 indexed dayId,
+        uint256 lenderShare18,
+        uint256 borrowerShare18,
+        bool provisional,
+        address era
+    );
+
+    /// @notice A P2 compensation arrival was QUARANTINED into the
+    ///         stranded-recovery reservation (§2.2's token-safe rejection —
+    ///         tokens accepted, never payable here; the R4 return takes it
+    ///         from the reservation). `reason`: 1 = day not deliberately
+    ///         zeroed, 2 = era mismatch, 3 = past the day's expiry (lapse
+    ///         flags or the frozen clock words, installed or wire-carried),
+    ///         4 = a second arrival while a provisional credit is already
+    ///         held (one provisional receipt binding per day), 5 = the day
+    ///         is permanently V3-unhealable on this rotated mirror (prior
+    ///         state, no recorded era — the confirm/demote hook could never
+    ///         run), 6 = clockless payload (zero finalizedAt — an honest
+    ///         Base refuses such a dispatch, so this is stale or hostile
+    ///         and could never settle).
+    /// @custom:event-category informational/reward-compensation
+    event CompensationQuarantined(
+        uint256 indexed dayId,
+        address indexed remitter,
+        uint256 remitId,
+        uint256 amount,
+        uint8 reason
+    );
+
+    /// @notice A provisional compensation was CONFIRMED in place by the
+    ///         day's V3 broadcast (matching era, day genuinely zeroed).
+    /// @custom:event-category informational/reward-compensation
+    event CompensationConfirmed(uint256 indexed dayId, address era);
+
+    /// @notice A provisional compensation was DEMOTED to the
+    ///         stranded-recovery reservation by the day's V3 broadcast
+    ///         (era mismatch, or the day turned out not to be zeroed).
+    /// @custom:event-category informational/reward-compensation
+    event CompensationDemoted(
+        uint256 indexed dayId, uint256 amount, uint8 reason
+    );
+
     /**
-     * @dev #1222 M3 B2-d2 (Codex #1426 r6) — NET fresh headroom for a remit
-     *      that will retire `retires` of the outstanding armed-fresh
-     *      commitments: `CAP − remitted − paid − (outstandingFresh −
-     *      retires)`, floored at zero. The gross `CAP − remitted − paid`
-     *      figure ignores commitments other days (and Base-side claims)
-     *      still hold against the pool — after an operator RELEASE (which
-     *      keeps the sent amount counted while restoring the obligation),
-     *      the gross check would let a re-remit push total issuance past
-     *      the 69M cap by exactly the stranded amount, terminally
-     *      truncating later claims. Healthy-path no-op: finalize reserves
-     *      commitments within remaining headroom.
+     * @notice #1434 P2-w2 — trusted ingress for a P2 MANUAL-COMPENSATION
+     *         delivery (design §2.2): classify the arrival against the
+     *         day's mirror-local state and either credit the per-side
+     *         compensated pools or quarantine the value into the arrival
+     *         reservation. NEVER reverts on a classification failure — a
+     *         revert is re-executable into the same revert forever (§2h
+     *         R6d), so the token-safe form accepts the tokens and records
+     *         why they are not payable.
+     * @dev    Receiver-gated (the receiver already moved the VPFI in and
+     *         scaled both shares to what physically landed). Cases, era
+     *         first:
+     *
+     *         KNOWN state (day applied AND era recorded): a remitter that
+     *         does not match the day's era quarantines (reason 2 — §1.1's
+     *         compensation-side era binding); a day not deliberately
+     *         zeroed quarantines (reason 1 — there is nothing to
+     *         compensate); a lapsed / short-lapsed day quarantines
+     *         (reason 3 — the loss was already recorded at lapse;
+     *         unreachable until the w4 terminals ship). Otherwise the
+     *         pools credit CONFIRMED.
+     *
+     *         UNKNOWN state (day not applied, or applied without an era —
+     *         the compensation OVERTOOK the V3 broadcast, §2.2 case b):
+     *         credit PROVISIONALLY under the payload's authenticated
+     *         remitter as the assumed era. The V3 arrival later confirms
+     *         in place or demotes to the reservation
+     *         ({RewardReporterFacet.onRewardBroadcastV3Received} calls
+     *         {onCompensationDayBroadcastArrived}). Never waits: the
+     *         expiry inputs rode the remit itself (R4b).
+     *
+     *         In EVERY case the receipt is recorded exactly like an
+     *         ordinary delivery (first write wins), so the ACK path is
+     *         unchanged, and `rewardBudgetReceivedTotal` records the
+     *         arrival. The armed-fresh counter advances only for CREDITED
+     *         pools (quarantined value is recorded uncounted instead), and
+     *         what was counted is stored so a demotion can move it —
+     *         counted + uncounted always reconciles against what Base
+     *         sent.
      */
-    function _freshHeadroomNet(
-        LibVaipakam.Storage storage s,
-        uint256 retires
-    ) private view returns (uint256 remaining) {
-        uint256 used = s.rewardBudgetRemittedGlobal + s.interactionPoolPaidOut;
-        remaining = used >= LibVaipakam.VPFI_INTERACTION_POOL_CAP
-            ? 0
-            : LibVaipakam.VPFI_INTERACTION_POOL_CAP - used;
-        uint256 outFresh = s.outstandingCommitFresh;
-        uint256 encumbered = outFresh > retires ? outFresh - retires : 0;
-        remaining = remaining > encumbered ? remaining - encumbered : 0;
+    function onCompensationBudgetReceived(
+        address token,
+        uint256 amount,
+        uint256 dayId,
+        uint256 sourceChainId,
+        uint256 remitId,
+        address remitter,
+        uint256 lenderShare18,
+        uint256 borrowerShare18,
+        uint64 finalizedAt,
+        uint32 lapseScheduleVersion,
+        uint64 lapseWindowSeconds,
+        uint64 /* dispatchCutoffGap — Base-side input (the R3 refusal);
+                  carried for symmetry + w4's gates, unused here */
+    ) external nonReentrant whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (msg.sender != s.rewardRemittanceReceiver) {
+            revert NotRewardRemittanceReceiver(msg.sender);
+        }
+        if (token != s.vpfiToken) {
+            revert RewardBudgetTokenMismatch(s.vpfiToken, token);
+        }
+        if (lenderShare18 + borrowerShare18 > amount) {
+            revert CompensationSharesExceedDelivery(
+                lenderShare18, borrowerShare18, amount
+            );
+        }
+
+        s.rewardBudgetReceivedTotal += amount;
+        // Receipt exactly as the ordinary ingress records it — the ACK
+        // path reads this record and nothing else.
+        if (remitId != 0 && remitter != address(0)) {
+            bytes32 rKey = _receiptKey(remitter, remitId);
+            LibVaipakam.ReceivedRemit storage rec = s.receivedRemits[rKey];
+            if (rec.receivedAt == 0) {
+                rec.srcChainId = SafeCast.toUint32(sourceChainId);
+                rec.receivedAt = uint64(block.timestamp);
+                rec.amount = amount;
+                rec.remitter = remitter;
+            }
+        }
+
+        address era = s.dayClockEra[dayId];
+        bool stateKnown = s.broadcastV2Applied[dayId] && era != address(0);
+        if (stateKnown) {
+            uint8 reason = 0;
+            if (remitter != era) reason = 2;
+            else if (!s.dayDeliberatelyZeroed[dayId]) reason = 1;
+            else if (
+                s.dayLapsed[dayId] || s.dayShortLapsed[dayId]
+                    // #1656 r3 — the raw-expiry test governs FIRST
+                    // compensations only: a compensated-and-open day is
+                    // inside its §2.5 REMEDIATION window (the short-lapse
+                    // deadline supersedes the original expiry for
+                    // supplements — §2.5: "a supplemental arriving after
+                    // the state is set is quarantined", i.e. the terminal
+                    // FLAGS govern, and they are tested above). Without
+                    // this, an aged migrated day's re-opened supplemental
+                    // headroom would be unreachable — every top-up would
+                    // quarantine against a clock its remediation window
+                    // replaced.
+                    || (
+                        !s.dayCompensation[dayId].compensated
+                            && _pastExpiry(
+                                s.dayLapseClock[dayId].finalizedAt,
+                                s.dayLapseClock[dayId].scheduleVersion,
+                                s.dayLapseClock[dayId].lapseWindowSeconds
+                            )
+                    )
+            ) {
+                // Codex #1634 r1 — the flags alone are the w4 TERMINALS'
+                // record; the INSTALLED clock itself already decides "past
+                // the applicable expiry" (§2.2's fourth case tests the
+                // clock, not just the flags), so an arrival after the true
+                // expiry quarantines even before any terminal has run.
+                reason = 3;
+            }
+            if (reason != 0) {
+                _quarantineCompensation(
+                    s, dayId, remitter, remitId, amount, reason
+                );
+                return;
+            }
+            _creditCompensation(
+                s,
+                dayId,
+                remitId,
+                lenderShare18,
+                borrowerShare18,
+                amount,
+                /* provisional */ false,
+                era
+            );
+            return;
+        }
+
+        // Codex #1634 r1 — two arrivals that must NOT go provisional:
+        //
+        // (a) A day the w1 rotation gate has made permanently V3-unhealable
+        //     (rotated mirror + prior state + no recorded era): its
+        //     provisional credit could never reach the confirm/demote hook,
+        //     leaving the value outside the reservation forever. Quarantine
+        //     at ingress instead — the same three conjuncts the V3 ingress
+        //     refuses on, threaded verbatim.
+        if (
+            s.rewardEraRotated && era == address(0)
+                && (s.broadcastV2Applied[dayId] || s.knownGlobalSet[dayId])
+        ) {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 5);
+            return;
+        }
+        // (b) A SECOND compensation while one is already provisional: the
+        //     day holds one provisional receipt binding (era + remitId),
+        //     and overwriting it would demote BOTH packets' pools under the
+        //     last receipt key — the receipt-bounded return could then
+        //     recover at most that one reservation's entitlement, stranding
+        //     the earlier packet. One provisional credit per day;
+        //     conflicting arrivals hold their own receipt-keyed reservation
+        //     until the day's broadcast settles which era governs.
+        LibVaipakam.DayCompensation storage dcPrior = s.dayCompensation[dayId];
+        if (dcPrior.provisional) {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 4);
+            return;
+        }
+        // (c) A CLOCKLESS payload (zero finalizedAt) cannot settle: an
+        //     honest Base refuses such a dispatch outright (#1634 r2 —
+        //     {CompensationDayHasNoClock}), so one arriving here is stale
+        //     or hostile, and a provisional credit for it would wait on a
+        //     V3 broadcast that can never carry a matching clock. The
+        //     token-safe mirror of the Base-side refusal (reason 6).
+        if (finalizedAt == 0) {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 6);
+            return;
+        }
+        // (d) The overtake case can still be PAST ITS TRUE EXPIRY: the wire
+        //     carries the full frozen clock words (R4b), so the ingress
+        //     evaluates them even with no broadcast state — a delivery
+        //     arriving after the day's expiry must never be provisionally
+        //     credited only to lapse at confirmation.
+        if (_pastExpiry(finalizedAt, lapseScheduleVersion, lapseWindowSeconds))
+        {
+            _quarantineCompensation(s, dayId, remitter, remitId, amount, 3);
+            return;
+        }
+        _creditCompensation(
+            s,
+            dayId,
+            remitId,
+            lenderShare18,
+            borrowerShare18,
+            amount,
+            /* provisional */ true,
+            remitter
+        );
     }
+
+    /// @dev §2.4 — expiry from FROZEN words only, both sourced from Base's
+    ///      finalization-time freeze (the installed clock on a stamped day,
+    ///      the wire's duplicated words on an unstamped one). Version 0 =
+    ///      no schedule frozen ⇒ never expired (a zero window must not
+    ///      read as "lapse immediately" — the w1 rule).
+    function _pastExpiry(
+        uint64 finalizedAt,
+        uint32 scheduleVersion,
+        uint64 lapseWindowSeconds
+    ) private view returns (bool) {
+        return finalizedAt != 0 && scheduleVersion != 0
+            && block.timestamp > uint256(finalizedAt) + lapseWindowSeconds;
+    }
+
+    /// @dev Credit the per-side pools (+ the armed-fresh counter when the
+    ///      day is armed-attributable), recording what was counted so a
+    ///      later demotion can move exactly that.
+    function _creditCompensation(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 remitId,
+        uint256 lenderShare18,
+        uint256 borrowerShare18,
+        uint256 amount,
+        bool provisional,
+        address era
+    ) private {
+        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
+        // #1434 P2-w4 (§2.5) — the short-compensated deadline inputs,
+        // stamped BEFORE the pools move so the qualifying test reads the
+        // pre-credit shortfall. First credit starts the absolute 3×
+        // clock; a later credit extends the rolling window ONLY if it is
+        // QUALIFYING — cutting the remaining per-side shortfall by at
+        // least one quarter on some short side — so dust top-ups cannot
+        // park the day unclaimable forever (§2.5's bounded-deadline
+        // rule). With no standing quote yet (accums zero) nothing is
+        // "short", the qualifying test is vacuously false, and only the
+        // first-credit stamp lands — the deadline then runs on the
+        // absolute clock, which is the conservative direction.
+        //
+        // #1656 r11 — a PROVISIONAL credit stamps NO clocks: it awaits
+        // its V3 confirmation, and until that lands Base holds the
+        // compensation gate (a supplemental needs a consumed ACK's
+        // round trip first), so no remediation interval exists yet. A
+        // delayed broadcast would otherwise burn the whole window while
+        // supplementing was impossible and let the short-lapse terminal
+        // fire the moment `provisional` clears. The confirm hook stamps
+        // the clocks at confirmation time instead; the demote path
+        // deletes any stamped clocks with the credit (r1).
+        if (!provisional) {
+            if (s.firstCompReceiptAt[dayId] == 0) {
+                s.firstCompReceiptAt[dayId] = uint64(block.timestamp);
+                s.lastQualifyingCompReceiptAt[dayId] =
+                    uint64(block.timestamp);
+            } else if (
+                _cutsShortfallByQuarter(
+                    s, dayId, lenderShare18, borrowerShare18
+                )
+            ) {
+                s.lastQualifyingCompReceiptAt[dayId] =
+                    uint64(block.timestamp);
+            }
+        }
+        dc.lenderPool18 += SafeCast.toUint128(lenderShare18);
+        dc.borrowerPool18 += SafeCast.toUint128(borrowerShare18);
+        dc.creditedAmount += SafeCast.toUint128(amount);
+        dc.compensated = true;
+        if (provisional) {
+            dc.provisional = true;
+            dc.provisionalEra = era;
+        }
+        dc.remitId = remitId;
+        // #1656 r8 - receipt classification: era == the payload remitter
+        // on both credit paths (the known-state ladder requires the
+        // match; the provisional branch DEFINES era := remitter).
+        s.receivedRemits[_receiptKey(era, remitId)].classification =
+            provisional ? 2 : 0;
+
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        if (armedFrom != 0 && dayId >= armedFrom) {
+            s.rewardBudgetArmedFreshReceived += amount;
+            dc.armedFreshCounted += SafeCast.toUint128(amount);
+        } else {
+            s.rewardBudgetFreshUncounted += amount;
+        }
+        emit CompensationCredited(
+            dayId, lenderShare18, borrowerShare18, provisional, era
+        );
+    }
+
+    /// @dev #1434 P2-w4 (§2.5) — does this credit cut the remaining
+    ///      per-side shortfall (quoted − pool, on a side that IS short)
+    ///      by at least one quarter? Reads the PRE-credit pools (the
+    ///      caller stamps before crediting). A side with no shortfall
+    ///      contributes nothing; with neither side short there is nothing
+    ///      to qualify against.
+    function _cutsShortfallByQuarter(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 lenderShare18,
+        uint256 borrowerShare18
+    ) private view returns (bool) {
+        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
+        uint256 shortL;
+        uint256 shortB;
+        {
+            uint256 qL = s.compQuoteAccum18[
+                dayId
+            ][uint8(LibVaipakam.RewardSide.Lender)];
+            uint256 qB = s.compQuoteAccum18[
+                dayId
+            ][uint8(LibVaipakam.RewardSide.Borrower)];
+            uint256 pL = uint256(dc.lenderPool18);
+            uint256 pB = uint256(dc.borrowerPool18);
+            shortL = qL > pL ? qL - pL : 0;
+            shortB = qB > pB ? qB - pB : 0;
+        }
+        if (shortL != 0 && lenderShare18 * 4 >= shortL) return true;
+        if (shortB != 0 && borrowerShare18 * 4 >= shortB) return true;
+        return false;
+    }
+
+    /// @dev The token-safe rejection: the whole arrival enters the
+    ///      stranded-recovery reservation (backing excluded from ordinary
+    ///      claims via {LibVpfiRecycle.backingPosition}), its fresh value
+    ///      recorded UNCOUNTED, and the receipt-keyed record names it for
+    ///      the R4 return (w5).
+    function _quarantineCompensation(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        address remitter,
+        uint256 remitId,
+        uint256 amount,
+        uint8 reason
+    ) private {
+        s.strandedRecoveryReserved += amount;
+        s.rewardBudgetFreshUncounted += amount;
+        LibVaipakam.StrandedRecovery storage sr =
+            s.strandedRecoveries[_receiptKey(remitter, remitId)];
+        sr.amount += amount;
+        sr.dayId = dayId;
+        if (sr.reservedAt == 0) sr.reservedAt = uint64(block.timestamp);
+        sr.reason = reason;
+        // #1656 r8 - the receipt carries the classification so the ACK
+        // wire can say "not consumed" and hold the R6 gate.
+        s.receivedRemits[_receiptKey(remitter, remitId)].classification = 1;
+        emit CompensationQuarantined(dayId, remitter, remitId, amount, reason);
+    }
+
+    /**
+     * @notice #1434 P2-w2 — the V3-broadcast arrival hook for a day
+     *         holding a PROVISIONAL compensation: CONFIRM it in place when
+     *         the broadcast's deployment matches the assumed era AND the
+     *         day is genuinely deliberately-zeroed; DEMOTE the whole
+     *         credit to the stranded-recovery reservation otherwise (the
+     *         confirmed era's state governs).
+     * @dev    Diamond-internal: callable only through the Diamond itself
+     *         ({RewardReporterFacet.onRewardBroadcastV3Received} invokes it
+     *         via `address(this)` after installing/verifying the day's
+     *         clock). No-op for a day with no provisional credit.
+     */
+    function onCompensationDayBroadcastArrived(
+        uint256 dayId,
+        address baseDeployment,
+        bool zeroedForDest
+    ) external {
+        if (msg.sender != address(this)) {
+            revert CompensationHookNotSelf(msg.sender);
+        }
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.DayCompensation storage dc = s.dayCompensation[dayId];
+        if (!dc.provisional) return;
+
+        if (dc.provisionalEra == baseDeployment && zeroedForDest) {
+            dc.provisional = false;
+            // #1656 r11 — the remediation clock starts NOW, not at the
+            // provisional receipt: only from confirmation can Base's
+            // supplemental path ever run (gate → consumed ACK → gate
+            // clear), so the bounded window must not have been burning
+            // while the credit sat unconfirmed. First-stamp only: a
+            // provisional can exist solely on a day with no known
+            // broadcast state, and every credited (clock-stamping)
+            // receipt flows through the known-state branch — a non-zero
+            // clock here is an unreachable ordering left untouched
+            // defensively (the absolute 3× cap governs regardless).
+            if (s.firstCompReceiptAt[dayId] == 0) {
+                s.firstCompReceiptAt[dayId] = uint64(block.timestamp);
+                s.lastQualifyingCompReceiptAt[dayId] =
+                    uint64(block.timestamp);
+            }
+            // #1656 r8 - the settled credit is CONSUMED: its receipt's
+            // ack may now clear the R6 gate.
+            s.receivedRemits[
+                _receiptKey(dc.provisionalEra, dc.remitId)
+            ].classification = 0;
+            // #1634 r3 — reclassify against the NOW-installed D*: the same
+            // core call that delivered this confirming broadcast installs
+            // `armedFromDay` BEFORE this hook runs, so a compensation that
+            // overtook the arming broadcast (credited while the chain was
+            // still unarmed, counted as zero) moves to the armed-fresh
+            // ledger here — otherwise the delivered-fresh bound would
+            // defer this day's claims despite their backing having landed.
+            uint256 armedFrom = s.governorCommitArmedFromDay;
+            if (
+                dc.armedFreshCounted == 0 && armedFrom != 0
+                    && dayId >= armedFrom
+            ) {
+                uint256 credited = dc.creditedAmount;
+                s.rewardBudgetArmedFreshReceived += credited;
+                uint256 unc = s.rewardBudgetFreshUncounted;
+                s.rewardBudgetFreshUncounted =
+                    unc > credited ? unc - credited : 0;
+                dc.armedFreshCounted = SafeCast.toUint128(credited);
+            }
+            emit CompensationConfirmed(dayId, baseDeployment);
+            return;
+        }
+        // Demote: era mismatch (2) or the day was never zeroed (1). The
+        // reservation takes the CREDITED amount, wholesale (#1634 r3) —
+        // the pool sum can floor a wei below it on a scaled delivery, and
+        // the design promises the demotion moves the arrival, not the sum.
+        uint8 reason = dc.provisionalEra == baseDeployment ? 1 : 2;
+        uint256 pools = dc.creditedAmount;
+        uint256 counted = dc.armedFreshCounted;
+        s.strandedRecoveryReserved += pools;
+        // Move the counted portion back to uncounted so the
+        // counted + uncounted reconciliation identity holds.
+        if (counted != 0) {
+            uint256 af = s.rewardBudgetArmedFreshReceived;
+            s.rewardBudgetArmedFreshReceived = af > counted ? af - counted : 0;
+            s.rewardBudgetFreshUncounted += counted;
+        }
+        LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[
+            _receiptKey(dc.provisionalEra, dc.remitId)
+        ];
+        sr.amount += pools;
+        sr.dayId = dayId;
+        if (sr.reservedAt == 0) sr.reservedAt = uint64(block.timestamp);
+        sr.reason = reason;
+        // #1656 r8 - demoted = stranded: the receipt's ack must not
+        // clear the R6 gate any more.
+        s.receivedRemits[
+            _receiptKey(dc.provisionalEra, dc.remitId)
+        ].classification = 1;
+        delete s.dayCompensation[dayId];
+        // #1656 r1 - the demoted credit's receipt clocks go with it: a
+        // later CURRENT-era compensation must get its own full bounded
+        // window, not inherit a rejected packet's aged firstCompReceiptAt
+        // (three windows past which it could be short-lapsed on arrival).
+        delete s.firstCompReceiptAt[dayId];
+        delete s.lastQualifyingCompReceiptAt[dayId];
+        emit CompensationDemoted(dayId, pools, reason);
+    }
+
+
+
+
 
     /**
      * @dev #1434 P1-a — may this delivery's fresh component be counted as
@@ -1050,8 +1553,18 @@ contract RewardRemittanceFacet is
         // r3/r4 — echo the receipt's PAYLOAD-recorded remitter so the
         // canonical ingress can verify the ack names ITSELF (remit ids are
         // per-deployment; see {LibVaipakam.ReceivedRemit.remitter}).
+        // #1656 r8 - the wire says whether the delivery was CONSUMED
+        // (credited; provisional confirmed): only a consumption ack may
+        // clear the Base R6 gate - a quarantined or still-provisional
+        // delivery's value is not finally consumed, and its clearing
+        // evidence is the w5 return (or the confirm, after which this
+        // ack re-presents as consumed).
         messageId = IRewardMessenger(messenger).sendRemitAck{value: msg.value}(
-            remitId, rec.amount, rec.remitter, refundAddress
+            remitId,
+            rec.amount,
+            rec.remitter,
+            rec.classification == 0,
+            refundAddress
         );
         emit RemitAckDispatched(remitId, messageId, rec.amount);
     }
@@ -1096,7 +1609,11 @@ contract RewardRemittanceFacet is
         uint32 sourceChainId,
         uint256 remitId,
         uint256 amountReceived,
-        address remitter
+        address remitter,
+        // #1656 r8 - mirror-attested consumption (receipt classification
+        // == credited). Gates the R6 clear + the compFunded
+        // reconciliation.
+        bool consumed
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0))
@@ -1115,7 +1632,46 @@ contract RewardRemittanceFacet is
             revert RemitAckSenderMismatch(remitId, remitter);
         }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        if (r.status == 2) return;
+        if (r.status == 2) {
+            if (r.dstChainId == sourceChainId) {
+                // #1656 r3 - a FORCED finalization preserved declared
+                // funding with no received figure; the FIRST authentic
+                // ACK that lands afterwards carries it. One-shot (the
+                // flag clears).
+                // #1656 r10 - the one-shot survives NON-consumed acks:
+                // a provisional ack dispatched pre-confirm but arriving
+                // post-force must not burn the flag before the consumed
+                // re-presentation can reconcile.
+                if (r.forcedFinalized && consumed) {
+                    r.forcedFinalized = false;
+                    _reconcileCompFunded(s, r, amountReceived);
+                    emit RemitAckAfterForcedFinalize(
+                        remitId, sourceChainId, amountReceived
+                    );
+                }
+                // #1656 r9 - the LATE-CONSUMPTION settle: an early
+                // NON-consumed ack (provisional delivery, ack before the
+                // V3 confirm) Acked the reservation while the R6 gate
+                // held. The first CONSUMED re-presentation after the
+                // confirm clears the gate and reconciles - a normal
+                // cross-chain ordering, not an error path. Idempotent:
+                // once cleared, the gate no longer names this remit.
+                if (
+                    consumed
+                        && s.compensationOutstanding[r.dstChainId]
+                            == remitId
+                ) {
+                    LibRewardRemitDispatch.clearCompensationGate(
+                        s, r.dstChainId
+                    );
+                    _reconcileCompFunded(s, r, amountReceived);
+                    emit RemitAckLateConsumption(
+                        remitId, sourceChainId, amountReceived
+                    );
+                }
+            }
+            return;
+        }
         if (r.status == 3) {
             emit RemitAckAfterRelease(remitId, sourceChainId, amountReceived);
             return;
@@ -1124,7 +1680,7 @@ contract RewardRemittanceFacet is
         if (r.dstChainId != sourceChainId) {
             revert RemitAckChainMismatch(remitId, r.dstChainId, sourceChainId);
         }
-        _finalizeReservation(s, r, remitId, amountReceived, false);
+        _finalizeReservation(s, r, remitId, amountReceived, false, consumed);
     }
 
     /**
@@ -1141,7 +1697,10 @@ contract RewardRemittanceFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
         if (r.status != 1) revert RemitReservationNotPending(remitId);
-        _finalizeReservation(s, r, remitId, 0, true);
+        // #1656 r8 - the forced finalize is the operator's consumption
+        // attestation (same evidenced mould as the ACK), so it clears
+        // the gate.
+        _finalizeReservation(s, r, remitId, 0, true, true);
     }
 
     /**
@@ -1184,11 +1743,42 @@ contract RewardRemittanceFacet is
         uint256 n = closed.length;
         for (uint256 i; i < n; ) {
             uint256 d = closed[i];
-            delete s.rewardBudgetRemitted[dst][d];
-            delete s.dayClosedByRemitId[dst][d];
+            // #1656 r1 - delete the day markers ONLY when this reservation
+            // OWNS the closure: a SUPPLEMENTAL reservation names the same
+            // day for its record/ACK lifecycle, but the closure belongs to
+            // the original acknowledged manual remit - releasing a failed
+            // supplement must not erase it (that would re-open funding on
+            // an already-funded day and free its standing quote).
+            if (s.dayClosedByRemitId[dst][d] == remitId) {
+                delete s.rewardBudgetRemitted[dst][d];
+                delete s.dayClosedByRemitId[dst][d];
+            }
             unchecked {
                 ++i;
             }
+        }
+        // #1656 r6 - a released COMPENSATION reservation takes its
+        // DECLARED per-side contribution out of the funded cumulative:
+        // the release means those tokens never funded the obligation
+        // (the reservation can never execute), and leaving them counted
+        // would make the recovery ceremony's re-dispatch impossible -
+        // the per-side bound would reject the replacement as exceeding
+        // the quote. Saturating; contributions from OTHER reservations
+        // on the same day (the original under a released supplemental,
+        // or vice versa) remain counted, correctly.
+        if (
+            n == 1
+                && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
+        ) {
+            uint256 cd = closed[0];
+            uint256 curL = s.compFundedLender18[dst][cd];
+            uint256 curB = s.compFundedBorrower18[dst][cd];
+            s.compFundedLender18[dst][cd] = curL > r.declaredLender18
+                ? curL - r.declaredLender18
+                : 0;
+            s.compFundedBorrower18[dst][cd] = curB > r.declaredBorrower18
+                ? curB - r.declaredBorrower18
+                : 0;
         }
         // Codex #1426 r4 — the FRESH counters stay UN-restored, exactly
         // like the recycled bucket: the sent VPFI is physically outside
@@ -1207,6 +1797,35 @@ contract RewardRemittanceFacet is
         );
     }
 
+    /// @dev #1656 r2/r3 - the declared-to-received reconciliation of the
+    ///      per-side funded cumulative for a COMPENSATION reservation
+    ///      (single-day by construction): a short delivery re-opens
+    ///      exactly the supplemental headroom it left. Pro-rata over the
+    ///      reservation's declared split; the mirror's receiver scales
+    ///      its credited shares the same way, and rounding skew is
+    ///      absorbed by the saturating subtraction + the per-side quote
+    ///      bound.
+    function _reconcileCompFunded(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RemitReservation storage r,
+        uint256 amountReceived
+    ) private {
+        uint256 total = r.total;
+        if (amountReceived >= total || total == 0 || r.dayIds.length != 1) {
+            return;
+        }
+        uint32 dst = r.dstChainId;
+        uint256 d = r.dayIds[0];
+        uint256 redL = r.declaredLender18
+            - (r.declaredLender18 * amountReceived) / total;
+        uint256 redB = r.declaredBorrower18
+            - (r.declaredBorrower18 * amountReceived) / total;
+        uint256 curL = s.compFundedLender18[dst][d];
+        uint256 curB = s.compFundedBorrower18[dst][d];
+        s.compFundedLender18[dst][d] = curL > redL ? curL - redL : 0;
+        s.compFundedBorrower18[dst][d] = curB > redB ? curB - redB : 0;
+    }
+
     /// @dev Shared ack/force finalize: Pending → Acked, pending → acked
     ///      aggregates rolled.
     function _finalizeReservation(
@@ -1214,7 +1833,13 @@ contract RewardRemittanceFacet is
         LibVaipakam.RemitReservation storage r,
         uint256 remitId,
         uint256 amountReceived,
-        bool forced
+        bool forced,
+        // #1656 r8 - false for a quarantined / still-provisional
+        // delivery's ack: the reservation still finalizes (delivery
+        // evidence), but the R6 gate HOLDS - SS5.1's clearing evidence
+        // is CONSUMPTION, and a stranded delivery settles via the w5
+        // return.
+        bool consumed
     ) private {
         r.status = 2;
         uint32 dst = r.dstChainId;
@@ -1222,106 +1847,39 @@ contract RewardRemittanceFacet is
         uint256 pending = s.remitPendingTotal[dst];
         s.remitPendingTotal[dst] = pending > total ? pending - total : 0;
         s.remitAckedTotal[dst] += total;
+        // #1434 P2-w4 (§5.1 R6) — a finalized COMPENSATION reservation
+        // clears the chain's one-in-flight gate. The consumption ACK is
+        // the ratified clearing evidence; the operator-evidenced forced
+        // finalize is its equivalent (same consumption semantics, same
+        // mould). A cancel/release does NOT come through here — it
+        // records terminal message state while the gate HOLDS (ratified),
+        // pending the w5 return / w6 recovery settlements.
+        if (consumed && s.compensationOutstanding[dst] == remitId) {
+            LibRewardRemitDispatch.clearCompensationGate(s, dst);
+            // #1656 r2 - AUTHENTIC ACKs only: the forced finalize passes
+            // amountReceived = 0 as a sentinel, and reading it as a real
+            // zero-token delivery would subtract the whole declared split
+            // and let the same obligation fund twice. A forced
+            // finalization preserves declared funding and MARKS the
+            // reservation (#1656 r3), so the first authentic ACK that
+            // later arrives can still reconcile it exactly once.
+            if (forced) {
+                r.forcedFinalized = true;
+            } else {
+                _reconcileCompFunded(s, r, amountReceived);
+            }
+        }
         emit RemitReservationAcked(remitId, dst, total, amountReceived, forced);
     }
 
-    /**
-     * @notice ADMIN — the evidenced MANUAL-BUDGET path for a `(day, chain)` a
-     *         force-finalize ZEROED out of the interest denominator: funds an
-     *         operator-sized amount to the mirror through the full
-     *         delivered-backing ledger (reservation → CCIP token send → ack).
-     * @dev    Requires the day still marked `remitIneligible` — the un-cleared
-     *         flag IS the on-chain evidence the day was zeroed; run this
-     *         BEFORE any {RewardCommitmentFacet.reconcileCommitmentRemitEligibility}
-     *         clear (for a zeroed day clearing restores nothing fundable —
-     *         the automatic slice is 0 forever — and it removes this path's
-     *         anchor). The amount is operator-sized from the mirror's locally
-     *         readable state (day totals + entry set — design record §2b: the
-     *         zeroed chain's own report prices at its deliberately-zero stamp
-     *         and is NOT a sizing basis). FRESH-funded under the 69M
-     *         `RewardPoolCapExceeded` guard (the zeroed day stamped no
-     *         recycled funding for this chain, so a recycled draw has no
-     *         backing figure); no armed-fresh commitment retires (the zeroed
-     *         chain's share was never committed at finalize — its numerator
-     *         was excluded from the globals). The flag stays set as
-     *         historical evidence; the day is closed by the reservation
-     *         marker, so no automatic path can double-fund it.
-     */
-    function remitManualBudget(
-        uint32 dstChainId,
-        uint256 dayId,
-        uint256 amount
-    )
-        external
-        payable
-        nonReentrant
-        whenNotPaused
-        onlyCanonical
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-        returns (bytes32 messageId)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (amount == 0) revert NothingToRemit();
-        if (!s.dailyGlobalFinalized[dayId]) {
-            revert RewardDayNotFinalized(dayId);
-        }
-        if (!s.chainDayCommitments[dayId][dstChainId].remitIneligible) {
-            revert RemitDayNotManualEligible(dayId, dstChainId);
-        }
-        if (
-            s.rewardBudgetRemitted[dstChainId][dayId] != 0
-                || s.dayClosedByRemitId[dstChainId][dayId] != 0
-        ) {
-            revert RemitDayAlreadyClosed(dayId, dstChainId);
-        }
-        address vpfi = s.vpfiToken;
-        if (vpfi == address(0)) revert VPFITokenNotSet();
-        address messenger = s.crossChainMessenger;
-        if (messenger == address(0)) revert RewardBudgetMessengerNotSet();
 
-        // r6 — NET headroom; a manual send retires no commitment (the
-        // zeroed chain's share was never committed at finalize).
-        uint256 remaining = _freshHeadroomNet(s, 0);
-        if (amount > remaining) {
-            revert RewardPoolCapExceeded(amount, remaining);
-        }
 
-        // Effects (CEI) — mark, count, reserve.
-        uint256 remitId = ++s.remitReservationNonce;
-        s.rewardBudgetRemitted[dstChainId][dayId] = amount;
-        s.dayClosedByRemitId[dstChainId][dayId] = remitId;
-        s.rewardBudgetRemittedGlobal += amount;
-        s.rewardBudgetRemittedTotal[dstChainId] += amount;
-        s.remitPendingTotal[dstChainId] += amount;
-        {
-            LibVaipakam.RemitReservation storage r =
-                s.remitReservations[remitId];
-            r.dstChainId = dstChainId;
-            r.status = 1;
-            r.sentAt = uint64(block.timestamp);
-            r.total = amount;
-            r.fresh = amount;
-            uint256[] memory one = new uint256[](1);
-            one[0] = dayId;
-            r.dayIds = one;
-        }
 
-        uint256[] memory fundedDays = new uint256[](1);
-        fundedDays[0] = dayId;
-        messageId = _sendRemitPayload(
-            s,
-            vpfi,
-            messenger,
-            dstChainId,
-            fundedDays,
-            // B2-d5 — the manual-budget path is FRESH-ONLY (see the
-            // `r.fresh = amount` reservation above), so it relocates no
-            // recycled custody.
-            RemitDispatch({total: amount, remitId: remitId, recycledShare: 0})
-        );
 
-        emit ManualRewardBudgetRemitted(dstChainId, dayId, amount, remitId);
-    }
+
+
+
+
 
     // ─── #1222 M3 B2-d2 — ledger views ────────────────────────────────────
 
@@ -1391,77 +1949,9 @@ contract RewardRemittanceFacet is
         }
     }
 
-    /// @notice The delivered-backing reservation for `remitId` (status 0 =
-    ///         never issued, 1 = Pending, 2 = Acked, 3 = Released).
-    function getRemitReservation(
-        uint256 remitId
-    ) external view returns (LibVaipakam.RemitReservation memory) {
-        return LibVaipakam.storageSlot().remitReservations[remitId];
-    }
 
-    /// @notice Reverse index: the `remitId` bound to a CCIP `messageId`
-    ///         (0 = unknown) — the operator-reconciliation entry point from
-    ///         observed CCIP delivery evidence.
-    function getRemitIdByMessageId(
-        bytes32 messageId
-    ) external view returns (uint256) {
-        return LibVaipakam.storageSlot().remitIdByCcipMessageId[messageId];
-    }
 
-    /// @notice The highest `remitId` issued so far (reservations are dense:
-    ///         1..nonce — the keeper's zero-RPC enumeration handle).
-    function getRemitReservationNonce() external view returns (uint256) {
-        return LibVaipakam.storageSlot().remitReservationNonce;
-    }
 
-    /**
-     * @notice The released-remit stranded seed ceremony's state, for the
-     *         operator deciding whether to run it and for watching one in
-     *         flight.
-     * @dev    #1448 r10. `recycleStrandedSeedApplied` had NO external view,
-     *         so an operator could not answer "has this already run?" and had
-     *         to infer it from the published figure — which is exactly the
-     *         value-based reasoning that is WRONG here: a non-zero stranded
-     *         total can be a post-upgrade release recorded organically, with
-     *         a historical amount still unrecovered behind it. The one-shot
-     *         flag is the only sound answer, so it is published.
-     * @return applied        The ceremony has completed; it cannot run again.
-     * @return target         The pinned range end (0 = none in flight).
-     * @return cursor         How far the scan has reached.
-     * @return accum          Stranded backing accumulated so far (published
-     *                        only at completion).
-     * @return counted        Released reservations found so far.
-     * @return releasedCount  Lifetime count of releases, and the figure the
-     *                        race guard pins against. On a Diamond upgraded in
-     *                        place the slot is newly appended, so until the
-     *                        ceremony completes this counts POST-UPGRADE
-     *                        releases only; completion backfills it from the
-     *                        full scan (#1448 r14). Read together with
-     *                        `applied`: a true lifetime figure once that is
-     *                        set, a partial one before it.
-     */
-    function getReleasedRemitStrandedSeedState()
-        external
-        view
-        returns (
-            bool applied,
-            uint256 target,
-            uint256 cursor,
-            uint256 accum,
-            uint256 counted,
-            uint256 releasedCount
-        )
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (
-            s.recycleStrandedSeedApplied,
-            s.recycleStrandedSeedTarget,
-            s.recycleStrandedSeedCursor,
-            s.recycleStrandedSeedAccum,
-            s.recycleStrandedSeedCounted,
-            s.remitReleasedCount
-        );
-    }
 
     /// @notice #1448 r8 — abandon an in-flight seed ceremony so it can be
     ///         restarted from scratch.
@@ -1752,40 +2242,9 @@ contract RewardRemittanceFacet is
         uint256 accumulated
     );
 
-    /// @notice Σ VPFI in PENDING (in-flight, un-acked) reservations to
-    ///         `chainId`.
-    function getRemitPendingTotal(
-        uint32 chainId
-    ) external view returns (uint256) {
-        return LibVaipakam.storageSlot().remitPendingTotal[chainId];
-    }
 
-    /// @notice Σ VPFI in ACKED (delivery-finalized) reservations to `chainId`.
-    function getRemitAckedTotal(
-        uint32 chainId
-    ) external view returns (uint256) {
-        return LibVaipakam.storageSlot().remitAckedTotal[chainId];
-    }
 
-    /// @notice The reservation that terminally closed `(chainId, dayId)`
-    ///         (0 = still open).
-    function getDayClosedByRemitId(
-        uint32 chainId,
-        uint256 dayId
-    ) external view returns (uint256) {
-        return LibVaipakam.storageSlot().dayClosedByRemitId[chainId][dayId];
-    }
 
-    /// @notice Mirror-side receipt record for `remitId` (`receivedAt` 0 =
-    ///         never delivered here).
-    function getReceivedRemit(
-        address remitter,
-        uint256 remitId
-    ) external view returns (LibVaipakam.ReceivedRemit memory) {
-        return LibVaipakam.storageSlot().receivedRemits[
-            _receiptKey(remitter, remitId)
-        ];
-    }
 
     // ─── Views ────────────────────────────────────────────────────────────
 
@@ -1952,7 +2411,7 @@ contract RewardRemittanceFacet is
         // Mirror remit's 69M pool-cap guard so a quote can't succeed for a batch
         // remit would reject near pool exhaustion. PR-3c — fresh share only,
         // mirroring the send path.
-        uint256 remaining = _freshHeadroomNet(s, totalArmedFresh);
+        uint256 remaining = _headroom(s, totalArmedFresh);
         if (totalFresh > remaining) {
             revert RewardPoolCapExceeded(totalFresh, remaining);
         }
@@ -1986,80 +2445,10 @@ contract RewardRemittanceFacet is
         );
     }
 
-    /// @notice VPFI already remitted for `(chainId, dayId)` (0 = not sent).
-    function getRewardBudgetRemitted(
-        uint32 chainId,
-        uint256 dayId
-    ) external view returns (uint256) {
-        return LibVaipakam.storageSlot().rewardBudgetRemitted[chainId][dayId];
-    }
 
-    /// @notice Cumulative VPFI remitted to `chainId` across all days.
-    function getRewardBudgetRemittedTotal(
-        uint32 chainId
-    ) external view returns (uint256) {
-        return LibVaipakam.storageSlot().rewardBudgetRemittedTotal[chainId];
-    }
 
-    /// @notice Σ VPFI remitted across every mirror.
-    function getRewardBudgetRemittedGlobal() external view returns (uint256) {
-        return LibVaipakam.storageSlot().rewardBudgetRemittedGlobal;
-    }
 
-    /// @notice The configured keeper EOA (address(0) = owner-only).
-    function getRewardRemittanceKeeper() external view returns (address) {
-        return LibVaipakam.storageSlot().rewardRemittanceKeeper;
-    }
 
-    /// @notice The mirror-side receiver authorized for {onRewardBudgetReceived}.
-    function getRewardRemittanceReceiver() external view returns (address) {
-        return LibVaipakam.storageSlot().rewardRemittanceReceiver;
-    }
 
-    /// @notice Cumulative VPFI reward budget received from Base on this mirror.
-    function getRewardBudgetReceivedTotal() external view returns (uint256) {
-        return LibVaipakam.storageSlot().rewardBudgetReceivedTotal;
-    }
 
-    /**
-     * @notice #1434 P1-a — how much of the reward funding delivered to this
-     *         chain counts as ARMED FRESH, and how much did not.
-     * @dev    The two are returned together because either alone misleads.
-     *         `counted` on its own cannot be told apart from "nothing was
-     *         ever sent"; `uncounted` on its own does not say against what.
-     *         Read as a pair they answer the only operational question here:
-     *         is this chain's counted funding keeping up with what Base
-     *         actually sent it?
-     *
-     *         NEITHER is a spendable balance, and neither is a bound. This
-     *         is a RECEIPT-side ledger: it says what arrived and how it was
-     *         attributed, not what remains. The bound it will feed — armed
-     *         fresh delivered LESS armed fresh paid — needs the paid side,
-     *         which lands with P1-b (see the storage docs for why the splits
-     *         cannot report it today). Do not subtract
-     *         `interactionPoolPaidOut` from `counted` and read the result as
-     *         headroom: that cumulative also counts legacy-schedule payouts
-     *         this funding never owed, and an earlier revision of this slice
-     *         was withdrawn for doing exactly that (Codex #1556 r1).
-     *
-     *         Not applicable on the canonical chain — Base receives no
-     *         remits, so both figures stay zero there regardless of how much
-     *         it may legitimately pay. Base's own bound is
-     *         {LibInteractionRewards.poolRemaining}.
-     * @return counted   Σ fresh component of deliveries that were both
-     *                   composition-known and armed-attributable.
-     * @return uncounted Σ fresh-looking amount of every delivery that failed
-     *                   either test. Non-zero means this chain's counted
-     *                   funding UNDERSTATES what Base sent — the safe
-     *                   direction, but one an operator must see.
-     */
-    function getDeliveredFreshPosition()
-        external
-        view
-        returns (uint256 counted, uint256 uncounted)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        counted = s.rewardBudgetArmedFreshReceived;
-        uncounted = s.rewardBudgetFreshUncounted;
-    }
 }

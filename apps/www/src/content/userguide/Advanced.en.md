@@ -221,8 +221,10 @@ Active offers from creators willing to lend. Acceptance is
 performed by a borrower. There is a hard gate at initiation: the
 borrower's collateral basket must produce a Health Factor of at
 least 1.5 against the lender's principal request. The HF math is
-the protocol's own — the gate is not bypassable. The 1% treasury
+the protocol's own — the gate is not bypassable. The `{liveValue:treasuryFeeBps}`% treasury
 cut on interest is debited at terminal settlement, not up front.
+That rate is fixed when the loan is created, so a later change to the
+protocol fee leaves an already-open loan on the rate it started with.
 
 <a id="offer-book.borrower-offers"></a>
 
@@ -382,7 +384,7 @@ cannot move assets.
   small skew can still erode recovery.
 - **Liquidation slippage** — the 4-DEX failover routes to the
   best execution it can find, but cannot guarantee a specific
-  price. Recovery is net of slippage and the 1% treasury cut
+  price. Recovery is net of slippage and the `{liveValue:treasuryFeeBps}`% treasury cut
   on interest.
 - **Illiquid-collateral defaults** — collateral transfers to
   you in full at default time. You have no recourse if the
@@ -669,7 +671,7 @@ hands the new holder the right to collect.
 The lender claim returns:
 
 - Your principal back into your wallet on this chain.
-- Accrued interest minus the 1% treasury cut. The cut is itself
+- Accrued interest minus the `{liveValue:treasuryFeeBps}`% treasury cut. The cut is itself
   reduced by your time-weighted VPFI fee-discount accumulator
   when consent is on.
 
@@ -965,7 +967,7 @@ Permissionless actions available to anyone regardless of role:
 #### If you're the lender
 
 - **Claim as lender** — terminal-only. Returns principal plus
-  interest minus the 1% treasury cut (further reduced by
+  interest minus the `{liveValue:treasuryFeeBps}`% treasury cut (further reduced by
   your time-weighted VPFI yield-fee discount when consent is
   on). Burns the lender position NFT.
 - **Initiate early withdrawal** — list the lender position NFT

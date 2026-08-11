@@ -1152,6 +1152,31 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().rewardEntries[id].forfeited = true;
     }
 
+    /// @notice #1434 P2-w1 test-only — erase a day's frozen lapse clock,
+    ///         reproducing a day that was FINALIZED before the P2-w1
+    ///         upgrade (production writes the clock unconditionally at
+    ///         `_finalizeAndWrite`, so the pre-upgrade shape is otherwise
+    ///         unreachable in a fresh test deployment). Drives the
+    ///         V2-wire-fallback and `DayHasNoLapseClock` heal-refusal
+    ///         paths.
+    function clearDayLapseClockRaw(uint256 dayId) external {
+        delete LibVaipakam.storageSlot().dayLapseClock[dayId];
+    }
+
+    /// @notice #1434 P2-w2 test-only — set the lapse flags whose ONLY
+    ///         production writers are the w4 lapse terminals, so the §2.2
+    ///         post-lapse quarantine branch (deliberately unreachable until
+    ///         w4 ships) can be exercised now.
+    function setDayLapsedRaw(
+        uint256 dayId,
+        bool lapsed,
+        bool shortLapsed
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.dayLapsed[dayId] = lapsed;
+        s.dayShortLapsed[dayId] = shortLapsed;
+    }
+
     /// @notice #1008 (S13) — seed the per-day §4 cap threshold `T_d` directly
     ///         (production snapshots it at finalization from the ETH feed +
     ///         effective cap ratio). `type(uint256).max` = cap disabled that
@@ -1608,6 +1633,190 @@ contract TestMutatorFacet {
         external
     {
         LibVaipakam.storageSlot().borrowerLifRebate[loanId].vpfiHeld = amount;
+    }
+
+    // ─── #1434 P2-w3 test-only — compensation-quote / pricing-ladder ─────────
+
+    /// @notice #1434 P2-w3 test-only — set the deliberately-zeroed marker
+    ///         whose production writer is the V3 broadcast ingress, so the
+    ///         quote surface and the pricing ladder can stage a zeroed day
+    ///         without a full Base→mirror broadcast round.
+    function setDayDeliberatelyZeroedRaw(uint256 dayId, bool zeroed) external {
+        LibVaipakam.storageSlot().dayDeliberatelyZeroed[dayId] = zeroed;
+    }
+
+    /// @notice #1434 P2-w3 test-only — stage a day's compensation record
+    ///         (production writer: `RewardRemittanceFacet._creditCompensation`)
+    ///         so the ladder's funded / underfunded / provisional arms can be
+    ///         exercised directly.
+    function setDayCompensationRaw(
+        uint256 dayId,
+        uint128 lenderPool18,
+        uint128 borrowerPool18,
+        bool compensated,
+        bool provisional
+    ) external {
+        LibVaipakam.DayCompensation storage dc =
+            LibVaipakam.storageSlot().dayCompensation[dayId];
+        dc.lenderPool18 = lenderPool18;
+        dc.borrowerPool18 = borrowerPool18;
+        dc.compensated = compensated;
+        dc.provisional = provisional;
+    }
+
+    /// @notice #1434 P2-w3 test-only — drive the internal cumulative fold so
+    ///         ladder tests observe crossing vs deferral without a full claim
+    ///         fixture.
+    function advanceCumThroughRaw(
+        uint8 side,
+        uint256 through
+    ) external returns (uint256 reached) {
+        return side == uint8(LibVaipakam.RewardSide.Lender)
+            ? LibInteractionRewards.advanceCumLenderThrough(through)
+            : LibInteractionRewards.advanceCumBorrowerThrough(through);
+    }
+
+    /// @notice #1434 P2-w3 test-only — the fold's stored state at day `d`
+    ///         (cursor + all four cumulative series), so the ladder tests can
+    ///         assert the exact figures each arm writes.
+    function getCumStateRaw(
+        uint8 side,
+        uint256 d
+    )
+        external
+        view
+        returns (
+            uint256 cursor,
+            uint256 rpn,
+            uint256 minRpn,
+            uint256 minRecycled,
+            uint256 minArmed
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (side == uint8(LibVaipakam.RewardSide.Lender)) {
+            return (
+                s.cumLenderCursor,
+                s.cumLenderRpn18[d],
+                s.cumMinLenderRpn18[d],
+                s.cumMinRecycledLenderRpn18[d],
+                s.cumMinArmedLenderRpn18[d]
+            );
+        }
+        return (
+            s.cumBorrowerCursor,
+            s.cumBorrowerRpn18[d],
+            s.cumMinBorrowerRpn18[d],
+            s.cumMinRecycledBorrowerRpn18[d],
+            s.cumMinArmedBorrowerRpn18[d]
+        );
+    }
+
+    // ─── #1434 P2-w4 test-only — lapse-terminal / legacy-stamp fixtures ─────
+
+    /// @notice #1434 P2-w4 test-only — the day's era record (production
+    ///         writer: the V3 apply), so the era-KNOWN compensation credit
+    ///         branch can be staged without a broadcast round.
+    function setDayClockEraRaw(uint256 dayId, address era) external {
+        LibVaipakam.storageSlot().dayClockEra[dayId] = era;
+    }
+
+    /// @notice #1434 P2-w4 test-only — freeze a day's lapse clock directly
+    ///         (production writer: `_finalizeAndWrite` → the V3 apply), so
+    ///         terminal tests need no broadcast round.
+    function setDayLapseClockRaw(
+        uint256 dayId,
+        uint64 finalizedAt,
+        uint32 scheduleVersion,
+        uint64 lapseWindowSeconds,
+        uint64 dispatchCutoffGap
+    ) external {
+        LibVaipakam.storageSlot().dayLapseClock[dayId] = LibVaipakam
+            .DayLapseClock({
+            finalizedAt: finalizedAt,
+            scheduleVersion: scheduleVersion,
+            lapseWindowSeconds: lapseWindowSeconds,
+            dispatchCutoffGap: dispatchCutoffGap
+        });
+    }
+
+    /// @notice #1434 P2-w4 test-only — set the short-lapse deadline inputs
+    ///         directly (production writers: `_creditCompensation` +
+    ///         `stampLegacyCompensation`), so deadline-math tests need no
+    ///         full credit round per timestamp.
+    function setCompReceiptClockRaw(
+        uint256 dayId,
+        uint64 firstAt,
+        uint64 lastQualifyingAt
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.firstCompReceiptAt[dayId] = firstAt;
+        s.lastQualifyingCompReceiptAt[dayId] = lastQualifyingAt;
+    }
+
+    /// @notice #1434 P2-w4 test-only — record a delivered remit receipt
+    ///         (production writer: the d5/P2 ingress), for the
+    ///         legacy-stamp tests.
+    function setReceivedRemitRaw(
+        address remitter,
+        uint256 remitId,
+        uint256 amount
+    ) external {
+        LibVaipakam.storageSlot().receivedRemits[
+            keccak256(abi.encode(remitter, remitId))
+        ] = LibVaipakam.ReceivedRemit({
+            srcChainId: uint32(block.chainid),
+            receivedAt: uint64(block.timestamp),
+            amount: amount,
+            remitter: remitter,
+            classification: 0
+        });
+    }
+
+    /// @notice #1434 P2-w4 test-only — the Base-side frozen zeroed marker
+    ///         (production writer: `_finalizeAndWrite`), for the legacy
+    ///         inventory tests.
+    function setDayZeroedForDestRaw(
+        uint256 dayId,
+        uint32 chainId,
+        bool zeroed
+    ) external {
+        LibVaipakam.storageSlot().dayZeroedForDest[dayId][chainId] = zeroed;
+    }
+
+    /// @notice #1434 P2-w4 test-only — the per-side funded cumulative
+    ///         (production writers: the two compensation dispatchers), so
+    ///         the inventory test can stage the pre-w4 legacy shape.
+    function setCompFundedRaw(
+        uint32 chainId,
+        uint256 dayId,
+        uint256 lender18,
+        uint256 borrower18
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.compFundedLender18[chainId][dayId] = lender18;
+        s.compFundedBorrower18[chainId][dayId] = borrower18;
+        // #1656 r2 — the existence flag follows the staged values: (0,0)
+        // stages the PRE-w4 shape (no record), nonzero stages a recorded
+        // one. Flag-true-with-zero-values arises only via the real
+        // ACK-reconciliation path.
+        s.compFundedRecorded[chainId][dayId] = lender18 != 0 || borrower18 != 0;
+    }
+
+    /// @notice #1434 P2-w3 test-only — the commitment twin's verdict for day
+    ///         `d`, so ladder lockstep (fold ↔ report pricing) is directly
+    ///         assertable.
+    function dailyDeltaForCommitmentRaw(
+        uint8 side,
+        uint256 d
+    ) external view returns (uint256 delta, bool priceable) {
+        return LibInteractionRewards.dailyDeltaForCommitment(
+            LibVaipakam.storageSlot(),
+            side == uint8(LibVaipakam.RewardSide.Lender)
+                ? LibVaipakam.RewardSide.Lender
+                : LibVaipakam.RewardSide.Borrower,
+            d
+        );
     }
 
     /// @dev Route `data` back through the diamond fallback (bubbling the raw

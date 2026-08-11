@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -173,6 +174,18 @@ contract OfferPreviewFacet {
         // vehicle (`expiresAt == 0`) never trips the expiry gate above.
         if (_saleLoanId != 0) {
             LibVaipakam.Loan storage _saleLoanM = s.loans[_saleLoanId];
+            // The position must still EXIST before anything is measured about
+            // it (Codex #1635 r10). This classifier used to sit far below the
+            // solvency block, so a listing whose loan was HF-liquidated before
+            // its stale listing was torn down previewed as "below its solvency
+            // floor" — a health shortfall reported for a position that no
+            // longer exists. Hoisted to match `_acceptOffer`, which now rejects
+            // a non-Active linked loan before it measures anything, so
+            // first-failure parity between the two surfaces still holds.
+            if (_saleLoanM.status != LibVaipakam.LoanStatus.Active) {
+                preview.errorCode = OfferAcceptFacet.AcceptError.SaleLoanNotActive;
+                return preview;
+            }
             if (
                 block.timestamp >=
                 uint256(_saleLoanM.startTime) +
@@ -180,6 +193,30 @@ contract OfferPreviewFacet {
             ) {
                 preview.errorCode =
                     OfferAcceptFacet.AcceptError.SaleLoanPastMaturity;
+                return preview;
+            }
+            // #1503 PR-E (design item 11) — mirror the accept-time solvency
+            // admission floor. Classified rather than reverted so the buyer
+            // sees "this position is below its sale floor" on the card.
+            // The classifier's code is preserved, not collapsed. Code 1 is
+            // genuinely "health factor below its floor"; 2-5 are weaker
+            // inherited terms or a live LTV over the admission cap, and
+            // reporting those as a health-factor failure would tell the buyer
+            // something false about their position (Codex #1635 r4). The
+            // `SALE_ADMISSION_UNAVAILABLE` sentinel — the classifier could not
+            // be consulted, so nothing was measured — lands on the same neutral
+            // blocked result for exactly that reason (Codex #1635 r5).
+            (uint8 _saleCode, , ) = LibSaleSolvency.saleSolvency(_saleLoanId);
+            if (_saleCode == 1) {
+                preview.errorCode = OfferAcceptFacet
+                    .AcceptError
+                    .SalePositionBelowSolvencyFloor;
+                return preview;
+            }
+            if (_saleCode != 0) {
+                preview.errorCode = OfferAcceptFacet
+                    .AcceptError
+                    .SaleAdmissionBlocked;
                 return preview;
             }
         }
@@ -260,13 +297,12 @@ contract OfferPreviewFacet {
         // `borrower` — Codex #959 round-8 P1).
         if (_saleLoanId != 0) {
             LibVaipakam.Loan storage _saleLoan = s.loans[_saleLoanId];
-            if (_saleLoan.status != LibVaipakam.LoanStatus.Active) {
-                preview.errorCode = OfferAcceptFacet.AcceptError.SaleLoanNotActive;
-                return preview;
-            }
-            // (The live-maturity classifier sits EARLIER in this chain —
-            // right after the expiry gate, mirroring `_acceptOffer`'s
-            // ordering; Codex #1505 r3.)
+            // (Both the `Active` and the live-maturity classifiers sit EARLIER
+            // in this chain — right after the expiry gate, mirroring
+            // `_acceptOffer`'s ordering; Codex #1505 r3, #1635 r10. The
+            // `Active` check moved up there because the solvency block must not
+            // measure a position that no longer exists, which left the copy
+            // that used to be here unreachable.)
             if (acceptor == LibERC721.ownerOf(_saleLoan.borrowerTokenId)) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleSelfBuy;
                 return preview;

@@ -152,7 +152,7 @@ contract RecyclePreLaunchAbsorptionTest is SetupTest, IVaipakamErrors {
 
     function testBackingIsUnchangedByTheAttributionMove() public {
         _credit(1, 3_000 ether);
-        (uint256 balance, uint256 bucket,,,,) =
+        (uint256 balance, uint256 bucket,,,,,) =
             _lens().getRecycleBackingSnapshot();
         assertEq(balance, DIAMOND_SEED, "no tokens moved");
         assertEq(bucket, 3_000 ether, "the bucket is earmarked as before");

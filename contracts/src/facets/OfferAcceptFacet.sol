@@ -7,6 +7,7 @@ import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {RefinanceFacet} from "./RefinanceFacet.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
+import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
@@ -843,11 +844,32 @@ contract OfferAcceptFacet is
             uint256 saleLoanId = s.saleOfferToLoanId[offerId];
             if (saleLoanId != 0) {
                 LibVaipakam.Loan storage saleLoan = s.loans[saleLoanId];
+                // The linked position must still EXIST before anything is
+                // measured about it (Codex #1635 r10). `LoanFacet.initiateLoan`
+                // enforces this too, but it runs after the guards below, so a
+                // listing whose loan was HF-liquidated or defaulted before its
+                // stale listing was torn down used to be judged on solvency
+                // first — reporting a health shortfall for a position that no
+                // longer exists. Ordered here so the reason names the real
+                // problem. Same `InvalidOffer` as `LoanFacet` uses for this, so
+                // the two paths speak with one voice.
+                if (saleLoan.status != LibVaipakam.LoanStatus.Active) {
+                    revert InvalidOffer();
+                }
                 if (
                     block.timestamp >=
                     uint256(saleLoan.startTime) +
                         uint256(saleLoan.durationDays) * 1 days
                 ) revert SaleLoanPastMaturity();
+                // #1503 PR-E (design item 11) — the BINDING solvency
+                // admission floor. `createLoanSaleOffer` checks it too, but
+                // a listing rests while the position keeps moving: only the
+                // read at the moment the buyer's value commits governs what
+                // they actually inherit. Enforced HERE, alongside maturity
+                // and for the same reason — before any buyer value moves,
+                // never at `completeLoanSale`, where a revert would strand a
+                // buyer whose principal has already settled.
+                LibSaleSolvency.assertSaleSolvent(saleLoanId);
             }
         }
 
@@ -1900,7 +1922,36 @@ contract OfferAcceptFacet is
         // `OfferExpired` classifier); post-upgrade vehicles normally classify
         // as `OfferExpired` first (expiry clamped at maturity). APPENDED —
         // prior values stay stable.
-        SaleLoanPastMaturity
+        SaleLoanPastMaturity,
+        // #1503 PR-E (design item 11) — the sale vehicle's linked loan is
+        // below the solvency floor its own admission required, so acceptance
+        // would revert `SalePositionBelowSolvencyFloor`. This code means a
+        // MEASURED shortfall and nothing else: it is set only for classifier
+        // code 1, where a health factor was actually read and compared.
+        // Surfaced so the UI can show the live HF against the floor instead of
+        // letting the buyer discover it by burning gas.
+        //
+        // It deliberately does NOT cover a position the oracle could not price
+        // — that used to degrade here and made the surface assert a shortfall
+        // it had never measured, with 0/0 as the figures (Codex #1635 r5). Any
+        // surface built from this vocabulary must show a health figure ONLY for
+        // this code. APPENDED — prior values stay stable.
+        SalePositionBelowSolvencyFloor,
+        // #1503 PR-E (Codex #1635 r4/r5/r8) — the sale is refused for an
+        // admission reason OTHER than a measured health shortfall. The neutral
+        // code, carrying every non-floor refusal:
+        //   * inherited risk terms weaker than current parameters (codes 2-4);
+        //   * a live LTV above the cap a fresh admission would allow (code 5);
+        //   * a leg that is not priceable right now (code 6) — refused
+        //     unconditionally, since the risk-access consent ladder grades
+        //     assets by identity, not by live priceability (r8);
+        //   * the classifier being unreachable or reverting at all
+        //     (`LibSaleSolvency.SALE_ADMISSION_UNAVAILABLE`) — refused, reason
+        //     not measurable (r5).
+        // Distinct from the floor code so a surface never tells a buyer their
+        // health factor is short when it is not, and never quotes a figure for
+        // a position that has none. APPENDED — prior values stay stable.
+        SaleAdmissionBlocked
     }
 
     /// @notice Projection of the loan that would land if the supplied

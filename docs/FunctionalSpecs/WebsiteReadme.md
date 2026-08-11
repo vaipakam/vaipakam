@@ -87,6 +87,38 @@ Public-navigation requirements:
   figure, while the public marketing pages read no chain state at all
   and show the figure shipped with the build — current as of the last
   deploy, and never to be described to a reader as read live
+- the exception is a page documenting a governance knob's DEFAULT, which
+  states a plain number rather than a reference. The two look identical
+  on the page and are different claims: "the fee is X%" describes what
+  the protocol charges today, while "the default is X%" describes where
+  the knob starts before anyone tunes it. A reference resolves to the
+  first, so using one for the second would silently rewrite the
+  documented default every time the live figure moved — and an operator
+  reading that page is trying to learn exactly what a retune would be
+  departing from
+- and a rate a reader is told applies to THEIR position is the rate that
+  position was opened at, not the one the protocol charges today. The
+  fee is snapshotted when a loan is created precisely so a later retune
+  cannot change the economics of a loan already running, so a page that
+  quotes the current rate to a holder of an older loan is telling them
+  the wrong number. Documentation that names the fee in the context of
+  an individual position must say that the rate is fixed at origination
+- where such a figure offers a provenance affordance, that affordance
+  must name the source it actually has. On a surface that makes no
+  chain read, describing the figure as a fallback awaiting a read —
+  "pending or unavailable" — is wrong twice over: nothing is pending,
+  nothing has failed, and a reader is told a mechanism is broken when
+  the number in front of them is the correct one. The three cases a
+  reader can be in are distinct and must read differently: the figure
+  came from the chain; a read was attempted and has not answered; no
+  read is made on this surface at all
+- a published figure that mirrors a protocol parameter must be
+  checkable against that parameter without anyone remembering to look.
+  Being right by maintenance is not a property the documentation has —
+  it is a property of whoever last edited it. Publication must fail
+  when the two disagree, and the check must fail just as loudly when it
+  cannot locate the parameter it is comparing against, since a check
+  that quietly compares nothing reports success
 - a number that is DERIVED — a worked example computing a fee on a
   stated amount — cannot be referenced that way, so it is recomputed
   whenever the rate it depends on changes, in every language the

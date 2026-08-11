@@ -41,7 +41,7 @@ returns the _effective_ value (default OR stored, whichever applies).
 
 ### Treasury fee on lender interest
 
-Default 1% of accrued lender
+Default 2% of accrued lender
 interest goes to treasury. Range: 0% – `MAX_FEE_BPS` (the cap is
 defined alongside the setter; conventionally 10% to leave headroom
 for protocol-fee experiments without ever crossing into "majority of
@@ -50,7 +50,7 @@ turns the cut off entirely.
 
 ### Loan-initiation fee
 
-Default 0.1% of principal, paid by the
+Default 0.2% of principal, paid by the
 borrower in VPFI at loan start. Range matches the treasury fee cap.
 Time-weighted VPFI tier discounts can take the borrower's effective
 fee to zero — the setter cap is on the gross rate.
@@ -146,9 +146,19 @@ Three properties keep it safe:
 - **Prospective only.** Each loan snapshots the floor it was admitted under
   (`Loan.minHealthFactorAtInit`) plus the effective init-LTV cap
   (`Loan.initLtvCapBpsAtInit`); every post-admission check (collateral
-  withdrawal, fallback-cure, partial-repay / swap-to-repay guards, refinance)
+  withdrawal, fallback-cure, refinance)
   reads that snapshot, so a retune never retroactively loosens *or* tightens
   an open position's buffer.
+
+  **Two guards deliberately do NOT read it.** `RepayFacet.repayPartial`
+  and the partial swap-to-repay path enforce MONOTONICITY instead —
+  `hfAfter < hfBefore` reverts `PartialRepayWorsensHealthFactor`, with no
+  comparison against `minHealthFactorAtInit`. So a borrower already below
+  their admission floor may partially repay, improving health while
+  staying under that floor. That is intentional: refusing a repayment
+  that makes a distressed position safer would be perverse. Do not read
+  the snapshot as a floor every post-admission action re-asserts — for
+  these two it is a direction, not a level.
 - **Branch-aware.** The dial moves only the non-tiered admission floor. The
   depth-tiered regime keeps its `1.0` not-born-liquidatable floor, and the
   liquidation trigger (`HF < 1.0`) is untouched in both regimes — so because
@@ -182,13 +192,28 @@ risk premiums, #394) that price the offers they post on a user's behalf.
   on an EOA).
 - **On-chain deviation cap (anti-rate-setting guarantee).**
   `setRateModelMaxDeviationBps(uint16)` / `getRateModelMaxDeviationBps()` —
-  default `500` (5%), range `[50, 2500]` (0.5%–25%). The resolver **clamps**
+  default `500` (5%), range `[50, 2500]` (0.5%–25%), **plus `0` as an
+  explicit reset** — the setter range-checks only nonzero values, and a
+  stored `0` resolves to the 500-bps library default. That is the
+  supported rollback: to undo a retune, write `0` rather than trying to
+  re-type the default. The resolver **clamps**
   the model's output to `±maxDeviation` of the caller's reference (market)
   rate, so a registered model — even buggy or adversarial — can only nudge the
   rate around the market anchor, never drive an automated offer far off-market
   (instant-loss-fill if too low, idle capital if too high). This is enforced in
-  the substrate (`OfferCreateFacet.quoteOfferRateBps`) so every consumer
-  inherits it, not trusted to each caller.
+  the resolver (`OfferCreateFacet.quoteOfferRateBps`).
+
+  **The resolver is a DORMANT opt-in quote, not a substrate every offer
+  passes through — read this before registering a model.** A rate a human
+  types is binding and is never transformed; the manual create path does
+  not call the model at all. The quote exists for dApp guidance and for
+  automated pricing (#393 auto-lend / auto-roll / keeper-posted intents,
+  #394 risk premiums), and those callers are expected to pass the quote
+  result in as the offer rate *themselves*. Today there is no such
+  caller: outside its own definition, `quoteOfferRateBps` is invoked
+  only by `RateModelTest`. So registering a model and tightening the
+  deviation cap currently constrains nothing in production — the clamp
+  binds whoever calls the quote, and nobody does yet.
 - **E2-safe.** A model only ever sets the value written into a *new* offer; a
   matched / live loan's rate is snapshotted immutably at init and never
   re-priced.
@@ -292,13 +317,6 @@ emergency rollback if a bad schedule was pushed by mistake.
 - `reserveFactorBps`: range **[0%, 50%]**. The 50% ceiling prevents a
   compromised admin from setting `reserveFactor = 100%` (lender
   receives 0% interest, defeats the lending product).
-
-### Staking APR
-
-Range **[0%, 20%]**. APRs above 20% on VPFI staking
-are unrealistic and a higher cap is a governance-error vector rather
-than a feature. Zero permitted (disables rewards while preserving
-staked principal accounting).
 
 ### Notification fee (per loan-side)
 
@@ -443,12 +461,33 @@ transient outage from being confused with real grace; the 30-day
 ceiling prevents the window from being set to "indefinite" (defeats
 the purpose). Default is 4 hours.
 
-### Reward OApp / local eid / base eid / canonical reward chain flag
+### Reward messenger / base chain id / canonical reward chain flag
 
 Address + integer + bool fields configuring the cross-chain
-reward reporter. Eid values are LayerZero V2 endpoint ids (40000s
-testnet, 30000s mainnet); no numeric range beyond "a known eid".
-Setter accepts and emits.
+reward reporter, all setter-accepts-and-emits with no numeric range:
+
+- **`rewardMessenger`** — the only address permitted to call the trusted
+  ingress handlers (aggregator receive on Base, broadcast receive on
+  mirrors). Pre-T-068 this slot held a LayerZero OApp and was named
+  `rewardOApp`; the rename is layout-preserving, but the selector and
+  error names changed, so a consumer reading the old ABI fails loudly
+  rather than silently.
+- **`baseChainId`** — the plain EVM chain id of the canonical reward
+  chain. **Expect `8453` everywhere on mainnet, Base included** — the
+  deploy exports it unconditionally ("whether this chain is the
+  canonical itself or a mirror") and `ConfigureRewardReporter` writes
+  it, so an audit reading `8453` on Base is reading a correctly
+  configured Diamond, not drift. (The struct comment in `LibVaipakam`
+  still says "zero on Base itself", describing a field the canonical
+  chain does not consult rather than the value it is given.) Note this
+  is a chain id, NOT a CCIP chain
+  selector: since T-068 the reward flow identifies chains by
+  `block.chainid` and leaves selector translation to the messenger. The
+  old per-chain endpoint-id slot survives only as
+  `localEidLegacyDoNotUse`, never read or written.
+- **`isCanonicalRewardChain`** — gates aggregator ingress, finalize and
+  the broadcast trigger. Admin-settable so the flag does not depend on
+  which chain the Diamond happens to be deployed to.
 
 ### Interaction-rewards launch timestamp
 
@@ -780,18 +819,6 @@ pre-notify lane (HF watcher's existing surface) and the periodic-
 interest pre-notify lane (T-034) read from the same `getPreNotifyDays()`
 view.
 
-## Cross-chain VPFI buy (T-031 Layer 4a)
-
-### Reconciliation watchdog enabled flag (reconciliationWatchdogEnabled)
-
-Master switch for the
-off-chain buy-flow reconciliation watchdog. Default `true`
-post-init. The watchdog Worker reads this flag before each pass —
-when `false`, it skips reconciliation and emits no alerts. Same
-governance auth as every other lever. Lets governance silence the
-watchdog during a planned bridge ceremony or known reconciliation
-gap without redeploying the Worker. Boolean — no range.
-
 ## Range Orders match constraints
 
 ### Range-orders cancel cooldown
@@ -822,16 +849,54 @@ only configs. Zero disables that adapter; non-zero enables it.
 
 ## Reward + cross-chain pairs
 
-### Reward OApp address / Buy receiver address / Buy adapter mapping
+### Reward messenger address mapping
 
 Address-only; non-zero enforced; zero disables that
 specific cross-chain lane.
 
-### LayerZero peers
+### CCIP messenger registry (chain selectors, remote messengers, channel peers)
 
-(set per-eid, per-OApp). Standard LZ V2 peer
-mesh. Mismatch surfaces as undelivered packets; not a runtime
-exploit vector under the DVN policy.
+Four owner-set maps on each chain's `CcipMessenger`, all
+address-or-identifier only, no numeric ranges. All four are required:
+a lane with a selector and a peer but no registered channel is not
+half-configured, it is unusable, because `sendMessage` and
+`quoteMessageFee` reject a caller absent from the channel map and
+inbound delivery rejects a missing handler as `UnknownChannel`.
+
+- **chain id ↔ CCIP chain selector** (`setChainSelector`) — the
+  translation point the design mandates: domain contracts pass a plain
+  EVM chain id and only the adapter knows the selector. Kept one-to-one
+  in both directions; rebinding a selector already bound to a different
+  chain id reverts. A zero selector means unconfigured, not "default".
+- **remote messenger per chain** (`setRemoteMessenger`) — outbound, the
+  CCIP message receiver; inbound, the allowlisted sender. Zero means no
+  peer.
+- **channel registration** (`registerChannel`) — binds a channelId to
+  the local domain contract that handles its inbound messages, in both
+  directions. Without it that contract cannot send and cannot receive.
+- **channel peer per (channel, remote chain)** (`setChannelPeer`) — the
+  counterpart domain contract on the remote chain, passed to the local
+  handler as the inbound `sourceSender`.
+
+  **Read what this does and does not authenticate.** The messenger
+  checks only that the peer is set (a zero entry rejects the message);
+  it does not compare the CCIP sender against it. And no handler
+  shipping today compares it either — `VaipakamRewardMessenger`,
+  `RewardRemittanceReceiver`, `BuybackRemittanceReceiver` and
+  `VpfiReturnReceiver` all ignore the argument, the remittance receivers
+  binding deployment identity from the payload instead. So a peer set to
+  the WRONG non-zero address is not caught here. The authentication that
+  does hold is one layer up: `CcipMessenger` allowlists the source
+  messenger per chain (`setRemoteMessenger`) and the router's own
+  sender check. Treat the peer map as routing metadata, not as a
+  forgery guard.
+
+A misconfigured selector, remote messenger or channel registration
+surfaces as an undelivered or rejected message. Note that CCIP's transport security is operated by
+Chainlink — a committing DON, an executing DON, and an independent Risk
+Management Network — and is uniform for every integrator. There is no
+verifier fleet to select or configure here, so there is no insecure
+default to get wrong.
 
 ## Pause levers
 
@@ -943,7 +1008,7 @@ decoder already handles every typed inner error
 (`RefinanceCapsRequired`, `SanctionedAddress`, etc.). Codex
 review on PR #542 caught the wrapper-error misdesign in the first
 attempt; PR #553 (the design-doc-first re-attempt under
-[`docs/DesignsAndPlans/T092AtomicAcceptAndRefinance.md`](../DesignsAndPlans/T092AtomicAcceptAndRefinance.md))
+[`docs/DesignsAndPlans/T092AtomicAcceptAndRefinance.md`](https://github.com/vaipakam/vaipakam/blob/main/docs/DesignsAndPlans/T092AtomicAcceptAndRefinance.md))
 shipped without further findings.
 
 **Reentrancy:** `refinanceLoanFromAccept` is `onlyDiamondInternal`
@@ -978,9 +1043,11 @@ Master flag for the in-place loan extension.
 The three flags are independent. Flipping `cfgAutoLendEnabled` off
 does NOT disable `cfgAutoExtendEnabled` — users with both-side
 extend caps set continue to benefit from the auto-extend pass even
-while auto-lend is paused. Each flag's `Set` event is indexed by
-the new value so an indexer can reconstruct the flip history
-without a state migration.
+while auto-lend is paused. Each flag emits a `Set` event carrying the
+new value, so the flip history is reconstructible from the logs without
+a state migration — but the parameter is NOT `indexed`
+(`event AutoLendEnabledSet(bool enabled)`), so a consumer must fetch the
+events and decode them; it cannot filter by value at the RPC.
 
 ### Recommended operational mode
 
@@ -1030,14 +1097,30 @@ after handover — the same posture as the #399 backstop switches.
   (`AggregatorAdapterImplementation`). Position owners can **always** still
   act on their own positions directly, and ordinary **permissionless**
   liquidation stays open — only delegated keepers are frozen.
+- **What `true` does NOT block — read this before relying on it in an
+  incident.** The flag is consulted in `LibAuth` and at the sites listed
+  above; it is not a global gate on everything a `KEEPER_ROLE` holder
+  can call. `RewardCommitmentFacet.submitCommitmentBatch` is
+  `onlyRole(KEEPER_ROLE)` with no keeper-pause check, and it is the
+  entry point the production keeper's commitment-report pass uses. A
+  compromised key can therefore keep submitting — or grief — reward
+  commitments while the console shows keepers paused, which can delay
+  remittance until someone resets the accumulation. **On a key
+  compromise, pausing is not sufficient: revoke `KEEPER_ROLE` from the
+  compromised address as part of the same action.**
 - **When to flip on:** a keeper-key compromise or a misbehaving bot fleet
   (mass mis-priced auto-actions). It is the broad incident lever; the
-  per-user keeper revoke is the narrow one.
+  per-user keeper revoke is the narrow one. Note the caveat above — for a
+  compromise the two are used together, not as alternatives.
 
 ### `aggregatorAdaptersPaused` — external yield-aggregator pause
 
-- **Getter:** `LibVaipakam.cfgAggregatorAdaptersPaused()` (read on-chain;
-  surfaced in the Protocol Console).
+- **Getter:** none on the ABI. `LibVaipakam.cfgAggregatorAdaptersPaused()`
+  is an `internal` library read, so it is not callable from outside the
+  Diamond and does not appear in the Protocol Console — the facet
+  exposes the setter only. To confirm the live state, read the
+  `AggregatorAdaptersPausedSet` event or the storage slot directly.
+  (An external getter would be the better fix; tracked separately.)
 - **Setter:** `AdminFacet.setAggregatorAdaptersPaused(bool value)` → emits
   `AggregatorAdaptersPausedSet`.
 - **What `true` blocks:** onboarding a new aggregator
@@ -1051,7 +1134,9 @@ after handover — the same posture as the #399 backstop switches.
 
 ### `peerLtvReadsPaused` — peer-protocol data-read pause
 
-- **Getter:** `LibVaipakam.cfgPeerLtvReadsPaused()`.
+- **Getter:** none on the ABI — `LibVaipakam.cfgPeerLtvReadsPaused()` is
+  an `internal` library read, same as the aggregator flag above. Confirm
+  the live state from `PeerLtvReadsPausedSet`.
 - **Setter:** `AdminFacet.setPeerLtvReadsPaused(bool value)` → emits
   `PeerLtvReadsPausedSet`. The setter also **invalidates the tier-LTV
   cache** (zeroes `tierLtvCache[t].lastRefreshedAt` for every tier) on
@@ -1059,10 +1144,15 @@ after handover — the same posture as the #399 backstop switches.
   cached reading.
 - **What `true` blocks:** the optional reads of peer lending protocols used
   to refine the depth-tiered collateral limits. While paused,
-  `effectiveTierMaxInitLtvBps` falls back to the **governance-set cap**
-  (`cfgTierMaxInitLtvBps`) — never the library default — so a compromised
-  external data source can't influence risk parameters, and unpausing can
-  never transiently widen a tier below the governance cap.
+  `effectiveTierMaxInitLtvBps` falls back to `cfgTierMaxInitLtvBps`, so a
+  compromised external data source cannot influence risk parameters.
+
+  **That fallback is the governance-set cap only where governance has
+  set one.** `cfgTier{1,2,3}MaxInitLtvBps` treat a stored `0` as "use the
+  library default" (50% / 60% / 65%), so on a fresh or partly-configured
+  deployment pausing falls back to the library value, not to an operator
+  decision. Before relying on this switch as a containment measure,
+  verify each tier cap is a nonzero override.
 - **When to flip on:** a peer protocol's on-chain LTV reads look
   manipulated or unreliable.
 
@@ -1095,8 +1185,8 @@ touches user funds or per-user consent state.
 - **Default new chain bring-up**: every numeric knob defaults to a
   reasonable library value. Governance does NOT need to write each
   knob at deploy time; the only mandatory writes are the
-  chain-specific addresses (treasury, oracles, LZ endpoints, peers,
-  per-chain VPFI Buy adapter registry).
+  chain-specific addresses (treasury, oracles, the CCIP messenger
+  registry, and the sanctions oracle on retail).
 - **Governance handover** (DeploymentRunbook §6): post-deploy, every
   tunable transitions from EOA-controllable to multisig-via-timelock
   controllable. Range guards apply equally to both before and after

@@ -48,8 +48,8 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *        false → pro-rata interest based on actual elapsed days.
  *      Late fees: 1% first overdue day + 0.5%/day, capped at 5% of
  *      principal (see {LibVaipakam.calculateLateFee}).
- *      Fee distribution: {LibEntitlement.splitTreasury} routes
- *      `TREASURY_FEE_BPS` (1%) to treasury; remainder to the lender.
+ *      Fee distribution: {LibEntitlement.splitTreasury} routes the loan's
+ *      snapshotted treasury fee to treasury; remainder to the lender.
  *      For ERC-20 loans the settlement math is computed atomically by
  *      {LibSettlement.computeRepayment}.
  *

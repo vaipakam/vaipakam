@@ -14,7 +14,20 @@
 // Sandbox egress shim (proxy CA + undici dispatcher) — optional:
 // present only in environments that need it, pointed at by env.
 if (process.env.LIVE_PROXY_SETUP) {
-  await import(process.env.LIVE_PROXY_SETUP);
+  try {
+    await import(process.env.LIVE_PROXY_SETUP);
+  } catch (err) {
+    // A shim that will not load is a broken ENVIRONMENT, not a product
+    // regression (Codex #1621 r6) — and it fails before any browser or
+    // page exists, so there is nothing this run could have observed.
+    // `blockedSync` is a hoisted function declaration, so it is callable
+    // from here despite being defined further down.
+    blockedSync(
+      `cannot load LIVE_PROXY_SETUP — the egress shim this environment` +
+        ` needs would not initialise.\n  module: ${process.env.LIVE_PROXY_SETUP}` +
+        `\n  ${err.message}`,
+    );
+  }
 }
 // Node's built-in fetch (undici under the hood) — no extra dep. The
 // optional LIVE_PROXY_SETUP shim may swap the global dispatcher.
@@ -41,6 +54,303 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WALLETS_PATH =
   process.env.TESTNET_WALLETS_FILE ??
   path.join(HERE, '../testnet-wallets/wallets.json');
+let LIVE_BROWSER = null;
+
+/**
+ * Register a browser/context for `blocked()` to close.
+ *
+ * `launch()` registers its own, so drives built on it need not call
+ * this. It exists for the one drive that launches Chromium itself
+ * (`live-desk-i18n-capture.mjs` runs a per-locale context matrix that
+ * `launch()`'s single-context shape does not express) so it can still
+ * reach the SHARED blocked exit rather than keep a second copy of it.
+ */
+export function trackBrowser(browser) {
+  LIVE_BROWSER = browser;
+}
+
+/**
+ * Synchronous BLOCKED exit, for the pre-browser precondition checks
+ * (`loadWallets`, `walletFor`, bundle-shape and config validation) that
+ * run before any browser exists and cannot await.
+ */
+export function blockedSync(why) {
+  console.error(`\nBLOCKED: ${why}`);
+  process.exit(2);
+}
+
+/**
+ * Exit BLOCKED (code 2) — "this drive could not verify anything", as
+ * distinct from FAIL (code 1) — "this drive found a defect".
+ *
+ * The distinction is the whole point of the three-verdict contract in
+ * `run-live-batch.mjs`: a misclassified infra blip sends someone hunting
+ * a product bug that does not exist, and habitual FAIL rows train
+ * reviewers to skim past the one that is real (#1581).
+ *
+ * The rule for choosing: if the drive never got a served page to assert
+ * against — unreachable site, dead RPC, absent credential, no browser,
+ * no eligible on-chain state — it is BLOCKED. If it asserted against a
+ * page that WAS served and the assertion failed, that is FAIL.
+ *
+ * Closes any browser this module opened, so a blocked exit cannot leave
+ * a Chromium behind. Callers do not wire that themselves — it was the
+ * per-driver duplication `live-position-observe.mjs`'s `discovery()`
+ * wrapper existed to avoid.
+ */
+export async function blocked(why, err, cleanup) {
+  const detail = err ? `\n  ${String(err.message ?? err).split('\n')[0].slice(0, 300)}` : '';
+  console.error(`\nBLOCKED: ${why}${detail}`);
+  try {
+    await LIVE_BROWSER?.close();
+  } catch {
+    /* exiting anyway — a close failure must not mask the real cause */
+  }
+  try {
+    // Runs AFTER the close, so a caller removing a throwaway profile
+    // directory is not fighting a Chromium that still holds it open.
+    await cleanup?.();
+  } catch {
+    /* same — cleanup is best effort on the way out */
+  }
+  process.exit(2);
+}
+
+/**
+ * A browser/context SETUP failure, raised instead of exiting when the
+ * caller has asked to decide the verdict itself (Codex #1621 r1).
+ *
+ * `launch()` exiting BLOCKED directly is right for a drive that has
+ * observed nothing yet — which is all of them at launch time, with one
+ * exception. `live-recover-locales.mjs` launches a fresh browser PER
+ * LOCALE and accumulates findings across them, so a setup failure on
+ * locale 6 must not discard a real localization defect found on locale
+ * 2: "verified nothing" would be a false statement about that run. It
+ * catches this and lets its own `exitOnEvidence` choose.
+ *
+ * Part 1 of #1581 broke exactly that, silently — moving the exit inside
+ * `launch()` meant that catch could never run, and the precedence rule
+ * #1590 r6 added went dead without any test noticing.
+ */
+export class LiveSetupError extends Error {
+  constructor(what, cause) {
+    super(`browser setup failed (${what})`);
+    this.name = 'LiveSetupError';
+    this.cause = cause;
+  }
+}
+
+/**
+ * A PRECONDITION failure raised where exiting immediately would be
+ * unsafe (Codex #1621 r4).
+ *
+ * `blockedSync` is right before a drive can mutate anything. After that
+ * point `process.exit` skips the drive's `finally`, which is what cancels
+ * a posted offer or a resting signed order — so a stale ABI bundle could
+ * cost real testnet funds. Throwing instead lets the cleanup run, and the
+ * drive classifies this type as BLOCKED at its final exit.
+ *
+ * Preferred over an up-front list of everything used after the mutation
+ * boundary: such a list drifted within one review round (it omitted
+ * `getOffer` and `previewMatch`), and a list that must stay exhaustive to
+ * be safe is the wrong shape for a safety property.
+ */
+export class LivePreconditionError extends Error {
+  constructor(why) {
+    super(why);
+    this.name = 'LivePreconditionError';
+  }
+}
+
+/**
+ * Run a setup/precondition step; any throw is BLOCKED, not FAIL.
+ *
+ * Wrap the things that must work before verification can start —
+ * navigation to the site, reading deployment data, resolving config —
+ * and leave assertions against a served page unwrapped so a real defect
+ * still exits 1.
+ */
+export async function precondition(what, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    await blocked(`${what} failed, so nothing could be observed`, err);
+  }
+}
+
+/**
+ * Open a site path as a PRECONDITION — BLOCKED on failure, not FAIL.
+ *
+ * Use this for a drive's FIRST navigation, which is its reachability
+ * probe: an unreachable site, a DNS failure or a dead preview means the
+ * drive never got a page to assert against.
+ *
+ * Deliberately NOT for later navigations. Once the site is known
+ * reachable, a route that fails to load is a plausible product
+ * regression — a broken route IS a defect — so those keep exiting 1.
+ * The line is "did we ever get served anything", not "did every
+ * navigation succeed".
+ */
+/**
+ * Watch whether the PAGE's own JSON-RPC endpoint is answering.
+ *
+ * The problem this solves: several drives read their verdict out of a
+ * chain-backed UI state — a precheck banner rendered from an eth_call, a
+ * submit button gated on live reads. When the RPC the deployed page uses
+ * stops answering, that state never arrives, a `waitFor` expires, and the
+ * drive reports FAIL. Every one of those drives is registered in
+ * THREE_VERDICT_DRIVERS, so the batch TRUSTS that code and calls an
+ * outage a product regression.
+ *
+ * Two traps, both of which a first attempt at this fell into:
+ *
+ *  1. SCOPE. A whole-session counter is disarmed by the page-load reads
+ *     that have nothing to do with the verdict: the endpoint answers on
+ *     load, then dies or starts throttling exactly when the assertion's
+ *     reads go out, and the drive falls through to FAIL anyway. So the
+ *     window has to be reset immediately before the wait that matters.
+ *
+ *  2. WHAT COUNTS. A 200 carrying a JSON-RPC *error* still proves the
+ *     endpoint answered — and for a revert-driven assertion that error IS
+ *     the expected result. Counting only `result` misses precisely the
+ *     call the verdict rests on.
+ *
+ * Usage: `const rpc = watchPageRpc(page)` once after launch; `rpc.reset()`
+ * just before the critical wait; `await rpc.settled()` in the failure
+ * path, and treat `0` as BLOCKED.
+ *
+ * Counted from the page's traffic rather than an endpoint the driver
+ * picks, because the served SPA chooses its RPC at build time — the only
+ * reliable way to know which endpoint matters is to watch what the page
+ * does (the reasoning live-rpc-audit.mjs records at length).
+ */
+export function watchPageRpc(page) {
+  let answered = 0;
+  const bodyReads = [];
+  // Membership is decided when the REQUEST starts, not when its response
+  // arrives. A slow hydration request issued before `reset()` can land
+  // after it, and counting that as an answer makes a total outage DURING
+  // the assertion look like a live endpoint — FAIL where BLOCKED is right,
+  // the exact failure this helper exists to prevent. live-rpc-audit.mjs
+  // already keys on the request object for this reason; the helper was
+  // first written without carrying that over.
+  //
+  // Stamped with a GENERATION rather than added to a set. A set plus a
+  // cleared tally is not enough and was the second wrong version of this:
+  // clearing the counter does nothing about a stale request whose response
+  // arrives later and increments it again. The generation bumps on reset,
+  // so a response can only count when its request started in the CURRENT
+  // window. (A WeakSet cannot be cleared, which is what made the set
+  // approach quietly unfixable.)
+  let generation = 0;
+  const startedIn = new WeakMap();
+  // Recorded requests that have not yet emitted `response`. Without this,
+  // `settled()` snapshots `bodyReads` while a request is still in flight,
+  // `Promise.allSettled([])` returns instantly, and the window reports
+  // ZERO answers — a false BLOCKED over whatever the drive was asserting.
+  // live-rpc-audit.mjs solved this with a bounded drain loop; this helper
+  // was written without it, the same way it was written without
+  // request-start attribution.
+  const outstanding = new Set();
+  page.on('request', (req) => {
+    if (req.method() !== 'POST') return;
+    startedIn.set(req, generation);
+    outstanding.add(req);
+  });
+  // A request that fails at the transport level never emits `response`, so
+  // it would otherwise hold the drain loop open for the whole grace period.
+  page.on('requestfailed', (req) => outstanding.delete(req));
+  page.on('response', (res) => {
+    outstanding.delete(res.request());
+    // Captured here and RE-CHECKED after the body read below. The read is
+    // async, so a response that passed this gate can finish parsing after
+    // a later `reset()` and increment the freshly-zeroed counter — making
+    // a completely unanswered window look RPC-live. Checking the
+    // generation only once, before the await, was the fifth way this
+    // helper got the window wrong.
+    const gen = startedIn.get(res.request());
+    if (gen !== generation || res.status() !== 200) return;
+    // `response` fires on HEADERS and does not await handlers, so the body
+    // is still in flight; collect the promises and settle before judging.
+    bodyReads.push(
+      res
+        .text()
+        .then((text) => {
+          // The window may have closed while this body was in flight.
+          if (gen !== generation) return;
+          const parsed = JSON.parse(text);
+          for (const r of Array.isArray(parsed) ? parsed : [parsed]) {
+            if (r && r.jsonrpc && (r.result !== undefined || r.error !== undefined)) {
+              answered++;
+            }
+          }
+        })
+        .catch(() => {
+          /* not a JSON-RPC body, or it never arrived */
+        }),
+    );
+  });
+  return {
+    /**
+     * Start a fresh window. Call immediately before the critical wait.
+     *
+     * Only responses to POSTs that START after this point can contribute:
+     * the generation bump orphans everything already in flight.
+     */
+    reset() {
+      generation++;
+      answered = 0;
+      bodyReads.length = 0;
+      outstanding.clear();
+    },
+    /**
+     * Report answers seen this window.
+     *
+     * Drains outstanding requests first, bounded — a request still
+     * unanswered after the grace period did not contribute an answer
+     * anyway, and must not hang the drive. Then settles the body reads,
+     * because `response` fires on HEADERS and the parse is still in
+     * flight when the handler returns.
+     */
+    async settled(graceMs = 15_000) {
+      const until = Date.now() + graceMs;
+      while (outstanding.size > 0 && Date.now() < until) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      await Promise.allSettled(bodyReads);
+      return answered;
+    },
+  };
+}
+
+export async function visit(page, pathname, opts = {}) {
+  return precondition(`opening ${pathname}`, async () => {
+    const resp = await page.goto(`${SITE}${pathname}`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60_000,
+      ...opts,
+    });
+    // A THROW is not the only way a target can be unreachable (Codex
+    // #1621 r8). `page.goto` resolves normally for an HTTP error page —
+    // a preview URL 404ing, a CDN returning 502/503 — so without this the
+    // helper declared reachability established and every later assertion
+    // ran against a gateway error body. During an infrastructure outage
+    // that is not one misleading row but the whole fleet reporting
+    // product FAILs, which is the exact scenario this contract exists to
+    // prevent.
+    //
+    // Status is checked only for the FIRST navigation, which is what this
+    // helper is for. A later route returning 404 is a plausible product
+    // regression and stays exit 1.
+    const status = resp?.status();
+    if (typeof status === 'number' && status >= 400) {
+      throw new Error(`${SITE}${pathname} answered HTTP ${status}`);
+    }
+    return resp;
+  });
+}
+
+let WALLETS;
 /**
  * Read LAZILY, on the first request for a key — not at import.
  *
@@ -56,7 +366,6 @@ const WALLETS_PATH =
  * `launch()`, which is the first thing it does, so the BLOCKED exit
  * still fires before any browser work.
  */
-let WALLETS;
 function loadWallets() {
   if (WALLETS !== undefined) return WALLETS;
   let raw;
@@ -69,13 +378,14 @@ function loadWallets() {
     // secret-unavailable batch read as a defect, which is exactly the
     // mislabelling the three-verdict contract exists to prevent (#1529
     // review round 6).
-    console.error(
-      `\nBLOCKED: cannot read the dev wallet file — this driver signs, so it` +
-        ` cannot run without one.\n  path: ${WALLETS_PATH}\n  ${err.message}` +
+    // Uses the shared exit so there is one definition of "BLOCKED" —
+    // this message and `walletFor`'s were separate copies of it.
+    blockedSync(
+      `cannot read the dev wallet file — this driver signs, so it cannot run` +
+        ` without one.\n  path: ${WALLETS_PATH}\n  ${err.message}` +
         `\n  → set TESTNET_WALLETS_FILE, or run a watch-only drive` +
         ` (live-position-observe.mjs) which needs no key.`,
     );
-    process.exit(2);
   }
   // Normalize both documented shapes to a role map — the array form
   // ({ role, address, privateKey }[]) indexed as a map yields
@@ -101,17 +411,16 @@ function walletFor(role) {
   const wallets = loadWallets();
   const w = wallets?.[role];
   const key = w?.privateKey;
+  // Shared exit, not a local copy of it (#1581).
   const blocked = (why) => {
     const roles = Object.keys(wallets ?? {});
-    console.error(
-      `\nBLOCKED: the dev wallet file has no usable credential for role` +
-        ` "${role}" — ${why}.` +
+    blockedSync(
+      `the dev wallet file has no usable credential for role "${role}" — ${why}.` +
         `\n  path:  ${WALLETS_PATH}` +
         `\n  roles: ${roles.length ? roles.join(', ') : '(none)'}` +
         `\n  → each role needs { address, privateKey } with a 32-byte key,` +
         ` and the address must be the one that key derives.`,
     );
-    process.exit(2);
   };
 
   if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
@@ -283,6 +592,19 @@ export async function launch({
   // shim, viewport, profile handling and `done()` cleanup are shared
   // with every other drive rather than copied (Codex #1590 r1).
   keyless = false,
+  // onSetupFailure: what a browser/context SETUP failure does.
+  //
+  //   'blocked' (default) — exit 2 immediately. Right for a drive that
+  //     has observed nothing yet, which is every drive at launch time.
+  //   'throw' — raise a `LiveSetupError` for the caller to handle.
+  //     For a drive that launches repeatedly and ACCUMULATES findings
+  //     across launches, where exiting here would discard evidence
+  //     already gathered and claim the run verified nothing. Only
+  //     `live-recover-locales.mjs` needs it (Codex #1621 r1).
+  //
+  // The default is the safe one on purpose: forgetting the option costs
+  // a correct-but-blunt verdict, never a silently discarded finding.
+  onSetupFailure = 'blocked',
 } = {}) {
   const account = keyless
     ? null
@@ -290,18 +612,75 @@ export async function launch({
   let chainId = startChainId;
   let authorized = preAuthorized;
 
-  const profileDir = freshProfile
-    ? fs.mkdtempSync(path.join(os.tmpdir(), `alpha02-fresh-${role}-`))
-    : path.join(HERE, 'profiles', role);
-  fs.mkdirSync(profileDir, { recursive: true });
+  let profileDir = null;
   // A throwaway profile is created BEFORE the browser is launched, so a
   // launch failure (Chromium missing, bad LIVE_CHROMIUM_PATH, no disk)
   // leaves it behind — the caller never gets a `done()` to clean up
   // with. Cleaning here rather than at each call site keeps the
   // create/remove pair in one place (Codex #1590 r6).
-  let ctx;
-  try {
-    ctx = await chromium.launchPersistentContext(profileDir, {
+  const removeThrowawayProfile = () => {
+    if (freshProfile && profileDir) fs.rmSync(profileDir, { recursive: true, force: true });
+  };
+
+  /**
+   * Run one browser/context SETUP step.
+   *
+   * EVERY pre-page step goes through this, not just the launch (Codex
+   * #1621 r1). Guarding only `launchPersistentContext` left the route
+   * shim, the wallet binding, the init script and the first page
+   * unguarded: a rejection there reached the driver's top level as exit
+   * 1 AND leaked the Chromium, so an environment problem after a
+   * successful launch still read as a product regression. COVERAGE.md
+   * already stated the rule — "every step of it belongs inside the same
+   * wrapper" — and part 1 implemented only the first step of it.
+   */
+  const setup = async (what, fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (onSetupFailure === 'throw') {
+        // The caller decides the verdict, so clean up what `blocked()`
+        // would have and hand the failure back intact.
+        try {
+          await LIVE_BROWSER?.close();
+        } catch {
+          /* best effort on the way out */
+        }
+        LIVE_BROWSER = null;
+        // Best effort, exactly as the close above is (Codex #1621 r6). An
+        // rmSync failure here would REPLACE the LiveSetupError with a raw
+        // filesystem exception, and the evidence-accumulating callers key
+        // on `instanceof LiveSetupError` — so they would rethrow and exit 1
+        // for a setup problem where no page was ever observed, defeating
+        // the whole point of handing the error back.
+        try {
+          removeThrowawayProfile();
+        } catch {
+          /* the setup failure is the story; a leftover temp dir is not */
+        }
+        throw new LiveSetupError(what, err);
+      }
+      // BLOCKED, not FAIL (#1581): no usable browser means the drive
+      // never got a page to assert against. Rethrowing exited 1 and made
+      // a missing or unusable Chromium read as a product regression.
+      await blocked(`browser setup failed (${what})`, err, removeThrowawayProfile);
+    }
+  };
+
+  // Creating the profile directory is setup too (Codex #1621 r2). An
+  // unwritable profile parent or exhausted temp storage threw here,
+  // BEFORE the wrapper below existed to catch it, so the shared
+  // launcher's promise of BLOCKED-on-setup-failure had a hole in it at
+  // the very first step.
+  await setup('creating the browser profile directory', async () => {
+    profileDir = freshProfile
+      ? fs.mkdtempSync(path.join(os.tmpdir(), `alpha02-fresh-${role}-`))
+      : path.join(HERE, 'profiles', role);
+    fs.mkdirSync(profileDir, { recursive: true });
+  });
+
+  const ctx = await setup('launching the browser', async () => {
+    const created = await chromium.launchPersistentContext(profileDir, {
       headless,
       // Optional override for environments with a pre-provisioned
       // browser image (e.g. a sandbox that blocks downloads); when
@@ -312,10 +691,11 @@ export async function launch({
       args: ['--no-sandbox'],
       viewport: { width: 1280, height: 900 },
     });
-  } catch (err) {
-    if (freshProfile) fs.rmSync(profileDir, { recursive: true, force: true });
-    throw err;
-  }
+    // Register it so a later `blocked()` — from this module or a driver —
+    // closes it instead of leaving a Chromium behind.
+    LIVE_BROWSER = created;
+    return created;
+  });
 
   // The egress gateway resets Chromium's own TLS handshakes, so ALL
   // page traffic is served from THIS process via undici (whose stack
@@ -358,7 +738,8 @@ export async function launch({
     return `${method} (non-RPC mutating request)`;
   }
 
-  await ctx.route('**/*', async (route) => {
+  await setup('installing the route shim', () =>
+    ctx.route('**/*', async (route) => {
     const req = route.request();
     const violation = readOnlyViolation(req);
     if (violation) {
@@ -393,7 +774,8 @@ export async function launch({
     } catch {
       await route.abort('failed');
     }
-  });
+    }),
+  );
 
   const rpcLog = [];
   const WRITE_METHODS = new Set([
@@ -526,7 +908,8 @@ export async function launch({
   // public-page probe should present no provider at all, so an app
   // regression that asks for accounts on load has nothing to answer it.
   if (!keyless) {
-    await ctx.exposeBinding('__walletRequest', async (_src, payload) => {
+    await setup('exposing the wallet binding', () =>
+      ctx.exposeBinding('__walletRequest', async (_src, payload) => {
       try {
         const result = await handle(payload);
         return { result: jsonSafe(result) };
@@ -538,9 +921,11 @@ export async function launch({
           },
         };
       }
-    });
+      }),
+    );
 
-    await ctx.addInitScript(() => {
+    await setup('installing the wallet init script', () =>
+      ctx.addInitScript(() => {
       if (window.ethereum?.__vaipakamTest) return;
       const listeners = {};
       const provider = {
@@ -581,10 +966,11 @@ export async function launch({
         );
       window.addEventListener('eip6963:requestProvider', announce);
       announce();
-    });
+      }),
+    );
   }
 
-  const page = ctx.pages()[0] ?? (await ctx.newPage());
+  const page = await setup('opening the first page', async () => ctx.pages()[0] ?? ctx.newPage());
   page.setDefaultTimeout(20_000);
 
   const consoleErrors = [];

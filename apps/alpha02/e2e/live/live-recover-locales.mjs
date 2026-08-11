@@ -150,6 +150,19 @@ const chunkUrlFor = (code) =>
  */
 class SetupError extends Error {}
 
+// Set once the deployed site has actually SERVED a page. Only the FIRST
+// unserved navigation is a reachability precondition (Codex #1621 r12);
+// after that the site is known to answer, so a locale that then 404s or
+// 503s is a broken ROUTE — a product finding.
+//
+// The r11 status check above got this half right and half wrong: it
+// stopped scoring an error document as a localization defect, but routed
+// every locale's HTTP error into `SetupError`, so one late 503 reported
+// "could not check" for the rest of the matrix and exited BLOCKED with a
+// real regression sitting in it. Tracked across the loop, not per probe,
+// for the same reason live-ux-sweep tracks it across its session loop.
+let reachabilityProven = false;
+
 async function probe(page, code) {
   const expected = EXPECTED[code];
   const problems = [];
@@ -179,10 +192,23 @@ async function probe(page, code) {
   page.on('response', onResponse);
 
   try {
-    await page.goto(`${SITE}/recover`, {
+    const resp = await page.goto(`${SITE}/recover`, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
     });
+    // A resolved `goto` is not proof of reachability (Codex #1621 r11).
+    // `page.goto` resolves for a 404 or CDN 5xx, and this probe checked
+    // only for a THROWN navigation error — so an unavailable target had
+    // its error document scored as a missing locale chunk and wrong page
+    // content, i.e. reported as a localization defect. Thrown into the
+    // catch below, which already classifies a failed navigation as
+    // "nothing observed". Third drive to need this: the shared `visit()`
+    // got it in r8, live-desk-i18n-capture in r9.
+    const status = resp?.status();
+    if (typeof status === 'number' && status >= 400) {
+      throw new Error(`${SITE}/recover answered HTTP ${status}`);
+    }
+    reachabilityProven = true;
   } catch (err) {
     // Nothing has been OBSERVED yet, so this cannot be a product
     // finding: an unreachable host, a wrong SITE_URL or an egress
@@ -190,9 +216,12 @@ async function probe(page, code) {
     // Reported as FAIL it would be nine confident rows asserting a
     // healthy deployment is broken (Codex #1590 r7).
     page.off('response', onResponse);
-    throw new SetupError(
-      `could not load ${SITE}/recover — ${String(err).split('\n')[0]}`,
-    );
+    const why = `could not load ${SITE}/recover — ${String(err).split('\n')[0]}`;
+    // Once the site has served a page, a navigation that then fails is a
+    // regression in that route, so it exits 1 as a finding rather than
+    // excusing itself as infrastructure.
+    if (reachabilityProven) throw new Error(why);
+    throw new SetupError(why);
   }
 
   // Wait for the REQUESTED locale to settle, not merely for any
@@ -344,6 +373,12 @@ for (const code of LOCALES) {
     // to mutate external state (Codex #1590 r2).
       readOnly: true,
       freshProfile: true,
+      // Hand the setup failure BACK rather than exiting on it, so the
+      // catch below can weigh it against evidence already gathered
+      // (Codex #1621 r1). Without this, `launch()` exits BLOCKED
+      // internally and this catch is unreachable — which is what part 1
+      // of #1581 silently did to the #1590 r6 precedence rule.
+      onSetupFailure: 'throw',
     });
   } catch (err) {
     // BLOCKED means "verified nothing". If an EARLIER locale already

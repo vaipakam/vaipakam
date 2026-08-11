@@ -242,8 +242,11 @@ erfolgt durch einen Borrower. Bei der Initiierung gibt es ein
 hartes Gate: Der Collateral-Korb des Borrowers muss gegenüber der
 Principal-Anforderung des Lenders einen Health Factor von
 mindestens 1,5 erzeugen. Die HF-Mathematik ist die des Protokolls
-selbst — das Gate ist nicht umgehbar. Der 1%-Treasury-Anteil auf
+selbst — das Gate ist nicht umgehbar. Der `{liveValue:treasuryFeeBps}`%-Treasury-Anteil auf
 Zinsen wird beim terminalen Settlement abgezogen, nicht im Voraus.
+Dieser Satz wird bei der Kreditvergabe festgeschrieben; eine spätere
+Änderung der Protokollgebühr lässt einen bereits laufenden Kredit auf
+seinem ursprünglichen Satz.
 
 <a id="offer-book.borrower-offers"></a>
 
@@ -413,7 +416,7 @@ Timelock abgesichert und können keine Assets bewegen.
 - **Liquidations-Slippage** — der 4-DEX-Failover routet zur
   besten Ausführung, die er finden kann, kann aber keinen
   bestimmten Preis garantieren. Recovery ist netto nach Slippage
-  und dem 1%-Treasury-Anteil auf Zinsen.
+  und dem `{liveValue:treasuryFeeBps}`%-Treasury-Anteil auf Zinsen.
 - **Defaults bei illiquidem Collateral** — Collateral geht zum
   Zeitpunkt des Defaults vollständig auf dich über. Es gibt keinen
   Regress, wenn das Asset weniger wert ist als der Principal plus
@@ -722,7 +725,7 @@ gibt dem neuen Halter das Recht zur Auszahlung.
 Der Lender-Claim gibt zurück:
 
 - Deinen Principal zurück in dein Wallet auf dieser Chain.
-- Aufgelaufene Zinsen minus den 1%-Treasury-Anteil. Der Anteil
+- Aufgelaufene Zinsen minus den `{liveValue:treasuryFeeBps}`%-Treasury-Anteil. Der Anteil
   wird selbst durch deinen zeitgewichteten VPFI-Gebühren-Rabatt-
   Akkumulator reduziert, wenn die Zustimmung an ist.
 
@@ -1030,7 +1033,7 @@ verfügbar sind:
 #### Wenn du der Lender bist
 
 - **Als Lender claimen** — nur in terminalen Zuständen. Gibt
-  Principal plus Zinsen minus dem 1%-Treasury-Anteil zurück
+  Principal plus Zinsen minus dem `{liveValue:treasuryFeeBps}`%-Treasury-Anteil zurück
   (weiter reduziert durch deinen zeitgewichteten
   VPFI-Yield-Fee-Rabatt, wenn die Zustimmung an ist). Verbrennt den
   Lender-Position-NFT.

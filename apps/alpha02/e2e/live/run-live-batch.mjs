@@ -39,27 +39,30 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Drivers that actually IMPLEMENT the three-verdict contract above.
+ * Drivers that IMPLEMENT the three-verdict contract above.
  *
- * The contract is aspirational for everything not in this set. Those
- * drivers exit 1 for infrastructure failures — an unreachable site, a
- * dead RPC, an absent wallet file — either by an explicit
- * `process.exit(1)` or by letting the rejection reach the top level. A
- * FAIL row from one of them may or may not be a real regression.
+ * As of #1581 that is every driver in this directory. The set is kept
+ * rather than dropped because it is what makes the vocabulary HONEST:
+ * membership is enforced at classification, so an exit 2 from a driver
+ * outside it is recorded as a FAIL. Reading it as BLOCKED would assert
+ * "this surface ran but verified nothing" about a driver that never
+ * agreed to mean that by exiting 2 (#1529 review round 19), and a new
+ * driver is exactly the case where that could still happen.
  *
- * Membership here is ENFORCED at classification, not just described: an
- * exit 2 from a driver outside this set is recorded as a FAIL, because
- * reading it as BLOCKED would assert "this surface ran but verified
- * nothing" about a driver that never agreed to mean that by exiting 2.
- *
- * Naming that explicitly is the point. A summary that silently applied a
- * three-verdict vocabulary to twelve drivers when one honours it reads
- * as "no infrastructure failures occurred" when what actually happened
- * is that none could be distinguished (#1529 review round 19). Migrating
- * the rest is tracked separately; add each here as it lands.
+ * So: ADD A NEW DRIVER HERE when you add one. Honouring the contract is
+ * a requirement for a driver in this directory, not an aspiration — and
+ * the startup check below names anything unregistered rather than
+ * letting the batch quietly misreport it.
  */
 const THREE_VERDICT_DRIVERS = new Set([
+  'live-alerts-link.mjs',
+  'live-collateral-precheck.mjs',
+  'live-desk-i18n-capture.mjs',
+  'live-dryrun-review.mjs',
+  'live-killswitch-regression.mjs',
   'live-position-observe.mjs',
+  'live-rate-desk.mjs',
+  'live-recover.mjs',
   // Exits 2 when a locale bundle lacks a key it is asked to assert —
   // a missing PRECONDITION in the repo, not a product regression. It
   // is auto-discovered by the sweep below, so without this entry the
@@ -67,12 +70,34 @@ const THREE_VERDICT_DRIVERS = new Set([
   // driver predates the contract, contradicting the driver's own
   // report of the same run (Codex #1590 r3).
   'live-recover-locales.mjs',
+  'live-risk-access.mjs',
+  'live-rpc-audit.mjs',
+  'live-signed-book.mjs',
+  'live-support-ticket.mjs',
+  'live-ux-sweep.mjs',
 ]);
 
 const scripts = fs
   .readdirSync(HERE)
   .filter((f) => f.startsWith('live-') && f.endsWith('.mjs'))
   .sort();
+
+// Say so UP FRONT rather than at classification time. An unregistered
+// driver's BLOCKED is silently downgraded to FAIL below — the safe
+// direction, but silent, and someone then hunts a product bug that a
+// missing entry in this file invented. Warning here also means a driver
+// added without registering is visible on the run that first includes it,
+// not on whichever later run happens to hit its BLOCKED path.
+const unregistered = scripts.filter((s) => !THREE_VERDICT_DRIVERS.has(s));
+if (unregistered.length) {
+  console.log(
+    `\nNOTE: ${unregistered.length} driver(s) are not registered in` +
+      ` THREE_VERDICT_DRIVERS, so a BLOCKED exit from them will be reported` +
+      ` as FAIL:\n` +
+      unregistered.map((s) => `  ${s}`).join('\n') +
+      `\n  → if they honour the three-verdict contract, add them to that set.`,
+  );
+}
 
 const results = [];
 for (const script of scripts) {
@@ -110,16 +135,17 @@ for (const r of results) {
     `${r.verdict.padEnd(7)}  ${r.script}` +
       (r.verdict === 'FAIL' && r.code !== 1 ? `  (exit ${r.code})` : '') +
       // Do not let this row be read as a confirmed product defect.
-      (unmigrated ? '  (may be infrastructure — driver predates the contract)' : ''),
+      (unmigrated ? '  (unregistered driver — may be infrastructure)' : ''),
   );
 }
 const unmigratedFails = results.filter((r) => r.verdict === 'FAIL' && !r.honoursContract);
 if (unmigratedFails.length) {
   console.log(
-    `\n${unmigratedFails.length} FAIL(s) came from drivers that do not yet` +
-      ` distinguish BLOCKED from FAIL — an unreachable site or RPC looks` +
-      ` identical to a regression there. Read those drives' output before` +
-      ` treating them as defects.`,
+    `\n${unmigratedFails.length} FAIL(s) came from drivers not registered in` +
+      ` THREE_VERDICT_DRIVERS, so BLOCKED could not be distinguished from` +
+      ` FAIL for them — an unreachable site or RPC looks identical to a` +
+      ` regression. Read those drives' output before treating them as` +
+      ` defects, and register them if they honour the contract.`,
   );
 }
 const blocked = results.filter((r) => r.verdict === 'BLOCKED');

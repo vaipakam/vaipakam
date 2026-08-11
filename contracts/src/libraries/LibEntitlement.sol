@@ -232,8 +232,15 @@ library LibEntitlement {
     ///      `cfgTreasuryFeeBps()`, so a mid-loan governance retune never
     ///      changes an open loan's settlement economics vs. the signed
     ///      receipt. `view`, not `pure`: the snapshot resolver touches
-    ///      storage. A `0` snapshot (pre-#957 loan) falls back to the live
-    ///      knob — see {LibVaipakam.effectiveTreasuryFeeBps}.
+    ///      storage. A `0` snapshot (pre-#957 loan) resolves to the FROZEN
+    ///      `LEGACY_TREASURY_FEE_BPS`, NOT the live knob — see
+    ///      {LibVaipakam.effectiveTreasuryFeeBps}, which explains why:
+    ///      falling through to the live knob would have repriced every
+    ///      pre-#957 open loan when #1352 bumped the default, which is the
+    ///      retroactive change the snapshot exists to prevent. (This line
+    ///      said "falls back to the live knob" until #1614; it described
+    ///      the opposite of the code, on the one path where the difference
+    ///      is a grandfathered loan's economics.)
     function splitTreasury(
         LibVaipakam.Loan storage loan,
         uint256 interestAmount

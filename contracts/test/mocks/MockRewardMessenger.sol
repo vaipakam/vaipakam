@@ -4,11 +4,13 @@ pragma solidity ^0.8.29;
 import {
     IRewardMessenger,
     IRewardRemitAckIngress,
-    RewardBroadcastV2
+    RewardBroadcastV2,
+    RewardBroadcastV3
 } from "../../src/interfaces/IRewardMessenger.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RepatriationFacet} from "../../src/facets/RepatriationFacet.sol";
+import {RewardCommitmentFacet} from "../../src/facets/RewardCommitmentFacet.sol";
 
 /// @title MockRewardMessenger
 /// @notice Test double for the production CCIP-backed reward messenger
@@ -80,6 +82,17 @@ contract MockRewardMessenger is IRewardMessenger {
     IRewardMessenger.BroadcastV2PerDest[] public lastV2Dests;
     uint256 public broadcastV2Count;
 
+    // ─── #1434 P2-w1 — V3 broadcast spies ─────────────────────────────────
+    IRewardMessenger.BroadcastV2Shared public lastV3Shared;
+    IRewardMessenger.BroadcastV3Extras public lastV3Extras;
+    IRewardMessenger.BroadcastV3PerDest[] public lastV3Dests;
+    uint256 public broadcastV3Count;
+    IRewardMessenger.BroadcastV2Shared public lastV3SingleShared;
+    IRewardMessenger.BroadcastV3Extras public lastV3SingleExtras;
+    IRewardMessenger.BroadcastV3PerDest public lastV3SingleDest;
+    uint256 public broadcastV3SingleCount;
+    uint256 public lastV3SingleValue;
+
     // ─── Knobs ─────────────────────────────────────────────────────────────
     uint256 public quoteNative;
     bool public revertOnSend;
@@ -92,6 +105,11 @@ contract MockRewardMessenger is IRewardMessenger {
     ///         eight-argument send reverts EMPTY (missing selector), which
     ///         must trip the reporter's 8 → 6 generation-fallback shim.
     bool public b3Unsupported;
+    /// @notice #1434 P2-w1 — simulate a pre-V3 messenger proxy: every V3
+    ///         surface reverts EMPTY (missing selector), which must trip
+    ///         the aggregator's V3 → V2 fallback (and turn the heal into
+    ///         `MessengerPredatesV3`).
+    bool public v3Unsupported;
 
     constructor(address diamond_) {
         diamond = diamond_;
@@ -115,6 +133,22 @@ contract MockRewardMessenger is IRewardMessenger {
 
     function setV2Unsupported(bool v) external {
         v2Unsupported = v;
+    }
+
+    function setV3Unsupported(bool v) external {
+        v3Unsupported = v;
+    }
+
+    function lastV3DestsLength() external view returns (uint256) {
+        return lastV3Dests.length;
+    }
+
+    function lastV3DestAt(uint256 i)
+        external
+        view
+        returns (IRewardMessenger.BroadcastV3PerDest memory)
+    {
+        return lastV3Dests[i];
     }
 
     function setBroadcastDestinations(uint256[] calldata d) external {
@@ -261,6 +295,7 @@ contract MockRewardMessenger is IRewardMessenger {
     // ─── #1222 M3 B2-d2 — remit-ack surface ───────────────────────────────
 
     uint256 public lastAckRemitId;
+    bool public lastAckConsumed;
     uint256 public lastAckAmount;
     address public lastAckRefund;
     uint256 public lastAckValue;
@@ -278,8 +313,10 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 remitId,
         uint256 amountReceived,
         address remitter,
+        bool consumed,
         address payable refundAddress
     ) external payable override returns (bytes32 messageId) {
+        lastAckConsumed = consumed;
         require(msg.sender == diamond, "MockMessenger: only diamond");
         if (revertOnSend) revert("MockMessenger: send revert");
         lastAckRemitId = remitId;
@@ -309,7 +346,19 @@ contract MockRewardMessenger is IRewardMessenger {
         uint256 amountReceived
     ) external {
         IRewardRemitAckIngress(diamond).onRemitAckReceived(
-            sourceChainId, remitId, amountReceived, diamond
+            sourceChainId, remitId, amountReceived, diamond, true
+        );
+    }
+
+    /// @dev #1656 r8 - consumption-explicit delivery for the R6 gate tests.
+    function deliverRemitAckWithConsumed(
+        uint32 sourceChainId,
+        uint256 remitId,
+        uint256 amountReceived,
+        bool consumed
+    ) external {
+        IRewardRemitAckIngress(diamond).onRemitAckReceived(
+            sourceChainId, remitId, amountReceived, diamond, consumed
         );
     }
 
@@ -322,7 +371,7 @@ contract MockRewardMessenger is IRewardMessenger {
         address remitter
     ) external {
         IRewardRemitAckIngress(diamond).onRemitAckReceived(
-            sourceChainId, remitId, amountReceived, remitter
+            sourceChainId, remitId, amountReceived, remitter, true
         );
     }
 
@@ -414,6 +463,149 @@ contract MockRewardMessenger is IRewardMessenger {
     ///         reporter ingress.
     function deliverBroadcastV2(RewardBroadcastV2 calldata b) external {
         RewardReporterFacet(diamond).onRewardBroadcastV2Received(b);
+    }
+
+    // ─── #1434 P2-w1 — V3 broadcast surface ───────────────────────────────
+
+    function broadcastDayV3(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV3Extras calldata extras,
+        IRewardMessenger.BroadcastV3PerDest[] calldata dests,
+        address payable refundAddress
+    ) external payable override {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (v3Unsupported) {
+            // Missing-selector analog: revert with EMPTY returndata.
+            assembly ("memory-safe") {
+                revert(0, 0)
+            }
+        }
+        if (revertOnBroadcast) revert("MockMessenger: broadcast revert");
+        lastV3Shared = shared;
+        lastV3Extras = extras;
+        delete lastV3Dests;
+        for (uint256 i; i < dests.length; ++i) {
+            lastV3Dests.push(dests[i]);
+        }
+        lastBroadcastDay = shared.dayId;
+        lastBroadcastRefund = refundAddress;
+        lastBroadcastValue = msg.value;
+        broadcastV3Count += 1;
+    }
+
+    function quoteBroadcastDayV3(
+        IRewardMessenger.BroadcastV2Shared calldata,
+        IRewardMessenger.BroadcastV3Extras calldata,
+        IRewardMessenger.BroadcastV3PerDest[] calldata dests
+    ) external view override returns (uint256) {
+        if (v3Unsupported) {
+            assembly ("memory-safe") {
+                revert(0, 0)
+            }
+        }
+        // Per-destination pricing, deliberately DIFFERENT from both the
+        // flat legacy quote and the V2 per-lane price so a facet-level
+        // quote test can discriminate which messenger generation priced it.
+        return quoteNative * dests.length * 3;
+    }
+
+    function broadcastDayV3Single(
+        IRewardMessenger.BroadcastV2Shared calldata shared,
+        IRewardMessenger.BroadcastV3Extras calldata extras,
+        IRewardMessenger.BroadcastV3PerDest calldata dest,
+        address payable refundAddress
+    ) external payable override returns (bytes32) {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (v3Unsupported) {
+            assembly ("memory-safe") {
+                revert(0, 0)
+            }
+        }
+        if (revertOnBroadcast) revert("MockMessenger: broadcast revert");
+        lastV3SingleShared = shared;
+        lastV3SingleExtras = extras;
+        lastV3SingleDest = dest;
+        lastBroadcastRefund = refundAddress;
+        lastV3SingleValue = msg.value;
+        broadcastV3SingleCount += 1;
+        return bytes32(uint256(0xB3515));
+    }
+
+    function quoteBroadcastDayV3Single(
+        IRewardMessenger.BroadcastV2Shared calldata,
+        IRewardMessenger.BroadcastV3Extras calldata,
+        IRewardMessenger.BroadcastV3PerDest calldata
+    ) external view override returns (uint256) {
+        if (v3Unsupported) {
+            assembly ("memory-safe") {
+                revert(0, 0)
+            }
+        }
+        return quoteNative * 3;
+    }
+
+    /// @notice #1434 P2-w1 — simulate a kind-10 delivery landing on the
+    ///         mirror reporter ingress.
+    function deliverBroadcastV3(RewardBroadcastV3 calldata b) external {
+        RewardReporterFacet(diamond).onRewardBroadcastV3Received(b);
+    }
+
+    // ─── #1434 P2-w3 — compensation-quote surface ─────────────────────────
+
+    uint256 public lastCompQuoteDay;
+    uint256 public lastCompQuoteLender18;
+    uint256 public lastCompQuoteBorrower18;
+    uint256 public compQuoteSendCount;
+
+    function sendCompQuote(
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address payable
+    ) external payable override returns (bytes32) {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (revertOnSend) revert("MockMessenger: send revert");
+        lastCompQuoteDay = dayId;
+        lastCompQuoteLender18 = quotedLender18;
+        lastCompQuoteBorrower18 = quotedBorrower18;
+        compQuoteSendCount += 1;
+        return bytes32(uint256(0xC0117E));
+    }
+
+    function quoteSendCompQuote(
+        uint256,
+        uint256,
+        uint256
+    ) external view override returns (uint256) {
+        return quoteNative;
+    }
+
+    /// @notice #1434 P2-w3 — simulate a kind-11 delivery landing on the
+    ///         canonical commitment-facet ingress.
+    function deliverCompQuote(
+        uint32 srcChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
+    ) external {
+        // Default era = this mock (the "sending diamond" a real messenger
+        // would stamp); era-divergence tests use the explicit overload.
+        RewardCommitmentFacet(diamond).onCompQuoteReceived(
+            srcChainId, dayId, quotedLender18, quotedBorrower18, address(this)
+        );
+    }
+
+    /// @dev #1636 r1 — era-explicit delivery for the binding tests.
+    function deliverCompQuoteFromEra(
+        uint32 srcChainId,
+        uint256 dayId,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18,
+        address era
+    ) external {
+        RewardCommitmentFacet(diamond).onCompQuoteReceived(
+            srcChainId, dayId, quotedLender18, quotedBorrower18, era
+        );
     }
 
     // ─── #1568 C2 — repatriation instruction surfaces ─────────────────────
@@ -591,6 +783,30 @@ contract MockRewardMessenger is IRewardMessenger {
             0,
             0,
             0
+        );
+    }
+
+    /// @dev #1636 r2 — legacy kind-2 delivery carrying the full frozen
+    ///      tuple, for mixed-generation consistency tests: a V3 for the
+    ///      same day must agree on the day-pool figures (production sends
+    ///      the SAME finalize-frozen values on both wires).
+    function deliverBroadcastFull(
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
+    ) external {
+        RewardReporterFacet(diamond).onRewardBroadcastReceived(
+            dayId,
+            globalLenderNumeraire18,
+            globalBorrowerNumeraire18,
+            capThreshold18,
+            scheduleFloorHalf,
+            recycledHalf,
+            armedFromDay
         );
     }
 

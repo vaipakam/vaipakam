@@ -238,15 +238,126 @@ a regex and fail derivation), so the derivation itself has to be inside
 the guarded path. Otherwise every signing driver exits 1 and the batch
 reports an unusable wallet file as a possible product defect.
 
-The three-verdict exit contract is only honoured by the drivers that
-implement it. The batch summary must say which those are rather than
-applying its vocabulary to every driver, or a row reading FAIL hides
-that no infrastructure failure could have been distinguished. Naming
-them is not enough on its own: the runner must also CLASSIFY by that
-list, so an exit 2 from a driver outside it reads as FAIL rather than
-being promoted to BLOCKED. Otherwise the summary asserts "ran but
-verified nothing" about a driver that never agreed to mean that by
-exiting 2 — a claim about a surface nobody checked.
+The three-verdict exit contract is honoured by EVERY driver in
+`e2e/live/` as of #1581, and the batch runner classifies by an explicit
+registry rather than by exit code alone. The registry stays even now that
+it lists everything, because it is what makes the vocabulary honest: an
+exit 2 from an unregistered driver reads as FAIL rather than being
+promoted to BLOCKED, so the summary can never assert "ran but verified
+nothing" about a driver that never agreed to mean that by exiting 2 — a
+claim about a surface nobody checked. **Register a new driver when you
+add one**; the runner names anything unregistered at startup instead of
+quietly misreporting it later.
+
+Which failures are preconditions, driver by driver:
+
+- **The FIRST navigation is the reachability probe** — BLOCKED via the
+  shared `visit()` helper. Later navigations stay FAIL: once the site is
+  known to serve, a route that will not load IS a plausible regression.
+  The line is "did we ever get served anything", not "did every
+  navigation succeed". One deliberate exception: `live-ux-sweep.mjs` is
+  an evidence sweep rather than a pass/fail drive, so it RECORDS a failed
+  route navigation in its report and keeps going — its exit code speaks
+  only to whether the sweep stayed read-only. Whether that should change
+  is #1626. A drive holding a FUNDED, pre-authorized wallet asks the
+  reachability question over plain HTTP instead — `live-risk-access.mjs`
+  does — because `launch()` defaults to a signer that forwards
+  `eth_sendTransaction` without a confirmation step, and pointing that at
+  an arbitrary `SITE_URL` would hand a regressed or hostile build a live
+  key before the drive has asserted anything. Reachability needs no
+  browser; the probe should not be the thing that exposes a signer.
+- **A verdict read out of chain-backed UI state** — a banner rendered from
+  an `eth_call`, a submit button gated on live reads. When the page's RPC
+  stops answering, that state never arrives, a `waitFor` expires, and the
+  drive reports a product regression for an outage. Use `watchPageRpc()`
+  from `driver.mjs`: `reset()` immediately before the critical wait,
+  `settled()` in the failure path, and treat zero answers as BLOCKED. Two
+  things that look right and are not — a session-wide counter (the
+  page-load reads disarm it, so an endpoint that dies exactly when the
+  assertion's reads go out still reports FAIL), and counting only JSON-RPC
+  `result` (a 200 carrying an `error` still proves the endpoint answered,
+  and for a revert-driven assertion that error IS the expected result).
+  A third, subtler one: window membership has to be stamped when the
+  REQUEST starts, because clearing the tally on reset does nothing about a
+  stale request whose response lands afterwards and increments it again.
+  All three are pinned by `e2e/live/watchPageRpc.test.mjs` — this helper
+  was wrong three times, each time in a way that read as correct, so it is
+  unit-tested rather than trusted.
+- **Cleanup capacity, for any drive that MUTATES shared chain state** —
+  reserved BEFORE the mutation, not discovered after it, and read at the
+  PENDING block so an aborted earlier run's un-mined spend counts. Asset
+  funding is not gas: a gasless post costs the maker no ETH, and WETH pays
+  escrow rather than transactions, so proving either one says nothing about
+  whether the drive can UNDO what it does. Reserve for the whole arc
+  including the `finally` sweep. Three drives do this — `live-signed-book`
+  (cancel a resting signed order), `live-rate-desk` (post → amend → cancel
+  with real escrow held), `live-risk-access` (raise a risk tier and put it
+  back) — and each would otherwise leave live orders, held escrow, or an
+  elevated tier behind on a shared testnet. The verdict is the lesser
+  problem; the stranded state is the harm.
+- **Fixture data the drive reads rather than asserts** — the deployments
+  bundle's addresses, the per-facet ABI bundle, an override artifact a
+  flag points at. A stale or half-exported bundle means the surface went
+  UNREVIEWED, not that it regressed.
+- **On-chain state the drive needs in order to act at all** — most
+  visibly wallet/vault funding. Gate it BEFORE the browser opens, on
+  exactly the quantity the drive later asserts against, so the gate can
+  never block a run that would otherwise pass.
+- **Config that selects nothing** — a typo'd session or locale selector
+  gathers no evidence, so the surfaces it names are still unswept.
+
+Two failure modes to avoid when drawing that line. A precondition placed
+AFTER the drive has mutated state exits past the cleanup boundary and can
+leave a dev wallet dirty — every BLOCKED exit must sit ahead of the first
+mutation. And the line must not be drawn so wide that it swallows real
+defects: a chain that REVERTS a valid write is evidence, so only the read
+half of a setup step belongs inside the precondition wrapper. The point of
+separating the verdicts is to stop mislabelling in both directions.
+
+Finding these is not a grep for `throw` and `process.exit`. The
+misclassification that survived the first pass of #1581 went through a
+driver's own step recorder — `record(step, 'FAIL', …)` — and reported "top
+up the lender's vault" as a gasless-posting regression. Read what each
+non-zero path actually MEANS, rather than trusting the shape of the exit.
+
+Four more traps, each of which cost a review round on #1621:
+
+- **Guard the WHOLE setup, not its first step.** Wrapping only the browser
+  launch leaves the route shim, the wallet binding, the init script and
+  the first page unguarded — a rejection there still exits 1 and leaks the
+  Chromium. `launch()` routes every pre-page step through one wrapper.
+- **A shared BLOCKED exit must not overrule a caller that has evidence.**
+  A drive that launches repeatedly and accumulates findings across
+  launches must be able to weigh a later setup failure against a real
+  defect found earlier; exiting inside `launch()` silently deleted that
+  rule. Hence `onSetupFailure: 'throw'` — default `'blocked'`, because
+  forgetting the option must cost a blunt verdict, never a discarded
+  finding. **Three drives are in this shape**, not one, and the rule has
+  to be applied to each: `live-recover-locales.mjs` (a browser per
+  locale), `live-ux-sweep.mjs` (a browser per session, accumulating
+  read-only violations) and `live-desk-i18n-capture.mjs` (a context per
+  locale). The test to apply: does this drive record anything before its
+  LAST launch? If so, a mid-run setup failure must not decide the verdict
+  alone. In all three the precedence is the same — a real finding outranks
+  an incomplete run, and only a run that found nothing reports BLOCKED.
+- **After a browser exists, use the ASYNC exit.** `blockedSync` skips the
+  close, so a post-launch BLOCKED can strand a persistent-profile Chromium
+  and leave its profile directory locked — which makes the NEXT driver in
+  a sequential batch fail to launch, turning one blocked drive into
+  several.
+- **Presence is not validity, and "not empty" is not "complete".** A
+  truthiness check on a deployment address accepts a malformed one and
+  hands it to the RPC client, which throws exit 1 long before any
+  address-shaped guard runs. A whole-bundle emptiness check on the ABI
+  export passes a HALF-exported bundle. Validate the shape at load, and
+  per file.
+
+The write-permission version of the same point: `mkdirSync(recursive)` on
+an existing directory succeeds without testing write access, so a check
+that only creates the directory does not prove the artifacts can be
+written. Probe an actual write. (Note this is invisible when the drive
+runs as root, which ignores directory permissions — verify it as an
+unprivileged user or the check looks like it passed.)
 
 The transport rule covers EVERY way the page reaches the network, not
 just the one the driver proxies. Reads the app makes through an injected

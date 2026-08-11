@@ -9,7 +9,11 @@
  */
 
 import type { Abi, Address, PublicClient } from 'viem';
-import { REPATRIATION_ABI, REWARD_AGGREGATOR_ABI } from './abi';
+import {
+  INTERACTION_REWARDS_LENS_ABI,
+  REPATRIATION_ABI,
+  REWARD_AGGREGATOR_ABI,
+} from './abi';
 import {
   isCoverageGap,
   resolveChain,
@@ -225,6 +229,30 @@ export function repatPositionUnavailableGap(
   };
 }
 
+/**
+ * Build the gap for an unreadable backing snapshot (#1434 P2-w2).
+ *
+ * Exported for direct testing, like {@link compositionUnavailableGap}.
+ */
+export function backingSnapshotUnavailableGap(
+  chainId: number,
+  err: unknown,
+): CoverageGap {
+  const failure = classify(err, 'getRecycleBackingSnapshot');
+  const preP2 = isMissingSelector(err);
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'own-ledger-backing',
+    detail:
+      `getRecycleBackingSnapshot() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `The balance / arrival-reservation tuple is UNKNOWN this tick, so the recovery-reservation backing check did NOT run for this chain (substituting zero would page a false CRITICAL after any real quarantine, and substituting the reservation as zero would silently stop alarming on spent recovery backing).\n\n` +
+      (preP2
+        ? `The 7-output snapshot does not exist in this Diamond's CURRENT CUT — either a pre-P2-w2 lens facet, or a partial refresh; selector/shape absence cannot distinguish the two. Refresh the InteractionRewardsLensFacet to close this gap.`
+        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+  };
+}
+
 export function compositionUnavailableGap(
   chainId: number,
   err: unknown,
@@ -336,6 +364,31 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     viewGaps.push(repatPositionUnavailableGap(target.chainId, err));
   }
 
+  // #1434 P2-w2 — the backing snapshot (balance + arrival reservation),
+  // separately for the same newer-facet reason, at the same pinned block.
+  // The lens view predates P2-w2 but its OUTPUT SHAPE widened (6 → 7
+  // returns), so an old lens decodes short and the read fails — which is
+  // the correct UNKNOWN, not a value.
+  let backing:
+    | { vpfiBalance: bigint; strandedRecoveryReserved: bigint }
+    | undefined;
+  try {
+    const snap = await readView<
+      readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint]
+    >(
+      target.client,
+      target.diamond,
+      'getRecycleBackingSnapshot',
+      [],
+      blockNumber,
+      INTERACTION_REWARDS_LENS_ABI,
+    );
+    backing = { vpfiBalance: snap[0], strandedRecoveryReserved: snap[6] };
+  } catch (err) {
+    backing = undefined;
+    viewGaps.push(backingSnapshotUnavailableGap(target.chainId, err));
+  }
+
   return {
     ledger: {
     // The freshness brand is applied by `observeMesh` after validation —
@@ -352,6 +405,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
     paidOutRecycled: governor[3],
     composition,
     repatriatedOut,
+    backing,
     observedAt: block.timestamp,
     },
     gaps: viewGaps,
