@@ -448,8 +448,22 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // B2-d5 block already upgraded) reads the new implementation's
         // value and skips.
         {
+            // #1660 r9 - live-config-over-artifact, the same rule as
+            // every other probe: the Diamond's registered receiver is
+            // the one the refreshed ingress trusts.
+            address liveRecvP2 =
+                RewardRemittanceLensFacet(diamond).getRewardRemittanceReceiver();
             address remitReceiverP2 =
                 _readAddrOptional(".rewardRemittanceReceiver");
+            if (liveRecvP2 != address(0)) {
+                if (
+                    remitReceiverP2 != address(0)
+                        && remitReceiverP2 != liveRecvP2
+                ) {
+                    _probeUpgradeRemitReceiver(remitReceiverP2);
+                }
+                remitReceiverP2 = liveRecvP2;
+            }
             // #1634 r2 — the SAME fail-closed posture as the B2-d5 block:
             // `_readAddrOptional` returns zero for a missing / stale /
             // malformed artifact as well as for a chain that genuinely has
@@ -464,26 +478,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 remitReceiverP2 != address(0) || isCanonicalRewardP2,
                 "P2-w2: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
             );
-            if (remitReceiverP2 != address(0)) {
-                uint256 gen = 0;
-                (bool ok, bytes memory ret) = remitReceiverP2.staticcall(
-                    abi.encodeWithSignature("WIRE_GENERATION()")
-                );
-                if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
-                if (gen < REMIT_RECEIVER_WIRE_GENERATION) {
-                    address newImplP2 = address(new RewardRemittanceReceiver());
-                    UUPSUpgradeable(remitReceiverP2).upgradeToAndCall(
-                        newImplP2, ""
-                    );
-                    Deployments.writeRewardRemittanceReceiverImpl(newImplP2);
-                    console.log(
-                        "P2-w2: upgraded RewardRemittanceReceiver (wire gen",
-                        gen,
-                        "-> 3) impl:",
-                        newImplP2
-                    );
-                }
-            }
+            _probeUpgradeRemitReceiver(remitReceiverP2);
         }
 
         // ─── #1434 P2-w4 (#1656 r10) — reward MESSENGER generation probe ──
@@ -496,29 +491,21 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // receiver probe above; idempotent on rerun. EVERY chain has a
         // messenger, so a missing artifact is always a hard stop.
         {
-            address rewardMsgr = _readAddrOptional(".rewardMessenger");
+            // #1660 r9 - LIVE address first (the Diamond's registered
+            // messenger is the one the refreshed facets will call); a
+            // DISTINCT artifact address is upgraded as well - the same
+            // live-config-over-artifact rule the return-channel probes
+            // follow. Every chain registers a messenger, so both being
+            // zero is a hard stop.
+            (address liveMsgr, , , , ) =
+                RewardReporterFacet(diamond).getRewardReporterConfig();
+            address msgrArt = _readAddrOptional(".rewardMessenger");
             require(
-                rewardMsgr != address(0),
-                "P2-w4: refresh needs .rewardMessenger in addresses.json"
+                liveMsgr != address(0) || msgrArt != address(0),
+                "P2-w4: refresh needs a reward messenger (live or artifact)"
             );
-            uint256 mgen = 0;
-            (bool mok, bytes memory mret) = rewardMsgr.staticcall(
-                abi.encodeWithSignature("WIRE_GENERATION()")
-            );
-            if (mok && mret.length == 32) mgen = abi.decode(mret, (uint256));
-            if (mgen < REWARD_MESSENGER_WIRE_GENERATION) {
-                address newMsgrImpl = address(new VaipakamRewardMessenger());
-                UUPSUpgradeable(rewardMsgr).upgradeToAndCall(newMsgrImpl, "");
-                Deployments.writeAddress(
-                    ".rewardMessengerImpl", newMsgrImpl
-                );
-                console.log(
-                    "P2-w4/w5: upgraded VaipakamRewardMessenger (wire gen",
-                    mgen,
-                    "-> 3) impl:",
-                    newMsgrImpl
-                );
-            }
+            _probeUpgradeRewardMessenger(liveMsgr);
+            if (msgrArt != liveMsgr) _probeUpgradeRewardMessenger(msgrArt);
         }
 
         // ─── #1434 P2-w5 (#1660 r1) — return-channel satellite probes ──
@@ -888,6 +875,50 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     }
 
     /// @notice Broadcast one bounded diamondCut for `cuts[start..end)`.
+    /// @dev #1660 r9 — generation-probe + UUPS-upgrade one remittance
+    ///      receiver proxy (no-op for zero or already-current).
+    function _probeUpgradeRemitReceiver(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < REMIT_RECEIVER_WIRE_GENERATION) {
+            address newImpl = address(new RewardRemittanceReceiver());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeRewardRemittanceReceiverImpl(newImpl);
+            console.log(
+                "P2-w2: upgraded RewardRemittanceReceiver (wire gen",
+                gen,
+                "-> 3) impl:",
+                newImpl
+            );
+        }
+    }
+
+    /// @dev #1660 r9 — generation-probe + UUPS-upgrade one reward
+    ///      messenger proxy (no-op for zero or already-current).
+    function _probeUpgradeRewardMessenger(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < REWARD_MESSENGER_WIRE_GENERATION) {
+            address newImpl = address(new VaipakamRewardMessenger());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeAddress(".rewardMessengerImpl", newImpl);
+            console.log(
+                "P2-w4/w5: upgraded VaipakamRewardMessenger (wire gen",
+                gen,
+                "-> 3) impl:",
+                newImpl
+            );
+        }
+    }
+
     /// @dev #1660 r3 — generation-probe + UUPS-upgrade one return-channel
     ///      SENDER proxy (no-op for zero or already-current). ONE
     ///      implementation, called for the live endpoint AND a distinct

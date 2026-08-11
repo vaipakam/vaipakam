@@ -1085,7 +1085,17 @@ the bounds are the design's actual commitment.
    > reconciliation) from the contradicting mirror; the reverse order
    > never forges B1 eligibility. Fitting the conflict logic pushed the
    > mutating remittance facet past EIP-170, resolved by moving the
-   > helper-free `quoteRemitAckFee` view to the lens facet.
+   > helper-free `quoteRemitAckFee` view to the lens facet. Round 9
+   > tied off the last three: the conflict claw is ONE-SHOT
+   > (`conflictClawed` — a replayed conflicting ack keeps privileges
+   > withheld but can no longer drain unrelated receipts' credit off
+   > the global position balance); the refresh script's reward-
+   > messenger and remittance-receiver probes read the LIVE Diamond
+   > config first with distinct artifact addresses upgraded separately
+   > (the live-config-over-artifact rule now uniform across all four
+   > probes); and the keeper's remit-ack surface combines both facet
+   > ABIs (viem resolves functions from the supplied ABI, so the lens
+   > move would otherwise break the ACK quote client-side).
 
 
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —

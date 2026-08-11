@@ -3203,6 +3203,19 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(overage, 1e18, "clawed slice quarantined");
         // Position balance (recovered - redispatched) is zero: no further
         // uncharged capacity exists.
+
+        // #1660 r9 - the claw is ONE-SHOT: another receipt's legitimate
+        // credit lands, and a REPLAYED conflicting consumed ack must not
+        // drain it into the overage quarantine.
+        mutator.setRemitReservationCompRaw(80, CHAIN_ARB, 2, 1e18, 6);
+        comp.onStrandedReturnReceived(
+            address(diamond), 80, 6, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
+            0
+        );
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, 3e18); // replay
+        (recovered, redispatched, overage) = rlens.getRecoveryPosition();
+        assertEq(recovered, 3e18, "unrelated credit untouched by the replay");
+        assertEq(overage, 1e18, "no second claw");
     }
 
     /// #1660 r8 - the reverse contradiction: a quarantine ack after a

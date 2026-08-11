@@ -6702,6 +6702,12 @@ library LibVaipakam {
         // also describe a PROVISIONAL receipt that later confirms as
         // consumed, and only true quarantine is terminal mirror-side.
         bool quarantineAcked;
+        // #1660 r9 - the classification-conflict claw ran for this
+        // receipt (one-shot): the ack path is permissionlessly
+        // re-presentable, and a replayed conflict must not repeatedly
+        // move UNRELATED receipts' recovery credit into the overage
+        // quarantine off the global position balance.
+        bool conflictClawed;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

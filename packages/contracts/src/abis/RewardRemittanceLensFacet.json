@@ -480,6 +480,11 @@
             "name": "quarantineAcked",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "conflictClawed",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

@@ -1886,7 +1886,14 @@ contract RewardRemittanceFacet is
     ) private returns (bool conflict) {
         conflict = r.quarantineAcked;
         r.consumedAcked = true;
-        if (conflict) {
+        // #1660 r9 - ONE-SHOT: a replayed consumed ack on an already-
+        // conflicted receipt keeps the privileges withheld (the return
+        // value) but must not claw again - `avail` is the GLOBAL
+        // position balance, and a replay after another receipt's
+        // legitimate credit would drain unrelated capacity into the
+        // overage quarantine.
+        if (conflict && !r.conflictClawed) {
+            r.conflictClawed = true;
             uint256 rec = s.remitRecoveredForReceipt[remitId];
             uint256 avail = s.rewardBudgetRecovered
                 - s.rewardBudgetRedispatched;
