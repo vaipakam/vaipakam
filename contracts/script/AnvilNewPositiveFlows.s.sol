@@ -32,7 +32,7 @@ import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {LibSaleSolvency} from "../src/libraries/LibSaleSolvency.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
-import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
+import {MockUniswapV3Factory, MockUniswapV3Pool} from "./mocks/MockUniswapV3.sol";
 import {MockSanctionsList} from "../test/mocks/MockSanctionsList.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
@@ -98,6 +98,9 @@ contract AnvilNewPositiveFlows is Script {
     /// @dev #1503 PR-E — kept so N25 can move the collateral price
     ///      and drive a live position under its solvency floor.
     MockChainlinkFeed wethFeedRef;
+    /// @dev The mock USDC/WETH pool, kept so a feed move can re-price the
+    ///      pool's spot in the SAME step. See {_setWethPriceConsistently}.
+    MockUniswapV3Pool mockPoolRef;
 
     // Mock-token decimals + sizing chosen to mirror SepoliaPositiveFlows
     // so every scenario's debt + collateral math is comfortably above
@@ -242,7 +245,9 @@ contract AnvilNewPositiveFlows is Script {
         // chain whose deploy has the depth guard configured (the guard is recent;
         // that's why the raw-1:1 fixture used to pass). See
         // `_mockPoolSqrtPriceX96` for the derivation.
-        univ3.createPool(address(usdc), address(weth), 3000, _mockPoolSqrtPriceX96(), 1e24);
+        mockPoolRef = MockUniswapV3Pool(
+            univ3.createPool(address(usdc), address(weth), 3000, _mockPoolSqrtPriceX96(), 1e24)
+        );
 
         // Mock sanctions oracle — N7 (recoverStuckERC20) checks the
         // declaredSource against this oracle and reverts
@@ -308,9 +313,18 @@ contract AnvilNewPositiveFlows is Script {
     ///      per deploy. `Math.mulDiv` keeps the `·Q192` intermediate from
     ///      overflowing uint256; the result fits uint160 for these values.
     function _mockPoolSqrtPriceX96() internal view returns (uint160) {
+        return _mockPoolSqrtPriceX96At(2000e8);
+    }
+
+    /// @dev The same derivation for an ARBITRARY WETH feed price, so a scenario
+    ///      that moves the feed can move the pool with it. Splitting this out is
+    ///      what makes {_setWethPriceConsistently} possible: the value-balance
+    ///      guard compares the pool's spot against the FEED, so the two must
+    ///      travel together or the pool stops being a valid route.
+    function _mockPoolSqrtPriceX96At(uint256 pWethE8) internal view returns (uint160) {
         uint256 pUsdc = 1e8;
         uint256 scaleUsdc = 1e14; // 10^(8 + 6)
-        uint256 pWeth = 2000e8;
+        uint256 pWeth = pWethE8;
         uint256 scaleWeth = 1e26; // 10^(8 + 18)
         (uint256 p0, uint256 scale0, uint256 p1, uint256 scale1) =
             address(usdc) < address(weth)
@@ -319,6 +333,32 @@ contract AnvilNewPositiveFlows is Script {
         uint256 q192 = uint256(1) << 192;
         uint256 sq = Math.sqrt(Math.mulDiv(p0 * scale1, q192, p1 * scale0));
         return uint160(sq);
+    }
+
+    /// @dev Move the mock WETH price on BOTH sources the Diamond consults: the
+    ///      Chainlink feed (which drives health factors) and the mock pool's
+    ///      spot (which the liquidity classifier compares against that feed).
+    ///
+    ///      Moving only the feed silently de-prices the OTHER leg. The mock
+    ///      USDC and WETH share one pool, and `OracleFacet`'s value-balance
+    ///      guard requires the pool's reserves, valued at feed prices, to
+    ///      balance. A 25% feed move ($2000 -> $1500) against a pool still
+    ///      quoting $2000 fails that guard, the pool stops being a discoverable
+    ///      route, and mock USDC — whose only route is this pool — classifies
+    ///      Illiquid. The sale scenarios then hit the #1655 unpriceable-leg
+    ///      refusal (`SaleLegUnpriceable`, code 6) on the PRINCIPAL leg instead
+    ///      of the solvency floor (code 1) they exist to exercise, and the
+    ///      scenario's own liquidity assertion does not catch it because that
+    ///      assertion covers the COLLATERAL leg, which keeps its own feed-priced
+    ///      branch and stays Liquid.
+    ///
+    ///      Re-pricing the pool alongside the feed is also the more faithful
+    ///      fixture: a real 25% move shows up in the AMM as well as the oracle.
+    ///      Health factors are unaffected by the pool spot, so the drift the
+    ///      scenarios engineer still happens exactly as before.
+    function _setWethPriceConsistently(uint256 pWethE8) internal {
+        wethFeedRef.setPrice(int256(pWethE8));
+        mockPoolRef.setSqrtPriceX96(_mockPoolSqrtPriceX96At(pWethE8));
     }
 
     function _setCountryIfUnset(uint256 key, address user, string memory country) internal {
@@ -1978,7 +2018,7 @@ contract AnvilNewPositiveFlows is Script {
         // deployerKey, not adminKey: the mock feed is owner-gated to the
         // account that deployed it in `_deployMocksAndConfigure`.
         vm.startBroadcast(deployerKey);
-        wethFeedRef.setPrice(1500e8);
+        _setWethPriceConsistently(1500e8);
         vm.stopBroadcast();
 
         // The depth guard can reclassify an asset when the feed moves away
@@ -2021,7 +2061,7 @@ contract AnvilNewPositiveFlows is Script {
         // Restore the price and run the SAME sale for real: it must now
         // settle, proving the refusal above was the floor and nothing else.
         vm.startBroadcast(deployerKey);
-        wethFeedRef.setPrice(2000e8);
+        _setWethPriceConsistently(2000e8);
         vm.stopBroadcast();
 
         vm.startBroadcast(newLenderKey);
@@ -2107,7 +2147,7 @@ contract AnvilNewPositiveFlows is Script {
         bytes memory _ssig26 = LibAcceptTestSigner.sign(diamond, _ts26, lenderKey);
 
         vm.startBroadcast(deployerKey);
-        wethFeedRef.setPrice(1500e8);
+        _setWethPriceConsistently(1500e8);
         vm.stopBroadcast();
 
         // Same reasoning as N25: an Illiquid leg is refused unconditionally for
@@ -2148,7 +2188,7 @@ contract AnvilNewPositiveFlows is Script {
         console.log("Sub-floor listing accept refused with SalePositionBelowSolvencyFloor");
 
         vm.startBroadcast(deployerKey);
-        wethFeedRef.setPrice(2000e8);
+        _setWethPriceConsistently(2000e8);
         vm.stopBroadcast();
 
         vm.startBroadcast(lenderKey);
