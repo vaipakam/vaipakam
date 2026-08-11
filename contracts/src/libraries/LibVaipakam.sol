@@ -6432,6 +6432,22 @@ library LibVaipakam {
         //   configured - allowOutOfOrderExecution), and the closure
         //   unwind (day markers + funded contribution) runs exactly once.
         mapping(uint256 => bool) strandedReturnTerminalized;
+        // ── #1434 P2-w6 (design §5.3/§5.4) — the recovery ceremony ──
+        //
+        // BASE-ONLY — governance-evidenced TERMINAL LOSS recorded against
+        //   a released reservation's stranded value (§5.3: the residue
+        //   neither ceremony-recovered nor still in pool custody). One
+        //   term of the full-custody-resolution identity the R6 gate
+        //   clears on: recovered + terminalLoss == stranded (r.total).
+        mapping(uint256 => uint256) ceremonyTerminalLoss;
+        // BASE-ONLY (§5.4 R6e) — the imported outstanding-compensation
+        //   marker for a chain after a Base deployment rotation:
+        //   keccak256(abi.encode(oldRemitter, oldRemitId)). While set,
+        //   the chain's gate is held by OLD-ERA evidence this deployment
+        //   never issued — only the imported-clear paths (the mirror's
+        //   re-presented consumed attestation, or the ADMIN evidenced
+        //   clear) may release it; new-era acks/returns never match it.
+        mapping(uint32 => bytes32) importedOutstanding;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

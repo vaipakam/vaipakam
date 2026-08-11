@@ -1104,6 +1104,34 @@ the bounds are the design's actual commitment.
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —
    carries the FunctionalSpec amendment if (a) is ratified.
 
+   > **Implementation note (P2-w6, 2026-08-11).** Shipped per the ratified
+   > §5.3 unification. "Cancellation" needed no new surface — the existing
+   > release IS the terminal message-state record (status 3, gate held).
+   > What w6 adds is the settlement the held gate waits for:
+   > `recordRecoveryCeremony(remitId, freshInflow, recycledInflow)` and
+   > `recordRecoveryTerminalLoss(remitId, amount)` (ADMIN evidenced, the
+   > forced-finalize mould, Released reservations only, consumed receipts
+   > refused). The fresh half credits the SAME recovery position the B1
+   > return feeds — folded into the ONE per-receipt recovered cumulative,
+   > so returns and ceremonies compose in a single custody-resolution
+   > identity: `recovered + terminalLoss == r.total` releases the gate,
+   > partial recoveries hold it, over-recording refuses, and a ceremony
+   > credit shrinks the standing loss record exactly like an out-of-order
+   > return chunk. The recycled half re-enters through
+   > `creditCustodyRelocated` under a NEW append-only provenance class
+   > (`RecoveryCeremonyRelocation`, refId = the remitId). A physical-
+   > backing assertion (`balance >= bucket + position + overage + fresh`)
+   > rolls back a books-only recovery at the record. R6e landed as the
+   > `importOutstandingCompensation` marker (keccak of the OLD-era tuple,
+   > set beside the gate; only imported-clear paths release it), the
+   > ack-ingress imported-marker branch BEFORE the era check (a
+   > re-presented CONSUMED attestation resolves; non-consumed observes —
+   > quarantined old-era value cannot ride a new-era B1 return, its era
+   > check refuses old remitters by design, so it resolves via the
+   > evidenced `clearImportedOutstanding` + ceremony), and the rotation
+   > runbook step (inventory `getCompensationOutstandingChains()` empty
+   > or imported before cutover).
+
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates
 of §2.1/§2.4 in its place.

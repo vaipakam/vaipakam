@@ -257,6 +257,21 @@ Rotating the admin multisig → governance timelock is the final step.
 
 ## 8. Post-deploy operational steps
 
+### Rotation: outstanding compensations must survive the cutover (#1434 P2-w6)
+
+Before retiring a canonical Base deployment, read
+`getCompensationOutstandingChains()` on it. For every chain listed,
+either settle the compensation first (consumption ack, stranded return,
+or recovery ceremony + terminal loss), or carry it over: on the NEW
+deployment run `importOutstandingCompensation(chain, oldDeployment,
+oldRemitId)` for each open tuple. The imported gate blocks new
+compensation dispatches for that chain until the old-era evidence
+resolves it — a mirror's re-presented CONSUMED ack releases it
+permissionlessly; anything else resolves through the evidenced
+`clearImportedOutstanding` once the value settles via the recovery
+ceremony. No unresolved compensation may be silently forgotten by a
+redeploy.
+
 - **Fund the `VpfiBuyReceiver` ETH float.** The cross-chain buy is two
   legs; the receiver pays leg 2's CCIP fee from a held ETH balance. Send
   ETH to the receiver via `fundETH()` after deploy — an unfunded receiver

@@ -83,7 +83,18 @@ library LibVpfiRecycle {
         // surplus as mirror funding and collide authorization ids with
         // remit ids in event-based accounting. refId here is the
         // repatriation AUTHORIZATION id.
-        RepatriationReturnRelocation
+        RepatriationReturnRelocation,
+        // #1434 P2-w6 — CUSTODY-RELOCATION class for the RECYCLED half of
+        // a recovery-ceremony settlement (append-only enum): governance
+        // brought a released compensation reservation's stranded pool-
+        // custody value home to Base (design §5.3). Same relocated-
+        // custody exclusion semantics as the two classes above, DISTINCT
+        // for provenance: refId here is the released reservation's
+        // remitId, and the fresh half deliberately does NOT come through
+        // this class — it credits the w5 RECOVERY POSITION (the ratified
+        // §5.3 unification: no emission-headroom restoration anywhere;
+        // the re-remit runs uncharged from the position).
+        RecoveryCeremonyRelocation
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed

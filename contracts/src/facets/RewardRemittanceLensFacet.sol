@@ -358,6 +358,23 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().strandedReturnedCumulative;
     }
 
+    /// @notice #1434 P2-w6 (§5.3) — governance-recorded terminal loss for
+    ///         a released reservation's stranded value (one term of the
+    ///         custody-resolution identity the R6 gate clears on).
+    function getCeremonyTerminalLoss(
+        uint256 remitId
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().ceremonyTerminalLoss[remitId];
+    }
+
+    /// @notice #1434 P2-w6 (§5.4 R6e) — the imported old-era outstanding
+    ///         marker for a chain (zero = none).
+    function getImportedOutstanding(
+        uint32 dstChainId
+    ) external view returns (bytes32) {
+        return LibVaipakam.storageSlot().importedOutstanding[dstChainId];
+    }
+
     /// @dev Local twins of the mutating facet's errors (same selectors).
     error RewardMessengerNotSet();
     error ReceivedRemitNotFound(uint256 remitId);

@@ -443,6 +443,26 @@ interface IVaipakamErrors {
     ///         shape, refused re-executably rather than misread.
     error RemitAckClassificationInvalid(uint8 classification);
 
+    // -- #1434 P2-w6 - the recovery ceremony + R6e rotation --
+
+    /// @notice Ceremony records apply to RELEASED reservations only.
+    error CeremonyReservationNotReleased(uint256 remitId);
+
+    /// @notice recovered + terminal loss would pass the reservation's
+    ///         dispatched total - over-recording refused.
+    error CeremonyExceedsStranded(uint256 remitId, uint256 sum, uint256 total);
+
+    /// @notice The Diamond does not hold the value the ceremony claims
+    ///         arrived - a books-only recovery must roll back here.
+    error CeremonyInflowNotBacked(uint256 remitId, uint256 bal, uint256 need);
+
+    /// @notice Imported tuple names zero or THIS deployment (an own-era
+    ///         reservation needs no import).
+    error ImportedTupleInvalid(address oldRemitter);
+
+    /// @notice No imported marker stands for this chain.
+    error ImportedMarkerMissing(uint32 dstChainId);
+
     /// @notice A from-recovery dispatch exceeds the recovery position
     ///         balance (recovered − redispatched).
     error RecoveryPositionInsufficient(uint256 requested, uint256 available);

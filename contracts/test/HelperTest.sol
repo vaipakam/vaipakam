@@ -2142,7 +2142,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](12);
         selectors[0] =
             RewardCompensationDispatchFacet.remitManualBudget.selector;
         selectors[1] =
@@ -2166,6 +2166,18 @@ contract HelperTest {
         selectors[7] = RewardCompensationDispatchFacet
             .resetReleasedRemitStrandedSeed
             .selector;
+        // #1434 P2-w6 - the recovery ceremony + R6e rotation.
+        selectors[8] =
+            RewardCompensationDispatchFacet.recordRecoveryCeremony.selector;
+        selectors[9] = RewardCompensationDispatchFacet
+            .recordRecoveryTerminalLoss
+            .selector;
+        selectors[10] = RewardCompensationDispatchFacet
+            .importOutstandingCompensation
+            .selector;
+        selectors[11] = RewardCompensationDispatchFacet
+            .clearImportedOutstanding
+            .selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
@@ -2176,7 +2188,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](27);
+        selectors = new bytes4[](29);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2210,6 +2222,10 @@ contract HelperTest {
             RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
         // #1660 r8 - moved off the mutating facet for EIP-170 headroom.
         selectors[26] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
+        selectors[27] =
+            RewardRemittanceLensFacet.getCeremonyTerminalLoss.selector;
+        selectors[28] =
+            RewardRemittanceLensFacet.getImportedOutstanding.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

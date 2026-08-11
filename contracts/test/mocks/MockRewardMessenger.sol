@@ -391,6 +391,20 @@ contract MockRewardMessenger is IRewardMessenger {
         );
     }
 
+    /// @dev #1434 P2-w6 (R6e) - arbitrary-remitter delivery with an
+    ///      explicit wire classification (imported-marker branch tests).
+    function deliverRemitAckFromWithClassification(
+        uint32 sourceChainId,
+        uint256 remitId,
+        uint256 amountReceived,
+        address remitter,
+        uint8 classification
+    ) external {
+        IRewardRemitAckIngress(diamond).onRemitAckReceived(
+            sourceChainId, remitId, amountReceived, remitter, classification
+        );
+    }
+
     function quoteSendChainReport(
         uint256,
         uint256,

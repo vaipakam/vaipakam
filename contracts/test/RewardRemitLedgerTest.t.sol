@@ -2968,6 +2968,13 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
+    /// Bucket component of the backing snapshot (w6 ceremony tests).
+    function _bucket() internal view returns (uint256 bucket) {
+        (, bucket, , , , , , ) = InteractionRewardsLensFacet(
+            address(diamond)
+        ).getRecycleBackingSnapshot();
+    }
+
     /// Same arming, named for tests that deliberately present NO ack
     /// first (the r4 refusal paths).
     function _armReturnIngressNoAck() internal {
@@ -3392,6 +3399,183 @@ contract RewardRemitLedgerTest is SetupTest {
         (fl, fb) = rlens.getCompFunded(CHAIN_ARB, 1);
         assertEq(fl, 3e18, "cumulative lands exactly at quote");
         assertEq(fb, 2e18, "cumulative lands exactly at quote");
+    }
+
+    // -- #1434 P2-w6: the recovery ceremony + R6e rotation (SS8-6) ------
+
+    /// Fixture: a released compensation reservation (remit 1, day 1,
+    /// total 3e18) with the gate still held by it, and the stranded
+    /// tokens "brought home" (minted back, simulating pool -> Diamond).
+    function _releasedCeremonyFixture() internal {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            1,
+            "release holds the gate"
+        );
+    }
+
+    /// SS8-6 - the ceremony credits the FRESH half into the w5 recovery
+    /// position and the RECYCLED half as relocated bucket custody, folds
+    /// into the ONE per-receipt recovered cumulative, and clears the gate
+    /// only at FULL custody resolution.
+    function test_Ceremony_CreditsPositionAndRelocatedCustody() public {
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 3e18); // pool -> Diamond, physically
+        uint256 bucketBefore = _bucket();
+        comp.recordRecoveryCeremony(1, 2e18, 1e18);
+        (uint256 recovered, , ) = rlens.getRecoveryPosition();
+        assertEq(recovered, 2e18, "fresh half entered the position");
+        assertEq(
+            _bucket() - bucketBefore,
+            1e18,
+            "recycled half relocated into the bucket"
+        );
+        assertEq(rlens.getRecoveredForReceipt(1), 3e18, "one cumulative");
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "full resolution clears the gate"
+        );
+        // The recovered value re-dispatches UNCHARGED from the position.
+        uint256 globalBefore = rlens.getRewardBudgetRemittedGlobal();
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 1.5e18, 0.5e18
+        );
+        assertEq(
+            rlens.getRewardBudgetRemittedGlobal(),
+            globalBefore,
+            "ceremony-recovered value re-dispatches uncharged"
+        );
+    }
+
+    /// SS8-6 - partial recoveries HOLD the gate; the terminal-loss record
+    /// completes the identity; over-recording refuses.
+    function test_Ceremony_PartialHoldsGateAndLossCompletes() public {
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 2e18);
+        comp.recordRecoveryCeremony(1, 1e18, 0);
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            1,
+            "partial recovery holds the gate"
+        );
+        comp.recordRecoveryCeremony(1, 1e18, 0);
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 1, "still held");
+        // Over-recording past the dispatched total refuses.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CeremonyExceedsStranded.selector,
+                1,
+                4e18,
+                3e18
+            )
+        );
+        comp.recordRecoveryTerminalLoss(1, 2e18);
+        // The evidenced terminal loss completes the resolution.
+        comp.recordRecoveryTerminalLoss(1, 1e18);
+        assertEq(rlens.getCeremonyTerminalLoss(1), 1e18);
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "recovered + loss == stranded clears the gate"
+        );
+    }
+
+    /// SS8-6 - ceremony guards: live reservations refuse (their value
+    /// settles through acks/returns), consumed receipts refuse, and a
+    /// books-only recovery with no tokens behind it rolls back.
+    function test_Ceremony_Guards() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CeremonyReservationNotReleased.selector, 1
+            )
+        );
+        comp.recordRecoveryCeremony(1, 1e18, 0);
+        vm.warp(block.timestamp + 7 days);
+        remit.releaseRemitReservation(1);
+        // Books-only: pin the bucket at the whole balance so the fresh
+        // credit has NO unearmarked float behind it - a recovery with no
+        // tokens actually home must roll back at the record.
+        uint256 bal = vpfiTok.balanceOf(address(diamond));
+        mutator.setRecycleBucketRaw(bal);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CeremonyInflowNotBacked.selector,
+                1,
+                bal,
+                bal + 1e18
+            )
+        );
+        comp.recordRecoveryCeremony(1, 1e18, 0);
+    }
+
+    /// SS8-6 (R6e) - an imported old-era marker holds the gate against
+    /// new dispatches until the mirror's re-presented CONSUMED
+    /// attestation resolves it; non-consumed re-presents only observe.
+    function test_Import_GateBlocksUntilRepresentedOrEvidenced() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        address oldBase = address(0x01dBA5E);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CompensationGateHeld.selector, CHAIN_ARB, 7
+            )
+        );
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        // A non-consumed re-present observes, gate unchanged.
+        rewardMessenger.deliverRemitAckFromWithClassification(
+            CHAIN_ARB, 7, 3e18, oldBase, 2
+        );
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 7, "held");
+        // The consumed re-present resolves and releases the gate.
+        rewardMessenger.deliverRemitAckFromWithClassification(
+            CHAIN_ARB, 7, 3e18, oldBase, 1
+        );
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0, "released");
+        assertEq(
+            rlens.getImportedOutstanding(CHAIN_ARB), bytes32(0), "marker gone"
+        );
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+    }
+
+    /// SS8-6 (R6e) - the ADMIN evidenced clear covers quarantined old-era
+    /// value a new-era return cannot carry; a wrong-tuple ack never
+    /// touches the imported gate.
+    function test_Import_EvidencedClearAndWrongTuple() public {
+        address oldBase = address(0x01dBA5E);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
+        // A stale-era ack for a DIFFERENT tuple is rejected as before.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RemitAckSenderMismatch.selector,
+                8,
+                oldBase
+            )
+        );
+        rewardMessenger.deliverRemitAckFromWithClassification(
+            CHAIN_ARB, 8, 1e18, oldBase, 1
+        );
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 7, "held");
+        comp.clearImportedOutstanding(CHAIN_ARB);
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0, "cleared");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ImportedMarkerMissing.selector, CHAIN_ARB
+            )
+        );
+        comp.clearImportedOutstanding(CHAIN_ARB);
     }
 
     /// #1660 r4 - POSITIVE non-consumption evidence is required: a return

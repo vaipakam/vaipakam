@@ -1623,6 +1623,40 @@ contract RewardRemittanceFacet is
         // restart per deployment, so a stale-era receipt (pre-rotation,
         // possibly same chain id) can never finalize a same-numbered
         // reservation here.
+        // #1434 P2-w6 (§5.4 R6e) — the IMPORTED-marker branch, before the
+        // era check: after a Base rotation, the retired deployment's
+        // outstanding compensation holds this chain's gate under an
+        // imported old-era tuple. The mirror's receipt state survives the
+        // rotation, and its permissionlessly re-presented ack reaches the
+        // CURRENT deployment here — verified against the imported marker,
+        // never against our own reservations (which never contained the
+        // tuple). A CONSUMED attestation resolves the old delivery and
+        // releases the gate; quarantined/provisional old-era value cannot
+        // settle through a new-era return (the B1 era check refuses old
+        // remitters by design) and resolves via the ADMIN evidenced
+        // clear + ceremony instead — observed here, never guessed at.
+        {
+            bytes32 marker = s.importedOutstanding[sourceChainId];
+            if (
+                marker != bytes32(0)
+                    && marker == keccak256(abi.encode(remitter, remitId))
+            ) {
+                if (classification == 1) {
+                    delete s.importedOutstanding[sourceChainId];
+                    LibRewardRemitDispatch.clearCompensationGate(
+                        s, sourceChainId
+                    );
+                    emit ImportedOutstandingResolved(
+                        sourceChainId, remitter, remitId
+                    );
+                } else {
+                    emit ImportedOutstandingObserved(
+                        sourceChainId, remitter, remitId, classification
+                    );
+                }
+                return;
+            }
+        }
         if (remitter != address(this)) {
             revert RemitAckSenderMismatch(remitId, remitter);
         }
@@ -1869,6 +1903,27 @@ contract RewardRemittanceFacet is
         uint256 indexed remitId,
         uint256 clawedToOverage,
         uint256 unrecoverable
+    );
+
+    /// @notice #1434 P2-w6 (§5.4 R6e) — a mirror's re-presented CONSUMED
+    ///         attestation resolved an imported old-era outstanding
+    ///         compensation; the chain's gate released.
+    /// @custom:event-category state-change/reward-compensation
+    event ImportedOutstandingResolved(
+        uint32 indexed sourceChainId,
+        address oldRemitter,
+        uint256 oldRemitId
+    );
+
+    /// @notice §5.4 R6e — an imported tuple's ack arrived NON-consumed:
+    ///         observed for the operator (the evidenced clear + ceremony
+    ///         are the resolution path), gate unchanged.
+    /// @custom:event-category informational/reward-compensation
+    event ImportedOutstandingObserved(
+        uint32 indexed sourceChainId,
+        address oldRemitter,
+        uint256 oldRemitId,
+        uint8 classification
     );
 
     /// @dev #1660 r8 - stamp a CONSUMED attestation. Returns true when it

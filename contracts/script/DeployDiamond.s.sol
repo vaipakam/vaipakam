@@ -2727,7 +2727,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](8);
+        s = new bytes4[](12);
         s[0] = RewardCompensationDispatchFacet.remitManualBudget.selector;
         s[1] =
             RewardCompensationDispatchFacet.remitSupplementalBudget.selector;
@@ -2749,6 +2749,18 @@ contract DeployDiamond is Script {
         s[7] = RewardCompensationDispatchFacet
             .resetReleasedRemitStrandedSeed
             .selector;
+        // #1434 P2-w6 - the recovery ceremony + R6e rotation.
+        s[8] =
+            RewardCompensationDispatchFacet.recordRecoveryCeremony.selector;
+        s[9] = RewardCompensationDispatchFacet
+            .recordRecoveryTerminalLoss
+            .selector;
+        s[10] = RewardCompensationDispatchFacet
+            .importOutstandingCompensation
+            .selector;
+        s[11] = RewardCompensationDispatchFacet
+            .clearImportedOutstanding
+            .selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).
@@ -2757,7 +2769,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](27);
+        s = new bytes4[](29);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2791,6 +2803,10 @@ contract DeployDiamond is Script {
             RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
         // #1660 r8 - moved off the mutating facet for EIP-170 headroom.
         s[26] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
+        s[27] =
+            RewardRemittanceLensFacet.getCeremonyTerminalLoss.selector;
+        s[28] =
+            RewardRemittanceLensFacet.getImportedOutstanding.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
