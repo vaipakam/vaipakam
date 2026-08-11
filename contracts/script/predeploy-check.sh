@@ -17,10 +17,14 @@
 #            SelectorCoverageTest  (every facet selector cut into the
 #                                   Diamond + no 4-byte selector
 #                                   collision; #71).
-#        • with `--full`      — the entire regression suite (invariants
-#            excluded — run those separately; they are slow). Use for a
-#            mainnet preflight: do not deploy contracts whose tests are
-#            red. `deploy-mainnet.sh` passes `--full`.
+#        • with `--full`      — the entire regression suite, by DELEGATING
+#            to `run-regression.sh` (chunked `--match-path` invocations +
+#            an exhaustiveness guard, so no compile unit trips the viaIR
+#            stack ceiling and no suite can be silently skipped).
+#            Invariants excluded — run those separately; they are slow.
+#            Use for a mainnet preflight: do not deploy contracts whose
+#            tests are red. `deploy-mainnet.sh` passes `--full`, as does
+#            the release-track `mainnet-gate.yml` workflow.
 #
 #   3. Deploy shell-script lint — `deploy-{chain,testnet,mainnet}.sh`:
 #        • `bash -n` syntax check.
@@ -45,7 +49,7 @@
 #
 # Usage:
 #   bash script/predeploy-check.sh            # deploy-sanity suite only
-#   bash script/predeploy-check.sh --full     # + full regression
+#   bash script/predeploy-check.sh --full     # + full (chunked) regression
 #
 # It is also invoked automatically as a preflight step inside
 # `deploy-chain.sh`, `deploy-testnet.sh` and `deploy-mainnet.sh`, so a
@@ -92,16 +96,25 @@ fi
 echo
 if [ "$MODE_FULL" -eq 1 ]; then
   echo "[predeploy 2/4] full forge regression (mainnet preflight)"
-  # Invariants are excluded — they are slow (100 runs) and run as their
-  # own pass; this gate is "the regression is green before a deploy".
-  # `--match-path 'test/*.t.sol'` forces a SPARSE compile (only the matched
-  # tests + their dependency closure) rather than the non-sparse
-  # `--no-match-path`-only form, which pulls in the standalone deploy
-  # scripts and trips the same viaIR whole-unit ceiling as step [1] (#636 /
-  # #601). globset's `*` crosses `/`, so `test/*.t.sol` still matches every
-  # current + future `*.t.sol` anywhere under `test/` — same coverage, just
-  # compiled sparsely. Mirrors `run-regression.sh`.
-  if forge test --match-path "test/*.t.sol" --no-match-path "test/invariants/*"; then
+  # DELEGATED to `run-regression.sh` — deliberately NOT a second copy of the
+  # regression command (#1620). This branch used to run its own single
+  # `forge test --match-path 'test/*.t.sol'` pass. That sparse-compile form
+  # was correct when written, but `run-regression.sh` has since recorded
+  # that ordinary feature growth (#591) re-crossed the viaIR whole-unit
+  # stack ceiling for even that single pass — which is why that script
+  # moved to CHUNKED `--match-path` invocations. This branch never followed,
+  # so the mainnet preflight (and `mainnet-gate.yml`, which runs this same
+  # `--full` path on the release track) was running the form its sibling
+  # script documents as outgrown. A ceiling trip here is a COMPILE failure,
+  # and it sets the same FAIL=1 as a red test — so it would read as
+  # "regression failed, do not deploy" while having tested nothing.
+  #
+  # One chunking implementation, one exhaustiveness guard, one place to fix
+  # when the ceiling moves again. Invariants stay excluded (they are slow —
+  # 100 runs — and run as their own pass); plain `run-regression.sh` without
+  # `--invariants` is exactly that scope, so the gate's semantics are
+  # unchanged. It forces FOUNDRY_PROFILE=default itself.
+  if bash "$SCRIPT_DIR/run-regression.sh"; then
     echo "  ✓ full regression passes"
   else
     echo "  ✗ regression failed — do not deploy red contracts" >&2
