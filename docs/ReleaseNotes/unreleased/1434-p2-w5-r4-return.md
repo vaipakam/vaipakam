@@ -3,9 +3,14 @@
 A compensation that a mirror had to quarantine (wrong era, expired
 window, conflicting arrival) is no longer a dead end. Anyone can now
 send the quarantined value home to Base over the shared return channel —
-the record on the mirror is the evidence, the caller only pays the
-message fee, and the exact recorded amount travels; nothing about the
-return can be redirected or resized by the caller.
+the record on the mirror is the evidence and the caller only pays the
+message fee. Returns are sent in caller-chosen chunks bounded by the
+record's remaining balance (the destination lane has a transfer ceiling
+the mirror cannot read, and a single indivisible send above it would be
+permanently undeliverable), with the remainder staying retryable; the
+caller can neither redirect a chunk nor send more than the record
+holds, and the wire itself carries the record's remaining balance so
+the canonical chain can tell a partial return from the final one.
 
 On Base, the returned value lands in a new **recovery position**. The
 credit is strictly bounded: it must arrive from the chain the original

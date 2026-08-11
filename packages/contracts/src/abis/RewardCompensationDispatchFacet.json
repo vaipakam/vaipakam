@@ -308,7 +308,13 @@
         "internalType": "uint256"
       },
       {
-        "name": "shortfall",
+        "name": "chunkShortfall",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalShortfall",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

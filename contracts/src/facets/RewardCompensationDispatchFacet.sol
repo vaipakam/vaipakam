@@ -546,7 +546,13 @@ contract RewardCompensationDispatchFacet is
         uint256 dayId,
         uint256 credited,
         uint256 overage,
-        uint256 shortfall,
+        // #1660 r10 - BOTH figures, explicitly: this chunk's transport
+        // gap (declared minus received), and the receipt's recomputed
+        // TOTAL loss record after this chunk (which folds in first-leg
+        // deficits on the terminal and shrinks on out-of-order
+        // recoveries) - event consumers must see what the lens sees.
+        uint256 chunkShortfall,
+        uint256 totalShortfall,
         bool gateCleared
     );
 
@@ -736,7 +742,7 @@ contract RewardCompensationDispatchFacet is
         }
         emit StrandedReturnSettled(
             remitId, sourceChainId, dayId, credited, overage, shortfall,
-            gateCleared
+            s.strandedReturnShortfall[remitId], gateCleared
         );
     }
 
