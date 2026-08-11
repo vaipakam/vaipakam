@@ -274,6 +274,299 @@ interface IVaipakamErrors {
     ///         apply another chain's funded figures here).
     error BroadcastDestinationMismatch(uint256 destChainId);
 
+    // ─── #1434 P2-w1 — V3 broadcast + versioned lapse schedule ──────────────
+
+    /// @notice `lapseWindowSeconds` outside the hard-coded `[3 days,
+    ///         30 days]` bounds (design §7).
+    error LapseWindowOutOfBounds(uint64 lapseWindowSeconds);
+    /// @notice `dispatchCutoffGap` outside the hard-coded `[6 hours,
+    ///         7 days]` bounds (design §7).
+    error DispatchCutoffGapOutOfBounds(uint64 dispatchCutoffGap);
+    /// @notice The relational bound `lapseWindowSeconds >= dispatchCutoffGap
+    ///         + 48 hours` failed — such a version would place the dispatch
+    ///         cutoff at (or before) finalization and forbid every
+    ///         compensation for every day frozen under it, unrepairably
+    ///         (frozen parameters are permanent). Refused, never stored.
+    error LapseScheduleMarginViolated(
+        uint64 lapseWindowSeconds, uint64 dispatchCutoffGap
+    );
+    /// @notice {broadcastGlobalTo} on a day with no frozen lapse clock (a
+    ///         day finalized before the P2-w1 upgrade). There is no
+    ///         authentic clock to heal with — such days broadcast on the V2
+    ///         wire via the ordinary {broadcastGlobal}.
+    error DayHasNoLapseClock(uint256 dayId);
+    /// @notice {broadcastGlobalTo}'s destination has no day-scoped
+    ///         historical standing for `dayId` (neither included in its
+    ///         finalized denominator nor holding a chain-day commitments
+    ///         record) — the permissionless heal only re-delivers facts a
+    ///         destination already had a stake in.
+    error DestinationHasNoDayStanding(uint256 dayId, uint256 destChainId);
+    /// @notice {broadcastGlobalTo} needs the kind-10 single-destination
+    ///         send, which this messenger proxy predates. Unlike the full
+    ///         {broadcastGlobal}, the heal cannot fall back to the V2 wire —
+    ///         kind-5 carries no clock, so a fallback would "succeed" while
+    ///         healing nothing.
+    error MessengerPredatesV3();
+    /// @notice A V3 broadcast arrived carrying a zero `finalizedAt`. An
+    ///         honest Base never sends one (clockless days ride the V2
+    ///         wire), so this fails closed as a re-executable CCIP message.
+    error BroadcastClockMissing(uint256 dayId);
+    /// @notice A V3 broadcast named a different Base deployment than the one
+    ///         already recorded for this day (§2h constraint 20 — a delayed
+    ///         broadcast from a retired deployment must never install its
+    ///         clock, schedule or zeroed marker into the new era).
+    error BroadcastEraMismatch(
+        uint256 dayId, address recordedEra, address packetEra
+    );
+    /// @notice A V3 broadcast's `baseDeployment` does not match this
+    ///         mirror's configured CURRENT Base deployment — or that
+    ///         config is unset (`expected == 0`), in which case the V3
+    ///         ingress is deliberately dark (Codex #1632 r1: the per-day
+    ///         era record cannot defend the FIRST install, so the ground
+    ///         truth must be explicit, and fail-closed while unarmed).
+    error BroadcastEraUnauthenticated(
+        uint256 dayId, address expected, address packetEra
+    );
+    /// @notice A LEGACY broadcast (kind-5 / kind-2) attempted a FRESH
+    ///         apply after this mirror rotated Base eras (Codex #1632 r2:
+    ///         legacy packets carry no deployment identity, so a retired
+    ///         era's delayed or manually re-executed delivery is
+    ///         indistinguishable from a legitimate one — after a rotation
+    ///         the only legitimate sender speaks V3, and the legacy wires
+    ///         retire permanently). Replays of already-applied days stay
+    ///         idempotent.
+    error LegacyBroadcastRetired(uint256 dayId);
+    /// @notice A re-delivered V3 broadcast disagreed with the day's already-
+    ///         installed frozen clock facts (finalizedAt / schedule version /
+    ///         inline parameters / zeroed marker).
+    error BroadcastClockDivergence(uint256 dayId);
+    /// @notice #1434 P2-w2 — a P2 compensation payload's per-side shares
+    ///         sum past the delivered amount (malformed payload; both
+    ///         shares floor when scaled, so an honest wire can never trip
+    ///         this).
+    error CompensationSharesExceedDelivery(
+        uint256 lenderShare18, uint256 borrowerShare18, uint256 amount
+    );
+    /// @notice #1434 P2-w2 — the compensation broadcast-arrival hook is
+    ///         Diamond-internal (the reporter facet invokes it through the
+    ///         Diamond's own fallback); any other caller is rejected.
+    error CompensationHookNotSelf(address caller);
+    /// @notice #1634 r2 — a P2 compensation cannot dispatch for a day with
+    ///         no frozen lapse clock: such a day can never emit the V3
+    ///         broadcast that settles the mirror's classification, so the
+    ///         credit would sit provisional forever (or quarantine
+    ///         wrongly). A post-w1 zeroed day heals its clock first
+    ///         (`broadcastGlobalTo`); a day finalized before the clock
+    ///         machinery existed belongs to the w4 legacy-compensation
+    ///         migration (`stampLegacyCompensation`), not this wire.
+    error CompensationDayHasNoClock(uint256 dayId);
+    /// @notice #1634 r3 — the R3 dispatch cutoff: a compensation must not
+    ///         dispatch within `dispatchCutoffGap` of the day's frozen
+    ///         expiry — bridge latency could carry it past expiry, where
+    ///         the mirror quarantines it (reason 3) after Base has already
+    ///         closed the day and consumed headroom.
+    error CompensationDispatchPastCutoff(
+        uint256 dayId, uint256 expiry, uint64 dispatchCutoffGap
+    );
+
+    // ─── #1434 P2-w3 — the compensation quote (§1.4) ────────────────────────
+
+    /// @notice The quote surfaces only exist for a deliberately-zeroed day
+    ///         (the V3 marker — §1.1).
+    error CompQuoteDayNotZeroed(uint256 dayId);
+    /// @notice R1d (§2.3) — the day's LOCAL interest close has not run;
+    ///         zero totals would be ambiguous (unfolded vs genuinely
+    ///         zero). `closeDay` is permissionless: anyone can produce the
+    ///         missing fact and retry.
+    error CompQuoteLocalCloseMissing(uint256 dayId);
+    /// @notice The day has lapsed (or short-lapsed) — the compensation
+    ///         window is over; the loss was recorded at the lapse.
+    error CompQuoteDayLapsed(uint256 dayId);
+    /// @notice Accumulation is closed: the quote was already dispatched
+    ///         (its inputs are frozen, so there is nothing to
+    ///         re-accumulate — re-DISPATCH is the retry lever).
+    error CompQuoteAlreadyDispatched(uint256 dayId);
+
+    /// @notice #1656 r11 — the day's lapse loss is recorded EXACT
+    ///         (conservation proved), so its completed accumulation may
+    ///         not be reset out from under the published record.
+    error CompQuoteResetRefusedExactLoss(uint256 dayId);
+
+    // ── #1434 P2-w5 — the R4 stranded return + recovery position ──
+
+    /// @notice The caller is not the configured return-channel receiver.
+    error OnlyStrandedReturnReceiver(address caller);
+
+    /// @notice The return names a reservation issued by ANOTHER Base
+    ///         deployment (pre-rotation dispatch) — settles via the R6e
+    ///         rotation runbook, never here.
+    error StrandedReturnWrongEra(address remitter);
+
+    /// @notice No reservation exists under this remitId.
+    error StrandedReturnUnknownReservation(uint256 remitId);
+
+    /// @notice The authenticated source chain is not the chain this
+    ///         reservation was dispatched to (Codex #1600 r1 P1 — the
+    ///         chain binding).
+    error StrandedReturnWrongSourceChain(uint32 got, uint32 want);
+
+    /// @notice Wrong token, zero actual, or actual above declared.
+    error StrandedReturnDeliveryInvalid();
+
+    /// @notice #1660 r1 — the named reservation is not a COMPENSATION
+    ///         dispatch (single-day, fresh-only, per-side declared): an
+    ///         ordinary batch reservation's recycled component never
+    ///         charged the lifetime cap, so crediting its total would
+    ///         mint uncharged re-dispatch capacity (a 69M bypass).
+    error StrandedReturnNotCompensation(uint256 remitId);
+
+    /// @notice #1660 r2 — the reported day is not the reservation's own
+    ///         single day: settlement and loss evidence must bind to the
+    ///         authoritative obligation, never a wire-supplied one.
+    error StrandedReturnWrongDay(uint256 got, uint256 want);
+
+    /// @notice #1660 r3 - the receipt was CONSUMED (consumed ack or its
+    ///         forced equivalent): its value backs mirror claims, so a
+    ///         return against it would reuse the dispatch cap lineage.
+    error StrandedReturnConsumedReceipt(uint256 remitId);
+
+    /// @notice #1660 r4 - the return arrived before the receipt's ack:
+    ///         positive NON-consumption evidence (an Acked-non-consumed
+    ///         or Released reservation) is required before any credit,
+    ///         because out-of-order transport could otherwise land a
+    ///         faulty mirror's return ahead of its consumed attestation.
+    ///         Re-executable once the permissionless ack lands.
+    error StrandedReturnAwaitingAck(uint256 remitId, uint8 status);
+
+    /// @notice #1660 r6 - the ack wire's classification word is zero or
+    ///         out of range: zero is the retired generation-1 bool-false
+    ///         shape, refused re-executably rather than misread.
+    error RemitAckClassificationInvalid(uint8 classification);
+
+    /// @notice A from-recovery dispatch exceeds the recovery position
+    ///         balance (recovered − redispatched).
+    error RecoveryPositionInsufficient(uint256 requested, uint256 available);
+    /// @notice The side's conservation sum does not equal the day's folded
+    ///         side total — the accumulation has not covered every entry.
+    error CompQuoteIncomplete(
+        uint256 dayId, uint8 side, uint256 conservation18, uint256 total18
+    );
+    /// @notice A quote arrived for a day Base has not finalized.
+    error CompQuoteDayNotFinalized(uint256 dayId);
+    /// @notice A quote arrived for a chain-day that was never zeroed out of
+    ///         the denominator (and holds no prior quote record).
+    error CompQuoteDayNotIneligible(uint256 dayId, uint32 chainId);
+    /// @notice A re-quote arrived AFTER the day was funded — the funded
+    ///         amount was bounded by the quote standing at dispatch, which
+    ///         is the receipt-bound obligation supplements top up against.
+    error CompQuoteDayAlreadyFunded(uint256 dayId, uint32 chainId);
+    /// @notice #1434 P2-w3 — a manual compensation needs a STANDING quote:
+    ///         the sizing evidence is the mirror's authenticated
+    ///         counterfactual share, never operator judgment alone.
+    error CompensationNotQuoted(uint256 dayId, uint32 chainId);
+    /// @notice #1434 P2-w3 — the per-side amounts exceed the standing
+    ///         quote (each side separately — an aggregate bound would
+    ///         admit overfunding one side while shorting the other).
+    error CompensationExceedsQuote(
+        uint256 lenderAmount18,
+        uint256 borrowerAmount18,
+        uint256 quotedLender18,
+        uint256 quotedBorrower18
+    );
+    /// @notice #1434 P2-w3 (#1636 r1) — the quote surface needs the day's
+    ///         frozen pool stamp (the Δq numerator); pricing without it
+    ///         would quote (0,0) and wrongly resolve a demand-carrying day
+    ///         to zero.
+    error CompQuoteDayPoolStampMissing(uint256 dayId);
+    /// @notice #1434 P2-w3 (#1636 r1) — a re-delivered quote's sending
+    ///         Diamond diverges from the era the standing quote is bound
+    ///         to; a stale-era wire must not overwrite newer evidence.
+    error CompQuoteEraMismatch(
+        uint256 dayId,
+        uint32 chainId,
+        address boundEra,
+        address arrivedEra
+    );
+    /// @notice #1434 P2-w3 (#1636 r2) — the quote ingress is FAIL-CLOSED
+    ///         until the operator registers the sending chain's current
+    ///         mirror Diamond: without a configured ground truth, a
+    ///         delayed retired-era wire could be the FIRST arrival and
+    ///         bind (or zero-clear) the day unchallenged.
+    error CompQuoteMirrorEraUnset(uint32 chainId);
+    /// @notice #1434 P2-w3 (#1636 r4) — a resolved-zero standing quote is
+    ///         TERMINAL and refuses the era-rotation clear: its (0,0)
+    ///         ingress already retired the day's manual-funding anchor,
+    ///         deleting the record would strand the chain-day outside
+    ///         every admission path, and a re-quote under ANY era is
+    ///         deterministically (0,0) again — there is nothing to
+    ///         restate.
+    error CompQuoteResolvedZeroFinal(uint256 dayId, uint32 chainId);
+    // ─── #1434 P2-w4 — lapse terminals + R6 gate + supplemental ─────────────
+    /// @notice The full-lapse terminal needs a deliberately-zeroed day.
+    error LapseDayNotZeroed(uint256 dayId);
+    /// @notice A compensated day never takes the FULL lapse — its exits
+    ///         are the supplemental top-up or the short-lapse terminal.
+    error LapseDayCompensated(uint256 dayId);
+    /// @notice R1d — no lapse before the day's local interest close ran
+    ///         (a lapse without a fold would retire unfolded demand).
+    error LapseDayLocalCloseMissing(uint256 dayId);
+    /// @notice The day has no frozen clock, or froze under version 0
+    ///         (pre-schedule) — not lapse-eligible; healable by re-broadcast.
+    error LapseDayClockMissing(uint256 dayId);
+    /// @notice The day's frozen expiry has not passed.
+    error LapseDayNotExpired(uint256 dayId, uint256 expiry);
+    /// @notice The day already reached a terminal (lapsed, short-lapsed,
+    ///         or resolved-zero) — terminals are monotone.
+    error LapseDayAlreadyTerminal(uint256 dayId);
+    /// @notice The short-lapse terminal needs a CONFIRMED compensation.
+    error ShortLapseNotCompensated(uint256 dayId);
+    /// @notice The pools cover the standing per-side quotes — nothing is
+    ///         short; the day prices at full Δq already.
+    error ShortLapseNotShort(uint256 dayId);
+    /// @notice §2.5's bounded deadline (min(lastQualifying + window,
+    ///         first + 3×window)) has not passed.
+    error ShortLapseDeadlineNotReached(uint256 dayId, uint256 deadline);
+    /// @notice R6 — one compensation reservation in flight per chain; the
+    ///         standing one must settle (ACK / return / recovery) first.
+    error CompensationGateHeld(uint32 chainId, uint256 outstandingRemitId);
+    /// @notice A supplemental tops up a day a manual remit already CLOSED.
+    error SupplementalDayNotClosed(uint256 dayId, uint32 chainId);
+    /// @notice The closing reservation must be ACKED (value consumed) —
+    ///         for a dead reservation, release is the tool.
+    error SupplementalReservationNotAcked(uint256 remitId, uint8 status);
+    /// @notice Constraint-19 — the legacy stamp needs the day's COMPLETED
+    ///         quote first (the legacy wire carried no per-side split; the
+    ///         stamp cannot invent one).
+    error LegacyStampQuoteMissing(uint256 dayId);
+    /// @notice Constraint-19 — the named receipt does not exist, or was
+    ///         already spent on a day (one receipt stamps one day).
+    error LegacyReceiptUnusable(bytes32 receiptKey);
+    /// @notice Constraint-19 — the day is not stampable: not zeroed,
+    ///         already terminal, or already compensated.
+    error LegacyDayNotStampable(uint256 dayId);
+    /// @notice #1434 P2-w4 (#1656 r1) — a compensated day whose receipt
+    ///         clocks predate the w4 upgrade (both zero) is not
+    ///         short-lapse-eligible until {armShortLapseClock} starts its
+    ///         bounded window — without this, the deadline formula would
+    ///         read one window past the epoch and fire immediately.
+    error ShortLapseClockUnarmed(uint256 dayId);
+    /// @notice The clock armer is one-shot per day.
+    error ShortLapseClockAlreadyArmed(uint256 dayId);
+    /// @notice #1434 P2-w4 (#1656 r1) — the supplemental needs the
+    ///         per-side funded record its bound reads; a pre-w4 funded day
+    ///         has none until the ADMIN seed backfills it.
+    error SupplementalFundedRecordMissing(uint256 dayId, uint32 chainId);
+    /// @notice #1434 P2-w4 (#1656 r1) — the seed's figures must fit the
+    ///         day's recorded scalar funding and the standing quote.
+    error CompFundedSeedInvalid(uint256 dayId, uint32 chainId);
+    /// @notice #1434 P2-w4 (#1656 r2) — the lapse terminals are DARK until
+    ///         the ADMIN arms them (the constraint-19 activation gate,
+    ///         on-chain): arming attests the legacy inventory read empty
+    ///         and every delivered legacy receipt was stamped.
+    error LapseTerminalsNotArmed();
+    /// @notice The terminals arm once.
+    error LapseTerminalsAlreadyArmed();
+
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by
     ///         governance. Exit paths (repay / liquidate / claim / withdraw)

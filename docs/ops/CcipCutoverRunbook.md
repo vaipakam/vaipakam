@@ -333,6 +333,72 @@ flight, in this order when **lowering**:
   before pointing the receiver at a new Diamond; this is the standing
   receiver-rotation precondition shared by every remittance receiver,
   not a repatriation-specific rule.
+- **Reward-broadcast era rotation** (#1434 P2-w1, Codex #1632 r2) —
+  when the canonical Base DIAMOND rotates, every mirror's V3-broadcast
+  era ground truth rotates with it, in this order:
+  1. **Drain the old era's broadcasts first**: let (or force) every
+     in-flight kind-5/kind-10 delivery from the old Base land — or
+     accept their loss — BEFORE step 2. Order matters because step 2
+     is one-way. **Also heal every era-UNKNOWN day now** (#1632 r3):
+     days applied before the mirror's first arming carry no era
+     provenance, and a rotated mirror permanently refuses to attach V3
+     clock facts to them (it can no longer tell which era supplied
+     their figures) — run `broadcastGlobalTo(dayId, mirror)` for each
+     while the old era is still current, or accept them staying
+     clockless forever.
+  2. On every mirror: `RewardReporterFacet.setBaseRewardDeployment(newBaseDiamond)`.
+     A second, DIFFERENT nonzero value is detected as a rotation and
+     **permanently retires the legacy broadcast wires' fresh applies**
+     on that mirror (`LegacyBroadcastRetired`): kind-5/kind-2 packets
+     carry no deployment identity, so after a rotation a retired era's
+     delayed or manually re-executed delivery cannot be told apart
+     from a legitimate one — only the V3 wire (which authenticates its
+     era) keeps applying fresh days. Replays of already-applied days
+     stay idempotent.
+  3. Days whose figures were applied under the OLD era keep their
+     recorded era (the apply-time provenance stamp) and refuse
+     new-era V3 backfills (`BroadcastEraMismatch`) — cross-era
+     combination is the exact state-poisoning this blocks. Such days
+     are the drain/heal ceremony's job, not silent overwrite.
+  The first arming (zero → nonzero) is NOT a rotation; a disarm/re-arm
+  cycle of the same address is not one either.
+- **Mirror-era registry on Base** (#1434 P2-w3, Codex #1636 r2/r3) —
+  the RECIPROCAL registration: Base's compensation-quote (kind-11)
+  ingress authenticates every arriving quote's sending-Diamond word
+  against `RewardCommitmentFacet.setMirrorRewardDeployment(chainId,
+  mirrorDiamond)` and is FAIL-CLOSED per chain until that registration
+  exists (`CompQuoteMirrorEraUnset`; deliveries stay failed-but-
+  re-executable).
+  1. **Initial setup** — register every mirror's Diamond on Base as
+     part of the reward-mesh configuration.
+     `ConfigureRewardReporter.s.sol` does this on canonical chains from
+     `MIRROR_REWARD_DEPLOYMENTS` (format
+     `"42161:0xMirrorDiamond,10:0xMirrorDiamond"`); leaving it unset
+     logs a loud warning and leaves zeroed-day compensation quoting
+     unreachable for the unregistered lanes.
+  1b. **Lapse-terminal arming (constraint-19, #1656 r2)** — the two
+     permissionless lapse terminals ship DARK
+     (`LapseTerminalsNotArmed`). Per mirror, arm them
+     (`RewardCommitmentFacet.armLapseTerminals`, ADMIN, one-shot) ONLY
+     after: (a) Base's `getLegacyManualReservations` pages read EMPTY
+     over the full id range (Pending hits released or resolved), and
+     (b) every delivered legacy receipt was stamped mirror-side
+     (`stampLegacyCompensation`) and any pre-w4 funded day seeded
+     Base-side (`seedCompFunded`, at the RECEIVED figure for
+     short-ACKed deliveries). The arm is the checklist's on-chain
+     attestation — an upgrade window's expired days cannot be lapsed
+     out from under an unstamped legacy delivery.
+  2. **When a MIRROR Diamond rotates**: on Base, run
+     `setMirrorRewardDeployment(chainId, newMirrorDiamond)`, then
+     `clearCompQuote(dayId, chainId)` for any NONZERO quote still
+     standing under the retired mirror. Two record classes refuse the
+     clear by design (#1636 r4): funded days (their standing quote is
+     the receipt-bound obligation) and RESOLVED-ZERO records
+     (`CompQuoteResolvedZeroFinal` — the (0,0) ingress already retired
+     the day's funding anchor, the day is terminally zero, and a
+     re-quote under any era is deterministically (0,0) again; the
+     record stays as the receipt). The new era then re-quotes the
+     cleared days permissionlessly from the mirror side.
 
 ---
 

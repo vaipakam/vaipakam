@@ -39,6 +39,23 @@ interface IRepatriationReturnIngress {
     ) external;
 }
 
+/// @notice #1434 P2-w5 — the Diamond's Mode-B stranded-return ingress: the
+///         satellite authenticates the transport and forwards the tokens;
+///         the Diamond authenticates the receipt lifecycle (era, chain
+///         binding, entitlement bound, gate settlement).
+interface IStrandedReturnIngress {
+    function onStrandedReturnReceived(
+        address remitter,
+        uint256 remitId,
+        uint256 dayId,
+        uint32 sourceChainId,
+        address token,
+        uint256 declaredAmount,
+        uint256 actualReceived,
+        uint256 remainingAfter
+    ) external;
+}
+
 /**
  * @title VpfiReturnReceiver — #1568 C2 (mirror→Base VPFI return channel, receive leg)
  *
@@ -66,6 +83,13 @@ interface IRepatriationReturnIngress {
  *
  * @dev UUPS-upgradeable; guardian + owner pause. Holds no native funds.
  */
+/// @dev #1660 r1 - this satellite's WIRE GENERATION, file-level so the
+///      in-place refresh script imports the same durable constant the
+///      contract publishes (the receiver/messenger probe pattern).
+///      Generation 2 = the B1 stranded-return decode branch (#1434 P2-w5); a proxy
+///      without the selector is generation 1.
+uint256 constant VPFI_RETURN_RECEIVER_WIRE_GENERATION = 2;
+
 contract VpfiReturnReceiver is
     Initializable,
     Ownable2StepUpgradeable,
@@ -88,6 +112,11 @@ contract VpfiReturnReceiver is
     // forge-lint: disable-next-line(mixed-case-variable)
     uint256[48] private __gap;
 
+    /// @notice #1660 r1 - the durable upgrade probe the refresh script
+    ///         generation-gates on.
+    uint256 public constant WIRE_GENERATION =
+        VPFI_RETURN_RECEIVER_WIRE_GENERATION;
+
     // ─── Events ───────────────────────────────────────────────────────
 
     /// @custom:event-category informational/config
@@ -105,6 +134,14 @@ contract VpfiReturnReceiver is
     event RepatriationCancelAckForwarded(
         uint256 indexed sourceChainId,
         uint256 indexed authId
+    );
+    /// @custom:event-category informational/reward-transport
+    event StrandedReturnForwarded(
+        uint256 indexed sourceChainId,
+        address indexed remitter,
+        uint256 indexed remitId,
+        address token,
+        uint256 actualReceived
     );
 
     // ─── Errors ───────────────────────────────────────────────────────
@@ -187,6 +224,8 @@ contract VpfiReturnReceiver is
             _handleRepatReturn(uint32(sourceChainId), payload, tokens);
         } else if (head == ReturnWire.RETURN_WIRE_TAG_REPAT_CANCEL_ACK_A1) {
             _handleRepatCancelAck(uint32(sourceChainId), payload, tokens);
+        } else if (head == ReturnWire.RETURN_WIRE_TAG_STRANDED_B1) {
+            _handleStrandedReturn(uint32(sourceChainId), payload, tokens);
         } else {
             // Fail-closed rollout (the {ReturnWire} property): an unknown
             // keccak tag can never be coerced into a known shape, and the
@@ -272,6 +311,67 @@ contract VpfiReturnReceiver is
         );
 
         emit RepatriationCancelAckForwarded(sourceChainId, authId);
+    }
+
+    /// @dev #1434 P2-w5 — Mode-B STRANDED RETURN: one token, declared must
+    ///      match the transport amount exactly (the mirror sends its
+    ///      recorded outflow, never a caller figure), and the spendable /
+    ///      balance-delta idiom reports what actually lands in the Diamond
+    ///      — the entitlement bound and any shortfall accounting are the
+    ///      Diamond ingress's job, not the transport's.
+    function _handleStrandedReturn(
+        uint32 sourceChainId,
+        bytes calldata payload,
+        ICrossChainMessenger.TokenAmount[] calldata tokens
+    ) internal {
+        if (payload.length != 6 * 32) {
+            revert PayloadSizeMismatch(payload.length, 6 * 32);
+        }
+        if (tokens.length != 1) revert WrongTokenCount(tokens.length);
+        (
+            ,
+            address remitter,
+            uint256 remitId,
+            uint256 dayId,
+            uint256 declaredAmount,
+            uint256 remainingAfter
+        ) = abi.decode(
+            payload, (uint256, address, uint256, uint256, uint256, uint256)
+        );
+
+        address deliveredToken = tokens[0].token;
+        uint256 deliveredAmount = tokens[0].amount;
+        if (deliveredAmount != declaredAmount) {
+            revert AmountMismatch(declaredAmount, deliveredAmount);
+        }
+        if (deliveredAmount == 0) revert ZeroAmount();
+
+        uint256 spendable = IERC20(deliveredToken).balanceOf(address(this));
+        if (spendable == 0) revert ZeroAmount();
+        uint256 toTransfer = spendable < deliveredAmount
+            ? spendable
+            : deliveredAmount;
+
+        uint256 diamondBalBefore = IERC20(deliveredToken).balanceOf(diamond);
+        IERC20(deliveredToken).safeTransfer(diamond, toTransfer);
+        uint256 actualReceived = IERC20(deliveredToken).balanceOf(diamond) -
+            diamondBalBefore;
+        if (actualReceived == 0) revert ZeroAmount();
+
+        IStrandedReturnIngress(diamond).onStrandedReturnReceived(
+            remitter,
+            remitId,
+            dayId,
+            sourceChainId,
+            deliveredToken,
+            declaredAmount,
+            actualReceived,
+            remainingAfter
+        );
+
+        emit StrandedReturnForwarded(
+            sourceChainId, remitter, remitId, deliveredToken, actualReceived
+        );
     }
 
     // ─── Emergency pause ──────────────────────────────────────────────

@@ -42,7 +42,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launch, ensureConnected, addressOf, SITE } from './driver.mjs';
+import {
+  launch,
+  ensureConnected,
+  addressOf,
+  blockedSync,
+  LiveSetupError,
+  SITE,
+  visit,
+} from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(HERE, 'shots', 'ux-sweep');
@@ -167,16 +175,19 @@ const sessionKeys = (sessionsEnv ?? (PROBE_ONLY ? 'main' : 'main,disconnected,ar
 // which evidence gets produced, and silently dropping `disconnect`
 // (say) would let a review report ship missing a whole coverage
 // dimension while exiting 0 (Codex #1181 P2).
+// Both exits are BLOCKED, not FAIL (#1581): a mis-set selector means the
+// sweep gathered nothing, so the surfaces it covers are still unswept —
+// the batch must not report that as evidence the app regressed.
 const knownKeys = new Set(SESSIONS.map((s) => s.key));
 const unknown = sessionKeys.filter((k) => !knownKeys.has(k));
 if (unknown.length > 0) {
-  throw new Error(
+  blockedSync(
     `UX_SWEEP_SESSIONS names unknown session(s): ${unknown.join(', ')} — known: ${[...knownKeys].join(', ')}`,
   );
 }
 const activeSessions = SESSIONS.filter((s) => sessionKeys.includes(s.key));
 if (activeSessions.length === 0) {
-  throw new Error('UX_SWEEP_SESSIONS selected no sessions — nothing to sweep');
+  blockedSync('UX_SWEEP_SESSIONS selected no sessions — nothing to sweep');
 }
 
 /** The DevTools-tabs-in-one-call probe. Runs in the page; every field
@@ -278,7 +289,24 @@ async function resolveLoanDetailRoute(page) {
 
 const routesEnv = process.env.UX_SWEEP_ROUTES;
 
-fs.mkdirSync(OUT_DIR, { recursive: true });
+// The sweep's whole output is these artifacts — nowhere to write them is
+// a missing precondition, not a finding (#1581).
+//
+// Probe an actual write, because `mkdirSync(recursive)` on an EXISTING
+// directory succeeds without testing write access (Codex #1621 r2).
+// Without the probe the first hard failure was a screenshot `rmSync`
+// mid-sweep — which exits 1 AND leaves the browser open — or, in
+// probe-only mode, the closing `writeFileSync` after the whole sweep had
+// run. Both report "nowhere to write" as a product finding, and the
+// first one does it after wasting the run.
+try {
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  const probe = path.join(OUT_DIR, '.write-probe');
+  fs.writeFileSync(probe, '');
+  fs.rmSync(probe, { force: true });
+} catch (err) {
+  blockedSync(`cannot write to the sweep output directory\n  path: ${OUT_DIR}\n  ${err.message}`);
+}
 const report = {
   site: SITE,
   startedAt: null, // stamped by the caller reading report.json mtime; Date.now is fine here (plain node, not a Workflow)
@@ -286,13 +314,43 @@ const report = {
   passes: [],
 };
 report.startedAt = new Date().toISOString();
+// Every selected session's credential, resolved BEFORE any evidence is
+// gathered (Codex #1621 r3). `addressOf` and `launch`'s own `walletFor`
+// both exit BLOCKED synchronously and both run outside the try below, so
+// a wallet file with a valid lender but no borrower let session 1 record
+// a real read-only violation and then had session 2 exit 2 — replacing a
+// proven finding with "verified nothing", the very thing
+// `onSetupFailure: 'throw'` was added to prevent. Resolving them here
+// makes a missing credential a precondition again: nothing has been
+// observed yet, so exiting is honest and costs no evidence.
+for (const s of activeSessions) addressOf(s.role);
 const allBlockedRequests = [];
+// Sessions whose browser never started. Reported at the end rather than
+// exited on, so a finding from a session that DID run still wins.
+const setupFailures = [];
+// Set once the site has actually served a page. Keyed to the first load
+// that HAPPENS, not to activeSessions[0] (Codex #1621 r4): if session 0's
+// setup failed, session 1 is the run's first load and skipped the probe,
+// so an unreachable target exited 1 and leaked that session's browser.
+let reachabilityProven = false;
 const backgroundNetworkBySession = {};
 
 for (const session of activeSessions) {
   const routes = routesEnv
-    ? routesEnv.split(',').map((s) => s.trim())
+    ? routesEnv.split(',').map((s) => s.trim()).filter(Boolean)
     : [...(session.routes ?? STATIC_ROUTES)];
+  // A selector that normalises to NOTHING is BLOCKED, not PASS (Codex
+  // #1621 r6) — the same rule DESK_I18N_LOCALES got, on the sibling
+  // selector I did not revisit. `UX_SWEEP_ROUTES=",,,"` is non-empty, so
+  // the default does not apply; unfiltered it produced empty route names
+  // that re-visited SITE and exited 0 having swept none of the routes
+  // asked for.
+  if (routes.length === 0) {
+    blockedSync(
+      `UX_SWEEP_ROUTES=${JSON.stringify(routesEnv)} selects no routes —` +
+        ` nothing to sweep.`,
+    );
+  }
 
   report.sessions.push({
     key: session.key,
@@ -303,15 +361,37 @@ for (const session of activeSessions) {
     passes: session.passes.map((p) => p.name),
   });
 
-const { page, done, blockedRequests } = await launch({
-  role: session.role,
-  startChainId: session.chainId,
-  headless: true,
-  readOnly: true,
-  preAuthorized: session.preAuthorized ?? true,
-  allowRequestAccounts: session.allowRequestAccounts ?? true,
-  freshProfile: session.freshProfile ?? false,
-});
+// This sweep launches once PER SESSION and accumulates findings across
+// them in `allBlockedRequests`, so it is evidence-accumulating in the
+// same way live-recover-locales.mjs is (Codex #1621 r2). If session 1
+// caught a page-initiated write — a proven product defect — and session
+// 3's browser fails to start, exiting BLOCKED there would replace that
+// finding with "verified nothing". Take the error back and decide at
+// the end, where the evidence is.
+let launched;
+try {
+  launched = await launch({
+    role: session.role,
+    startChainId: session.chainId,
+    headless: true,
+    readOnly: true,
+    onSetupFailure: 'throw',
+    preAuthorized: session.preAuthorized ?? true,
+    allowRequestAccounts: session.allowRequestAccounts ?? true,
+    freshProfile: session.freshProfile ?? false,
+  });
+} catch (err) {
+  if (!(err instanceof LiveSetupError)) throw err;
+  // Record and carry on to the next session: the verdict is decided at
+  // the end, where a finding from an earlier session can outrank this.
+  setupFailures.push({
+    key: session.key,
+    why: String(err.cause?.message ?? err.cause ?? err).split('\n')[0].slice(0, 200),
+  });
+  console.error(`session ${session.key}: browser setup failed — ${err.message}`);
+  continue;
+}
+const { page, done, blockedRequests } = launched;
 
 // One console/request tap for the lifetime of the context.
 let sink = null;
@@ -375,7 +455,17 @@ page.on('response', async (res) => {
   if (bytes > 500_000) s.network.heavy.push({ bytes, url: url.slice(0, 300) });
 });
 
-await page.goto(SITE, { waitUntil: 'domcontentloaded' });
+// The FIRST session's initial load is this sweep's reachability probe:
+// if the site never answers there is no evidence to gather, so BLOCKED
+// (#1581). Later sessions keep exiting 1 — by then the site is known to
+// serve, and the per-route loop below already records its own nav
+// failures as findings rather than crashing.
+if (!reachabilityProven) {
+  await visit(page, '/');
+  reachabilityProven = true;
+} else {
+  await page.goto(SITE, { waitUntil: 'domcontentloaded' });
+}
 if (session.connect) {
   await ensureConnected(page);
 }
@@ -520,4 +610,19 @@ if (allBlockedRequests.length > 0) {
 // but verified nothing", whose cause and remedy are the opposite of this
 // one's (#1529 review round 5). This sweep verified plenty; what it found
 // is a defect.
-process.exit(allBlockedRequests.length > 0 ? 1 : 0);
+//
+// A finding OUTRANKS an incomplete sweep (Codex #1621 r2), the same
+// precedence live-recover-locales.mjs applies: reporting BLOCKED here
+// would discard a proven write attempt because some later session's
+// browser would not start.
+if (allBlockedRequests.length > 0) process.exit(1);
+if (setupFailures.length > 0) {
+  console.error(
+    `\nBLOCKED: ${setupFailures.length} of ${activeSessions.length} session(s)` +
+      ` never started, so those surfaces are unswept and no finding came from` +
+      ` the ones that did:\n` +
+      setupFailures.map((f) => `  ${f.key}: ${f.why}`).join('\n'),
+  );
+  process.exit(2);
+}
+process.exit(0);

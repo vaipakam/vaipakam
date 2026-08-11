@@ -32,7 +32,13 @@
  *   sensible values before the snapshot resolves and when it cannot be
  *   reached (indexer redeploying, chain absent from the snapshot, a row
  *   too stale to trust). A docs page must render for whoever arrives
- *   during any of those.
+ *   during any of those. Those defaults still have to be RIGHT — they
+ *   are what a reader sees on every failure path — so
+ *   `scripts/check-knob-defaults-vs-contracts.ts` (#1623) keeps them
+ *   pinned to the protocol's own constants. Wiring the snapshot does
+ *   not retire that guard; it makes it the fallback's correctness
+ *   check rather than the only thing standing between the page and a
+ *   stale figure.
  * - The `<span title="...">` tooltip names the source, so a reader
  *   curious about provenance can tell a figure that tracks the protocol
  *   from one baked into this build.
@@ -117,7 +123,7 @@ export function LiveValue({ knob, locale }: LiveValueProps) {
   //
   // This is the copy the docs actually render: Whitepaper, Overview,
   // UserGuide and AdminKnobsDocs all reach it via `markdownComponents()`.
-  const { config } = useProtocolConfig();
+  const { config, chainReads } = useProtocolConfig();
 
   // Robustness: token typos (e.g. `{liveValue:treasuryFeebps}`) fall
   // through to inline code rendering so the bug is visible in the
@@ -145,7 +151,16 @@ export function LiveValue({ knob, locale }: LiveValueProps) {
       title={
         isLive
           ? 'Live value from the published protocol configuration'
-          : 'Value shipped with this page — published configuration not loaded'
+          : chainReads
+            ? 'Value shipped with this page — published configuration not loaded'
+            : // A surface that makes no read at all: neither "not loaded"
+              // nor "pending" is true, and saying either describes a
+              // failure that never happened (#1612). This branch is not
+              // reachable on the marketing site now that the snapshot is
+              // wired, and is kept because the component is what any
+              // future read-free surface would render — the wording is
+              // the one #1623 settled on for exactly that case.
+              'Published value — bundled into this site at release, not read live from the chain'
       }
       style={{
         // Subtle styling so live values don't visually shout — the

@@ -118,6 +118,22 @@ Public-navigation requirements:
   quotes the current rate to a holder of an older loan is telling them
   the wrong number. Documentation that names the fee in the context of
   an individual position must say that the rate is fixed at origination
+- where such a figure offers a provenance affordance, that affordance
+  must name the source it actually has. On a surface that makes no
+  chain read, describing the figure as a fallback awaiting a read —
+  "pending or unavailable" — is wrong twice over: nothing is pending,
+  nothing has failed, and a reader is told a mechanism is broken when
+  the number in front of them is the correct one. The three cases a
+  reader can be in are distinct and must read differently: the figure
+  came from the chain; a read was attempted and has not answered; no
+  read is made on this surface at all
+- a published figure that mirrors a protocol parameter must be
+  checkable against that parameter without anyone remembering to look.
+  Being right by maintenance is not a property the documentation has —
+  it is a property of whoever last edited it. Publication must fail
+  when the two disagree, and the check must fail just as loudly when it
+  cannot locate the parameter it is comparing against, since a check
+  that quietly compares nothing reports success
 - a number that is DERIVED — a worked example computing a fee on a
   stated amount — cannot be referenced that way, so it is recomputed
   whenever the rate it depends on changes, in every language the

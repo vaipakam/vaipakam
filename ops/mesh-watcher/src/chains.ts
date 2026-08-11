@@ -72,7 +72,8 @@ export interface CoverageGap {
     | 'base-books-repat'
     | 'own-ledger'
     | 'own-ledger-composition'
-    | 'own-ledger-repat';
+    | 'own-ledger-repat'
+    | 'own-ledger-backing';
   detail: string;
   /**
    * The chain the endpoint actually reported, on `chain-mismatch` gaps only

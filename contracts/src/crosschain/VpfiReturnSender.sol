@@ -41,6 +41,13 @@ import {ICrossChainMessenger} from "./ICrossChainMessenger.sol";
  *
  * @dev UUPS-upgradeable; guardian + owner pause; exact-amount approvals only.
  */
+/// @dev #1660 r1 - this satellite's WIRE GENERATION, file-level so the
+///      in-place refresh script imports the same durable constant the
+///      contract publishes (the receiver/messenger probe pattern).
+///      Generation 2 = the B1 stranded-return send surface (#1434 P2-w5); a proxy
+///      without the selector is generation 1.
+uint256 constant VPFI_RETURN_SENDER_WIRE_GENERATION = 2;
+
 contract VpfiReturnSender is
     Initializable,
     Ownable2StepUpgradeable,
@@ -65,6 +72,11 @@ contract VpfiReturnSender is
     // forge-lint: disable-next-line(mixed-case-variable)
     uint256[46] private __gap;
 
+    /// @notice #1660 r1 - the durable upgrade probe the refresh script
+    ///         generation-gates on.
+    uint256 public constant WIRE_GENERATION =
+        VPFI_RETURN_SENDER_WIRE_GENERATION;
+
     // ─── Events ───────────────────────────────────────────────────────
 
     /// @custom:event-category informational/config
@@ -87,6 +99,15 @@ contract VpfiReturnSender is
         bytes32 indexed messageId,
         address indexed issuingBase,
         uint256 indexed authId
+    );
+    /// @custom:event-category informational/reward-transport
+    event StrandedReturnSent(
+        bytes32 indexed messageId,
+        address indexed remitter,
+        uint256 indexed remitId,
+        uint256 dayId,
+        uint256 amount,
+        uint256 remainingAfter
     );
 
     // ─── Errors ───────────────────────────────────────────────────────
@@ -232,6 +253,60 @@ contract VpfiReturnSender is
         emit RepatriationCancelAckSent(messageId, issuingBase, authId);
     }
 
+    /// @notice #1434 P2-w5 — send a Mode-B STRANDED RETURN to Base: the
+    ///         quarantined compensation VPFI the Diamond just moved into
+    ///         this escrow, plus the payload binding it to the receipt it
+    ///         settles (`remitter` = the issuing Base deployment,
+    ///         `remitId` = the reservation the return retires).
+    /// @dev    Called by {RepatriationFacet.sendStrandedReturn} in the same
+    ///         transaction that retires the mirror's stranded-recovery
+    ///         record and transfers the tokens here — any failure reverts
+    ///         the whole return (record intact, nothing stranded in
+    ///         escrow). Same exact-approval / whole-tx-atomicity posture as
+    ///         the Mode-A leg above.
+    function sendStrandedReturn(
+        uint256 dstChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 dayId,
+        uint256 amount,
+        uint256 remainingAfter,
+        address payable refundAddress
+    )
+        external
+        payable
+        whenNotPaused
+        nonReentrant
+        returns (bytes32 messageId)
+    {
+        if (msg.sender != diamond) revert NotDiamond(msg.sender);
+        if (amount == 0) revert ZeroAmount();
+        address token = vpfiToken;
+        uint256 held = IERC20(token).balanceOf(address(this));
+        if (held < amount) revert InsufficientEscrow(amount, held);
+
+        bytes memory payload = abi.encode(
+            ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
+            remitter,
+            remitId,
+            dayId,
+            amount,
+            remainingAfter
+        );
+        ICrossChainMessenger.TokenAmount[] memory tokens =
+            new ICrossChainMessenger.TokenAmount[](1);
+        tokens[0] = ICrossChainMessenger.TokenAmount({
+            token: token,
+            amount: amount
+        });
+
+        IERC20(token).forceApprove(messenger, amount);
+        messageId = _send(dstChainId, payload, tokens, refundAddress);
+        emit StrandedReturnSent(
+            messageId, remitter, remitId, dayId, amount, remainingAfter
+        );
+    }
+
     // ─── Quotes ───────────────────────────────────────────────────────
 
     /// @notice Fee quote for {sendRepatriationReturn} with these arguments.
@@ -246,6 +321,34 @@ contract VpfiReturnSender is
             issuingBase,
             authId,
             amount
+        );
+        ICrossChainMessenger.TokenAmount[] memory tokens =
+            new ICrossChainMessenger.TokenAmount[](1);
+        tokens[0] = ICrossChainMessenger.TokenAmount({
+            token: vpfiToken,
+            amount: amount
+        });
+        return ICrossChainMessenger(messenger).quoteMessageFee(
+            dstChainId, payload, tokens, destGasLimit
+        );
+    }
+
+    /// @notice Fee quote for {sendStrandedReturn} with these arguments.
+    function quoteStrandedReturn(
+        uint256 dstChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 dayId,
+        uint256 amount,
+        uint256 remainingAfter
+    ) external view returns (uint256 fee) {
+        bytes memory payload = abi.encode(
+            ReturnWire.RETURN_WIRE_TAG_STRANDED_B1,
+            remitter,
+            remitId,
+            dayId,
+            amount,
+            remainingAfter
         );
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);

@@ -290,10 +290,29 @@ function subscribe(onChange: () => void): () => void {
 export function useProtocolConfig(): {
   config: MarketingProtocolConfig | null;
   loading: boolean;
+  /**
+   * Whether this surface ATTEMPTS a read at all — declared, not inferred
+   * (#1612, preserved through the #1630 merge).
+   *
+   * `true` here now that the snapshot is wired. It is kept rather than
+   * dropped because the flag is what lets `<LiveValue>` tell "no read was
+   * ever made" apart from "the read did not land": both arrive as
+   * `config === null`, and collapsing them is precisely the bug #1623
+   * fixed — every reader of a public page was told the figure they
+   * hovered was a chain read "pending or unavailable" on a surface where
+   * nothing was pending and nothing had failed. That distinction still
+   * matters for any future surface that opts out of reads.
+   */
+  chainReads: boolean;
 } {
-  return useSyncExternalStore(
+  const store = useSyncExternalStore(
     subscribe,
     () => snapshot,
     () => SERVER_SNAPSHOT,
   );
+  // Wrapping the store value is safe: the identity churn that
+  // `useSyncExternalStore` punishes is in `getSnapshot`, which still
+  // returns the stable module-level `snapshot`. This object is ordinary
+  // render output.
+  return { config: store.config, loading: store.loading, chainReads: true };
 }

@@ -627,14 +627,20 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         _agg().broadcastGlobal{value: 0.2 ether}(1);
 
-        assertEq(messenger.broadcastV2Count(), 1, "one V2 broadcast");
+        // #1434 P2-w1 — the current sender generation is the kind-10 V3
+        // wire (same per-destination shape + the frozen clock facts); the
+        // V2 and legacy spies must stay untouched. The V2 fallback itself
+        // is covered in RewardBroadcastV3Test (pre-V3 messenger + clockless
+        // day).
+        assertEq(messenger.broadcastV3Count(), 1, "one V3 broadcast");
+        assertEq(messenger.broadcastV2Count(), 0, "V2 send not used");
         assertEq(messenger.broadcastCount(), 0, "legacy send not used");
         (uint256 vDay, uint256 vGL, uint256 vGB, , , , ) =
-            messenger.lastV2Shared();
+            messenger.lastV3Shared();
         assertEq(vDay, 1);
         assertEq(vGL, 15e18);
         assertEq(vGB, 6e18);
-        assertEq(messenger.lastV2DestsLength(), 2, "one entry per mirror");
+        assertEq(messenger.lastV3DestsLength(), 2, "one entry per mirror");
         assertEq(messenger.lastBroadcastRefund(), alice);
         assertEq(messenger.lastBroadcastValue(), 0.2 ether);
     }
@@ -644,6 +650,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     ///      to the legacy kind-2 send with the full composition payload.
     function testBroadcastFallsBackToLegacySendOnPreB2bMessenger() public {
         _configureCanonical();
+        // A pre-B2-b proxy predates BOTH newer generations — model it by
+        // removing the V3 selector too (#1434 P2-w1 ladder head).
+        messenger.setV3Unsupported(true);
         messenger.setV2Unsupported(true);
         messenger.deliverChainReport(CHAIN_BASE, 1, 7e18, 3e18);
         messenger.deliverChainReport(CHAIN_ARB, 1, 5e18, 2e18);
@@ -654,6 +663,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         _agg().broadcastGlobal{value: 0.2 ether}(1);
 
+        assertEq(messenger.broadcastV3Count(), 0, "V3 send unavailable");
         assertEq(messenger.broadcastV2Count(), 0, "V2 send unavailable");
         assertEq(messenger.broadcastCount(), 1, "legacy fallback used");
         assertEq(messenger.lastBroadcastDay(), 1);
@@ -682,10 +692,21 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
         _agg().finalizeDay(1);
 
+        // #1434 P2-w1 — the quote walks the same three-step ladder as the
+        // send. The mock prices each generation distinctly (V3 = lane×3,
+        // V2 = lane×1, legacy = flat), so the value proves which messenger
+        // path ran.
+        assertEq(
+            _agg().quoteBroadcastGlobal(1),
+            0.3 ether,
+            "V3 quote: one lane per destination, x3 marker"
+        );
+
+        messenger.setV3Unsupported(true);
         assertEq(
             _agg().quoteBroadcastGlobal(1),
             0.1 ether,
-            "V2 quote: one lane per destination"
+            "pre-V3 messenger: V2 quote, one lane per destination"
         );
 
         messenger.setV2Unsupported(true);
@@ -721,7 +742,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _agg().broadcastGlobal(1);
         _agg().broadcastGlobal(1);
         _agg().broadcastGlobal(1);
-        assertEq(messenger.broadcastV2Count(), 3, "three retries allowed");
+        assertEq(messenger.broadcastV3Count(), 3, "three retries allowed");
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -955,10 +976,10 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         assertEq(kgBorrower, 0);
 
         // 5. Broadcast would ship the pair to every peer (here: counted
-        //    only — B2-b sends the kind-5 per-destination shape).
+        //    only — #1434 P2-w1 sends the kind-10 per-destination shape).
         _agg().broadcastGlobal(1);
-        assertEq(messenger.broadcastV2Count(), 1);
-        (, uint256 vGL, , , , , ) = messenger.lastV2Shared();
+        assertEq(messenger.broadcastV3Count(), 1);
+        (, uint256 vGL, , , , , ) = messenger.lastV3Shared();
         assertEq(vGL, 70e18);
     }
 

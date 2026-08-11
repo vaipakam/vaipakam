@@ -17,20 +17,34 @@
 # local box and the artifact lineage being shipped, is caught
 # before deploy.
 #
-# Runner-ceiling caveat (per ADR-0011, 2026-05-27): the default-
-# profile full forge regression on the current test corpus peaks at
-# ~17.7 GB RSS, over the 16 GB `ubuntu-latest` ceiling. The narrow
-# `release/**` + `v*` trigger set means this workflow has NOT yet
-# been exercised on the current corpus — no release-track refs
-# exist yet on this repo. Before the FIRST push to a `release/**`
-# branch or the first `v*` tag, the operator must either:
+# Runner-ceiling caveat (per ADR-0011, 2026-05-27; revised #1620):
+# the ceiling problem is now addressed IN PRINCIPLE but still
+# UNMEASURED on a GitHub-hosted runner.
+#
+# What changed: `predeploy-check.sh --full` used to run a single
+# `forge test --match-path 'test/*.t.sol'` pass, whose peak RSS is the
+# ~17.7 GB figure that overruns the 16 GB `ubuntu-latest` ceiling. It
+# now DELEGATES to `run-regression.sh`, which splits the suite into
+# chunked `--match-path` invocations sized to stay under the viaIR
+# whole-unit stack ceiling. Peak RSS is therefore bounded by the
+# largest single chunk plus the cached `src/` compile, not by the
+# whole corpus at once — structurally a far better fit for a 16 GB
+# runner.
+#
+# What has NOT changed: nobody has measured it here. The narrow
+# `release/**` + `v*` trigger set means this workflow still has not
+# been exercised on the current corpus — no release-track refs exist
+# yet on this repo. Before the FIRST push to a `release/**` branch or
+# the first `v*` tag, the operator should still either:
 #   (a) confirm `predeploy-check.sh --full` fits on `ubuntu-latest`
-#       for that release commit's corpus (re-measure with `/usr/bin/
-#       time -v forge test --no-match-path "test/invariants/*"`), or
+#       for that release commit's corpus (measure the chunked run with
+#       `/usr/bin/time -v bash script/run-regression.sh`), or
 #   (b) move this workflow to a self-hosted runner / a different
 #       scheduled path.
-# Discovering the OOM gap at cutover would be expensive; documenting
-# the gap here keeps the operator's pre-cutover checklist honest.
+# If a chunk does prove too large, `CHUNK_SIZE` / `SUBDIR_CHUNK_SIZE`
+# tune it down without touching this workflow. Discovering the OOM gap
+# at cutover would be expensive; documenting the gap here keeps the
+# operator's pre-cutover checklist honest.
 #
 # This workflow is the safety net at the line that matters: before a
 # release-track commit hits any deployable branch / tag, the full

@@ -33,6 +33,10 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
 - `finalizedAt` (`uint64`) — Base's `block.timestamp` at
   `_finalizeAndWrite`, **frozen in new per-day storage at finalization**
   (`dayFinalizedAt[dayId]`), never read live at send.
+  *(w1 implementation note: the four frozen scalars — `finalizedAt`,
+  `scheduleVersion` and the two inline parameters — live packed in one
+  per-day slot, `dayLapseClock[dayId]`, on both sides; the doc's
+  per-fact names below map onto its fields.)*
 - `lapseScheduleVersion` (`uint32`) — the version of the lapse-window /
   cutoff-gap parameter set under which this day's clocks are evaluated,
   **frozen per day at finalization** (`dayLapseScheduleVersion[dayId]`).
@@ -52,7 +56,32 @@ the leading word exactly as today), whose struct = V2's fields **plus**:
   compensation ingress (§2.2) accepts a compensation for a day only from
   the remitter matching the day's recorded era, and a V3 packet whose
   `baseDeployment` differs from an already-recorded era for that day is
-  rejected.
+  rejected. *(w1 strengthening, Codex #1632 r1 P1: the recorded-era check
+  alone cannot defend a day's FIRST install — nothing is recorded yet,
+  and the CCIP lane authenticates the shared remote messenger, not the
+  Diamond generation behind it, so a retired deployment's in-flight
+  packet would win the race after a rotation. The mirror therefore holds
+  an explicit ADMIN-set ground truth, `baseRewardDeployment`, that every
+  V3 packet must name; while unset the V3 ingress is dark (fail-closed,
+  packets stay re-executable), and rotation belongs to the same ceremony
+  that rotates the Base deployment. Second strengthening, #1632 r2: the
+  identity-less LEGACY wires are the remaining cross-era channel — a
+  retired era's kind-5 landing around a rotation could create applied
+  state a new-era V3 would then backfill its clock onto. So an armed
+  mirror stamps era PROVENANCE (`dayClockEra`) on every legacy apply,
+  and a true era rotation — a second, different nonzero ground truth —
+  permanently retires the legacy wires' fresh applies
+  (`LegacyBroadcastRetired`; replays stay idempotent). Arming ships in
+  the standard `ConfigureRewardReporter` spell + deploy wrappers (the
+  mainnet wrapper enforces it on the transaction-producing configure
+  phase itself, #1632 r3); the rotation ceremony is recorded in
+  CcipCutoverRunbook §8. Third strengthening, #1632 r3: a rotated
+  mirror also refuses V3 clock facts for days with prior state but
+  UNKNOWN era (applied before arming — the pre-arming inventory), which
+  the ceremony therefore heals BEFORE rotating; and the heal's standing
+  predicate includes the frozen `dayZeroedForDest` marker, so
+  reconciliation clearing the live flag never strands a zeroed
+  destination's heal.)*
 
 **Why frozen-at-finalization is load-bearing (R2a).** A re-broadcast today
 is NOT byte-identical by construction — `broadcastGlobal` reads everything
@@ -131,7 +160,28 @@ schedule copies both halves:
   (implementation may inline the two bounded values per packet instead of a
   side table — 2 words, simpler, no first-appearance tracking; the
   implementer picks, the requirement is only that the day's *applicable
-  parameters* are mirror-known from authenticated Base data).
+  parameters* are mirror-known from authenticated Base data). *(w1 took
+  the inline option: the two bounded values ride every V3 packet and are
+  frozen per day in `dayLapseClock[dayId]`; there is no mirror-side
+  version table. `MSG_TYPE_BROADCAST_V3` landed as kind 10 — kinds 8/9
+  were taken by the #1568 repatriation wire.)*
+
+> *(w2 implementation notes: `REMIT_WIRE_TAG_P2` landed as specified —
+> single-day, per-side amounts, frozen `finalizedAt` + schedule version
+> inline; fresh-only (no `recycledShare` field). The §2.2 classification
+> is ERA-FIRST: with `broadcastV2Applied && dayClockEra != 0` the known-
+> state ladder runs (era match → zeroed → not lapsed → credit; any
+> failure quarantines with a reason code); otherwise the provisional
+> branch. The provisional confirm/demote hook rides every ACCEPTED V3
+> broadcast. §4.1's reservation landed as `strandedRecoveryReserved` +
+> receipt-keyed `strandedRecoveries` records; the `backingPosition`
+> natspec rule was narrowed to "no balance-OWNER subtractions" since the
+> reservation is a protocol LEDGER like the bucket. The R3 dispatch
+> cutoff shipped IN w2 after review (#1634 r3): the ingress evaluates
+> expiry from the frozen words already, so a late dispatch could arrive
+> quarantined after Base closed the day — the cutoff and the evaluation
+> must travel together. Clockless days refuse dispatch outright (r2);
+> all four clock words ride the wire (r1).)*
 
 ### 1.3 R4b — the applicable expiry rides the remit too
 
@@ -249,6 +299,82 @@ construction. The walk recognises a compensated day by a mirror-local
 stamp written at compensation ingress (`dayCompensated[dayId] =
 receiptKey`) and prices it from the compensated pool instead of the
 broadcast halves.
+
+> *(w3 implementation notes — three recorded deviations, each toward the
+> stricter shape. (1) **No second marker**: the walk recognises a
+> compensated day by w2's own record (`dayCompensation[d].compensated &&
+> !provisional`), not a separate `dayCompensated` stamp — one fact, one
+> flag. (2) **The deferral ceiling moved from per-entry to the day
+> CROSSING**: scouting found the cumulative cursor exposes a crossed day
+> to TWO payment paths — the per-day walk AND the entry path's bulk
+> window pricing of spanning entries (`_entryWindowSplitFrom`), which a
+> walk-level per-entry bound cannot protect. So the §2.1 ladder's
+> compensated arm crosses only when the side's delivered pool covers the
+> side's own quoted sum (`compQuoteAccum18`, complete by the dispatch
+> conservation proof) — keyed on the AMOUNT present per the standing
+> B2-d4 constraint — and an underfunded day defers WHOLE (§2g's
+> never-trim holds; per-entry ceilings are vacuous on a crossed day by
+> construction). Under-quote partial funding therefore waits for w4's
+> supplemental remit or short-lapse terminal (the w2 manual remit is
+> once-per-day). (3) **Resolved-zero is a ladder arm, not "ordinary
+> walk"**: pre-P1-b the ordinary walk IS the blanket mirror halt, so the
+> ladder returns the zero-delta crossing itself. The ladder landed as ONE
+> shared per-day derivation (`_dayDeltas`) consumed by both cumulative
+> folds, the commitment twin (a governed-open day is NOT priceable — a
+> zero report for a later-compensated day would under-commit), and the
+> walk's own decomposition; Δq itself is the one shared
+> `LibInteractionRewards.compQuoteDelta` the quote accumulator also
+> reads, so quoted figure and priced figure cannot diverge. A compensated
+> day's Δq stays in `cumMinArmed*` so the window split classifies it
+> armed-fresh — matching w2's counting of the credit into
+> `rewardBudgetArmedFreshReceived` — and carries zero recycled component.
+> `MSG_TYPE_COMP_QUOTE` landed as kind 11; Base ingress admits a
+> re-delivery refresh only while the day is unfunded, and a `(0,0)` quote
+> clears `remitIneligible` (nothing to compensate) while bounding funding
+> to zero. `remitManualBudget` enforces the §2.5 PER-SIDE bound, stricter
+> than the aggregate wording here.
+>
+> Review round 1 (#1636) added four more deviations, all accepted: (4)
+> **Δq's numerator is `dayPoolStamp[d].scheduleFloor / 2`** exactly as
+> §1.4 above prescribes — the first implementation wrongly read the
+> chain's own `chainDayRecycledFunding` slice, which `_perDestFields`
+> stamps ZERO for a zeroed destination, so it would have quoted (0,0)
+> and resolved a demand-carrying day; the quote surface now also REFUSES
+> an unstamped day. (5) **The quote is UNCAPPED** (`Σ perDay × Δq`, no
+> `C_side` min): forfeit settlement prices without the per-user ceiling
+> by design (#1353), and bulk window pricing skips the per-(user,day)
+> ceiling, so a capped quote would open the funding gate below the real
+> settlement liability; caps still apply at payment time per path. (6)
+> An ADMIN **reset valve** (`resetCompQuoteAccumulation`) mirrors the
+> commitment accumulator's — the permissionless accumulator's cursor can
+> be parked past the covering set by a single high-id submission. (7)
+> The wire carries the **sending diamond as an era word** (stamped by
+> the messenger) and Base BINDS the standing quote to it: same-era
+> re-delivery refreshes, divergence reverts, ADMIN `clearCompQuote`
+> releases a stale binding after a mirror redeploy (funded days refuse
+> both). The `_contribFor` global-zero short-circuit was removed — the
+> stored cumulative row is the one pricing truth for walk and bulk
+> alike.
+>
+> Round 2 added two more: (8) **the V3 broadcast carries the day-level
+> funded pool halves** (2 new wire words, 21 → 23): the V2 wire never
+> transported the day-level figure (only per-chain slices, zero for a
+> zeroed dest) and the legacy kind-2 ingress that installed
+> `dayPoolStamp` retires at rotation — without the transport, mirror-side
+> quoting was unreachable on the V3 production path. The V3 apply
+> installs the stamp (divergence-checked against any standing one, the
+> broadcast consensus family), including on replays, so pre-r2 V3 days
+> heal by the same permissionless re-send that backfills clocks. (9)
+> **Base holds a FAIL-CLOSED mirror-era registry**
+> (`setMirrorRewardDeployment`, the reciprocal of the mirror-side
+> `setBaseRewardDeployment`): the quote ingress authenticates EVERY
+> arrival — including the first — against it, closing the
+> first-arrival window the r1 standing-quote binding alone could not
+> defend (a delayed retired-era wire arriving first would have bound
+> unchallenged, and a stale (0,0) would have cleared the
+> manual-funding anchor permanently). Rotation ceremony: update the
+> registry, then `clearCompQuote` any quote standing under the retired
+> era.)*
 
 ---
 
@@ -431,6 +557,94 @@ credited but does not move the clock. The absolute 3× cap holds regardless
 — after it, only full funding before the deadline prevents the terminal.
 This is R2's principle applied to R1c's state: pay what is backed,
 terminate on a bounded clock, record the loss.
+
+> *(w4 implementation notes — deviations recorded: (1) **§2.1's
+> "truncate-at-remaining" landed as PRO-RATA SCALING AT THE CROSSING** —
+> the short-lapsed day's ladder arm prices `Δq × pool_s / quoted_s` per
+> side rather than paying entries in order until the pool exhausts. The
+> w3 lesson governs: bulk window pricing settles from the cumulative
+> rows with no payment-path budget, so an order-dependent truncation
+> cannot bound it — the scaled crossing bounds every path at once, is
+> order-independent, and Σ floored payments ≤ pool by construction.
+> (2) **`stampLegacyCompensation` is ADMIN-evidenced, not
+> permissionless**: `ReceivedRemit` predates any day binding, so the
+> receipt↔day association is verifiable only against Base's
+> `RemitReservation.dayIds` — operator-side evidence; a permissionless
+> surface could bind any legacy receipt to any zeroed day. Pre-live
+> there are ZERO legacy receipts on any deployment. (3) The R6 gate
+> clears on the operator-evidenced **forced finalize too** (same
+> consumption semantics, same mould as the ACK); cancels/releases hold
+> it as ratified. (4) The deadline's qualifying stamps live in
+> `_creditCompensation` reading the PRE-credit shortfall; with no
+> standing quote yet the qualifying test is vacuously false and the
+> absolute clock alone runs — the conservative direction. (5) The
+> supplemental checks clock PRESENCE only — deliberately NOT the manual
+> path's R3 cutoff (#1656 r3): a compensated-and-open day is inside its
+> §2.5 remediation window, whose deadline supersedes the original
+> expiry, and the mirror ingress correspondingly exempts
+> already-compensated days from the raw-expiry quarantine (the terminal
+> FLAGS govern supplements). The cutoff's guaranteed-quarantine premise
+> holds only for FIRST compensations, where it stays. Two precise
+> qualifications (#1656 r5): the remediation deadline is NOT an
+> enforced ingress cutoff — the mirror rejects only once a terminal
+> FLAG is set, and the flag is set by the permissionless terminal
+> TRANSACTION, so a supplemental landing after the effective deadline
+> but before that transaction is still credited, and a full top-up in
+> that ordering window prevents the terminal (a bounded, benign race:
+> the day ends fully funded — the outcome the terminal exists to
+> approximate). And the declared→received reconciliation of the
+> per-side cumulative (`compFunded*`, stamped by both dispatchers)
+> runs on PENDING acks and on the FIRST ack after a forced
+> finalization only — a RELEASED reservation's late-executing ack is
+> recorded (`RemitAckAfterRelease`) but does not reconcile — instead
+> the RELEASE ITSELF subtracts the reservation's declared per-side
+> split from the funded cumulative (#1656 r6): the released tokens
+> never funded the obligation, and leaving them counted would make the
+> recovery ceremony's re-dispatch impossible against the per-side
+> bound. Contributions from other reservations on the day remain
+> counted. (6) Fitting w4 required
+> the EIP-170 triple split: `RewardRemittanceLensFacet` (22 ledger
+> views), `RewardCompensationDispatchFacet` (manual + supplemental),
+> `LibRewardRemitDispatch` (the shared dispatch tail / net headroom /
+> gate pair — one source, inlined per facet). Review round 2 (#1656)
+> hardened the upgrade seams: the terminals ship DARK behind a one-shot
+> ADMIN `armLapseTerminals` (the §8 activation gate as on-chain state —
+> a permissionless lapse cannot race the legacy migration); the funded
+> record's existence is a dedicated flag (`compFundedRecorded`), never
+> the (0,0) value pair (a severe short delivery's reconciliation can
+> round both sides to zero and the day must stay supplementable); the
+> migration seed records AT MOST the declared scalar (an already-ACKed
+> short delivery seeds at received); and the operator-evidenced forced
+> finalize preserves declared funding (its zero received-amount is a
+> sentinel — the authentic ACK is permissionlessly re-presentable when
+> reconciliation is wanted). Round 10 closed the last two seams of that
+> state machine: the forced-finalize one-shot is spent only by a
+> CONSUMED ack — a provisional (non-consumed) ack arriving post-force
+> leaves the flag standing so the consumed re-presentation can still
+> reconcile — and the in-place refresh script generation-gates the
+> reward MESSENGER proxy the same way it gates the receiver
+> (`WIRE_GENERATION`), since the refreshed facets speak the 5-word
+> consumption ACK that a generation-1 messenger rejects. Round 11
+> hardened three more edges. First, the short-lapse scaled delta shaves
+> the side's covering-entry count off the delivered pool before scaling
+> (`Δq × (pool − n) / quoted`): bulk settlement floors once over an
+> entry's whole window, so the lapsed day's marginal can round UP by a
+> wei per covering entry, and the unshaved scaling could pay a few wei
+> more than was delivered out of unrelated custody — the same
+> "upper bound must dominate every rounding regime" lesson the quote's
+> per-entry ceiling encodes, now applied to the terminal's arm. The
+> accumulator counts entries from the feature's genesis (no deployment
+> ever ran the w3 accumulator without the count), so the count is never
+> stale for a real quoted day. Second, a PROVISIONAL compensation stamps
+> no remediation clocks — they start when its V3 broadcast confirms the
+> credit, because only from confirmation can Base's supplemental path
+> run at all; a delayed broadcast would otherwise burn the bounded
+> window while remediation was impossible and let the terminal fire the
+> moment `provisional` cleared. Third, an EXACT lapse-loss record
+> (conservation proved) freezes its accumulation — the admin reset valve
+> refuses, since a wiped accumulator could never refresh figures the
+> refinement hook no longer touches; partial records stay resettable,
+> which is precisely the parked-cursor recovery the valve exists for.)*
 
 ---
 
@@ -747,6 +961,146 @@ the bounds are the design's actual commitment.
 5. **P2-w5 — R4 return over #1568's channel + recovery position +
    uncharged re-dispatch** (§4.2) — downstream of #1568's shared slice,
    before M7 arming (plan §4 `SHAREDWIRE --> MODEBWIRE -.-> ARMGATE`).
+
+   > **Implementation note (P2-w5, 2026-08-10).** Shipped as designed,
+   > with the shapes pinned here. The B1 kind
+   > (`vaipakam.return.wire.stranded.b1`) carries `(remitter, remitId,
+   > dayId, amount)` plus one TokenAmount — `remitter` (the issuing Base
+   > deployment) IS the era binding, checked Base-side against
+   > `address(this)` with a stale era failing closed and re-executable
+   > (the R6e runbook's case). The mirror dispatch is PERMISSIONLESS
+   > payable in the R6b posture: quarantine is terminal mirror-side and
+   > the return its only exit, the stored record is the evidence, and
+   > the caller can neither redirect a chunk nor send beyond the
+   > record — returns are CHUNKED (r2, detailed below): each send
+   > retires a caller-chosen amount bounded by the record's remaining
+   > balance, the remainder stays retryable, and the wire carries the
+   > post-chunk remainder with zero marking the terminal chunk. Mirror-
+   > outbound lane capacity is checked per chunk before the retirement,
+   > so over-capacity fails retryably. Base-side, the entitlement is the reservation's
+   > dispatched `total` with a per-receipt recovered cumulative; the
+   > overage position absorbs the excess token-safely. The gate clears
+   > only when the returning receipt IS the outstanding one. The
+   > reservation's STATUS is deliberately untouched by the return —
+   > delivery evidence (the ack path) and value settlement are
+   > independent lifecycles. Re-dispatch substitution landed as thin
+   > `…FromRecovery` wrappers over the ONE manual/supplemental
+   > implementation (a `fromRecovery` funding-source flag): the position
+   > check replaces the 69M headroom check, `rewardBudgetRedispatched`
+   > replaces the `rewardBudgetRemittedGlobal` charge, and every other
+   > bound (quote, era, clock, cutoff, gate, per-side cumulative) is
+   > shared by construction. Ordinary armed-day BATCH substitution —
+   > which §4.2 also admits — is deliberately deferred: the batch path's
+   > mixed fresh/recycled split interacts with commitment retirement and
+   > deserves its own slice if ever needed. A release of a
+   > recovery-funded reservation restores NEITHER headroom (never
+   > charged) NOR the position (the tokens are physically in transport
+   > custody until the R6d ceremony — which, per the ratified §5.3
+   > unification, credits the SAME position). The Base position joins
+   > `backingPosition`'s subtraction as the second protocol-ledger term
+   > (single writer set: the authenticated ingress credits, the
+   > from-recovery dispatch debits), the transparency snapshot publishes
+   > it as an eighth output, and the mesh watcher's
+   > recovery-reservation check sums it into the spoken-for figure Review
+   > round 1 closed three seams: the entitlement basis requires a
+   > COMPENSATION-shaped reservation (single-day, fresh-only, per-side
+   > declared) — an ordinary batch remit's recycled component never
+   > charged the cap, so crediting its total would mint uncharged
+   > re-dispatch capacity; BOTH return-channel satellites publish
+   > `WIRE_GENERATION` and the in-place refresh script generation-gates
+   > them alongside the receiver and messenger (the w4 lesson applied to
+   > every proxy the refreshed facets speak to); and a short actual is
+   > recorded per receipt as TRANSPORT LOSS (`strandedReturnShortfall`)
+   > — the mirror's one-shot record retired at declared, so the gap can
+   > never re-arrive and must read as the R6d loss ceremony's evidence,
+   > not as recoverable entitlement. Round 2 hardened the transport
+   > seams: returns are CHUNKABLE (the mirror cannot read Base's INBOUND
+   > lane ceiling, and a single indivisible send above it would be
+   > permanently unexecutable with the one-shot record already gone —
+   > partial retirement keeps the remainder retryable, with the operator
+   > capacity-pairing rule in the runbook's §8 ceremony); the wire
+   > carries the record's post-chunk REMAINDER, and the terminal chunk
+   > (remainder zero) closes the receipt's loss evidence by ASSIGNMENT
+   > at the full residual — folding in the FIRST-leg deficit (a
+   > compensation that arrived short Base→mirror left less on the mirror
+   > than the reservation dispatched), idempotent under replays and
+   > self-correcting; the reported day must equal the reservation's own
+   > single day (settlement evidence binds to the authoritative
+   > obligation); and the refresh script's satellite probes read the
+   > LIVE endpoints from the Diamond (`getRepatriationPosition`) with
+   > the artifact as fallback — the artifact file is not the authority
+   > on whether a satellite is armed. Round 3 closed the lifecycle
+   > seams: a CONSUMED receipt (consumed ack or forced equivalent,
+   > stamped on the reservation) is not B1-recoverable — its value
+   > entered mirror claim backing, and a return against it would reuse
+   > the dispatch's cap lineage while that value still backs claims;
+   > the FIRST terminal chunk unwinds the closure exactly once (day
+   > markers ownership-guarded + declared funding out of the cumulative,
+   > the release mould) so the recovery position can fund the SAME
+   > obligation without a release; loss closure recomputes on every
+   > chunk once a terminal was observed (the transport executes out of
+   > order — a partial landing after the terminal must shrink the loss
+   > it just recovered); and the satellite probes prefer the LIVE
+   > endpoint with a distinct artifact address upgraded as well (a
+   > stale artifact must never shadow the active proxy). Round 4
+   > made both exclusions order-independent: the return requires
+   > POSITIVE non-consumption evidence (an Acked-non-consumed or
+   > Released reservation) rather than mere absence of a consumed
+   > stamp — out-of-order transport could land a faulty mirror's
+   > return ahead of its consumed attestation, and a credited
+   > re-dispatch cannot be revoked; an early return stays
+   > re-executable until the permissionless ack lands. And the
+   > declared-funding unwind is a ONE-flag operation shared by release
+   > and the terminal return (`declaredUnwound`) — a released
+   > reservation's late-returning message must not subtract the same
+   > contribution twice and erase a replacement's funding recorded
+   > while the terminal chunk was in flight. Round 5 finished the
+   > evidence ladder: the ACK WIRE carries the receipt's full
+   > CLASSIFICATION (consumed / quarantined / provisional) instead of a
+   > collapsed consumed bit, Base stamps `quarantineAcked` /
+   > `consumedAcked` per reservation (including on the Released ack
+   > branch — released-alone is message-state, not classification
+   > evidence), and B1 eligibility is the QUARANTINE attestation
+   > specifically — an Acked-non-consumed state can be a PROVISIONAL
+   > receipt that later confirms as consumed. And the manual dispatch
+   > bound became CUMULATIVE per side (funded-so-far + request ≤
+   > quote), because a terminal return can re-open a day that retains a
+   > successor supplement's funding. Round 6 versioned the widened
+   > ack word against its own predecessor: the wire offsets
+   > classification by one (1 consumed / 2 quarantined / 3 provisional,
+   > 0 refused re-executably) so a generation-1 bool ack in flight can
+   > never be misread — a legacy consumed ack (true = 1) decodes as
+   > consumed with identical semantics, and a legacy non-consumed ack
+   > (false = 0) fails closed until anyone re-presents it under the
+   > current encoding. Round 7 closed the last two transport seams:
+   > the messenger's WIRE GENERATION bumped to 3 (the classification
+   > word changed `sendRemitAck`'s SELECTOR — a generation-2 proxy
+   > would silently skip the refresh probe and every facet ack call
+   > would revert), and the messenger validates the classification
+   > word on the RAW uint256 BEFORE narrowing (uint8(258) == 2 would
+   > forge quarantine evidence from a malformed peer packet). Round 8
+   > made contradictory terminal classifications a CONFLICT: a consumed
+   > attestation landing after quarantine eligibility (impossible for an
+   > honest mirror — quarantined never transitions to consumed) claws
+   > the receipt's still-unspent return credit into the overage
+   > quarantine, reports the re-dispatched slice unrecoverable, and
+   > withholds every consumed-ack privilege (gate clear,
+   > reconciliation) from the contradicting mirror; the reverse order
+   > never forges B1 eligibility. Fitting the conflict logic pushed the
+   > mutating remittance facet past EIP-170, resolved by moving the
+   > helper-free `quoteRemitAckFee` view to the lens facet. Round 9
+   > tied off the last three: the conflict claw is ONE-SHOT
+   > (`conflictClawed` — a replayed conflicting ack keeps privileges
+   > withheld but can no longer drain unrelated receipts' credit off
+   > the global position balance); the refresh script's reward-
+   > messenger and remittance-receiver probes read the LIVE Diamond
+   > config first with distinct artifact addresses upgraded separately
+   > (the live-config-over-artifact rule now uniform across all four
+   > probes); and the keeper's remit-ack surface combines both facet
+   > ABIs (viem resolves functions from the supplied ABI, so the lens
+   > move would otherwise break the ACK quote client-side).
+
+
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —
    carries the FunctionalSpec amendment if (a) is ratified.
 

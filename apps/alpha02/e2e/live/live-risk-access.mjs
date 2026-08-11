@@ -13,15 +13,50 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
-import { clientsFor, ensureConnected, launch, SITE } from './driver.mjs';
+import {
+  blockedSync,
+  clientsFor,
+  ensureConnected,
+  launch,
+  precondition,
+  SITE,
+} from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DIAMOND = JSON.parse(
-  readFileSync(
-    path.join(HERE, '../../../../packages/contracts/src/deployments.json'),
-    'utf8',
-  ),
-)['84532'].diamond;
+const DIAMOND = readDiamond();
+/**
+ * The Base-Sepolia Diamond address from the shipped bundle.
+ *
+ * BLOCKED, not FAIL (#1581): with no address there is nothing to point
+ * the read/write asserts at, so the surface goes unreviewed. Left
+ * unguarded, a missing bundle key threw `TypeError: Cannot read
+ * properties of undefined` and the batch reported a stale artifact as a
+ * /risk-access regression.
+ */
+function readDiamond() {
+  const file = path.join(
+    HERE,
+    '../../../../packages/contracts/src/deployments.json',
+  );
+  let diamond;
+  try {
+    diamond = JSON.parse(readFileSync(file, 'utf8'))['84532']?.diamond;
+  } catch (err) {
+    blockedSync(`cannot read the deployments bundle\n  path: ${file}\n  ${err.message}`);
+  }
+  // Validated as an ADDRESS, not merely as a string (Codex #1621 r4
+  // applied to its siblings — this file was the one I missed). A
+  // malformed-but-non-empty value passes a type check and is then handed
+  // to viem, which throws at top level with exit 1: a stale artifact
+  // reported as a /risk-access regression.
+  if (typeof diamond !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(diamond)) {
+    blockedSync(
+      `the deployments bundle's 84532.diamond is not a 0x-40-hex address:` +
+        ` ${JSON.stringify(diamond)}\n  path: ${file}`,
+    );
+  }
+  return diamond;
+}
 const READ_ABI = parseAbi([
   'function getVaultRiskTier(address) view returns (uint8)',
   'function getEffectiveRiskTier(address) view returns (uint8)',
@@ -127,11 +162,101 @@ async function tierZeroAtOrAfter(minBlock) {
 // or the read-path assertions must still restore the wallet and close
 // the context — not leave the manual driver stuck.
 try {
+// Reachability FIRST, before anything mutates the wallet (Codex #1621
+// r2). A BLOCKED exit uses `process.exit`, so it skips the cleanup
+// boundary below — which is only safe while the wallet is still as the
+// drive found it. Probing the site after the strict-mode write could
+// therefore exit "observed nothing" having already changed persistent
+// on-chain state.
+//
+// It cannot simply be reordered with the real `/risk-access` load: the
+// normalization has to land BEFORE the page boots (#1539 r4), or a prior
+// run's strict mode poisons the OFF-posture assertions. So the
+// reachability question is asked separately, and cheaply, up front.
+// Asked over plain HTTP, NOT by navigating the signing context (Codex
+// #1621 r12). `launch()` defaults to `readOnly: false` +
+// `preAuthorized: true`, so `page` carries a funded, already-connected
+// wallet whose injected binding forwards `eth_sendTransaction` and the
+// signature methods with no confirmation step. Pointing THAT context at
+// an arbitrary SITE_URL hands a regressed or hostile build a live signer
+// before this drive has asserted anything — and the `finally` below only
+// restores a risk tier, which cannot unwind a transaction. A reachability
+// question does not need a browser, let alone a wallet; live-recover-
+// locales states the same rule for its keyless context.
+await precondition(`opening ${SITE}`, async () => {
+  // Bounded, matching the 60s ceiling every Playwright navigation carries
+  // (Codex #1621 r12). A target that accepts the connection and then stalls
+  // before headers would otherwise hang on whatever timeout the runtime
+  // happens to have — holding this drive, and the sequential batch behind
+  // it, open with a launched browser and no verdict.
+  const res = await fetch(SITE, {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) throw new Error(`${SITE} answered HTTP ${res.status}`);
+});
+
+// The strict-mode READ is a PRECONDITION — a dead RPC means this drive
+// never got to assert anything (#1581).
+//
+// The normalization WRITE is deliberately NOT wrapped. A chain that
+// reverts a valid `setRiskStrictMode(false)` is evidence of a defect, and
+// reclassifying that as "verified nothing" would hide it — the reason to
+// separate the two verdicts is to stop mislabelling, in both directions.
+const strictOn = await precondition('reading strict mode from a prior run', () =>
+  pub.readContract({
+    address: DIAMOND,
+    abi: READ_ABI,
+    functionName: 'getRiskStrictMode',
+    args: [who],
+  }),
+);
+// Gas for the WHOLE mutation arc, reserved before the first write (Codex
+// #1621 r14).
+//
+// This drive raises the vault's risk tier and is responsible for putting
+// it back — via the UI, and failing that via the direct write in the
+// `finally`. A wallet with enough ETH for the raise but not the restore
+// therefore succeeds at leaving the vault at Broad liquid and then fails
+// BOTH restoration paths, exiting FAIL with persistent chain state left in
+// the riskier posture. Registering this driver as contract-compliant while
+// it can do that is the same class of problem as publishing an order you
+// cannot cancel: the unsafe state is the harm, and the verdict is the
+// lesser issue.
+//
+// Reserved for up to four writes (optional strict normalize, raise, lower,
+// plus the finally's direct restore) at a padded price, read at the
+// PENDING block so an aborted earlier run's un-mined spend is counted.
+await precondition('reserving native gas for the tier raise and its restore', async () => {
+  const [bal, fees, pendingNonce, latestNonce] = await Promise.all([
+    pub.getBalance({ address: who, blockTag: 'pending' }),
+    pub.estimateFeesPerGas().catch(() => ({})),
+    pub.getTransactionCount({ address: who, blockTag: 'pending' }),
+    pub.getTransactionCount({ address: who, blockTag: 'latest' }),
+  ]);
+  if (pendingNonce !== latestNonce) {
+    throw new Error(
+      `borrower has ${pendingNonce - latestNonce} transaction(s) still pending;` +
+        ' their spend is invisible to this reserve check',
+    );
+  }
+  const perGas = fees.maxFeePerGas ?? fees.gasPrice ?? (await pub.getGasPrice());
+  if (!perGas) throw new Error('chain returned no usable gas price');
+  const need = perGas * 200_000n * 4n * 2n;
+  if (bal < need) {
+    throw new Error(
+      `borrower native balance ${bal} wei is under the ~${need} wei needed to` +
+        ' raise the tier AND guarantee putting it back — refusing to mutate a' +
+        ' tier this run could not restore',
+    );
+  }
+});
+
 // Persistent-wallet normalization BEFORE the page loads (Codex #1539
 // r4): a prior strict-mode run must not poison the OFF-posture
 // assertions. Chain-confirmed direct write, exactly like the fork
 // spec's resetRiskState.
-if (await pub.readContract({ address: DIAMOND, abi: READ_ABI, functionName: 'getRiskStrictMode', args: [who] })) {
+if (strictOn) {
   console.log('note: strict mode ON from a prior run — normalizing OFF');
   const w = clientsFor(84532).wallet('borrower');
   const hash = await w.writeContract({
@@ -143,7 +268,12 @@ if (await pub.readContract({ address: DIAMOND, abi: READ_ABI, functionName: 'get
   await pub.waitForTransactionReceipt({ hash });
 }
 
-await page.goto(SITE + '/risk-access', { waitUntil: 'domcontentloaded', timeout: 60000 });
+// A plain navigation, NOT `visit()`. The site is already known reachable
+// from the probe above, so a `/risk-access` route that will not load is a
+// plausible product regression — and the wallet may now be mutated, so a
+// BLOCKED exit here would skip the cleanup boundary. Both reasons point
+// the same way: exit 1.
+await page.goto(`${SITE}/risk-access`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 await page.waitForTimeout(3000);
 await ensureConnected(page);
 

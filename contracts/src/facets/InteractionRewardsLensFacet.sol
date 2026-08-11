@@ -781,7 +781,21 @@ contract InteractionRewardsLensFacet {
             uint256 unearmarked,
             uint256 outstandingRecycled,
             uint256 paidOutRecycled,
-            uint256 keeperBudget
+            uint256 keeperBudget,
+            // #1434 P2-w2 — the arrival reservation (§4.1): quarantined
+            // compensation value awaiting the R4 return, already
+            // SUBTRACTED inside `unearmarked` and published here so the
+            // watcher's backing figures can alarm on a fresh claim
+            // spending recovery-reserved tokens.
+            uint256 strandedRecoveryReserved,
+            // #1434 P2-w5 — the Base recovery-position earmark (§4.2):
+            // position balance (recovered − redispatched) + the overage
+            // quarantine, i.e. exactly the second protocol-ledger term
+            // `backingPosition` subtracts. Published for the same parity
+            // reason as the term above — the watcher recomputes
+            // `unearmarked` from components and must see every
+            // subtrahend. Zero on mirrors.
+            uint256 recoveryPositionReserved
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -789,5 +803,9 @@ contract InteractionRewardsLensFacet {
         outstandingRecycled = s.outstandingCommitRecycled;
         paidOutRecycled = s.paidOutRecycled;
         keeperBudget = s.recycleKeeperBudget;
+        strandedRecoveryReserved = s.strandedRecoveryReserved;
+        recoveryPositionReserved = s.rewardBudgetRecovered
+            - s.rewardBudgetRedispatched
+            + s.strandedReturnOverage;
     }
 }

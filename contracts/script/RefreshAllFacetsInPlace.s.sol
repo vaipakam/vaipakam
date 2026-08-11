@@ -76,6 +76,11 @@ import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
+import {VpfiReturnSender, VPFI_RETURN_SENDER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnSender.sol";
+import {VpfiReturnReceiver, VPFI_RETURN_RECEIVER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnReceiver.sol";
+import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
@@ -83,7 +88,10 @@ import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 // proxy, not a Diamond facet; the B2-d5 block below upgrades it in step
 // with the widened ingress so an un-upgraded receiver cannot silently
 // decode the new payload as the legacy shape.
-import {RewardRemittanceReceiver} from "../src/crosschain/RewardRemittanceReceiver.sol";
+import {
+    RewardRemittanceReceiver,
+    REMIT_RECEIVER_WIRE_GENERATION
+} from "../src/crosschain/RewardRemittanceReceiver.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 /// @dev Minimal ERC-173 view to pre-flight the diamond owner.
@@ -157,7 +165,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 70;
+    uint256 internal constant EXPECTED_FACETS = 72;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -422,6 +430,156 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             );
         }
 
+        // ─── #1434 P2-w2 (Codex #1634 r1) — receiver wire-generation probe ──
+        //
+        // The B2-d5 block above gates its receiver upgrade on the RETIRED
+        // Diamond selectors still being routed — its own durable migration
+        // marker. A deployment already past that migration routes neither,
+        // so the block is (correctly) skipped there — but that also skipped
+        // the RECEIVER upgrade for every LATER wire generation: the P2
+        // compensation tag would hit a receiver that reads the keccak-sized
+        // tag as a legacy array offset and reverts every delivery, while
+        // Base has already closed the day and holds the reservation Pending.
+        //
+        // The durable gate for this and every future generation is the
+        // receiver's OWN `WIRE_GENERATION` constant: a missing selector
+        // (pre-P2 implementation) or a lower value means the proxy needs
+        // the upgrade. Idempotent — a rerun (or a same-run pass after the
+        // B2-d5 block already upgraded) reads the new implementation's
+        // value and skips.
+        {
+            // #1660 r9 - live-config-over-artifact, the same rule as
+            // every other probe: the Diamond's registered receiver is
+            // the one the refreshed ingress trusts.
+            address liveRecvP2 =
+                RewardRemittanceLensFacet(diamond).getRewardRemittanceReceiver();
+            address remitReceiverP2 =
+                _readAddrOptional(".rewardRemittanceReceiver");
+            if (liveRecvP2 != address(0)) {
+                if (
+                    remitReceiverP2 != address(0)
+                        && remitReceiverP2 != liveRecvP2
+                ) {
+                    _probeUpgradeRemitReceiver(remitReceiverP2);
+                }
+                remitReceiverP2 = liveRecvP2;
+            }
+            // #1634 r2 — the SAME fail-closed posture as the B2-d5 block:
+            // `_readAddrOptional` returns zero for a missing / stale /
+            // malformed artifact as well as for a chain that genuinely has
+            // no receiver, and a MIRROR silently skipping here would ship
+            // the P2 Diamond ingress with a receiver that cannot decode
+            // the P2 tag — every manual compensation failing while Base
+            // has closed the day. Only the canonical chain legitimately
+            // has no receiver.
+            (, , , bool isCanonicalRewardP2, ) =
+                RewardReporterFacet(diamond).getRewardReporterConfig();
+            require(
+                remitReceiverP2 != address(0) || isCanonicalRewardP2,
+                "P2-w2: mirror refresh needs .rewardRemittanceReceiver in addresses.json"
+            );
+            _probeUpgradeRemitReceiver(remitReceiverP2);
+        }
+
+        // ─── #1434 P2-w4 (#1656 r10) — reward MESSENGER generation probe ──
+        //
+        // The refreshed facets call the messenger's GENERATION-2 surface
+        // (5-word consumption ACK, kind-11 quotes, 23-word V3); a proxy
+        // still on generation 1 reverts every one of those sends — acks
+        // never reach Base, compensation gates stay held, ordinary
+        // reservations sit Pending. Same durable-constant posture as the
+        // receiver probe above; idempotent on rerun. EVERY chain has a
+        // messenger, so a missing artifact is always a hard stop.
+        {
+            // #1660 r9 - LIVE address first (the Diamond's registered
+            // messenger is the one the refreshed facets will call); a
+            // DISTINCT artifact address is upgraded as well - the same
+            // live-config-over-artifact rule the return-channel probes
+            // follow. Every chain registers a messenger, so both being
+            // zero is a hard stop.
+            (address liveMsgr, , , , ) =
+                RewardReporterFacet(diamond).getRewardReporterConfig();
+            address msgrArt = _readAddrOptional(".rewardMessenger");
+            require(
+                liveMsgr != address(0) || msgrArt != address(0),
+                "P2-w4: refresh needs a reward messenger (live or artifact)"
+            );
+            _probeUpgradeRewardMessenger(liveMsgr);
+            if (msgrArt != liveMsgr) _probeUpgradeRewardMessenger(msgrArt);
+        }
+
+        // ─── #1434 P2-w5 (#1660 r1) — return-channel satellite probes ──
+        //
+        // The refreshed facets speak GENERATION-2 surfaces on BOTH
+        // return-channel satellites: the mirror facet calls the sender's
+        // `sendStrandedReturn`, and Base's ingress expects the receiver
+        // to decode the B1 kind (an old receiver rejects it as an
+        // unknown wire kind — re-executable, but stuck until upgraded).
+        // Same durable-constant posture as the probes above; idempotent.
+        // The satellites are OPTIONAL deployments (the C2 transport is
+        // operator-armed) — but the artifact file is NOT the authority on
+        // whether one is armed (#1660 r2): the DIAMOND's live endpoint
+        // config is. Read both; a LIVE-configured endpoint whose artifact
+        // is missing or stale still gets probed and upgraded (a silent
+        // skip there would ship generation-2 facets against a
+        // generation-1 satellite), and a dark-but-deployed artifact is
+        // upgraded too so a later arming meets current code. Only a chain
+        // with NEITHER a live endpoint NOR an artifact skips — it has no
+        // return path to brick.
+        {
+            address liveSender;
+            address liveReceiver;
+            (, liveSender, liveReceiver, ) =
+                RepatriationFacet(diamond).getRepatriationPosition();
+            // #1660 r3 - LIVE endpoint first (the Diamond is the
+            // authority on which proxy is armed); the artifact covers a
+            // dark-but-deployed satellite, and BOTH are upgraded when
+            // they name distinct proxies (a stale artifact must never
+            // shadow the active sender).
+            address rsendArt = _readAddrOptional(".vpfiReturnSender");
+            _probeUpgradeReturnSender(liveSender);
+            if (rsendArt != liveSender) _probeUpgradeReturnSender(rsendArt);
+            address rrecvArt = _readAddrOptional(".vpfiReturnReceiver");
+            _probeUpgradeReturnReceiver(liveReceiver);
+            if (rrecvArt != liveReceiver) {
+                _probeUpgradeReturnReceiver(rrecvArt);
+            }
+        }
+
+        // ─── #1434 P2-w2 (#1634 r2) — retire the 3-arg manual remit ─────────
+        //
+        // `remitManualBudget` changed from (uint32,uint256,uint256) to the
+        // per-side (uint32,uint256,uint256,uint256) shape, so its SELECTOR
+        // changed — and this script Replaces/Adds but never Removes (SCOPE
+        // note above). The retired selector would stay routed to the OLD
+        // facet bytecode: an admin on stale tooling could still close a
+        // day and dispatch the legacy d5 ordinary-remit payload, which the
+        // upgraded mirror books through `onRewardBudgetReceived` instead
+        // of the compensation classifier — no compensated pools, no
+        // recovery reservation, while Base considers the compensation
+        // sent. Remove it so stale tooling FAILS CLOSED. Gated on the old
+        // selector being routed (the standing idempotent-rerun pattern).
+        {
+            bytes4 oldManualRemit3 = bytes4(
+                keccak256("remitManualBudget(uint32,uint256,uint256)")
+            );
+            if (loupe.facetAddress(oldManualRemit3) != address(0)) {
+                bytes4[] memory rmManual = new bytes4[](1);
+                rmManual[0] = oldManualRemit3;
+                IDiamondCut.FacetCut[] memory rmManualCut =
+                    new IDiamondCut.FacetCut[](1);
+                rmManualCut[0] = IDiamondCut.FacetCut({
+                    facetAddress: address(0),
+                    action: IDiamondCut.FacetCutAction.Remove,
+                    functionSelectors: rmManual
+                });
+                IDiamondCut(diamond).diamondCut(rmManualCut, address(0), "");
+                console.log(
+                    "P2-w2: removed retired remitManualBudget(uint32,uint256,uint256) selector"
+                );
+            }
+        }
+
         // ─── #1503 PR-A — listing lifecycle: retire the 3-arg selector ──────
         //
         // PR-A changed `createLoanSaleOffer` from 3 args to 4 (the mandatory
@@ -650,6 +808,21 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             address(new RewardRemittanceFacet()),
             _getRewardRemittanceSelectors()
         );
+        // #1434 P2-w4 — the remittance lens: `_split` re-points the
+        // RELOCATED view selectors (routed to the mutating facet on a live
+        // Diamond) via Replace and adds the new w4 views.
+        items[70] = Item(
+            "rewardRemittanceLensFacet",
+            address(new RewardRemittanceLensFacet()),
+            _getRewardRemittanceLensSelectors()
+        );
+        // #1434 P2-w4 — the compensation dispatch pair: `_split` re-points
+        // the relocated manual selector via Replace + adds the supplemental.
+        items[71] = Item(
+            "rewardCompensationDispatchFacet",
+            address(new RewardCompensationDispatchFacet()),
+            _getRewardCompensationDispatchSelectors()
+        );
         items[62] = Item("offerPreviewFacet", address(new OfferPreviewFacet()), _getOfferPreviewSelectors());
         // #1104 — RiskPreviewFacet split off RiskAccessFacet (items[60]).
         items[63] = Item("riskPreviewFacet", address(new RiskPreviewFacet()), _getRiskPreviewFacetSelectors());
@@ -702,6 +875,95 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     }
 
     /// @notice Broadcast one bounded diamondCut for `cuts[start..end)`.
+    /// @dev #1660 r9 — generation-probe + UUPS-upgrade one remittance
+    ///      receiver proxy (no-op for zero or already-current).
+    function _probeUpgradeRemitReceiver(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < REMIT_RECEIVER_WIRE_GENERATION) {
+            address newImpl = address(new RewardRemittanceReceiver());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeRewardRemittanceReceiverImpl(newImpl);
+            console.log(
+                "P2-w2: upgraded RewardRemittanceReceiver (wire gen",
+                gen,
+                "-> 3) impl:",
+                newImpl
+            );
+        }
+    }
+
+    /// @dev #1660 r9 — generation-probe + UUPS-upgrade one reward
+    ///      messenger proxy (no-op for zero or already-current).
+    function _probeUpgradeRewardMessenger(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < REWARD_MESSENGER_WIRE_GENERATION) {
+            address newImpl = address(new VaipakamRewardMessenger());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeAddress(".rewardMessengerImpl", newImpl);
+            console.log(
+                "P2-w4/w5: upgraded VaipakamRewardMessenger (wire gen",
+                gen,
+                "-> 3) impl:",
+                newImpl
+            );
+        }
+    }
+
+    /// @dev #1660 r3 — generation-probe + UUPS-upgrade one return-channel
+    ///      SENDER proxy (no-op for zero or already-current). ONE
+    ///      implementation, called for the live endpoint AND a distinct
+    ///      artifact address.
+    function _probeUpgradeReturnSender(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < VPFI_RETURN_SENDER_WIRE_GENERATION) {
+            address newImpl = address(new VpfiReturnSender());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeVpfiReturnSenderImpl(newImpl);
+            console.log(
+                "P2-w5: upgraded VpfiReturnSender (wire gen",
+                gen,
+                "-> 2) impl:",
+                newImpl
+            );
+        }
+    }
+
+    /// @dev #1660 r3 — the RECEIVER twin of the probe above.
+    function _probeUpgradeReturnReceiver(address proxy) private {
+        if (proxy == address(0)) return;
+        uint256 gen = 0;
+        (bool ok, bytes memory ret) = proxy.staticcall(
+            abi.encodeWithSignature("WIRE_GENERATION()")
+        );
+        if (ok && ret.length == 32) gen = abi.decode(ret, (uint256));
+        if (gen < VPFI_RETURN_RECEIVER_WIRE_GENERATION) {
+            address newImpl = address(new VpfiReturnReceiver());
+            UUPSUpgradeable(proxy).upgradeToAndCall(newImpl, "");
+            Deployments.writeVpfiReturnReceiverImpl(newImpl);
+            console.log(
+                "P2-w5: upgraded VpfiReturnReceiver (wire gen",
+                gen,
+                "-> 2) impl:",
+                newImpl
+            );
+        }
+    }
+
     function _sendBatch(address diamond, IDiamondCut.FacetCut[] memory cuts, uint256 start, uint256 end) private {
         IDiamondCut.FacetCut[] memory batch = new IDiamondCut.FacetCut[](end - start);
         uint256 sels;

@@ -503,6 +503,26 @@ phase_preflight() {
   if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_CHAIN_ID:-}" ]; then
     MISSING+=("BASE_CHAIN_ID  (REQUIRED on mirror chains — canonical Base chain id)")
   fi
+  # #1434 P2-w1 (Codex #1632 r2) — mirror chains also need the canonical
+  # Base DIAMOND address: the V3 broadcast era ground truth
+  # (ConfigureRewardReporter → setBaseRewardDeployment). WARN-only, in
+  # step with the spell's own loud warning: without it the kind-10
+  # ingress stays fail-closed dark on this mirror (day figures still
+  # flow on the kind-5 wire) until the operator arms it.
+  if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_REWARD_DEPLOYMENT:-}" ]; then
+    echo "  ⚠ BASE_REWARD_DEPLOYMENT unset — the V3 (kind-10) broadcast"
+    echo "    ingress will stay DARK on this mirror (no day clocks; the"
+    echo "    P2 lapse machinery cannot arm) until setBaseRewardDeployment"
+    echo "    is called with canonical Base's Diamond address."
+  fi
+  # #1434 P2-w3 (#1636 r4) — the canonical-side reciprocal. WARN-only
+  # on testnet (lanes come up incrementally); mainnet HARD-FAILS.
+  if [ "$IS_CANONICAL" = "1" ] && [ -z "${MIRROR_REWARD_DEPLOYMENTS:-}" ]; then
+    echo "  ⚠ MIRROR_REWARD_DEPLOYMENTS unset — the compensation-quote"
+    echo "    (kind-11) ingress will stay DARK per lane (fail-closed,"
+    echo "    CompQuoteMirrorEraUnset) until setMirrorRewardDeployment is"
+    echo "    called with each mirror's Diamond address."
+  fi
   if [ ${#MISSING[@]} -ne 0 ]; then
     echo "FAIL: required env vars missing in .env:"
     for v in "${MISSING[@]}"; do echo "    - $v"; done
