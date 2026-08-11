@@ -1685,7 +1685,15 @@ contract RewardRemittanceFacet is
         // the only surviving link from the old-era tuple to that credit,
         // and consumption is exactly the evidence that voids it.
         {
-            bytes32 tomb = keccak256(abi.encode(remitter, remitId));
+            // #1662 r5 — the SOURCE CHAIN is part of the key. Peer
+            // authentication only proves the message came from SOME
+            // configured mirror; the live imported branch binds evidence
+            // through `importedOutstanding[sourceChainId]`, and a
+            // chain-agnostic tombstone would drop that binding — letting
+            // a compromised mirror name another chain's public tuple and
+            // permanently move that chain's capacity into quarantine.
+            bytes32 tomb =
+                keccak256(abi.encode(sourceChainId, remitter, remitId));
             uint256 attributed = s.importedSettledAttribution[tomb];
             if (attributed != 0) {
                 if (classification == 1) {

@@ -1311,9 +1311,47 @@ the bounds are the design's actual commitment.
    >    import a small old receipt and classify any unearmarked Diamond
    >    balance as recovered — minting arbitrary uncharged re-dispatch
    >    capacity. The OLD reservation's total and provenance split are now
-   >    carried at import (validated to describe one parcel) and enforced
-   >    per component at settlement, mirroring how the local ceremony binds
-   >    to its own reservation.
+   >    carried at import and enforced per component at settlement,
+   >    mirroring how the local ceremony binds to its own reservation.
+   >    (Superseded in round 5: carried figures bound a TYPO, not a
+   >    compromised admin — the parcel is now READ from the retiring
+   >    deployment.)
+   >
+   > **Round-5 addendum (#1662).** Four more, and the pair that matters
+   > most turns on a distinction round 4 got wrong: **validating operator
+   > input for self-consistency is not authentication.**
+   >
+   > 1. **The carried bounds were never checked against anything.** Any
+   >    self-consistent `(total, fresh, recycled)` tuple passed, so a
+   >    compromised admin could still mint arbitrary capacity — the bound
+   >    was decorative against exactly the adversary it was added for.
+   > 2. **The GROSS split was the wrong bound regardless.** A rotation can
+   >    follow a PARTIAL ceremony or partial terminal loss on the retiring
+   >    deployment; importing gross figures lets the same parcel be
+   >    recovered twice (4 recovered pre-rotation + 10 imported = 14 of
+   >    lineage from a 10-token parcel).
+   >
+   >    Both close with one move. The retired deployment is a live contract
+   >    on this same chain, so its own record is the evidence: the import
+   >    READS the reservation and the already-resolved amount, and carries
+   >    only the UNRESOLVED remainder. The caller supplies nothing but the
+   >    tuple. Fail-closed on an unreadable or fully-resolved record; a
+   >    MISSING terminal-loss getter is a structural zero rather than an
+   >    unknown, because a deployment predating the ceremony has no loss
+   >    state to miss.
+   > 3. **The settled-import tombstone was chain-agnostic.** Peer
+   >    authentication proves a message came from SOME configured mirror,
+   >    and the live imported branch binds evidence through
+   >    `importedOutstanding[sourceChainId]` — the tombstone dropped that
+   >    binding, so a compromised mirror could name another chain's public
+   >    tuple and permanently move that chain's capacity into quarantine.
+   >    The source chain is now part of the key.
+   > 4. **A settled tuple could be re-imported.** The gate returns to zero
+   >    at settlement, so an authentic parcel could be imported and settled
+   >    repeatedly — each pass minting a fresh attribution while
+   >    OVERWRITING the tombstone, so a later consumed attestation voided
+   >    only the last credit and left the earlier ones drawable. One
+   >    parcel, one import: a permanent per-tuple marker, never cleared.
 
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates

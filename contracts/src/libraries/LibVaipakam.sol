@@ -6489,7 +6489,23 @@ library LibVaipakam {
         //   credit re-dispatchable while the original delivery still backs
         //   mirror claims. This is the only link back from an old-era
         //   tuple to the local credit it produced.
+        //   #1662 r5 — keyed by (sourceChainId, oldRemitter, oldRemitId).
+        //   The CHAIN is part of the key, not incidental: peer
+        //   authentication proves a message came from SOME configured
+        //   mirror, and the live imported branch binds evidence through
+        //   `importedOutstanding[sourceChainId]`. A chain-agnostic
+        //   tombstone would drop that binding, letting a compromised
+        //   mirror void ANOTHER chain's attribution — public tuples,
+        //   permanent effect.
         mapping(bytes32 => uint256) importedSettledAttribution;
+        // BASE-ONLY (#1662 r5) — every imported tuple ever seen, keyed the
+        //   same way, set at IMPORT and never cleared. The gate returns to
+        //   zero once a settlement clears it, so without this an authentic
+        //   old tuple could be imported and settled REPEATEDLY, each pass
+        //   minting a fresh attribution while overwriting the tombstone —
+        //   a later consumed attestation would void only the last one and
+        //   leave the earlier credits drawable. One parcel, one import.
+        mapping(bytes32 => bool) importedTupleSeen;
         // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
         //   outstanding-compensation record for a chain after a Base
         //   deployment rotation: the RAW old-era tuple, not its hash —

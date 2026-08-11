@@ -10,6 +10,7 @@ import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {MockRetiredDeployment} from "./mocks/MockRetiredDeployment.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -3938,11 +3939,9 @@ contract RewardRemitLedgerTest is SetupTest {
         r; // the fixture's split is not what this test asserts
 
         // An imported OLD-ERA settlement books recovered value. The
-        // carried parcel is recycled-only, matching what it settles.
-        address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, 7, false, 1e18, 0, 1e18
-        );
+        // retired parcel is recycled-only, matching what it settles.
+        address oldBase = _retired(1e18, 0, 1e18, 0, 0);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
         vpfiTok.mint(address(diamond), 1e18);
         comp.clearImportedOutstanding(CHAIN_ARB, 0, 1e18);
         (, , , , uint256 resolvedAfter) = RewardAggregatorFacet(
@@ -3962,7 +3961,7 @@ contract RewardRemitLedgerTest is SetupTest {
     /// contradiction into a clean consumption that clears the newest
     /// gate.
     function test_Import_SecondRotationCarriesEvidence() public {
-        address oldBase = address(0x01dBA5E);
+        address oldBase = _retired(3e18, 3e18, 0, 0, 0);
         // Reading the retiring deployment's visible gate is refused.
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -3970,13 +3969,11 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, type(uint256).max, false, 3e18, 3e18, 0
+            CHAIN_ARB, oldBase, type(uint256).max, false
         );
         // Carrying the record (tuple + observed quarantine) preserves the
         // contradiction across the rotation.
-        comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, 7, true, 3e18, 3e18, 0
-        );
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, true);
         (, , bool q) = rlens.getImportedOutstanding(CHAIN_ARB);
         assertTrue(q, "the earlier quarantine evidence survived");
         rewardMessenger.deliverRemitAckFromWithClassification(
@@ -4048,10 +4045,8 @@ contract RewardRemitLedgerTest is SetupTest {
         _finalizeDay(1);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
-        address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, 7, false, 3e18, 3e18, 0
-        );
+        address oldBase = _retired(3e18, 3e18, 0, 0, 0);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
         vpfiTok.mint(address(diamond), 2e18);
 
         vm.recordLogs();
@@ -4125,6 +4120,23 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.recordRecoveryCeremony(1, 1, 0);
     }
 
+    /// #1662 r5 - stand up a RETIRED deployment whose record the import
+    /// reads. The import no longer takes the parcel on the operator's
+    /// word; it reads the retiring Diamond and carries the UNRESOLVED
+    /// remainder, so every import fixture needs a real record to read.
+    function _retired(
+        uint256 total,
+        uint256 fresh,
+        uint256 recycled,
+        uint256 recovered,
+        uint256 loss
+    ) internal returns (address) {
+        MockRetiredDeployment old = new MockRetiredDeployment();
+        old.setReservation(3, total, fresh, recycled);
+        old.setResolved(recovered, loss);
+        return address(old);
+    }
+
     // -- #1662 r4 ----------------------------------------------------
 
     /// r4-d1 - the JOINT bound values fold in prior LOSS and must NOT be
@@ -4158,10 +4170,8 @@ contract RewardRemitLedgerTest is SetupTest {
     /// mirror claims. A tombstone keeps the tuple -> attribution link so
     /// consumption can still void it.
     function test_Import_LateConsumptionVoidsMintedAttribution() public {
-        address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, 7, false, 3e18, 3e18, 0
-        );
+        address oldBase = _retired(3e18, 3e18, 0, 0, 0);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
         vpfiTok.mint(address(diamond), 2e18);
         vm.recordLogs();
         comp.clearImportedOutstanding(CHAIN_ARB, 2e18, 0);
@@ -4194,28 +4204,26 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(recAfter - redAfter, 0, "and left the position");
     }
 
-    /// r4-d4 - an imported settlement has no local reservation to bind
-    /// against, so the OLD reservation's figures are carried at import and
-    /// enforced here. Without them an operator typo (or a compromised
-    /// admin) could import a small old receipt and classify any
-    /// unearmarked Diamond balance as recovered, minting arbitrary
-    /// uncharged re-dispatch capacity.
-    function test_Import_SettlementBoundedByCarriedOldReservation() public {
-        address oldBase = address(0x01dBA5E);
-        // The carried split must describe ONE parcel.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ImportedBoundsInvalid.selector, 3e18, 2e18, 0
-            )
-        );
-        comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, 7, false, 3e18, 2e18, 0
-        );
-        comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, 7, false, 3e18, 3e18, 0
-        );
-        vpfiTok.mint(address(diamond), 10e18);
-        // Over-claiming the fresh component refuses...
+    /// r4-d4 / r5-e1+e4 - an imported settlement has no local reservation
+    /// to bind against, so the parcel is READ from the retiring
+    /// deployment - not taken on the caller's word - and bounded by what
+    /// that deployment had NOT already resolved. Round 4 carried the
+    /// figures as ADMIN parameters, which bounds a typo but not a
+    /// compromised admin, and used the GROSS split, which double-counts a
+    /// parcel the old deployment had partly recovered already.
+    function test_Import_SettlementBoundedByRetiredParcel() public {
+        // A MIXED parcel is required to pin this: with a fresh-only
+        // parcel the fresh bound is derived independently of the total,
+        // so a test that only exercises fresh cannot see the total term
+        // at all (it survived exactly that mutation).
+        //
+        // 10 dispatched (6 fresh / 4 recycled), of which 3 was already
+        // resolved before the rotation. Only 7 may be carried: fresh
+        // 6-3 = 3, and the recycled bound is the REMAINDER 7-3 = 4 — not
+        // the gross 4-plus-slack a total-of-10 would allow.
+        address oldBase = _retired(10e18, 6e18, 4e18, 3e18, 0);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        vpfiTok.mint(address(diamond), 30e18);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.CeremonyProvenanceExceeded.selector,
@@ -4225,16 +4233,106 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         comp.clearImportedOutstanding(CHAIN_ARB, 4e18, 0);
-        // ...as does claiming recycled the old parcel never carried.
+        // The RECYCLED bound observes the unresolved total: 4, not 7.
         vm.expectRevert(
             abi.encodeWithSelector(
-                IVaipakamErrors.CeremonyProvenanceExceeded.selector, 7, 1, 0
+                IVaipakamErrors.CeremonyProvenanceExceeded.selector,
+                7,
+                5e18,
+                4e18
             )
         );
-        comp.clearImportedOutstanding(CHAIN_ARB, 0, 1);
-        // Within the carried bounds it settles.
+        comp.clearImportedOutstanding(CHAIN_ARB, 0, 5e18);
+        // And the whole unresolved parcel settles exactly.
+        comp.clearImportedOutstanding(CHAIN_ARB, 3e18, 4e18);
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0);
+    }
+
+    /// r5-e1 - an unreadable or fully-resolved retired record is refused:
+    /// no evidence, no import.
+    function test_Import_RefusesUnreadableOrResolvedParcel() public {
+        address empty = _retired(0, 0, 0, 0, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ImportedReservationUnreadable.selector,
+                empty,
+                7
+            )
+        );
+        comp.importOutstandingCompensation(CHAIN_ARB, empty, 7, false);
+
+        address done = _retired(5e18, 5e18, 0, 5e18, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ImportedParcelFullyResolved.selector, done, 7
+            )
+        );
+        comp.importOutstandingCompensation(CHAIN_ARB, done, 7, false);
+    }
+
+    /// r5-e1 - a deployment PREDATING the recovery ceremony exposes no
+    /// terminal-loss getter. Its absence is a structural zero (there is no
+    /// loss state on that generation to miss), not an unknown, so the
+    /// import proceeds on the reservation and recovered figures alone.
+    function test_Import_PreCeremonyGenerationHasNoLossSurface() public {
+        MockRetiredDeployment old = new MockRetiredDeployment();
+        old.setReservation(3, 4e18, 4e18, 0);
+        old.setResolved(1e18, 0);
+        old.setSupportsLoss(false);
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, address(old), 7, false
+        );
+        vpfiTok.mint(address(diamond), 10e18);
         comp.clearImportedOutstanding(CHAIN_ARB, 3e18, 0);
         assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0);
+    }
+
+    /// r5-e3 - ONE import per tuple, ever. The gate returns to zero when a
+    /// settlement clears it, so a replay would mint a SECOND attribution
+    /// and overwrite the tombstone - leaving the first credit drawable and
+    /// unreachable by the evidence that should void it.
+    function test_Import_ReplayAfterSettlementRefused() public {
+        address oldBase = _retired(3e18, 3e18, 0, 0, 0);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.clearImportedOutstanding(CHAIN_ARB, 3e18, 0);
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0, "settled");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ImportedTupleAlreadySeen.selector,
+                CHAIN_ARB,
+                7
+            )
+        );
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+    }
+
+    /// r5-e2 - the settled-import tombstone is bound to its SOURCE CHAIN.
+    /// Peer authentication only proves a message came from some configured
+    /// mirror; without the chain in the key, a compromised mirror could
+    /// name another chain's public tuple and permanently move that chain's
+    /// recovery capacity into quarantine.
+    function test_Import_TombstoneIsChainBound() public {
+        address oldBase = _retired(2e18, 2e18, 0, 0, 0);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        vpfiTok.mint(address(diamond), 2e18);
+        comp.clearImportedOutstanding(CHAIN_ARB, 2e18, 0);
+        (uint256 recBefore, uint256 redBefore, ) = rlens.getRecoveryPosition();
+        assertEq(recBefore - redBefore, 2e18, "credit stands");
+        // A DIFFERENT chain's mirror names the same tuple: no match, so it
+        // falls through to the era check and is refused outright.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RemitAckSenderMismatch.selector, 7, oldBase
+            )
+        );
+        rewardMessenger.deliverRemitAckFromWithClassification(
+            CHAIN_OP, 7, 2e18, oldBase, 1
+        );
+        (uint256 recAfter, uint256 redAfter, ) = rlens.getRecoveryPosition();
+        assertEq(
+            recAfter - redAfter, 2e18, "another chain cannot void it"
+        );
     }
 
     /// SS8-6 (R6e) - an imported old-era marker holds the gate at the
@@ -4246,10 +4344,8 @@ contract RewardRemitLedgerTest is SetupTest {
         _finalizeDay(1);
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
-        address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, 7, false, 3e18, 3e18, 0
-        );
+        address oldBase = _retired(3e18, 3e18, 0, 0, 0);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
         assertEq(
             rlens.getCompensationOutstanding(CHAIN_ARB),
             type(uint256).max,
@@ -4297,10 +4393,8 @@ contract RewardRemitLedgerTest is SetupTest {
     /// is the own-era contradiction rule, imported: the consumed
     /// re-present gets NO clear; only the evidenced settlement resolves.
     function test_Import_QuarantineThenConsumedConflicts() public {
-        address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, 7, false, 3e18, 3e18, 0
-        );
+        address oldBase = _retired(3e18, 3e18, 0, 0, 0);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
         rewardMessenger.deliverRemitAckFromWithClassification(
             CHAIN_ARB, 7, 3e18, oldBase, 2
         );
@@ -4338,10 +4432,8 @@ contract RewardRemitLedgerTest is SetupTest {
     /// wrong-tuple ack never touches the imported gate, and a double
     /// clear refuses.
     function test_Import_EvidencedSettlementBooksAndWrongTuple() public {
-        address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, 7, false, 3e18, 2e18, 1e18
-        );
+        address oldBase = _retired(3e18, 2e18, 1e18, 0, 0);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
         // A stale-era ack for a DIFFERENT tuple is rejected as before.
         vm.expectRevert(
             abi.encodeWithSelector(

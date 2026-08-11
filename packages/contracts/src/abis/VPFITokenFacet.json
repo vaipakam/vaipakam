@@ -1007,20 +1007,26 @@
   },
   {
     "type": "error",
-    "name": "ImportedBoundsInvalid",
+    "name": "ImportedMarkerMissing",
     "inputs": [
       {
-        "name": "oldTotal",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ImportedParcelFullyResolved",
+    "inputs": [
+      {
+        "name": "oldRemitter",
+        "type": "address",
+        "internalType": "address"
       },
       {
-        "name": "oldFresh",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "oldRecycled",
+        "name": "remitId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1028,12 +1034,33 @@
   },
   {
     "type": "error",
-    "name": "ImportedMarkerMissing",
+    "name": "ImportedReservationUnreadable",
+    "inputs": [
+      {
+        "name": "oldRemitter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ImportedTupleAlreadySeen",
     "inputs": [
       {
         "name": "dstChainId",
         "type": "uint32",
         "internalType": "uint32"
+      },
+      {
+        "name": "oldRemitId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

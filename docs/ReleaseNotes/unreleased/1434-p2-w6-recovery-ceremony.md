@@ -64,3 +64,10 @@ carried over — so a settlement cannot claim more than was ever at stake.
 And if the old chain later reports that the original delivery went through
 after all, the recovery credit that settlement created is voided, even
 though the carry-over record itself has already been closed out.
+
+What a carried-over compensation was worth is now established by reading
+the retired deployment's own record rather than by anything the operator
+types, and only the part that deployment had not already settled can be
+carried. Each carried-over delivery can be brought across exactly once,
+and the evidence that later voids its recovery is bound to the chain that
+delivery belonged to — so no other chain can reach it.

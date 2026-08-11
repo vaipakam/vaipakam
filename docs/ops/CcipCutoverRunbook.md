@@ -264,11 +264,15 @@ Before retiring a canonical Base deployment, read
 either settle the compensation first (consumption ack, stranded return,
 or recovery ceremony + terminal loss), or carry it over: on the NEW
 deployment run `importOutstandingCompensation(chain, oldDeployment,
-oldRemitId, quarantineObserved, oldTotal, oldFresh, oldRecycled)` for each
-open tuple — the last three read from the retiring deployment's own
-reservation record. They bound the eventual settlement: an imported gate
-has no local reservation to bind against, so without them a mistyped
-settlement could classify unrelated Diamond balance as recovered.
+oldRemitId, quarantineObserved)` for each open tuple.
+
+The parcel's size is NOT an operator input: the new deployment reads the
+retiring deployment's own reservation record and its already-resolved
+amount, and carries only the UNRESOLVED remainder — so a rotation that
+follows a partial recovery ceremony carries only what is genuinely still
+outstanding. The retiring deployment must therefore still be readable at
+its address when the import runs (do not decommission it first), and each
+tuple may be imported exactly once.
 
 Read the tuple from the retiring deployment's `getImportedOutstanding`
 when that deployment was ITSELF holding an imported gate — its visible
