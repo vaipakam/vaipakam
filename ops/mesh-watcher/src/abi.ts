@@ -152,7 +152,8 @@ const EXPECTED_VIEWS: ReadonlyArray<{
   // #1434 P2-w2 — the backing snapshot on `InteractionRewardsLensFacet`:
   // the balance / arrival-reservation tuple the recovery-reservation check
   // compares. Shape-asserted like every other watched view — the reader's
-  // positional cast of output [6] as `strandedRecoveryReserved` must fail
+  // positional casts of output [6] as `strandedRecoveryReserved` and
+  // [7] as `recoveryPositionReserved` must fail
   // AT STARTUP on any drift, not silently misread a neighbouring word
   // (Codex #1634 r1 P2).
   {
@@ -166,6 +167,10 @@ const EXPECTED_VIEWS: ReadonlyArray<{
       'paidOutRecycled:uint256',
       'keeperBudget:uint256',
       'strandedRecoveryReserved:uint256',
+      // #1434 P2-w5 — the Base recovery-position earmark (position
+      // balance + overage quarantine), the second protocol-ledger
+      // subtrahend inside `unearmarked`. Zero on mirrors.
+      'recoveryPositionReserved:uint256',
     ],
     facet: 'lens',
   },

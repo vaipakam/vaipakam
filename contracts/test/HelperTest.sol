@@ -90,7 +90,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](165);
+        selectors = new bytes4[](168);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -415,6 +415,10 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setReceivedRemitRaw.selector;
         selectors[n++] = TestMutatorFacet.setDayZeroedForDestRaw.selector;
         selectors[n++] = TestMutatorFacet.setCompFundedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setStrandedRecoveryRaw.selector;
+        selectors[n++] =
+            TestMutatorFacet.setRemitReservationCompRaw.selector;
+        selectors[n++] = TestMutatorFacet.setCompensationGateRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2116,7 +2120,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](13);
         selectors[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
         selectors[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
         selectors[2] = RewardRemittanceFacet.remitRewardBudget.selector;
@@ -2126,13 +2130,10 @@ contract HelperTest {
         selectors[6] = RewardRemittanceFacet.onRewardBudgetReceived.selector;
         selectors[7] = RewardRemittanceFacet.quoteRemittanceFee.selector;
         selectors[8] = RewardRemittanceFacet.sendRemitAck.selector;
-        selectors[9] = RewardRemittanceFacet.quoteRemitAckFee.selector;
-        selectors[10] = RewardRemittanceFacet.onRemitAckReceived.selector;
-        selectors[11] = RewardRemittanceFacet.finalizeRemitReservation.selector;
-        selectors[12] = RewardRemittanceFacet.releaseRemitReservation.selector;
-        selectors[13] = RewardRemittanceFacet.seedReleasedRemitStranded.selector;
-        selectors[14] = RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
-        selectors[15] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        selectors[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
+        selectors[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
+        selectors[11] = RewardRemittanceFacet.releaseRemitReservation.selector;
+        selectors[12] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
@@ -2141,7 +2142,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](8);
         selectors[0] =
             RewardCompensationDispatchFacet.remitManualBudget.selector;
         selectors[1] =
@@ -2149,6 +2150,22 @@ contract HelperTest {
         // #1656 r1 — the pre-w4 funded-record seed.
         selectors[2] =
             RewardCompensationDispatchFacet.seedCompFunded.selector;
+        // #1434 P2-w5 — from-recovery wrappers + the B1 return ingress.
+        selectors[3] =
+            RewardCompensationDispatchFacet.remitManualBudgetFromRecovery.selector;
+        selectors[4] = RewardCompensationDispatchFacet
+            .remitSupplementalBudgetFromRecovery
+            .selector;
+        selectors[5] =
+            RewardCompensationDispatchFacet.onStrandedReturnReceived.selector;
+        // #1660 r11 - the B2-d5 seed ceremony pair, moved here for
+        // EIP-170 headroom on the mutating remittance facet.
+        selectors[6] = RewardCompensationDispatchFacet
+            .seedReleasedRemitStranded
+            .selector;
+        selectors[7] = RewardCompensationDispatchFacet
+            .resetReleasedRemitStrandedSeed
+            .selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
@@ -2159,7 +2176,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](27);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2182,6 +2199,17 @@ contract HelperTest {
         selectors[19] = RewardRemittanceLensFacet.getRewardRemittanceReceiver.selector;
         selectors[20] = RewardRemittanceLensFacet.getRewardBudgetReceivedTotal.selector;
         selectors[21] = RewardRemittanceLensFacet.getDeliveredFreshPosition.selector;
+        // #1434 P2-w5 — the recovery-position reads.
+        selectors[22] = RewardRemittanceLensFacet.getRecoveryPosition.selector;
+        selectors[23] =
+            RewardRemittanceLensFacet.getRecoveredForReceipt.selector;
+        selectors[24] = RewardRemittanceLensFacet
+            .getStrandedReturnedCumulative
+            .selector;
+        selectors[25] =
+            RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
+        // #1660 r8 - moved off the mutating facet for EIP-170 headroom.
+        selectors[26] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
@@ -2270,7 +2298,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](17);
         selectors[0] = RepatriationFacet.authorizeRepatriation.selector;
         selectors[1] = RepatriationFacet.onRepatriationReturnReceived.selector;
         selectors[2] = RepatriationFacet.onRepatriationCancelAck.selector;
@@ -2292,6 +2320,8 @@ contract HelperTest {
         selectors[13] = RepatriationFacet.getRepatriationInstruction.selector;
         selectors[14] = RepatriationFacet.setRepatriationTokenAdminRegistry.selector;
         selectors[15] = RepatriationFacet.getRepatriationTokenAdminRegistry.selector;
+        // #1434 P2-w5 — the Mode-B stranded return dispatch.
+        selectors[16] = RepatriationFacet.sendStrandedReturn.selector;
     }
 
     function getVaultFactoryFacetSelectorsExtended()

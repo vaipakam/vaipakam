@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 
 /**
  * @title RewardRemittanceLensFacet — the remittance ledger's READ surface.
@@ -325,5 +326,72 @@ contract RewardRemittanceLensFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         counted = s.rewardBudgetArmedFreshReceived;
         uncounted = s.rewardBudgetFreshUncounted;
+    }
+
+    /// @notice #1434 P2-w5 (§4.2) — the Base recovery position: lifetime
+    ///         credited returns, lifetime uncharged re-dispatches (their
+    ///         difference is the spendable position balance), and the
+    ///         above-entitlement overage quarantine.
+    function getRecoveryPosition()
+        external
+        view
+        returns (uint256 recovered, uint256 redispatched, uint256 overage)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        recovered = s.rewardBudgetRecovered;
+        redispatched = s.rewardBudgetRedispatched;
+        overage = s.strandedReturnOverage;
+    }
+
+    /// @notice #1434 P2-w5 — how much of this reservation's entitlement a
+    ///         stranded return has already credited (the bound's "already
+    ///         recovered" term).
+    function getRecoveredForReceipt(
+        uint256 remitId
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().remitRecoveredForReceipt[remitId];
+    }
+
+    /// @notice #1434 P2-w5 — this mirror's lifetime VPFI returned to Base
+    ///         by the R4 stranded return.
+    function getStrandedReturnedCumulative() external view returns (uint256) {
+        return LibVaipakam.storageSlot().strandedReturnedCumulative;
+    }
+
+    /// @dev Local twins of the mutating facet's errors (same selectors).
+    error RewardMessengerNotSet();
+    error ReceivedRemitNotFound(uint256 remitId);
+    error ReceivedRemitStale(uint256 remitId, uint32 srcChainId);
+
+    /// @notice Quote the CCIP native fee a {RewardRemittanceFacet.sendRemitAck}
+    ///         for `remitId` costs. (#1660 r8 — moved here for EIP-170
+    ///         headroom on the mutating facet; helper-free, view-only.)
+    function quoteRemitAckFee(
+        uint256 remitId,
+        address remitter
+    ) external view returns (uint256 fee) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address messenger = s.rewardMessenger;
+        if (messenger == address(0)) revert RewardMessengerNotSet();
+        LibVaipakam.ReceivedRemit storage rec =
+            s.receivedRemits[_receiptKey(remitter, remitId)];
+        if (rec.receivedAt == 0) revert ReceivedRemitNotFound(remitId);
+        if (rec.srcChainId != s.baseChainId) {
+            revert ReceivedRemitStale(remitId, rec.srcChainId);
+        }
+        fee = IRewardMessenger(messenger).quoteSendRemitAck(
+            remitId, rec.amount, rec.remitter
+        );
+    }
+
+    /// @notice #1660 r1 — this receipt's recorded B1 transport shortfall
+    ///         (declared minus actual, cumulative): value the mirror's
+    ///         retired one-shot record can never re-send — transport
+    ///         loss awaiting the R6d loss ceremony, not recoverable
+    ///         entitlement.
+    function getStrandedReturnShortfall(
+        uint256 remitId
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().strandedReturnShortfall[remitId];
     }
 }

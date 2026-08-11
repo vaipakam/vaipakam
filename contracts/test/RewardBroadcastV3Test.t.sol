@@ -1219,7 +1219,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         _configureCompMirror();
         messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB)); // zeroed = false
 
-        (, , uint256 unearmarkedBefore, , , , uint256 reservedBefore) =
+        (, , uint256 unearmarkedBefore, , , , uint256 reservedBefore, ) =
             _lens().getRecycleBackingSnapshot();
         assertEq(reservedBefore, 0, "reservation starts empty");
 
@@ -1235,7 +1235,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         );
         // The §4.1 claim exclusion, visible at the ONE definition both
         // enforcement sites read: unearmarked shrinks by the reservation.
-        (, , uint256 unearmarkedAfter, , , , uint256 reservedAfter) =
+        (, , uint256 unearmarkedAfter, , , , uint256 reservedAfter, ) =
             _lens().getRecycleBackingSnapshot();
         assertEq(reservedAfter, 5e18, "snapshot publishes the reservation");
         assertEq(

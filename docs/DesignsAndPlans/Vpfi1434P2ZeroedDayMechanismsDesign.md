@@ -961,6 +961,146 @@ the bounds are the design's actual commitment.
 5. **P2-w5 — R4 return over #1568's channel + recovery position +
    uncharged re-dispatch** (§4.2) — downstream of #1568's shared slice,
    before M7 arming (plan §4 `SHAREDWIRE --> MODEBWIRE -.-> ARMGATE`).
+
+   > **Implementation note (P2-w5, 2026-08-10).** Shipped as designed,
+   > with the shapes pinned here. The B1 kind
+   > (`vaipakam.return.wire.stranded.b1`) carries `(remitter, remitId,
+   > dayId, amount)` plus one TokenAmount — `remitter` (the issuing Base
+   > deployment) IS the era binding, checked Base-side against
+   > `address(this)` with a stale era failing closed and re-executable
+   > (the R6e runbook's case). The mirror dispatch is PERMISSIONLESS
+   > payable in the R6b posture: quarantine is terminal mirror-side and
+   > the return its only exit, the stored record is the evidence, and
+   > the caller can neither redirect a chunk nor send beyond the
+   > record — returns are CHUNKED (r2, detailed below): each send
+   > retires a caller-chosen amount bounded by the record's remaining
+   > balance, the remainder stays retryable, and the wire carries the
+   > post-chunk remainder with zero marking the terminal chunk. Mirror-
+   > outbound lane capacity is checked per chunk before the retirement,
+   > so over-capacity fails retryably. Base-side, the entitlement is the reservation's
+   > dispatched `total` with a per-receipt recovered cumulative; the
+   > overage position absorbs the excess token-safely. The gate clears
+   > only when the returning receipt IS the outstanding one. The
+   > reservation's STATUS is deliberately untouched by the return —
+   > delivery evidence (the ack path) and value settlement are
+   > independent lifecycles. Re-dispatch substitution landed as thin
+   > `…FromRecovery` wrappers over the ONE manual/supplemental
+   > implementation (a `fromRecovery` funding-source flag): the position
+   > check replaces the 69M headroom check, `rewardBudgetRedispatched`
+   > replaces the `rewardBudgetRemittedGlobal` charge, and every other
+   > bound (quote, era, clock, cutoff, gate, per-side cumulative) is
+   > shared by construction. Ordinary armed-day BATCH substitution —
+   > which §4.2 also admits — is deliberately deferred: the batch path's
+   > mixed fresh/recycled split interacts with commitment retirement and
+   > deserves its own slice if ever needed. A release of a
+   > recovery-funded reservation restores NEITHER headroom (never
+   > charged) NOR the position (the tokens are physically in transport
+   > custody until the R6d ceremony — which, per the ratified §5.3
+   > unification, credits the SAME position). The Base position joins
+   > `backingPosition`'s subtraction as the second protocol-ledger term
+   > (single writer set: the authenticated ingress credits, the
+   > from-recovery dispatch debits), the transparency snapshot publishes
+   > it as an eighth output, and the mesh watcher's
+   > recovery-reservation check sums it into the spoken-for figure Review
+   > round 1 closed three seams: the entitlement basis requires a
+   > COMPENSATION-shaped reservation (single-day, fresh-only, per-side
+   > declared) — an ordinary batch remit's recycled component never
+   > charged the cap, so crediting its total would mint uncharged
+   > re-dispatch capacity; BOTH return-channel satellites publish
+   > `WIRE_GENERATION` and the in-place refresh script generation-gates
+   > them alongside the receiver and messenger (the w4 lesson applied to
+   > every proxy the refreshed facets speak to); and a short actual is
+   > recorded per receipt as TRANSPORT LOSS (`strandedReturnShortfall`)
+   > — the mirror's one-shot record retired at declared, so the gap can
+   > never re-arrive and must read as the R6d loss ceremony's evidence,
+   > not as recoverable entitlement. Round 2 hardened the transport
+   > seams: returns are CHUNKABLE (the mirror cannot read Base's INBOUND
+   > lane ceiling, and a single indivisible send above it would be
+   > permanently unexecutable with the one-shot record already gone —
+   > partial retirement keeps the remainder retryable, with the operator
+   > capacity-pairing rule in the runbook's §8 ceremony); the wire
+   > carries the record's post-chunk REMAINDER, and the terminal chunk
+   > (remainder zero) closes the receipt's loss evidence by ASSIGNMENT
+   > at the full residual — folding in the FIRST-leg deficit (a
+   > compensation that arrived short Base→mirror left less on the mirror
+   > than the reservation dispatched), idempotent under replays and
+   > self-correcting; the reported day must equal the reservation's own
+   > single day (settlement evidence binds to the authoritative
+   > obligation); and the refresh script's satellite probes read the
+   > LIVE endpoints from the Diamond (`getRepatriationPosition`) with
+   > the artifact as fallback — the artifact file is not the authority
+   > on whether a satellite is armed. Round 3 closed the lifecycle
+   > seams: a CONSUMED receipt (consumed ack or forced equivalent,
+   > stamped on the reservation) is not B1-recoverable — its value
+   > entered mirror claim backing, and a return against it would reuse
+   > the dispatch's cap lineage while that value still backs claims;
+   > the FIRST terminal chunk unwinds the closure exactly once (day
+   > markers ownership-guarded + declared funding out of the cumulative,
+   > the release mould) so the recovery position can fund the SAME
+   > obligation without a release; loss closure recomputes on every
+   > chunk once a terminal was observed (the transport executes out of
+   > order — a partial landing after the terminal must shrink the loss
+   > it just recovered); and the satellite probes prefer the LIVE
+   > endpoint with a distinct artifact address upgraded as well (a
+   > stale artifact must never shadow the active proxy). Round 4
+   > made both exclusions order-independent: the return requires
+   > POSITIVE non-consumption evidence (an Acked-non-consumed or
+   > Released reservation) rather than mere absence of a consumed
+   > stamp — out-of-order transport could land a faulty mirror's
+   > return ahead of its consumed attestation, and a credited
+   > re-dispatch cannot be revoked; an early return stays
+   > re-executable until the permissionless ack lands. And the
+   > declared-funding unwind is a ONE-flag operation shared by release
+   > and the terminal return (`declaredUnwound`) — a released
+   > reservation's late-returning message must not subtract the same
+   > contribution twice and erase a replacement's funding recorded
+   > while the terminal chunk was in flight. Round 5 finished the
+   > evidence ladder: the ACK WIRE carries the receipt's full
+   > CLASSIFICATION (consumed / quarantined / provisional) instead of a
+   > collapsed consumed bit, Base stamps `quarantineAcked` /
+   > `consumedAcked` per reservation (including on the Released ack
+   > branch — released-alone is message-state, not classification
+   > evidence), and B1 eligibility is the QUARANTINE attestation
+   > specifically — an Acked-non-consumed state can be a PROVISIONAL
+   > receipt that later confirms as consumed. And the manual dispatch
+   > bound became CUMULATIVE per side (funded-so-far + request ≤
+   > quote), because a terminal return can re-open a day that retains a
+   > successor supplement's funding. Round 6 versioned the widened
+   > ack word against its own predecessor: the wire offsets
+   > classification by one (1 consumed / 2 quarantined / 3 provisional,
+   > 0 refused re-executably) so a generation-1 bool ack in flight can
+   > never be misread — a legacy consumed ack (true = 1) decodes as
+   > consumed with identical semantics, and a legacy non-consumed ack
+   > (false = 0) fails closed until anyone re-presents it under the
+   > current encoding. Round 7 closed the last two transport seams:
+   > the messenger's WIRE GENERATION bumped to 3 (the classification
+   > word changed `sendRemitAck`'s SELECTOR — a generation-2 proxy
+   > would silently skip the refresh probe and every facet ack call
+   > would revert), and the messenger validates the classification
+   > word on the RAW uint256 BEFORE narrowing (uint8(258) == 2 would
+   > forge quarantine evidence from a malformed peer packet). Round 8
+   > made contradictory terminal classifications a CONFLICT: a consumed
+   > attestation landing after quarantine eligibility (impossible for an
+   > honest mirror — quarantined never transitions to consumed) claws
+   > the receipt's still-unspent return credit into the overage
+   > quarantine, reports the re-dispatched slice unrecoverable, and
+   > withholds every consumed-ack privilege (gate clear,
+   > reconciliation) from the contradicting mirror; the reverse order
+   > never forges B1 eligibility. Fitting the conflict logic pushed the
+   > mutating remittance facet past EIP-170, resolved by moving the
+   > helper-free `quoteRemitAckFee` view to the lens facet. Round 9
+   > tied off the last three: the conflict claw is ONE-SHOT
+   > (`conflictClawed` — a replayed conflicting ack keeps privileges
+   > withheld but can no longer drain unrelated receipts' credit off
+   > the global position balance); the refresh script's reward-
+   > messenger and remittance-receiver probes read the LIVE Diamond
+   > config first with distinct artifact addresses upgraded separately
+   > (the live-config-over-artifact rule now uniform across all four
+   > probes); and the keeper's remit-ack surface combines both facet
+   > ABIs (viem resolves functions from the supplied ABI, so the lens
+   > move would otherwise break the ACK quote client-side).
+
+
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —
    carries the FunctionalSpec amendment if (a) is ratified.
 

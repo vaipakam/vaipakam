@@ -1819,6 +1819,62 @@ contract TestMutatorFacet {
         );
     }
 
+    /// @notice #1434 P2-w5 test-only — install a stranded-recovery record
+    ///         directly (record + reserved sum), the w5 return's input.
+    function setStrandedRecoveryRaw(
+        address remitter,
+        uint256 remitId,
+        uint256 amount,
+        uint256 dayId,
+        uint8 reason
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.StrandedRecovery storage sr =
+            s.strandedRecoveries[keccak256(abi.encode(remitter, remitId))];
+        s.strandedRecoveryReserved =
+            s.strandedRecoveryReserved + amount - sr.amount;
+        sr.amount = amount;
+        sr.dayId = dayId;
+        sr.reservedAt = uint64(block.timestamp);
+        sr.reason = reason;
+    }
+
+    /// @notice #1434 P2-w5 test-only — hold the R6 gate directly.
+    function setCompensationGateRaw(uint32 dstChainId, uint256 remitId)
+        external
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.compensationOutstanding[dstChainId] = remitId;
+        s.compensationOutstandingChains.push(dstChainId);
+    }
+
+    /// @notice #1434 P2-w5 test-only — a minimal reservation row for the
+    ///         B1 ingress paths (dstChainId + status + total are what the
+    ///         ingress reads).
+    function setRemitReservationCompRaw(
+        uint256 remitId,
+        uint32 dstChainId,
+        uint8 status,
+        uint256 total,
+        uint256 dayId
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        r.dstChainId = dstChainId;
+        r.status = status;
+        r.total = total;
+        // #1660 r1 - COMPENSATION-shaped (single-day, fresh-only, declared
+        // split stamped): the B1 ingress refuses anything else.
+        r.fresh = total;
+        r.declaredLender18 = total;
+        // #1660 r5 - the raw models a QUARANTINE-ACKED receipt (the B1
+        // eligibility evidence).
+        r.quarantineAcked = true;
+        uint256[] memory one = new uint256[](1);
+        one[0] = dayId;
+        r.dayIds = one;
+    }
+
     /// @dev Route `data` back through the diamond fallback (bubbling the raw
     ///      revert) so a routed `onlyDiamondInternal` host sees `msg.sender ==
     ///      address(this)`.

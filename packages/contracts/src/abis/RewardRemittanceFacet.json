@@ -128,9 +128,9 @@
         "internalType": "address"
       },
       {
-        "name": "consumed",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "classification",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [],
@@ -183,30 +183,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "quoteRemitAckFee",
-    "inputs": [
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "remitter",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "fee",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -336,26 +312,6 @@
       }
     ],
     "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "resetReleasedRemitStrandedSeed",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "seedReleasedRemitStranded",
-    "inputs": [
-      {
-        "name": "upTo",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -532,56 +488,6 @@
   },
   {
     "type": "event",
-    "name": "ReleasedRemitStrandedSeedProgress",
-    "inputs": [
-      {
-        "name": "cursor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "target",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "accumulated",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReleasedRemitStrandedSeedReset",
-    "inputs": [],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReleasedRemitStrandedSeeded",
-    "inputs": [
-      {
-        "name": "total",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "reservations",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "RemitAckAfterForcedFinalize",
     "inputs": [
       {
@@ -623,6 +529,31 @@
       },
       {
         "name": "amountReceived",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemitAckClassificationConflict",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "clawedToOverage",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "unrecoverable",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2159,6 +2090,17 @@
   },
   {
     "type": "error",
+    "name": "OnlyStrandedReturnReceiver",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PadNumeraireRateFeedStale",
     "inputs": []
   },
@@ -2328,6 +2270,22 @@
   },
   {
     "type": "error",
+    "name": "RecoveryPositionInsufficient",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RecoverySignatureInvalid",
     "inputs": []
   },
@@ -2375,17 +2333,6 @@
   },
   {
     "type": "error",
-    "name": "ReleasedRemitStrandedAlreadySeeded",
-    "inputs": [
-      {
-        "name": "current",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "RemitAckChainMismatch",
     "inputs": [
       {
@@ -2402,6 +2349,17 @@
         "name": "got",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitAckClassificationInvalid",
+    "inputs": [
+      {
+        "name": "classification",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ]
   },
@@ -2630,90 +2588,6 @@
   },
   {
     "type": "error",
-    "name": "SeedDoesNotReconcile",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SeedNotStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SeedNothingToScan",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SeedRaceDetected",
-    "inputs": [
-      {
-        "name": "baseline",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "current",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SeedRangeInvalid",
-    "inputs": [
-      {
-        "name": "upTo",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cursor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "target",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SeedWouldShrinkReleasedCount",
-    "inputs": [
-      {
-        "name": "scanned",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "current",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SeedWouldShrinkStrandedTotal",
-    "inputs": [
-      {
-        "name": "derived",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "current",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SelfCollateralizedOffer",
     "inputs": []
   },
@@ -2781,6 +2655,103 @@
     "type": "error",
     "name": "SourceChainIdNotExpected",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnAwaitingAck",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnConsumedReceipt",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnDeliveryInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnNotCompensation",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnUnknownReservation",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnWrongDay",
+    "inputs": [
+      {
+        "name": "got",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "want",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnWrongEra",
+    "inputs": [
+      {
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnWrongSourceChain",
+    "inputs": [
+      {
+        "name": "got",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "want",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   },
   {
     "type": "error",

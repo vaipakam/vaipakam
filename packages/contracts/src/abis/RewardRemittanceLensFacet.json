@@ -245,6 +245,48 @@
   },
   {
     "type": "function",
+    "name": "getRecoveredForReceipt",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRecoveryPosition",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "recovered",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "redispatched",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "overage",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getReleasedRemitStrandedSeedState",
     "inputs": [],
     "outputs": [
@@ -416,6 +458,31 @@
           },
           {
             "name": "forcedFinalized",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "fundedFromRecovery",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "consumedAcked",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "declaredUnwound",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "quarantineAcked",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "conflictClawed",
             "type": "bool",
             "internalType": "bool"
           }
@@ -590,5 +657,93 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getStrandedReturnShortfall",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getStrandedReturnedCumulative",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quoteRemitAckFee",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "fee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "ReceivedRemitNotFound",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReceivedRemitStale",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "srcChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardMessengerNotSet",
+    "inputs": []
   }
 ]

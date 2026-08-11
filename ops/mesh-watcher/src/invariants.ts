@@ -140,7 +140,12 @@ export interface LocalLedger {
    * recovery-reservation check SKIPS for this chain (substituting zero in
    * either slot pages falsely or silences truly).
    */
-  backing?: { vpfiBalance: bigint; strandedRecoveryReserved: bigint };
+  backing?: {
+    vpfiBalance: bigint;
+    strandedRecoveryReserved: bigint;
+    // #1434 P2-w5 — the Base recovery-position earmark (zero on mirrors).
+    recoveryPositionReserved: bigint;
+  };
   outstandingFresh: bigint;
   armedFromDay: bigint;
   paidOutRecycled: bigint;
@@ -803,7 +808,10 @@ export function checkHardInvariants(
   // snapshot could not be read (pre-P2-w2 lens or transport failure).
   for (const local of obs.allLocals.values()) {
     if (!local.backing) continue;
-    const spoken = local.bucket + local.backing.strandedRecoveryReserved;
+    const spoken =
+      local.bucket +
+      local.backing.strandedRecoveryReserved +
+      local.backing.recoveryPositionReserved;
     if (local.backing.vpfiBalance + bucketToleranceWei >= spoken) continue;
     out.push(makeFinding({
       code: 'recovery-reservation-backing',
@@ -812,15 +820,17 @@ export function checkHardInvariants(
         local.backing.vpfiBalance,
         local.bucket,
         local.backing.strandedRecoveryReserved,
+        local.backing.recoveryPositionReserved,
       ],
       severity: 'critical',
       chainId: local.chainId,
       title: 'Balance no longer covers bucket + arrival reservation',
       detail:
-        `balance + tolerance < bucket + strandedRecoveryReserved — tokens the ledger says are spoken for (recycle backing or quarantined compensation awaiting return) have been spent\n` +
+        `balance + tolerance < bucket + strandedRecoveryReserved + recoveryPositionReserved — tokens the ledger says are spoken for (recycle backing, quarantined compensation awaiting return, or the Base recovery position) have been spent\n` +
         `  balance     = ${fmt(local.backing.vpfiBalance)}\n` +
         `  bucket      = ${fmt(local.bucket)}\n` +
         `  reserved    = ${fmt(local.backing.strandedRecoveryReserved)}\n` +
+        `  recovery    = ${fmt(local.backing.recoveryPositionReserved)}\n` +
         `  spoken-for  = ${fmt(spoken)}\n` +
         `  shortfall   = ${fmt(spoken - local.backing.vpfiBalance)}\n` +
         `  tolerance   = ${fmt(bucketToleranceWei)}`,

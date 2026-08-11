@@ -1553,41 +1553,32 @@ contract RewardRemittanceFacet is
         // r3/r4 — echo the receipt's PAYLOAD-recorded remitter so the
         // canonical ingress can verify the ack names ITSELF (remit ids are
         // per-deployment; see {LibVaipakam.ReceivedRemit.remitter}).
-        // #1656 r8 - the wire says whether the delivery was CONSUMED
-        // (credited; provisional confirmed): only a consumption ack may
-        // clear the Base R6 gate - a quarantined or still-provisional
-        // delivery's value is not finally consumed, and its clearing
-        // evidence is the w5 return (or the confirm, after which this
-        // ack re-presents as consumed).
+        // #1656 r8 / #1660 r5 - the wire carries the receipt's full
+        // CLASSIFICATION (0 consumed / 1 quarantined / 2 provisional),
+        // not a collapsed consumed bit: only a consumption ack clears
+        // the Base R6 gate, and only a QUARANTINE ack is B1-return
+        // evidence - an Acked-non-consumed state alone could be a
+        // PROVISIONAL receipt that later confirms as consumed, so Base
+        // must be able to tell the two apart. Re-presentable: after the
+        // confirm/demote the stored classification changes and the ack
+        // re-presents with the new value.
+        // #1660 r6 - WIRE classification = storage classification + 1:
+        // value 0 is deliberately unassigned so the widened word is
+        // unambiguous against a generation-1 bool ack in flight - a
+        // legacy consumed ack (bool true = 1) decodes as CONSUMED with
+        // identical semantics, and a legacy non-consumed ack (bool
+        // false = 0) decodes as INVALID and stays re-executable until
+        // anyone re-presents it under the current encoding.
         messageId = IRewardMessenger(messenger).sendRemitAck{value: msg.value}(
             remitId,
             rec.amount,
             rec.remitter,
-            rec.classification == 0,
+            rec.classification + 1,
             refundAddress
         );
         emit RemitAckDispatched(remitId, messageId, rec.amount);
     }
 
-    /// @notice Quote the CCIP native fee a {sendRemitAck} for `remitId` costs.
-    function quoteRemitAckFee(
-        uint256 remitId,
-        address remitter
-    ) external view returns (uint256 fee) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address messenger = s.rewardMessenger;
-        if (messenger == address(0)) revert RewardMessengerNotSet();
-        LibVaipakam.ReceivedRemit storage rec =
-            s.receivedRemits[_receiptKey(remitter, remitId)];
-        if (rec.receivedAt == 0) revert ReceivedRemitNotFound(remitId);
-        // Codex #1426 r2 — mirror the send's stale-receipt rejection.
-        if (rec.srcChainId != s.baseChainId) {
-            revert ReceivedRemitStale(remitId, rec.srcChainId);
-        }
-        fee = IRewardMessenger(messenger).quoteSendRemitAck(
-            remitId, rec.amount, rec.remitter
-        );
-    }
 
     // ─── #1222 M3 B2-d2 — Base-side ack ingress + operator valves ─────────
 
@@ -1610,10 +1601,14 @@ contract RewardRemittanceFacet is
         uint256 remitId,
         uint256 amountReceived,
         address remitter,
-        // #1656 r8 - mirror-attested consumption (receipt classification
-        // == credited). Gates the R6 clear + the compFunded
-        // reconciliation.
-        bool consumed
+        // #1656 r8 / #1660 r5 - the mirror-attested receipt
+        // CLASSIFICATION (0 consumed / 1 quarantined / 2 provisional).
+        // Consumption gates the R6 clear + compFunded reconciliation;
+        // QUARANTINE is the B1 return's eligibility evidence - a
+        // provisional attestation stamps neither (it can still confirm
+        // as consumed, and treating it as quarantine would let a faulty
+        // mirror return value ahead of that confirmation).
+        uint8 classification
     ) external nonReentrant whenNotPaused {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.rewardMessenger || s.rewardMessenger == address(0))
@@ -1632,6 +1627,15 @@ contract RewardRemittanceFacet is
             revert RemitAckSenderMismatch(remitId, remitter);
         }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        // #1660 r6 - the wire offsets classification by one (0 is the
+        // RETIRED generation-1 bool-false shape): 1 consumed /
+        // 2 quarantined / 3 provisional. Zero or out-of-range fails
+        // closed and re-executable - never guessed at.
+        if (classification == 0 || classification > 3) {
+            revert RemitAckClassificationInvalid(classification);
+        }
+        bool consumed = classification == 1;
+        bool quarantined = classification == 2;
         if (r.status == 2) {
             if (r.dstChainId == sourceChainId) {
                 // #1656 r3 - a FORCED finalization preserved declared
@@ -1642,7 +1646,12 @@ contract RewardRemittanceFacet is
                 // a provisional ack dispatched pre-confirm but arriving
                 // post-force must not burn the flag before the consumed
                 // re-presentation can reconcile.
-                if (r.forcedFinalized && consumed) {
+                bool ackConflict;
+                if (consumed) {
+                    ackConflict = _stampConsumedAck(s, r, remitId);
+                }
+                if (quarantined) _stampQuarantineAck(r, remitId);
+                if (r.forcedFinalized && consumed && !ackConflict) {
                     r.forcedFinalized = false;
                     _reconcileCompFunded(s, r, amountReceived);
                     emit RemitAckAfterForcedFinalize(
@@ -1657,7 +1666,7 @@ contract RewardRemittanceFacet is
                 // cross-chain ordering, not an error path. Idempotent:
                 // once cleared, the gate no longer names this remit.
                 if (
-                    consumed
+                    consumed && !ackConflict
                         && s.compensationOutstanding[r.dstChainId]
                             == remitId
                 ) {
@@ -1673,6 +1682,21 @@ contract RewardRemittanceFacet is
             return;
         }
         if (r.status == 3) {
+            // #1660 r5 - a RELEASED reservation's late ack still records
+            // its classification EVIDENCE (nothing else): the B1 return
+            // requires a quarantine attestation even for released
+            // reservations - released-alone says the MESSAGE was deemed
+            // dead, not what the delivery became if it executed after
+            // all (it could have been consumed, and a return against
+            // consumed lineage is the r4/r5 bypass).
+            if (r.dstChainId == sourceChainId) {
+                if (consumed) {
+                    // conflict claw runs here too; released reservations
+                    // have no consumed-ack privileges to withhold.
+                    _stampConsumedAck(s, r, remitId);
+                }
+                if (quarantined) _stampQuarantineAck(r, remitId);
+            }
             emit RemitAckAfterRelease(remitId, sourceChainId, amountReceived);
             return;
         }
@@ -1680,7 +1704,9 @@ contract RewardRemittanceFacet is
         if (r.dstChainId != sourceChainId) {
             revert RemitAckChainMismatch(remitId, r.dstChainId, sourceChainId);
         }
-        _finalizeReservation(s, r, remitId, amountReceived, false, consumed);
+        _finalizeReservation(
+            s, r, remitId, amountReceived, false, consumed, quarantined
+        );
     }
 
     /**
@@ -1700,7 +1726,7 @@ contract RewardRemittanceFacet is
         // #1656 r8 - the forced finalize is the operator's consumption
         // attestation (same evidenced mould as the ACK), so it clears
         // the gate.
-        _finalizeReservation(s, r, remitId, 0, true, true);
+        _finalizeReservation(s, r, remitId, 0, true, true, false);
     }
 
     /**
@@ -1769,7 +1795,10 @@ contract RewardRemittanceFacet is
         if (
             n == 1
                 && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
+                // #1660 r4 - once, whichever unwind path ran first.
+                && !r.declaredUnwound
         ) {
+            r.declaredUnwound = true;
             uint256 cd = closed[0];
             uint256 curL = s.compFundedLender18[dst][cd];
             uint256 curB = s.compFundedBorrower18[dst][cd];
@@ -1828,6 +1857,95 @@ contract RewardRemittanceFacet is
 
     /// @dev Shared ack/force finalize: Pending → Acked, pending → acked
     ///      aggregates rolled.
+    /// @notice #1660 r8 - contradictory terminal classifications landed
+    ///         for one receipt (an honest mirror can never produce both:
+    ///         quarantined never transitions to consumed, nor consumed to
+    ///         quarantined). The still-unspent slice of any return credit
+    ///         is clawed into the overage quarantine; what a re-dispatch
+    ///         already consumed is unrecoverable on-chain and becomes the
+    ///         recovery ceremony's evidence.
+    /// @custom:event-category state-change/reward-compensation
+    event RemitAckClassificationConflict(
+        uint256 indexed remitId,
+        uint256 clawedToOverage,
+        uint256 unrecoverable
+    );
+
+    /// @dev #1660 r8 - stamp a CONSUMED attestation. Returns true when it
+    ///      CONTRADICTS a prior quarantine attestation: the caller must
+    ///      then withhold the consumed-ack privileges (gate clear +
+    ///      reconciliation) - a mirror contradicting itself gets no
+    ///      further trust extended. The conflict freezes the receipt's
+    ///      return credit: the unspent slice moves to the overage
+    ///      quarantine (not claimable, not re-dispatchable), and
+    ///      `consumedAcked` blocks every further B1 credit.
+    function _stampConsumedAck(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RemitReservation storage r,
+        uint256 remitId
+    ) private returns (bool conflict) {
+        conflict = r.quarantineAcked;
+        r.consumedAcked = true;
+        // #1660 r9 - ONE-SHOT: a replayed consumed ack on an already-
+        // conflicted receipt keeps the privileges withheld (the return
+        // value) but must not claw again - `avail` is the GLOBAL
+        // position balance, and a replay after another receipt's
+        // legitimate credit would drain unrelated capacity into the
+        // overage quarantine.
+        if (conflict && !r.conflictClawed) {
+            r.conflictClawed = true;
+            uint256 rec = s.remitRecoveredForReceipt[remitId];
+            uint256 avail = s.rewardBudgetRecovered
+                - s.rewardBudgetRedispatched;
+            uint256 claw = rec < avail ? rec : avail;
+            if (claw != 0) {
+                s.rewardBudgetRecovered -= claw;
+                s.strandedReturnOverage += claw;
+            }
+            // #1660 r11 - the terminal return RE-OPENED the obligation
+            // (day markers + declared funding) on the strength of the
+            // quarantine attestation this consumed ack now contradicts:
+            // the consumed delivery still backs mirror claims, so the
+            // re-opened funding path must CLOSE again. The day re-closes
+            // under the original receipt if still open (a successor's
+            // closure is never clobbered), and the declared split
+            // re-enters the funded cumulative either way - reflecting
+            // the consumed reality and, via the cumulative quote bound,
+            // freezing further manual/supplemental headroom. Inside the
+            // terminalized guard the reservation is compensation-shaped
+            // (only B1 terminalizes, and B1 requires the shape).
+            if (s.strandedReturnTerminalized[remitId]) {
+                uint32 cdst = r.dstChainId;
+                uint256 cday = r.dayIds[0];
+                if (s.dayClosedByRemitId[cdst][cday] == 0) {
+                    s.dayClosedByRemitId[cdst][cday] = remitId;
+                    s.rewardBudgetRemitted[cdst][cday] = r.total;
+                }
+                if (r.declaredUnwound) {
+                    r.declaredUnwound = false;
+                    s.compFundedLender18[cdst][cday] += r.declaredLender18;
+                    s.compFundedBorrower18[cdst][cday] +=
+                        r.declaredBorrower18;
+                }
+            }
+            emit RemitAckClassificationConflict(remitId, claw, rec - claw);
+        }
+    }
+
+    /// @dev #1660 r8 - stamp a QUARANTINE attestation; refused (with the
+    ///      conflict surfaced) when a consumed attestation already stands
+    ///      - B1 eligibility must never be forged onto a consumed receipt.
+    function _stampQuarantineAck(
+        LibVaipakam.RemitReservation storage r,
+        uint256 remitId
+    ) private {
+        if (r.consumedAcked) {
+            emit RemitAckClassificationConflict(remitId, 0, 0);
+            return;
+        }
+        r.quarantineAcked = true;
+    }
+
     function _finalizeReservation(
         LibVaipakam.Storage storage s,
         LibVaipakam.RemitReservation storage r,
@@ -1839,7 +1957,10 @@ contract RewardRemittanceFacet is
         // evidence), but the R6 gate HOLDS - SS5.1's clearing evidence
         // is CONSUMPTION, and a stranded delivery settles via the w5
         // return.
-        bool consumed
+        bool consumed,
+        // #1660 r5 - the ack specifically attested QUARANTINE (the B1
+        // return's eligibility evidence; provisional stamps neither).
+        bool quarantined
     ) private {
         r.status = 2;
         uint32 dst = r.dstChainId;
@@ -1854,7 +1975,15 @@ contract RewardRemittanceFacet is
         // mould). A cancel/release does NOT come through here — it
         // records terminal message state while the gate HOLDS (ratified),
         // pending the w5 return / w6 recovery settlements.
-        if (consumed && s.compensationOutstanding[dst] == remitId) {
+        // #1660 r3 - the CONSUMPTION stamp: a consumed receipt is not
+        // B1-recoverable (its value entered the mirror's compensated
+        // pools as claim backing; a return against it would reuse the
+        // dispatch's cap lineage). Stamped whether or not the gate
+        // still names this remit.
+        bool ackConflict;
+        if (consumed) ackConflict = _stampConsumedAck(s, r, remitId);
+        else if (quarantined) _stampQuarantineAck(r, remitId);
+        if (consumed && !ackConflict && s.compensationOutstanding[dst] == remitId) {
             LibRewardRemitDispatch.clearCompensationGate(s, dst);
             // #1656 r2 - AUTHENTIC ACKs only: the forced finalize passes
             // amountReceived = 0 as a sentinel, and reading it as a real
@@ -1953,294 +2082,6 @@ contract RewardRemittanceFacet is
 
 
 
-    /// @notice #1448 r8 — abandon an in-flight seed ceremony so it can be
-    ///         restarted from scratch.
-    /// @dev    Required because the race guard is otherwise a BRICK: once a
-    ///         remittance is released mid-ceremony the live counter
-    ///         permanently differs from the pinned baseline, so every
-    ///         subsequent range call reverts and nothing can ever publish —
-    ///         the exact liveness failure the resumable design was added to
-    ///         remove, reintroduced by the guard that protects it.
-    ///
-    ///         Clears only the ceremony's own scratch state. It CANNOT touch
-    ///         `recycleReleasedRemitStrandedCumulative`, and it refuses once
-    ///         the ceremony has completed — so this is a restart lever, never
-    ///         a way to re-run a finished seed or to edit the published
-    ///         figure.
-    function resetReleasedRemitStrandedSeed()
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        // Same reasoning as the seed itself (#1448 r12): a role flip must not
-        // be able to strand an in-flight ceremony with no way to restart it.
-        // `SeedNotStarted` below is the real precondition.
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.recycleStrandedSeedApplied) {
-            revert ReleasedRemitStrandedAlreadySeeded(
-                s.recycleReleasedRemitStrandedCumulative
-            );
-        }
-        if (s.recycleStrandedSeedTarget == 0) revert SeedNotStarted();
-        delete s.recycleStrandedSeedTarget;
-        delete s.recycleStrandedSeedCursor;
-        delete s.recycleStrandedSeedAccum;
-        delete s.recycleStrandedSeedCounted;
-        delete s.recycleStrandedSeedBaseline;
-        delete s.recycleStrandedSeedBaselineCount;
-        emit ReleasedRemitStrandedSeedReset();
-    }
-    /// @notice The seed ceremony has already run. Keyed on a dedicated
-    ///         applied-flag, NOT on the counter being non-zero: a release
-    ///         landing after the upgrade but before the ceremony would
-    ///         otherwise reject it permanently (#1448 r5).
-    error ReleasedRemitStrandedAlreadySeeded(uint256 current);
-    /// @notice The derived total is below what the counter already holds,
-    ///         which would silently discard recorded state.
-    error SeedWouldShrinkStrandedTotal(uint256 derived, uint256 current);
-    /// @notice The scanned release count is below the live lifetime count,
-    ///         which would silently discard recorded releases. Unreachable by
-    ///         construction (see the backfill at completion) — asserted
-    ///         because the alternative is assuming it (#1448 r14).
-    error SeedWouldShrinkReleasedCount(uint256 scanned, uint256 current);
-    /// @notice `upTo` does not advance the cursor, or runs past the pinned
-    ///         target. Ranges must move forward and stay within `1..target`.
-    error SeedRangeInvalid(uint256 upTo, uint256 cursor, uint256 target);
-    /// @notice A remittance was released while the ceremony was part-way
-    ///         through, so the scan and the live counter disagree about it.
-    error SeedRaceDetected(uint256 baseline, uint256 current);
-    /// @notice No reservations exist, so there is nothing to seed.
-    error SeedNothingToScan();
-    /// @notice There is no in-flight ceremony to reset.
-    error SeedNotStarted();
-    /// @notice The derived seed leaves a recycled relation still violated,
-    ///         so the state was not produced by pre-upgrade releases alone.
-    error SeedDoesNotReconcile();
-
-    /// @notice Slack allowed on the REVERSE composition direction when
-    ///         validating a seed. Mirrors the watcher's
-    ///         `COMPOSITION_SLACK_TOLERANCE_WEI` default (1e15 = 0.001 VPFI):
-    ///         `consume`'s bucket floor widens that side by bounded cap-trim
-    ///         dust, and the ceremony must not refuse over it.
-    uint256 internal constant SEED_COMPOSITION_SLACK_WEI = 1e15;
-
-    /// @notice #1448 r3 — one-time seed of
-    ///         `recycleReleasedRemitStrandedCumulative` on a Diamond that
-    ///         released remittances BEFORE that counter existed.
-    /// @dev    Why this is needed at all: the old `restoreReleasedRemit`
-    ///         already restored `outstandingCommitRecycled` and decremented
-    ///         `paidOutRecycled`, but nothing recorded how much it stranded.
-    ///         After an in-place upgrade the new counter starts at zero, so
-    ///         BOTH externally-checkable recycled relations — bucket coverage
-    ///         and bucket composition — read as violated by exactly that
-    ///         historical amount, on state the supported release path
-    ///         produced. Without this the watcher pages CRITICAL twice, on
-    ///         correct behaviour, from the first tick after the upgrade.
-    ///
-    ///         DERIVED, never operator-supplied. The caller passes only WHICH
-    ///         reservations to count; the amount comes from storage. An
-    ///         operator-supplied figure that ran high would manufacture
-    ///         permanent slack in both relations — precisely the defect
-    ///         Codex #1448 r1 removed when it rejected `recycledFull`.
-    ///
-    ///         Sums `r.recycled` (the CLAMPED share actually sent), never
-    ///         `r.recycledFull`: the residual was retired by
-    ///         {LibVpfiRecycle.releaseCommitment} without moving tokens, so
-    ///         it never left the bucket. The derivation is EXACT rather than
-    ///         an upper bound because `consume(st.recycled)` added the whole
-    ///         of `r.recycled` to `paidOutRecycled` in the same transaction
-    ///         that stamped it, so the old reversal's zero-floor never bound.
-    ///
-    ///         SCANS `1..getRemitReservationNonce()` rather than taking a
-    ///         caller-supplied id list (Codex #1448 r4). A supplied list
-    ///         cannot be proved COMPLETE: the post-condition below checks
-    ///         inequalities, and pre-existing bucket headroom can absorb an
-    ///         omitted release, so an operator could pass one id, omit
-    ///         another, satisfy both checks, and permanently arm the one-shot
-    ///         guard with a short total. Reservation ids are dense (`1..nonce`,
-    ///         both allocation sites pre-increment), so scanning is complete
-    ///         by construction and there is no completeness argument to get
-    ///         wrong. It is a one-time admin call, so the bounded loop is the
-    ///         right trade against an operator-error class.
-    ///
-    ///         One-shot keyed on a dedicated APPLIED FLAG, deliberately not
-    ///         on the counter being non-zero (#1448 r5, restated here because
-    ///         the stale wording this replaces is where a wrong operator rule
-    ///         came from). A release landing after the upgrade but before the
-    ///         ceremony makes the counter non-zero while a historical amount
-    ///         is still unrecovered behind it — a value-keyed guard would
-    ///         refuse exactly the run that is needed. Re-running cannot
-    ///         double-count regardless: the scan covers every id in
-    ///         `1..target` and ASSIGNS the total rather than adding to it.
-
-    /// @param  upTo Highest reservation id to scan in THIS call. Must be
-    ///              greater than the current cursor and at most the pinned
-    ///              target. Pass the target itself to finish in one call on a
-    ///              Diamond with a short history.
-    function seedReleasedRemitStranded(uint256 upTo)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        // #1448 r12 — deliberately NOT `onlyCanonical`. The role is a mutable
-        // admin setting, and the exact state this ceremony reconstructs is
-        // HISTORY: a Diamond that released remittances while canonical, was
-        // demoted, and is refreshed afterwards still holds those status-3
-        // reservations and still needs them counted. Gating on the current
-        // role would leave it with an unseeded composition discrepancy
-        // forever unless an operator re-promoted it just to run a migration,
-        // which is a far worse instruction than dropping the modifier. A
-        // role change part-way through a chunked ceremony would likewise
-        // block both completion and reset.
-        //
-        // Recorded history is the real gate and it is self-enforcing: only
-        // the canonical chain ever creates reservations, so on a chain that
-        // was never canonical `remitReservationNonce == 0` and the first
-        // call reverts `SeedNothingToScan`. Admin authority plus a non-empty
-        // reservation history is exactly the precondition, with no reliance
-        // on a flag that can move underneath it.
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 current = s.recycleReleasedRemitStrandedCumulative;
-        if (s.recycleStrandedSeedApplied) {
-            revert ReleasedRemitStrandedAlreadySeeded(current);
-        }
-
-        // First call pins the finish line and the race baseline.
-        uint256 target = s.recycleStrandedSeedTarget;
-        if (target == 0) {
-            target = s.remitReservationNonce;
-            if (target == 0) revert SeedNothingToScan();
-            s.recycleStrandedSeedTarget = target;
-            s.recycleStrandedSeedBaseline = current;
-            s.recycleStrandedSeedBaselineCount = s.remitReleasedCount;
-        } else if (
-            current != s.recycleStrandedSeedBaseline ||
-            s.remitReleasedCount != s.recycleStrandedSeedBaselineCount
-        ) {
-            // A release landed mid-ceremony. It recorded organically, and it
-            // may sit in an already-scanned range, so the scan and the live
-            // counter now disagree about it. Detect and refuse rather than
-            // guess: the operator resets and re-runs.
-            //
-            // #1448 r10 — the COUNT is checked as well as the value, because
-            // the value alone is blind to exactly the release the scan is
-            // most likely to miss: one whose recycled share is zero moves the
-            // status to Released and leaves the stranded cumulative untouched,
-            // so a value-only guard passes while the emitted found-count is
-            // already wrong. The value check stays because it is the cheaper
-            // signal and states the ledger property directly.
-            revert SeedRaceDetected(s.recycleStrandedSeedBaseline, current);
-        }
-
-        uint256 cursor = s.recycleStrandedSeedCursor;
-        if (upTo <= cursor || upTo > target) {
-            revert SeedRangeInvalid(upTo, cursor, target);
-        }
-
-        uint256 accum = s.recycleStrandedSeedAccum;
-        uint256 counted = s.recycleStrandedSeedCounted;
-        for (uint256 id = cursor + 1; id <= upTo; ) {
-            LibVaipakam.RemitReservation storage r = s.remitReservations[id];
-            if (r.status == 3) {
-                accum += r.recycled;
-                unchecked {
-                    ++counted;
-                }
-            }
-            unchecked {
-                ++id;
-            }
-        }
-        s.recycleStrandedSeedAccum = accum;
-        s.recycleStrandedSeedCounted = counted;
-        s.recycleStrandedSeedCursor = upTo;
-        emit ReleasedRemitStrandedSeedProgress(upTo, target, accum);
-
-        // Not finished yet — nothing is published, so the ledger and every
-        // relation over it stay exactly as they were.
-        if (upTo < target) return;
-
-        // ── COMPLETION ───────────────────────────────────────────────────
-        // ASSIGN, not add. The scan covered EVERY id in `1..target`, so the
-        // total already subsumes anything recorded organically before the
-        // ceremony began — adding would double-count those. It can never
-        // shrink the counter for the same reason, but assert rather than
-        // assume.
-        if (accum < current) {
-            revert SeedWouldShrinkStrandedTotal(accum, current);
-        }
-        s.recycleReleasedRemitStrandedCumulative = accum;
-
-        // #1448 r14 — the lifetime release COUNT is backfilled here, for the
-        // same reason and by the same argument as the stranded total above.
-        // `remitReleasedCount` is an APPENDED slot: on a Diamond upgraded in
-        // place it starts at zero and therefore counts only post-upgrade
-        // releases, while `counted` covers the whole reservation history. Left
-        // alone, the published pair would be self-contradictory — a "lifetime"
-        // figure SMALLER than the "found so far" subset it is meant to contain,
-        // and unreconcilable against the release history it claims to describe.
-        //
-        // ASSIGN, not add, and it cannot shrink: the scan covered every id in
-        // `1..target`, and no release can have landed after the ceremony began
-        // (the count arm of the race guard would have blocked completion), so
-        // every release this counter already holds is a status-3 reservation
-        // inside the scanned range and is therefore already in `counted`.
-        if (counted < s.remitReleasedCount) {
-            revert SeedWouldShrinkReleasedCount(counted, s.remitReleasedCount);
-        }
-        s.remitReleasedCount = counted;
-
-        s.recycleStrandedSeedApplied = true;
-
-        // POST-CONDITION, not a comment. If the seed does not actually
-        // reconcile both relations, the divergence was NOT produced by
-        // pre-upgrade releases and this ceremony must not half-silence a
-        // real alert. Revert loudly instead — which also unwinds the
-        // assignment above, so a failed completion leaves nothing published.
-        uint256 bucket = s.recycleBucket;
-        if (bucket + accum < s.outstandingCommitRecycled) {
-            revert SeedDoesNotReconcile();
-        }
-        // BOTH directions, with the same shapes the external checker uses
-        // (#1448 r5). The one-sided form only rejected excess CLAIMS, so a
-        // chain whose raw or relocated counter was independently short could
-        // pass, permanently arm the ceremony, and clear the release alert
-        // while the reverse discrepancy survived.
-        //
-        // Uses the RAW stored counter, not `creditedCumulative`, deliberately:
-        // the derived floor can manufacture the very value that is missing out
-        // of `bucket + paidOut`, which is exactly how a short counter slipped
-        // through the one-sided check.
-        uint256 destinations = bucket + s.paidOutRecycled + accum;
-        uint256 claimed = s.recycleCreditedCumulative
-            + s.recycleCustodyRelocatedCumulative;
-        if (claimed > destinations) revert SeedDoesNotReconcile();
-        if (destinations > claimed + SEED_COMPOSITION_SLACK_WEI) {
-            revert SeedDoesNotReconcile();
-        }
-        emit ReleasedRemitStrandedSeeded(accum, counted);
-    }
-
-    /// @notice #1448 r3 — the one-time stranded-cumulative seed ran.
-    /// @param  total       Derived Σ of `recycled` over the supplied
-    ///                     released reservations.
-    /// @param  reservations How many RELEASED reservations were found in the
-    ///                      full `1..nonce` scan.
-    /// @custom:event-category state-change/treasury-mutation
-    event ReleasedRemitStrandedSeeded(uint256 total, uint256 reservations);
-
-    /// @notice #1448 r7 — one RANGE of the resumable seed completed. Nothing
-    ///         is published until `cursor == target`; this exists so an
-    ///         operator can see progress across a multi-transaction ceremony.
-    /// @custom:event-category informational/reward-governor
-    /// @notice #1448 r8 — an in-flight seed ceremony was abandoned; the next
-    ///         call starts a fresh one with a newly pinned target.
-    /// @custom:event-category informational/reward-governor
-    event ReleasedRemitStrandedSeedReset();
-
-    event ReleasedRemitStrandedSeedProgress(
-        uint256 cursor,
-        uint256 target,
-        uint256 accumulated
-    );
 
 
 

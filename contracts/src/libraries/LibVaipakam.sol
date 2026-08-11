@@ -6386,6 +6386,52 @@ library LibVaipakam {
         //   accumulator from the feature's genesis (no deployment ever
         //   ran the w3 accumulator without it), zeroed by reset.
         mapping(uint256 => mapping(uint8 => uint256)) compQuoteEntryCount;
+        // ── #1434 P2-w5 (design §4.2) — the R4 stranded-return recovery ──
+        //
+        // BASE-ONLY — the RECOVERY POSITION pair. `rewardBudgetRecovered`
+        //   accumulates entitlement-bounded credits from authenticated B1
+        //   stranded returns; `rewardBudgetRedispatched` accumulates the
+        //   uncharged re-dispatches drawn from the position. The position
+        //   balance is their difference (dispatch enforces redispatched ≤
+        //   recovered). RECOVERY-POSITION EVIDENCE, never a cap deduction:
+        //   `remaining` reads the gross `rewardBudgetRemittedGlobal` alone
+        //   (#1586 ratified — a recovered parcel's cap charge happened at
+        //   its ORIGINAL dispatch and never repeats).
+        uint256 rewardBudgetRecovered;
+        uint256 rewardBudgetRedispatched;
+        // BASE-ONLY — value delivered by a B1 return ABOVE the receipt's
+        //   remaining entitlement: quarantined token-safe in this
+        //   operator-visible position, never credited to recovery (a
+        //   faulty or compromised mirror could otherwise attach a small
+        //   valid receipt to an arbitrarily large return and mint
+        //   uncharged re-dispatch capacity — a 69M bypass), never
+        //   reverted (the tokens are already at the Diamond; refusing
+        //   the message would strand the whole delivery behind the wire).
+        uint256 strandedReturnOverage;
+        // BASE-ONLY — per-receipt recovered cumulative (keyed remitId,
+        //   era-checked at ingress): the entitlement bound's "already
+        //   recovered" term, so partial/duplicate returns can never
+        //   credit past the reservation's dispatched total.
+        mapping(uint256 => uint256) remitRecoveredForReceipt;
+        // MIRROR-ONLY — lifetime VPFI returned to Base by the R4 stranded
+        //   return (observability twin of `strandedRecoveryReserved`'s
+        //   debits; the reserved sum is the LIVE earmark, this is the
+        //   monotone outflow record).
+        uint256 strandedReturnedCumulative;
+        // BASE-ONLY (#1660 r1) — per-receipt transport shortfall of a B1
+        //   return: the mirror retired its one-shot record at the DECLARED
+        //   amount, so a short actual (bridge loss) leaves value that can
+        //   never re-arrive. Recorded so Base's recovery ledger reconciles
+        //   against the mirror's outflow cumulative from on-chain state,
+        //   and so the residual entitlement is readable as transport loss
+        //   (the R6d loss ceremony's evidence), not as recoverable value.
+        mapping(uint256 => uint256) strandedReturnShortfall;
+        // BASE-ONLY (#1660 r3) - a TERMINAL B1 chunk was observed for
+        //   this receipt (mirror remainder zero): loss-evidence closure
+        //   recomputes on every later chunk (out-of-order transport is
+        //   configured - allowOutOfOrderExecution), and the closure
+        //   unwind (day markers + funded contribution) runs exactly once.
+        mapping(uint256 => bool) strandedReturnTerminalized;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -6630,6 +6676,38 @@ library LibVaipakam {
         // may still run the declared-to-received reconciliation exactly
         // once, then clears this.
         bool forcedFinalized;
+        // #1434 P2-w5 (§4.2) - this reservation was funded from the
+        // RECOVERY POSITION (uncharged re-dispatch): no 69M headroom was
+        // charged at dispatch, so no path may ever "restore" headroom
+        // for it; the R6d ceremony reads this to route a physical
+        // recovery back to the position rather than the cap.
+        bool fundedFromRecovery;
+        // #1660 r3 - a CONSUMED acknowledgement (or its operator-forced
+        // equivalent) settled this receipt: the delivered value entered
+        // the mirror's compensated pools as claim backing. A consumed
+        // receipt is NOT B1-recoverable - crediting a return against it
+        // would reuse the original dispatch's cap lineage while the
+        // consumed value still backs claims (a 69M bypass).
+        bool consumedAcked;
+        // #1660 r4 - the declared per-side contribution has been unwound
+        // from `compFunded*` (by release OR by the B1 terminal-return
+        // unwind - whichever ran first). One flag, both writers guarded:
+        // a released reservation's late-returning message must not
+        // subtract the same contribution twice and erase a replacement's
+        // funding.
+        bool declaredUnwound;
+        // #1660 r5 - the ack specifically attested classification
+        // QUARANTINED: the B1 return's eligibility evidence. Distinct
+        // from the absence of `consumedAcked` - a non-consumed ack can
+        // also describe a PROVISIONAL receipt that later confirms as
+        // consumed, and only true quarantine is terminal mirror-side.
+        bool quarantineAcked;
+        // #1660 r9 - the classification-conflict claw ran for this
+        // receipt (one-shot): the ack path is permissionlessly
+        // re-presentable, and a replayed conflict must not repeatedly
+        // move UNRELATED receipts' recovery credit into the overage
+        // quarantine off the global position balance.
+        bool conflictClawed;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

@@ -391,6 +391,61 @@ interface IVaipakamErrors {
     ///         (conservation proved), so its completed accumulation may
     ///         not be reset out from under the published record.
     error CompQuoteResetRefusedExactLoss(uint256 dayId);
+
+    // ── #1434 P2-w5 — the R4 stranded return + recovery position ──
+
+    /// @notice The caller is not the configured return-channel receiver.
+    error OnlyStrandedReturnReceiver(address caller);
+
+    /// @notice The return names a reservation issued by ANOTHER Base
+    ///         deployment (pre-rotation dispatch) — settles via the R6e
+    ///         rotation runbook, never here.
+    error StrandedReturnWrongEra(address remitter);
+
+    /// @notice No reservation exists under this remitId.
+    error StrandedReturnUnknownReservation(uint256 remitId);
+
+    /// @notice The authenticated source chain is not the chain this
+    ///         reservation was dispatched to (Codex #1600 r1 P1 — the
+    ///         chain binding).
+    error StrandedReturnWrongSourceChain(uint32 got, uint32 want);
+
+    /// @notice Wrong token, zero actual, or actual above declared.
+    error StrandedReturnDeliveryInvalid();
+
+    /// @notice #1660 r1 — the named reservation is not a COMPENSATION
+    ///         dispatch (single-day, fresh-only, per-side declared): an
+    ///         ordinary batch reservation's recycled component never
+    ///         charged the lifetime cap, so crediting its total would
+    ///         mint uncharged re-dispatch capacity (a 69M bypass).
+    error StrandedReturnNotCompensation(uint256 remitId);
+
+    /// @notice #1660 r2 — the reported day is not the reservation's own
+    ///         single day: settlement and loss evidence must bind to the
+    ///         authoritative obligation, never a wire-supplied one.
+    error StrandedReturnWrongDay(uint256 got, uint256 want);
+
+    /// @notice #1660 r3 - the receipt was CONSUMED (consumed ack or its
+    ///         forced equivalent): its value backs mirror claims, so a
+    ///         return against it would reuse the dispatch cap lineage.
+    error StrandedReturnConsumedReceipt(uint256 remitId);
+
+    /// @notice #1660 r4 - the return arrived before the receipt's ack:
+    ///         positive NON-consumption evidence (an Acked-non-consumed
+    ///         or Released reservation) is required before any credit,
+    ///         because out-of-order transport could otherwise land a
+    ///         faulty mirror's return ahead of its consumed attestation.
+    ///         Re-executable once the permissionless ack lands.
+    error StrandedReturnAwaitingAck(uint256 remitId, uint8 status);
+
+    /// @notice #1660 r6 - the ack wire's classification word is zero or
+    ///         out of range: zero is the retired generation-1 bool-false
+    ///         shape, refused re-executably rather than misread.
+    error RemitAckClassificationInvalid(uint8 classification);
+
+    /// @notice A from-recovery dispatch exceeds the recovery position
+    ///         balance (recovered − redispatched).
+    error RecoveryPositionInsufficient(uint256 requested, uint256 available);
     /// @notice The side's conservation sum does not equal the day's folded
     ///         side total — the accumulation has not covered every entry.
     error CompQuoteIncomplete(
