@@ -10,6 +10,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
+import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
@@ -214,6 +215,18 @@ contract EarlyWithdrawalFacet is
         // NFT rental lender-sale requires NFT custody transfer — not supported in Phase 1
         if (loan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidSaleOffer();
+
+        // #1503 PR-E (design item 11) — the incoming lender never
+        // underwrote this loan, so the sale is an ADMISSION and must
+        // clear the same solvency floor the loan's own admission did.
+        // Without it a lender watching collateral fall could hand an
+        // already-underwater (possibly same-block liquidatable) position
+        // to a buyer whose standing offer was authored for a FRESH,
+        // comfortably over-collateralized position — priced off principal
+        // and accrued interest, which say nothing about the shortfall.
+        // Checked before any compliance / vault work so a doomed sale
+        // reverts cheaply.
+        LibSaleSolvency.assertSaleSolvent(loanId);
 
         // Per-asset pause: direct lender swap-in is a creation path (Noah
         // steps into new exposure without going through acceptOffer). The
@@ -645,6 +658,13 @@ contract EarlyWithdrawalFacet is
         // mid-offset entangles two concurrent close-outs of the same loan. The
         // offset must be cancelled or completed first (it is short-lived).
         if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetActiveOnLoan();
+        // #1503 PR-E (design item 11) — fail fast rather than publish a
+        // listing that could not lawfully be filled. The BINDING check is
+        // the accept-time one in `OfferAcceptFacet` (the position keeps
+        // moving after listing, so only the fill-time read governs); this
+        // one exists so a lender is told at listing time, not after a
+        // buyer's transaction reverts.
+        LibSaleSolvency.assertSaleSolvent(loanId);
         // Borrower action window — a previous listing on this loan ended
         // without completing (cancel / expiry / teardown). Chaining bounded
         // listings back-to-back would recreate the indefinite borrower freeze

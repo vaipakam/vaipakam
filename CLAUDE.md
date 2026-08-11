@@ -126,6 +126,16 @@ per-facet ABI matches `forge inspect`. It is wired as preflight step
 passes `--full`), so a deploy cannot proceed past a failing check; it is
 also runnable standalone (`bash script/predeploy-check.sh`).
 
+`--full` **delegates to `run-regression.sh`** (#1620) — it does not carry
+its own regression command. There is exactly one chunking implementation;
+if the viaIR ceiling moves again, `run-regression.sh` is the only place to
+fix, and both the mainnet preflight and the release-track
+`mainnet-gate.yml` inherit the fix. Don't re-inline a `forge test` call
+here: an un-chunked pass trips the ceiling as a COMPILE failure, which this
+gate reports with the same "regression failed" wording as a red test — a
+green-looking suite that never ran is the failure mode this delegation
+exists to prevent.
+
 **When you add a facet**: add it to `DiamondFacetNames.cutFacetNames()`
 AND add its `_get<Facet>Selectors()` call to
 `SelectorCoverageTest._populateRoutedSet()`. **When you add a function to
@@ -776,27 +786,50 @@ bash script/run-regression.sh              # full suite minus invariants
 bash script/run-regression.sh --invariants # + the invariant suites
 ```
 
-It runs `forge test --match-path 'test/*.t.sol' --no-match-path
-'test/invariants/*'` (forcing `FOUNDRY_PROFILE=default`). Driving with
-`--match-path` makes Foundry compile **sparsely** — only the matched files +
-their dependency closure — so the standalone scripts that no test imports are
-left out, and dropping that slice of IR keeps the unit under the ceiling. The
-deploy logic still compiles where it matters (DeployDiamond.s.sol is pulled in
-as a dependency of `test/deploy/DeployDiamondIntegrationTest`).
+It runs the suite in **compile-bounded CHUNKS**, forcing
+`FOUNDRY_PROFILE=default`. A single sparse `forge test --match-path
+'test/*.t.sol'` pass used to be enough — matched files + their dependency
+closure only, leaving out the standalone scripts no test imports — but ordinary
+feature growth (#591) re-crossed the ceiling for even that, so the script now
+splits the run so each `forge test` invocation stays under it:
 
-**Cannot miss a suite:** globset's `*` crosses `/` (see `contracts/foundry.toml`),
-so `test/*.t.sol` recursively matches every current and future `*.t.sol`
-anywhere under `test/` — a newly-added suite is picked up automatically; there
-is no chunk list, folder layout, or allowlist to keep in sync. (Standalone
-scripts' compile-correctness is covered separately by `forge build` /
-predeploy-check.)
+- **Top-level suites** — `find test -maxdepth 1` enumerates them, and they run
+  `CHUNK_SIZE` at a time (default 25) as brace globs of exact stems
+  (`test/{A,B,…}.t.sol`). Brace globs of stems, not a `test/*.t.sol` glob:
+  globset's `*` crosses `/`, so that pattern would recurse into the subdirs
+  and defeat the split.
+- **Subdirectory suites** — one pass per `SUBDIRS` entry (`scenarios deploy
+  fork seaport token`), chunked `SUBDIR_CHUNK_SIZE` at a time (default 3;
+  `fork` alone crossed the ceiling in a single glob by 2026-07-13).
+- **`fork` files self-gate** on the RPC each needs — `FORK_URL_BASE_SEPOLIA`
+  for the Seaport sources, `FORK_URL_MAINNET` for the rest — and are dropped
+  when unset, so a no-URL pre-deploy gate stays green.
 
-The principled cause-fix that keeps the unit small is to return **lean DTOs**
+Foundry caches `src/` across invocations, so only the first chunk pays the full
+src compile; the rest add just their own test files. Same total compile, in
+ceiling-safe units. If a chunk ever trips, tune down with `CHUNK_SIZE=N` /
+`SUBDIR_CHUNK_SIZE=N` rather than editing the script. Deploy logic still
+compiles where it matters (DeployDiamond.s.sol is pulled in as a dependency of
+`test/deploy/DeployDiamondIntegrationTest`); standalone scripts'
+compile-correctness is covered separately by `forge build` / predeploy-check.
+
+**Cannot miss a suite — but `SUBDIRS` IS a list to keep in sync.** Chunk
+membership is derived from `find`, so a newly added `*.t.sol` in an
+already-covered location is picked up automatically. A new *subdirectory* is
+not: add it to `SUBDIRS`. An exhaustiveness guard cross-checks every
+non-invariant test file against the covered set and **aborts the run** if one
+is uncovered, so the failure is loud rather than a silently skipped suite — but
+it fails the regression, so fix it by adding the subdir.
+
+`predeploy-check.sh --full` delegates here (#1620), so the mainnet preflight and
+the release-track `mainnet-gate.yml` inherit all of the above — including the
+exhaustiveness guard.
+
+The principled cause-fix that keeps each unit small is to return **lean DTOs**
 from paginated / array views (the #603 `OfferSummary`/`LoanSummary` pattern) —
-never an array of a 40+-field struct, whose ABI coder inflates peak stack. If
-the test slice alone ever trips the ceiling, fall back to splitting the run into
-two `--match-path` globs (e.g. `test/[A-M]*.t.sol` + `test/[N-Z]*.t.sol` + the
-subdirs), but that is not needed today.
+never an array of a 40+-field struct, whose ABI coder inflates peak stack.
+Chunking bounds the symptom; lean DTOs are what stop the ceiling being
+re-crossed.
 
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 

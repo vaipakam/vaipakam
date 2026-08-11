@@ -5,13 +5,25 @@
  *
  * ON THIS SURFACE THAT IS ALWAYS THE COMPILE-TIME DEFAULT. The
  * marketing site is deliberately wallet-free, so its `useProtocolConfig`
- * is a stub that reports no config and every knob below falls back to
- * `defaultValue`. The component is shared with connected-app surfaces
- * where the read is real; here it buys a single definition point for a
- * number that ten locale files would otherwise each hold a copy of.
- * That is worth having — #1352 retuned both fees and the copies drifted
- * — but it is not liveness, and marketing copy must not tell a reader
- * these figures come from the chain.
+ * is a stub that reports no config — and says so explicitly via
+ * `chainReads: false`, which the tooltip below reads rather than
+ * inferring from a null config (#1612). Every knob falls back to
+ * `defaultValue`.
+ *
+ * What that buys is a single definition point for a number that ten
+ * locale files would otherwise each hold a copy of. That is worth having
+ * — #1352 retuned both fees and the copies drifted — but it is not
+ * liveness, and marketing copy must not tell a reader these figures come
+ * from the chain. `scripts/check-knob-defaults-vs-contracts.ts` keeps the
+ * single copy honest against the protocol's own constants, since a
+ * registry fixes the ten-copies problem but cannot notice its one copy
+ * going stale.
+ *
+ * The live branch is retained, not dead weight: it is the whole reason
+ * wiring real reads here would need no change to this component. Note it
+ * is NOT shared code with the connected app — `apps/defi` carries its own
+ * copy of this file, which nothing renders and #1603 deletes. Do not
+ * assume an edit here reaches any other surface.
  *
  * Markdown integration: doc content uses inline-code tokens like
  *   `{liveValue:treasuryFeeBps}`
@@ -111,7 +123,7 @@ export function LiveValue({ knob, locale }: LiveValueProps) {
   //
   // This is the copy the docs actually render: Whitepaper, Overview,
   // UserGuide and AdminKnobsDocs all reach it via `markdownComponents()`.
-  const { config } = useProtocolConfig();
+  const { config, chainReads } = useProtocolConfig();
 
   // Robustness: token typos (e.g. `{liveValue:treasuryFeebps}`) fall
   // through to inline code rendering so the bug is visible in the
@@ -129,7 +141,14 @@ export function LiveValue({ knob, locale }: LiveValueProps) {
       title={
         isLive
           ? 'Live value from on-chain protocol config'
-          : 'Compile-time default — chain read pending or unavailable'
+          : chainReads
+            ? 'Compile-time default — chain read pending or unavailable'
+            : // The marketing surface makes no chain read, so neither
+              // "pending" nor "unavailable" is true here (#1612). Saying
+              // so described a transient failure to every reader who
+              // hovered a fee figure, and invited them to refresh and
+              // wait for a number that was already the right one.
+              'Published value — bundled into this site at release, not read live from the chain'
       }
       style={{
         // Subtle styling so live values don't visually shout — the
