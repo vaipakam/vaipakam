@@ -57,3 +57,10 @@ governance settles a compensation carried over from a retired deployment,
 the recovered amount is booked against a freshly issued reference that the
 replacement dispatch can actually name, so carried-over value does not end
 up earmarked with no way to spend it.
+
+Settling a compensation carried over from a retired deployment is bounded
+by what that original delivery actually sent, recorded at the time it is
+carried over — so a settlement cannot claim more than was ever at stake.
+And if the old chain later reports that the original delivery went through
+after all, the recovery credit that settlement created is voided, even
+though the carry-over record itself has already been closed out.

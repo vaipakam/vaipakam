@@ -2705,7 +2705,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](13);
+        s = new bytes4[](12);
         s[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
         s[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
         s[2] = RewardRemittanceFacet.remitRewardBudget.selector;
@@ -2717,8 +2717,7 @@ contract DeployDiamond is Script {
         s[8] = RewardRemittanceFacet.sendRemitAck.selector;
         s[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
         s[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
-        s[11] = RewardRemittanceFacet.releaseRemitReservation.selector;
-        s[12] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        s[11] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.
@@ -2727,7 +2726,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](12);
+        s = new bytes4[](13);
         s[0] = RewardCompensationDispatchFacet.remitManualBudget.selector;
         s[1] =
             RewardCompensationDispatchFacet.remitSupplementalBudget.selector;
@@ -2761,6 +2760,9 @@ contract DeployDiamond is Script {
         s[11] = RewardCompensationDispatchFacet
             .clearImportedOutstanding
             .selector;
+        // #1662 r4 - relocated off the remittance facet (EIP-170).
+        s[12] =
+            RewardCompensationDispatchFacet.releaseRemitReservation.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).

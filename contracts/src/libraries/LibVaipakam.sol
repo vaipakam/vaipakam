@@ -6479,6 +6479,17 @@ library LibVaipakam {
         //   whole remaining credit is voided at the contradiction,
         //   whatever the pool could absorb at that instant.
         mapping(uint256 => uint256) recoveryClawedForReceipt;
+        // BASE-ONLY (#1662 r4) — SETTLED imported tuples, keyed
+        //   `keccak256(abi.encode(oldRemitter, oldRemitId))`, mapping to
+        //   the attribution id their fresh recovery was minted onto.
+        //   A tombstone, not live state: the imported marker is deleted at
+        //   settlement, so a later re-presented CONSUMED attestation from
+        //   the old mirror would otherwise miss the imported branch
+        //   entirely and revert at the era check — leaving the minted
+        //   credit re-dispatchable while the original delivery still backs
+        //   mirror claims. This is the only link back from an old-era
+        //   tuple to the local credit it produced.
+        mapping(bytes32 => uint256) importedSettledAttribution;
         // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
         //   outstanding-compensation record for a chain after a Base
         //   deployment rotation: the RAW old-era tuple, not its hash —
@@ -6756,6 +6767,16 @@ library LibVaipakam {
         address oldRemitter;
         uint256 oldRemitId;
         bool quarantineObserved;
+        // #1662 r4 — the OLD reservation's dispatched figures, carried at
+        //   import. The local ceremony binds recovery to `r.total` /
+        //   `r.fresh` / `r.recycled`; an imported settlement has no local
+        //   reservation to bind against, so without these an operator
+        //   typo (or a compromised admin) could import a small old
+        //   receipt and classify any unearmarked Diamond balance as
+        //   recovered — minting arbitrary uncharged re-dispatch capacity.
+        uint256 oldTotal;
+        uint256 oldFresh;
+        uint256 oldRecycled;
     }
 
     struct RemitReservation {

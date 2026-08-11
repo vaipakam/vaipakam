@@ -2123,7 +2123,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](12);
         selectors[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
         selectors[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
         selectors[2] = RewardRemittanceFacet.remitRewardBudget.selector;
@@ -2135,8 +2135,7 @@ contract HelperTest {
         selectors[8] = RewardRemittanceFacet.sendRemitAck.selector;
         selectors[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
         selectors[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
-        selectors[11] = RewardRemittanceFacet.releaseRemitReservation.selector;
-        selectors[12] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        selectors[11] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
@@ -2145,7 +2144,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](13);
         selectors[0] =
             RewardCompensationDispatchFacet.remitManualBudget.selector;
         selectors[1] =
@@ -2181,6 +2180,9 @@ contract HelperTest {
         selectors[11] = RewardCompensationDispatchFacet
             .clearImportedOutstanding
             .selector;
+        // #1662 r4 - relocated off the remittance facet (EIP-170).
+        selectors[12] =
+            RewardCompensationDispatchFacet.releaseRemitReservation.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

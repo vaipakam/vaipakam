@@ -270,9 +270,9 @@ contract RewardRemitLedgerTest is SetupTest {
                 block.timestamp + 7 days
             )
         );
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
 
         LibVaipakam.RemitReservation memory r = rlens.getRemitReservation(1);
         assertEq(uint256(r.status), 3, "released");
@@ -321,7 +321,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 1
             )
         );
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
     }
 
     // ─── armed-day remit gate + Σcommitments clamp ────────────────────────
@@ -913,7 +913,7 @@ contract RewardRemitLedgerTest is SetupTest {
         uint256 suppId = rlens.getCompensationOutstanding(CHAIN_ARB);
 
         vm.warp(block.timestamp + 8 days); // past REMIT_RELEASE_MIN_AGE
-        remit.releaseRemitReservation(suppId);
+        comp.releaseRemitReservation(suppId);
         assertEq(
             rlens.getDayClosedByRemitId(CHAIN_ARB, 1),
             1,
@@ -1010,7 +1010,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(ids.length, 1, "listed while pending");
 
         vm.warp(block.timestamp + 8 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         (ids, ) = rlens.getLegacyManualReservations(1, 10);
         assertEq(ids.length, 0, "released hit drops from the inventory");
     }
@@ -1626,7 +1626,7 @@ contract RewardRemitLedgerTest is SetupTest {
         uint256 total = _remitDay1ToArb();
         assertEq(total, liab, "first remit clamped");
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 0, "day re-opened");
 
         // Backing gone (stranded in the CCIP pool): the day is NOT
@@ -1891,7 +1891,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertTrue(canonBefore, "fixture: this diamond is the canonical chain");
 
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
 
         (uint256 raw, uint256 stranded, , , ) =
             RewardAggregatorFacet(address(diamond))
@@ -1938,7 +1938,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // only the sent share, and the release strands exactly that share.
         uint256 bucketBeforeRemit = 1_000e18;
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
 
         (, uint256 stranded, , , uint256 bucket, , , uint256 outstanding) =
             _composition();
@@ -1984,7 +1984,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _assertDerivation("after remit consume + residual release");
 
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         _assertComposition("after released-remit restore");
         _assertDerivation("after released-remit restore");
     }
@@ -2045,7 +2045,7 @@ contract RewardRemitLedgerTest is SetupTest {
     {
         (, recycledSent) = _remitRecycledWithResidual();
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         // Rewind BOTH appended slots to reproduce the pre-upgrade shape
         // (#1448 r14). Rewinding only the value would build a state that
         // cannot occur — a zero stranded total beside a release count that
@@ -2107,7 +2107,7 @@ contract RewardRemitLedgerTest is SetupTest {
         {
             (uint256 recycledFull, ) = _remitRecycledWithResidual();
             vm.warp(block.timestamp + 7 days);
-            remit.releaseRemitReservation(1);
+            comp.releaseRemitReservation(1);
             mutator.setReleasedRemitStrandedRaw(0);
             r = rlens.getRemitReservation(1);
             assertGt(recycledFull, r.recycled, "fixture: residual exists");
@@ -2144,7 +2144,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Seed_CountsEveryReleasedReservationNotJustOne() public {
         (, uint256 sentA) = _remitRecycledWithResidual();
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
 
         // A second remit of the re-opened day, released in turn.
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
@@ -2154,7 +2154,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // expressions get common-subexpression-eliminated under viaIR and the
         // second is a no-op, so the release would revert RemitReleaseTooEarly.
         vm.warp(block.timestamp + 8 days);
-        remit.releaseRemitReservation(2);
+        comp.releaseRemitReservation(2);
 
         assertEq(rlens.getRemitReservationNonce(), 2, "fixture: two reservations");
         assertGt(r2.recycled, 0, "fixture: the second stranded something too");
@@ -2204,7 +2204,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Seed_StillRunsAfterAPostUpgradeReleaseRecordedSome() public {
         (, uint256 sentA) = _remitRecycledWithResidual();
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         // The pre-upgrade shape: the historical release recorded nothing.
         mutator.setReleasedRemitStrandedRaw(0);
 
@@ -2213,7 +2213,7 @@ contract RewardRemitLedgerTest is SetupTest {
         _remitDay1ToArb();
         LibVaipakam.RemitReservation memory r2 = rlens.getRemitReservation(2);
         vm.warp(block.timestamp + 8 days);
-        remit.releaseRemitReservation(2);
+        comp.releaseRemitReservation(2);
 
         (, uint256 before, , , , , , ) = _composition();
         assertEq(before, r2.recycled, "only the NEW release is recorded");
@@ -2231,7 +2231,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Seed_DoesNotDoubleCountAnAlreadyRecordedRelease() public {
         (, uint256 sent) = _remitRecycledWithResidual();
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         // Counter left AS RECORDED — not rewound. The ceremony must be a
         // no-op in value terms here.
         (, uint256 before, , , , , , ) = _composition();
@@ -2334,12 +2334,12 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Seed_ResumesAcrossRangesAndOnlyPublishesAtTheEnd() public {
         (, uint256 sentA) = _remitRecycledWithResidual();
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
         LibVaipakam.RemitReservation memory r2 = rlens.getRemitReservation(2);
         vm.warp(block.timestamp + 8 days);
-        remit.releaseRemitReservation(2);
+        comp.releaseRemitReservation(2);
         mutator.setReleasedRemitStrandedRaw(0);
         assertEq(rlens.getRemitReservationNonce(), 2, "fixture: two ids");
 
@@ -2363,7 +2363,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Seed_DetectsAReleaseLandingMidCeremony() public {
         _remitRecycledWithResidual();
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
         mutator.setReleasedRemitStrandedRaw(0);
@@ -2372,7 +2372,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         // Reservation 2 is released before the operator runs range 2.
         vm.warp(block.timestamp + 8 days);
-        remit.releaseRemitReservation(2);
+        comp.releaseRemitReservation(2);
 
         (, uint256 nowCounter, , , , , , ) = _composition();
         vm.expectRevert(
@@ -2436,14 +2436,14 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Seed_ResetRecoversFromADetectedRace() public {
         _remitRecycledWithResidual();
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
         mutator.setReleasedRemitStrandedRaw(0);
 
         comp.seedReleasedRemitStranded(1);
         vm.warp(block.timestamp + 8 days);
-        remit.releaseRemitReservation(2); // the race
+        comp.releaseRemitReservation(2); // the race
 
         (, uint256 raced, , , , , , ) = _composition();
         vm.expectRevert(
@@ -2538,7 +2538,7 @@ contract RewardRemitLedgerTest is SetupTest {
     function test_Seed_RaceGuardCatchesAZeroRecycledRelease() public {
         _remitRecycledWithResidual();
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
         mutator.setReleasedRemitStrandedRaw(0);
@@ -2553,7 +2553,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // Release it, then rewind the value so the counter reads exactly as
         // it would after a release that stranded nothing.
         vm.warp(block.timestamp + 8 days);
-        remit.releaseRemitReservation(2);
+        comp.releaseRemitReservation(2);
         mutator.setReleasedRemitStrandedRaw(valueMid);
 
         (, uint256 valueAfter, , , , , , ) = _composition();
@@ -3047,7 +3047,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // Absolute warp - viaIR CSEs identical block.timestamp reads
         // across vm.warp within one test frame (the warp-CSE gotcha).
         vm.warp(30 days);
-        remit.releaseRemitReservation(2);
+        comp.releaseRemitReservation(2);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.RecoveryReceiptCreditInsufficient.selector,
@@ -3081,7 +3081,7 @@ contract RewardRemitLedgerTest is SetupTest {
             CHAIN_ARB, 1, 2e18, 1e18, 1
         );
         vm.warp(30 days); // absolute - the warp-CSE gotcha
-        remit.releaseRemitReservation(2);
+        comp.releaseRemitReservation(2);
         assertEq(
             rlens.getRewardBudgetRemittedGlobal(),
             globalAfter,
@@ -3418,7 +3418,7 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         assertEq(
             rlens.getCompensationOutstanding(CHAIN_ARB),
             1,
@@ -3443,7 +3443,7 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger.deliverCommitmentReport(CHAIN_ARB, 1, 3e18, 0);
         _remitDay1ToArb();
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         r = rlens.getRemitReservation(1);
         // LIVE-fixture assertions: the properties below are only
         // meaningful while BOTH components are non-zero.
@@ -3568,7 +3568,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         comp.recordRecoveryCeremony(1, 1e18, 0);
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         // Books-only: pin the bucket at the whole balance so the fresh
         // credit has NO unearmarked float behind it - a recovery with no
         // tokens actually home must roll back at the record.
@@ -3937,9 +3937,12 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(resolvedBefore, 0);
         r; // the fixture's split is not what this test asserts
 
-        // An imported OLD-ERA settlement books recovered value.
+        // An imported OLD-ERA settlement books recovered value. The
+        // carried parcel is recycled-only, matching what it settles.
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, oldBase, 7, false, 1e18, 0, 1e18
+        );
         vpfiTok.mint(address(diamond), 1e18);
         comp.clearImportedOutstanding(CHAIN_ARB, 0, 1e18);
         (, , , , uint256 resolvedAfter) = RewardAggregatorFacet(
@@ -3967,11 +3970,13 @@ contract RewardRemitLedgerTest is SetupTest {
             )
         );
         comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, type(uint256).max, false
+            CHAIN_ARB, oldBase, type(uint256).max, false, 3e18, 3e18, 0
         );
         // Carrying the record (tuple + observed quarantine) preserves the
         // contradiction across the rotation.
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, true);
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, oldBase, 7, true, 3e18, 3e18, 0
+        );
         (, , bool q) = rlens.getImportedOutstanding(CHAIN_ARB);
         assertTrue(q, "the earlier quarantine evidence survived");
         rewardMessenger.deliverRemitAckFromWithClassification(
@@ -4044,7 +4049,9 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, oldBase, 7, false, 3e18, 3e18, 0
+        );
         vpfiTok.mint(address(diamond), 2e18);
 
         vm.recordLogs();
@@ -4118,6 +4125,118 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.recordRecoveryCeremony(1, 1, 0);
     }
 
+    // -- #1662 r4 ----------------------------------------------------
+
+    /// r4-d1 - the JOINT bound values fold in prior LOSS and must NOT be
+    /// persisted as recovered. Storing them recorded loss as recovery, so
+    /// `_drawFromRecovery` subtracted a recycled figure that never entered
+    /// the position - publishing zero capacity for a receipt that has
+    /// some, or reverting once the fictitious subtrahend exceeded credit.
+    function test_Ceremony_LossDoesNotInflateRecoveredCounters() public {
+        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
+        // Record the whole RECYCLED component as lost...
+        comp.recordRecoveryTerminalLoss(1, 0, r.recycled);
+        // ...then recover FRESH. The joint bound must permit this (the
+        // components are disjoint), and must not book the recycled loss
+        // as recycled RECOVERY.
+        comp.recordRecoveryCeremony(1, r.fresh, 0);
+        (uint256 cf, uint256 cr) = rlens.getCeremonyRecovered(1);
+        assertEq(cf, r.fresh, "fresh recovered is the fresh INFLOW");
+        assertEq(cr, 0, "no recycled was recovered - only lost");
+        // The per-receipt credit is therefore the whole fresh recovery,
+        // and it is drawable rather than zeroed by a phantom subtrahend.
+        (uint256 credit, uint256 red, uint256 clawed) =
+            rlens.getRecoveryCreditForReceipt(1);
+        assertEq(credit, r.fresh, "credit is not deflated by the loss");
+        assertEq(red + clawed, 0);
+    }
+
+    /// r4-d2 - after an imported settlement the marker is deleted, so a
+    /// late CONSUMED re-present from the old mirror would miss the
+    /// imported branch entirely and revert at the era check - leaving the
+    /// minted credit re-dispatchable while the original delivery backs
+    /// mirror claims. A tombstone keeps the tuple -> attribution link so
+    /// consumption can still void it.
+    function test_Import_LateConsumptionVoidsMintedAttribution() public {
+        address oldBase = address(0x01dBA5E);
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, oldBase, 7, false, 3e18, 3e18, 0
+        );
+        vpfiTok.mint(address(diamond), 2e18);
+        vm.recordLogs();
+        comp.clearImportedOutstanding(CHAIN_ARB, 2e18, 0);
+        uint256 attributionId;
+        {
+            Vm.Log[] memory logs = vm.getRecordedLogs();
+            bytes32 sig = keccak256(
+                "ImportedOutstandingCleared(uint32,address,uint256,uint256,uint256,uint256)"
+            );
+            for (uint256 i; i < logs.length; ++i) {
+                if (logs[i].topics[0] != sig) continue;
+                (, , , , attributionId) = abi.decode(
+                    logs[i].data,
+                    (address, uint256, uint256, uint256, uint256)
+                );
+            }
+        }
+        assertGt(attributionId, 0);
+        (uint256 recBefore, uint256 redBefore, ) = rlens.getRecoveryPosition();
+        assertEq(recBefore - redBefore, 2e18, "credit stands");
+
+        // The OLD mirror re-presents CONSUMED for the settled tuple.
+        rewardMessenger.deliverRemitAckFromWithClassification(
+            CHAIN_ARB, 7, 3e18, oldBase, 1
+        );
+        (uint256 credit, uint256 red, uint256 clawed) =
+            rlens.getRecoveryCreditForReceipt(attributionId);
+        assertEq(credit - red - clawed, 0, "the minted credit is void");
+        (uint256 recAfter, uint256 redAfter, ) = rlens.getRecoveryPosition();
+        assertEq(recAfter - redAfter, 0, "and left the position");
+    }
+
+    /// r4-d4 - an imported settlement has no local reservation to bind
+    /// against, so the OLD reservation's figures are carried at import and
+    /// enforced here. Without them an operator typo (or a compromised
+    /// admin) could import a small old receipt and classify any
+    /// unearmarked Diamond balance as recovered, minting arbitrary
+    /// uncharged re-dispatch capacity.
+    function test_Import_SettlementBoundedByCarriedOldReservation() public {
+        address oldBase = address(0x01dBA5E);
+        // The carried split must describe ONE parcel.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ImportedBoundsInvalid.selector, 3e18, 2e18, 0
+            )
+        );
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, oldBase, 7, false, 3e18, 2e18, 0
+        );
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, oldBase, 7, false, 3e18, 3e18, 0
+        );
+        vpfiTok.mint(address(diamond), 10e18);
+        // Over-claiming the fresh component refuses...
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CeremonyProvenanceExceeded.selector,
+                7,
+                4e18,
+                3e18
+            )
+        );
+        comp.clearImportedOutstanding(CHAIN_ARB, 4e18, 0);
+        // ...as does claiming recycled the old parcel never carried.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CeremonyProvenanceExceeded.selector, 7, 1, 0
+            )
+        );
+        comp.clearImportedOutstanding(CHAIN_ARB, 0, 1);
+        // Within the carried bounds it settles.
+        comp.clearImportedOutstanding(CHAIN_ARB, 3e18, 0);
+        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0);
+    }
+
     /// SS8-6 (R6e) - an imported old-era marker holds the gate at the
     /// SENTINEL (#1662 r1: old-era ids alias this deployment's own
     /// nonces, so a real id would let an ordinary remit's consumed ack
@@ -4128,7 +4247,9 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, oldBase, 7, false, 3e18, 3e18, 0
+        );
         assertEq(
             rlens.getCompensationOutstanding(CHAIN_ARB),
             type(uint256).max,
@@ -4177,7 +4298,9 @@ contract RewardRemitLedgerTest is SetupTest {
     /// re-present gets NO clear; only the evidenced settlement resolves.
     function test_Import_QuarantineThenConsumedConflicts() public {
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, oldBase, 7, false, 3e18, 3e18, 0
+        );
         rewardMessenger.deliverRemitAckFromWithClassification(
             CHAIN_ARB, 7, 3e18, oldBase, 2
         );
@@ -4216,7 +4339,9 @@ contract RewardRemitLedgerTest is SetupTest {
     /// clear refuses.
     function test_Import_EvidencedSettlementBooksAndWrongTuple() public {
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, oldBase, 7, false, 3e18, 2e18, 1e18
+        );
         // A stale-era ack for a DIFFERENT tuple is rejected as before.
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -4298,7 +4423,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // The message never executes; the operator releases (declared
         // unwound, day re-opened, gate still HELD).
         vm.warp(block.timestamp + 7 days);
-        remit.releaseRemitReservation(1);
+        comp.releaseRemitReservation(1);
         (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
         assertEq(fl + fb, 0, "release unwound the declared split");
         // #1660 r5 - the quarantine ack is still presentable on the

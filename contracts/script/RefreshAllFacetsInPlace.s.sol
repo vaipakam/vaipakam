@@ -430,6 +430,63 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             );
         }
 
+        // ─── #1434 P2-w6 (#1662 r4) — retire the UNATTRIBUTED recovery
+        //     wrappers ───────────────────────────────────────────────────
+        //
+        // w6 gave both `…FromRecovery` wrappers a `sourceRemitId`, which
+        // CHANGES their selectors. This script Replaces and Adds but never
+        // Removes (see the SCOPE note), so the old four-argument selectors
+        // would stay routed to the PREVIOUS facet and remain callable —
+        // debiting the pooled recovery position while updating no
+        // per-receipt ledger. That is precisely the accounting the new
+        // argument exists to enforce: an unattributed draw leaves the
+        // nominal source receipt's credit intact, so the same value can be
+        // spent a second time through the new wrapper once another receipt
+        // replenishes the pool.
+        //
+        // Removed only when actually routed — a Diamond that never carried
+        // them (a fresh deploy, or a rerun after this block) has nothing to
+        // Remove, and asking the cut to Remove an unrouted selector reverts,
+        // which would abort the whole refresh.
+        {
+            bytes4 oldManualFromRecovery = bytes4(
+                keccak256(
+                    "remitManualBudgetFromRecovery(uint32,uint256,uint256,uint256)"
+                )
+            );
+            bytes4 oldSupplementalFromRecovery = bytes4(
+                keccak256(
+                    "remitSupplementalBudgetFromRecovery(uint32,uint256,uint256,uint256)"
+                )
+            );
+            bool routedManual =
+                loupe.facetAddress(oldManualFromRecovery) != address(0);
+            bool routedSupp =
+                loupe.facetAddress(oldSupplementalFromRecovery) != address(0);
+            if (routedManual || routedSupp) {
+                bytes4[] memory rmRecovery = new bytes4[](
+                    (routedManual ? 1 : 0) + (routedSupp ? 1 : 0)
+                );
+                uint256 j;
+                if (routedManual) {
+                    rmRecovery[j] = oldManualFromRecovery;
+                    ++j;
+                }
+                if (routedSupp) rmRecovery[j] = oldSupplementalFromRecovery;
+                IDiamondCut.FacetCut[] memory rmRecoveryCut =
+                    new IDiamondCut.FacetCut[](1);
+                rmRecoveryCut[0] = IDiamondCut.FacetCut({
+                    facetAddress: address(0),
+                    action: IDiamondCut.FacetCutAction.Remove,
+                    functionSelectors: rmRecovery
+                });
+                IDiamondCut(diamond).diamondCut(rmRecoveryCut, address(0), "");
+                console.log(
+                    "P2-w6: removed retired UNATTRIBUTED FromRecovery selectors"
+                );
+            }
+        }
+
         // ─── #1434 P2-w2 (Codex #1634 r1) — receiver wire-generation probe ──
         //
         // The B2-d5 block above gates its receiver upgrade on the RETIRED

@@ -4,6 +4,7 @@ pragma solidity 0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardRemitDispatch} from "../libraries/LibRewardRemitDispatch.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -882,6 +883,126 @@ contract RewardCompensationDispatchFacet is
             remitId
         );
     }
+    /// @notice #1222 M3 — a PENDING reservation was operator-RELEASED.
+    ///         The VALUE counters stay reserved (the tokens sit in the
+    ///         transport's custody): `recycledStranded` is what the
+    ///         release recorded as stranded, not a re-credit.
+    /// @custom:event-category state-change/reward-compensation
+    event RemitReservationReleased(
+        uint256 indexed remitId,
+        uint32 indexed dstChainId,
+        uint256 total,
+        uint256 fresh,
+        uint256 recycledStranded
+    );
+
+    // ── #1222 M3: the RELEASE valve ─────────────────────────────────
+    // (#1662 r4 — relocated off the mutating remittance facet for EIP-170
+    // headroom, exactly as `quoteRemitAckFee` and the B2-d5 seed pair were
+    // in w5. Base-only ADMIN evidence, which is this facet's character;
+    // no behaviour change, and the selector is unchanged so the in-place
+    // refresh simply Replaces its route.)
+
+    /// @dev #1222 M3 — the reconciliation timeout a release must clear.
+    uint256 internal constant REMIT_RELEASE_MIN_AGE = 7 days;
+
+    /**
+     * @notice ADMIN valve — release a PENDING reservation the operator has
+     *         verified can NEVER execute: re-opens its days for funding and
+     *         restores the outstanding commitments (the VALUE counters stay
+     *         reserved — see the event doc).
+     * @dev    LAST-RESORT + evidenced: CCIP failed messages stay manually
+     *         re-executable indefinitely, so the normal recovery is
+     *         re-execution → delivery → ack, with the reservation simply
+     *         staying Pending meanwhile. Release is for a message with
+     *         permanent-failure evidence (e.g. an unrecoverable receiver).
+     *         The recycled share's TOKENS sit locked in the CCIP token pool —
+     *         genuinely outside Diamond custody — so `recycleBucket` is
+     *         deliberately NOT re-credited (see
+     *         {LibVpfiRecycle.restoreReleasedRemit}); the release event
+     *         records the stranded figure and physical recovery rides the
+     *         B2-d5 custody-credit class. If the message executes AFTER a
+     *         release, the late ack surfaces via {RemitAckAfterRelease}.
+     */
+    function releaseRemitReservation(
+        uint256 remitId
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        if (r.status != 1) revert RemitReservationNotPending(remitId);
+        // r5 — §M3's reconciliation timeout, on-chain: a merely-delayed
+        // message must age out before its days may re-open.
+        uint256 earliest = uint256(r.sentAt) + REMIT_RELEASE_MIN_AGE;
+        if (block.timestamp < earliest) {
+            revert RemitReleaseTooEarly(remitId, earliest);
+        }
+        r.status = 3;
+        // #1448 r10 — beside the status flip, deliberately: the seed
+        // ceremony's race guard keys on this, and a release that moved the
+        // status without moving the count would be invisible to it.
+        ++s.remitReleasedCount;
+        uint32 dst = r.dstChainId;
+        uint256[] storage closed = r.dayIds;
+        uint256 n = closed.length;
+        for (uint256 i; i < n; ) {
+            uint256 d = closed[i];
+            // #1656 r1 - delete the day markers ONLY when this reservation
+            // OWNS the closure: a SUPPLEMENTAL reservation names the same
+            // day for its record/ACK lifecycle, but the closure belongs to
+            // the original acknowledged manual remit - releasing a failed
+            // supplement must not erase it (that would re-open funding on
+            // an already-funded day and free its standing quote).
+            if (s.dayClosedByRemitId[dst][d] == remitId) {
+                delete s.rewardBudgetRemitted[dst][d];
+                delete s.dayClosedByRemitId[dst][d];
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        // #1656 r6 - a released COMPENSATION reservation takes its
+        // DECLARED per-side contribution out of the funded cumulative:
+        // the release means those tokens never funded the obligation
+        // (the reservation can never execute), and leaving them counted
+        // would make the recovery ceremony's re-dispatch impossible -
+        // the per-side bound would reject the replacement as exceeding
+        // the quote. Saturating; contributions from OTHER reservations
+        // on the same day (the original under a released supplemental,
+        // or vice versa) remain counted, correctly.
+        if (
+            n == 1
+                && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
+                // #1660 r4 - once, whichever unwind path ran first.
+                && !r.declaredUnwound
+        ) {
+            r.declaredUnwound = true;
+            uint256 cd = closed[0];
+            uint256 curL = s.compFundedLender18[dst][cd];
+            uint256 curB = s.compFundedBorrower18[dst][cd];
+            s.compFundedLender18[dst][cd] = curL > r.declaredLender18
+                ? curL - r.declaredLender18
+                : 0;
+            s.compFundedBorrower18[dst][cd] = curB > r.declaredBorrower18
+                ? curB - r.declaredBorrower18
+                : 0;
+        }
+        // Codex #1426 r4 — the FRESH counters stay UN-restored, exactly
+        // like the recycled bucket: the sent VPFI is physically outside
+        // Diamond custody (locked in the CCIP pool), so re-opening 69M
+        // headroom here would let the re-remit's transfer draw commingled
+        // custody (bucket tokens, LIF holds) as "fresh". The re-remit
+        // consumes NEW headroom (two real outflows happened); physical
+        // recovery restores the counters through the same governance
+        // ceremony that re-credits the bucket (B2-d5 class).
+        uint256 pending = s.remitPendingTotal[dst];
+        s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
+        LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
+        LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled);
+        emit RemitReservationReleased(
+            remitId, dst, r.total, r.fresh, r.recycled
+        );
+    }
+
     // ── #1434 P2-w6: the recovery ceremony + R6e rotation (§5.3/§5.4) ──
 
     /// @dev #1662 r1 — the gate value an IMPORTED old-era outstanding
@@ -1027,8 +1148,14 @@ contract RewardCompensationDispatchFacet is
         if (cr > r.recycled) {
             revert CeremonyProvenanceExceeded(remitId, cr, r.recycled);
         }
-        s.ceremonyFreshRecovered[remitId] = cf;
-        s.ceremonyRecycledRecovered[remitId] = cr;
+        // #1662 r4 — `cf`/`cr` are JOINT bound values (they fold in
+        // prior LOSS) and must not be persisted as recovered: doing so
+        // records loss as recovery, and `_drawFromRecovery` then
+        // subtracts a recycled figure that never entered the position —
+        // publishing zero per-receipt capacity, or reverting outright
+        // once the fictitious subtrahend exceeds the credit.
+        s.ceremonyFreshRecovered[remitId] += freshInflow;
+        s.ceremonyRecycledRecovered[remitId] += recycledInflow;
         s.remitRecoveredForReceipt[remitId] = recovered;
         _bookRecoveredInflow(s, remitId, freshInflow, recycledInflow, true);
         // The recovered value is no longer lost: the loss record shrinks
@@ -1255,6 +1382,14 @@ contract RewardCompensationDispatchFacet is
      *         old-era evidence clears it (the mirror's re-presented
      *         consumed attestation, or {clearImportedOutstanding}).
      */
+    /// @param oldTotal #1662 r4 — the OLD reservation's dispatched total,
+    ///        and `oldFresh`/`oldRecycled` its provenance split, read from
+    ///        the retiring deployment. The local ceremony binds recovery to
+    ///        the reservation it settles; an imported settlement has no
+    ///        local reservation, so these carried figures are what stop an
+    ///        operator typo — or a compromised admin — classifying
+    ///        arbitrary unearmarked Diamond balance as recovered and
+    ///        minting uncharged re-dispatch capacity out of it.
     /// @param quarantineObserved #1662 r2 — carry the RETIRING
     ///        deployment's observed-quarantine evidence (read
     ///        `getImportedOutstanding` on it, or pass false for a
@@ -1268,7 +1403,10 @@ contract RewardCompensationDispatchFacet is
         uint32 dstChainId,
         address oldRemitter,
         uint256 oldRemitId,
-        bool quarantineObserved
+        bool quarantineObserved,
+        uint256 oldTotal,
+        uint256 oldFresh,
+        uint256 oldRecycled
     ) external onlyCanonical onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (oldRemitter == address(0) || oldRemitter == address(this)) {
@@ -1286,10 +1424,17 @@ contract RewardCompensationDispatchFacet is
                 dstChainId, s.compensationOutstanding[dstChainId]
             );
         }
+        // #1662 r4 — the carried split must describe one parcel.
+        if (oldFresh + oldRecycled != oldTotal || oldTotal == 0) {
+            revert ImportedBoundsInvalid(oldTotal, oldFresh, oldRecycled);
+        }
         s.importedOutstanding[dstChainId] = LibVaipakam.ImportedOutstanding({
             oldRemitter: oldRemitter,
             oldRemitId: oldRemitId,
-            quarantineObserved: quarantineObserved
+            quarantineObserved: quarantineObserved,
+            oldTotal: oldTotal,
+            oldFresh: oldFresh,
+            oldRecycled: oldRecycled
         });
         // #1662 r1 — the SENTINEL, never the old id: old-era remit ids
         // alias this deployment's own nonces, and an ordinary new-era
@@ -1334,6 +1479,18 @@ contract RewardCompensationDispatchFacet is
         if (im.oldRemitter == address(0)) {
             revert ImportedMarkerMissing(dstChainId);
         }
+        // #1662 r4 — bounded by the OLD reservation, per component, the
+        // same way the local ceremony is bounded by its own.
+        if (freshInflow > im.oldFresh) {
+            revert CeremonyProvenanceExceeded(
+                im.oldRemitId, freshInflow, im.oldFresh
+            );
+        }
+        if (recycledInflow > im.oldRecycled) {
+            revert CeremonyProvenanceExceeded(
+                im.oldRemitId, recycledInflow, im.oldRecycled
+            );
+        }
         uint256 attributionId;
         if (freshInflow + recycledInflow != 0) {
             // #1662 r2 — localStranding FALSE: this value was stranded on
@@ -1356,6 +1513,15 @@ contract RewardCompensationDispatchFacet is
             if (freshInflow != 0) {
                 attributionId = ++s.remitReservationNonce;
                 s.remitRecoveredForReceipt[attributionId] = freshInflow;
+                // #1662 r4 — the marker is deleted below, so a LATER
+                // consumed re-present from the old mirror would miss the
+                // imported branch and revert at the era check, leaving
+                // this credit re-dispatchable while the original delivery
+                // backs mirror claims. The tombstone is the only link
+                // back from the old-era tuple to the credit it minted.
+                s.importedSettledAttribution[
+                    keccak256(abi.encode(im.oldRemitter, im.oldRemitId))
+                ] = attributionId;
             }
         }
         delete s.importedOutstanding[dstChainId];

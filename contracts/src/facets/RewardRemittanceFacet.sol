@@ -194,14 +194,6 @@ contract RewardRemittanceFacet is
     ///         restores both through the B2-d5 governance ceremony).
     ///         `recycledStranded` is the stranded recycled share.
     /// @custom:event-category informational/reward-transport
-    event RemitReservationReleased(
-        uint256 indexed remitId,
-        uint32 indexed dstChainId,
-        uint256 total,
-        uint256 fresh,
-        uint256 recycledStranded
-    );
-
     /// @notice #1222 M3 B2-d2 — an ack arrived for a RELEASED reservation:
     ///         the operator released in error and the mirror WAS funded
     ///         (double-funding if its days were re-remitted). Surfaced for
@@ -1685,6 +1677,33 @@ contract RewardRemittanceFacet is
                 return;
             }
         }
+        // #1662 r4 — a SETTLED imported tuple: the marker was deleted at
+        // settlement, so a late consumed re-present from the old mirror
+        // would fall through to the era check and revert, leaving the
+        // credit that settlement minted freely re-dispatchable while the
+        // original delivery in fact backs mirror claims. The tombstone is
+        // the only surviving link from the old-era tuple to that credit,
+        // and consumption is exactly the evidence that voids it.
+        {
+            bytes32 tomb = keccak256(abi.encode(remitter, remitId));
+            uint256 attributed = s.importedSettledAttribution[tomb];
+            if (attributed != 0) {
+                if (classification == 1) {
+                    (uint256 claw, uint256 unspent) =
+                        _voidRecoveryCredit(s, attributed);
+                    if (unspent != 0) {
+                        emit ImportedAttributionVoided(
+                            sourceChainId, remitter, remitId, attributed, claw
+                        );
+                    }
+                } else {
+                    emit ImportedOutstandingObserved(
+                        sourceChainId, remitter, remitId, classification
+                    );
+                }
+                return;
+            }
+        }
         if (remitter != address(this)) {
             revert RemitAckSenderMismatch(remitId, remitter);
         }
@@ -1808,102 +1827,6 @@ contract RewardRemittanceFacet is
         _finalizeReservation(s, r, remitId, 0, true, true, false);
     }
 
-    /**
-     * @notice ADMIN valve — release a PENDING reservation the operator has
-     *         verified can NEVER execute: re-opens its days for funding and
-     *         restores the outstanding commitments (the VALUE counters stay
-     *         reserved — see the event doc).
-     * @dev    LAST-RESORT + evidenced: CCIP failed messages stay manually
-     *         re-executable indefinitely, so the normal recovery is
-     *         re-execution → delivery → ack, with the reservation simply
-     *         staying Pending meanwhile. Release is for a message with
-     *         permanent-failure evidence (e.g. an unrecoverable receiver).
-     *         The recycled share's TOKENS sit locked in the CCIP token pool —
-     *         genuinely outside Diamond custody — so `recycleBucket` is
-     *         deliberately NOT re-credited (see
-     *         {LibVpfiRecycle.restoreReleasedRemit}); the release event
-     *         records the stranded figure and physical recovery rides the
-     *         B2-d5 custody-credit class. If the message executes AFTER a
-     *         release, the late ack surfaces via {RemitAckAfterRelease}.
-     */
-    function releaseRemitReservation(
-        uint256 remitId
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) onlyCanonical {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        if (r.status != 1) revert RemitReservationNotPending(remitId);
-        // r5 — §M3's reconciliation timeout, on-chain: a merely-delayed
-        // message must age out before its days may re-open.
-        uint256 earliest = uint256(r.sentAt) + REMIT_RELEASE_MIN_AGE;
-        if (block.timestamp < earliest) {
-            revert RemitReleaseTooEarly(remitId, earliest);
-        }
-        r.status = 3;
-        // #1448 r10 — beside the status flip, deliberately: the seed
-        // ceremony's race guard keys on this, and a release that moved the
-        // status without moving the count would be invisible to it.
-        ++s.remitReleasedCount;
-        uint32 dst = r.dstChainId;
-        uint256[] storage closed = r.dayIds;
-        uint256 n = closed.length;
-        for (uint256 i; i < n; ) {
-            uint256 d = closed[i];
-            // #1656 r1 - delete the day markers ONLY when this reservation
-            // OWNS the closure: a SUPPLEMENTAL reservation names the same
-            // day for its record/ACK lifecycle, but the closure belongs to
-            // the original acknowledged manual remit - releasing a failed
-            // supplement must not erase it (that would re-open funding on
-            // an already-funded day and free its standing quote).
-            if (s.dayClosedByRemitId[dst][d] == remitId) {
-                delete s.rewardBudgetRemitted[dst][d];
-                delete s.dayClosedByRemitId[dst][d];
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        // #1656 r6 - a released COMPENSATION reservation takes its
-        // DECLARED per-side contribution out of the funded cumulative:
-        // the release means those tokens never funded the obligation
-        // (the reservation can never execute), and leaving them counted
-        // would make the recovery ceremony's re-dispatch impossible -
-        // the per-side bound would reject the replacement as exceeding
-        // the quote. Saturating; contributions from OTHER reservations
-        // on the same day (the original under a released supplemental,
-        // or vice versa) remain counted, correctly.
-        if (
-            n == 1
-                && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
-                // #1660 r4 - once, whichever unwind path ran first.
-                && !r.declaredUnwound
-        ) {
-            r.declaredUnwound = true;
-            uint256 cd = closed[0];
-            uint256 curL = s.compFundedLender18[dst][cd];
-            uint256 curB = s.compFundedBorrower18[dst][cd];
-            s.compFundedLender18[dst][cd] = curL > r.declaredLender18
-                ? curL - r.declaredLender18
-                : 0;
-            s.compFundedBorrower18[dst][cd] = curB > r.declaredBorrower18
-                ? curB - r.declaredBorrower18
-                : 0;
-        }
-        // Codex #1426 r4 — the FRESH counters stay UN-restored, exactly
-        // like the recycled bucket: the sent VPFI is physically outside
-        // Diamond custody (locked in the CCIP pool), so re-opening 69M
-        // headroom here would let the re-remit's transfer draw commingled
-        // custody (bucket tokens, LIF holds) as "fresh". The re-remit
-        // consumes NEW headroom (two real outflows happened); physical
-        // recovery restores the counters through the same governance
-        // ceremony that re-credits the bucket (B2-d5 class).
-        uint256 pending = s.remitPendingTotal[dst];
-        s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
-        LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
-        LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled);
-        emit RemitReservationReleased(
-            remitId, dst, r.total, r.fresh, r.recycled
-        );
-    }
 
     /// @dev #1656 r2/r3 - the declared-to-received reconciliation of the
     ///      per-side funded cumulative for a COMPENSATION reservation
@@ -1982,6 +1905,49 @@ contract RewardRemittanceFacet is
         uint256 oldRemitId
     );
 
+    /// @notice §5.4 R6e (#1662 r4) — an ALREADY-SETTLED imported tuple's
+    ///         old mirror re-presented a CONSUMED attestation: the credit
+    ///         that settlement minted is void (the delivery backs mirror
+    ///         claims after all). `clawed` is what the pooled position
+    ///         could physically absorb; the entitlement is voided whole.
+    /// @custom:event-category state-change/reward-compensation
+    event ImportedAttributionVoided(
+        uint32 indexed sourceChainId,
+        address oldRemitter,
+        uint256 oldRemitId,
+        uint256 attributionId,
+        uint256 clawed
+    );
+
+    /// @dev #1662 r4 - ONE implementation of the recovery-credit VOID.
+    ///      Both the own-era contradiction claw and the settled-import
+    ///      tombstone need exactly this rule, and writing it twice is how
+    ///      the two drifted in the first place: the ENTITLEMENT is voided
+    ///      whole, while only what the pooled position can absorb moves
+    ///      PHYSICALLY to the overage quarantine. Idempotent - a replay
+    ///      recomputes `unspent` as zero and does nothing.
+    /// @return claw    what physically moved to the quarantine.
+    /// @return unspent the entitlement voided (always >= claw).
+    function _voidRecoveryCredit(
+        LibVaipakam.Storage storage s,
+        uint256 receiptId
+    ) private returns (uint256 claw, uint256 unspent) {
+        uint256 credit = s.remitRecoveredForReceipt[receiptId]
+            - s.ceremonyRecycledRecovered[receiptId];
+        uint256 spent = s.recoveryRedispatchedForReceipt[receiptId]
+            + s.recoveryClawedForReceipt[receiptId];
+        unspent = credit > spent ? credit - spent : 0;
+        if (unspent == 0) return (0, 0);
+        uint256 avail =
+            s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
+        claw = unspent < avail ? unspent : avail;
+        if (claw != 0) {
+            s.rewardBudgetRecovered -= claw;
+            s.strandedReturnOverage += claw;
+        }
+        s.recoveryClawedForReceipt[receiptId] += unspent;
+    }
+
     /// @dev #1660 r8 - stamp a CONSUMED attestation. Returns true when it
     ///      CONTRADICTS a prior quarantine attestation: the caller must
     ///      then withhold the consumed-ack privileges (gate clear +
@@ -2036,26 +2002,9 @@ contract RewardRemittanceFacet is
         // and is reported as such in the event.
         uint256 rec = s.remitRecoveredForReceipt[remitId]
             - s.ceremonyRecycledRecovered[remitId];
-        uint256 spent = s.recoveryRedispatchedForReceipt[remitId];
-        uint256 unspent = rec > spent ? rec - spent : 0;
         if ((conflict || rec != 0) && !r.conflictClawed) {
             r.conflictClawed = true;
-            uint256 avail = s.rewardBudgetRecovered
-                - s.rewardBudgetRedispatched;
-            uint256 claw = unspent < avail ? unspent : avail;
-            if (claw != 0) {
-                s.rewardBudgetRecovered -= claw;
-                s.strandedReturnOverage += claw;
-            }
-            // #1662 r3 — VOID the receipt's whole remaining credit, not
-            // merely the slice the pool could absorb. The physical claw is
-            // bounded by the pooled balance; the ENTITLEMENT is not, and
-            // leaving the remainder on the receipt's ledger would let it
-            // become spendable again the moment another receipt credits
-            // the pool — drawing against backing that was never its own.
-            if (unspent != 0) {
-                s.recoveryClawedForReceipt[remitId] = unspent;
-            }
+            (uint256 claw, ) = _voidRecoveryCredit(s, remitId);
             emit RemitAckClassificationConflict(remitId, claw, rec - claw);
         }
         // #1660 r11 / #1662 r2 - a settled released receipt whose

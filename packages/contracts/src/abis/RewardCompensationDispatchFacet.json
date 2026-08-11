@@ -45,6 +45,21 @@
         "name": "quarantineObserved",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "oldTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oldFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oldRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -137,6 +152,19 @@
       },
       {
         "name": "recycledLoss",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseRemitReservation",
+    "inputs": [
+      {
+        "name": "remitId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -591,6 +619,43 @@
       },
       {
         "name": "reservations",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemitReservationReleased",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledStranded",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1513,6 +1578,27 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ImportedBoundsInvalid",
+    "inputs": [
+      {
+        "name": "oldTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oldFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oldRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

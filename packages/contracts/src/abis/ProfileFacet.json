@@ -1679,6 +1679,27 @@
   },
   {
     "type": "error",
+    "name": "ImportedBoundsInvalid",
+    "inputs": [
+      {
+        "name": "oldTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oldFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "oldRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ImportedMarkerMissing",
     "inputs": [
       {

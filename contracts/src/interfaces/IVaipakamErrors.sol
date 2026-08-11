@@ -477,6 +477,14 @@ interface IVaipakamErrors {
     ///         deployment's visible gate instead of its imported record).
     error ImportedTupleIsSentinel();
 
+    /// @notice #1662 r4 — the carried old-reservation figures do not
+    ///         describe one parcel (split must sum to a non-zero total).
+    error ImportedBoundsInvalid(
+        uint256 oldTotal,
+        uint256 oldFresh,
+        uint256 oldRecycled
+    );
+
     /// @notice Imported tuple names zero or THIS deployment (an own-era
     ///         reservation needs no import).
     error ImportedTupleInvalid(address oldRemitter);

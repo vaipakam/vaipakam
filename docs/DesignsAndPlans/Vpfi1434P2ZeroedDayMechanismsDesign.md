@@ -1276,6 +1276,44 @@ the bounds are the design's actual commitment.
    >    ordering the calls loss-first spends one component twice and still
    >    satisfies the aggregate identity by borrowing the other component's
    >    slack. Both paths now carry both terms.
+   >
+   > **Round-4 addendum (#1662).** Four more. One is the round-3 fix's own
+   > regression, and the rest close the imported-settlement surface that
+   > round 3 opened:
+   >
+   > 1. **The joint bound value was PERSISTED as recovered.** Round 3 made
+   >    `cf`/`cr` fold in prior loss for the bound check — and then stored
+   >    them into the recovered counters, recording loss as recovery. The
+   >    per-receipt draw then subtracts a recycled figure that never entered
+   >    the position: zero published capacity for a receipt that has some,
+   >    or an outright revert once the fictitious subtrahend exceeds the
+   >    credit. The counters now take the INFLOW; the joint values validate
+   >    and are discarded. (Lesson: a value computed for a CHECK is not a
+   >    value to STORE — give it a name that says so, or it will be reused.)
+   > 2. **A settled import had no path back from old-era evidence.** The
+   >    marker is deleted at settlement, so a later consumed re-present from
+   >    the old mirror missed the imported branch and reverted at the era
+   >    check — leaving the credit that settlement minted re-dispatchable
+   >    while the original delivery backs mirror claims. A tuple→attribution
+   >    TOMBSTONE now survives settlement, and consumption voids the credit
+   >    through it (same shape as the own-era claw: the pooled balance
+   >    bounds what physically moves, the entitlement is voided whole).
+   > 3. **The retired UNATTRIBUTED wrappers stayed callable.** Adding
+   >    `sourceRemitId` changes both `…FromRecovery` selectors, and the
+   >    in-place refresh Replaces/Adds but never Removes — so the old
+   >    four-argument entry points stay routed to the previous facet,
+   >    debiting the pooled position while updating no per-receipt ledger.
+   >    That is exactly the accounting the argument exists to enforce. The
+   >    refresh now Removes both, gated on their being routed so a rerun
+   >    cannot abort the whole script.
+   > 4. **Imported settlement was unbounded.** It has no local reservation
+   >    to bind against, so an operator typo (or a compromised admin) could
+   >    import a small old receipt and classify any unearmarked Diamond
+   >    balance as recovered — minting arbitrary uncharged re-dispatch
+   >    capacity. The OLD reservation's total and provenance split are now
+   >    carried at import (validated to describe one parcel) and enforced
+   >    per component at settlement, mirroring how the local ceremony binds
+   >    to its own reservation.
 
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates
