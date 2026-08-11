@@ -2047,6 +2047,15 @@ contract RewardRemittanceFacet is
                 s.rewardBudgetRecovered -= claw;
                 s.strandedReturnOverage += claw;
             }
+            // #1662 r3 — VOID the receipt's whole remaining credit, not
+            // merely the slice the pool could absorb. The physical claw is
+            // bounded by the pooled balance; the ENTITLEMENT is not, and
+            // leaving the remainder on the receipt's ledger would let it
+            // become spendable again the moment another receipt credits
+            // the pool — drawing against backing that was never its own.
+            if (unspent != 0) {
+                s.recoveryClawedForReceipt[remitId] = unspent;
+            }
             emit RemitAckClassificationConflict(remitId, claw, rec - claw);
         }
         // #1660 r11 / #1662 r2 - a settled released receipt whose

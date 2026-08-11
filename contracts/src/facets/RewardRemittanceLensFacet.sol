@@ -402,13 +402,26 @@ contract RewardRemittanceLensFacet {
     ///         to the position). Their difference is the receipt's
     ///         UNSPENT capacity: what a further from-recovery dispatch may
     ///         draw, and the most a contradicting consumed ack may claw.
+    /// @dev `clawed` (#1662 r3) — credit VOIDED by a contradicting
+    ///      consumed attestation. Unspent capacity is
+    ///      `credit − redispatched − clawed`; the clawed term is what
+    ///      stops confiscated credit becoming spendable again once
+    ///      another receipt replenishes the pooled position.
     function getRecoveryCreditForReceipt(
         uint256 remitId
-    ) external view returns (uint256 credit, uint256 redispatched) {
+    )
+        external
+        view
+        returns (uint256 credit, uint256 redispatched, uint256 clawed)
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 c = s.remitRecoveredForReceipt[remitId]
             - s.ceremonyRecycledRecovered[remitId];
-        return (c, s.recoveryRedispatchedForReceipt[remitId]);
+        return (
+            c,
+            s.recoveryRedispatchedForReceipt[remitId],
+            s.recoveryClawedForReceipt[remitId]
+        );
     }
 
     /// @notice #1434 P2-w6 (§5.4 R6e, reshaped #1662 r1) — the imported

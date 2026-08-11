@@ -1462,7 +1462,14 @@ contract RewardAggregatorFacet is
             s.recycleReleasedRemitStrandedCumulative,
             s.recycleAccountingSeeded || s.recycleCreditedCumulative != 0,
             s.isCanonicalRewardChain,
+            // #1662 r3 — capped HERE, not at the write site: the stored
+            // cumulative accrues uncapped so resolutions recorded before
+            // the one-time stranded seed completes are not silently
+            // discarded against a floor that does not exist yet.
             s.recycleReleasedRemitResolvedCumulative
+                > s.recycleReleasedRemitStrandedCumulative
+                ? s.recycleReleasedRemitStrandedCumulative
+                : s.recycleReleasedRemitResolvedCumulative
         );
     }
 

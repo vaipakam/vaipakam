@@ -48,3 +48,12 @@ belonged to another. Value written off as permanently lost is recorded
 with the same care as value recovered — both stop counting as still in
 transit, so a written-off balance cannot go on appearing to back live
 obligations.
+
+Where a delivery's recovery is contradicted, the whole of its remaining
+recovery entitlement is voided rather than only the part that could be
+reclaimed at that moment — so it cannot quietly become spendable again
+later out of value that belongs to a different delivery. And when
+governance settles a compensation carried over from a retired deployment,
+the recovered amount is booked against a freshly issued reference that the
+replacement dispatch can actually name, so carried-over value does not end
+up earmarked with no way to spend it.

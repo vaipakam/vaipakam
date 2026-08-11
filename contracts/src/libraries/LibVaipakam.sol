@@ -6467,6 +6467,18 @@ library LibVaipakam {
         //   NAMES its source receipt and is bounded by that receipt's
         //   own unspent credit.
         mapping(uint256 => uint256) recoveryRedispatchedForReceipt;
+        // BASE-ONLY (#1662 r3) — the per-receipt recovery credit VOIDED by
+        //   a contradicting consumed attestation. Distinct from the
+        //   redispatched counter (that value was legitimately spent; this
+        //   was confiscated), and load-bearing rather than cosmetic: the
+        //   physical claw is bounded by the POOLED balance, so a receipt
+        //   whose contradiction could only be partly absorbed would
+        //   otherwise still read as having unspent credit — and become
+        //   spendable again the moment ANOTHER receipt replenished the
+        //   pool, drawing against backing that was never its own. The
+        //   whole remaining credit is voided at the contradiction,
+        //   whatever the pool could absorb at that instant.
+        mapping(uint256 => uint256) recoveryClawedForReceipt;
         // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
         //   outstanding-compensation record for a chain after a Base
         //   deployment rotation: the RAW old-era tuple, not its hash —
@@ -6505,6 +6517,15 @@ library LibVaipakam {
         //   RETIRED deployment and was never in this deployment's
         //   cumulative, so netting it would under-recognise local backing
         //   and page a false CRITICAL shortfall.
+        //
+        //   #1662 r3 — stored UNCAPPED, capped only where it is PUBLISHED.
+        //   On an in-place-upgraded Diamond the stranded cumulative stays
+        //   zero or partial until the one-time seed ceremony finishes, and
+        //   a resolution recorded in that window would have been saturated
+        //   away against a floor that had not been established yet — with
+        //   the seed's later assignment doing no recomputation, the
+        //   discarded portion would read as still-in-transit forever,
+        //   restoring the exact phantom allowance this counter removes.
         uint256 recycleReleasedRemitResolvedCumulative;
     }
 

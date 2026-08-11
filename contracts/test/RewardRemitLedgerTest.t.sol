@@ -3828,7 +3828,7 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
             CHAIN_ARB, 1, 2e18, 1e18, 1
         );
-        (uint256 c1, uint256 d1) = rlens.getRecoveryCreditForReceipt(1);
+        (uint256 c1, uint256 d1, ) = rlens.getRecoveryCreditForReceipt(1);
         assertEq(c1 - d1, 0, "receipt 1 has nothing left unspent");
         (uint256 recBefore, uint256 redBefore, ) = rlens.getRecoveryPosition();
         assertEq(recBefore - redBefore, 2e18, "only receipt 90's credit left");
@@ -3847,9 +3847,11 @@ contract RewardRemitLedgerTest is SetupTest {
         // receipt's own unspent credit, and 90's is untouched.
         // (`test_Recovery_SupplementalFromRecovery` exercises 90 actually
         // spending it, on a day with the quote headroom to accept it.)
-        (uint256 c90, uint256 d90) = rlens.getRecoveryCreditForReceipt(90);
+        (uint256 c90, uint256 d90, uint256 z90) =
+            rlens.getRecoveryCreditForReceipt(90);
         assertEq(c90, 2e18, "90's credit intact");
         assertEq(d90, 0, "90 has drawn nothing");
+        assertEq(z90, 0, "and nothing of 90's was clawed");
     }
 
     /// r2-b3 - a from-recovery dispatch may not draw against a receipt
@@ -3980,6 +3982,140 @@ contract RewardRemitLedgerTest is SetupTest {
             type(uint256).max,
             "the carried contradiction still withholds the clear"
         );
+    }
+
+    // -- #1662 r3 ----------------------------------------------------
+
+    /// r3-c1 - a contradiction VOIDS the receipt's whole remaining
+    /// recovery entitlement, not merely the slice the pooled position
+    /// could absorb at that instant. The physical claw is bounded by the
+    /// balance; the entitlement is not. Leaving the remainder standing
+    /// let it become spendable again the moment ANOTHER receipt credited
+    /// the pool - drawing against backing that was never its own.
+    function test_Recovery_ClawedCreditNeverBecomesSpendable() public {
+        // Receipt 1 recovers 3e18 by ceremony...
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        // ...then spends 2e18 of it, leaving 1e18 unspent.
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 1.4e18, 0.6e18, 1
+        );
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 2, 2e18, true);
+        // The contradiction lands while the pool holds only 1e18, so the
+        // PHYSICAL claw is 1e18 - and the entitlement is voided with it.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, true);
+        (uint256 c, uint256 d, uint256 z) =
+            rlens.getRecoveryCreditForReceipt(1);
+        assertEq(c - d - z, 0, "receipt 1's entitlement is fully void");
+
+        // Another receipt now replenishes the pooled position.
+        mutator.setRemitReservationCompRaw(90, CHAIN_ARB, 2, 2e18, 4);
+        _armReturnIngress();
+        comp.onStrandedReturnReceived(
+            address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
+        );
+        (uint256 rec, uint256 red, ) = rlens.getRecoveryPosition();
+        assertGt(rec - red, 0, "the pool is funded again");
+        // ...and receipt 1 still cannot spend a wei of it. (A fresh day,
+        // so the refusal is the CREDIT check and not day-closure.)
+        _finalizeDay(2);
+        mutator.setChainDayRemitIneligibleRaw(2, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 2, 3e18, 2e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RecoveryReceiptCreditInsufficient.selector,
+                1,
+                1e18,
+                0
+            )
+        );
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 2, 0.6e18, 0.4e18, 1
+        );
+    }
+
+    /// r3-c2 - an imported settlement's FRESH half must be DRAWABLE. The
+    /// old-era id names nothing locally (and could collide with a live
+    /// reservation), so without a minted attribution the recovered tokens
+    /// are earmarked forever while the position reports them as capacity.
+    function test_Import_FreshRecoveryIsAttributedAndDrawable() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        address oldBase = address(0x01dBA5E);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        vpfiTok.mint(address(diamond), 2e18);
+
+        vm.recordLogs();
+        comp.clearImportedOutstanding(CHAIN_ARB, 2e18, 0);
+        uint256 attributionId;
+        {
+            Vm.Log[] memory logs = vm.getRecordedLogs();
+            bytes32 sig = keccak256(
+                "ImportedOutstandingCleared(uint32,address,uint256,uint256,uint256,uint256)"
+            );
+            for (uint256 i; i < logs.length; ++i) {
+                if (logs[i].topics[0] != sig) continue;
+                (, , , , attributionId) = abi.decode(
+                    logs[i].data,
+                    (address, uint256, uint256, uint256, uint256)
+                );
+            }
+        }
+        assertGt(attributionId, 0, "a drawable id was minted and published");
+        (uint256 credit, , ) =
+            rlens.getRecoveryCreditForReceipt(attributionId);
+        assertEq(credit, 2e18, "the imported fresh half is attributed");
+        // ...and it actually spends.
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 1.2e18, 0.8e18, attributionId
+        );
+    }
+
+    /// r3-c3 - a resolution recorded BEFORE the one-time stranded seed
+    /// completes must not be discarded. The stored cumulative accrues
+    /// uncapped and is capped only where published, so the seed's later
+    /// assignment reveals the full resolved figure instead of leaving
+    /// returned/written-off value reading as in-transit forever.
+    function test_Ceremony_ResolutionSurvivesLateStrandedSeed() public {
+        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
+        // Reproduce the pre-seed shape: the stranded floor is not yet
+        // published, exactly as on an in-place-upgraded Diamond.
+        mutator.setReleasedRemitStrandedRaw(0);
+        comp.recordRecoveryTerminalLoss(1, r.fresh, r.recycled);
+        (, , , , uint256 publishedPreSeed) = RewardAggregatorFacet(
+            address(diamond)
+        ).getRecycleCompositionPosition();
+        assertEq(publishedPreSeed, 0, "capped at the unseeded floor");
+        // The seed lands the historical total.
+        mutator.setReleasedRemitStrandedRaw(r.recycled);
+        (, , , , uint256 publishedPostSeed) = RewardAggregatorFacet(
+            address(diamond)
+        ).getRecycleCompositionPosition();
+        assertEq(
+            publishedPostSeed,
+            r.recycled,
+            "the pre-seed resolution was retained, not discarded"
+        );
+    }
+
+    /// r3-c4 - the joint provenance bound must hold in BOTH orders.
+    /// Recording loss first and recovery second previously spent one
+    /// component twice while still satisfying the aggregate identity by
+    /// borrowing the other component's slack.
+    function test_Ceremony_LossThenRecoveryStillBoundsJointly() public {
+        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
+        comp.recordRecoveryTerminalLoss(1, r.fresh, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CeremonyProvenanceExceeded.selector,
+                1,
+                r.fresh + 1,
+                r.fresh
+            )
+        );
+        comp.recordRecoveryCeremony(1, 1, 0);
     }
 
     /// SS8-6 (R6e) - an imported old-era marker holds the gate at the

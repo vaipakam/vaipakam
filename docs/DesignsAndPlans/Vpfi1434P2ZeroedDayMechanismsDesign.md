@@ -1109,7 +1109,8 @@ the bounds are the design's actual commitment.
    > release IS the terminal message-state record (status 3, gate held).
    > What w6 adds is the settlement the held gate waits for:
    > `recordRecoveryCeremony(remitId, freshInflow, recycledInflow)` and
-   > `recordRecoveryTerminalLoss(remitId, amount)` (ADMIN evidenced, the
+   > `recordRecoveryTerminalLoss(remitId, freshLoss, recycledLoss)`
+   > (ADMIN evidenced, the
    > forced-finalize mould, Released reservations only, consumed receipts
    > refused). The fresh half credits the SAME recovery position the B1
    > return feeds — folded into the ONE per-receipt recovered cumulative,
@@ -1242,6 +1243,39 @@ the bounds are the design's actual commitment.
    >    contradiction into a clean consumption that clears the newest gate.
    >    The import now carries the flag explicitly and refuses the
    >    sentinel outright.
+   >
+   > **Round-3 addendum (#1662).** Four more, three of them the second-order
+   > consequences of round 2's own remedies — the recurring shape being that
+   > a per-receipt ledger and a pooled balance must agree in BOTH directions:
+   >
+   > 1. **Clawed credit stayed spendable.** The contradiction claw reduced
+   >    only the pooled counter, leaving the receipt's own credit and spent
+   >    figures untouched — so once ANOTHER receipt replenished the pool,
+   >    a dispatch naming the contradicted receipt passed both checks and
+   >    drew against backing that was never its own. The claw now VOIDS the
+   >    receipt's whole remaining credit, not merely the slice the pool
+   >    could absorb at that instant: the physical claw is bounded by the
+   >    balance, the entitlement is not.
+   > 2. **Imported fresh recovery was unspendable.** The settlement credited
+   >    the pooled position but created no drawable per-receipt credit, and
+   >    the old-era id names nothing locally (and could collide with a live
+   >    reservation), so those tokens were earmarked forever with the
+   >    position reporting them as capacity. The settlement now mints a
+   >    fresh attribution id from the reservation nonce — the authority for
+   >    that id space, so collision is impossible — and publishes it in the
+   >    event as the id a replacement dispatch must name.
+   > 3. **Resolutions before the stranded SEED were discarded.** The
+   >    resolved counter saturated against a stranded floor that the
+   >    one-time seed ceremony has not finished establishing on an
+   >    in-place-upgraded Diamond, and the seed recomputes nothing — so
+   >    value genuinely returned or written off in that window would read as
+   >    in-transit forever, restoring the phantom allowance. It now accrues
+   >    UNCAPPED and is capped where PUBLISHED.
+   > 4. **The joint provenance bound was one-directional.** The loss path
+   >    netted prior recovery, but the ceremony ignored prior loss — so
+   >    ordering the calls loss-first spends one component twice and still
+   >    satisfies the aggregate identity by borrowing the other component's
+   >    slack. Both paths now carry both terms.
 
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates

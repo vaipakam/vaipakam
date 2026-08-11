@@ -933,12 +933,17 @@ contract RewardCompensationDispatchFacet is
     ///         {RewardRemittanceFacet}'s ImportedOutstandingResolved
     ///         instead.
     /// @custom:event-category state-change/reward-compensation
+    /// @dev `attributionId` (#1662 r3) — the freshly minted local receipt
+    ///      id carrying the imported FRESH recovery's drawable credit.
+    ///      Zero when nothing fresh was booked. This is the id a
+    ///      replacement `…FromRecovery` dispatch must name.
     event ImportedOutstandingCleared(
         uint32 indexed dstChainId,
         address oldRemitter,
         uint256 oldRemitId,
         uint256 freshInflow,
-        uint256 recycledInflow
+        uint256 recycledInflow,
+        uint256 attributionId
     );
 
     /// @dev #1662 r2 (self-review) — a TRUSTED consumption attestation:
@@ -1006,11 +1011,19 @@ contract RewardCompensationDispatchFacet is
         // relabel (a fresh-only compensation "recovered as recycled"
         // would move uncharged value into the bucket's claimable
         // custody).
-        uint256 cf = s.ceremonyFreshRecovered[remitId] + freshInflow;
+        // #1662 r3 — JOINT with prior loss, in BOTH directions. The
+        // loss path already netted prior recovery; without the mirror
+        // term here, ordering the calls loss-first-recovery-second spends
+        // one component twice and still satisfies the aggregate identity
+        // by borrowing the other component's slack — clearing the gate
+        // over value that was only ever accounted once.
+        uint256 cf = s.ceremonyFreshRecovered[remitId]
+            + s.ceremonyFreshLoss[remitId] + freshInflow;
         if (cf > r.fresh) {
             revert CeremonyProvenanceExceeded(remitId, cf, r.fresh);
         }
-        uint256 cr = s.ceremonyRecycledRecovered[remitId] + recycledInflow;
+        uint256 cr = s.ceremonyRecycledRecovered[remitId]
+            + s.ceremonyRecycledLoss[remitId] + recycledInflow;
         if (cr > r.recycled) {
             revert CeremonyProvenanceExceeded(remitId, cr, r.recycled);
         }
@@ -1108,11 +1121,13 @@ contract RewardCompensationDispatchFacet is
         uint256 amount
     ) private {
         if (amount == 0) return;
-        uint256 stranded = s.recycleReleasedRemitStrandedCumulative;
-        uint256 resolved =
-            s.recycleReleasedRemitResolvedCumulative + amount;
-        s.recycleReleasedRemitResolvedCumulative =
-            resolved > stranded ? stranded : resolved;
+        // #1662 r3 — accumulate UNCAPPED and cap where it is published.
+        // Saturating here against a stranded floor that the one-time seed
+        // ceremony has not finished establishing silently discards the
+        // excess, and the seed's later assignment recomputes nothing — so
+        // value genuinely returned or written off would read as still in
+        // transit forever.
+        s.recycleReleasedRemitResolvedCumulative += amount;
     }
 
     /// @dev §5.3 — the FULL-custody-resolution gate clear: recovered plus
@@ -1164,7 +1179,12 @@ contract RewardCompensationDispatchFacet is
     ) private {
         uint256 credit = s.remitRecoveredForReceipt[sourceRemitId]
             - s.ceremonyRecycledRecovered[sourceRemitId];
-        uint256 spent = s.recoveryRedispatchedForReceipt[sourceRemitId];
+        // #1662 r3 — CONFISCATED credit is not merely un-clawable, it is
+        // unspendable: a contradiction voids the receipt's whole remaining
+        // credit even where the pool could only absorb part of it, or the
+        // next receipt's credit would silently become its backing.
+        uint256 spent = s.recoveryRedispatchedForReceipt[sourceRemitId]
+            + s.recoveryClawedForReceipt[sourceRemitId];
         uint256 unspent = credit > spent ? credit - spent : 0;
         if (amount > unspent) {
             revert RecoveryReceiptCreditInsufficient(
@@ -1314,6 +1334,7 @@ contract RewardCompensationDispatchFacet is
         if (im.oldRemitter == address(0)) {
             revert ImportedMarkerMissing(dstChainId);
         }
+        uint256 attributionId;
         if (freshInflow + recycledInflow != 0) {
             // #1662 r2 — localStranding FALSE: this value was stranded on
             // the RETIRED deployment and never entered this one's
@@ -1322,6 +1343,20 @@ contract RewardCompensationDispatchFacet is
             _bookRecoveredInflow(
                 s, im.oldRemitId, freshInflow, recycledInflow, false
             );
+            // #1662 r3 — the fresh half must be DRAWABLE. Every
+            // from-recovery dispatch names a source receipt, and the
+            // old-era id names nothing here (worse, it could collide with
+            // one of THIS deployment's reservations), so imported
+            // recovery would earmark tokens the position reports as
+            // spendable while no caller could ever legitimately spend
+            // them. Mint a fresh id from the reservation nonce — the
+            // authority for this id space, so collision is impossible —
+            // and publish it: that id is what the operator names in the
+            // replacement dispatch.
+            if (freshInflow != 0) {
+                attributionId = ++s.remitReservationNonce;
+                s.remitRecoveredForReceipt[attributionId] = freshInflow;
+            }
         }
         delete s.importedOutstanding[dstChainId];
         LibRewardRemitDispatch.clearCompensationGate(s, dstChainId);
@@ -1330,7 +1365,8 @@ contract RewardCompensationDispatchFacet is
             im.oldRemitter,
             im.oldRemitId,
             freshInflow,
-            recycledInflow
+            recycledInflow,
+            attributionId
         );
     }
 
