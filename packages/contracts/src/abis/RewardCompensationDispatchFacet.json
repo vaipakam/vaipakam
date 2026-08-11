@@ -185,6 +185,13 @@
   },
   {
     "type": "function",
+    "name": "resetReleasedRemitStrandedSeed",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "seedCompFunded",
     "inputs": [
       {
@@ -204,6 +211,19 @@
       },
       {
         "name": "borrowerAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "seedReleasedRemitStranded",
+    "inputs": [
+      {
+        "name": "upTo",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -266,6 +286,56 @@
       },
       {
         "name": "remitId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReleasedRemitStrandedSeedProgress",
+    "inputs": [
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "target",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "accumulated",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReleasedRemitStrandedSeedReset",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReleasedRemitStrandedSeeded",
+    "inputs": [
+      {
+        "name": "total",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reservations",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1756,6 +1826,17 @@
   },
   {
     "type": "error",
+    "name": "ReleasedRemitStrandedAlreadySeeded",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemitAckChainMismatch",
     "inputs": [
       {
@@ -1944,6 +2025,90 @@
     "type": "error",
     "name": "SanctionsOracleUnavailable",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedDoesNotReconcile",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedNotStarted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedNothingToScan",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedRaceDetected",
+    "inputs": [
+      {
+        "name": "baseline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SeedRangeInvalid",
+    "inputs": [
+      {
+        "name": "upTo",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "target",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SeedWouldShrinkReleasedCount",
+    "inputs": [
+      {
+        "name": "scanned",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SeedWouldShrinkStrandedTotal",
+    "inputs": [
+      {
+        "name": "derived",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

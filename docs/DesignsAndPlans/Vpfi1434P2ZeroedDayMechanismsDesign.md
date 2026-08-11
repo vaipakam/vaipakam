@@ -971,10 +971,13 @@ the bounds are the design's actual commitment.
    > (the R6e runbook's case). The mirror dispatch is PERMISSIONLESS
    > payable in the R6b posture: quarantine is terminal mirror-side and
    > the return its only exit, the stored record is the evidence, and
-   > the caller can neither redirect nor resize (the recorded amount
-   > travels — the two-delta rule's source half). Lane capacity is
-   > checked before the one-shot retire, so over-capacity fails
-   > retryably. Base-side, the entitlement is the reservation's
+   > the caller can neither redirect a chunk nor send beyond the
+   > record — returns are CHUNKED (r2, detailed below): each send
+   > retires a caller-chosen amount bounded by the record's remaining
+   > balance, the remainder stays retryable, and the wire carries the
+   > post-chunk remainder with zero marking the terminal chunk. Mirror-
+   > outbound lane capacity is checked per chunk before the retirement,
+   > so over-capacity fails retryably. Base-side, the entitlement is the reservation's
    > dispatched `total` with a per-receipt recovered cumulative; the
    > overage position absorbs the excess token-safely. The gate clears
    > only when the returning receipt IS the outstanding one. The

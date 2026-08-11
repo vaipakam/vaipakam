@@ -2117,7 +2117,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](15);
+        selectors = new bytes4[](13);
         selectors[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
         selectors[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
         selectors[2] = RewardRemittanceFacet.remitRewardBudget.selector;
@@ -2130,9 +2130,7 @@ contract HelperTest {
         selectors[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
         selectors[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
         selectors[11] = RewardRemittanceFacet.releaseRemitReservation.selector;
-        selectors[12] = RewardRemittanceFacet.seedReleasedRemitStranded.selector;
-        selectors[13] = RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
-        selectors[14] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        selectors[12] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
@@ -2141,7 +2139,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](8);
         selectors[0] =
             RewardCompensationDispatchFacet.remitManualBudget.selector;
         selectors[1] =
@@ -2157,6 +2155,14 @@ contract HelperTest {
             .selector;
         selectors[5] =
             RewardCompensationDispatchFacet.onStrandedReturnReceived.selector;
+        // #1660 r11 - the B2-d5 seed ceremony pair, moved here for
+        // EIP-170 headroom on the mutating remittance facet.
+        selectors[6] = RewardCompensationDispatchFacet
+            .seedReleasedRemitStranded
+            .selector;
+        selectors[7] = RewardCompensationDispatchFacet
+            .resetReleasedRemitStrandedSeed
+            .selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

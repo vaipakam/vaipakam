@@ -2702,7 +2702,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](15);
+        s = new bytes4[](13);
         s[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
         s[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
         s[2] = RewardRemittanceFacet.remitRewardBudget.selector;
@@ -2715,9 +2715,7 @@ contract DeployDiamond is Script {
         s[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
         s[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
         s[11] = RewardRemittanceFacet.releaseRemitReservation.selector;
-        s[12] = RewardRemittanceFacet.seedReleasedRemitStranded.selector;
-        s[13] = RewardRemittanceFacet.resetReleasedRemitStrandedSeed.selector;
-        s[14] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        s[12] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.
@@ -2726,7 +2724,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](6);
+        s = new bytes4[](8);
         s[0] = RewardCompensationDispatchFacet.remitManualBudget.selector;
         s[1] =
             RewardCompensationDispatchFacet.remitSupplementalBudget.selector;
@@ -2740,6 +2738,14 @@ contract DeployDiamond is Script {
             .selector;
         s[5] =
             RewardCompensationDispatchFacet.onStrandedReturnReceived.selector;
+        // #1660 r11 - the B2-d5 seed ceremony pair, moved here for
+        // EIP-170 headroom on the mutating remittance facet.
+        s[6] = RewardCompensationDispatchFacet
+            .seedReleasedRemitStranded
+            .selector;
+        s[7] = RewardCompensationDispatchFacet
+            .resetReleasedRemitStrandedSeed
+            .selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).
