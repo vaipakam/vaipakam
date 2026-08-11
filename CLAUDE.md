@@ -126,6 +126,16 @@ per-facet ABI matches `forge inspect`. It is wired as preflight step
 passes `--full`), so a deploy cannot proceed past a failing check; it is
 also runnable standalone (`bash script/predeploy-check.sh`).
 
+`--full` **delegates to `run-regression.sh`** (#1620) — it does not carry
+its own regression command. There is exactly one chunking implementation;
+if the viaIR ceiling moves again, `run-regression.sh` is the only place to
+fix, and both the mainnet preflight and the release-track
+`mainnet-gate.yml` inherit the fix. Don't re-inline a `forge test` call
+here: an un-chunked pass trips the ceiling as a COMPILE failure, which this
+gate reports with the same "regression failed" wording as a red test — a
+green-looking suite that never ran is the failure mode this delegation
+exists to prevent.
+
 **When you add a facet**: add it to `DiamondFacetNames.cutFacetNames()`
 AND add its `_get<Facet>Selectors()` call to
 `SelectorCoverageTest._populateRoutedSet()`. **When you add a function to
