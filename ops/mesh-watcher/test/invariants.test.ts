@@ -140,7 +140,7 @@ function mirrorLocal(): LocalLedger {
     composition: {
       creditedRaw: 1000n * E,
       releasedRemitStranded: 0n,
-      releasedRemitRecovered: 0n,
+      releasedRemitResolved: 0n,
       accountingSeeded: true,
       isCanonicalRewardChain: false,
     },
@@ -180,7 +180,7 @@ function canonicalLocal(): LocalLedger {
     composition: {
       creditedRaw: 800n * E,
       releasedRemitStranded: 0n,
-      releasedRemitRecovered: 0n,
+      releasedRemitResolved: 0n,
       accountingSeeded: true,
       isCanonicalRewardChain: true,
     },
@@ -229,7 +229,7 @@ function canonicalLocal(): LocalLedger {
 type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
   creditedRaw?: bigint;
   releasedRemitStranded?: bigint;
-  releasedRemitRecovered?: bigint;
+  releasedRemitResolved?: bigint;
   accountingSeeded?: boolean;
   isCanonicalRewardChain?: boolean;
   /** `null` = the newer view could not be read on this chain. */
@@ -252,7 +252,7 @@ function coherent(
   const {
     creditedRaw,
     releasedRemitStranded,
-    releasedRemitRecovered,
+    releasedRemitResolved,
     accountingSeeded,
     isCanonicalRewardChain,
     composition,
@@ -288,8 +288,8 @@ function coherent(
     creditedRaw: creditedRaw ?? l.reportedCumulative,
     releasedRemitStranded:
       releasedRemitStranded ?? baseComp.releasedRemitStranded,
-    releasedRemitRecovered:
-      releasedRemitRecovered ?? baseComp.releasedRemitRecovered,
+    releasedRemitResolved:
+      releasedRemitResolved ?? baseComp.releasedRemitResolved,
     accountingSeeded: accountingSeeded ?? baseComp.accountingSeeded,
     isCanonicalRewardChain:
       isCanonicalRewardChain ?? baseComp.isCanonicalRewardChain,
@@ -392,7 +392,7 @@ describe('bucket-coverage — role resolution across a stale snapshot (#1448 r11
         bucket: 150_000_000_000_000_000_000n,
         outstandingRecycled: 200_000_000_000_000_000_000n,
         releasedRemitStranded: 50_000_000_000_000_000_000n,
-        releasedRemitRecovered: 50_000_000_000_000_000_000n,
+        releasedRemitResolved: 50_000_000_000_000_000_000n,
         isCanonicalRewardChain: true,
       }),
     );
@@ -417,7 +417,7 @@ describe('bucket-coverage — role resolution across a stale snapshot (#1448 r11
         bucket: 150_000_000_000_000_000_000n,
         outstandingRecycled: 200_000_000_000_000_000_000n,
         releasedRemitStranded: 50_000_000_000_000_000_000n,
-        releasedRemitRecovered: 0n,
+        releasedRemitResolved: 0n,
         isCanonicalRewardChain: true,
       }),
     );

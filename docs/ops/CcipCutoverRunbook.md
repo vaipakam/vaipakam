@@ -264,7 +264,15 @@ Before retiring a canonical Base deployment, read
 either settle the compensation first (consumption ack, stranded return,
 or recovery ceremony + terminal loss), or carry it over: on the NEW
 deployment run `importOutstandingCompensation(chain, oldDeployment,
-oldRemitId)` for each open tuple. The imported gate blocks new
+oldRemitId, quarantineObserved)` for each open tuple.
+
+Read the tuple from the retiring deployment's `getImportedOutstanding`
+when that deployment was ITSELF holding an imported gate — its visible
+`getCompensationOutstanding` reads a sentinel in that case, and importing
+the sentinel is refused precisely because no old-era acknowledgement could
+ever match it. Carry `quarantineObserved` across too: dropping it would
+turn a mirror's already-observed quarantine-then-consumed contradiction
+back into a clean consumption on the new deployment. The imported gate blocks new
 compensation dispatches for that chain until the old-era evidence
 resolves it — a mirror's re-presented CONSUMED ack releases it
 permissionlessly; anything else resolves through the evidenced settlement

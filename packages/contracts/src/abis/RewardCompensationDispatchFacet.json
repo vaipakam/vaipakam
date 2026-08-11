@@ -40,6 +40,11 @@
         "name": "oldRemitId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "quarantineObserved",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "outputs": [],
@@ -126,7 +131,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "amount",
+        "name": "freshLoss",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledLoss",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -189,6 +199,11 @@
       },
       {
         "name": "borrowerAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceRemitId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -257,6 +272,11 @@
       },
       {
         "name": "borrowerAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceRemitId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -438,6 +458,12 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "quarantineObserved",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -490,7 +516,13 @@
         "internalType": "uint256"
       },
       {
-        "name": "amount",
+        "name": "freshLoss",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledLoss",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1500,6 +1532,11 @@
   },
   {
     "type": "error",
+    "name": "ImportedTupleIsSentinel",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InitLtvAboveTier",
     "inputs": [
       {
@@ -2132,6 +2169,27 @@
       },
       {
         "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RecoveryReceiptCreditInsufficient",
+    "inputs": [
+      {
+        "name": "sourceRemitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unspent",
         "type": "uint256",
         "internalType": "uint256"
       }

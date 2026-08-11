@@ -382,6 +382,35 @@ contract RewardRemittanceLensFacet {
         );
     }
 
+    /// @notice #1434 P2-w6 (#1662 r2) — the per-receipt TERMINAL-LOSS
+    ///         split by provenance. Their sum is {getCeremonyTerminalLoss};
+    ///         the recycled half is what leaves the coverage allowance.
+    function getCeremonyLoss(
+        uint256 remitId
+    ) external view returns (uint256 fresh, uint256 recycled) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.ceremonyFreshLoss[remitId],
+            s.ceremonyRecycledLoss[remitId]
+        );
+    }
+
+    /// @notice #1434 P2-w6 (#1662 r2) — the uncharged re-dispatch already
+    ///         drawn against this receipt's own recovery credit, and the
+    ///         credit itself (the fresh-provenance part of what it
+    ///         recovered — the recycled half went to bucket custody, not
+    ///         to the position). Their difference is the receipt's
+    ///         UNSPENT capacity: what a further from-recovery dispatch may
+    ///         draw, and the most a contradicting consumed ack may claw.
+    function getRecoveryCreditForReceipt(
+        uint256 remitId
+    ) external view returns (uint256 credit, uint256 redispatched) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 c = s.remitRecoveredForReceipt[remitId]
+            - s.ceremonyRecycledRecovered[remitId];
+        return (c, s.recoveryRedispatchedForReceipt[remitId]);
+    }
+
     /// @notice #1434 P2-w6 (§5.4 R6e, reshaped #1662 r1) — the imported
     ///         old-era outstanding record for a chain (zero remitter =
     ///         none).

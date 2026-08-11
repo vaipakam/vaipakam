@@ -6449,6 +6449,24 @@ library LibVaipakam {
         //   the total bound alone cannot see that.
         mapping(uint256 => uint256) ceremonyFreshRecovered;
         mapping(uint256 => uint256) ceremonyRecycledRecovered;
+        // BASE-ONLY (#1662 r2) — the per-receipt TERMINAL-LOSS split by
+        //   provenance. Their sum is `ceremonyTerminalLoss` (kept as the
+        //   custody-resolution term); the split exists because the
+        //   RECYCLED half of a loss retires locally-stranded backing
+        //   exactly as a recovery does — the value is gone, so an
+        //   external checker must stop counting it as in-transit.
+        mapping(uint256 => uint256) ceremonyFreshLoss;
+        mapping(uint256 => uint256) ceremonyRecycledLoss;
+        // BASE-ONLY (#1662 r2) — the per-receipt UNCHARGED re-dispatch
+        //   drawn against THIS receipt's recovery credit. The position is
+        //   a pooled balance, but a contradicted receipt may only ever
+        //   have ITS OWN unspent credit clawed: sizing the claw on the
+        //   global balance confiscates other receipts' capacity, which
+        //   they can never re-credit (their per-receipt entitlement is
+        //   already exhausted). Every from-recovery dispatch therefore
+        //   NAMES its source receipt and is bounded by that receipt's
+        //   own unspent credit.
+        mapping(uint256 => uint256) recoveryRedispatchedForReceipt;
         // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
         //   outstanding-compensation record for a chain after a Base
         //   deployment rotation: the RAW old-era tuple, not its hash —
@@ -6464,19 +6482,30 @@ library LibVaipakam {
         //   settlement) may release it; new-era acks/returns never
         //   match it.
         mapping(uint32 => ImportedOutstanding) importedOutstanding;
-        // BASE-ONLY (#1662 r2 self-review) — Σ of the RECYCLED-provenance
-        //   value physically returned to bucket custody by a recovery
-        //   settlement, capped at `recycleReleasedRemitStrandedCumulative`.
-        //   The release moved `paidOutRecycled -> stranded`; a ceremony
-        //   moves that same value back into `recycleBucket` WITHOUT
-        //   retiring the stranded record (the composition bound needs the
-        //   un-netted destination term to stay balanced). Without this
-        //   counter the coverage allowance `bucket + stranded` would count
-        //   the same VPFI twice forever — permanent phantom headroom on a
-        //   CRITICAL invariant. External checkers net it out of the
-        //   allowance while reading composition un-netted (see the
-        //   mesh-watcher's `bucket-coverage` rule).
-        uint256 recycleReleasedRemitRecoveredCumulative;
+        // BASE-ONLY (#1662 r2) — Σ of the LOCALLY-stranded
+        //   RECYCLED-provenance value that is no longer in transit,
+        //   whether because a recovery settlement returned it to bucket
+        //   custody or because governance recorded it as terminally LOST.
+        //   Capped at `recycleReleasedRemitStrandedCumulative`.
+        //
+        //   Why it exists: the release moved `paidOutRecycled -> stranded`;
+        //   a ceremony moves that same value back into `recycleBucket`
+        //   WITHOUT retiring the stranded record (the composition bound
+        //   needs the un-netted destination term to stay balanced). So the
+        //   coverage allowance `bucket + stranded` would back the same
+        //   VPFI twice forever — permanent phantom headroom on a CRITICAL
+        //   invariant. External checkers net THIS out of the ALLOWANCE
+        //   while reading composition un-netted (mesh-watcher's
+        //   `bucket-coverage` rule).
+        //
+        //   Two exclusions matter. (1) TERMINAL LOSS counts here too: the
+        //   tokens are gone, so leaving them in the allowance lets a dead
+        //   50 back live reservations forever. (2) An IMPORTED old-era
+        //   settlement does NOT count: its stranding happened on the
+        //   RETIRED deployment and was never in this deployment's
+        //   cumulative, so netting it would under-recognise local backing
+        //   and page a false CRITICAL shortfall.
+        uint256 recycleReleasedRemitResolvedCumulative;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

@@ -3026,7 +3026,7 @@ contract RewardRemitLedgerTest is SetupTest {
 
         // Uncharged re-dispatch from the position.
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
-            CHAIN_ARB, 1, 2e18, 1e18
+            CHAIN_ARB, 1, 2e18, 1e18, 1
         );
         assertEq(
             rlens.getRewardBudgetRemittedGlobal(),
@@ -3040,20 +3040,24 @@ contract RewardRemitLedgerTest is SetupTest {
             "reservation stamped fundedFromRecovery"
         );
 
-        // The position is now empty: a further from-recovery draw refuses.
+        // Receipt 1's own credit is now fully spent: a further draw
+        // against it refuses at the PER-RECEIPT bound (#1662 r2), which
+        // precedes the pooled backstop - and is the bound that makes the
+        // contradiction claw attributable rather than confiscatory.
         // Absolute warp - viaIR CSEs identical block.timestamp reads
         // across vm.warp within one test frame (the warp-CSE gotcha).
         vm.warp(30 days);
         remit.releaseRemitReservation(2);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IVaipakamErrors.RecoveryPositionInsufficient.selector,
+                IVaipakamErrors.RecoveryReceiptCreditInsufficient.selector,
+                1,
                 3e18,
                 0
             )
         );
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
-            CHAIN_ARB, 1, 2e18, 1e18
+            CHAIN_ARB, 1, 2e18, 1e18, 1
         );
     }
 
@@ -3074,7 +3078,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // (terminal return re-opened the day - no release of the Acked
         // reservation needed or possible)
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
-            CHAIN_ARB, 1, 2e18, 1e18
+            CHAIN_ARB, 1, 2e18, 1e18, 1
         );
         vm.warp(30 days); // absolute - the warp-CSE gotcha
         remit.releaseRemitReservation(2);
@@ -3200,7 +3204,7 @@ contract RewardRemitLedgerTest is SetupTest {
         );
         // 2e18 of the credit is already re-dispatched (spent).
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
-            CHAIN_ARB, 1, 1.5e18, 0.5e18
+            CHAIN_ARB, 1, 1.5e18, 0.5e18, 1
         );
         // The contradicting consumed ack lands: the unspent 1e18 is clawed
         // into the overage quarantine; 2e18 is unrecoverable on-chain.
@@ -3478,7 +3482,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // The recovered value re-dispatches UNCHARGED from the position.
         uint256 globalBefore = rlens.getRewardBudgetRemittedGlobal();
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
-            CHAIN_ARB, 1, 1.5e18, 0.5e18
+            CHAIN_ARB, 1, 1.5e18, 0.5e18, 1
         );
         assertEq(
             rlens.getRewardBudgetRemittedGlobal(),
@@ -3538,9 +3542,9 @@ contract RewardRemitLedgerTest is SetupTest {
                 3e18
             )
         );
-        comp.recordRecoveryTerminalLoss(1, 2e18);
+        comp.recordRecoveryTerminalLoss(1, 2e18, 0);
         // The evidenced terminal loss completes the resolution.
-        comp.recordRecoveryTerminalLoss(1, 1e18);
+        comp.recordRecoveryTerminalLoss(1, 1e18, 0);
         assertEq(rlens.getCeremonyTerminalLoss(1), 1e18);
         assertEq(
             rlens.getCompensationOutstanding(CHAIN_ARB),
@@ -3610,7 +3614,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 IVaipakamErrors.StrandedReturnConsumedReceipt.selector, 1
             )
         );
-        comp.recordRecoveryTerminalLoss(1, 1e18);
+        comp.recordRecoveryTerminalLoss(1, 1e18, 0);
         // The chain is LIVE again - the brick is what this pins.
         _finalizeDay(2);
         mutator.setChainDayRemitIneligibleRaw(2, CHAIN_ARB, true);
@@ -3637,7 +3641,7 @@ contract RewardRemitLedgerTest is SetupTest {
             "a contradicted consumption clears nothing"
         );
         // The evidenced settlement still runs, and resolves the gate.
-        comp.recordRecoveryTerminalLoss(1, 3e18);
+        comp.recordRecoveryTerminalLoss(1, 3e18, 0);
         assertEq(
             rlens.getCompensationOutstanding(CHAIN_ARB),
             0,
@@ -3771,6 +3775,213 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
+    // -- #1662 r2: the five round-2 findings -------------------------
+
+    /// r2-b1 - a ceremony-settled released receipt that LATER takes a
+    /// clean consumed ack must have its funding accounting RE-CLOSED.
+    /// The release unwound the declared contribution on the premise the
+    /// message never executed; a consumed delivery falsifies that, so
+    /// leaving it unwound lets governance dispatch a replacement against
+    /// a quote the original already funded - OVERFUNDING the obligation.
+    /// Pre-fix the re-close ran only for B1-terminalized receipts, so a
+    /// ceremony-only settlement took none at all.
+    function test_Ceremony_LateConsumptionRecloses() public {
+        _releasedCeremonyFixture();
+        (uint256 fl0, uint256 fb0) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl0 + fb0, 0, "release unwound the declared split");
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "the ceremony resolved the receipt"
+        );
+        // The delivery executed after all.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, true);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl, 2e18, "lender contribution re-closed");
+        assertEq(fb, 1e18, "borrower contribution re-closed");
+        // ...and the cumulative quote bound now refuses the replacement
+        // that the unwound state would have allowed.
+        vm.expectRevert();
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+    }
+
+    /// r2-b3 - the claw may only ever take the contradicted receipt's OWN
+    /// UNSPENT credit. Once receipt A's recovery has been re-dispatched,
+    /// the pooled position consists of OTHER receipts' credits; sizing
+    /// the claw on that balance permanently confiscates capacity they can
+    /// never re-earn, because their own per-receipt entitlement is
+    /// already exhausted.
+    function test_Recovery_ClawTakesOnlyOwnUnspentCredit() public {
+        // Receipt 1: a released compensation, ceremony-recovered 3e18.
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        // Receipt 90: an UNRELATED receipt's B1 return credit, untouched.
+        mutator.setRemitReservationCompRaw(90, CHAIN_ARB, 2, 2e18, 4);
+        _armReturnIngress();
+        comp.onStrandedReturnReceived(
+            address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
+        );
+        // Receipt 1 spends its OWN credit in full.
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 2e18, 1e18, 1
+        );
+        (uint256 c1, uint256 d1) = rlens.getRecoveryCreditForReceipt(1);
+        assertEq(c1 - d1, 0, "receipt 1 has nothing left unspent");
+        (uint256 recBefore, uint256 redBefore, ) = rlens.getRecoveryPosition();
+        assertEq(recBefore - redBefore, 2e18, "only receipt 90's credit left");
+
+        // Receipt 1 is now contradicted. Its own credit is already spent,
+        // so there is NOTHING left to claw - receipt 90 must be untouched.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, true);
+        (uint256 recAfter, uint256 redAfter, ) = rlens.getRecoveryPosition();
+        assertEq(
+            recAfter - redAfter,
+            2e18,
+            "receipt 90's capacity survives receipt 1's contradiction"
+        );
+        // ...and it is still ATTRIBUTABLE to 90, which is what makes it
+        // spendable: a from-recovery draw is bounded by the named
+        // receipt's own unspent credit, and 90's is untouched.
+        // (`test_Recovery_SupplementalFromRecovery` exercises 90 actually
+        // spending it, on a day with the quote headroom to accept it.)
+        (uint256 c90, uint256 d90) = rlens.getRecoveryCreditForReceipt(90);
+        assertEq(c90, 2e18, "90's credit intact");
+        assertEq(d90, 0, "90 has drawn nothing");
+    }
+
+    /// r2-b3 - a from-recovery dispatch may not draw against a receipt
+    /// that has no (remaining) credit of its own, even while the pooled
+    /// position is ample. Attribution is what makes the claw bounded.
+    function test_Recovery_DispatchBoundedByNamedReceiptCredit() public {
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        // Receipt 90 owns no credit; the position is 3e18 all the same.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RecoveryReceiptCreditInsufficient.selector,
+                90,
+                1e18,
+                0
+            )
+        );
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 0.6e18, 0.4e18, 90
+        );
+    }
+
+    /// r2-b4 - terminally LOST recycled tokens must leave the coverage
+    /// allowance. They are gone; leaving them counted as in-transit
+    /// backing lets a dead balance back live reservations forever - the
+    /// same phantom-headroom failure the recovered half closes, reached
+    /// from the other end.
+    function test_Ceremony_TerminalLossRetiresRecycledBacking() public {
+        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
+        (, uint256 stranded, , , uint256 resolvedBefore) =
+            RewardAggregatorFacet(address(diamond))
+                .getRecycleCompositionPosition();
+        assertGt(stranded, 0, "fixture: the release stranded value");
+        assertEq(resolvedBefore, 0, "nothing resolved yet");
+        comp.recordRecoveryTerminalLoss(1, r.fresh, r.recycled);
+        (, , , , uint256 resolvedAfter) = RewardAggregatorFacet(
+            address(diamond)
+        ).getRecycleCompositionPosition();
+        assertEq(
+            resolvedAfter,
+            r.recycled < stranded ? r.recycled : stranded,
+            "the lost recycled provenance leaves the allowance"
+        );
+        (uint256 lf, uint256 lr) = rlens.getCeremonyLoss(1);
+        assertEq(lf, r.fresh, "fresh loss recorded by provenance");
+        assertEq(lr, r.recycled, "recycled loss recorded by provenance");
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "full loss resolves the receipt"
+        );
+    }
+
+    /// r2-b4 - recovery and loss are draws on the SAME dispatched split,
+    /// so they bound JOINTLY per component: a loss cannot re-spend a
+    /// component a ceremony already recovered.
+    function test_Ceremony_LossAndRecoveryBoundJointly() public {
+        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
+        comp.recordRecoveryCeremony(1, 0, r.recycled);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.CeremonyProvenanceExceeded.selector,
+                1,
+                r.recycled + 1,
+                r.recycled
+            )
+        );
+        comp.recordRecoveryTerminalLoss(1, 0, 1);
+    }
+
+    /// r2-b2 - an IMPORTED old-era settlement must NOT net out of the
+    /// LOCAL coverage allowance: that value was stranded on the retired
+    /// deployment and never entered this one's cumulative, so netting it
+    /// under-recognises local backing and pages a false CRITICAL.
+    function test_Import_SettlementDoesNotNetLocalStranding() public {
+        // Local stranding exists on this deployment.
+        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
+        (, uint256 stranded, , , uint256 resolvedBefore) =
+            RewardAggregatorFacet(address(diamond))
+                .getRecycleCompositionPosition();
+        assertGt(stranded, 0, "fixture: local stranding");
+        assertEq(resolvedBefore, 0);
+        r; // the fixture's split is not what this test asserts
+
+        // An imported OLD-ERA settlement books recovered value.
+        address oldBase = address(0x01dBA5E);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        vpfiTok.mint(address(diamond), 1e18);
+        comp.clearImportedOutstanding(CHAIN_ARB, 0, 1e18);
+        (, , , , uint256 resolvedAfter) = RewardAggregatorFacet(
+            address(diamond)
+        ).getRecycleCompositionPosition();
+        assertEq(
+            resolvedAfter,
+            0,
+            "an old-era recovery never nets the local allowance"
+        );
+    }
+
+    /// r2-b5 - a SECOND rotation must carry the imported record's
+    /// evidence. Copying the retiring deployment's visible gate yields
+    /// the SENTINEL (which no old-era ack can match), and re-importing
+    /// the tuple fresh would reset an observed quarantine - laundering a
+    /// contradiction into a clean consumption that clears the newest
+    /// gate.
+    function test_Import_SecondRotationCarriesEvidence() public {
+        address oldBase = address(0x01dBA5E);
+        // Reading the retiring deployment's visible gate is refused.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ImportedTupleIsSentinel.selector
+            )
+        );
+        comp.importOutstandingCompensation(
+            CHAIN_ARB, oldBase, type(uint256).max, false
+        );
+        // Carrying the record (tuple + observed quarantine) preserves the
+        // contradiction across the rotation.
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, true);
+        (, , bool q) = rlens.getImportedOutstanding(CHAIN_ARB);
+        assertTrue(q, "the earlier quarantine evidence survived");
+        rewardMessenger.deliverRemitAckFromWithClassification(
+            CHAIN_ARB, 7, 3e18, oldBase, 1
+        );
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            type(uint256).max,
+            "the carried contradiction still withholds the clear"
+        );
+    }
+
     /// SS8-6 (R6e) - an imported old-era marker holds the gate at the
     /// SENTINEL (#1662 r1: old-era ids alias this deployment's own
     /// nonces, so a real id would let an ordinary remit's consumed ack
@@ -3781,7 +3992,7 @@ contract RewardRemitLedgerTest is SetupTest {
         mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
         rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
         assertEq(
             rlens.getCompensationOutstanding(CHAIN_ARB),
             type(uint256).max,
@@ -3830,7 +4041,7 @@ contract RewardRemitLedgerTest is SetupTest {
     /// re-present gets NO clear; only the evidenced settlement resolves.
     function test_Import_QuarantineThenConsumedConflicts() public {
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
         rewardMessenger.deliverRemitAckFromWithClassification(
             CHAIN_ARB, 7, 3e18, oldBase, 2
         );
@@ -3869,7 +4080,7 @@ contract RewardRemitLedgerTest is SetupTest {
     /// clear refuses.
     function test_Import_EvidencedSettlementBooksAndWrongTuple() public {
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
         // A stale-era ack for a DIFFERENT tuple is rejected as before.
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -3969,7 +4180,7 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0);
         // A replacement funds the day from the position meanwhile.
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
-            CHAIN_ARB, 1, 0.6e18, 0.4e18
+            CHAIN_ARB, 1, 0.6e18, 0.4e18, 1
         );
         // The released reservation's TERMINAL chunk lands: the declared
         // subtraction must SKIP (already unwound at release) - the
@@ -4061,7 +4272,7 @@ contract RewardRemitLedgerTest is SetupTest {
         // The replacement funds the SAME day from the position - the
         // Acked reservation needs no release.
         comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
-            CHAIN_ARB, 1, 2e18, 1e18
+            CHAIN_ARB, 1, 2e18, 1e18, 1
         );
         assertTrue(rlens.getRemitReservation(2).fundedFromRecovery);
     }
@@ -4161,7 +4372,7 @@ contract RewardRemitLedgerTest is SetupTest {
             address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
         );
         comp.remitSupplementalBudgetFromRecovery{value: 0.01 ether}(
-            CHAIN_ARB, 1, 1e18, 0.5e18
+            CHAIN_ARB, 1, 1e18, 0.5e18, 90
         );
         assertEq(
             rlens.getRewardBudgetRemittedGlobal(),

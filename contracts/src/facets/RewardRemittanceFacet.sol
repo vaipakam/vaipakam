@@ -2026,44 +2026,61 @@ contract RewardRemittanceFacet is
         // bucket custody (the settlement's backing assertion proved the
         // tokens are here); freezing it would strand real tokens outside
         // every ledger, and it mints no uncharged emission capacity.
+        // #1662 r2 - this receipt's OWN UNSPENT credit, never the
+        // pooled balance. The position is fungible but the claw is not:
+        // once receipt A's credit has been re-dispatched, `avail` is
+        // made of OTHER receipts' credits, and clawing against it
+        // permanently confiscates capacity they can never re-earn
+        // (their own per-receipt entitlement is already exhausted).
+        // A's already-spent slice is genuinely unrecoverable on-chain
+        // and is reported as such in the event.
         uint256 rec = s.remitRecoveredForReceipt[remitId]
             - s.ceremonyRecycledRecovered[remitId];
+        uint256 spent = s.recoveryRedispatchedForReceipt[remitId];
+        uint256 unspent = rec > spent ? rec - spent : 0;
         if ((conflict || rec != 0) && !r.conflictClawed) {
             r.conflictClawed = true;
             uint256 avail = s.rewardBudgetRecovered
                 - s.rewardBudgetRedispatched;
-            uint256 claw = rec < avail ? rec : avail;
+            uint256 claw = unspent < avail ? unspent : avail;
             if (claw != 0) {
                 s.rewardBudgetRecovered -= claw;
                 s.strandedReturnOverage += claw;
             }
-            // #1660 r11 - the terminal return RE-OPENED the obligation
-            // (day markers + declared funding) on the strength of the
-            // quarantine attestation this consumed ack now contradicts:
-            // the consumed delivery still backs mirror claims, so the
-            // re-opened funding path must CLOSE again. The day re-closes
-            // under the original receipt if still open (a successor's
-            // closure is never clobbered), and the declared split
-            // re-enters the funded cumulative either way - reflecting
-            // the consumed reality and, via the cumulative quote bound,
-            // freezing further manual/supplemental headroom. Inside the
-            // terminalized guard the reservation is compensation-shaped
-            // (only B1 terminalizes, and B1 requires the shape).
-            if (s.strandedReturnTerminalized[remitId]) {
-                uint32 cdst = r.dstChainId;
-                uint256 cday = r.dayIds[0];
-                if (s.dayClosedByRemitId[cdst][cday] == 0) {
-                    s.dayClosedByRemitId[cdst][cday] = remitId;
-                    s.rewardBudgetRemitted[cdst][cday] = r.total;
-                }
-                if (r.declaredUnwound) {
-                    r.declaredUnwound = false;
-                    s.compFundedLender18[cdst][cday] += r.declaredLender18;
-                    s.compFundedBorrower18[cdst][cday] +=
-                        r.declaredBorrower18;
-                }
-            }
             emit RemitAckClassificationConflict(remitId, claw, rec - claw);
+        }
+        // #1660 r11 / #1662 r2 - a settled released receipt whose
+        // delivery turns out to have been CONSUMED must have its funding
+        // accounting RE-CLOSED: the release (or the terminal return)
+        // unwound the declared contribution on the premise that the
+        // message never executed, and a consumed delivery falsifies
+        // that premise - the value does back mirror claims after all.
+        // Leaving it unwound lets governance dispatch a replacement
+        // against a quote the original already funded, OVERFUNDING the
+        // obligation.
+        //
+        // r2 widened this beyond terminalized (B1-returned) receipts: a
+        // receipt settled by CEREMONY or terminal loss alone never
+        // terminalizes, so it took no re-close at all. `declaredUnwound`
+        // is itself the one-shot - clearing it IS the closure - and the
+        // compensation shape is checked here rather than inherited from
+        // the terminalized guard. The day re-closes under the original
+        // receipt only if still open, so a successor's closure (and its
+        // gate) is never clobbered.
+        if (
+            r.declaredUnwound
+                && r.dayIds.length == 1
+                && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
+        ) {
+            uint32 cdst = r.dstChainId;
+            uint256 cday = r.dayIds[0];
+            if (s.dayClosedByRemitId[cdst][cday] == 0) {
+                s.dayClosedByRemitId[cdst][cday] = remitId;
+                s.rewardBudgetRemitted[cdst][cday] = r.total;
+            }
+            r.declaredUnwound = false;
+            s.compFundedLender18[cdst][cday] += r.declaredLender18;
+            s.compFundedBorrower18[cdst][cday] += r.declaredBorrower18;
         }
     }
 

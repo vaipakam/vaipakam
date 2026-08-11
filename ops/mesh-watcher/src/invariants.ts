@@ -192,19 +192,22 @@ export interface LocalLedger {
      */
     releasedRemitStranded: bigint;
     /**
-     * Σ of the RECYCLED-provenance value a recovery settlement physically
-     * returned to bucket custody (#1434 P2-w6 / #1662 r2).
+     * Σ of the LOCALLY-stranded RECYCLED-provenance value that is no
+     * longer in transit (#1434 P2-w6 / #1662 r2) — returned to bucket
+     * custody by a recovery settlement, or recorded as terminally LOST.
      *
-     * The stranded figure above is monotone HISTORY: a recovery ceremony
-     * puts the value back in `recycleBucket` but deliberately does NOT
-     * retire the stranded record, because the composition relation needs
-     * it un-netted as a destination term. So the COVERAGE allowance —
-     * and only the coverage allowance — must net this out; otherwise
-     * `bucket + stranded` counts the same VPFI twice forever and the
-     * CRITICAL coverage check gains permanent phantom headroom equal to
-     * everything ever recovered. Bounded on-chain by the stranded figure.
+     * The stranded figure above is monotone HISTORY: it retires on
+     * neither, because the composition relation needs it un-netted as a
+     * destination term. So the COVERAGE allowance — and only the
+     * coverage allowance — must net this out; otherwise `bucket +
+     * stranded` counts the same VPFI twice forever, and terminally lost
+     * tokens go on backing live reservations after there is nothing
+     * left to back them. Bounded on-chain by the stranded figure, and
+     * deliberately EXCLUDES imported old-era settlements (their
+     * stranding was never in this deployment's cumulative, so netting
+     * them would under-recognise local backing).
      */
-    releasedRemitRecovered: bigint;
+    releasedRemitResolved: bigint;
     /**
      * Whether ANY recycled credit has ever run on this chain.
      *
@@ -782,16 +785,18 @@ export function checkHardInvariants(
     // Fresh: BOTH sources must agree (r2). Stale: `isCanonicalHere` already
     // IS the chain's own claim, so this collapses to that one source rather
     // than demanding agreement with a view from another point in time.
-    // #1662 r2 — NET of what recovery settlements already put back in the
-    // bucket: the stranded record does not retire on recovery, so the
-    // un-netted figure would allow the recovered VPFI to back reservations
-    // twice. Clamped at zero — the on-chain cap makes recovered <= stranded,
-    // but a stale/mixed read must degrade to "no allowance", never negative.
+    // #1662 r2 — NET of what is no longer in transit: value a recovery
+    // settlement put back in the bucket, and value recorded as terminally
+    // lost. The stranded record retires on neither, so the un-netted
+    // figure would let recovered VPFI back reservations twice and let dead
+    // tokens back them forever. Clamped at zero — the on-chain cap makes
+    // resolved <= stranded, but a stale/mixed read must degrade to "no
+    // allowance", never negative.
     const strandedNet =
       local.composition.releasedRemitStranded >
-      local.composition.releasedRemitRecovered
+      local.composition.releasedRemitResolved
         ? local.composition.releasedRemitStranded -
-          local.composition.releasedRemitRecovered
+          local.composition.releasedRemitResolved
         : 0n;
     const allowance = isCanonicalHere ? strandedNet : 0n;
     const backing = local.bucket + allowance;

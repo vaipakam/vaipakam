@@ -464,6 +464,19 @@ interface IVaipakamErrors {
         uint256 bound
     );
 
+    /// @notice #1662 r2 — an uncharged re-dispatch exceeds the NAMED
+    ///         source receipt's own unspent recovery credit.
+    error RecoveryReceiptCreditInsufficient(
+        uint256 sourceRemitId,
+        uint256 requested,
+        uint256 unspent
+    );
+
+    /// @notice #1662 r2 — the imported tuple names the gate SENTINEL as
+    ///         its old-era remit id (the operator read the retiring
+    ///         deployment's visible gate instead of its imported record).
+    error ImportedTupleIsSentinel();
+
     /// @notice Imported tuple names zero or THIS deployment (an own-era
     ///         reservation needs no import).
     error ImportedTupleInvalid(address oldRemitter);

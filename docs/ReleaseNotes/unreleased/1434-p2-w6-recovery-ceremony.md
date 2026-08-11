@@ -39,3 +39,12 @@ mirror's own reports contradict each other, nothing is taken on trust —
 the gate stays shut until governance settles it with evidence, and any
 recovery credit that the contradiction calls into question is frozen
 rather than left spendable.
+
+Recovered value is now tracked per original delivery rather than as one
+undifferentiated pool. That matters when a delivery is later contradicted:
+only the value still unspent from that particular delivery is frozen, so
+one contradicted delivery can no longer consume the recovery capacity that
+belonged to another. Value written off as permanently lost is recorded
+with the same care as value recovered — both stop counting as still in
+transit, so a written-off balance cannot go on appearing to back live
+obligations.

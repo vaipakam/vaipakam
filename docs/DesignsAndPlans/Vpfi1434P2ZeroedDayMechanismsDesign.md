@@ -1200,6 +1200,48 @@ the bounds are the design's actual commitment.
    >    two-ceremony test pins that the bound is CUMULATIVE — a mutant
    >    bounding each call rather than the running total previously passed
    >    the whole suite.
+   >
+   > **Round-2 addendum (#1662).** Five more, four of them consequences of
+   > the ceremony being a SECOND writer into ledgers the w5 return path
+   > had to itself:
+   >
+   > 1. **The obligation re-close was scoped to B1-terminalized receipts.**
+   >    A receipt settled by CEREMONY (or terminal loss) alone never
+   >    terminalizes, so a later clean consumed ack re-closed nothing: the
+   >    declared contribution stayed unwound, and governance could dispatch
+   >    a replacement against a quote the original had in fact funded —
+   >    overfunding the obligation. The re-close is now keyed on the unwind
+   >    flag itself (which is its own one-shot) plus the compensation
+   >    shape, and still never clobbers a successor's day closure.
+   > 2. **The claw sized on the POOLED position.** Once a receipt's own
+   >    recovery had been re-dispatched, the remaining balance belonged to
+   >    OTHER receipts, and clawing against it confiscated capacity they
+   >    could never re-earn (their own entitlement being exhausted). Fixed
+   >    by making the position ATTRIBUTABLE: every from-recovery dispatch
+   >    now NAMES its source receipt, the draw is bounded by that receipt's
+   >    own unspent credit, and the claw is bounded by the same quantity.
+   >    The already-spent slice stays genuinely unrecoverable and is
+   >    reported as such.
+   > 3. **Terminal loss left dead tokens in the coverage allowance.** The
+   >    recycled half of a released reservation that is written off is
+   >    gone, but nothing retired it from the in-transit figure, so a dead
+   >    balance would back live reservations forever. Terminal loss now
+   >    carries a provenance split (bounded JOINTLY with recovery against
+   >    the same dispatched components) and retires its recycled half.
+   >    With that, the counter's meaning widened from "recovered" to
+   >    "RESOLVED — no longer in transit, whether returned or written off".
+   > 4. **Imported settlements were netting against LOCAL stranding.** An
+   >    old-era recovery retires the RETIRED deployment's stranding, which
+   >    was never in this deployment's cumulative; netting it
+   >    under-recognises local backing and pages a false CRITICAL. The
+   >    booking helper now takes an explicit local-stranding flag.
+   > 5. **A SECOND rotation could not carry imported evidence.** Copying
+   >    the retiring deployment's visible gate yields the SENTINEL (which
+   >    no old-era ack can match), and re-importing the tuple fresh reset
+   >    `quarantineObserved` — laundering a quarantine→consumed
+   >    contradiction into a clean consumption that clears the newest gate.
+   >    The import now carries the flag explicitly and refuses the
+   >    sentinel outright.
 
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates

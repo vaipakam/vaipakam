@@ -107,7 +107,7 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitManualBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, false
+            dstChainId, dayId, lenderAmount18, borrowerAmount18, false, 0
         );
     }
 
@@ -118,11 +118,17 @@ contract RewardCompensationDispatchFacet is
     ///         source differs — the 69M cap is NOT charged (the parcel's
     ///         charge happened at its original dispatch) and the draw is
     ///         bounded by the position balance instead.
+    /// @param sourceRemitId #1662 r2 — the receipt whose recovery credit
+    ///        funds this dispatch. The position is a pooled balance, but
+    ///        it is NOT anonymous: a contradicted receipt may only have
+    ///        ITS OWN unspent credit clawed back, so every draw must be
+    ///        attributable. Bounded by that receipt's own unspent credit.
     function remitManualBudgetFromRecovery(
         uint32 dstChainId,
         uint256 dayId,
         uint256 lenderAmount18,
-        uint256 borrowerAmount18
+        uint256 borrowerAmount18,
+        uint256 sourceRemitId
     )
         external
         payable
@@ -133,7 +139,12 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitManualBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, true
+            dstChainId,
+            dayId,
+            lenderAmount18,
+            borrowerAmount18,
+            true,
+            sourceRemitId
         );
     }
 
@@ -144,7 +155,8 @@ contract RewardCompensationDispatchFacet is
         uint256 dayId,
         uint256 lenderAmount18,
         uint256 borrowerAmount18,
-        bool fromRecovery
+        bool fromRecovery,
+        uint256 sourceRemitId
     ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // #1434 P2-w2 (R1/R1b) — the compensation is sized PER SIDE on the
@@ -255,11 +267,7 @@ contract RewardCompensationDispatchFacet is
         // charge happened at its ORIGINAL dispatch and never repeats
         // (#1586 ratified).
         if (fromRecovery) {
-            uint256 position =
-                s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
-            if (amount > position) {
-                revert RecoveryPositionInsufficient(amount, position);
-            }
+            _drawFromRecovery(s, sourceRemitId, amount);
         } else {
             uint256 remaining = LibRewardRemitDispatch.freshHeadroomNet(s, 0);
             if (amount > remaining) {
@@ -371,7 +379,7 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitSupplementalBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, false
+            dstChainId, dayId, lenderAmount18, borrowerAmount18, false, 0
         );
     }
 
@@ -379,11 +387,14 @@ contract RewardCompensationDispatchFacet is
     ///         POSITION (#1434 P2-w5, §4.2): the uncharged re-dispatch
     ///         of returned value into the same receipt-bound obligation.
     ///         Same bounds and gates as {remitSupplementalBudget}.
+    /// @param sourceRemitId #1662 r2 — the receipt whose recovery credit
+    ///        funds this top-up; see {remitManualBudgetFromRecovery}.
     function remitSupplementalBudgetFromRecovery(
         uint32 dstChainId,
         uint256 dayId,
         uint256 lenderAmount18,
-        uint256 borrowerAmount18
+        uint256 borrowerAmount18,
+        uint256 sourceRemitId
     )
         external
         payable
@@ -394,7 +405,12 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitSupplementalBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, true
+            dstChainId,
+            dayId,
+            lenderAmount18,
+            borrowerAmount18,
+            true,
+            sourceRemitId
         );
     }
 
@@ -404,7 +420,8 @@ contract RewardCompensationDispatchFacet is
         uint256 dayId,
         uint256 lenderAmount18,
         uint256 borrowerAmount18,
-        bool fromRecovery
+        bool fromRecovery,
+        uint256 sourceRemitId
     ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 amount = lenderAmount18 + borrowerAmount18;
@@ -480,11 +497,7 @@ contract RewardCompensationDispatchFacet is
         // manual send it tops up. From-recovery: position-bounded,
         // uncharged (#1434 P2-w5).
         if (fromRecovery) {
-            uint256 position =
-                s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
-            if (amount > position) {
-                revert RecoveryPositionInsufficient(amount, position);
-            }
+            _drawFromRecovery(s, sourceRemitId, amount);
         } else {
             uint256 remaining = LibRewardRemitDispatch.freshHeadroomNet(s, 0);
             if (amount > remaining) {
@@ -896,7 +909,8 @@ contract RewardCompensationDispatchFacet is
     /// @custom:event-category state-change/reward-compensation
     event RecoveryTerminalLossRecorded(
         uint256 indexed remitId,
-        uint256 amount,
+        uint256 freshLoss,
+        uint256 recycledLoss,
         uint256 lossCumulative,
         bool gateCleared
     );
@@ -907,7 +921,8 @@ contract RewardCompensationDispatchFacet is
     event OutstandingCompensationImported(
         uint32 indexed dstChainId,
         address oldRemitter,
-        uint256 oldRemitId
+        uint256 oldRemitId,
+        bool quarantineObserved
     );
 
     /// @notice §5.4 R6e (#1662 r1) — the ADMIN evidenced SETTLEMENT of
@@ -1002,7 +1017,7 @@ contract RewardCompensationDispatchFacet is
         s.ceremonyFreshRecovered[remitId] = cf;
         s.ceremonyRecycledRecovered[remitId] = cr;
         s.remitRecoveredForReceipt[remitId] = recovered;
-        _bookRecoveredInflow(s, remitId, freshInflow, recycledInflow);
+        _bookRecoveredInflow(s, remitId, freshInflow, recycledInflow, true);
         // The recovered value is no longer lost: the loss record shrinks
         // exactly like an out-of-order B1 chunk's recompute.
         uint256 sf = s.strandedReturnShortfall[remitId];
@@ -1023,15 +1038,26 @@ contract RewardCompensationDispatchFacet is
      *         evidenced counterpart of the ceremony record; together they
      *         complete the custody-resolution identity that clears the
      *         R6 gate.
+     * @dev    #1662 r2 — split BY PROVENANCE, exactly like the ceremony,
+     *         and bounded per component against the reservation's own
+     *         dispatched split net of what is already recorded. The
+     *         recycled half is not bookkeeping detail: those tokens were
+     *         locally stranded and are now GONE, so they must leave the
+     *         coverage allowance. Leaving them in lets a dead balance
+     *         back live reservations forever — the same phantom-headroom
+     *         failure the recovered half closes, arrived at from the
+     *         other end.
      */
     function recordRecoveryTerminalLoss(
         uint256 remitId,
-        uint256 amount
+        uint256 freshLoss,
+        uint256 recycledLoss
     ) external nonReentrant whenNotPaused onlyCanonical
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        uint256 amount = freshLoss + recycledLoss;
         if (amount == 0) revert NothingToRemit();
         if (r.status != 3) revert CeremonyReservationNotReleased(remitId);
         // #1662 r1 — a CONSUMED receipt's value backs mirror claims:
@@ -1046,11 +1072,47 @@ contract RewardCompensationDispatchFacet is
         if (recovered + loss > r.total) {
             revert CeremonyExceedsStranded(remitId, recovered + loss, r.total);
         }
+        // Per-component provenance bounds — recovery and loss are both
+        // draws on the SAME dispatched split, so they bound jointly.
+        uint256 cf = s.ceremonyFreshRecovered[remitId]
+            + s.ceremonyFreshLoss[remitId] + freshLoss;
+        if (cf > r.fresh) {
+            revert CeremonyProvenanceExceeded(remitId, cf, r.fresh);
+        }
+        uint256 cr = s.ceremonyRecycledRecovered[remitId]
+            + s.ceremonyRecycledLoss[remitId] + recycledLoss;
+        if (cr > r.recycled) {
+            revert CeremonyProvenanceExceeded(remitId, cr, r.recycled);
+        }
+        s.ceremonyFreshLoss[remitId] += freshLoss;
+        s.ceremonyRecycledLoss[remitId] += recycledLoss;
         s.ceremonyTerminalLoss[remitId] = loss;
+        // The lost recycled tokens leave the coverage allowance.
+        _resolveStrandedRecycled(s, recycledLoss);
         bool gateCleared = _maybeClearResolvedGate(s, r, remitId, recovered);
         emit RecoveryTerminalLossRecorded(
-            remitId, amount, loss, gateCleared
+            remitId, freshLoss, recycledLoss, loss, gateCleared
         );
+    }
+
+    /// @dev #1662 r2 — record that `amount` of LOCALLY-stranded
+    ///      recycled-provenance value is no longer in transit, saturating
+    ///      at the stranded record. Fed by BOTH resolutions: a recovery
+    ///      settlement (the tokens came home) and a terminal loss (they
+    ///      are gone). Both must leave the coverage allowance — a dead 50
+    ///      that still counts as in-transit backing masks a real shortfall
+    ///      forever, which is the same phantom-headroom failure the
+    ///      recovered half of this counter exists to close.
+    function _resolveStrandedRecycled(
+        LibVaipakam.Storage storage s,
+        uint256 amount
+    ) private {
+        if (amount == 0) return;
+        uint256 stranded = s.recycleReleasedRemitStrandedCumulative;
+        uint256 resolved =
+            s.recycleReleasedRemitResolvedCumulative + amount;
+        s.recycleReleasedRemitResolvedCumulative =
+            resolved > stranded ? stranded : resolved;
     }
 
     /// @dev §5.3 — the FULL-custody-resolution gate clear: recovered plus
@@ -1077,6 +1139,46 @@ contract RewardCompensationDispatchFacet is
         }
     }
 
+    /// @dev #1662 r2 — draw `amount` of uncharged re-dispatch capacity
+    ///      against the NAMED source receipt's own recovery credit.
+    ///
+    ///      Per-receipt, not pooled, and that distinction is load-bearing.
+    ///      The position balance is fungible, but the CLAW is not: when a
+    ///      receipt's recovery is later contradicted by a consumed
+    ///      attestation, only that receipt's own unspent credit may be
+    ///      confiscated. Sizing draws (or claws) on the global balance
+    ///      lets receipt A's contradiction consume receipt B's capacity,
+    ///      which B can never re-credit because its own entitlement is
+    ///      already exhausted. Naming the source at dispatch is what makes
+    ///      "A's unspent" a computable quantity.
+    ///
+    ///      The RECYCLED half of a ceremony never enters the position (it
+    ///      goes to bucket custody), so the credit is the fresh-provenance
+    ///      part alone. The global balance is still asserted as a physical
+    ///      backstop — the per-receipt sum can never exceed it, so a
+    ///      failure there is an invariant breach, not a user error.
+    function _drawFromRecovery(
+        LibVaipakam.Storage storage s,
+        uint256 sourceRemitId,
+        uint256 amount
+    ) private {
+        uint256 credit = s.remitRecoveredForReceipt[sourceRemitId]
+            - s.ceremonyRecycledRecovered[sourceRemitId];
+        uint256 spent = s.recoveryRedispatchedForReceipt[sourceRemitId];
+        uint256 unspent = credit > spent ? credit - spent : 0;
+        if (amount > unspent) {
+            revert RecoveryReceiptCreditInsufficient(
+                sourceRemitId, amount, unspent
+            );
+        }
+        uint256 position =
+            s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
+        if (amount > position) {
+            revert RecoveryPositionInsufficient(amount, position);
+        }
+        s.recoveryRedispatchedForReceipt[sourceRemitId] = spent + amount;
+    }
+
     /// @dev #1662 r1 — book a physically-recovered inflow: ONE combined
     ///      backing assertion over BOTH halves (fresh earmarks the
     ///      recovery position, recycled earmarks the bucket — asserted
@@ -1084,11 +1186,19 @@ contract RewardCompensationDispatchFacet is
     ///      about to claim), then the position credit and the
     ///      relocated-custody credit. A books-only "recovery" with no
     ///      tokens behind it rolls back here, not at claim time.
+    /// @param localStranding #1662 r2 — whether the recycled component
+    ///        retires stranding recorded in THIS deployment's cumulative.
+    ///        False for an IMPORTED old-era settlement: that value was
+    ///        stranded on the RETIRED deployment and never entered this
+    ///        one's `recycleReleasedRemitStrandedCumulative`, so netting
+    ///        it would under-recognise local backing and page a false
+    ///        CRITICAL shortfall on legitimate commitments.
     function _bookRecoveredInflow(
         LibVaipakam.Storage storage s,
         uint256 refId,
         uint256 freshInflow,
-        uint256 recycledInflow
+        uint256 recycledInflow,
+        bool localStranding
     ) private {
         uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
         uint256 earmarks = s.recycleBucket + recycledInflow
@@ -1104,24 +1214,15 @@ contract RewardCompensationDispatchFacet is
                 recycledInflow,
                 LibVpfiRecycle.RecycleSource.RecoveryCeremonyRelocation
             );
-            // #1662 r2 (self-review) — the release moved this value
+            // #1662 r2 — the release moved this value
             // `paidOutRecycled -> releasedRemitStranded`, and the credit
             // above just put it back in the bucket. The stranded record
             // deliberately STAYS (the composition bound needs it as the
             // un-netted destination term, and it is a monotone history),
             // so without this counter an external checker's coverage
             // allowance `bucket + stranded` would count the same VPFI
-            // twice — permanently weakening a CRITICAL invariant by the
-            // recovered amount. Capped at the stranded record: a
-            // settlement whose recycled component exceeds what this
-            // deployment ever recorded as stranded (an imported old-era
-            // settlement, whose stranding happened on the retired
-            // deployment) must not net out MORE than the allowance holds.
-            uint256 strandedRec = s.recycleReleasedRemitStrandedCumulative;
-            uint256 nettable = s.recycleReleasedRemitRecoveredCumulative
-                + recycledInflow;
-            s.recycleReleasedRemitRecoveredCumulative =
-                nettable > strandedRec ? strandedRec : nettable;
+            // twice — permanently weakening a CRITICAL invariant.
+            if (localStranding) _resolveStrandedRecycled(s, recycledInflow);
         }
     }
 
@@ -1134,14 +1235,31 @@ contract RewardCompensationDispatchFacet is
      *         old-era evidence clears it (the mirror's re-presented
      *         consumed attestation, or {clearImportedOutstanding}).
      */
+    /// @param quarantineObserved #1662 r2 — carry the RETIRING
+    ///        deployment's observed-quarantine evidence (read
+    ///        `getImportedOutstanding` on it, or pass false for a
+    ///        first-generation import). Without this a SECOND rotation
+    ///        silently launders a contradiction: the retiring deployment's
+    ///        record already held quarantine evidence, and re-importing
+    ///        the tuple fresh would reset the flag, converting a
+    ///        quarantine→consumed contradiction into a clean consumption
+    ///        that clears the newest deployment's gate.
     function importOutstandingCompensation(
         uint32 dstChainId,
         address oldRemitter,
-        uint256 oldRemitId
+        uint256 oldRemitId,
+        bool quarantineObserved
     ) external onlyCanonical onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (oldRemitter == address(0) || oldRemitter == address(this)) {
             revert ImportedTupleInvalid(oldRemitter);
+        }
+        // #1662 r2 — the retiring deployment's VISIBLE gate reads the
+        // sentinel when it was itself holding an imported gate. Copying
+        // that across produces a tuple no old-era ack can ever match, so
+        // refuse it and make the operator read the imported RECORD.
+        if (oldRemitId == IMPORTED_GATE_SENTINEL) {
+            revert ImportedTupleIsSentinel();
         }
         if (s.compensationOutstanding[dstChainId] != 0) {
             revert CompensationGateHeld(
@@ -1151,7 +1269,7 @@ contract RewardCompensationDispatchFacet is
         s.importedOutstanding[dstChainId] = LibVaipakam.ImportedOutstanding({
             oldRemitter: oldRemitter,
             oldRemitId: oldRemitId,
-            quarantineObserved: false
+            quarantineObserved: quarantineObserved
         });
         // #1662 r1 — the SENTINEL, never the old id: old-era remit ids
         // alias this deployment's own nonces, and an ordinary new-era
@@ -1161,7 +1279,7 @@ contract RewardCompensationDispatchFacet is
             s, dstChainId, IMPORTED_GATE_SENTINEL
         );
         emit OutstandingCompensationImported(
-            dstChainId, oldRemitter, oldRemitId
+            dstChainId, oldRemitter, oldRemitId, quarantineObserved
         );
     }
 
@@ -1197,8 +1315,12 @@ contract RewardCompensationDispatchFacet is
             revert ImportedMarkerMissing(dstChainId);
         }
         if (freshInflow + recycledInflow != 0) {
+            // #1662 r2 — localStranding FALSE: this value was stranded on
+            // the RETIRED deployment and never entered this one's
+            // stranded cumulative, so it must not net out of the local
+            // coverage allowance.
             _bookRecoveredInflow(
-                s, im.oldRemitId, freshInflow, recycledInflow
+                s, im.oldRemitId, freshInflow, recycledInflow, false
             );
         }
         delete s.importedOutstanding[dstChainId];

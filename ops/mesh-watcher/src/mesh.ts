@@ -319,7 +319,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
         releasedRemitStranded: bigint;
         accountingSeeded: boolean;
         isCanonicalRewardChain: boolean;
-        releasedRemitRecovered: bigint;
+        releasedRemitResolved: bigint;
       }
     | undefined;
   try {
@@ -337,7 +337,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
       releasedRemitStranded: c[1],
       accountingSeeded: c[2],
       isCanonicalRewardChain: c[3],
-      releasedRemitRecovered: c[4],
+      releasedRemitResolved: c[4],
     };
   } catch (err) {
     composition = undefined;
