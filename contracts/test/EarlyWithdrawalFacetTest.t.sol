@@ -3574,6 +3574,58 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
+    /// @dev #1659 — a resting-listing accept must not depend on the SELLER
+    ///      holding a standing ERC-20 allowance for the Diamond.
+    ///
+    ///      Completion settles the loan's accrued interest by pulling it from
+    ///      `originalLender`'s WALLET (T-037's direct-from-payer pattern). On
+    ///      the DIRECT sale that is sound: the seller is the transaction's
+    ///      caller and can approve in the same transaction. On this route the
+    ///      BUYER is the caller, so the seller cannot approve inside it, and a
+    ///      real seller carries no standing allowance afterwards.
+    ///
+    ///      Two crutches hide this from the rest of the suite, and this fixture
+    ///      removes both. `SetupTest` grants every participant a
+    ///      `type(uint256).max` allowance, so the pull always succeeds here
+    ///      where it would fail in production; and the pull is skipped
+    ///      altogether when accrued interest is zero, which it is whenever
+    ///      listing and accept share one timestamp — every other test, and
+    ///      every `forge script` simulation. Time has to actually pass.
+    function test_saleAccept_completesWithoutSellerStandingAllowance() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v1659NoAllowanceBuyer");
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address bv = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer); ERC20(mockERC20).approve(bv, type(uint256).max);
+        vm.prank(buyer); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
+
+        // A real seller approves what a flow needs, not an unlimited standing
+        // allowance. Drop the harness's blanket grant.
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), 0);
+
+        // Accrued interest must be non-zero or the pull never happens at all.
+        // Stay inside the 7-day listing window so the accept cannot be refused
+        // for expiry instead of for the reason under test.
+        vm.warp(block.timestamp + 3 days);
+
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            buyer,
+            "the buyer must end up the lender of record"
+        );
+    }
+
     /// @dev The guard must not over-block: a position exactly AT its floor is
     ///      admissible (the comparison is `<`, not `<=`).
     function test_sellLoanViaBuyOffer_admittedExactlyAtFloor() public {
