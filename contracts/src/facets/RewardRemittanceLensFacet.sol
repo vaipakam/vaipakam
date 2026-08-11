@@ -367,12 +367,38 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().ceremonyTerminalLoss[remitId];
     }
 
-    /// @notice #1434 P2-w6 (§5.4 R6e) — the imported old-era outstanding
-    ///         marker for a chain (zero = none).
+    /// @notice #1434 P2-w6 (#1662 r1) — the per-receipt ceremony-recovered
+    ///         cumulatives BY PROVENANCE component. Each is bounded by the
+    ///         reservation's own dispatched split, and the recycled figure
+    ///         is what the consumed-ack claw excludes from the position
+    ///         debit (#1662 r2).
+    function getCeremonyRecovered(
+        uint256 remitId
+    ) external view returns (uint256 fresh, uint256 recycled) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.ceremonyFreshRecovered[remitId],
+            s.ceremonyRecycledRecovered[remitId]
+        );
+    }
+
+    /// @notice #1434 P2-w6 (§5.4 R6e, reshaped #1662 r1) — the imported
+    ///         old-era outstanding record for a chain (zero remitter =
+    ///         none).
     function getImportedOutstanding(
         uint32 dstChainId
-    ) external view returns (bytes32) {
-        return LibVaipakam.storageSlot().importedOutstanding[dstChainId];
+    )
+        external
+        view
+        returns (
+            address oldRemitter,
+            uint256 oldRemitId,
+            bool quarantineObserved
+        )
+    {
+        LibVaipakam.ImportedOutstanding storage im =
+            LibVaipakam.storageSlot().importedOutstanding[dstChainId];
+        return (im.oldRemitter, im.oldRemitId, im.quarantineObserved);
     }
 
     /// @dev Local twins of the mutating facet's errors (same selectors).

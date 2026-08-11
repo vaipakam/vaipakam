@@ -1635,21 +1635,49 @@ contract RewardRemittanceFacet is
         // settle through a new-era return (the B1 era check refuses old
         // remitters by design) and resolves via the ADMIN evidenced
         // clear + ceremony instead — observed here, never guessed at.
+        // #1660 r6 - the wire offsets classification by one (0 is the
+        // RETIRED generation-1 bool-false shape): 1 consumed /
+        // 2 quarantined / 3 provisional. Zero or out-of-range fails
+        // closed and re-executable - never guessed at. (#1662 r1 -
+        // validated BEFORE the imported branch, so an imported tuple's
+        // malformed ack fails closed too, never "observes".)
+        if (classification == 0 || classification > 3) {
+            revert RemitAckClassificationInvalid(classification);
+        }
         {
-            bytes32 marker = s.importedOutstanding[sourceChainId];
+            LibVaipakam.ImportedOutstanding storage im =
+                s.importedOutstanding[sourceChainId];
             if (
-                marker != bytes32(0)
-                    && marker == keccak256(abi.encode(remitter, remitId))
+                im.oldRemitter != address(0) && im.oldRemitter == remitter
+                    && im.oldRemitId == remitId
             ) {
                 if (classification == 1) {
-                    delete s.importedOutstanding[sourceChainId];
-                    LibRewardRemitDispatch.clearCompensationGate(
-                        s, sourceChainId
-                    );
-                    emit ImportedOutstandingResolved(
-                        sourceChainId, remitter, remitId
-                    );
+                    if (im.quarantineObserved) {
+                        // #1662 r1 - consumed AFTER quarantined is the
+                        // own-era contradiction rule, imported: an
+                        // honest mirror never transitions quarantined ->
+                        // consumed, so the re-present gets NO clear -
+                        // the gate stays held for the operator's
+                        // evidenced settlement.
+                        emit ImportedOutstandingConflict(
+                            sourceChainId, remitter, remitId
+                        );
+                    } else {
+                        delete s.importedOutstanding[sourceChainId];
+                        LibRewardRemitDispatch.clearCompensationGate(
+                            s, sourceChainId
+                        );
+                        emit ImportedOutstandingResolved(
+                            sourceChainId, remitter, remitId
+                        );
+                    }
                 } else {
+                    // #1662 r1 - a QUARANTINED re-present is terminal
+                    // mirror-side evidence and is REMEMBERED (a later
+                    // consumed re-present must conflict); a provisional
+                    // one is not (it may still legitimately confirm
+                    // consumed).
+                    if (classification == 2) im.quarantineObserved = true;
                     emit ImportedOutstandingObserved(
                         sourceChainId, remitter, remitId, classification
                     );
@@ -1661,13 +1689,6 @@ contract RewardRemittanceFacet is
             revert RemitAckSenderMismatch(remitId, remitter);
         }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        // #1660 r6 - the wire offsets classification by one (0 is the
-        // RETIRED generation-1 bool-false shape): 1 consumed /
-        // 2 quarantined / 3 provisional. Zero or out-of-range fails
-        // closed and re-executable - never guessed at.
-        if (classification == 0 || classification > 3) {
-            revert RemitAckClassificationInvalid(classification);
-        }
         bool consumed = classification == 1;
         bool quarantined = classification == 2;
         if (r.status == 2) {
@@ -1725,9 +1746,33 @@ contract RewardRemittanceFacet is
             // consumed lineage is the r4/r5 bypass).
             if (r.dstChainId == sourceChainId) {
                 if (consumed) {
-                    // conflict claw runs here too; released reservations
-                    // have no consumed-ack privileges to withhold.
-                    _stampConsumedAck(s, r, remitId);
+                    bool relConflict = _stampConsumedAck(s, r, remitId);
+                    // #1662 r2 (self-review) — a CLEAN consumption on a
+                    // released reservation CLEARS the gate. The release
+                    // held it pending the value's fate; a consumed
+                    // delivery IS that fate settled (§5.1's clearing
+                    // evidence — the compensation funded the obligation
+                    // after all), so the gate's premise is discharged and
+                    // nothing needs recovering. Withholding the clear
+                    // here bricked the chain permanently: consumption
+                    // closes the return path AND both governance
+                    // settlement records, leaving no writer able to
+                    // clear. A CONTRADICTED consumption still clears
+                    // nothing (w5's withheld privileges) — that case
+                    // resolves through the operator's evidenced
+                    // settlement, which {_consumptionTrusted} keeps open.
+                    if (
+                        !relConflict
+                            && s.compensationOutstanding[r.dstChainId]
+                                == remitId
+                    ) {
+                        LibRewardRemitDispatch.clearCompensationGate(
+                            s, r.dstChainId
+                        );
+                        emit RemitAckLateConsumption(
+                            remitId, sourceChainId, amountReceived
+                        );
+                    }
                 }
                 if (quarantined) _stampQuarantineAck(r, remitId);
             }
@@ -1926,6 +1971,17 @@ contract RewardRemittanceFacet is
         uint8 classification
     );
 
+    /// @notice §5.4 R6e (#1662 r1) — an imported tuple's re-presented
+    ///         CONSUMED attestation CONTRADICTED its earlier quarantine
+    ///         re-present: no clear extended; the evidenced settlement is
+    ///         the only remaining resolution.
+    /// @custom:event-category state-change/reward-compensation
+    event ImportedOutstandingConflict(
+        uint32 indexed sourceChainId,
+        address oldRemitter,
+        uint256 oldRemitId
+    );
+
     /// @dev #1660 r8 - stamp a CONSUMED attestation. Returns true when it
     ///      CONTRADICTS a prior quarantine attestation: the caller must
     ///      then withhold the consumed-ack privileges (gate clear +
@@ -1934,6 +1990,18 @@ contract RewardRemittanceFacet is
     ///      return credit: the unspent slice moves to the overage
     ///      quarantine (not claimable, not re-dispatchable), and
     ///      `consumedAcked` blocks every further B1 credit.
+    ///      #1662 r2 (self-review) - the CLAW now fires on ANY standing
+    ///      recovery credit for the receipt, not only on a
+    ///      mirror-self-contradiction. A w6 recovery ceremony credits the
+    ///      position WITHOUT requiring a quarantine attestation (its
+    ///      evidence is governance + physical backing, not the mirror), so
+    ///      gating the claw on `quarantineAcked` let ceremony-minted
+    ///      UNCHARGED re-dispatch capacity survive a later consumed
+    ///      attestation - capacity backing value that also backs mirror
+    ///      claims, the exact 69M bypass the claw exists to prevent. The
+    ///      RETURN value stays the mirror-self-contradiction signal: a
+    ///      ceremony contradicted by consumption is governance-vs-mirror,
+    ///      which does not impeach the ack's own privileges.
     function _stampConsumedAck(
         LibVaipakam.Storage storage s,
         LibVaipakam.RemitReservation storage r,
@@ -1947,9 +2015,21 @@ contract RewardRemittanceFacet is
         // position balance, and a replay after another receipt's
         // legitimate credit would drain unrelated capacity into the
         // overage quarantine.
-        if (conflict && !r.conflictClawed) {
+        // #1662 r2 (self-review) - the POSITION-provenance part only.
+        // Pre-w6 the per-receipt cumulative was 1:1 with position credits
+        // (B1 returns credit the position in full), but a ceremony folds
+        // its RECYCLED half into the same cumulative while sending that
+        // half to the BUCKET - clawing on the raw cumulative would debit
+        // the global position for value that never entered it, i.e. drain
+        // UNRELATED receipts' legitimate capacity into the permanent
+        // overage quarantine. The recycled half is physically-present
+        // bucket custody (the settlement's backing assertion proved the
+        // tokens are here); freezing it would strand real tokens outside
+        // every ledger, and it mints no uncharged emission capacity.
+        uint256 rec = s.remitRecoveredForReceipt[remitId]
+            - s.ceremonyRecycledRecovered[remitId];
+        if ((conflict || rec != 0) && !r.conflictClawed) {
             r.conflictClawed = true;
-            uint256 rec = s.remitRecoveredForReceipt[remitId];
             uint256 avail = s.rewardBudgetRecovered
                 - s.rewardBudgetRedispatched;
             uint256 claw = rec < avail ? rec : avail;

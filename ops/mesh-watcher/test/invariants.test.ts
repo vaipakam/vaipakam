@@ -140,6 +140,7 @@ function mirrorLocal(): LocalLedger {
     composition: {
       creditedRaw: 1000n * E,
       releasedRemitStranded: 0n,
+      releasedRemitRecovered: 0n,
       accountingSeeded: true,
       isCanonicalRewardChain: false,
     },
@@ -179,6 +180,7 @@ function canonicalLocal(): LocalLedger {
     composition: {
       creditedRaw: 800n * E,
       releasedRemitStranded: 0n,
+      releasedRemitRecovered: 0n,
       accountingSeeded: true,
       isCanonicalRewardChain: true,
     },
@@ -227,6 +229,7 @@ function canonicalLocal(): LocalLedger {
 type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
   creditedRaw?: bigint;
   releasedRemitStranded?: bigint;
+  releasedRemitRecovered?: bigint;
   accountingSeeded?: boolean;
   isCanonicalRewardChain?: boolean;
   /** `null` = the newer view could not be read on this chain. */
@@ -249,6 +252,7 @@ function coherent(
   const {
     creditedRaw,
     releasedRemitStranded,
+    releasedRemitRecovered,
     accountingSeeded,
     isCanonicalRewardChain,
     composition,
@@ -284,6 +288,8 @@ function coherent(
     creditedRaw: creditedRaw ?? l.reportedCumulative,
     releasedRemitStranded:
       releasedRemitStranded ?? baseComp.releasedRemitStranded,
+    releasedRemitRecovered:
+      releasedRemitRecovered ?? baseComp.releasedRemitRecovered,
     accountingSeeded: accountingSeeded ?? baseComp.accountingSeeded,
     isCanonicalRewardChain:
       isCanonicalRewardChain ?? baseComp.isCanonicalRewardChain,
@@ -366,6 +372,65 @@ describe('bucket-coverage — role resolution across a stale snapshot (#1448 r11
     );
     return l;
   }
+
+  // #1434 P2-w6 / #1662 r2 — a recovery ceremony puts stranded RECYCLED
+  // value back in the bucket WITHOUT retiring the stranded record (that
+  // record is monotone history the composition relation still needs as a
+  // destination term). If the allowance kept reading the gross figure, the
+  // recovered VPFI would back reservations twice — the bucket holds it AND
+  // the allowance still claims it is in transit — so a genuine shortfall of
+  // up to everything ever recovered would go unpaged, permanently. The
+  // mutation this kills: `allowance = stranded` instead of
+  // `stranded - recovered`.
+  it('nets RECOVERED value out of the stranded coverage allowance', () => {
+    // The ceremony returned the whole 5e19: bucket rose by it, and the
+    // stranded record stayed. Reservations rose too — the recovered tokens
+    // back them once, not twice. Gross allowance would see 5e19 of phantom
+    // headroom and stay silent on a real 5e19 shortfall.
+    const l = fresh(
+      coherent(canonicalLocal(), {
+        bucket: 150_000_000_000_000_000_000n,
+        outstandingRecycled: 200_000_000_000_000_000_000n,
+        releasedRemitStranded: 50_000_000_000_000_000_000n,
+        releasedRemitRecovered: 50_000_000_000_000_000_000n,
+        isCanonicalRewardChain: true,
+      }),
+    );
+    const obs: MeshObservation = {
+      ...observation(),
+      canonicalChainId: CANONICAL,
+      freshLocals: new Map([[CANONICAL, l]]),
+      allLocals: new Map([[CANONICAL, l]]),
+    };
+    const found = checkHardInvariants(obs, TOLERANCE)
+      .filter((f) => f.code === 'bucket-coverage');
+    expect(found).toHaveLength(1);
+    expect(found[0]!.severity).toBe('critical');
+  });
+
+  // The same shape with the recovery NOT yet run stays silent: the value
+  // really is in transit, and the allowance is exactly what it is for. This
+  // is what keeps the check above from being a blanket "always page".
+  it('still admits the allowance for value that is genuinely stranded', () => {
+    const l = fresh(
+      coherent(canonicalLocal(), {
+        bucket: 150_000_000_000_000_000_000n,
+        outstandingRecycled: 200_000_000_000_000_000_000n,
+        releasedRemitStranded: 50_000_000_000_000_000_000n,
+        releasedRemitRecovered: 0n,
+        isCanonicalRewardChain: true,
+      }),
+    );
+    const obs: MeshObservation = {
+      ...observation(),
+      canonicalChainId: CANONICAL,
+      freshLocals: new Map([[CANONICAL, l]]),
+      allLocals: new Map([[CANONICAL, l]]),
+    };
+    const found = checkHardInvariants(obs, TOLERANCE)
+      .filter((f) => f.code === 'bucket-coverage');
+    expect(found).toEqual([]);
+  });
 
   it('does not page when a STALE snapshot predates a role migration', () => {
     const l = demotedCanonical();

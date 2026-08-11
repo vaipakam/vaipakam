@@ -532,6 +532,11 @@
         "name": "isCanonicalRewardChain",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "releasedRemitRecovered",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1445,6 +1450,27 @@
       },
       {
         "name": "need",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CeremonyProvenanceExceeded",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "component",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bound",
         "type": "uint256",
         "internalType": "uint256"
       }

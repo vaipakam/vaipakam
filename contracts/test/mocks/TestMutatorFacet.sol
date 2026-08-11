@@ -1839,6 +1839,20 @@ contract TestMutatorFacet {
         sr.reason = reason;
     }
 
+    /// @notice #1662 r2 test-only — set the GLOBAL recovery position
+    ///         directly, so a test can stand up capacity belonging to
+    ///         receipts other than the one under test (the claw sizes on
+    ///         the global balance, so an over-claw is only observable
+    ///         against unrelated capacity).
+    function setRecoveryPositionRaw(
+        uint256 recovered,
+        uint256 redispatched
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardBudgetRecovered = recovered;
+        s.rewardBudgetRedispatched = redispatched;
+    }
+
     /// @notice #1434 P2-w5 test-only — hold the R6 gate directly.
     function setCompensationGateRaw(uint32 dstChainId, uint256 remitId)
         external

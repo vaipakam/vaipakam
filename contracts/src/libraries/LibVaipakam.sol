@@ -6440,14 +6440,43 @@ library LibVaipakam {
         //   term of the full-custody-resolution identity the R6 gate
         //   clears on: recovered + terminalLoss == stranded (r.total).
         mapping(uint256 => uint256) ceremonyTerminalLoss;
-        // BASE-ONLY (§5.4 R6e) — the imported outstanding-compensation
-        //   marker for a chain after a Base deployment rotation:
-        //   keccak256(abi.encode(oldRemitter, oldRemitId)). While set,
-        //   the chain's gate is held by OLD-ERA evidence this deployment
-        //   never issued — only the imported-clear paths (the mirror's
+        // BASE-ONLY (#1662 r1) — the ceremony-recovered cumulatives BY
+        //   PROVENANCE component, each bounded by the reservation's own
+        //   dispatched split (fresh ≤ r.fresh, recycled ≤ r.recycled): a
+        //   compensation reservation is fresh-only by construction, so a
+        //   ceremony crediting "recycled" custody for one would relabel
+        //   fresh-provenance value into the bucket's claimable custody —
+        //   the total bound alone cannot see that.
+        mapping(uint256 => uint256) ceremonyFreshRecovered;
+        mapping(uint256 => uint256) ceremonyRecycledRecovered;
+        // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
+        //   outstanding-compensation record for a chain after a Base
+        //   deployment rotation: the RAW old-era tuple, not its hash —
+        //   the ack branch matches on it, the evidenced settlement books
+        //   recovered custody against the OLD-era remitId as provenance
+        //   refId, and `quarantineObserved` remembers a re-presented
+        //   QUARANTINED attestation so a later consumed re-present
+        //   CONTRADICTS the mirror's own record (the own-era conflict
+        //   rule, imported). While set, the chain's gate is held at the
+        //   IMPORTED sentinel — OLD-ERA evidence this deployment never
+        //   issued; only the imported-clear paths (the mirror's
         //   re-presented consumed attestation, or the ADMIN evidenced
-        //   clear) may release it; new-era acks/returns never match it.
-        mapping(uint32 => bytes32) importedOutstanding;
+        //   settlement) may release it; new-era acks/returns never
+        //   match it.
+        mapping(uint32 => ImportedOutstanding) importedOutstanding;
+        // BASE-ONLY (#1662 r2 self-review) — Σ of the RECYCLED-provenance
+        //   value physically returned to bucket custody by a recovery
+        //   settlement, capped at `recycleReleasedRemitStrandedCumulative`.
+        //   The release moved `paidOutRecycled -> stranded`; a ceremony
+        //   moves that same value back into `recycleBucket` WITHOUT
+        //   retiring the stranded record (the composition bound needs the
+        //   un-netted destination term to stay balanced). Without this
+        //   counter the coverage allowance `bucket + stranded` would count
+        //   the same VPFI twice forever — permanent phantom headroom on a
+        //   CRITICAL invariant. External checkers net it out of the
+        //   allowance while reading composition un-netted (see the
+        //   mesh-watcher's `bucket-coverage` rule).
+        uint256 recycleReleasedRemitRecoveredCumulative;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -6667,6 +6696,18 @@ library LibVaipakam {
     ///      retirement pairs off without drift. `dayIds` is every day the
     ///      batch terminally CLOSED (funded + clamped-to-zero) — release
     ///      re-opens them all.
+    /// @notice #1434 P2-w6 (§5.4 R6e, reshaped #1662 r1) — an imported
+    ///         OLD-ERA outstanding compensation for a chain: the retired
+    ///         deployment's receipt tuple, carried onto the rotated-in
+    ///         deployment so its R6 gate cannot silently forget an
+    ///         unresolved delivery. `quarantineObserved` is the imported
+    ///         twin of the own-era classification-conflict evidence.
+    struct ImportedOutstanding {
+        address oldRemitter;
+        uint256 oldRemitId;
+        bool quarantineObserved;
+    }
+
     struct RemitReservation {
         uint32 dstChainId;
         // 0 = none, 1 = Pending (in flight), 2 = Acked (delivered,

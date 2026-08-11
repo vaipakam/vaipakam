@@ -124,6 +124,12 @@ const EXPECTED_VIEWS: ReadonlyArray<{
       'releasedRemitStranded:uint256',
       'accountingSeeded:bool',
       'isCanonicalRewardChain:bool',
+      // #1662 P2-w6 r2 — the recovered counterpart of the stranded
+      // figure. The stranded cumulative is monotone HISTORY and does not
+      // retire when a recovery ceremony puts the value back in the
+      // bucket, so the coverage ALLOWANCE must net this out or the same
+      // VPFI backs `bucket + stranded` twice forever.
+      'releasedRemitRecovered:uint256',
     ],
   },
   // #1568 C2 — the repatriation ledger views, on `RepatriationFacet`.

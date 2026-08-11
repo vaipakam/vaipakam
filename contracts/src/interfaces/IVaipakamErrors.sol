@@ -456,6 +456,14 @@ interface IVaipakamErrors {
     ///         arrived - a books-only recovery must roll back here.
     error CeremonyInflowNotBacked(uint256 remitId, uint256 bal, uint256 need);
 
+    /// @notice #1662 r1 — a ceremony component exceeds the reservation's
+    ///         own dispatched provenance split (fresh vs recycled).
+    error CeremonyProvenanceExceeded(
+        uint256 remitId,
+        uint256 component,
+        uint256 bound
+    );
+
     /// @notice Imported tuple names zero or THIS deployment (an own-era
     ///         reservation needs no import).
     error ImportedTupleInvalid(address oldRemitter);

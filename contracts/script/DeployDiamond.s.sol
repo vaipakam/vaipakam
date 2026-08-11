@@ -2769,7 +2769,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](29);
+        s = new bytes4[](30);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2807,6 +2807,8 @@ contract DeployDiamond is Script {
             RewardRemittanceLensFacet.getCeremonyTerminalLoss.selector;
         s[28] =
             RewardRemittanceLensFacet.getImportedOutstanding.selector;
+        s[29] =
+            RewardRemittanceLensFacet.getCeremonyRecovered.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

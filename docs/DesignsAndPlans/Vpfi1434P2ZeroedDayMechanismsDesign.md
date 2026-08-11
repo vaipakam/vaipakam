@@ -1131,6 +1131,75 @@ the bounds are the design's actual commitment.
    > evidenced `clearImportedOutstanding` + ceremony), and the rotation
    > runbook step (inventory `getCompensationOutstandingChains()` empty
    > or imported before cutover).
+   >
+   > **r1 addendum (#1662).** Six hardenings from review round 1: the
+   > ceremony's physical-backing assertion is ONE combined check over
+   > BOTH halves (fresh + recycled earmarked together — neither half may
+   > lean on float the other is about to claim); each half is
+   > additionally bounded by the reservation's own dispatched provenance
+   > split (fresh ≤ r.fresh, recycled ≤ r.recycled — a fresh-only
+   > compensation cannot "recover as recycled" and relabel uncharged
+   > value into claimable bucket custody); the terminal-loss record
+   > refuses consumed receipts exactly like the ceremony (consumed value
+   > backs mirror claims — it is neither lost nor recoverable); the
+   > imported gate holds a SENTINEL (max uint256), never the old-era id —
+   > old ids alias this deployment's own nonces, and an ordinary remit's
+   > consumed ack would otherwise clear an imported hold it never
+   > evidenced; the imported record stores the RAW old-era tuple and
+   > REMEMBERS a quarantined re-present, so a later consumed re-present
+   > CONFLICTS (the own-era contradiction rule, imported; provisional →
+   > consumed stays legitimate), and a malformed classification fails
+   > closed before the imported branch; and the evidenced clear became an
+   > evidenced SETTLEMENT that books any recovered old-era inflow (fresh
+   > → the recovery position, recycled → relocated custody, refId = the
+   > old-era remitId) under the same combined backing assertion — both
+   > components zero is the pure-loss shape.
+   >
+   > **Self-review addendum (#1662, pre-round-2).** An adversarial pass
+   > over the r1 fixes found five more, four of them in the seam the
+   > ceremony opened between the w5 recovery ledger and the w6 settlement:
+   >
+   > 1. **The a3 guard bricked the gate.** A released reservation that
+   >    later takes a CONSUMED ack had, after a3, no clearing writer left
+   >    at all — the return path, the ceremony and the loss record all
+   >    refuse consumption, so the chain could never receive another
+   >    compensation. Fixed at the cause: a CLEAN consumption on a
+   >    released reservation now CLEARS the gate itself (it is §5.1's
+   >    clearing evidence — the delivery funded the obligation after all),
+   >    and the refusals narrowed from `consumedAcked` to a TRUSTED
+   >    consumption (consumed with no standing quarantine attestation). A
+   >    mirror that contradicted itself earns no trust, which is exactly
+   >    why the operator's evidenced settlement must stay open for that
+   >    case — closing it too is what left no path at all.
+   > 2. **The conflict claw over-drew by the recycled half.** Pre-w6 the
+   >    per-receipt recovered cumulative was 1:1 with position credits;
+   >    the ceremony folds its RECYCLED half into the same cumulative
+   >    while sending that half to the bucket, so the claw debited the
+   >    GLOBAL position for value that never entered it — draining
+   >    unrelated receipts' capacity into the permanent quarantine. The
+   >    claw now sizes on the position-provenance part only.
+   > 3. **Ceremony credit escaped the claw entirely.** The claw fired only
+   >    on a quarantine contradiction, and a ceremony requires no
+   >    quarantine attestation (its evidence is governance + physical
+   >    backing), so ceremony-minted uncharged capacity survived a later
+   >    consumed attestation — capacity backing value that also backs
+   >    mirror claims. The claw now fires on ANY standing position credit;
+   >    the returned conflict signal stays mirror-self-contradiction,
+   >    since governance-vs-mirror does not impeach the ack's own
+   >    privileges.
+   > 4. **The recycled half double-counted against coverage.** A release
+   >    moves value from paid-out into the released-stranded record; the
+   >    ceremony puts it back in the bucket while that record — monotone
+   >    history the composition relation still needs un-netted — stays. An
+   >    external checker's allowance `bucket + stranded` therefore backed
+   >    the same VPFI twice, permanently. A recovered cumulative (capped
+   >    at the stranded figure) is now published beside it, and the
+   >    mesh-watcher nets it out of the coverage allowance only.
+   > 5. **The a4 accumulator was unobservable and untested.** A lens
+   >    getter now exposes the per-provenance cumulatives, and a
+   >    two-ceremony test pins that the bound is CUMULATIVE — a mutant
+   >    bounding each call rather than the running total previously passed
+   >    the whole suite.
 
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates

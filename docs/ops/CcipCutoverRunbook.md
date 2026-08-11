@@ -267,10 +267,11 @@ deployment run `importOutstandingCompensation(chain, oldDeployment,
 oldRemitId)` for each open tuple. The imported gate blocks new
 compensation dispatches for that chain until the old-era evidence
 resolves it — a mirror's re-presented CONSUMED ack releases it
-permissionlessly; anything else resolves through the evidenced
-`clearImportedOutstanding` once the value settles via the recovery
-ceremony. No unresolved compensation may be silently forgotten by a
-redeploy.
+permissionlessly; anything else resolves through the evidenced settlement
+`clearImportedOutstanding(chain, freshInflow, recycledInflow)`,
+which books whatever value physically came home as it releases the
+gate (both components zero for a pure loss). No unresolved
+compensation may be silently forgotten by a redeploy.
 
 - **Fund the `VpfiBuyReceiver` ETH float.** The cross-chain buy is two
   legs; the receiver pays leg 2's CCIP fee from a held ETH balance. Send

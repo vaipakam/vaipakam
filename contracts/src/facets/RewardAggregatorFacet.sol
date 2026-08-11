@@ -1424,6 +1424,19 @@ contract RewardAggregatorFacet is
      *                               therefore apply the allowance only while
      *                               the role still holds, rather than assuming
      *                               a mirror's total is structurally zero.
+     * @return releasedRemitRecovered #1662 r2 — Σ of the RECYCLED-provenance
+     *                               value a recovery settlement physically
+     *                               returned to bucket custody. The stranded
+     *                               figure above deliberately does NOT retire
+     *                               on recovery: it is monotone history, and
+     *                               the composition relation needs it
+     *                               un-netted as a destination term. So a
+     *                               checker's coverage ALLOWANCE — and only
+     *                               the allowance — must net this out
+     *                               (`stranded - recovered`), or the same
+     *                               VPFI backs reservations twice in
+     *                               `bucket + stranded` forever. Bounded
+     *                               on-chain by the stranded figure.
      */
     function getRecycleCompositionPosition()
         external
@@ -1432,7 +1445,8 @@ contract RewardAggregatorFacet is
             uint256 creditedRaw,
             uint256 releasedRemitStranded,
             bool accountingSeeded,
-            bool isCanonicalRewardChain
+            bool isCanonicalRewardChain,
+            uint256 releasedRemitRecovered
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -1440,7 +1454,8 @@ contract RewardAggregatorFacet is
             s.recycleCreditedCumulative,
             s.recycleReleasedRemitStrandedCumulative,
             s.recycleAccountingSeeded || s.recycleCreditedCumulative != 0,
-            s.isCanonicalRewardChain
+            s.isCanonicalRewardChain,
+            s.recycleReleasedRemitRecoveredCumulative
         );
     }
 

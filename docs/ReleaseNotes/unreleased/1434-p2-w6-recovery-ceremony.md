@@ -28,4 +28,14 @@ deployment, keyed to the old deployment's receipt. The imported gate
 blocks new compensation dispatches for that chain until the old
 delivery's fate is proven: a mirror can permissionlessly re-present its
 receipt, and a consumed outcome releases the gate on the spot, while
-anything else stays held for the operator's evidenced resolution.
+anything else stays held for the operator's evidenced settlement,
+which books whatever value physically came home as it releases the
+gate.
+
+A late confirmation that the original delivery did go through after all
+now settles the chain by itself: the compensation funded what it was sent
+for, so the gate opens and the chain can be compensated again. Where the
+mirror's own reports contradict each other, nothing is taken on trust —
+the gate stays shut until governance settles it with evidence, and any
+recovery credit that the contradiction calls into question is frozen
+rather than left spendable.

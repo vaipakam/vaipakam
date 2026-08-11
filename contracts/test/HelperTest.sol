@@ -90,7 +90,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](168);
+        selectors = new bytes4[](169);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -419,6 +419,9 @@ contract HelperTest {
         selectors[n++] =
             TestMutatorFacet.setRemitReservationCompRaw.selector;
         selectors[n++] = TestMutatorFacet.setCompensationGateRaw.selector;
+        // #1662 r2 — unrelated recovery-position capacity, so an over-claw
+        // on one receipt is observable against another's credit.
+        selectors[n++] = TestMutatorFacet.setRecoveryPositionRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2188,7 +2191,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](29);
+        selectors = new bytes4[](30);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2226,6 +2229,8 @@ contract HelperTest {
             RewardRemittanceLensFacet.getCeremonyTerminalLoss.selector;
         selectors[28] =
             RewardRemittanceLensFacet.getImportedOutstanding.selector;
+        selectors[29] =
+            RewardRemittanceLensFacet.getCeremonyRecovered.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

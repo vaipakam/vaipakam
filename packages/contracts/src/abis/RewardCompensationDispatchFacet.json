@@ -7,6 +7,16 @@
         "name": "dstChainId",
         "type": "uint32",
         "internalType": "uint32"
+      },
+      {
+        "name": "freshInflow",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledInflow",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -350,16 +360,28 @@
         "internalType": "uint32"
       },
       {
-        "name": "marker",
-        "type": "bytes32",
+        "name": "oldRemitter",
+        "type": "address",
         "indexed": false,
-        "internalType": "bytes32"
+        "internalType": "address"
       },
       {
-        "name": "evidenced",
-        "type": "bool",
+        "name": "oldRemitId",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bool"
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshInflow",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledInflow",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -846,6 +868,27 @@
       },
       {
         "name": "need",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CeremonyProvenanceExceeded",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "component",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bound",
         "type": "uint256",
         "internalType": "uint256"
       }
