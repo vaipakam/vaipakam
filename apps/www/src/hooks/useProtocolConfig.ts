@@ -94,6 +94,20 @@ const CLOCK_SKEW_TOLERANCE_SECONDS = 5 * 60;
 const VPFI_DECIMALS = 18n;
 
 /**
+ * The ceiling the protocol APPLIES to a per-tier VPFI fee discount —
+ * `LibVaipakam.MAX_FEE_DISCOUNT_BPS`.
+ *
+ * Mirrored here rather than read, for the same reason the knob defaults
+ * are: this surface has no chain client. It is a deliberately narrow
+ * mirror — one number, guarding a display clamp — and the drift risk is
+ * bounded by the fact that raising the applied ceiling is a protocol
+ * change that would go through the same review that would notice this
+ * line. (`ConfigFacet`'s SETTER ceiling is a different, higher number —
+ * 9,000 — which is exactly why the clamp is needed.)
+ */
+const APPLIED_DISCOUNT_CEILING_BPS = 5000;
+
+/**
  * The knobs the marketing pages quote, mapped from the display bundle.
  * Field names match what `<LiveValue>`'s registry reads, so the two
  * cannot drift apart silently — a rename breaks the build.
@@ -158,6 +172,20 @@ function asTokenQuad(value: unknown): [number, number, number, number] | null {
   // 10n ** 18n)` silently rounds past 2^53; dividing first keeps the
   // whole-token figure exact, which is the one a reader sees.
   const scale = 10n ** VPFI_DECIMALS;
+  // ...but that division FLOORS, and `ConfigFacet.setVpfiTierThresholds`
+  // permits a threshold that is not a whole multiple of 1e18. A
+  // configured 100.9 VPFI would publish as "100 VPFI" wearing the
+  // `published` badge — a documented eligibility boundary that is simply
+  // wrong, and wrong in the direction that tells a reader they qualify
+  // when they do not. The display format for these is whole tokens
+  // (`format: 'count'`, zero fraction digits), so there is nowhere to
+  // put the remainder even if we kept it.
+  //
+  // So reject rather than truncate. That drops the whole bundle to
+  // bundled defaults, which is the same all-or-nothing rule the decoder
+  // already applies elsewhere: a figure the site cannot state exactly is
+  // one it should not state as live.
+  if (out.some((v) => v! % scale !== 0n)) return null;
   const tokens = out.map((v) => toSafeNumber(v! / scale));
   if (tokens.some((v) => v === null)) return null;
   return tokens as [number, number, number, number];
@@ -174,7 +202,18 @@ export function decodeMarketingConfig(
   const treasuryFeeBps = toSafeNumber(asBigInt(bundle[0]));
   const loanInitiationFeeBps = toSafeNumber(asBigInt(bundle[1]));
   const tierThresholdsTokens = asTokenQuad(bundle[7]);
-  const tierDiscountBps = asBpsQuad(bundle[8]);
+  // The bundle carries the CONFIGURED per-tier discount, which
+  // `ConfigFacet.setVpfiTierDiscountBps` permits up to 9,000 BPS. What a
+  // user actually receives is clamped to `LibVaipakam.MAX_FEE_DISCOUNT_BPS`
+  // (5,000) by `getEffectiveDiscount` and every fee path. Publishing the
+  // raw figure would advertise a 60% discount that reduces fees by 50%
+  // across all 134 documentation references — a promise the protocol does
+  // not keep. The docs describe the discount a user GETS, so publish the
+  // applied value.
+  const rawDiscountBps = asBpsQuad(bundle[8]);
+  const tierDiscountBps = rawDiscountBps?.map((v) =>
+    Math.min(v, APPLIED_DISCOUNT_CEILING_BPS),
+  ) as [number, number, number, number] | undefined ?? null;
   if (
     treasuryFeeBps === null ||
     loanInitiationFeeBps === null ||
@@ -242,12 +281,38 @@ function publish() {
   for (const l of listeners) l();
 }
 
+/**
+ * Abort deadline for the snapshot request.
+ *
+ * Load-bearing for DEPLOYABILITY, not just for page latency. `fetch`
+ * without a deadline hangs for as long as the peer holds the connection
+ * open, and `scripts/prerender.mjs` snapshots every route × locale with
+ * `waitUntil: 'networkidle'` under a 30 s timeout, exiting non-zero if a
+ * route misses it. An indexer that accepts connections but stops
+ * answering — a partial outage, not even a hard one — would therefore
+ * fail the prerender of every route and block every marketing-site
+ * deployment. That is a far worse failure than the one this whole file
+ * exists to avoid, and it would arrive at the least convenient moment,
+ * since the site is most likely to need a deploy when something else is
+ * already wrong.
+ *
+ * Four seconds matches the connected app's indexer client
+ * (`apps/alpha02/src/data/indexer.ts`) — deliberately the same number
+ * rather than a second opinion about the same rail — and leaves the
+ * prerenderer 26 s of headroom to reach networkidle with the bundled
+ * default in place.
+ */
+const REQUEST_TIMEOUT_MS = 4_000;
+
 async function load() {
   loading = true;
   publish();
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(`${INDEXER_ORIGIN}/config/${DOCS_CHAIN_ID}`, {
       headers: { accept: 'application/json' },
+      signal: ac.signal,
     });
     if (res.ok) {
       const body: unknown = await res.json();
@@ -261,11 +326,13 @@ async function load() {
       }
     }
   } catch {
-    // Deliberately silent. There is nothing a reader of a docs page can
-    // do about an unreachable indexer, and the page still renders its
-    // bundled defaults. Logging here would put a red error in the
+    // Deliberately silent, and this now also swallows the abort above.
+    // There is nothing a reader of a docs page can do about an
+    // unreachable or unresponsive indexer, and the page still renders
+    // its bundled defaults. Logging here would put a red error in the
     // console of a perfectly working page.
   } finally {
+    clearTimeout(timer);
     loading = false;
     publish();
   }
