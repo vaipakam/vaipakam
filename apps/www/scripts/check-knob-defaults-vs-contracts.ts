@@ -106,7 +106,31 @@ const ANCHORS: Record<KnobName, Anchor> = {
  * anchored declarations to matter. Block comments are stripped first so a
  * `//` inside one cannot terminate the wrong thing.
  */
-const source = readFileSync(LIB, 'utf8')
+/**
+ * The anchor file itself missing is reported, not thrown. This check runs
+ * from `prebuild`, so if the library is renamed or moved the bare
+ * `readFileSync` ENOENT surfaces as a stack trace at the top of a build —
+ * a reader's first guess is a broken script, not a moved anchor. Naming
+ * the path and the fix costs three lines and points at the real cause.
+ *
+ * This still FAILS (it does not skip): a publish step that cannot find
+ * what it is meant to verify must stop.
+ */
+let raw: string;
+try {
+  raw = readFileSync(LIB, 'utf8');
+} catch {
+  console.error(
+    `check-knob-defaults-vs-contracts: cannot read the anchor library at\n` +
+      `  ${LIB}\n` +
+      `The published figures on the marketing site are anchored to the protocol\n` +
+      `constants in that file. If it was renamed or moved, update LIB in this\n` +
+      `script and the matching path in ci.yml's WORKSPACES_RE.`,
+  );
+  process.exit(1);
+}
+
+const source = raw
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
   .replace(/\/\/[^\n]*/g, '');
 const failures: string[] = [];

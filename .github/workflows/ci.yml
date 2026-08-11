@@ -232,7 +232,17 @@ jobs:
             fi
           fi
           echo "Diff range: $BASE..$HEAD"
-          CHANGED=$(git diff --name-only "$BASE" "$HEAD" || git diff --name-only HEAD~1 HEAD)
+          # `--no-renames` is load-bearing, not stylistic. With rename
+          # detection ON (git's default), `--name-only` collapses a rename
+          # to the DESTINATION path alone, so every filter below that names
+          # an exact file stops matching the moment that file is renamed —
+          # the job silently doesn't run, which is the one direction a CI
+          # trigger must never fail in. For change detection a rename is
+          # correctly BOTH a deletion at the old path and an addition at the
+          # new one: consumers keyed on the old path (e.g. the www knob-drift
+          # guard, which reads `contracts/src/libraries/LibVaipakam.sol`) are
+          # exactly who needs waking when it moves out from under them.
+          CHANGED=$(git diff --no-renames --name-only "$BASE" "$HEAD" || git diff --no-renames --name-only HEAD~1 HEAD)
           echo "Changed files:"
           echo "$CHANGED"
 
