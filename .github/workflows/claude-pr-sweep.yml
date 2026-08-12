@@ -30,12 +30,14 @@
 #
 # ── Cost ─────────────────────────────────────────────────────────────
 #
-# At a 15-minute cadence this is ~96 agent runs/day. Each is a full
-# Claude Code session with repo checkout. If that proves more than the
-# work warrants, widen the cron — the sweep is idempotent and a longer
-# gap costs only latency, never correctness. GitHub also treats
-# `schedule` as best-effort and delays runs under load, so treat the
-# cadence as a floor rather than a guarantee.
+# At a 15-minute cadence plus the hourly backstop this is ~120 agent
+# runs/day. Each is a full Claude Code session with repo checkout. If
+# that proves more than the work warrants, widen the cron — the sweep is
+# idempotent and a longer gap costs only latency, never correctness.
+# GitHub also treats `schedule` as best-effort and DROPS runs under load
+# rather than queuing them, so treat the cadence as a floor rather than a
+# guarantee. Most ticks are expected to find nothing and exit in seconds;
+# the cost is dominated by the runs that actually do work.
 #
 # `workflow_dispatch` is wired so the sweep can be run on demand
 # without waiting for the next tick.
@@ -44,9 +46,25 @@ name: Claude PR sweep
 
 on:
   schedule:
-    # Off the quarter-hour on purpose: :00/:15/:30/:45 are the busiest
-    # minutes on GitHub's scheduler and the most delayed.
+    # Primary cadence. Off the quarter-hour on purpose: :00/:15/:30/:45
+    # are the busiest minutes on GitHub's scheduler and the most delayed.
     - cron: '7,22,37,52 * * * *'
+    # Hourly backstop, at an unrelated minute. GitHub drops scheduled
+    # runs under load rather than queuing them, so an individual tick
+    # going missing is expected behaviour, not a fault. This gives a
+    # dropped tick a second slot in a different part of the hour.
+    #
+    # Be clear about what this does NOT cover: it is the same `schedule`
+    # mechanism on the same workflow, so it is no help if scheduling
+    # itself stops (GitHub disables scheduled workflows after 60 days of
+    # repository inactivity) or if the sweep job is failing every run.
+    # Those need something watching from outside this workflow — see the
+    # staleness-watchdog note in the PR that introduced this file.
+    #
+    # Harmless when the primary cadence is healthy: the concurrency
+    # group serialises overlapping runs, and a sweep with nothing to do
+    # exits quietly, so a redundant tick costs one short run.
+    - cron: '13 * * * *'
   workflow_dispatch:
     inputs:
       focus:
