@@ -214,8 +214,15 @@ export function OrderTicket({
   const signedOffer = useSignedOfferSigning();
 
   // Ladder-row tap → limit rate. Applied on every new tap (nonce).
+  //
+  // Deliberately an effect (#1520): `prefill` is an EVENT delivered as a prop
+  // — a tap in a sibling component, carrying a nonce so repeated taps of the
+  // same row still apply. There is no local handler to do this at source, and
+  // it cannot be derived: the rate is user-editable afterwards, so the tap
+  // seeds state rather than defining it.
   useEffect(() => {
     if (prefill === null) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRate(String(prefill.rateBps / 100));
     clearConsentOnEdit();
     setPostedHash(null);
@@ -225,7 +232,25 @@ export function OrderTicket({
   // Any market change voids consent — the deal being consented to
   // changed underneath the ticket. Posting-mode changes void it too:
   // the consent line was read against a different escrow reality.
+  // Deliberately an effect (#1520), and checked rather than assumed: this
+  // fires on inputs that arrive as PROPS (pair, tenor, side) or from local
+  // chips (postMode), and none of them is resolved asynchronously. Every
+  // local path that changes them also calls `clearConsentOnEdit` in the same
+  // handler, so consent is voided in the same batch as the change; this
+  // effect is the backstop for a parent-driven change, where the user has
+  // just clicked a control elsewhere and so cannot be mid-click on Post.
+  //
+  // That claim was NOT true when this comment was written (Codex #1682 r1
+  // F2): the two side buttons and the posting-mode chips set their state and
+  // nothing else, so for `side` and `postMode` this effect was the ONLY thing
+  // clearing consent — a commit late, leaving exactly the frame the comment
+  // asserted could not exist. Those three handlers now clear in the same
+  // batch, which is what makes the claim, and this disable, correct.
+  // That is what distinguishes it from #1678, where the trigger was an async
+  // arrival that could coincide with a click — there, an effect was the wrong
+  // mechanism and the gate had to be derived.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     clearConsentOnEdit();
     setPostedHash(null);
     setGaslessPosted(null);
@@ -314,9 +339,6 @@ export function OrderTicket({
       Number.isFinite(ts) && ts > nowSec + MAX_OFFER_EXPIRY_HORIZON_SECONDS
     );
   };
-  // IOC requires an expiry (#125) — GTC + IOC is contract-invalid.
-  const iocNeedsExpiry = fillMode === FILL_IOC && expiry === 'gtc';
-
   // #1145 round-2 (Codex P2) — gasless LENDER posts are single-fill
   // only. The matcher requires a constant collateral:principal ratio
   // across a signed range (`SignedOfferRatioNotConstant`), and lender
@@ -329,11 +351,38 @@ export function OrderTicket({
   // structurally, independent of this state. Borrower gasless posts are
   // single-value already and stay untouched.
   const gaslessLenderSingleFill = postMode === 'gasless' && side === 'lender';
-  useEffect(() => {
-    if (gaslessLenderSingleFill && fillMode === FILL_PARTIAL) {
-      setFillMode(FILL_AON);
-    }
-  }, [gaslessLenderSingleFill, fillMode]);
+  /**
+   * The fill mode that actually applies, DERIVED rather than corrected in an
+   * effect (#1520).
+   *
+   * An effect could only flip the stored value after a commit, so a frame
+   * existed where the ticket claimed partial fill in a mode that cannot serve
+   * it — and everything computed from it that frame (the payload, the IOC
+   * check, the fee preview) described an order that could not be posted.
+   * Deriving also makes the chip honest: it highlights the mode in force
+   * rather than the one that is about to be overwritten.
+   *
+   * (An earlier version of this comment said a source fix was unavailable
+   * because `side` arrives as a prop. That was simply wrong — `side` is local
+   * state, and the handlers that change it are right here. A source reset is
+   * therefore possible; deriving is kept because it is the stronger of the two
+   * — it cannot be forgotten at a new call site, and it fixes the chip's
+   * display as well as the payload.)
+   *
+   * Coerces PARTIAL only — never IOC (Codex #1682 r1 F1). The collapse this
+   * mirrors, `collapseForSignedPost`, maps `0 → 1` and deliberately leaves
+   * IOC alone because its expiry semantics are load-bearing; and only the
+   * Partial chip is disabled in this mode, so IOC stays selectable. Coercing
+   * every mode therefore signed an AON order for a user who picked IOC, and
+   * `iocNeedsExpiry` stopped seeing an IOC to check — bypassing the #125
+   * GTC-plus-IOC guard on the way.
+   */
+  const effectiveFillMode =
+    gaslessLenderSingleFill && fillMode === FILL_PARTIAL ? FILL_AON : fillMode;
+
+  // IOC requires an expiry (#125) — GTC + IOC is contract-invalid. Reads the
+  // EFFECTIVE mode, so it judges the order that would actually be posted.
+  const iocNeedsExpiry = effectiveFillMode === FILL_IOC && expiry === 'gtc';
 
   // ---- form + payload -------------------------------------------------
   const form = useMemo(
@@ -383,10 +432,12 @@ export function OrderTicket({
       );
       return {
         ...base,
-        fillMode,
+        fillMode: effectiveFillMode,
         expiresAt,
         amount:
-          fillMode === FILL_AON && side === 'lender' ? base.amountMax : base.amount,
+          effectiveFillMode === FILL_AON && side === 'lender'
+            ? base.amountMax
+            : base.amount,
       };
     } catch {
       return null;
@@ -429,7 +480,7 @@ export function OrderTicket({
     // holding the payload from the last form edit, so the simulation would
     // describe an expiry the ticket no longer has.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [postMode, walletChain, consent, decimalsReady, form, fillMode, expiry, customExpiry, nowSec]);
+  }, [postMode, walletChain, consent, decimalsReady, form, effectiveFillMode, expiry, customExpiry, nowSec]);
   const preSign = useTxSimulation(simTx);
 
   // #1112 — early under-collateral warning for the borrow side, consent
@@ -457,7 +508,7 @@ export function OrderTicket({
     }
     // `nowSec` for the same reason as simTx above (Codex #1520 r1).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [side, walletChain, decimalsReady, fieldsComplete, form, fillMode, expiry, customExpiry, nowSec]);
+  }, [side, walletChain, decimalsReady, fieldsComplete, form, effectiveFillMode, expiry, customExpiry, nowSec]);
 
   // ---- token security (#1036) — fail closed on blocked/unverified ----
   const lendingSec = useTokenSecurity(readChain.chainId, pair?.lendingAsset);
@@ -992,14 +1043,23 @@ export function OrderTicket({
         <button
           type="button"
           className={side === 'lender' ? 'active' : ''}
-          onClick={() => setSide('lender')}
+          onClick={() => {
+            // Same batch as the change (Codex #1682 r1 F2) — the passive
+            // backstop effect lands a commit later, leaving a frame where the
+            // side has flipped but consent and canPost are still true.
+            setSide('lender');
+            clearConsentOnEdit();
+          }}
         >
           {text.sideLend}
         </button>
         <button
           type="button"
           className={side === 'borrower' ? 'active' : ''}
-          onClick={() => setSide('borrower')}
+          onClick={() => {
+            setSide('borrower');
+            clearConsentOnEdit();
+          }}
         >
           {text.sideBorrow}
         </button>
@@ -1168,7 +1228,7 @@ export function OrderTicket({
               <button
                 key={value}
                 type="button"
-                className={`desk-chip${fillMode === value ? ' active' : ''}`}
+                className={`desk-chip${effectiveFillMode === value ? ' active' : ''}`}
                 title={unavailable ? text.gaslessLenderAonNote : hint}
                 disabled={unavailable}
                 onClick={() => {
@@ -1208,7 +1268,10 @@ export function OrderTicket({
               type="button"
               className={`desk-chip${postMode === value ? ' active' : ''}`}
               title={hint}
-              onClick={() => setPostMode(value)}
+              onClick={() => {
+                setPostMode(value);
+                clearConsentOnEdit();
+              }}
             >
               {label}
             </button>
