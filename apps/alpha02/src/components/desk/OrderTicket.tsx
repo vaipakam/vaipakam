@@ -423,9 +423,13 @@ export function OrderTicket({
     } catch {
       return null;
     }
-    // buildPayload reads only state captured by these deps.
+    // buildPayload reads only state captured by these deps, plus the
+    // ticking clock it is handed — which is why `nowSec` is listed too
+    // (Codex #1520 r1): without it a tick re-renders but leaves this memo
+    // holding the payload from the last form edit, so the simulation would
+    // describe an expiry the ticket no longer has.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [postMode, walletChain, consent, decimalsReady, form, fillMode, expiry, customExpiry]);
+  }, [postMode, walletChain, consent, decimalsReady, form, fillMode, expiry, customExpiry, nowSec]);
   const preSign = useTxSimulation(simTx);
 
   // #1112 — early under-collateral warning for the borrow side, consent
@@ -451,8 +455,9 @@ export function OrderTicket({
     } catch {
       return null;
     }
+    // `nowSec` for the same reason as simTx above (Codex #1520 r1).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [side, walletChain, decimalsReady, fieldsComplete, form, fillMode, expiry, customExpiry]);
+  }, [side, walletChain, decimalsReady, fieldsComplete, form, fillMode, expiry, customExpiry, nowSec]);
 
   // ---- token security (#1036) — fail closed on blocked/unverified ----
   const lendingSec = useTokenSecurity(readChain.chainId, pair?.lendingAsset);
@@ -933,10 +938,11 @@ export function OrderTicket({
         lendSym,
       ),
     };
-    // buildPayload reads only state captured by these deps (same
-    // pattern as simTx above).
+    // buildPayload reads only state captured by these deps, plus the
+    // ticking clock (same pattern as simTx above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    nowSec,
     fieldsComplete,
     decimalsReady,
     fees.ready,
