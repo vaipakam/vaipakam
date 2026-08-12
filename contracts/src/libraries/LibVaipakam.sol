@@ -6432,6 +6432,16 @@ library LibVaipakam {
         //   configured - allowOutOfOrderExecution), and the closure
         //   unwind (day markers + funded contribution) runs exactly once.
         mapping(uint256 => bool) strandedReturnTerminalized;
+        // #1659 — sale proceeds held in Diamond custody by `OfferAcceptFacet`
+        //   on the resting-listing accept, consumed by
+        //   `EarlyWithdrawalFacet._completeLoanSaleImpl`'s net settlement so the
+        //   seller's forfeited accrued interest and any rate shortfall are
+        //   deducted from the INCOMING proceeds rather than pulled from the
+        //   seller's wallet (which cannot work when the buyer is the caller).
+        //   Keyed by the UNDERLYING loan id, not the sale offer id. Written and
+        //   consumed inside one atomic accept-then-complete transaction, so a
+        //   non-zero value observed between transactions would be a bug.
+        mapping(uint256 => uint256) saleProceedsEscrow;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

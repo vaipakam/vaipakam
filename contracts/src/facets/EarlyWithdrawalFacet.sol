@@ -1022,16 +1022,74 @@ contract EarlyWithdrawalFacet is
             remainingSecs) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
 
-        // T-037 — pay each destination directly from `originalLender`
-        // (the wallet of liam, who approved the Diamond). The previous
-        // pull-into-Diamond-then-split pattern incurred 1 transferFrom +
-        // N transfers (3 transfers total in the worst case); the new
-        // direct-transfer pattern is N transferFroms total (2 in the
-        // worst case). Same accounting via the new
-        // {transferFromPayerToTreasury} / {depositFromPayerForLender}
-        // helpers — they record `treasuryBalances` and `heldForLender`
-        // identically to the Diamond-resident variants.
-        if (saleRemainingInterest > originalRemainingInterest) {
+        // #1659 — NET SETTLEMENT out of the escrowed proceeds. Canonical spec,
+        // "Smart Contract Actions": *"the sale flow should prefer net settlement
+        // so protocol-defined forfeitures or shortfalls can be deducted directly
+        // from the incoming proceeds instead of requiring Liam to source separate
+        // wallet liquidity in the same asset"*.
+        //
+        // `OfferAcceptFacet` escrows the buyer's principal in Diamond custody on
+        // the resting-listing accept, so the fan-out below is the one the DIRECT
+        // sale (`sellLoanViaBuyOffer`) has always used: the same
+        // `liamCost` / `treasuryCut` algebra, the same `RateShortfallTooHigh`
+        // guard, and the same Diamond-resident helpers. The two routes had
+        // duplicated this algebra and diverged on who funds the forfeit; they now
+        // agree.
+        //
+        // The T-037 shape kept below (for the manual-recovery entry) paid each
+        // destination with a `transferFrom` on the seller's WALLET, which assumes
+        // the payer is the caller and has approved the Diamond. That holds on the
+        // direct sale and on `completeLoanSale`, where the seller calls, and fails
+        // on the listing accept, where the BUYER calls — reverting
+        // `ERC20InsufficientAllowance` for any seller without a standing
+        // allowance, masked only because the pull is skipped when `accrued == 0`.
+        uint256 proceeds = s.saleProceedsEscrow[loanId];
+        if (proceeds > 0) {
+            delete s.saleProceedsEscrow[loanId];
+            uint256 saleShortfall = saleRemainingInterest >
+                originalRemainingInterest
+                ? saleRemainingInterest - originalRemainingInterest
+                : 0;
+            // Forfeited accrued is applied to the shortfall FIRST, with only the
+            // unused excess going to treasury — the spec's own ordering.
+            uint256 liamCost = accrued > saleShortfall
+                ? accrued
+                : saleShortfall;
+            uint256 treasuryCut = accrued > saleShortfall
+                ? accrued - saleShortfall
+                : 0;
+            // Same rule the direct sale applies: if liam's cost exceeds what the
+            // buyer brought, net settlement cannot complete — liam would owe
+            // tokens we never collected from him. Fail closed with the existing
+            // named error rather than reverting deep inside a token transfer.
+            if (liamCost > proceeds) revert RateShortfallTooHigh();
+
+            uint256 toLiam = proceeds - liamCost;
+            if (toLiam > 0) {
+                IERC20(loan.principalAsset).safeTransfer(
+                    originalLender,
+                    toLiam
+                );
+            }
+            LibFacet.transferToTreasury(loan.principalAsset, treasuryCut);
+            if (saleShortfall > 0) {
+                // #831 — vault-lock the buyer's (newLender) receive, exactly as
+                // the pulled variant did: a buyer flagged AFTER committing the
+                // sale must not brick the completion and strand the committed
+                // seller. The shortfall parks frozen in the buyer's OWN vault
+                // behind the #821 freeze.
+                LibSanctionedLock.begin(s, newLender);
+                LibFacet.depositForNewLender(
+                    loan.principalAsset,
+                    newLender,
+                    saleShortfall,
+                    loanId
+                );
+                LibSanctionedLock.end(
+                    s, newLender, loanId, loan.principalAsset, saleShortfall
+                );
+            }
+        } else if (saleRemainingInterest > originalRemainingInterest) {
             uint256 shortfall = saleRemainingInterest -
                 originalRemainingInterest;
             if (accrued >= shortfall) {
