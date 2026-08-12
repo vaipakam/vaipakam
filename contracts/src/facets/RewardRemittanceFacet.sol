@@ -1636,47 +1636,17 @@ contract RewardRemittanceFacet is
         if (classification == 0 || classification > 3) {
             revert RemitAckClassificationInvalid(classification);
         }
-        {
-            LibVaipakam.ImportedOutstanding storage im =
-                s.importedOutstanding[sourceChainId];
-            if (
-                im.oldRemitter != address(0) && im.oldRemitter == remitter
-                    && im.oldRemitId == remitId
-            ) {
-                if (classification == 1) {
-                    if (im.quarantineObserved) {
-                        // #1662 r1 - consumed AFTER quarantined is the
-                        // own-era contradiction rule, imported: an
-                        // honest mirror never transitions quarantined ->
-                        // consumed, so the re-present gets NO clear -
-                        // the gate stays held for the operator's
-                        // evidenced settlement.
-                        emit ImportedOutstandingConflict(
-                            sourceChainId, remitter, remitId
-                        );
-                    } else {
-                        delete s.importedOutstanding[sourceChainId];
-                        LibRewardRemitDispatch.clearCompensationGate(
-                            s, sourceChainId
-                        );
-                        emit ImportedOutstandingResolved(
-                            sourceChainId, remitter, remitId
-                        );
-                    }
-                } else {
-                    // #1662 r1 - a QUARANTINED re-present is terminal
-                    // mirror-side evidence and is REMEMBERED (a later
-                    // consumed re-present must conflict); a provisional
-                    // one is not (it may still legitimately confirm
-                    // consumed).
-                    if (classification == 2) im.quarantineObserved = true;
-                    emit ImportedOutstandingObserved(
-                        sourceChainId, remitter, remitId, classification
-                    );
-                }
-                return;
-            }
-        }
+        // #1662 r7 — there is NO permissionless clear for an imported
+        // gate. A mistyped import can name an unrelated, already-CONSUMED
+        // historical receipt, and that receipt's re-presented ack would
+        // clear the sentinel while the genuinely outstanding delivery is
+        // still live — the replacement and the original would then BOTH
+        // back mirror claims. Binding the import to the real outstanding
+        // gate would need the predecessor read that r6 removed (it cannot
+        // be authenticated), so the permissionless path goes instead:
+        // an imported gate clears ONLY through the operator's evidenced
+        // {clearImportedOutstanding}. That is what makes a mistaken
+        // import genuinely liveness-only.
         if (remitter != address(this)) {
             revert RemitAckSenderMismatch(remitId, remitter);
         }
@@ -1695,7 +1665,7 @@ contract RewardRemittanceFacet is
                 // re-presentation can reconcile.
                 bool ackConflict;
                 if (consumed) {
-                    ackConflict = _stampConsumedAck(s, r, remitId);
+                    ackConflict = _stampConsumedAck(s, r, remitId, amountReceived);
                 }
                 if (quarantined) _stampQuarantineAck(r, remitId);
                 if (r.forcedFinalized && consumed && !ackConflict) {
@@ -1738,7 +1708,7 @@ contract RewardRemittanceFacet is
             // consumed lineage is the r4/r5 bypass).
             if (r.dstChainId == sourceChainId) {
                 if (consumed) {
-                    bool relConflict = _stampConsumedAck(s, r, remitId);
+                    bool relConflict = _stampConsumedAck(s, r, remitId, amountReceived);
                     // #1662 r2 (self-review) — a CLEAN consumption on a
                     // released reservation CLEARS the gate. The release
                     // held it pending the value's fate; a consumed
@@ -1846,38 +1816,6 @@ contract RewardRemittanceFacet is
         uint256 unrecoverable
     );
 
-    /// @notice #1434 P2-w6 (§5.4 R6e) — a mirror's re-presented CONSUMED
-    ///         attestation resolved an imported old-era outstanding
-    ///         compensation; the chain's gate released.
-    /// @custom:event-category state-change/reward-compensation
-    event ImportedOutstandingResolved(
-        uint32 indexed sourceChainId,
-        address oldRemitter,
-        uint256 oldRemitId
-    );
-
-    /// @notice §5.4 R6e — an imported tuple's ack arrived NON-consumed:
-    ///         observed for the operator (the evidenced clear + ceremony
-    ///         are the resolution path), gate unchanged.
-    /// @custom:event-category informational/reward-compensation
-    event ImportedOutstandingObserved(
-        uint32 indexed sourceChainId,
-        address oldRemitter,
-        uint256 oldRemitId,
-        uint8 classification
-    );
-
-    /// @notice §5.4 R6e (#1662 r1) — an imported tuple's re-presented
-    ///         CONSUMED attestation CONTRADICTED its earlier quarantine
-    ///         re-present: no clear extended; the evidenced settlement is
-    ///         the only remaining resolution.
-    /// @custom:event-category state-change/reward-compensation
-    event ImportedOutstandingConflict(
-        uint32 indexed sourceChainId,
-        address oldRemitter,
-        uint256 oldRemitId
-    );
-
     /// @dev #1662 r4 - ONE implementation of the recovery-credit VOID.
     ///      Both the own-era contradiction claw and the settled-import
     ///      tombstone need exactly this rule, and writing it twice is how
@@ -1930,7 +1868,11 @@ contract RewardRemittanceFacet is
     function _stampConsumedAck(
         LibVaipakam.Storage storage s,
         LibVaipakam.RemitReservation storage r,
-        uint256 remitId
+        uint256 remitId,
+        // #1662 r7 — the authenticated received figure, so the funding
+        // re-close below can reconcile a SHORT delivery instead of
+        // recording the day as fully funded and blocking its supplement.
+        uint256 amountReceived
     ) private returns (bool conflict) {
         conflict = r.quarantineAcked;
         r.consumedAcked = true;
@@ -1984,20 +1926,53 @@ contract RewardRemittanceFacet is
         // the terminalized guard. The day re-closes under the original
         // receipt only if still open, so a successor's closure (and its
         // gate) is never clobbered.
+        // #1662 r7 — only a TRUSTED, RECONCILED re-close.
+        //
+        // (a) NOT under contradiction. A quarantine→consumed sequence
+        //     earns no trust anywhere else — the gate stays held for
+        //     governance — so re-closing funding on it would leave the
+        //     operator unable to fund a replacement even after recording
+        //     the old parcel as lost: the quote bound would refuse it.
+        //
+        // (b) RECONCILED to what actually arrived. Restoring the full
+        //     DECLARED split for a short delivery records the day as
+        //     fully funded and blocks the legitimate supplement for the
+        //     shortfall — the same declared-vs-received reconciliation
+        //     the ordinary ack path performs.
+        // The CONFLICT carve-out is conditional, because two findings pull
+        // opposite ways and the deciding fact is whether the R6 gate is
+        // still protecting this obligation:
+        //   - a TERMINAL RETURN both cleared the gate and re-opened the
+        //     day (#1660 r11). Nothing blocks a replacement there, so a
+        //     contradicting consumption MUST re-close or the day is
+        //     funded twice while the consumed value also backs claims.
+        //   - a plain RELEASE holds the gate pending governance (#1662
+        //     r7). The gate already blocks the replacement, so re-closing
+        //     adds no protection and actively harms: after governance
+        //     records the parcel lost, the quote bound would refuse the
+        //     replacement the settlement exists to enable.
         if (
-            r.declaredUnwound
+            (!conflict || s.strandedReturnTerminalized[remitId])
+                && r.declaredUnwound
                 && r.dayIds.length == 1
                 && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
         ) {
             uint32 cdst = r.dstChainId;
             uint256 cday = r.dayIds[0];
+            uint256 total = r.total;
+            uint256 restoreL = r.declaredLender18;
+            uint256 restoreB = r.declaredBorrower18;
+            if (amountReceived < total && total != 0) {
+                restoreL = (restoreL * amountReceived) / total;
+                restoreB = (restoreB * amountReceived) / total;
+            }
             if (s.dayClosedByRemitId[cdst][cday] == 0) {
                 s.dayClosedByRemitId[cdst][cday] = remitId;
-                s.rewardBudgetRemitted[cdst][cday] = r.total;
+                s.rewardBudgetRemitted[cdst][cday] = restoreL + restoreB;
             }
             r.declaredUnwound = false;
-            s.compFundedLender18[cdst][cday] += r.declaredLender18;
-            s.compFundedBorrower18[cdst][cday] += r.declaredBorrower18;
+            s.compFundedLender18[cdst][cday] += restoreL;
+            s.compFundedBorrower18[cdst][cday] += restoreB;
         }
     }
 
@@ -2050,7 +2025,7 @@ contract RewardRemittanceFacet is
         // dispatch's cap lineage). Stamped whether or not the gate
         // still names this remit.
         bool ackConflict;
-        if (consumed) ackConflict = _stampConsumedAck(s, r, remitId);
+        if (consumed) ackConflict = _stampConsumedAck(s, r, remitId, amountReceived);
         else if (quarantined) _stampQuarantineAck(r, remitId);
         if (consumed && !ackConflict && s.compensationOutstanding[dst] == remitId) {
             LibRewardRemitDispatch.clearCompensationGate(s, dst);

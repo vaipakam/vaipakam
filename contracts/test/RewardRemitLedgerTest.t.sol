@@ -3950,37 +3950,6 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
-    /// r2-b5 - a SECOND rotation must carry the imported record's
-    /// evidence. Copying the retiring deployment's visible gate yields
-    /// the SENTINEL (which no old-era ack can match), and re-importing
-    /// the tuple fresh would reset an observed quarantine - laundering a
-    /// contradiction into a clean consumption that clears the newest
-    /// gate.
-    function test_Import_SecondRotationCarriesEvidence() public {
-        address oldBase = address(0x01dBA5E);
-        // Reading the retiring deployment's visible gate is refused.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ImportedTupleIsSentinel.selector
-            )
-        );
-        comp.importOutstandingCompensation(
-            CHAIN_ARB, oldBase, type(uint256).max, false
-        );
-        // Carrying the record (tuple + observed quarantine) preserves the
-        // contradiction across the rotation.
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, true);
-        (, , bool q) = rlens.getImportedOutstanding(CHAIN_ARB);
-        assertTrue(q, "the earlier quarantine evidence survived");
-        rewardMessenger.deliverRemitAckFromWithClassification(
-            CHAIN_ARB, 7, 3e18, oldBase, 1
-        );
-        assertEq(
-            rlens.getCompensationOutstanding(CHAIN_ARB),
-            type(uint256).max,
-            "the carried contradiction still withholds the clear"
-        );
-    }
 
     // -- #1662 r3 ----------------------------------------------------
 
@@ -4125,93 +4094,100 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
     }
 
-    /// SS8-6 (R6e) - an imported old-era marker holds the gate at the
-    /// SENTINEL (#1662 r1: old-era ids alias this deployment's own
-    /// nonces, so a real id would let an ordinary remit's consumed ack
-    /// clear an imported hold it never evidenced); re-presents: malformed
-    /// fails closed, provisional observes, consumed resolves.
-    function test_Import_GateBlocksUntilRepresentedOrEvidenced() public {
-        _finalizeDay(1);
-        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
-        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
-        address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
-        assertEq(
-            rlens.getCompensationOutstanding(CHAIN_ARB),
-            type(uint256).max,
-            "the imported hold is the sentinel, never a real id"
+
+
+    /// r7-g3 - a SHORT late consumption must re-close only what actually
+    /// arrived. Restoring the full DECLARED split records the day as
+    /// fully funded and blocks the legitimate supplement for the
+    /// shortfall - the same declared-vs-received reconciliation the
+    /// ordinary ack path performs.
+    function test_Recovery_ShortLateConsumptionReconciles() public {
+        _releasedCeremonyFixture();
+        (uint256 fl0, uint256 fb0) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl0 + fb0, 0, "release unwound the declared split");
+        // 2 of the declared 3 actually arrived, and it was consumed.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 2e18, true);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        // Each side floors independently, so the pair can land up to one
+        // wei per side UNDER the received figure - the conservative
+        // direction (never over-crediting the obligation).
+        assertApproxEqAbs(
+            fl + fb, 2e18, 2, "re-closed at RECEIVED, not declared"
         );
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.CompensationGateHeld.selector,
-                CHAIN_ARB,
-                type(uint256).max
-            )
-        );
-        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
-        // A malformed re-present fails closed, never "observes".
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.RemitAckClassificationInvalid.selector, 0
-            )
-        );
-        rewardMessenger.deliverRemitAckFromWithClassification(
-            CHAIN_ARB, 7, 3e18, oldBase, 0
-        );
-        // A PROVISIONAL re-present observes (it may still legitimately
-        // confirm consumed), gate unchanged.
-        rewardMessenger.deliverRemitAckFromWithClassification(
-            CHAIN_ARB, 7, 3e18, oldBase, 3
-        );
-        assertEq(
-            rlens.getCompensationOutstanding(CHAIN_ARB),
-            type(uint256).max,
-            "held"
-        );
-        // The consumed re-present resolves and releases the gate
-        // (provisional -> consumed is the legitimate transition).
-        rewardMessenger.deliverRemitAckFromWithClassification(
-            CHAIN_ARB, 7, 3e18, oldBase, 1
-        );
-        assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0, "released");
-        (address om, , ) = rlens.getImportedOutstanding(CHAIN_ARB);
-        assertEq(om, address(0), "marker gone");
-        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        // ...so the 1e18 shortfall is still supplementable.
+        assertLt(fl, 2e18, "lender side pro-rated");
+        assertLt(fb, 1e18, "borrower side pro-rated");
     }
 
-    /// SS8-6 (#1662 r1) - QUARANTINED-then-consumed on an imported tuple
-    /// is the own-era contradiction rule, imported: the consumed
-    /// re-present gets NO clear; only the evidenced settlement resolves.
-    function test_Import_QuarantineThenConsumedConflicts() public {
+    /// r7-g4 - a receipt that predates per-receipt attribution has credit
+    /// on record but no per-receipt spend/claw history (those were global
+    /// only), so its unspent figure would read as the FULL credit however
+    /// much was already drawn - and it could consume a LATER receipt's
+    /// backing. Refused outright once attribution is armed.
+    function test_Recovery_LegacyReceiptNotDrawableAfterArming() public {
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        // The upgrade arms attribution at the current nonce: receipt 1
+        // predates it.
+        comp.armRecoveryAttribution();
+        _finalizeDay(2);
+        mutator.setChainDayRemitIneligibleRaw(2, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 2, 3e18, 2e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RecoveryReceiptPredatesAttribution.selector, 1
+            )
+        );
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 2, 0.6e18, 0.4e18, 1
+        );
+        // One-shot.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RecoveryAttributionAlreadyArmed.selector
+            )
+        );
+        comp.armRecoveryAttribution();
+    }
+
+    /// SS8-6 (#1662 r7) - an imported gate has NO permissionless clear.
+    ///
+    /// A mistyped import can name an unrelated, already-CONSUMED
+    /// historical receipt. If that receipt's re-presented acknowledgement
+    /// could clear the sentinel, the operator would then fund a charged
+    /// replacement while the genuinely outstanding delivery was still
+    /// live - and BOTH would back mirror claims. Binding the import to
+    /// the real outstanding gate would need the predecessor read that r6
+    /// removed as unauthenticatable, so the permissionless path goes
+    /// instead: only the operator's evidenced settlement opens it. That
+    /// is what makes a mistaken import genuinely liveness-only.
+    function test_Import_HasNoPermissionlessClear() public {
         address oldBase = address(0x01dBA5E);
         comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
-        rewardMessenger.deliverRemitAckFromWithClassification(
-            CHAIN_ARB, 7, 3e18, oldBase, 2
-        );
-        (, , bool q) = rlens.getImportedOutstanding(CHAIN_ARB);
-        assertTrue(q, "the quarantine re-present is remembered");
-        vm.recordLogs();
-        rewardMessenger.deliverRemitAckFromWithClassification(
-            CHAIN_ARB, 7, 3e18, oldBase, 1
-        );
         assertEq(
             rlens.getCompensationOutstanding(CHAIN_ARB),
             type(uint256).max,
-            "the contradicting consumed re-present clears NOTHING"
+            "the imported hold is the sentinel"
         );
-        (address om, , ) = rlens.getImportedOutstanding(CHAIN_ARB);
-        assertEq(om, oldBase, "marker stays for the evidenced settlement");
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256(
-            "ImportedOutstandingConflict(uint32,address,uint256)"
-        );
-        bool seen;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == sig) seen = true;
+        // A re-presented ack for the imported tuple - in ANY
+        // classification - is refused at the era check and clears nothing.
+        for (uint8 cls = 1; cls <= 3; ++cls) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IVaipakamErrors.RemitAckSenderMismatch.selector, 7, oldBase
+                )
+            );
+            rewardMessenger.deliverRemitAckFromWithClassification(
+                CHAIN_ARB, 7, 3e18, oldBase, cls
+            );
         }
-        assertTrue(seen, "the contradiction is surfaced");
-        // The evidenced settlement is the remaining resolution (pure-loss
-        // shape: nothing physically came home).
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            type(uint256).max,
+            "still held after every re-present"
+        );
+        // Only the evidenced settlement opens it.
         comp.clearImportedOutstanding(CHAIN_ARB, 0);
         assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0, "cleared");
     }

@@ -1402,6 +1402,61 @@ the bounds are the design's actual commitment.
    >   later records for the same receipt (deliberately allowed — operator
    >   evidence stays the resolution path), leaving the new capacity
    >   permanently unreadable. Only the redispatched term advances now.
+   >
+   > **Round-7 addendum (#1662).** Four more, and the first retracts a
+   > rebuttal made in round 6.
+   >
+   > 1. **A mistaken import was NOT liveness-only.** Round 6 argued that
+   >    since a settlement mints nothing, a wrong import costs only
+   >    availability. The counter-case: a mistyped import can name an
+   >    unrelated, ALREADY-CONSUMED historical receipt, whose
+   >    permissionlessly re-presented ack then clears the sentinel — after
+   >    which the operator funds a charged replacement while the genuinely
+   >    outstanding delivery is still live, and BOTH back mirror claims.
+   >    Binding the import to the real outstanding gate needs the
+   >    predecessor read round 6 removed as unauthenticatable, so the
+   >    PERMISSIONLESS CLEAR goes instead: an imported gate now opens only
+   >    through the operator's evidenced settlement. That is what makes the
+   >    liveness-only claim true rather than asserted.
+   > 2. **The funding re-close was neither trusted nor reconciled.** It
+   >    restored the full DECLARED split regardless of what arrived (so a
+   >    short delivery recorded the day as fully funded and blocked its
+   >    legitimate supplement), and regardless of a quarantine→consumed
+   >    contradiction.
+   >
+   >    The conflict carve-out is CONDITIONAL, because two findings pull
+   >    opposite ways and the deciding fact is whether the R6 gate still
+   >    protects the obligation. A TERMINAL RETURN both cleared the gate
+   >    and re-opened the day (#1660 r11), so nothing else blocks a
+   >    replacement and the re-close is the only protection. A plain
+   >    RELEASE holds the gate pending governance, so re-closing adds no
+   >    protection and actively harms — after the loss is recorded, the
+   >    quote bound would refuse the very replacement the settlement
+   >    exists to enable. Both findings' tests pass under the conditional.
+   > 3. **An upgrade seam in per-receipt attribution.** On an in-place
+   >    upgrade from w5, recovery credit exists per receipt but the spends
+   >    and claws against it were tracked GLOBALLY only, so the new
+   >    per-receipt counters start at zero and a legacy receipt reads its
+   >    already-spent credit as unspent — letting it consume a later
+   >    receipt's backing. Removing the old unattributed selectors stops
+   >    new bad writes but repairs nothing existing. Legacy receipts are
+   >    therefore refused outright behind a one-shot armed watermark
+   >    (`armRecoveryAttribution`), retiring that capacity conservatively
+   >    rather than attempting a migration the chain has no per-receipt
+   >    history to reconstruct. The value stays reachable through the
+   >    ordinary CHARGED path.
+   > 4. The `importedTupleSeen` storage comment still described the
+   >    attribution tombstone deleted in round 6, and documented the wrong
+   >    key.
+   >
+   > *Process note.* The round-3 guard for (3) was silently ABSENT for a
+   > while: an edit script wrote two files and aborted before the third, so
+   > the storage field, the arming valve and the wired selector all existed
+   > while the guard enforcing them did not. Compile, grep and
+   > selector-coverage all read as "applied". Only a test that SUCCEEDED
+   > where it should have reverted exposed it — a partially-applied script
+   > is more dangerous than a failed one, because the surviving pieces hide
+   > the gap.
 
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates

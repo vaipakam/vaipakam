@@ -1286,6 +1286,41 @@ contract RewardCompensationDispatchFacet is
         }
     }
 
+    /**
+     * @notice ADMIN — #1662 r7: arm PER-RECEIPT recovery attribution on an
+     *         in-place-upgraded Diamond, fixing the watermark at the
+     *         current reservation nonce.
+     * @dev    One-shot. Everything at or below the watermark predates
+     *         attribution: recovery credit was recorded per receipt, but
+     *         the spending and claws against it were tracked only
+     *         GLOBALLY, so the new per-receipt counters start at zero and
+     *         would report already-spent credit as still unspent. Arming
+     *         retires that legacy capacity conservatively rather than
+     *         attempting a migration the chain has no per-receipt history
+     *         to reconstruct — removing the old unattributed selectors
+     *         stops new unattributed writes but repairs nothing existing.
+     *         The retired value is not lost: it stays reachable through
+     *         the ordinary CHARGED dispatch path.
+     */
+    function armRecoveryAttribution()
+        external
+        onlyCanonical
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.recoveryAttributionArmed) {
+            revert RecoveryAttributionAlreadyArmed();
+        }
+        s.recoveryAttributionArmed = true;
+        s.recoveryAttributionArmedAt = s.remitReservationNonce;
+        emit RecoveryAttributionArmed(s.remitReservationNonce);
+    }
+
+    /// @notice #1662 r7 — per-receipt recovery attribution armed; receipts
+    ///         at or below `watermark` are no longer drawable.
+    /// @custom:event-category state-change/reward-compensation
+    event RecoveryAttributionArmed(uint256 watermark);
+
     /// @dev #1662 r2 — draw `amount` of uncharged re-dispatch capacity
     ///      against the NAMED source receipt's own recovery credit.
     ///
@@ -1309,6 +1344,18 @@ contract RewardCompensationDispatchFacet is
         uint256 sourceRemitId,
         uint256 amount
     ) private {
+        // #1662 r7 — a receipt that predates per-receipt attribution has
+        // credit on record but no per-receipt spend/claw history (those
+        // were tracked GLOBALLY only), so its unspent figure would read as
+        // the FULL credit however much was already drawn — and it could
+        // then consume a LATER receipt's backing. Refused outright; the
+        // value stays reachable through the ordinary charged path.
+        if (
+            s.recoveryAttributionArmed
+                && sourceRemitId <= s.recoveryAttributionArmedAt
+        ) {
+            revert RecoveryReceiptPredatesAttribution(sourceRemitId);
+        }
         uint256 credit = s.remitRecoveredForReceipt[sourceRemitId]
             - s.ceremonyRecycledRecovered[sourceRemitId];
         // #1662 r3 — CONFISCATED credit is not merely un-clawable, it is

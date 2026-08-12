@@ -2144,7 +2144,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](14);
         selectors[0] =
             RewardCompensationDispatchFacet.remitManualBudget.selector;
         selectors[1] =
@@ -2183,6 +2183,9 @@ contract HelperTest {
         // #1662 r4 - relocated off the remittance facet (EIP-170).
         selectors[12] =
             RewardCompensationDispatchFacet.releaseRemitReservation.selector;
+        // #1662 r7 - the one-shot attribution watermark.
+        selectors[13] =
+            RewardCompensationDispatchFacet.armRecoveryAttribution.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

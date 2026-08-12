@@ -2726,7 +2726,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](13);
+        s = new bytes4[](14);
         s[0] = RewardCompensationDispatchFacet.remitManualBudget.selector;
         s[1] =
             RewardCompensationDispatchFacet.remitSupplementalBudget.selector;
@@ -2763,6 +2763,9 @@ contract DeployDiamond is Script {
         // #1662 r4 - relocated off the remittance facet (EIP-170).
         s[12] =
             RewardCompensationDispatchFacet.releaseRemitReservation.selector;
+        // #1662 r7 - the one-shot attribution watermark.
+        s[13] =
+            RewardCompensationDispatchFacet.armRecoveryAttribution.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).

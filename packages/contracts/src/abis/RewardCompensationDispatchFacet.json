@@ -1,6 +1,13 @@
 [
   {
     "type": "function",
+    "name": "armRecoveryAttribution",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "clearImportedOutstanding",
     "inputs": [
       {
@@ -466,6 +473,19 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RecoveryAttributionArmed",
+    "inputs": [
+      {
+        "name": "watermark",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -2210,6 +2230,11 @@
   },
   {
     "type": "error",
+    "name": "RecoveryAttributionAlreadyArmed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RecoveryDeadlineExpired",
     "inputs": []
   },
@@ -2245,6 +2270,17 @@
       },
       {
         "name": "unspent",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RecoveryReceiptPredatesAttribution",
+    "inputs": [
+      {
+        "name": "sourceRemitId",
         "type": "uint256",
         "internalType": "uint256"
       }

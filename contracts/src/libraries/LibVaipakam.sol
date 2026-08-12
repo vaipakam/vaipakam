@@ -6499,7 +6499,27 @@ library LibVaipakam {
         //   credit re-dispatchable while the original delivery still backs
         //   mirror claims. This is the only link back from an old-era
         //   tuple to the local credit it produced.
+        // BASE-ONLY (#1662 r5, re-documented r7) — every imported tuple
+        //   ever seen, keyed `keccak256(abi.encode(dstChainId,
+        //   oldRemitter, oldRemitId))` — the CHAIN is part of the key.
+        //   Set at IMPORT and never cleared: permanent replay protection,
+        //   one parcel one import. (It is a boolean marker only; the
+        //   fresh-recovery attribution this once pointed at was removed
+        //   in r6 along with the mint that needed it.)
         mapping(bytes32 => bool) importedTupleSeen;
+        // BASE-ONLY (#1662 r7) — the reservation nonce at which
+        //   PER-RECEIPT recovery attribution was armed. Receipts at or
+        //   below it predate attribution: their recovery credit was
+        //   recorded, but the spending and claws against it were only
+        //   ever tracked GLOBALLY, so their per-receipt counters read
+        //   zero and would report already-spent credit as unspent —
+        //   letting a legacy receipt draw against a later receipt's
+        //   backing. Legacy receipts are therefore not drawable at all;
+        //   their value remains reachable through the ordinary charged
+        //   path. Zero on a fresh deploy (no receipts exist), so it
+        //   constrains nothing there.
+        uint256 recoveryAttributionArmedAt;
+        bool recoveryAttributionArmed;
         // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
         //   outstanding-compensation record for a chain after a Base
         //   deployment rotation: the RAW old-era tuple, not its hash —

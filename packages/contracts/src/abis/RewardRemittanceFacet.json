@@ -475,87 +475,6 @@
   },
   {
     "type": "event",
-    "name": "ImportedOutstandingConflict",
-    "inputs": [
-      {
-        "name": "sourceChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "oldRemitter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "oldRemitId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ImportedOutstandingObserved",
-    "inputs": [
-      {
-        "name": "sourceChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "oldRemitter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "oldRemitId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "classification",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ImportedOutstandingResolved",
-    "inputs": [
-      {
-        "name": "sourceChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "oldRemitter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "oldRemitId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "RemitAckAfterForcedFinalize",
     "inputs": [
       {
@@ -2413,6 +2332,11 @@
   },
   {
     "type": "error",
+    "name": "RecoveryAttributionAlreadyArmed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RecoveryDeadlineExpired",
     "inputs": []
   },
@@ -2448,6 +2372,17 @@
       },
       {
         "name": "unspent",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RecoveryReceiptPredatesAttribution",
+    "inputs": [
+      {
+        "name": "sourceRemitId",
         "type": "uint256",
         "internalType": "uint256"
       }

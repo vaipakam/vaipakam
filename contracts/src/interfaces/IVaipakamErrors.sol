@@ -477,6 +477,14 @@ interface IVaipakamErrors {
     ///         deployment's visible gate instead of its imported record).
     error ImportedTupleIsSentinel();
 
+    /// @notice #1662 r7 — this receipt predates per-receipt recovery
+    ///         attribution, so its unspent figure is not reconstructible
+    ///         and it may not fund an uncharged re-dispatch.
+    error RecoveryReceiptPredatesAttribution(uint256 sourceRemitId);
+
+    /// @notice #1662 r7 — attribution is a one-shot arming.
+    error RecoveryAttributionAlreadyArmed();
+
     /// @notice #1662 r5 — this tuple was already imported once. One
     ///         parcel, one import: the gate returns to zero at settlement,
     ///         so a replay would mint a second attribution.
