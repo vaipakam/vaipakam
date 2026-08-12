@@ -212,6 +212,13 @@ export function useOffsetPending(
       offerId !== null &&
       (!query.data.locked || !query.data.offerExists)
     ) {
+      // Deliberately an effect (#1520): this INVALIDATES persisted device
+      // state on verified chain evidence, so it is external-store
+      // synchronisation rather than derived state. Deriving the returned id
+      // during render would leave `offerId` — which is part of this hook's
+      // query key — still naming the offer just disproved, so the hook would
+      // keep verifying an offer it knows is gone.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       clear();
     }
   }, [query.data, offerId, clear]);

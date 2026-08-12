@@ -323,9 +323,16 @@ export function useLoanSalePending(
   // Conversely, a marker that FAILED verification while a listing
   // stands is stale (cancel + relist from another device): clear it
   // so the next tick's probe can find the real one.
+  // Deliberately an effect (#1520): this RECONCILES two external stores —
+  // the device marker in localStorage and what the chain/indexer verified —
+  // so it is synchronisation, not derived state. It cannot move into render:
+  // the reconciled id is persisted, and it feeds this hook's query key, so a
+  // render-derived value would leave the key pointing at the id it just
+  // disproved. The cascade is one extra render on a rare reconciliation.
   useEffect(() => {
     const d = query.data;
     if (d?.listed && d.offerId !== null && d.offerId !== markerId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       remember(d.offerId);
     }
     if (d?.listed && d.offerId === null && markerId !== null) {
@@ -339,6 +346,12 @@ export function useLoanSalePending(
   useEffect(() => {
     const d = query.data;
     if (d !== undefined && !d.listed && markerId !== null) {
+      // A LATCH, which is why deriving this during render is not an option
+      // (#1520): the triggering condition stops holding the instant `clear()`
+      // runs, so a derived value would flash on and off in the same pass. The
+      // notice has to outlive its own cause and persist until the user
+      // dismisses it via `clearEndedNotice`.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEndedNotice(true);
       clear();
     }

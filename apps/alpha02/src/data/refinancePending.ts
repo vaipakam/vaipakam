@@ -239,7 +239,13 @@ export function useRefinancePending(
   });
 
   // Self-heal: a deleted/foreign record clears the marker.
+  //
+  // Deliberately an effect (#1520), same reasoning as offsetPending: this
+  // invalidates persisted device state on verified chain evidence, and the
+  // marker feeds this hook's query key, so a render-derived value would keep
+  // the key naming a record already known to be gone.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (query.data === 'gone') clear();
   }, [query.data, clear]);
 
