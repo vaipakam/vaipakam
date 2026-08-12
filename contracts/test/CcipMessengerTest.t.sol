@@ -404,6 +404,71 @@ contract CcipMessengerTest is Test {
         vm.stopPrank();
     }
 
+    // ─── setChannelPeer re-point guard (#1650) ──────────────────────────────
+    //
+    // Why this is guarded at all, when the sibling setters guard routing:
+    // a wrong selector or handler makes messages fail to route, loudly. A
+    // wrong peer routes everything perfectly and simply tells the handler the
+    // wrong originator — the failure with no symptom. `setUp` has already
+    // pointed messengerB's CHANNEL/CHAIN_A peer at handlerA, so these exercise
+    // the LIVE-peer transitions rather than first-time assignment.
+
+    function test_SetChannelPeer_RevertWhen_RepointingLivePeer() public {
+        address other = address(0xBEEF);
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.ChannelPeerAlreadySet.selector,
+                CHANNEL,
+                CHAIN_A,
+                address(handlerA)
+            )
+        );
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, other);
+
+        // The refusal must leave the old peer in place — a half-applied
+        // re-point would be worse than either outcome.
+        assertEq(
+            messengerB.channelPeerOf(CHANNEL, CHAIN_A),
+            address(handlerA),
+            "refused re-point must not disturb the configured peer"
+        );
+    }
+
+    function test_SetChannelPeer_ClearThenSet_Succeeds() public {
+        address other = address(0xBEEF);
+
+        // Clearing is always allowed: it is how an operator deliberately
+        // takes the lane down before re-pointing it.
+        vm.prank(owner);
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, address(0));
+        assertEq(
+            messengerB.channelPeerOf(CHANNEL, CHAIN_A),
+            address(0),
+            "clear must zero the peer"
+        );
+
+        vm.prank(owner);
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, other);
+        assertEq(
+            messengerB.channelPeerOf(CHANNEL, CHAIN_A),
+            other,
+            "set after clear must apply"
+        );
+    }
+
+    function test_SetChannelPeer_SameValue_IsIdempotent() public {
+        // A redeploy or reconfigure script that reasserts its configuration
+        // must not need to know whether it has run before.
+        vm.prank(owner);
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, address(handlerA));
+        assertEq(
+            messengerB.channelPeerOf(CHANNEL, CHAIN_A),
+            address(handlerA),
+            "re-setting the same peer must be a no-op, not a revert"
+        );
+    }
+
     function test_Initialize_RevertWhen_CalledTwice() public {
         vm.expectRevert();
         messengerA.initialize(owner);
