@@ -193,6 +193,19 @@ contract CcipMessenger is
     error UnknownChannel(bytes32 channelId);
     /// @notice No business peer configured for a (channel, chain) pair.
     error NoChannelPeer(bytes32 channelId, uint256 chainId);
+
+    /// @notice A configured channel peer was re-pointed at a different
+    ///         address without first being cleared.
+    /// @dev Silent re-pointing is the failure this guards. The inbound
+    ///      `sourceSender` a local handler acts on is READ FROM CONFIG, not
+    ///      recovered from the message, so an operator who overwrites a live
+    ///      peer changes what every subsequent message on that lane claims to
+    ///      be — with no on-chain evidence that anything moved. Clearing first
+    ///      (`setChannelPeer(id, chain, address(0))`) makes the re-point two
+    ///      deliberate transactions and two events.
+    error ChannelPeerAlreadySet(
+        bytes32 channelId, uint256 remoteChainId, address current
+    );
     /// @notice An inbound message's decoded sender is not the registered
     ///         CcipMessenger for its source chain.
     error UnauthorizedSourceMessenger(uint64 selector, address sender);
@@ -352,6 +365,30 @@ contract CcipMessenger is
             abi.decode(message.data, (bytes32, bytes));
 
         // 3. Resolve the local handler and the configured business peer.
+        //
+        //    `sourceSender` is READ FROM CONFIG, not recovered from the
+        //    message — the envelope carries `(channelId, payload)` and never
+        //    the originating contract's address. Read on its own that looks
+        //    like an unverified claim, so state why it is not:
+        //
+        //      - step 1 above allowlists the source MESSENGER, so only our
+        //        own adapter on `sourceChainId` can deliver here at all;
+        //      - on that adapter, `sendMessage` derives the channel from the
+        //        CALLER (`channelOf[msg.sender]`) rather than accepting it as
+        //        an argument, and `registerChannel` keeps that map one-to-one.
+        //
+        //    So a message stamped `channelId` from `sourceChainId` can only
+        //    have originated from that chain's registered handler for that
+        //    channel. `channelPeerOf` is the operator's declaration of WHICH
+        //    address that is; the binding that makes the declaration true
+        //    lives on the send side.
+        //
+        //    That leaves operator configuration as the sole way this can be
+        //    wrong, which is why `setChannelPeer` refuses to silently
+        //    re-point a live peer. Verifying the originator on the wire
+        //    instead would mean transmitting it and breaking the message
+        //    format, to re-prove a property the send-side binding already
+        //    guarantees.
         address handler = handlerOf[channelId];
         if (handler == address(0)) revert UnknownChannel(channelId);
         address sourceSender = channelPeerOf[channelId][sourceChainId];
@@ -524,6 +561,21 @@ contract CcipMessenger is
     /// @notice Configure (or, with `address(0)`, clear) the domain contract
     ///         on a remote chain for a channel — the inbound `sourceSender`
     ///         the local handler is told a message came from.
+    /// @dev Re-pointing a live peer requires clearing it first. This is the
+    ///      "conflicting operator assignments must be rejected rather than
+    ///      overwritten" rule from the CCIP lane-hardening spec, and it
+    ///      matters more here than for the sibling setters: a selector or
+    ///      handler misconfiguration makes messages fail to route, loudly,
+    ///      whereas a wrong peer routes everything perfectly while telling
+    ///      the handler the wrong originator. That is the failure mode with
+    ///      no symptom.
+    ///
+    ///      Clearing and re-setting is two transactions and two
+    ///      `ChannelPeerSet` events, so a re-point is legible in the log
+    ///      rather than indistinguishable from a first-time assignment.
+    ///      Re-setting a peer to the value it already holds is allowed and
+    ///      idempotent — a redeploy script that reasserts its configuration
+    ///      should not need to know whether it ran before.
     function setChannelPeer(
         bytes32 channelId,
         uint256 remoteChainId,
@@ -531,6 +583,10 @@ contract CcipMessenger is
     ) external onlyOwner {
         if (channelId == bytes32(0)) revert ZeroChannelId();
         if (remoteChainId == 0) revert ZeroChainId();
+        address current = channelPeerOf[channelId][remoteChainId];
+        if (current != address(0) && peer != address(0) && current != peer) {
+            revert ChannelPeerAlreadySet(channelId, remoteChainId, current);
+        }
         channelPeerOf[channelId][remoteChainId] = peer;
         emit ChannelPeerSet(channelId, remoteChainId, peer);
     }
