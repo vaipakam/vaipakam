@@ -1,82 +1,83 @@
-# P2-w6 — the recovery ceremony settles stranded value, and rotations carry open compensations (#1434 R6d/R6e)
+# P2-w6 — stranded compensation value gets a settlement, and rotations carry open compensations (#1434 R6d/R6e)
 
-A compensation whose message could verifiably never execute used to end
-at "released": the day re-opened, but the chain's one-compensation-at-a-
-time gate stayed held, waiting for the stranded tokens' fate to be
-settled. That settlement now exists. When governance physically brings
-the stranded value home, an evidenced ceremony record books it: the
-recycled portion re-enters the platform's recycled custody under its own
-provenance label, and the fresh portion lands in the same recovery
-position that stranded returns feed — from which a replacement
-compensation can be funded without charging the lifetime reward budget a
-second time. Where part of the value is genuinely gone, governance
-records that as explicit terminal loss. The gate releases only when
-recovered value plus recorded loss account for everything the original
-dispatch sent — partial recoveries keep it held, recording more than was
-ever dispatched is refused, and a ceremony that claims tokens arrived
-without them actually being present rolls back.
+A compensation whose message could verifiably never execute used to end at
+"released": the day re-opened for funding, but the chain's
+one-compensation-at-a-time gate stayed held, waiting for the stranded
+tokens' fate to be settled. Nothing existed to settle it. That settlement
+now exists.
 
-Replacing an earlier intent: recovery no longer "restores" spent budget
+## Recovering stranded value
+
+When governance physically brings stranded value home, an evidenced
+ceremony records it. The recycled portion re-enters the platform's
+recycled custody under its own provenance label; the fresh portion lands
+in the same recovery position that stranded returns feed, from which a
+replacement compensation can be funded without charging the lifetime
+reward budget a second time. Where part of the value is genuinely gone,
+governance records that as explicit terminal loss, split by provenance the
+same way.
+
+The gate releases only when recovered value plus recorded loss account for
+everything the original dispatch sent. Partial recoveries keep it held,
+recording more than was ever dispatched is refused, each component is
+bounded by what that delivery actually sent of that kind, and a ceremony
+claiming tokens arrived without them actually being present rolls back.
+
+Recovery is tracked **per original delivery**, not as one undifferentiated
+pool. This matters when a delivery is later contradicted: only the value
+still unspent from that particular delivery is frozen, so one contradicted
+delivery can never consume recovery capacity belonging to another — which
+that other delivery could not re-earn, its own entitlement being spent.
+When a contradiction does occur, the whole of that delivery's remaining
+entitlement is voided, not merely the part reclaimable at that instant, so
+it cannot quietly become spendable again out of value belonging to someone
+else.
+
+Value written off as permanently lost is recorded with the same care as
+value recovered: both stop counting as still in transit, so a written-off
+balance cannot go on appearing to back live obligations. Value that
+returns late is credited only up to what has not already been recovered or
+written off, so what is recovered plus what was written off can never
+exceed what was originally sent.
+
+*Replacing an earlier intent:* recovery no longer "restores" spent budget
 headroom. Keeping the lifetime figure permanently monotone and running
 replacements uncharged from the recovery position is economically
 identical, with one recovery pattern instead of two.
 
-Deployment rotations can no longer silently forget an open
-compensation. The outstanding-chain inventory is enumerable; the
-rotation ceremony imports any still-open chain's gate onto the new
-deployment, keyed to the old deployment's receipt. The imported gate
-blocks new compensation dispatches for that chain until the old
-delivery's fate is proven: a mirror can permissionlessly re-present its
-receipt, and a consumed outcome releases the gate on the spot, while
-anything else stays held for the operator's evidenced settlement,
-which books whatever value physically came home as it releases the
-gate.
+## Rotations
 
-A late confirmation that the original delivery did go through after all
-now settles the chain by itself: the compensation funded what it was sent
-for, so the gate opens and the chain can be compensated again. Where the
-mirror's own reports contradict each other, nothing is taken on trust —
-the gate stays shut until governance settles it with evidence, and any
-recovery credit that the contradiction calls into question is frozen
-rather than left spendable.
+A deployment rotation can no longer silently forget an open compensation.
+The outstanding-chain inventory is enumerable, and the rotation ceremony
+carries any still-open chain's gate onto the new deployment, keyed to the
+old deployment's receipt — including any evidence already observed about
+that delivery, so a contradiction seen before the rotation is not
+laundered into a clean outcome after it. Each open delivery can be carried
+across exactly once.
 
-Recovered value is now tracked per original delivery rather than as one
-undifferentiated pool. That matters when a delivery is later contradicted:
-only the value still unspent from that particular delivery is frozen, so
-one contradicted delivery can no longer consume the recovery capacity that
-belonged to another. Value written off as permanently lost is recorded
-with the same care as value recovered — both stop counting as still in
-transit, so a written-off balance cannot go on appearing to back live
-obligations.
+The carried gate blocks new compensation for that chain until the old
+delivery's fate is proven. A mirror can permissionlessly re-present its
+receipt, and a consumed outcome releases the gate on the spot; anything
+else stays held for the operator's evidenced settlement.
 
-Where a delivery's recovery is contradicted, the whole of its remaining
-recovery entitlement is voided rather than only the part that could be
-reclaimed at that moment — so it cannot quietly become spendable again
-later out of value that belongs to a different delivery. And when
-governance settles a compensation carried over from a retired deployment,
-the recovered amount is booked against a freshly issued reference that the
-replacement dispatch can actually name, so carried-over value does not end
-up earmarked with no way to spend it.
+**A carried-over settlement creates no spending capacity of its own.** It
+releases the block, and recycled value that physically came home re-enters
+platform custody; anything else remains ordinary custody. A replacement
+compensation is then funded through the normal charged path, which
+correctly counts against *this* deployment's lifetime budget rather than
+assuming an earlier deployment's accounting carries across — it does not.
+The consequence is that a mistaken carry-over costs only availability on
+the one chain it names, and never value.
 
-Settling a compensation carried over from a retired deployment is bounded
-by what that original delivery actually sent, recorded at the time it is
-carried over — so a settlement cannot claim more than was ever at stake.
-And if the old chain later reports that the original delivery went through
-after all, the recovery credit that settlement created is voided, even
-though the carry-over record itself has already been closed out.
+## Late confirmations
 
-What a carried-over compensation was worth is now established by reading
-the retired deployment's own record rather than by anything the operator
-types, and only the part that deployment had not already settled can be
-carried. Each carried-over delivery can be brought across exactly once,
-and the evidence that later voids its recovery is bound to the chain that
-delivery belonged to — so no other chain can reach it.
+If a released delivery turns out to have been consumed after all, that
+settles the chain by itself: the compensation funded what it was sent for,
+so the gate opens and the chain can be compensated again, and the funding
+accounting the release had unwound is re-closed — otherwise a replacement
+could be funded against a quota the original already met.
 
-Settling a compensation carried over from a retired deployment no longer
-creates any spending capacity of its own. It releases the block on that
-chain, and value that physically came home re-enters ordinary custody —
-so a replacement is funded the normal way, which correctly counts against
-this deployment's own lifetime budget rather than assuming an earlier
-deployment's accounting carries across. Recovery of value returned late
-also now accounts for anything already written off, so what is recovered
-plus what was written off can never exceed what was originally sent.
+Where a mirror's own reports contradict each other, nothing is taken on
+trust. The gate stays shut until governance settles it with evidence, and
+any recovery credit the contradiction calls into question is frozen rather
+than left spendable.

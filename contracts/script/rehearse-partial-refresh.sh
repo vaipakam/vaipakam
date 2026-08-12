@@ -86,16 +86,32 @@ RISK_PREVIEW_SELECTORS=(
   0x2c87c1a3  # saleAdmission
 )
 
-# KNOWN FAILURE — ReplaceStaleFacets currently fails at step 6, and the failure
-# is REAL, not a flaw in this script. Once the rehearsal was pointed at the
-# listing-accept branch this script actually refreshes (N26, per the mapping
-# below), the post-refresh sale reverted `ERC721InsufficientApproval` from inside
-# `completeLoanSaleInternal`. The same scenario passes on a chain that has NOT
-# been partially refreshed, and it fails identically against the pre-#1649
-# version of the refresh script, so it predates the routing work and is not
-# caused by it. Tracked as #1659 with the full trace. Do not "fix" this by
-# pointing the rehearsal back at N25 — that is precisely the blind spot that hid
-# the defect (Codex #1635 r5).
+# KNOWN FAILURE — ReplaceStaleFacets still fails at step 6, and the failure is
+# REAL, not a flaw in this script. Do not "fix" it by pointing the rehearsal
+# back at N25 — that is precisely the blind spot that hid the defect
+# (Codex #1635 r5).
+#
+# The DIAGNOSIS first recorded here was wrong on every substantive point, and
+# the corrected one matters because it changes who should pick this up:
+#
+#   - The revert is `ERC20InsufficientAllowance` (0xfb8f41b2), NOT
+#     `ERC721InsufficientApproval` (0x177e802f). The original trace's revert
+#     data carries three words, which the ERC-721 error cannot encode. The
+#     failing call is an ERC-20 `transferFrom` whose third argument is an
+#     AMOUNT, not a tokenId — the lender position never moves by transfer at
+#     all (`LibLoan.migrateLenderPosition` burns and re-mints it).
+#   - It is NOT caused by the refresh. It reproduces on a plain
+#     `anvil-bootstrap.sh` chain with no refresh applied.
+#   - The defect is that sale completion settles accrued interest by pulling
+#     from the SELLER's wallet on allowance (T-037's direct-from-payer
+#     pattern). That assumes the payer is the transaction's caller, which is
+#     true on the direct sale and false on the resting-listing accept, where
+#     the BUYER is the caller. It is masked whenever accrued interest is zero,
+#     which is every same-timestamp simulation and in-process test.
+#
+# So N25 surviving a refresh and N26 not is about WHO CALLS, not about which
+# facet was reinstalled. Tracked as #1659, retitled accordingly, with the
+# corrected trace.
 fail() { echo "REHEARSAL FAILED: $*" >&2; exit 1; }
 step() { echo; echo "--- $*"; }
 

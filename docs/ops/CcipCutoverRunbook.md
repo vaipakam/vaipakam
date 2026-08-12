@@ -260,41 +260,49 @@ Rotating the admin multisig → governance timelock is the final step.
 ### Rotation: outstanding compensations must survive the cutover (#1434 P2-w6)
 
 Before retiring a canonical Base deployment, read
-`getCompensationOutstandingChains()` on it. For every chain listed,
-either settle the compensation first (consumption ack, stranded return,
-or recovery ceremony + terminal loss), or carry it over: on the NEW
-deployment run `importOutstandingCompensation(chain, oldDeployment,
-oldRemitId, quarantineObserved)` for each open tuple.
+`getCompensationOutstandingChains()` on it. For every chain listed, either
+settle the compensation first (consumption ack, stranded return, or
+recovery ceremony + terminal loss), or carry it over to the new
+deployment. No unresolved compensation may be silently forgotten by a
+redeploy.
 
-The import carries no parcel figures at all, and needs none: settling an
-imported gate creates no spending capacity, so there is nothing a wrong
-figure could inflate. A mistaken import costs only liveness on that one
-chain — new compensation is blocked until the evidenced clear runs — and
-each tuple may be imported exactly once.
+**Carrying one over.** On the NEW deployment, run
+`importOutstandingCompensation(chain, oldDeployment, oldRemitId,
+quarantineObserved)` for each open tuple.
 
-When old-era value physically comes home, settle with
-`clearImportedOutstanding(chain, recycledInflow)`: the recycled component
-re-enters bucket custody (the call asserts the tokens are actually
-present), and any FRESH component simply remains in custody. Fund the
-replacement compensation through the ordinary charged path — the new
-deployment's lifetime budget counter starts at zero and never charged for
-the old parcel, so charging it now is the correct accounting, not a
-double charge.
+- Read the tuple from the retiring deployment's `getImportedOutstanding`
+  when that deployment was ITSELF holding a carried-over gate. Its visible
+  `getCompensationOutstanding` reads a sentinel in that case, and
+  importing the sentinel is refused — no old-era acknowledgement could
+  ever match it.
+- Carry `quarantineObserved` across. Dropping it would turn a mirror's
+  already-observed quarantine-then-consumed contradiction back into a
+  clean consumption on the new deployment.
+- Each tuple may be imported exactly once.
 
-Read the tuple from the retiring deployment's `getImportedOutstanding`
-when that deployment was ITSELF holding an imported gate — its visible
-`getCompensationOutstanding` reads a sentinel in that case, and importing
-the sentinel is refused precisely because no old-era acknowledgement could
-ever match it. Carry `quarantineObserved` across too: dropping it would
-turn a mirror's already-observed quarantine-then-consumed contradiction
-back into a clean consumption on the new deployment. The imported gate blocks new
-compensation dispatches for that chain until the old-era evidence
-resolves it — a mirror's re-presented CONSUMED ack releases it
-permissionlessly; anything else resolves through the evidenced settlement
-`clearImportedOutstanding(chain, freshInflow, recycledInflow)`,
-which books whatever value physically came home as it releases the
-gate (both components zero for a pure loss). No unresolved
-compensation may be silently forgotten by a redeploy.
+The import carries no figures about the parcel, and needs none: settling a
+carried-over gate creates no spending capacity, so there is nothing a
+wrong figure could inflate. A mistaken import therefore costs only
+availability on the one chain it names — new compensation is blocked there
+until the settlement runs — and never value.
+
+**Resolving it.** The carried gate blocks new compensation for that chain
+until the old delivery's fate is proven:
+
+- the mirror's re-presented CONSUMED acknowledgement releases it
+  permissionlessly; or
+- the operator settles it with
+  `clearImportedOutstanding(chain, recycledInflow)`.
+
+On settlement the recycled component re-enters bucket custody — the call
+asserts those tokens are actually present — and any fresh component simply
+remains in ordinary custody. Pass `0` when nothing came home.
+
+**Funding the replacement.** Use the ordinary CHARGED path
+(`remitManualBudget`), not a from-recovery dispatch. The new deployment's
+lifetime budget counter starts at zero and never charged for the old
+parcel, so charging it now is the correct accounting rather than a double
+charge.
 
 - **Fund the `VpfiBuyReceiver` ETH float.** The cross-chain buy is two
   legs; the receiver pays leg 2's CCIP fee from a held ETH balance. Send

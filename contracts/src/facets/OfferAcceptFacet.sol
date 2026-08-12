@@ -1208,19 +1208,49 @@ contract OfferAcceptFacet is
             bool isSaleVehicleAccept = s.saleOfferToLoanId[offerId] != 0;
 
             if (isSaleVehicleAccept) {
-                // Secondary-market position transfer — deliver the full sale
-                // principal to the seller (the underlying loan already paid its
-                // LIF at origination; #951).
+                // Secondary-market position transfer — no LIF is charged (the
+                // underlying loan already paid its own at origination; #951).
+                //
+                // #1659 — the sale principal is ESCROWED in Diamond custody here
+                // rather than paid straight to the seller, so completion can NET
+                // the seller's forfeited accrued interest and any rate shortfall
+                // out of the incoming proceeds. The canonical spec requires that
+                // ordering ("Smart Contract Actions"): *"the sale flow should
+                // prefer net settlement so protocol-defined forfeitures or
+                // shortfalls can be deducted directly from the incoming proceeds
+                // instead of requiring Liam to source separate wallet liquidity in
+                // the same asset"*.
+                //
+                // Paying the seller in full here forced completion to claw the
+                // forfeit back with a `transferFrom` against the seller's WALLET,
+                // which cannot work on this route: the BUYER is the caller, so the
+                // seller cannot approve inside someone else's transaction, and a
+                // real seller holds no standing allowance. The DIRECT sale
+                // (`sellLoanViaBuyOffer`) has always escrowed-then-fanned-out for
+                // exactly this reason — this makes the two routes agree instead of
+                // diverging on who funds the forfeit.
+                //
+                // The escrow and the split are inseparable: the auto-complete
+                // block below fires on the SAME `saleOfferToLoanId[offerId] != 0`
+                // predicate as this branch and reverts the whole transaction if
+                // completion fails, so escrowed proceeds cannot be left stranded.
+                // The seller still receives the full sale price net of what they
+                // already owed.
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC20.selector,
                         lender,
                         offer.lendingAsset,
-                        borrower,
+                        address(this),
                         effectivePrincipal
                     ),
                     VaultWithdrawFailed.selector
                 );
+                // Inlined rather than held in a local: this viaIR frame is already
+                // at its stack budget (see `chargeBorrowerLifAndDeliver` below).
+                s.saleProceedsEscrow[
+                    s.saleOfferToLoanId[offerId]
+                ] = effectivePrincipal;
             } else {
                 // HoldOnly hybrid borrower LIF (#1352, redesign §F3): charge the
                 // consent-gated, hold-tier-discounted lending-asset LIF and
