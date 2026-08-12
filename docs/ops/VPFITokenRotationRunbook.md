@@ -68,16 +68,15 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    settle, cancel, claim) open. Known inflow surfaces (**non-exhaustive** — the
    guarantee is step 5, not this list): offer-create, offer-accept; the VPFI
    vault-deposit surfaces (`depositVPFIToVault` / `depositVPFIToVaultWithPermit`);
-   and, where fixed-rate VPFI sales are enabled, the buy surfaces
-   (`buyVPFIWithETH`, `processBridgedBuy`). Each credits/stamps VPFI under the
-   *current* token. Do **not** apply a blanket global pause here — it would also
+   Each credits/stamps VPFI under the *current* token. Do **not** apply a
+   blanket global pause here — it would also
    freeze the drain paths and deadlock the procedure (the hard freeze comes
    later, step 4, once the drain is done).
    **Caveat — no deposit-only pause.** The current Diamond does NOT expose a
    per-function deposit-only pause (you cannot freeze `depositVPFIToVault`
    while leaving withdraws open). Inflow-reduction here is therefore coarse:
    announce, and run the drain during a deliberate **low-activity window**. The
-   only true inflow stop is the step-4 hard freeze; until then deposits/buys may
+   only true inflow stop is the step-4 hard freeze; until then deposits may
    still land. That residual race is acceptable pre-live (low volume) and is
    caught by the step-5 re-verify under freeze — but see **Known limitations**.
 2. **Enumerate ALL old-token exposure.** Identify every:
@@ -116,9 +115,10 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    TOTAL: account for the entire old-token VPFI supply the protocol controls.
    That includes the step-2 classes (offers, loans, encumbrances, tracked
    vault balances, borrower-LIF custody) **and** every place the protocol can
-   hold VPFI directly — the **Diamond's own reserve balance** (fixed-rate-buy
-   reserve, staking / interaction-reward pools) and any other VPFI-custodying
-   contract (e.g. the cross-chain buy receiver). Concretely: sum
+   hold VPFI directly — the **Diamond's own reserve balance** (staking /
+   interaction-reward pools, retained reward backing, and remittance funding)
+   and any other VPFI-custodying contract (for example a CCIP remittance or
+   return receiver). Concretely: sum
    `IERC20(oldToken).balanceOf(...)` across the Diamond, every user vault, and
    every custodying contract, and reconcile it to zero (or to amounts that are
    explicitly migration-handled). If anything remains, UNFREEZE, drain / migrate
@@ -130,10 +130,12 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    freeze, updates only the Diamond's `s.vpfiToken` and emits both
    `VPFITokenSet` and — because `previous != 0` — `VPFITokenRotated(previous,
    newToken)`. But other contracts carry their **own** VPFI token reference and
-   must be repointed in the same window — notably the cross-chain fixed-rate
-   **buy receiver** (and any buy adapter), which would otherwise keep
-   minting/crediting the OLD token. Enumerate all such pointers and update them
-   atomically-enough that no inbound flow lands on a stale token.
+   must be repointed in the same window — notably CCIP token pools,
+   remittance receivers, return receivers, and any future VPFI-aware
+   contract that stores its own token pointer. Enumerate all such pointers
+   and update them atomically-enough that no inbound flow lands on a stale
+   token. The removed fixed-rate buy receiver/adapter are not part of new
+   deployments.
 7. **Confirm the audit event.** Ops/indexer must observe `VPFITokenRotated` and
    record that the drain + zero-verification (steps 2–5) preceded it. The event
    is the on-chain breadcrumb; it does not by itself prove the drain.
@@ -157,9 +159,9 @@ operator does not over-trust it:
   the step-2 list is the known set but is explicitly **non-exhaustive**; the
   step-5 under-freeze re-verify is what makes the procedure correct regardless
   of any surface the list omits.
-- **Multi-pointer.** `setVPFIToken` repoints only the Diamond; the cross-chain
-  buy receiver / adapter (and any future VPFI-aware contract) carry their own
-  pointer and must be updated in the same window.
+- **Multi-pointer.** `setVPFIToken` repoints only the Diamond; CCIP pools,
+  remittance/return receivers, and any future VPFI-aware contract can carry
+  their own pointer and must be updated in the same window.
 
 **For routine rotations with live state, do not rely on this manual
 procedure** — build a comprehensive on-chain migration mechanism (per-position

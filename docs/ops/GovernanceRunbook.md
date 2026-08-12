@@ -11,8 +11,8 @@ Three roles, each with a different response budget:
 
 | Role | Held by | Path | Delay | Can do |
 |---|---|---|---|---|
-| Owner | Governance Safe (e.g. 4/7) | via Timelock | 48h | `diamondCut`, `setZeroExProxy`, LZ `setConfig`, UUPS upgrades, `setGuardian`, `unpause` |
-| Guardian | Incident-response Safe (e.g. 2/3) | direct | 0 | `pause()` on the Diamond and every LZ OApp |
+| Owner | Governance Safe (e.g. 4/7) | via Timelock | 48h | `diamondCut`, `setZeroExProxy`, CCIP messenger/channel config, UUPS upgrades, `setGuardian`, `unpause` |
+| Guardian | Incident-response Safe (e.g. 2/3) | direct | 0 | `pause()` on the Diamond and every `GuardianPausable` cross-chain contract |
 | KYC Ops | Ops Safe (may equal Guardian) | direct | 0 | per-user tier bumps (`KYC_ADMIN_ROLE`) |
 
 The Guardian exists to close the detect-to-freeze window that a 48h
@@ -90,20 +90,21 @@ After this tx lands the Diamond is fully timelock-controlled. Any
 further admin action must be Safe-proposed → 48h wait →
 Safe-executed.
 
-### 4. Migrate OApp + VPFIToken ownership
+### 4. Migrate cross-chain + VPFIToken ownership
 
 ```bash
 CONFIRM_HANDOVER=YES \
 GOVERNANCE_GUARDIAN=<GUARDIAN_SAFE> \
-forge script script/MigrateOAppGovernance.s.sol \
+forge script script/Handover.s.sol \
   --rpc-url $RPC --broadcast
 ```
 
 For every cross-chain contract deployed on this chain (canonical has
-`CcipMessenger` + `VaipakamRewardMessenger` + `VpfiBuyReceiver` + the
-canonical `VPFIToken` and its CCIP `LockReleaseTokenPool`; mirror
-chains have `CcipMessenger` + `VaipakamRewardMessenger` +
-`VpfiBuyAdapter` + `VPFIMirrorToken` + the CCIP `BurnMintTokenPool`),
+`CcipMessenger` + `VaipakamRewardMessenger` + the canonical
+`VPFIToken` and its CCIP `LockReleaseTokenPool`; mirror chains have
+`CcipMessenger` + `VaipakamRewardMessenger` + `VPFIMirrorToken` + the
+CCIP `BurnMintTokenPool`; chains with remittance/return receivers include
+those too),
 the script:
 
 1. Calls `setGuardian(guardian)` while the deployer still owns it
@@ -118,7 +119,7 @@ silently skipped so the same script runs on canonical and mirror chains.
 
 ### 5. Safe-schedule `acceptOwnership()` on each 2-step contract
 
-After step 4, each OApp (and `VPFIToken` on canonical) has the Timelock
+After step 4, each cross-chain Ownable2Step contract (and `VPFIToken` on canonical) has the Timelock
 listed as *pending* owner. Ownership doesn't transfer until the new
 owner calls `acceptOwnership()`. Since the Timelock IS the new owner,
 someone must schedule that call through the Timelock.
@@ -153,9 +154,9 @@ ac.hasRole(PAUSER_ROLE, deployerEOA)            == false
 // VPFIToken (canonical only)
 Ownable2Step(vpfiToken).owner()                 == timelock
 
-// Each LZ OApp
-Ownable2Step(oapp).owner()                      == timelock
-LZGuardianPausable(oapp).guardian()             == guardian
+// Each GuardianPausable cross-chain contract
+Ownable2Step(target).owner()                    == timelock
+GuardianPausable(target).guardian()             == guardian
 ```
 
 A Foundry test `test/GovernanceHandover.t.sol` can drive all of these
@@ -401,7 +402,8 @@ Guardian Safe directly calls `pause()` on the relevant contract:
 - `AdminFacet.pause()` on the Diamond — halts every `whenNotPaused`
   Diamond entry point.
 - `CcipMessenger.pause()` / `VaipakamRewardMessenger.pause()` /
-  `VpfiBuyAdapter.pause()` / `VpfiBuyReceiver.pause()` /
+  `RewardRemittanceReceiver.pause()` / `BuybackRemittanceReceiver.pause()` /
+  `VpfiReturnSender.pause()` / `VpfiReturnReceiver.pause()` /
   `VPFIMirrorToken.pause()` — halts send and receive legs on every
   cross-chain contract carrying `GuardianPausable`.
 
