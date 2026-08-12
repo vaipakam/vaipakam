@@ -81,3 +81,27 @@ governor — to the governance timelock. That is recorded as a known
 follow-up in the cutover runbook, where it remains a manual multisig
 step, and it is real work rather than cleanup. It has not been made worse
 by anything above, but it is the one genuine gap the sweep did not close.
+
+**Three defects in the first cut of this change, caught in review.** All
+three were in the new material rather than the removals, and two of them
+would have broken a deploy:
+
+- The CCIP variables were documented under the names the Forge scripts
+  read, not the names an operator sets. `deploy-chain.sh` resolves a
+  per-slug `CCIP_ROUTER_<SLUG>` and exports the bare name itself — and
+  treats a hand-set bare `CCIP_ROUTER` as a hard error precisely because
+  that is how one chain's router gets wired into another chain's deploy.
+  The template now shows the per-slug form.
+- The template pre-filled the canonical Base chain id with the testnet
+  value. Mainnet only forces the real value inside its configure phase,
+  so the earlier contract-deploy and lane-wiring phases would have used
+  whatever was in the environment — and the mirror-chain preflight checks
+  only that the value is *set*, not that it is right. A copied template
+  would therefore have wired a mainnet mirror to the testnet reward hub.
+  It now ships unset so the preflight stops and the operator chooses.
+- The environment rename introduced a regression of its own: the deploy
+  wrappers clear the old variable name before injecting the address they
+  resolved from the artifact, and the new name — which takes priority —
+  was not being cleared. A value left in an operator's `.env` would have
+  outranked the wrapper and tripped the mismatch check on multi-chain
+  runs. Both wrappers now clear and populate the current name.

@@ -1279,25 +1279,32 @@ EOF
   fi
   # DeployCrosschain records the reward contract under `.rewardMessenger`.
   # Hand ConfigureRewardReporter that address explicitly via the legacy
-  # env-var name `REWARD_OAPP_PROXY` (kept for back-compat). Pre-PR-#272
+  # env-var name `REWARD_MESSENGER_PROXY` (the legacy `REWARD_OAPP_PROXY`
+  # is still accepted by the script). Pre-PR-#272
   # artifacts store the same address under `.rewardOApp`; fall back to it.
   #
-  # IMPORTANT: explicitly unset `REWARD_OAPP_PROXY` before the read so a
+  # IMPORTANT: explicitly unset the override before the read so a
   # stale carry-over from a prior chain's run in a multi-chain loop
   # cannot silently override this chain's correct artifact resolution.
   # Without the reset, chain B would inherit chain A's exported value if
   # chain B's addresses.json happens to be missing both keys — pointing
   # at the wrong-chain messenger silently.
   # Flagged in the second-round external review of PR #272.
+  #
+  # BOTH names are cleared. `REWARD_MESSENGER_PROXY` is the current one
+  # and takes priority in ConfigureRewardReporter; clearing only the
+  # legacy name would let a value the operator left in .env outrank the
+  # artifact we resolve here and trip the mismatch check.
+  unset REWARD_MESSENGER_PROXY
   unset REWARD_OAPP_PROXY
   REWARD_MSGR=$(jq -r '.rewardMessenger // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   if [ -z "$REWARD_MSGR" ]; then
     REWARD_MSGR=$(jq -r '.rewardOApp // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   fi
   if [ -n "$REWARD_MSGR" ]; then
-    export REWARD_OAPP_PROXY="$REWARD_MSGR"
+    export REWARD_MESSENGER_PROXY="$REWARD_MSGR"
   fi
-  # If both keys missed, REWARD_OAPP_PROXY stays unset; ConfigureRewardReporter
+  # If both keys missed, the override stays unset; ConfigureRewardReporter
   # then falls through to `Deployments.readRewardMessenger()` which has
   # its own library-level fallback (and reverts loudly if it also misses).
 
