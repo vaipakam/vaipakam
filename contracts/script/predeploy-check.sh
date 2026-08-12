@@ -358,8 +358,28 @@ fi
 #     what an operator copies, and it was the worst offender — it shipped
 #     LZ_ENDPOINT_* and a whole fixed-rate-buy block for deleted scripts
 #     while omitting every CCIP_* variable the current deploy requires.
+#     The scanned SET matters as much as the pattern. `lzEid` /
+#     `lzEidForChain` can only come back from the artifact writer, the
+#     deploy script that calls it, or a committed artifact — none of
+#     which are shell wrappers. Scanning only the wrappers would have
+#     made those two patterns decorative: they would never have matched
+#     anything, and the guard would have reported success for a residue
+#     it structurally could not see. So the writer, `DeployDiamond`, the
+#     per-chain artifacts and the consolidated bundle are all in scope.
 LZ_RESIDUE='BASE_EID|LOCAL_EID|RewardOApp|OFTAdapter|LZ_ENDPOINT|REMOTE_EID|LOCAL_OAPP|lzEid|lzEidForChain|VPFI_BUY_RECEIVER_EID|WireVPFIPeers'
-for s in "${DEPLOY_SH[@]}" "../.env.example"; do
+LZ_SCAN=(
+  "${DEPLOY_SH[@]}"
+  "../.env.example"
+  "lib/Deployments.sol"
+  "DeployDiamond.s.sol"
+)
+# Committed deployment artifacts + the bundle every consumer imports.
+while IFS= read -r _f; do
+  LZ_SCAN+=("${_f#"$SCRIPT_DIR/"}")
+done < <(ls "$SCRIPT_DIR"/../deployments/*/addresses.json 2>/dev/null)
+LZ_SCAN+=("../../packages/contracts/src/deployments.json")
+
+for s in "${LZ_SCAN[@]}"; do
   [ -f "$SCRIPT_DIR/$s" ] || continue
   # Comment lines are exempt: a note saying "this variable is gone, do
   # not carry it forward" must be allowed to name the thing it retires.

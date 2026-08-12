@@ -798,10 +798,17 @@ four code edits**:
    `if (cid == X) return "<PREFIX>_";`. This is the binding that turns
    `block.chainid == 97` into `vm.envAddress("BNB_TESTNET_DIAMOND_ADDRESS")`
    when the artifact file is missing.
-3. **`contracts/script/lib/Deployments.sol#lzEidForChain()`** — add the
-   LayerZero V2 endpoint id row (e.g. `if (cid == 97) return 40102;`).
-   Every Deploy*OApp* / RewardOApp script stamps this into
-   `addresses.json#lzEid` automatically.
+3. **`contracts/script/lib/Deployments.sol#ccipSelectorForChainId()`** —
+   add the chain's CCIP chain-selector row (from Chainlink's published
+   Supported Networks directory), the CCIP analogue of what used to be
+   an endpoint-id row here. There is no longer an `lzEidForChain()` to
+   edit and nothing stamps `addresses.json#lzEid` — the resolver and the
+   stamp were both removed once the transport became CCIP-only. Set the
+   chain's `CCIP_ROUTER_<SLUG>` / `CCIP_RMN_PROXY_<SLUG>` /
+   `CCIP_TOKEN_ADMIN_REGISTRY_<SLUG>` /
+   `CCIP_REGISTRY_MODULE_OWNER_CUSTOM_<SLUG>` in `.env` alongside it, and
+   add the chain id to `CCIP_LANE_CHAIN_IDS` on every chain that should
+   route to it.
 4. **`apps/defi/src/contracts/config.ts`** — add the per-chain record,
    literally spelling out the `VITE_<PREFIX>_*` keys it consumes
    (`rpcUrl`, `diamondAddress`, `deployBlock`,

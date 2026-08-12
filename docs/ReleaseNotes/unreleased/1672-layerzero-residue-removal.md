@@ -105,3 +105,33 @@ would have broken a deploy:
   was not being cleared. A value left in an operator's `.env` would have
   outranked the wrapper and tripped the mismatch check on multi-chain
   runs. Both wrappers now clear and populate the current name.
+
+A second review round found four more, again all in the new material:
+
+- Only the router and RMN entries had been converted to per-slug names;
+  the two CCT registry addresses were still documented bare, and the
+  wrappers resolve all four the same way. Fixed.
+- The template's advice for the reward-messenger override — "populate
+  once, reuse everywhere", inherited from the CREATE2 bootstrap — is
+  false today. That deploy path is gone: the messenger is created with an
+  ordinary deploy, no script reads the version variable that used to salt
+  it, and the committed artifacts hold a different address per chain. So
+  a single reused value makes the agreement check abort. The variable is
+  removed, the override is documented as best left unset, and the two
+  deploy wrappers stop telling operators to bump a version that no longer
+  does anything.
+- The widened guard did not scan the files that can actually recreate the
+  endpoint-id stamp — the artifact writer, the deploy script that calls
+  it, the committed artifacts, the consumed bundle. Those two patterns
+  were therefore decorative: they could never have matched, and the guard
+  would have reported success for residue it structurally could not see.
+  The scan set now covers them, and that was verified by putting the
+  field back into an artifact and watching the gate fail.
+- The runbook's "adding a new chain" checklist still told operators to
+  edit the deleted endpoint-id resolver — a procedure that cannot be
+  completed. It now names the CCIP selector resolver and the per-slug
+  infrastructure variables that go with it.
+
+The pattern across both rounds is worth recording: every defect was in
+something newly written, not in anything removed. Deleting dead code is
+low-risk; describing what replaced it is where the mistakes were.

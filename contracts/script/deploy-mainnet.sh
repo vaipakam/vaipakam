@@ -633,9 +633,10 @@ $DEPLOY_DIR/.archive/<ISO-8601>/. The second confirm asserts you
 have reviewed the archive and genuinely intend to walk away from the
 prior on-chain deploy.
 
-Bump REWARD_VERSION in .env before re-running so the new reward messenger
-proxy lands at a fresh CREATE2 address. Current REWARD_VERSION:
-${REWARD_VERSION:-(unset)}
+The re-deploy creates a NEW reward messenger at a NEW address — it is a
+plain deploy, not CREATE2, so nothing needs bumping to force that. Every
+other chain's lane config that names the old address must be re-pointed
+at the one this run writes to addresses.json.
 EOF
       exit 1
     fi
@@ -692,8 +693,9 @@ EOF
     echo "[0a] --fresh + --confirm-purging-prior-mainnet-deploy: archiving prior chain state for $CHAIN_SLUG"
     archive_chain_state "$CHAIN_SLUG"
     echo
-    echo "  ⚠ Bump REWARD_VERSION in .env before this re-deploy lands."
-    echo "    Current REWARD_VERSION: ${REWARD_VERSION:-(unset)}"
+    echo "  ⚠ The re-deploy creates a NEW reward messenger at a NEW"
+    echo "    address (plain deploy, not CREATE2). Re-point every other"
+    echo "    chain's lane config at the address this run records."
     echo
   fi
 
