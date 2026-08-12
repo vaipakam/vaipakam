@@ -29,6 +29,18 @@ Audience: release engineer + signing multisig.
 > 2. **`ConfigureCcip.s.sol`** — channel peers, lane rate limits,
 >    `TokenAdminRegistry` registration, guardian wiring. Idempotent.
 >
+> **Amendment — the last of the LZ residue is now gone from the code.**
+> `lzEid` is no longer written into `addresses.json` (the eid resolver
+> that produced it is deleted), so it will not appear in any new
+> deployment artifact or in the consolidated `deployments.json` bundle;
+> `.env.example` no longer carries `LZ_ENDPOINT_*`, `LOCAL_EID`,
+> `BASE_EID`, `REMOTE_EID` or the fixed-rate-buy block, and it now
+> documents the `CCIP_*` variables the current deploy actually requires
+> — four of which have no default and abort the run if unset. The
+> pre-deploy gate's LayerZero-residue guard was widened to cover all of
+> that, `.env.example` included. Prose that *explains* the migration is
+> deliberately still allowed.
+>
 > See [`docs/adr/0004-ccip-over-layerzero.md`](../adr/0004-ccip-over-layerzero.md)
 > for the migration rationale and
 > [`contracts/RUNBOOK.md`](../../contracts/RUNBOOK.md) for the CCIP
@@ -1345,7 +1357,15 @@ liquidations to the full-collateral-transfer fallback path.
 
 `RewardReporterFacet` and `RewardAggregatorFacet` are cut in by `DeployDiamond.s.sol` alongside the other 27 facets. The script stops short of wiring the cross-chain config — every field below must be set per chain before the mesh is live.
 
-### 3a. RewardOApp proxy deployment
+### 3a. RewardOApp proxy deployment — HISTORICAL, do not run
+
+> **This section is dead.** `DeployRewardOAppCreate2.s.sol` is deleted,
+> and every environment variable in the block below (`REWARD_OWNER`,
+> `IS_CANONICAL_REWARD`, `BASE_EID`, `LZ_ENDPOINT`, `*_OPTIONS_HEX`) is
+> read by nothing. The reward messenger is deployed by
+> `DeployCrosschain.s.sol` and wired by `ConfigureCcip.s.sol` per the
+> banner at the top of this runbook. Kept for the CREATE2 reasoning,
+> which still explains why `REWARD_VERSION` must match across chains.
 
 The RewardOApp proxy must live at the **same address on every chain** so LayerZero peer wiring works with a single bytes32 peer value. Because the real impl's ctor takes the chain-specific LZ endpoint, we use a **bootstrap-proxy pattern**: deploy a chain-agnostic bootstrap impl via CREATE2, deploy an `ERC1967Proxy(bootstrap, "")` via CREATE2, then atomically `upgradeToAndCall` to the real chain-specific impl inside the same broadcast.
 

@@ -70,17 +70,11 @@ const INHERITED_EVENT_OVERRIDES = {
   'OwnershipTransferStarted(address,address)': 'informational/admin',
   // Diamond-3 / EIP-2535
   'DiamondCut((address,uint8,bytes4[])[],address,bytes)': 'informational/admin',
-  // LayerZero V2 OApp / OAppCore — inherited via VaipakamRewardOApp,
-  // VPFIBuyAdapter, VPFIBuyReceiver, VPFIMirror, VPFIOFTAdapter.
-  'PeerSet(uint32,bytes32)': 'informational/lz-plumbing',
-  'EnforcedOptionSet((uint32,uint16,bytes)[])': 'informational/lz-plumbing',
-  'DelegateSet(address)': 'informational/lz-plumbing',
-  'MsgInspectorSet(address)': 'informational/lz-plumbing',
-  'PreCrimeSet(address)': 'informational/lz-plumbing',
-  // LayerZero V2 OFT (Sent / Received are token-flow events; treat as
-  // vault mutations since they reflect cross-chain VPFI moves).
-  'OFTSent(bytes32,uint32,address,uint256,uint256)': 'state-change/vault-mutation',
-  'OFTReceived(bytes32,uint32,address,uint256)': 'state-change/vault-mutation',
+  // (The LayerZero V2 OApp / OFT inherited-event entries that used to sit
+  // here are gone. Every contract that inherited them — VaipakamRewardOApp,
+  // VPFIBuyAdapter, VPFIBuyReceiver, VPFIMirror, VPFIOFTAdapter — has been
+  // deleted, and there is no LayerZero dependency left under contracts/lib
+  // for anything to inherit them from, so the entries could never match.)
 };
 
 const ALLOWED_CATEGORIES = new Set([
@@ -99,7 +93,6 @@ const ALLOWED_CATEGORIES = new Set([
   'informational/liquidation',
   'informational/claim',
   'informational/settlement',
-  'informational/lz-plumbing',
   'informational/reward-transport',
   'informational/governance',
 ]);

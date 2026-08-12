@@ -342,15 +342,31 @@ else
 fi
 
 # 3d. Stale LayerZero deploy-residue guard. T-068 Phase 6.4 stripped the
-#     old LZ deploy variables when the cross-chain layer moved to CCIP.
-#     `lzEid` / `LayerZero` are deliberately NOT banned — the LZ endpoint
-#     id is still recorded as inert chain metadata in addresses.json.
-LZ_RESIDUE='BASE_EID|LOCAL_EID|RewardOApp|OFTAdapter'
-for s in "${DEPLOY_SH[@]}"; do
-  if grep -nE "$LZ_RESIDUE" "$SCRIPT_DIR/$s" >/dev/null 2>&1; then
+#     old LZ deploy variables when the cross-chain layer moved to CCIP,
+#     and the follow-up sweep removed the last of it: the eid resolver and
+#     its `lzEid` artifact stamp, the dead `.env.example` blocks for
+#     deleted scripts, and the LZ inherited-event allowlist.
+#
+#     `lzEid` IS now banned — it used to be tolerated as "inert chain
+#     metadata", but nothing read it, the typed deployment loader already
+#     documented it as gone, and an artifact key naming a retired
+#     transport is exactly the kind of thing that gets copied forward.
+#     `LayerZero` in prose is still allowed: the migration comments that
+#     explain why a thing is shaped the way it is are worth keeping.
+#
+#     `.env.example` is scanned too. It is not a deploy script, but it is
+#     what an operator copies, and it was the worst offender — it shipped
+#     LZ_ENDPOINT_* and a whole fixed-rate-buy block for deleted scripts
+#     while omitting every CCIP_* variable the current deploy requires.
+LZ_RESIDUE='BASE_EID|LOCAL_EID|RewardOApp|OFTAdapter|LZ_ENDPOINT|REMOTE_EID|LOCAL_OAPP|lzEid|lzEidForChain|VPFI_BUY_RECEIVER_EID|WireVPFIPeers'
+for s in "${DEPLOY_SH[@]}" "../.env.example"; do
+  [ -f "$SCRIPT_DIR/$s" ] || continue
+  # Comment lines are exempt: a note saying "this variable is gone, do
+  # not carry it forward" must be allowed to name the thing it retires.
+  if grep -nE "$LZ_RESIDUE" "$SCRIPT_DIR/$s" | grep -vE '^[0-9]+:[[:space:]]*#' >/dev/null 2>&1; then
     echo "  ✗ $s — stale LayerZero deploy residue (removed in T-068" >&2
     echo "    Phase 6.4 — the CCIP migration):" >&2
-    grep -nE "$LZ_RESIDUE" "$SCRIPT_DIR/$s" | sed 's/^/      /' >&2
+    grep -nE "$LZ_RESIDUE" "$SCRIPT_DIR/$s" | grep -vE '^[0-9]+:[[:space:]]*#' | sed 's/^/      /' >&2
     FAIL=1
   else
     echo "  ✓ $s — no stale LayerZero deploy residue"

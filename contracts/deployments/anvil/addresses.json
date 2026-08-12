@@ -3,7 +3,6 @@
   "deployedAt": "1777581762-unix",
   "diamond": "0x2E2Ed0Cfd3AD2f1d34481277b3204d807Ca2F8c2",
   "chainSlug": "anvil",
-  "lzEid": 31337,
   "deployBlock": 72,
   "escrowImpl": "0x02B7d5Ce8779587B7C33a3c31c5b8280a446190C",
   "treasury": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",

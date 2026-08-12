@@ -79,7 +79,6 @@
     "rewardClaimFacet": "0x480d459e6f23e7C40801c410Fb499b377ab2ec2f",
     "rewardCommitmentFacet": "0x483cdEF0a584883C376BAa8Bc1e2B03B8aFa849c"
   },
-  "lzEid": 40102,
   "oracleTestnetMockWeth": "0x6D874ff9a55517c61cECE2936B8F457a3ad9102d",
   "rewardMessenger": "0xFf46546B0A6C5376ddE6c0936b0dd266f11A70c0",
   "swapAdapters": {

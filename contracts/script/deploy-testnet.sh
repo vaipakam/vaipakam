@@ -33,7 +33,7 @@
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase contracts \
 #                                           --confirm-i-have-multisig-ready
-#       Deploys Diamond + Timelock + VPFI lane + Reward OApp.
+#       Deploys Diamond + Timelock + VPFI lane + reward messenger.
 #       The confirm flag is a deliberate friction — without it, the
 #       script refuses. The flag asserts: governance multisig is
 #       reachable for the role-rotation ceremony at the end of the
@@ -76,7 +76,7 @@
 #       Runs Handover.s.sol — same role / ownership rotation as
 #       mainnet (DEFAULT_ADMIN_ROLE → governance Safe direct, five
 #       Timelock-bound roles → Timelock, PAUSER_ROLE → Pauser Safe
-#       direct, ERC-173 + every OApp's Ownable2Step → governance
+#       direct, ERC-173 + every cross-chain contract's Ownable2Step → governance
 #       Safe). Practising this on testnet is the whole point of the
 #       rehearsal.
 #
@@ -708,7 +708,7 @@ phase_contracts() {
     cat >&2 <<EOF
 Refusing --phase contracts on mainnet without --confirm-i-have-multisig-ready.
 
-This phase deploys Diamond + Timelock + VPFI lane + Reward OApp on $CHAIN_SLUG.
+This phase deploys Diamond + Timelock + VPFI lane + reward messenger on $CHAIN_SLUG.
 Once landed, the role-rotation ceremony (DeploymentRunbook §6) must run on
 the same day to renounce DEPLOYER_ROLE / DEFAULT_ADMIN_ROLE / etc.
 
@@ -736,7 +736,7 @@ EOF
   # ── Detect-and-refuse: a chain dir with a `diamond` key in
   # addresses.json indicates a prior deploy. Re-running --phase
   # contracts without --fresh would either (a) collide on a CREATE2
-  # address (Reward OApp proxy at the same REWARD_VERSION salt) or
+  # address (reward-messenger proxy at the same REWARD_VERSION salt) or
   # (b) silently overwrite the addresses.json's CREATE-deployed keys
   # (Diamond, Timelock, VPFI lane impls) with NEW addresses while
   # keeping the prior CREATE2 keys, leaving a mixed-state set the
@@ -762,7 +762,7 @@ To proceed, pass --fresh:
 
 --fresh archives the prior chain state under
 $DEPLOY_DIR/.archive/<ISO-8601>/ and reminds you to bump
-REWARD_VERSION in .env so the new Reward OApp proxy lands at a
+REWARD_VERSION in .env so the new reward-messenger proxy lands at a
 fresh CREATE2 address.
 EOF
       exit 1
@@ -826,7 +826,7 @@ EOF
     purge_chain_d1
     echo
     echo "  ⚠ Bump REWARD_VERSION in .env before this re-deploy lands. The"
-    echo "    Reward OApp proxy is CREATE2-addressed off REWARD_VERSION;"
+    echo "    reward-messenger proxy is CREATE2-addressed off REWARD_VERSION;"
     echo "    keeping the same value would either re-use the old (now-stale)"
     echo "    proxy or hit a CreateCollision against the prior deploy's"
     echo "    bytecode. Current REWARD_VERSION: ${REWARD_VERSION:-(unset)}"
@@ -1327,7 +1327,7 @@ phase_handover() {
 Refusing --phase handover without --confirm-i-have-multisig-ready.
 
 This phase rotates DEFAULT_ADMIN_ROLE / Timelock-bound roles /
-PAUSER_ROLE / ERC-173 ownership / OApp ownership off ADMIN. The
+PAUSER_ROLE / ERC-173 ownership / cross-chain-contract ownership off ADMIN. The
 multi-party Safe ceremony that follows (acceptOwnership on each
 OApp + DeployerZeroRolesTest as exit gate) MUST run within the
 Ownable2Step pending-owner window — i.e. the multisig signers

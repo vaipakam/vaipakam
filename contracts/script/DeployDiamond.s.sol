@@ -795,8 +795,6 @@ contract DeployDiamond is Script {
         // Per-chain context that downstream scripts (and the frontend
         // env builder) consume directly from addresses.json:
         //   - chainSlug:   stable identifier matching the directory
-        //   - lzEndpoint:  LayerZero V2 EndpointV2 for this chain
-        //   - lzEid:       LayerZero V2 endpoint id
         //   - deployBlock: l2 block in which the Diamond proxy was created
         //                  (frontend uses this as the lower-bound for
         //                  log scans — `eth_getLogs(fromBlock=deployBlock)`).
@@ -816,7 +814,6 @@ contract DeployDiamond is Script {
         // All of these are stable for the lifetime of this Diamond
         // deploy; rewriting them on each run is idempotent.
         Deployments.writeChainSlug();
-        Deployments.writeLzEid(Deployments.lzEidForChain());
         Deployments.writeDeployBlock();
         Deployments.writeVaultImpl(
             VaultFactoryFacet(diamond)

@@ -1,8 +1,28 @@
 # Base Sepolia — Fresh Deployment Runbook
 
-End-to-end order of operations for a clean Base Sepolia deployment. Canonical VPFI + reward chain is Base Sepolia (chainId `84532`, LZ eid `40245`).
+End-to-end order of operations for a clean Base Sepolia deployment. Canonical VPFI + reward chain is Base Sepolia (chainId `84532`).
 
-Scope: a Base Sepolia fresh deployment wipes the old `BASE_SEPOLIA_DIAMOND_ADDRESS` and everything downstream (VPFI token, OFT adapter, mirrors, reward OApp, buy receiver/adapter). Mirror-chain deployments (Sepolia / Arb Sepolia / OP Sepolia / Polygon Amoy) assume their own fresh `<CHAIN>_DIAMOND_ADDRESS`.
+> **⚠ LayerZero-era document — do not follow it verbatim.** This runbook
+> was written against the pre-T-068 transport. LayerZero is gone: there
+> is no endpoint, no eid, no OApp, no peer wiring, and no fixed-rate buy
+> receiver/adapter (removed separately in #687-A). Any step below naming
+> `LZ_ENDPOINT`, an eid, `DeployRewardOAppCreate2.s.sol`,
+> `WireVPFIPeers.s.sol`, or a buy receiver/adapter refers to scripts that
+> no longer exist and will fail.
+>
+> The current path is `DeployCrosschain.s.sol` (CCIP messenger, reward
+> messenger, rate governor, token pool) followed by
+> `ConfigureCcip.s.sol` (selectors, remote messengers, channel peers,
+> per-lane rate limits, CCT registration) — driven by
+> [`DeploymentRunbook.md`](DeploymentRunbook.md) and
+> [`CcipCutoverRunbook.md`](CcipCutoverRunbook.md), which are the
+> authoritative deploy documents. Chains are keyed by EVM chain id
+> throughout.
+>
+> Retained for the Diamond/oracle/config steps, which are unchanged, and
+> as a record of the original bring-up order.
+
+Scope: a Base Sepolia fresh deployment wipes the old `BASE_SEPOLIA_DIAMOND_ADDRESS` and everything downstream (VPFI token, the CCT token pool, mirrors, reward messenger). Mirror-chain deployments (Sepolia / Arb Sepolia / OP Sepolia / Polygon Amoy) assume their own fresh `<CHAIN>_DIAMOND_ADDRESS`.
 
 All commands run from `contracts/`.
 
