@@ -133,6 +133,17 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
     walletChain?.chainId ?? '',
     onSupportedChain,
     inputKey ?? '',
+    // The CLIENT that would run the call, not just the chain it points at
+    // (Codex #1679 r7). wagmi can hydrate or replace `publicClient` without
+    // the address, chain or calldata moving; `simulate` re-arms on that
+    // (it closes over the client) but the stamped context would not, so the
+    // previous verdict stayed valid-looking through the new debounce. The
+    // concrete case is the one this hook creates itself: with no client the
+    // status is `unavailable`, which is TERMINAL — so a caller gating on
+    // settlement would read "answered" from a run that never happened, and
+    // open signing the moment the real client arrived. viem's `uid` is the
+    // client's identity and changes when it is replaced.
+    publicClient?.uid ?? '',
   ].join('|');
   /** Read by `simulate` so it does not have to close over the object. */
   const inputRef = useRef(input);
