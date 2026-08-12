@@ -1246,6 +1246,12 @@ export function OfferFlow({ side }: { side: Side }) {
     // the current fingerprint — not merely consent that is still true
     // from before the warning appeared.
     (securityWarned.length === 0 ||
+      // Deliberate, and state would reopen the gap: the only write is the
+      // checkbox handler below, which also sets form state, so a re-render
+      // always follows and the read cannot go stale. Holding it in state
+      // would move the comparison a render later — the exact window this
+      // gate closes.
+      // eslint-disable-next-line react-hooks/refs
       securityConsentFpRef.current === securityFingerprint) &&
     (mode === 'accept'
       ? selected !== null

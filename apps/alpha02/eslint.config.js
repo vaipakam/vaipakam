@@ -60,6 +60,12 @@ const BLOCKING_HOOKS = {
   // The rule this config exists for. Clean at zero violations, so it
   // enforces from day one instead of becoming a backlog nobody pays.
   'react-hooks/rules-of-hooks': 'error',
+  // Promoted on reaching zero (#1520). Five of the six sites it found were
+  // deliberate reads whose writes always commit state in the same pass —
+  // they carry a disable naming why converting them to state would be a
+  // REGRESSION — and the sixth, a ref written during render, was fixed.
+  // Erroring now keeps that judgement from being re-litigated by drift.
+  'react-hooks/refs': 'error',
 }
 
 export default defineConfig([

@@ -323,8 +323,16 @@ export function IndexerPushSync() {
   // value would go stale after a switch and scope against the old
   // wallet's identity/cache, wrongly suppressing the new wallet's
   // refetches.
+  // Stamped POST-COMMIT rather than during render: a render React
+  // discards (StrictMode's double invocation, an abandoned concurrent
+  // render) would otherwise leave the ref holding an address the UI
+  // never committed to, and the frame handler would scope against it.
+  // An effect cannot be late here — effects flush synchronously after
+  // commit, so no socket frame can be handled in between.
   const addressRef = useRef<string | null>(null);
-  addressRef.current = address?.toLowerCase() ?? null;
+  useEffect(() => {
+    addressRef.current = address?.toLowerCase() ?? null;
+  }, [address]);
   const chainId = readChain.chainId;
   const queryClient = useQueryClient();
   const wsOrigin = indexerWsOrigin();
