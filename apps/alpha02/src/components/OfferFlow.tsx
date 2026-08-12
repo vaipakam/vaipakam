@@ -1268,9 +1268,15 @@ export function OfferFlow({ side }: { side: Side }) {
     // both encode as `false`), the finished receipt would appear against an
     // acknowledgement of a screen that showed no terms at all.
     `receipt:${receipt ? 'ready' : 'pending'}`,
+    // Scoped to the ACTIVE receipt (#1679 r3): accept mode reads collateral
+    // metadata only from `selectedCollateralMeta`, while `collateralMeta`
+    // still belongs to the post form. Fingerprinting both let a late response
+    // for an abandoned post-form address churn the epoch during an accept,
+    // clearing consent though no visible term changed.
     `meta:${lendingMeta.data?.decimals ?? ''}/${lendingMeta.data?.symbol ?? ''}` +
-      `/${collateralMeta.data?.decimals ?? ''}/${collateralMeta.data?.symbol ?? ''}` +
-      `/${selectedCollateralMeta.data?.decimals ?? ''}/${selectedCollateralMeta.data?.symbol ?? ''}`,
+      (mode === 'accept'
+        ? `/${selectedCollateralMeta.data?.decimals ?? ''}/${selectedCollateralMeta.data?.symbol ?? ''}`
+        : `/${collateralMeta.data?.decimals ?? ''}/${collateralMeta.data?.symbol ?? ''}`),
     // #1679 r1 F5 — the dry run's verdict is a disclosure too. It is safe to
     // include now that the preview no longer waits for consent (see `simTx`).
     `sim:${preSign.result.status}:${
@@ -1355,6 +1361,16 @@ export function OfferFlow({ side }: { side: Side }) {
     // gate closes.
     // eslint-disable-next-line react-hooks/refs
     consentEpochRef.current === assertionEpoch &&
+    // The forced preview must have SETTLED, not merely been started
+    // (#1679 r3). Comparing epochs alone left signing enabled through the
+    // debounce and the eth_call, so a user could start submitting before a
+    // revert warning arrived — and once the submit closure is running, a
+    // later epoch advance cannot stop it. Making the preview precede consent
+    // is only meaningful if its verdict is in hand before signing opens.
+    // Safe against the deadlock fixed in r2 N2: ticking consent no longer
+    // restarts an identical simulation, so this cannot un-settle itself.
+    (mode !== 'post' ||
+      (preSign.result.status !== 'idle' && preSign.result.status !== 'loading')) &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
