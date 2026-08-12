@@ -825,8 +825,18 @@ contract VPFIDiscountFacet is
     }
 
     /// @notice Set the VPFI price anchor used by the fee-discount quote —
-    ///         ETH wei per 1 VPFI (18 dec). Default 1e15 ⇒ 1 VPFI = 0.001 ETH.
+    ///         ETH wei per 1 VPFI (18 dec). There is NO default: the slot
+    ///         starts at zero and the quote stays disabled until an
+    ///         operator configures it. 1e15 (⇒ 1 VPFI = 0.001 ETH) is the
+    ///         documented reference value to configure, not a fallback.
     /// @dev Zero disables the discount quote (falls back to the normal fee).
+    ///      This line and the previous sentence used to contradict each
+    ///      other — the header claimed "Default 1e15" while this one said
+    ///      zero disables, and only the latter is true of the code
+    ///      (`LibVPFIDiscount` returns `(false, 0)` on a zero rate). The
+    ///      claimed default had already been copied into
+    ///      `LibKeeperReward`'s anchor note, which is how it surfaced
+    ///      (Codex #1653 r2 P2).
     ///      ADMIN_ROLE-only. Emits {VPFIDiscountConfigUpdated}. (Renamed from
     ///      the removed `setVPFIBuyRate` — #687-A: the field is a discount price
     ///      anchor, not a sale rate.)

@@ -42,9 +42,14 @@ library LibKeeperReward {
     ///      reads the others — changing one does NOT move the rest:
     ///        - `LibVaipakam.VPFI_PER_ETH_FIXED_PHASE1` — the documented
     ///          Phase-1 peg, dormant since Recycling M1 (#1346).
-    ///        - `VPFIDiscountFacet.setVPFIDiscountRate`'s default — the
-    ///          fee-discount quote's price anchor, and unlike these two
-    ///          it is governance-settable at runtime.
+    ///        - `VPFIDiscountFacet.setVPFIDiscountRate` — the fee-discount
+    ///          quote's price anchor. Unlike these two it is
+    ///          governance-settable at runtime, and it has NO default:
+    ///          storage starts at zero, which `LibVPFIDiscount` reads as
+    ///          "discount disabled" rather than as any rate. 1e15 is the
+    ///          value an operator would configure to express the same
+    ///          peg, not a value the code falls back to (Codex #1653 r2
+    ///          P2).
     ///      Named here rather than left implicit so an audit or a repeg
     ///      that starts from this constant sees the other two (Codex
     ///      #1653 r1 P2).
