@@ -33,7 +33,19 @@ cd "$(dirname "$0")/.."   # -> contracts/
 export FOUNDRY_PROFILE=default
 # IO-priority boost only — `nice -n -10` (raised CPU priority) needs privileges
 # operators/sandboxes lack and a failing nice would abort the run.
+#
+# The boost is a nicety, never a requirement, so PROBE it rather than assume:
+# `ionice` may be absent (minimal container images), and RAISING best-effort
+# priority to -n 0 needs CAP_SYS_NICE, which an unprivileged CI runner may not
+# have. Either way the probe fails and we drop the prefix instead of failing
+# every chunk. This matters since #1620 — `predeploy-check.sh --full` now
+# delegates here, so this script runs on GitHub-hosted runners via
+# `mainnet-gate.yml`, not just on the operator's box.
 PREFIX=(ionice -c 2 -n 0)
+if ! "${PREFIX[@]}" true 2>/dev/null; then
+  echo "note: ionice unavailable or not permitted — running without the IO-priority boost"
+  PREFIX=()
+fi
 
 CHUNK_SIZE="${CHUNK_SIZE:-25}"
 

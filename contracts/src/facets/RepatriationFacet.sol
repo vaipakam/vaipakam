@@ -85,6 +85,16 @@ interface IVpfiReturnSender {
         uint256 authId,
         address payable refundAddress
     ) external payable returns (bytes32 messageId);
+
+    function sendStrandedReturn(
+        uint256 dstChainId,
+        address remitter,
+        uint256 remitId,
+        uint256 dayId,
+        uint256 amount,
+        uint256 remainingAfter,
+        address payable refundAddress
+    ) external payable returns (bytes32 messageId);
 }
 
 /**
@@ -216,6 +226,18 @@ contract RepatriationFacet is
     ///         until the mirror's ACK arrives — dispatching the request is
     ///         not the release (§3.6a constraint 5c).
     /// @custom:event-category informational/reward-transport
+    /// @notice #1434 P2-w5 — a quarantined compensation left this mirror
+    ///         for Base; the stranded-recovery record is retired.
+    /// @custom:event-category state-change/reward-transport
+    event StrandedReturnDispatched(
+        address indexed remitter,
+        uint256 indexed remitId,
+        uint256 dayId,
+        uint256 amount,
+        uint256 remainingAfter,
+        bytes32 messageId
+    );
+
     event RepatriationCancelDispatched(
         uint256 indexed authId,
         uint32 indexed dstChainId,
@@ -294,6 +316,13 @@ contract RepatriationFacet is
     error RepatriationMessengerNotSet();
     /// @notice The referenced mirror instruction is not in the required
     ///         state for this action.
+    /// @notice #1434 P2-w5 — no stranded-recovery record exists for this
+    ///         receipt (never quarantined, or already returned).
+    error StrandedReturnNothingRecorded(address remitter, uint256 remitId);
+
+    /// @notice #1660 r2 — zero, or above the record's remaining amount.
+    error StrandedReturnBadAmount(uint256 requested, uint256 recorded);
+
     error RepatriationInstructionWrongState(
         address issuingBase,
         uint256 authId,
@@ -826,6 +855,85 @@ contract RepatriationFacet is
             value: msg.value
         }(uint256(s.baseChainId), issuingBase, authId, refundAddress);
         emit RepatriationCancelAckDispatched(issuingBase, authId, messageId);
+    }
+
+    /**
+     * @notice #1434 P2-w5 (R4, design §4.2) — return a QUARANTINED
+     *         compensation to Base over the shared channel, Mode B's own
+     *         payload kind. Retires the mirror's stranded-recovery record
+     *         exactly once and sends the RECORDED amount (the two-delta
+     *         rule: the source debit is the stored figure, never a caller
+     *         figure; only the destination credit scales to what arrives).
+     * @dev    PERMISSIONLESS payable (the R6b posture): the record is the
+     *         mirror-authenticated evidence being attested — quarantine is
+     *         terminal mirror-side, the return is its ONLY exit, and the
+     *         value is already excluded from every spendable position
+     *         (`strandedRecoveryReserved`), so the caller contributes only
+     *         the CCIP fee (quote via {VpfiReturnSender.quoteStrandedReturn})
+     *         and can neither redirect nor inflate the return — `amount` is
+     *         bounded by the RECORD, and the record's remainder (not a
+     *         caller figure) rides the wire. CHUNKED deliberately (#1660
+     *         r2): the mirror cannot read Base's INBOUND lane ceiling, and
+     *         a single indivisible send above it would be permanently
+     *         unexecutable on Base with the one-shot record already gone —
+     *         partial retirement keeps the remainder retryable at a size
+     *         the destination lane admits (the operator pairing rule lives
+     *         in the CcipCutoverRunbook §8 capacity ceremony). Mirror-
+     *         outbound capacity is checked per chunk BEFORE the retirement.
+     * @param  amount VPFI to return this call — full or partial, bounded by
+     *         the stranded record's remaining amount.
+     */
+    function sendStrandedReturn(
+        address remitter,
+        uint256 remitId,
+        uint256 amount,
+        address payable refundAddress
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyMirror
+        returns (bytes32 messageId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address sender = s.repatriationSender;
+        if (sender == address(0)) revert RepatriationNotConfigured();
+        bytes32 key = keccak256(abi.encode(remitter, remitId));
+        LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[key];
+        uint256 recorded = sr.amount;
+        if (recorded == 0) {
+            revert StrandedReturnNothingRecorded(remitter, remitId);
+        }
+        if (amount == 0 || amount > recorded) {
+            revert StrandedReturnBadAmount(amount, recorded);
+        }
+        uint256 dayId = sr.dayId;
+
+        uint256 dst = uint256(s.baseChainId);
+        _assertWithinLaneCapacity(s, dst, amount, false);
+
+        // CEI: retire the CHUNK and release its earmark before the token
+        // movement; any send failure reverts the whole return. The
+        // remainder (possibly zero) rides the wire so Base can tell a
+        // partial from the receipt's terminal chunk.
+        uint256 remainingAfter = recorded - amount;
+        if (remainingAfter == 0) {
+            delete s.strandedRecoveries[key];
+        } else {
+            sr.amount = remainingAfter;
+        }
+        uint256 reserved = s.strandedRecoveryReserved;
+        s.strandedRecoveryReserved =
+            reserved > amount ? reserved - amount : 0;
+        s.strandedReturnedCumulative += amount;
+        IERC20(s.vpfiToken).safeTransfer(sender, amount);
+        messageId = IVpfiReturnSender(sender).sendStrandedReturn{
+            value: msg.value
+        }(dst, remitter, remitId, dayId, amount, remainingAfter, refundAddress);
+        emit StrandedReturnDispatched(
+            remitter, remitId, dayId, amount, remainingAfter, messageId
+        );
     }
 
     // ── Config ──────────────────────────────────────────────────────────────

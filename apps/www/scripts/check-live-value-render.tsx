@@ -136,8 +136,21 @@ function check(name: string, ok: boolean, detail: string) {
   // LiveValue renders a <span title="…"> naming the value's provenance.
   check(
     'inline token emits live-value markup',
-    /<span[^>]*title="[^"]*(Live value from on-chain|Compile-time default)/.test(html),
+    /<span[^>]*title="[^"]*(Live value from on-chain|Compile-time default|Published value)/.test(html),
     `no LiveValue span found; the token was consumed but nothing replaced it:\n      ${html}`,
+  );
+  // …and on THIS surface it must name the right one (#1612). The
+  // marketing site makes no chain read, so the fallback wording —
+  // "chain read pending or unavailable" — describes a transient failure
+  // that cannot occur here, telling every reader who hovers a fee figure
+  // that something is broken. Asserting the absence, not just the
+  // presence of some tooltip, is what makes this catch a regression back
+  // to the old copy: the check above passes either way.
+  check(
+    'provenance tooltip does not claim a failed or pending chain read',
+    !/chain read pending or unavailable/.test(html),
+    `the marketing surface attempts no chain read, so it must not report one as` +
+      ` pending or unavailable:\n      ${html}`,
   );
 }
 
@@ -370,11 +383,11 @@ function check(name: string, ok: boolean, detail: string) {
 
 if (failures.length > 0) {
   console.error(
-    `[check-live-value-render] FAILED — ${failures.length} of 37 checks\n${failures.join('\n')}\n`,
+    `[check-live-value-render] FAILED — ${failures.length} of 38 checks\n${failures.join('\n')}\n`,
   );
   process.exit(1);
 }
 
 console.log(
-  '[check-live-value-render] OK — 37 checks: inline tokens substitute across 7 constructs, block code stays literal across 3, unknown knobs stay visible, no internal props leak, and the published-markdown path matches the rendered one',
+  '[check-live-value-render] OK — 38 checks: inline tokens substitute across 7 constructs, block code stays literal across 3, unknown knobs stay visible, the provenance tooltip names a source this surface actually has, no internal props leak, and the published-markdown path matches the rendered one',
 );

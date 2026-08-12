@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -25,6 +26,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
  */
 contract RewardRemittanceFacetTest is SetupTest {
     RewardRemittanceFacet internal remit;
+    RewardRemittanceLensFacet rlens;
     MockRewardMessenger internal rewardMessenger; // data path (report/finalize)
     MockCrossChainMessenger internal ccip; // value path (token remittance)
     VPFIToken internal vpfiTok;
@@ -60,6 +62,7 @@ contract RewardRemittanceFacetTest is SetupTest {
         rewardMessenger = new MockRewardMessenger(address(diamond));
         ccip = new MockCrossChainMessenger();
         remit = RewardRemittanceFacet(address(diamond));
+        rlens = RewardRemittanceLensFacet(address(diamond));
 
         vm.chainId(CHAIN_BASE);
         RewardReporterFacet rep = RewardReporterFacet(address(diamond));
@@ -236,9 +239,9 @@ contract RewardRemittanceFacetTest is SetupTest {
             diamondBefore - expected,
             "diamond debited"
         );
-        assertEq(remit.getRewardBudgetRemitted(CHAIN_ARB, 1), expected, "marked");
-        assertEq(remit.getRewardBudgetRemittedTotal(CHAIN_ARB), expected, "total");
-        assertEq(remit.getRewardBudgetRemittedGlobal(), expected, "global");
+        assertEq(rlens.getRewardBudgetRemitted(CHAIN_ARB, 1), expected, "marked");
+        assertEq(rlens.getRewardBudgetRemittedTotal(CHAIN_ARB), expected, "total");
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), expected, "global");
     }
 
     function test_Remit_RefundsFeeOverpayment() public {
@@ -258,8 +261,8 @@ contract RewardRemittanceFacetTest is SetupTest {
         vm.expectRevert(RewardRemittanceFacet.NothingToRemit.selector);
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
         // The global accounting did not double-count.
-        uint256 expected = remit.getRewardBudgetRemitted(CHAIN_ARB, 1);
-        assertEq(remit.getRewardBudgetRemittedGlobal(), expected, "no double count");
+        uint256 expected = rlens.getRewardBudgetRemitted(CHAIN_ARB, 1);
+        assertEq(rlens.getRewardBudgetRemittedGlobal(), expected, "no double count");
     }
 
     // ─── gates ────────────────────────────────────────────────────────────────
@@ -317,10 +320,10 @@ contract RewardRemittanceFacetTest is SetupTest {
     function test_Remit_AllowsConfiguredKeeper() public {
         _finalizeDay1();
         remit.setRewardRemittanceKeeper(keeper);
-        assertEq(remit.getRewardRemittanceKeeper(), keeper, "keeper set");
+        assertEq(rlens.getRewardRemittanceKeeper(), keeper, "keeper set");
         vm.prank(keeper);
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
-        assertGt(remit.getRewardBudgetRemittedGlobal(), 0, "keeper remitted");
+        assertGt(rlens.getRewardBudgetRemittedGlobal(), 0, "keeper remitted");
     }
 
     function test_SetKeeper_RequiresAdmin() public {
@@ -410,10 +413,10 @@ contract RewardRemittanceFacetTest is SetupTest {
     function test_Ingress_RecordsReceivedFromRegisteredReceiver() public {
         address rcv = _rcv();
         remit.setRewardRemittanceReceiver(rcv);
-        assertEq(remit.getRewardRemittanceReceiver(), rcv, "receiver set");
+        assertEq(rlens.getRewardRemittanceReceiver(), rcv, "receiver set");
         vm.prank(rcv);
         remit.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE, 0, address(0xBA5E), 0, 0);
-        assertEq(remit.getRewardBudgetReceivedTotal(), 123e18, "recorded total");
+        assertEq(rlens.getRewardBudgetReceivedTotal(), 123e18, "recorded total");
     }
 
     function test_Ingress_RevertsForNonReceiver() public {

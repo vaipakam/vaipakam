@@ -1712,6 +1712,97 @@ contract TestMutatorFacet {
         );
     }
 
+    // ─── #1434 P2-w4 test-only — lapse-terminal / legacy-stamp fixtures ─────
+
+    /// @notice #1434 P2-w4 test-only — the day's era record (production
+    ///         writer: the V3 apply), so the era-KNOWN compensation credit
+    ///         branch can be staged without a broadcast round.
+    function setDayClockEraRaw(uint256 dayId, address era) external {
+        LibVaipakam.storageSlot().dayClockEra[dayId] = era;
+    }
+
+    /// @notice #1434 P2-w4 test-only — freeze a day's lapse clock directly
+    ///         (production writer: `_finalizeAndWrite` → the V3 apply), so
+    ///         terminal tests need no broadcast round.
+    function setDayLapseClockRaw(
+        uint256 dayId,
+        uint64 finalizedAt,
+        uint32 scheduleVersion,
+        uint64 lapseWindowSeconds,
+        uint64 dispatchCutoffGap
+    ) external {
+        LibVaipakam.storageSlot().dayLapseClock[dayId] = LibVaipakam
+            .DayLapseClock({
+            finalizedAt: finalizedAt,
+            scheduleVersion: scheduleVersion,
+            lapseWindowSeconds: lapseWindowSeconds,
+            dispatchCutoffGap: dispatchCutoffGap
+        });
+    }
+
+    /// @notice #1434 P2-w4 test-only — set the short-lapse deadline inputs
+    ///         directly (production writers: `_creditCompensation` +
+    ///         `stampLegacyCompensation`), so deadline-math tests need no
+    ///         full credit round per timestamp.
+    function setCompReceiptClockRaw(
+        uint256 dayId,
+        uint64 firstAt,
+        uint64 lastQualifyingAt
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.firstCompReceiptAt[dayId] = firstAt;
+        s.lastQualifyingCompReceiptAt[dayId] = lastQualifyingAt;
+    }
+
+    /// @notice #1434 P2-w4 test-only — record a delivered remit receipt
+    ///         (production writer: the d5/P2 ingress), for the
+    ///         legacy-stamp tests.
+    function setReceivedRemitRaw(
+        address remitter,
+        uint256 remitId,
+        uint256 amount
+    ) external {
+        LibVaipakam.storageSlot().receivedRemits[
+            keccak256(abi.encode(remitter, remitId))
+        ] = LibVaipakam.ReceivedRemit({
+            srcChainId: uint32(block.chainid),
+            receivedAt: uint64(block.timestamp),
+            amount: amount,
+            remitter: remitter,
+            classification: 0
+        });
+    }
+
+    /// @notice #1434 P2-w4 test-only — the Base-side frozen zeroed marker
+    ///         (production writer: `_finalizeAndWrite`), for the legacy
+    ///         inventory tests.
+    function setDayZeroedForDestRaw(
+        uint256 dayId,
+        uint32 chainId,
+        bool zeroed
+    ) external {
+        LibVaipakam.storageSlot().dayZeroedForDest[dayId][chainId] = zeroed;
+    }
+
+    /// @notice #1434 P2-w4 test-only — the per-side funded cumulative
+    ///         (production writers: the two compensation dispatchers), so
+    ///         the inventory test can stage the pre-w4 legacy shape.
+    function setCompFundedRaw(
+        uint32 chainId,
+        uint256 dayId,
+        uint256 lender18,
+        uint256 borrower18
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.compFundedLender18[chainId][dayId] = lender18;
+        s.compFundedBorrower18[chainId][dayId] = borrower18;
+        // #1656 r2 — the existence flag follows the staged values: (0,0)
+        // stages the PRE-w4 shape (no record), nonzero stages a recorded
+        // one. Flag-true-with-zero-values arises only via the real
+        // ACK-reconciliation path.
+        s.compFundedRecorded[chainId][dayId] = lender18 != 0 || borrower18 != 0;
+    }
+
     /// @notice #1434 P2-w3 test-only — the commitment twin's verdict for day
     ///         `d`, so ladder lockstep (fold ↔ report pricing) is directly
     ///         assertable.
@@ -1726,6 +1817,62 @@ contract TestMutatorFacet {
                 : LibVaipakam.RewardSide.Borrower,
             d
         );
+    }
+
+    /// @notice #1434 P2-w5 test-only — install a stranded-recovery record
+    ///         directly (record + reserved sum), the w5 return's input.
+    function setStrandedRecoveryRaw(
+        address remitter,
+        uint256 remitId,
+        uint256 amount,
+        uint256 dayId,
+        uint8 reason
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.StrandedRecovery storage sr =
+            s.strandedRecoveries[keccak256(abi.encode(remitter, remitId))];
+        s.strandedRecoveryReserved =
+            s.strandedRecoveryReserved + amount - sr.amount;
+        sr.amount = amount;
+        sr.dayId = dayId;
+        sr.reservedAt = uint64(block.timestamp);
+        sr.reason = reason;
+    }
+
+    /// @notice #1434 P2-w5 test-only — hold the R6 gate directly.
+    function setCompensationGateRaw(uint32 dstChainId, uint256 remitId)
+        external
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.compensationOutstanding[dstChainId] = remitId;
+        s.compensationOutstandingChains.push(dstChainId);
+    }
+
+    /// @notice #1434 P2-w5 test-only — a minimal reservation row for the
+    ///         B1 ingress paths (dstChainId + status + total are what the
+    ///         ingress reads).
+    function setRemitReservationCompRaw(
+        uint256 remitId,
+        uint32 dstChainId,
+        uint8 status,
+        uint256 total,
+        uint256 dayId
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        r.dstChainId = dstChainId;
+        r.status = status;
+        r.total = total;
+        // #1660 r1 - COMPENSATION-shaped (single-day, fresh-only, declared
+        // split stamped): the B1 ingress refuses anything else.
+        r.fresh = total;
+        r.declaredLender18 = total;
+        // #1660 r5 - the raw models a QUARANTINE-ACKED receipt (the B1
+        // eligibility evidence).
+        r.quarantineAcked = true;
+        uint256[] memory one = new uint256[](1);
+        one[0] = dayId;
+        r.dayIds = one;
     }
 
     /// @dev Route `data` back through the diamond fallback (bubbling the raw

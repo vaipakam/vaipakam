@@ -1055,27 +1055,30 @@ library LibInteractionRewards {
      *        - lapsed            → (0, 0) no halt: the day retires at zero
      *                              through the ordinary machinery — the
      *                              loss was recorded at the lapse (w4).
-     *        - shortLapsed OR
-     *          compensated       → funded ⇒ (Δq, 0) no halt,
+     *        - shortLapsed       → (Δq × pool/quoted, 0) no halt,
+     *                              `compensated = true`: the §2.5 bounded
+     *                              terminal for a funded-below-quote day —
+     *                              POOL-SCALED pricing so every settlement
+     *                              path stays within delivered funding
+     *                              with no per-payment truncation (see the
+     *                              arm's own comment; ordered before the
+     *                              compensated arm, whose funding gate
+     *                              would otherwise defer the day forever).
+     *        - compensated       → funded ⇒ (Δq, 0) no halt,
      *                              `compensated = true`: §1.5's
      *                              local-denominator pricing, funded by
      *                              the delivered pool. Underfunded ⇒
-     *                              DEFER: the w2 manual remit is
-     *                              once-per-day (`RemitDayAlreadyClosed`),
-     *                              so an underfunded day stays deferred
-     *                              until w4's supplemental remit or its
-     *                              short-lapse terminal resolves it — the
-     *                              gate mis-prices nothing in the interim.
-     *                              A crossed day can never un-fund
-     *                              (`_creditCompensation` only adds, and a
-     *                              confirmed credit no longer demotes). A
-     *                              PROVISIONAL credit does not price — the
-     *                              day defers until its V3 broadcast
-     *                              settles which era governs.
-     *                              (`dayShortLapsed` is unreachable until
-     *                              the w4 terminal ships its setter; w4
-     *                              owns the underfunded-terminal
-     *                              truncation refinement.)
+     *                              DEFER until the w4 supplemental remit
+     *                              tops the pool to quote or
+     *                              {lapseShortCompensatedDay}'s bounded
+     *                              deadline fires — the gate mis-prices
+     *                              nothing in the interim. A crossed day
+     *                              can never un-fund (`_creditCompensation`
+     *                              only adds, and a confirmed credit no
+     *                              longer demotes). A PROVISIONAL credit
+     *                              does not price — the day defers until
+     *                              its V3 broadcast settles which era
+     *                              governs.
      *        - resolvedZero      → (0, 0) no halt: the genuinely-zero day
      *                              prices zero — no entry accrued.
      *        - zeroed-and-open   → DEFER (halt): compensation is still
@@ -1112,7 +1115,60 @@ library LibInteractionRewards {
         }
         if (s.dayLapsed[d]) return (true, 0, 0, false, false);
         LibVaipakam.DayCompensation storage dc = s.dayCompensation[d];
-        if (s.dayShortLapsed[d] || (dc.compensated && !dc.provisional)) {
+        // #1434 P2-w4 (§2.5) — the SHORT-COMPENSATED terminal: a funded-
+        // below-quote day whose bounded deadline passed. Prices at the
+        // POOL-SCALED delta `Δq × pool_s / quoted_s` per side — §2.5's
+        // "truncate-at-remaining" landed as pro-rata scaling AT THE
+        // CROSSING (the w3 lesson verbatim: bulk window pricing has no
+        // payment-path budget, so the bound must live in the fold; scaling
+        // is order-independent, and Σ floored payments ≤ pool_s by
+        // construction). Both factors are frozen once the terminal is set
+        // (post-terminal supplements quarantine — §2.2's lapsed branch),
+        // so the recomputation is deterministic. Ordered BEFORE the
+        // compensated arm: a short-lapsed day IS compensated, and the
+        // funding gate below would defer it forever — the terminal is the
+        // deliberate exit from that deferral. The quote-dispatch evidence
+        // holds by construction (compensated ⇒ quoted, r5), and a zero
+        // quoted side scales to zero.
+        if (s.dayShortLapsed[d]) {
+            uint256 dq = compQuoteDelta(s, side, d);
+            uint8 sideKey = uint8(side);
+            uint256 quoted = s.compQuoteAccum18[d][sideKey];
+            if (dq == 0 || quoted == 0) return (true, 0, 0, false, true);
+            uint256 pool = side == LibVaipakam.RewardSide.Lender
+                ? uint256(s.dayCompensation[d].lenderPool18)
+                : uint256(s.dayCompensation[d].borrowerPool18);
+            if (pool >= quoted) {
+                // Fully funded by the terminal's own precondition failing
+                // only later credits (impossible — quarantined) — price
+                // the plain Δq; kept as a closed-form fallback rather
+                // than an assumed-unreachable revert. Rounding-safe
+                // without a shave: each entry's window-floored marginal
+                // is ≤ its ceiled quote share, so Σ marginals ≤ quoted
+                // ≤ pool.
+                return (true, dq, 0, false, true);
+            }
+            // #1656 r11 — shave the covering-entry count off the pool
+            // before scaling: `_entryWindowSplitFrom` floors once over
+            // each entry's WHOLE window, so the lapsed day's marginal
+            // can round UP by ≤1 wei per covering entry (difference of
+            // floors), and plain `Δq × pool / quoted` preserves those
+            // rounded-up marginals — aggregate settlement could exceed
+            // the delivered pool and consume unrelated fresh custody.
+            // With Δq' = ⌊Δq × (pool − n) / quoted⌋:
+            //   Σ marginals ≤ Σ share·Δq'/Δq + n ≤ (pool − n) + n = pool.
+            // The count is maintained from the accumulator's genesis
+            // (no deployment ever ran w3 without it), so count == 0 ⟺
+            // quoted == 0 and the subtraction is never against an
+            // unwalked accumulation. A pool at or under n wei prices
+            // zero — the dust joins the delivered-minus-paid residue.
+            uint256 nCnt = s.compQuoteEntryCount[d][sideKey];
+            if (pool <= nCnt) return (true, 0, 0, false, true);
+            return (
+                true, Math.mulDiv(dq, pool - nCnt, quoted), 0, false, true
+            );
+        }
+        if (dc.compensated && !dc.provisional) {
             // #1636 r5 — the quoted sums are trustworthy ONLY once the
             // quote DISPATCHED: dispatch is where the conservation proof
             // runs, so an undispatched `compQuoteAccum18` is either a

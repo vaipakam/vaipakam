@@ -141,6 +141,8 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -314,6 +316,8 @@ contract SetupTest is Test {
     InteractionRewardsLensFacet interactionRewardsLensFacet;
     RewardAggregatorFacet rewardAggregatorFacet;
     RewardRemittanceFacet rewardRemittanceFacet;
+    RewardRemittanceLensFacet rewardRemittanceLensFacet;
+    RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
     RewardCommitmentFacet rewardCommitmentFacet;
     RepatriationFacet repatriationFacet;
     RewardReporterFacet rewardReporterFacet;
@@ -426,6 +430,8 @@ contract SetupTest is Test {
         interactionRewardsLensFacet = new InteractionRewardsLensFacet();
         rewardAggregatorFacet = new RewardAggregatorFacet();
         rewardRemittanceFacet = new RewardRemittanceFacet();
+        rewardRemittanceLensFacet = new RewardRemittanceLensFacet();
+        rewardCompensationDispatchFacet = new RewardCompensationDispatchFacet();
         rewardCommitmentFacet = new RewardCommitmentFacet();
         repatriationFacet = new RepatriationFacet();
         rewardReporterFacet = new RewardReporterFacet();
@@ -457,7 +463,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](71);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](73);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -873,6 +879,17 @@ contract SetupTest is Test {
             facetAddress: address(rewardRemittanceFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRewardRemittanceFacetSelectors()
+        });
+        // #1434 P2-w4 — the remittance read surface (lens split).
+        cuts[71] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardRemittanceLensFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardRemittanceLensFacetSelectors()
+        });
+        cuts[72] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardCompensationDispatchFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardCompensationDispatchFacetSelectors()
         });
         // #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
         cuts[69] = IDiamondCut.FacetCut({

@@ -149,7 +149,11 @@ function mirrorLocal(): LocalLedger {
     // #1434 P2-w2 — backing snapshot present with a healthy float and no
     // quarantine (undefined would skip the recovery-reservation check
     // suite-wide — the same anti-vacuity rule as repatriatedOut above).
-    backing: { vpfiBalance: 400n * E, strandedRecoveryReserved: 0n },
+    backing: {
+      vpfiBalance: 400n * E,
+      strandedRecoveryReserved: 0n,
+      recoveryPositionReserved: 0n,
+    },
     observedAt: 1_800_000_000n,
   });
 }
@@ -180,7 +184,11 @@ function canonicalLocal(): LocalLedger {
     },
     repatriatedOut: 0n,
     // #1434 P2-w2 — as on the mirror fixture: present, healthy, empty.
-    backing: { vpfiBalance: 1_000n * E, strandedRecoveryReserved: 0n },
+    backing: {
+      vpfiBalance: 1_000n * E,
+      strandedRecoveryReserved: 0n,
+      recoveryPositionReserved: 0n,
+    },
     observedAt: 1_800_000_000n,
   });
 }
@@ -227,7 +235,11 @@ type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
    *  Omitted: derived from the (possibly overridden) bucket so a
    *  bucket-raising test cannot trip the recovery-reservation check by
    *  fixture incoherence (the #1618 r-fixture lesson). */
-  backingOverride?: { vpfiBalance: bigint; strandedRecoveryReserved: bigint } | null;
+  backingOverride?: {
+    vpfiBalance: bigint;
+    strandedRecoveryReserved: bigint;
+    recoveryPositionReserved?: bigint;
+  } | null;
 };
 
 function coherent(
@@ -250,12 +262,18 @@ function coherent(
   if (backingOverride === null) {
     l.backing = undefined;
   } else if (backingOverride !== undefined) {
-    l.backing = backingOverride;
+    l.backing = {
+      ...backingOverride,
+      recoveryPositionReserved:
+        backingOverride.recoveryPositionReserved ?? 0n,
+    };
   } else {
     const reserved = base.backing?.strandedRecoveryReserved ?? 0n;
+    const recovery = base.backing?.recoveryPositionReserved ?? 0n;
     l.backing = {
-      vpfiBalance: l.bucket + reserved + 200n * E,
+      vpfiBalance: l.bucket + reserved + recovery + 200n * E,
       strandedRecoveryReserved: reserved,
+      recoveryPositionReserved: recovery,
     };
   }
   if (composition === null) {
@@ -2576,6 +2594,40 @@ describe('recovery-reservation backing (#1434 P2-w2, §4.1)', () => {
       backingOverride: {
         vpfiBalance: 500n * E,
         strandedRecoveryReserved: 300n * E,
+      },
+    });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    expect(
+      findings.filter((f) => f.code === 'recovery-reservation-backing'),
+    ).toHaveLength(0);
+  });
+
+  it('fires CRITICAL when the RECOVERY POSITION term is what the balance misses (#1434 P2-w5)', () => {
+    // Driven off zero then non-zero deliberately (the w2 fixture lesson):
+    // reserved = 0 so ONLY the new position term creates the shortfall —
+    // a check that ignored it would pass this fixture.
+    const local = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 450n * E,
+        strandedRecoveryReserved: 0n,
+        recoveryPositionReserved: 300n * E,
+      },
+    });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    const hits = findings.filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe('critical');
+    expect(hits[0]?.detail).toContain('recovery');
+  });
+
+  it('a funded recovery position does not fire', () => {
+    const local = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 500n * E,
+        strandedRecoveryReserved: 0n,
+        recoveryPositionReserved: 300n * E,
       },
     });
     const findings = checkHardInvariants(obsWith(local), TOLERANCE);

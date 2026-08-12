@@ -109,6 +109,22 @@ closes #296):
    the per-PR loop is unblocked by the `cifast` change above, and
    the operator-local end-of-step full run is the real defence
    on contracts changes day-to-day.
+
+   *(Amended 2026-08-11, #1620: the ~17.7 GB figure above described a
+   SINGLE `forge test --match-path 'test/*.t.sol'` pass, which is what
+   `predeploy-check.sh --full` ran at the time this ADR was written.
+   `run-regression.sh` has since moved to CHUNKED `--match-path`
+   invocations — ordinary feature growth (#591) re-crossed the viaIR
+   whole-unit stack ceiling for even the single sparse pass — but the
+   `--full` branch was never updated to match, so this gate kept
+   running the outgrown form. It now delegates to `run-regression.sh`,
+   which bounds peak RSS by the largest single chunk plus the cached
+   `src/` compile rather than by the whole corpus at once. The (a)/(b)
+   pre-cutover choice above still stands: chunking makes the 16 GB fit
+   structurally plausible, but it remains **unmeasured on a
+   GitHub-hosted runner**, and an unmeasured fit is not a validated
+   one. `CHUNK_SIZE` / `SUBDIR_CHUNK_SIZE` tune chunk size down without
+   touching the workflow.)*
 6. **`Protect main` ruleset** updated to drop `contracts-full` +
    `Gas snapshot diff` from `required_status_checks`. The required set
    this ADR INTENDED: `contracts-fast` + `detect-changes` +
@@ -144,7 +160,10 @@ closes #296):
   `predeploy-check.sh --full` step but shares the same 16 GB
   ceiling and has not yet been validated on the current corpus
   (see the "release-track gate's runner constraint" note above —
-  operator action required before the first release/v* push).
+  operator action required before the first release/v* push; the
+  2026-08-11 amendment there records that `--full` now runs the
+  chunked regression, which makes the fit plausible but still
+  unmeasured).
 - A non-deploy-sanity / non-positive-flow regression introduced by
   a PR will NOT be caught by CI. Caught instead by: (a) the
   end-of-step local full run (operator), (b) `mainnet-gate` on the

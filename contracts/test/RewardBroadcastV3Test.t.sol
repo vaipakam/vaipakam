@@ -12,6 +12,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {
     IRewardMessenger,
@@ -1147,6 +1148,10 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         return RewardRemittanceFacet(address(diamond));
     }
 
+    function _rlens() internal view returns (RewardRemittanceLensFacet) {
+        return RewardRemittanceLensFacet(address(diamond));
+    }
+
     function _lens() internal view returns (InteractionRewardsLensFacet) {
         return InteractionRewardsLensFacet(address(diamond));
     }
@@ -1214,23 +1219,23 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         _configureCompMirror();
         messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB)); // zeroed = false
 
-        (, , uint256 unearmarkedBefore, , , , uint256 reservedBefore) =
+        (, , uint256 unearmarkedBefore, , , , uint256 reservedBefore, ) =
             _lens().getRecycleBackingSnapshot();
         assertEq(reservedBefore, 0, "reservation starts empty");
 
         _deliverComp(3, REMITTER, 3e18, 2e18);
 
         LibVaipakam.StrandedRecovery memory sr =
-            _remit().getStrandedRecovery(REMITTER, REMIT_ID);
+            _rlens().getStrandedRecovery(REMITTER, REMIT_ID);
         assertEq(sr.amount, 5e18, "whole arrival reserved");
         assertEq(sr.dayId, 3, "bound day recorded");
         assertEq(sr.reason, 1, "reason: not a zeroed day");
         assertEq(
-            _remit().getStrandedRecoveryReserved(), 5e18, "sum advanced"
+            _rlens().getStrandedRecoveryReserved(), 5e18, "sum advanced"
         );
         // The §4.1 claim exclusion, visible at the ONE definition both
         // enforcement sites read: unearmarked shrinks by the reservation.
-        (, , uint256 unearmarkedAfter, , , , uint256 reservedAfter) =
+        (, , uint256 unearmarkedAfter, , , , uint256 reservedAfter, ) =
             _lens().getRecycleBackingSnapshot();
         assertEq(reservedAfter, 5e18, "snapshot publishes the reservation");
         assertEq(
@@ -1239,12 +1244,12 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             "unearmarked excludes the reservation"
         );
         // Nothing payable was credited, and the fresh value is UNCOUNTED.
-        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        LibVaipakam.DayCompensation memory dc = _rlens().getDayCompensation(3);
         assertEq(dc.lenderPool18, 0, "no pool credit");
         assertFalse(dc.compensated, "not compensated");
         // Receipt recorded exactly like an ordinary delivery (ACK path).
         assertGt(
-            _remit().getReceivedRemit(REMITTER, REMIT_ID).receivedAt,
+            _rlens().getReceivedRemit(REMITTER, REMIT_ID).receivedAt,
             0,
             "receipt recorded"
         );
@@ -1261,10 +1266,10 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         _deliverComp(3, address(0xDD), 3e18, 2e18);
 
         LibVaipakam.StrandedRecovery memory sr =
-            _remit().getStrandedRecovery(address(0xDD), REMIT_ID);
+            _rlens().getStrandedRecovery(address(0xDD), REMIT_ID);
         assertEq(sr.amount, 5e18, "reserved");
         assertEq(sr.reason, 2, "reason: era mismatch");
-        assertFalse(_remit().getDayCompensation(3).compensated, "no credit");
+        assertFalse(_rlens().getDayCompensation(3).compensated, "no credit");
     }
 
     // ── Quarantine case 3: post-lapse arrival (w4 flags via mutator) ───────
@@ -1279,11 +1284,11 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         _deliverComp(3, REMITTER, 3e18, 2e18);
 
         assertEq(
-            _remit().getStrandedRecovery(REMITTER, REMIT_ID).reason,
+            _rlens().getStrandedRecovery(REMITTER, REMIT_ID).reason,
             3,
             "reason: post-lapse"
         );
-        assertFalse(_remit().getDayCompensation(3).compensated, "no credit");
+        assertFalse(_rlens().getDayCompensation(3).compensated, "no credit");
     }
 
     // ── The confirmed credit: applied + era match + zeroed + not lapsed ────
@@ -1297,7 +1302,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         uint256 armedBefore = 0; // fresh deploy: nothing armed-received yet
         _deliverComp(3, REMITTER, 3e18, 2e18);
 
-        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        LibVaipakam.DayCompensation memory dc = _rlens().getDayCompensation(3);
         assertEq(dc.lenderPool18, 3e18, "lender pool per side");
         assertEq(dc.borrowerPool18, 2e18, "borrower pool per side");
         assertTrue(dc.compensated, "compensated");
@@ -1306,7 +1311,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         // what was counted is recorded for a potential demotion.
         assertEq(dc.armedFreshCounted, 5e18, "counted figure stored");
         assertEq(
-            _remit().getStrandedRecoveryReserved(),
+            _rlens().getStrandedRecoveryReserved(),
             armedBefore,
             "nothing quarantined"
         );
@@ -1318,7 +1323,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         _configureCompMirror();
         _deliverComp(3, REMITTER, 3e18, 2e18); // no broadcast yet
 
-        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        LibVaipakam.DayCompensation memory dc = _rlens().getDayCompensation(3);
         assertTrue(dc.compensated, "credited");
         assertTrue(dc.provisional, "provisional - era unknown");
         assertEq(dc.provisionalEra, REMITTER, "assumed era = remitter");
@@ -1331,7 +1336,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         // Credited while the chain was UNARMED (no broadcast yet), so
         // nothing counted toward the armed-fresh ledger at credit time.
         assertEq(
-            _remit().getDayCompensation(3).armedFreshCounted,
+            _rlens().getDayCompensation(3).armedFreshCounted,
             0,
             "unarmed at credit - uncounted"
         );
@@ -1340,11 +1345,11 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         b.zeroedForDest = true; // genuinely zeroed, matching era
         messenger.deliverBroadcastV3(b);
 
-        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        LibVaipakam.DayCompensation memory dc = _rlens().getDayCompensation(3);
         assertTrue(dc.compensated, "credit stands");
         assertFalse(dc.provisional, "confirmed in place");
         assertEq(dc.lenderPool18, 3e18, "pools untouched");
-        assertEq(_remit().getStrandedRecoveryReserved(), 0, "no quarantine");
+        assertEq(_rlens().getStrandedRecoveryReserved(), 0, "no quarantine");
         // #1634 r3 — the confirming broadcast ALSO installed D* (the core
         // runs before the hook), so the credit reclassifies against it:
         // the delivered-fresh bound must see this day's backing.
@@ -1353,6 +1358,34 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             5e18,
             "reclassified against the now-installed arming day"
         );
+    }
+
+    /// #1656 r11 — a provisional credit stamps NO remediation clocks: the
+    /// bounded short-lapse window must not burn while the credit awaits
+    /// its V3 confirmation (Base's supplemental path is unreachable until
+    /// confirm → consumed-ACK round trip), so the clocks start at
+    /// confirmation time — even when the broadcast is delayed past the
+    /// whole lapse window.
+    function testProvisionalClocksStartAtConfirmation() public {
+        _configureCompMirror();
+        _deliverComp(3, REMITTER, 3e18, 2e18);
+        (uint64 f0, uint64 q0, ) = _com().getShortLapseDeadline(3);
+        assertEq(f0, 0, "provisional stamps no clocks");
+        assertEq(q0, 0, "provisional stamps no rolling clock");
+
+        // The confirming broadcast arrives 8 days late — past the 7-day
+        // window had it run from the receipt. Absolute warp + literal
+        // assertions: viaIR CSEs `block.timestamp` reads across
+        // `vm.warp` within one test frame (the warp-CSE gotcha), so a
+        // post-warp `block.timestamp` here can read the cached pre-warp
+        // value.
+        vm.warp(8 days + 1000);
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.zeroedForDest = true;
+        messenger.deliverBroadcastV3(b);
+        (uint64 f1, uint64 q1, ) = _com().getShortLapseDeadline(3);
+        assertEq(f1, uint64(8 days + 1000), "clock starts at confirm");
+        assertEq(q1, uint64(8 days + 1000), "rolling clock too");
     }
 
     /// #1634 r3 — a fee-on-transfer delivery's per-side shares each floor,
@@ -1380,11 +1413,11 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         messenger.deliverBroadcastV3(b); // era 0xDD != ERA_BASE -> demote
 
         assertEq(
-            _remit().getStrandedRecovery(address(0xDD), REMIT_ID).amount,
+            _rlens().getStrandedRecovery(address(0xDD), REMIT_ID).amount,
             5e18,
             "the FULL credited amount is reserved, not the floored pool sum"
         );
-        assertEq(_remit().getStrandedRecoveryReserved(), 5e18, "sum moved");
+        assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "sum moved");
     }
 
     function testProvisionalDemoted_EraMismatch() public {
@@ -1395,13 +1428,13 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         b.zeroedForDest = true;
         messenger.deliverBroadcastV3(b); // confirmed era = ERA_BASE
 
-        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        LibVaipakam.DayCompensation memory dc = _rlens().getDayCompensation(3);
         assertFalse(dc.compensated, "provisional state deleted");
         LibVaipakam.StrandedRecovery memory sr =
-            _remit().getStrandedRecovery(address(0xDD), REMIT_ID);
+            _rlens().getStrandedRecovery(address(0xDD), REMIT_ID);
         assertEq(sr.amount, 5e18, "whole credit demoted to the reservation");
         assertEq(sr.reason, 2, "reason: era mismatch");
-        assertEq(_remit().getStrandedRecoveryReserved(), 5e18, "sum moved");
+        assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "sum moved");
     }
 
     function testProvisionalDemoted_NotZeroed() public {
@@ -1411,7 +1444,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB)); // zeroed = false
 
         LibVaipakam.StrandedRecovery memory sr =
-            _remit().getStrandedRecovery(REMITTER, REMIT_ID);
+            _rlens().getStrandedRecovery(REMITTER, REMIT_ID);
         assertEq(sr.amount, 5e18, "demoted");
         assertEq(sr.reason, 1, "reason: the day was never zeroed");
     }
@@ -1470,11 +1503,11 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
 
         _deliverComp(3, address(0xD2), 4e18, 1e18); // second: conflicts
 
-        LibVaipakam.DayCompensation memory dc = _remit().getDayCompensation(3);
+        LibVaipakam.DayCompensation memory dc = _rlens().getDayCompensation(3);
         assertEq(dc.provisionalEra, address(0xD1), "first binding intact");
         assertEq(dc.lenderPool18, 3e18, "first pools intact");
         LibVaipakam.StrandedRecovery memory sr =
-            _remit().getStrandedRecovery(address(0xD2), REMIT_ID);
+            _rlens().getStrandedRecovery(address(0xD2), REMIT_ID);
         assertEq(sr.amount, 5e18, "second arrival reserved whole");
         assertEq(sr.reason, 4, "reason: provisional conflict");
     }
@@ -1496,11 +1529,11 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         _deliverComp(3, address(0xE2), 3e18, 2e18);
 
         assertFalse(
-            _remit().getDayCompensation(3).provisional,
+            _rlens().getDayCompensation(3).provisional,
             "never provisional"
         );
         LibVaipakam.StrandedRecovery memory sr =
-            _remit().getStrandedRecovery(address(0xE2), REMIT_ID);
+            _rlens().getStrandedRecovery(address(0xE2), REMIT_ID);
         assertEq(sr.amount, 5e18, "reserved");
         assertEq(sr.reason, 5, "reason: V3-unhealable day");
     }
@@ -1518,9 +1551,9 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
             3, REMITTER, 3e18, 2e18, finalizedLongAgo, 1, uint64(7 days)
         );
 
-        assertFalse(_remit().getDayCompensation(3).compensated, "no credit");
+        assertFalse(_rlens().getDayCompensation(3).compensated, "no credit");
         assertEq(
-            _remit().getStrandedRecovery(REMITTER, REMIT_ID).reason,
+            _rlens().getStrandedRecovery(REMITTER, REMIT_ID).reason,
             3,
             "reason: past expiry, evaluated from the wire words"
         );
@@ -1534,9 +1567,9 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         _configureCompMirror();
         _deliverCompWithClock(3, REMITTER, 3e18, 2e18, 0, 0, 0);
 
-        assertFalse(_remit().getDayCompensation(3).compensated, "no credit");
+        assertFalse(_rlens().getDayCompensation(3).compensated, "no credit");
         assertEq(
-            _remit().getStrandedRecovery(REMITTER, REMIT_ID).reason,
+            _rlens().getStrandedRecovery(REMITTER, REMIT_ID).reason,
             6,
             "reason: clockless payload"
         );
@@ -1555,7 +1588,7 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         _deliverComp(3, REMITTER, 3e18, 2e18);
 
         assertEq(
-            _remit().getStrandedRecovery(REMITTER, REMIT_ID).reason,
+            _rlens().getStrandedRecovery(REMITTER, REMIT_ID).reason,
             3,
             "reason: past expiry, evaluated from the installed clock"
         );

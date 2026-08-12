@@ -156,6 +156,18 @@ interface IRepatriationInstructionIngress {
  *      and any remainder is returned to the caller-supplied refund
  *      address.
  */
+/// @dev #1656 r10 - the reward messenger's WIRE GENERATION, file-level
+///      so the refresh script imports the same durable constant the
+///      contract publishes (the receiver's REMIT_RECEIVER_WIRE_GENERATION
+///      pattern). Generation 3 = the P2-w5 wire set (the ack's
+///      classification word replaced the consumed bool - a NEW
+///      selector; generation 2 was the P2-w3/w4 set): kind-11 comp
+///      quotes (5 words, era-bound), the 23-word V3 broadcast carrying
+///      the day-pool halves, and the 5-word consumption-attested ACK. A
+///      proxy without the selector is generation 1 and predates all
+///      three.
+uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 3;
+
 contract VaipakamRewardMessenger is
     Initializable,
     Ownable2StepUpgradeable,
@@ -193,6 +205,11 @@ contract VaipakamRewardMessenger is
     ///         `remitId` a delivered reward-budget remittance carried,
     ///         finalizing Base's delivered-backing reservation. Data-only —
     ///         the value moved on the token channel; this is its receipt.
+    /// @notice #1656 r10 - the durable upgrade probe the refresh script
+    ///         generation-gates on.
+    uint256 public constant WIRE_GENERATION =
+        REWARD_MESSENGER_WIRE_GENERATION;
+
     uint8 internal constant MSG_TYPE_REMIT_ACK = 7;
     /// @notice #1568 C2 — Base → ONE mirror Mode-A repatriation INSTRUCTION:
     ///         directs the mirror to move `amount` of its recycled surplus
@@ -322,7 +339,9 @@ contract VaipakamRewardMessenger is
     ///         tag, never the length (the standing rule). Canonical-gated on
     ///         receive; kind-7 pre-dates any deployment, so there is no
     ///         legacy 3-word shape to dual-decode.
-    uint256 internal constant REMIT_ACK_PAYLOAD_SIZE = 4 * 32;
+    // #1656 r8 - 5 words: kind, remitId, amountReceived, remitter,
+    // consumed (the mirror's consumption attestation the R6 gate keys on).
+    uint256 internal constant REMIT_ACK_PAYLOAD_SIZE = 5 * 32;
     /// @notice #1568 C2 — repatriation INSTRUCTION payload:
     ///         `abi.encode(uint8, address issuingBase, uint256 authId,
     ///         uint256 amount)`. Same length as the legacy report / remit
@@ -606,6 +625,9 @@ contract VaipakamRewardMessenger is
     error UnknownMessageType(uint8 msgType);
     /// @notice Inbound payload length is not the canonical 4-word shape.
     error PayloadSizeMismatch(uint256 got, uint256 expected);
+    /// @notice #1660 r7 - ack classification word zero or above 3
+    ///         (validated on the raw uint256, BEFORE any narrowing).
+    error AckClassificationOutOfRange(uint256 classification);
 
     /// @notice #1222 M3 B2-b — {broadcastDayV2}'s per-destination array
     ///         must match the configured destination set exactly.
@@ -913,6 +935,7 @@ contract VaipakamRewardMessenger is
         uint256 remitId,
         uint256 amountReceived,
         address remitter,
+        uint8 classification,
         address payable refundAddress
     )
         external
@@ -929,7 +952,8 @@ contract VaipakamRewardMessenger is
             MSG_TYPE_REMIT_ACK,
             remitId,
             amountReceived,
-            remitter
+            remitter,
+            uint256(classification)
         );
         messageId = _dispatch(baseChainId, payload, msg.value, refundAddress);
 
@@ -947,7 +971,8 @@ contract VaipakamRewardMessenger is
             MSG_TYPE_REMIT_ACK,
             remitId,
             amountReceived,
-            remitter
+            remitter,
+            uint256(0)
         );
         nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
             baseChainId, payload, _noTokens(), destGasLimit
@@ -1674,8 +1699,9 @@ contract VaipakamRewardMessenger is
         if (tokens.length != 0) revert UnexpectedTokens(tokens.length);
 
         // The inbound shape gate accepts the union of valid word counts:
-        // 6 (REPORT, #1222 B1), 4 (legacy REPORT / REMIT_ACK #1222 B2-d2 /
-        // REPAT_INSTRUCTION #1568 C2 — disambiguated by the kind tag below),
+        // 6 (REPORT, #1222 B1), 4 (legacy REPORT / REPAT_INSTRUCTION
+        // #1568 C2 — disambiguated by the kind tag below; REMIT_ACK moved
+        // to 5 words with the #1656 r8 consumed flag),
         // 8 (REPORT #1222 B3 / legacy BROADCAST / TierUpdated), 2
         // (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3 (REPAT_CANCEL,
         // #1568 C2), 23 (BROADCAST_V3, #1434 P2-w1's 21 + the two #1636 r2
@@ -1900,14 +1926,27 @@ contract VaipakamRewardMessenger is
             if (sourceChainId > type(uint32).max) {
                 revert ChainIdTooLarge(sourceChainId);
             }
-            (, uint256 remitId, uint256 amountReceived, address remitter) =
-                abi.decode(payload, (uint8, uint256, uint256, address));
+            (
+                ,
+                uint256 remitId,
+                uint256 amountReceived,
+                address remitter,
+                uint256 classification
+            ) = abi.decode(
+                payload, (uint8, uint256, uint256, address, uint256)
+            );
+            // #1660 r7 - validate BEFORE narrowing: uint8(258) == 2 would
+            // forge quarantine evidence from a malformed word.
+            if (classification == 0 || classification > 3) {
+                revert AckClassificationOutOfRange(classification);
+            }
             emit RemitAckReceived(sourceChainId, remitId, amountReceived);
             IRewardRemitAckIngress(diamond).onRemitAckReceived(
                 SafeCast.toUint32(sourceChainId),
                 remitId,
                 amountReceived,
-                remitter
+                remitter,
+                uint8(classification)
             );
         } else if (msgType == MSG_TYPE_REPAT_INSTRUCTION) {
             // #1568 C2 — Base → mirror repatriation instruction. Mirror-only.
