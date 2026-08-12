@@ -72,6 +72,12 @@ const BLOCKING_HOOKS = {
   // helper that was a fresh function each pass. Both are now stable, so the
   // dependency each effect really has is written down.
   'react-hooks/exhaustive-deps': 'error',
+  // Promoted on reaching zero (#1520). All nine sites were `Date.now()`
+  // read during render, which froze every value derived from it until an
+  // unrelated re-render; they now read a ticking clock through state
+  // (`hooks/useNowSec`). The one remaining call is in a submit handler the
+  // rule cannot recognise as one, and carries a disable saying so.
+  'react-hooks/purity': 'error',
 }
 
 export default defineConfig([

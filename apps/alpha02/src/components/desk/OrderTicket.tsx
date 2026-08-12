@@ -66,6 +66,7 @@ import {
 import type { DeskPair } from '../../data/desk';
 import { indexerConfigured, postSignedOffer } from '../../data/indexer';
 import { useSignedOfferSigning } from '../../contracts/useSignedOfferSigning';
+import { useNowSec } from '../../hooks/useNowSec';
 import {
   collapseForSignedPost,
   randomSignedOfferNonce,
@@ -266,11 +267,21 @@ export function OrderTicket({
 
   const overDurationCap = days > fees.maxOfferDurationDays;
 
+  // The ticket's expiry validation and previews compare against the clock.
+  // Reading it through state also makes the derived payload STABLER than
+  // before: every memo pass used to take its own `Date.now()`, so a preset
+  // expiry differed on each recompute.
+  const nowSec = useNowSec();
+
   // ---- expiry --------------------------------------------------------
   // Presets resolve RELATIVE to now at build time; submit re-resolves
   // fresh so a ticket left open doesn't post a stale deadline.
-  const resolveExpiresAt = (): bigint | null => {
-    const now = Math.floor(Date.now() / 1000);
+  //
+  // `now` is a PARAMETER rather than a read inside (#1520) precisely to
+  // keep that promise: the render-phase validation below passes the
+  // ticking clock, while submit passes an exact reading, so the deadline
+  // actually posted is never rounded to a tick.
+  const resolveExpiresAt = (now: number): bigint | null => {
     switch (expiry) {
       case 'gtc':
         return 0n;
@@ -292,7 +303,7 @@ export function OrderTicket({
       }
     }
   };
-  const expiryOk = expiry !== 'custom' || resolveExpiresAt() !== null;
+  const expiryOk = expiry !== 'custom' || resolveExpiresAt(nowSec) !== null;
   /** The custom stamp parses but sits past the contract's one-year
    *  horizon — split out so the inline copy can say WHY the ticket is
    *  held instead of the generic "must be in the future". */
@@ -300,8 +311,7 @@ export function OrderTicket({
     if (expiry !== 'custom' || !customExpiry) return false;
     const ts = Math.floor(new Date(customExpiry).getTime() / 1000);
     return (
-      Number.isFinite(ts) &&
-      ts > Math.floor(Date.now() / 1000) + MAX_OFFER_EXPIRY_HORIZON_SECONDS
+      Number.isFinite(ts) && ts > nowSec + MAX_OFFER_EXPIRY_HORIZON_SECONDS
     );
   };
   // IOC requires an expiry (#125) — GTC + IOC is contract-invalid.
@@ -356,9 +366,12 @@ export function OrderTicket({
    *  the lender side to single-value (`amount == amountMax`) — the
    *  contract requires it, and the borrower payload is single-value
    *  already. */
-  const buildPayload = (withConsent: boolean): CreateOfferPayload | null => {
+  const buildPayload = (
+    withConsent: boolean,
+    now: number,
+  ): CreateOfferPayload | null => {
     if (!fieldsComplete) return null;
-    const expiresAt = resolveExpiresAt();
+    const expiresAt = resolveExpiresAt(now);
     if (expiresAt === null || iocNeedsExpiry) return null;
     try {
       const base = toCreateOfferPayload(
@@ -394,7 +407,7 @@ export function OrderTicket({
   const simTx = useMemo((): TxSimInput | null => {
     if (postMode !== 'onchain') return null;
     if (!walletChain || !consent || !decimalsReady) return null;
-    const payload = buildPayload(true);
+    const payload = buildPayload(true, nowSec);
     if (!payload) return null;
     try {
       return {
@@ -422,7 +435,7 @@ export function OrderTicket({
     if (side !== 'borrower' || !walletChain || !decimalsReady || !fieldsComplete) {
       return null;
     }
-    const payload = buildPayload(true);
+    const payload = buildPayload(true, nowSec);
     if (!payload) return null;
     try {
       return {
@@ -508,7 +521,16 @@ export function OrderTicket({
       if (!address || !walletChain || !walletClient || !publicClient) {
         throw new Error(copy.wallet.connectFirst);
       }
-      const payload = buildPayload(consent);
+      // Submit re-resolves against an EXACT reading, not the ticking one,
+      // so the deadline posted on-chain is never rounded to a tick.
+      //
+      // Deliberate, and the rule's heuristic is what is wrong here: it
+      // cannot see that `submit` only ever runs from the post button's
+      // onClick (its single call site), so it treats this body as render
+      // phase. Reading a ticking value here would be the regression --
+      // it would post a deadline up to one tick stale.
+      // eslint-disable-next-line react-hooks/purity
+      const payload = buildPayload(consent, Math.floor(Date.now() / 1000));
       if (!payload) {
         throw new Error(
           customExpiryTooFar()
@@ -699,7 +721,7 @@ export function OrderTicket({
       // collateral is single-value by invariant. Collapse here —
       // structurally, not just via the fill-mode chip state — so the
       // signed wire order can never publish unmatchable partial depth.
-      const built = buildPayload(consent);
+      const built = buildPayload(consent, Math.floor(Date.now() / 1000));
       const payload = built === null ? null : collapseForSignedPost(built);
       if (!payload) {
         throw new Error(
@@ -879,7 +901,7 @@ export function OrderTicket({
   // sends, so the numbers can't drift from the order.
   const feePreview = useMemo((): { commit: string; fee: string } | null => {
     if (!fieldsComplete || !decimalsReady || !fees.ready) return null;
-    const payload = buildPayload(false);
+    const payload = buildPayload(false, nowSec);
     if (!payload) return null;
     const lendDec = lendingMeta.data?.decimals ?? 18;
     const collDec = collateralMeta.data?.decimals ?? 18;

@@ -32,6 +32,7 @@ import { SupportTicketCard } from './SupportTicketCard';
 import { useActiveChain } from '../chain/useActiveChain';
 import { indexerConfigured, probeIndexerFreshness } from '../data/indexer';
 import { readLastError } from '../diagnostics/lastError';
+import { useNowSec } from '../hooks/useNowSec';
 import {
   buildIssueUrl,
   buildReportBody,
@@ -173,16 +174,17 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
       : copy.diagnostics.rpcChecking;
   const rpcTone = rpc.error ? 'warn' : rpc.data ? 'ok' : 'muted';
 
+  // Ticks, so the age this drawer reports keeps counting while it is open
+  // rather than freezing at whatever it read on the render that opened it.
+  const nowSec = useNowSec();
+
   let indexerLine: string;
   let indexerTone: 'ok' | 'warn' | 'muted';
   if (!indexerConfigured()) {
     indexerLine = copy.diagnostics.indexerNotConfigured;
     indexerTone = 'muted';
   } else if (freshness.data?.kind === 'cursor') {
-    const ageSec = Math.max(
-      0,
-      Math.floor(Date.now() / 1000) - freshness.data.freshness.updatedAt,
-    );
+    const ageSec = Math.max(0, nowSec - freshness.data.freshness.updatedAt);
     if (ageSec < INDEXER_STALE_AFTER_SEC) {
       indexerLine = copy.diagnostics.indexerOk(formatAge(ageSec));
       indexerTone = 'ok';
