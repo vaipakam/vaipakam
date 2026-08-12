@@ -1509,6 +1509,22 @@ Its intended behaviour, as the test oracle for this surface:
   publishes signed lend depth that partial fills could not actually
   consume. Gasless borrow orders are unaffected — they already post as
   a single fixed size.
+  That substitution replaces the PARTIAL choice only. Immediate-or-
+  cancel remains available on a gasless lend order and is posted as
+  chosen, because immediate-or-cancel says when an order stops resting
+  rather than how much of it may fill — so it is not in conflict with
+  single-whole-fill, and the requirement that such an order carry an
+  expiry continues to apply to it. The ticket never posts a fill mode
+  other than the one it is showing: the mode displayed on the chips is
+  the mode that goes into the order, at every moment, including while
+  the terms that force the substitution are themselves changing.
+  Choosing to lend rather than borrow, or to post by signature rather
+  than on-chain, changes what is being agreed to, so it withdraws any
+  risk-and-terms acknowledgement already given — at the moment of the
+  change, not after it. This matters most for a signature-only post,
+  where the signature is the last checkpoint: nothing downstream
+  re-examines whether the acknowledgement matched the terms displayed
+  when it was given.
   Because nothing is locked at signing, a signed order can rest
   unbacked; the platform warns the maker when their vault does not
   currently cover the commitment (without blocking — funding later is
