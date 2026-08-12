@@ -116,14 +116,32 @@ export function useLoanSalePending(
 ) {
   const { readChain, address } = useActiveChain();
   const readClient = usePublicClient({ chainId: readChain.chainId });
-  const [markerId, setMarkerId] = useState<string | null>(null);
+  const [markerId, setMarkerId] = useState<string | null>(() =>
+    marker.read(readChain.chainId, loanId),
+  );
   // The recovery probe is expensive (indexer page + serial link
   // reads) — budget a few attempts per (chain, loan, wallet) episode
   // instead of re-firing on every 30s tick forever.
   const probeBudgetRef = useRef(3);
 
-  useEffect(() => {
+  // Re-seed the marker when the (chain, loan, wallet) identity changes, as
+  // a render-phase ADJUSTMENT rather than in an effect (#1520): React
+  // re-runs the render before painting, so the previous identity's marker
+  // is never displayed, where the effect version committed one frame
+  // carrying it. The initializer alone would freeze the first identity's
+  // marker, which is what the effect was there for.
+  const seedKey = `${readChain.chainId}:${loanId}:${address ?? ''}`;
+  const [seededFor, setSeededFor] = useState(seedKey);
+  if (seededFor !== seedKey) {
+    setSeededFor(seedKey);
     setMarkerId(marker.read(readChain.chainId, loanId));
+  }
+
+  // The probe budget stays in an effect on purpose: writing a ref during
+  // render is what `react-hooks/refs` (promoted in #1670) forbids, and
+  // unlike the marker this value is never read during render, so a
+  // post-commit reset is not observable.
+  useEffect(() => {
     probeBudgetRef.current = 3;
   }, [readChain.chainId, loanId, address]);
 
