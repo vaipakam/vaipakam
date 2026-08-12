@@ -2673,7 +2673,11 @@ export function Recover() {
   // Only a claim held by the CURRENT identity busies the button (Codex
   // #1547 r7) — a claim left behind by a previous account's still
   // running read must not disable the new account's card.
+  // genRef has exactly one write site (the identity-reset effect above),
+  // which also calls clearToFreshForm() and so always commits state; the
+  // read cannot observe a bump without a re-render following it.
   const reconciling =
+    // eslint-disable-next-line react-hooks/refs
     reconcileClaim !== null && reconcileClaim === genRef.current;
 
   /** Back to a blank form, nothing carried over — the same shape the

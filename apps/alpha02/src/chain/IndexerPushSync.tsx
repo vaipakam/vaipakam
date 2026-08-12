@@ -23,7 +23,7 @@
  *
  * Renders nothing; mount once inside the app shell.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useActiveChain } from './useActiveChain';
 import { indexerWsOrigin } from '../data/indexer';
@@ -323,8 +323,23 @@ export function IndexerPushSync() {
   // value would go stale after a switch and scope against the old
   // wallet's identity/cache, wrongly suppressing the new wallet's
   // refetches.
+  // Stamped POST-COMMIT rather than during render: a render React
+  // discards (StrictMode's double invocation, an abandoned concurrent
+  // render) would otherwise leave the ref holding an address the UI
+  // never committed to, and the frame handler would scope against it.
+  // A LAYOUT effect, not a passive one (Codex #1520 r1): passive effects
+  // are not guaranteed to flush before paint, so an `invalidate` frame
+  // already queued when an account switch commits could reach the handler
+  // while this ref still named the previous wallet — narrowing the new
+  // wallet's myLoans/myOffers invalidation against the old wallet's cache
+  // and suppressing a refetch it needs until the polling fallback covers
+  // it. Layout effects run synchronously after commit, before the browser
+  // can paint or dispatch the queued frame, which closes that window
+  // while keeping the post-commit property above.
   const addressRef = useRef<string | null>(null);
-  addressRef.current = address?.toLowerCase() ?? null;
+  useLayoutEffect(() => {
+    addressRef.current = address?.toLowerCase() ?? null;
+  }, [address]);
   const chainId = readChain.chainId;
   const queryClient = useQueryClient();
   const wsOrigin = indexerWsOrigin();

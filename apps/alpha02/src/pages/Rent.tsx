@@ -924,6 +924,11 @@ function RentNftFlow() {
     // A disclosed warning requires consent granted AGAINST the
     // current fingerprint, not consent left over from before it
     // appeared.
+    // Same shape as OfferFlow's canSign gate: the sole write is the consent
+    // checkbox handler, which also sets state, so a re-render always
+    // follows. State would delay the comparison by a render and briefly
+    // permit a submit against a warning the user has not consented to.
+    // eslint-disable-next-line react-hooks/refs
     (!prepaySecWarned || prepayConsentFpRef.current === prepaySecFingerprint) &&
     !killed &&
     !busy;

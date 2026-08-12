@@ -199,6 +199,13 @@ export function NotificationBell() {
               ) : rows.length === 0 ? (
                 <p className="notif-empty">{copy.notifications.empty}</p>
               ) : (
+                /* eslint-disable-next-line react-hooks/refs -- the
+                   open-time cursor snapshot exists precisely so the dots
+                   survive the real cursor advancing. Both writes (the
+                   identity-reset effect, and toggleOpen) set state in the
+                   same pass, so a re-render always follows; state here
+                   would instead re-render the panel mid-open and clear
+                   the dots the snapshot is for. */
                 rows.map((row) => (
                   <NotificationRow
                     key={row.id}

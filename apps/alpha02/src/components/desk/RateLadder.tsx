@@ -211,6 +211,12 @@ export function RateLadder({
   // keeps render pure (StrictMode double-render safe).
   const prevRef = useRef<LadderSnapshot>({ marketKey: null, sizes: new Map() });
   const flashIds = useMemo(
+    // Reading the PREVIOUS snapshot is the whole point of a change-flash
+    // diff, and the ref is advanced only in the effect below
+    // (post-commit), so render stays pure and StrictMode-safe. See the
+    // note above on why the memo must not recompute against the updated
+    // ref.
+    // eslint-disable-next-line react-hooks/refs
     () => ladderFlashIds(prevRef.current, ladder, chainId),
     [ladder, chainId],
   );
