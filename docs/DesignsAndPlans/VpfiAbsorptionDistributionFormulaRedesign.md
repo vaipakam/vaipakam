@@ -85,6 +85,14 @@ loanSideRewardCap ≈ ½ × 8.22 × 0.98 ≈ 4.03 VPFI per side (loan life)
 
 ### Current state (code + specs)
 
+> **Baseline snapshot, not today's rates.** This table records the state
+> this redesign was written against — i.e. BEFORE the rev-8 fee freeze
+> (#1352) that §"List fees" above ratifies. The live rates are **LIF
+> 0.2% / yield fee 2%**, and the borrower LIF is charged in the lending
+> asset with the hold-tier discount applied directly at acceptance; the
+> `tryApplyBorrowerLif` custody path in the table is retired and reached
+> only by loans opened before the freeze.
+
 | Surface | Mechanism today | Phase-1 launch reality |
 | --- | --- | --- |
 | Lender yield fee (1% of interest) | Prefer `tryApplyYieldFee` (VPFI at peg); else `directReductionYieldFee` (E-1) | Peg unset → **direct-reduction only**; no VPFI absorbed |

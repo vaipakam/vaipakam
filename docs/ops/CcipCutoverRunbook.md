@@ -36,14 +36,18 @@ deployed**. Per chain:
 | VPFI CCIP `TokenPool` | ✓ — Lock/Release | | ✓ — Burn/Mint |
 | `VpfiPoolRateGovernor` (the pool `rateLimitAdmin`) | ✓ | | |
 | `VaipakamRewardMessenger` | ✓ | | |
-| `VpfiBuyReceiver` | | ✓ | |
-| `VPFIMirrorToken` + `VpfiBuyAdapter` | | | ✓ |
+| `RewardRemittanceReceiver` / buyback / return receivers as applicable | ✓ | topology-dependent | topology-dependent |
+| `VPFIMirrorToken` | | | ✓ |
 
 Canonical vs mirror is decided by `block.chainid` — `8453` / `84532` are
 canonical Base; every other chain is a mirror.
 
-**Chain set (design §10):** Ethereum, Base, Arbitrum, Optimism, BNB
-(mainnet) and their public testnets. zk-rollup chains are out of scope.
+The fixed-rate buy contracts (`VpfiBuyAdapter` / `VpfiBuyReceiver`) are
+not deployed in the current CCIP stack; #687-A removed that sale surface.
+
+**Chain set (design §10 / CLAUDE.md):** Ethereum, Base, Polygon,
+Arbitrum and Optimism. BNB is testnet-tier only. zk-rollup chains and
+Solana are out of scope.
 
 ---
 
@@ -74,15 +78,11 @@ The slug suffix is the chain's upper-cased registry slug
   and (after the Ownable2Step handover) of every TokenPool. On testnet
   this is the same EOA as the deployer; on mainnet it is the admin
   multisig (see §5).
-- `TREASURY_ADDRESS` — local treasury for the buy adapter.
 - `BASE_CHAIN_ID` — **mirror chains only** — the EVM chain id of
   canonical Base (`8453` mainnet, `84532` Base Sepolia).
 - `CCIP_LANE_CHAIN_IDS` — **for the wiring pass** — comma-separated EVM
   chain ids of every *remote* chain to wire a lane to.
-- Optional: `VPFI_BUY_PAYMENT_TOKEN` (default native ETH; bridged WETH on
-  BNB/Polygon mainnet — see CLAUDE.md "VPFIBuyAdapter — payment-token
-  mode by chain"), `VPFI_BUY_REFUND_TIMEOUT` (default 900s),
-  `CCIP_DEST_GAS_LIMIT` (default 400000), `CCIP_GUARDIAN`,
+- Optional: `CCIP_DEST_GAS_LIMIT` (default 400000), `CCIP_GUARDIAN`,
   `CCIP_RATE_CAPACITY` / `CCIP_RATE_REFILL` (default the design §10
   starting values — see §4).
 

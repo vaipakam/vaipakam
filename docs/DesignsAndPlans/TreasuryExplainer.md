@@ -22,7 +22,7 @@ quietly.
 ## 1. What is "the treasury"?
 
 Every time a loan is repaid, Vaipakam keeps a small fee — for example
-1% of the interest. Those fees don't go to a person. They collect in
+2% of the interest. Those fees don't go to a person. They collect in
 the **treasury**, which is the protocol's own smart contract. Think of
 it as the protocol's bank account, owned by the protocol itself.
 

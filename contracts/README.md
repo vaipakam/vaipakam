@@ -497,7 +497,10 @@ All in `LibVaipakam.sol` — treat as audit-reviewed constants, not knobs.
 | Constant                         | Value       | Meaning                                                 |
 |----------------------------------|-------------|---------------------------------------------------------|
 | `MIN_HEALTH_FACTOR`              | `1.5e18`    | Minimum HF at loan initiation                           |
-| `TREASURY_FEE_BPS`               | `100`       | 1% treasury cut on accrued interest                     |
+| `TREASURY_FEE_BPS`               | `200`       | 2% treasury cut on accrued interest (rev-8 freeze, #1352; was `100`) |
+| `LEGACY_TREASURY_FEE_BPS`        | `100`       | Frozen 1% fallback for pre-#957 loans carrying no `treasuryFeeBpsAtInit` stamp — grandfathers them at the rate they opened under |
+| `LOAN_INITIATION_FEE_BPS`        | `20`        | 0.2% of ERC-20 principal, charged once at accept in the **lending asset** (rev-8 freeze, #1352; was `10`) |
+| `MAX_FEE_DISCOUNT_BPS`           | `5000`      | Uniform 50% clamp on any party's effective fee discount — binds below the 90% per-tier setter cap |
 | `KYC_TIER0_THRESHOLD_USD`        | `1000e18`   | Tier-0 cap (unverified wallets). Loans ≥ this need Tier-1 |
 | `KYC_TIER1_THRESHOLD_USD`        | `10000e18`  | Tier-1 cap (email / light KYC). Loans ≥ this need Tier-2  |
 | `RENTAL_BUFFER_BPS`              | `500`       | 5% prepay buffer on NFT rentals                         |

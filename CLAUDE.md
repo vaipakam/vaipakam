@@ -85,7 +85,21 @@ Placeholder facets (Phase 2): TreasuryFacet, PrecloseFacet, RefinanceFacet, Earl
 ### Key Constants (LibVaipakam.sol)
 
 - `MIN_HEALTH_FACTOR = 1.5e18` — minimum HF at loan initiation
-- `TREASURY_FEE_BPS = 100` — 1% treasury cut on interest
+- `TREASURY_FEE_BPS = 200` — 2% treasury cut on interest (the rev-8 fee
+  freeze, #1352; it was `100` = 1% before). Resolved **per loan** from
+  `treasuryFeeBpsAtInit`, so a governance retune never re-prices an open
+  loan. `LEGACY_TREASURY_FEE_BPS = 100` is the frozen fallback for
+  pre-#957 loans that carry no stamp — do NOT "simplify" that fallback to
+  the live knob, it would retroactively reprice every grandfathered loan
+  from 1% → 2% at repay
+- `LOAN_INITIATION_FEE_BPS = 20` — 0.2% of ERC-20 principal, charged once
+  at accept (also the #1352 freeze; was `10` = 0.1%). Since #1352 it is
+  charged in the **lending asset**, not VPFI — see the scope banner in
+  "VPFI Fee Discounts" below
+- `MAX_FEE_BPS = 5_000` (in `ConfigFacet`) — 50% ceiling for
+  `treasuryFeeBps` / `loanInitiationFeeBps`; `MAX_FEE_DISCOUNT_BPS = 5000`
+  — the uniform 50% clamp on any party's effective fee discount, which
+  binds well below the 90% per-tier setter cap (`MAX_DISCOUNT_BPS`)
 - `KYC_TIER0_THRESHOLD_NUMERAIRE = 1_000e18` / `KYC_TIER1_THRESHOLD_NUMERAIRE = 10_000e18` — two-tier KYC thresholds ($1k / $10k, numeraire-denominated). Enforcement is **dormant on the retail deploy** (see "Retail-deploy policy" below); there is no single `KYC_THRESHOLD_USD = 2000e18` constant (that value is stale)
 - `RENTAL_BUFFER_BPS = 500` — 5% buffer on NFT rental prepayment
 - `VOLATILITY_LTV_THRESHOLD_BPS = 11000` — 110% LTV collapse threshold
@@ -520,9 +534,12 @@ pass the live balance.
 **Borrower LIF — Phase 5 flow**:
 
 1. At `OfferFacet.acceptOffer` on the VPFI path: borrower pays the
-   FULL 0.1% LIF equivalent in VPFI (not tier-discounted) from their
+   FULL LIF equivalent in VPFI (not tier-discounted) from their
    vault into **Diamond custody** (not treasury). Amount recorded
-   in `s.borrowerLifRebate[loanId].vpfiHeld`.
+   in `s.borrowerLifRebate[loanId].vpfiHeld`. (The rate that path was
+   built against was the pre-#1352 0.1%; grandfathered loans settle at
+   whatever they stamped. The live rate is 0.2% and is **not** charged
+   this way — see the scope banner above.)
 2. At proper settlement (`RepayFacet` terminal, `PrecloseFacet`
    direct + offset, `RefinanceFacet`):
    `LibVPFIDiscount.settleBorrowerLifProper(loan)` splits `vpfiHeld`

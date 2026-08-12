@@ -832,7 +832,7 @@
     "step4Desc": "Pünktlich zurückzahlen und Sicherheiten zurückerhalten. Der Lender beansprucht Kapital plus Zinsen über das NFT. Bei einem Default folgen Liquidation oder vollständige Sicherheitenübertragung gemäß Protokollregeln.",
     "step4Detail1": "NFT zur Auszahlung vorlegen",
     "step4Detail2": "Säumniszuschläge auf 5% begrenzt",
-    "step4Detail3": "0,1% Kreditinitiierungsgebühr + 1% Renditegebühr auf Zinsen",
+    "step4Detail3": "0,2% Kreditinitiierungsgebühr + 2% Renditegebühr auf Zinsen",
     "step4Detail4": "Gestaffelter VPFI-Rabatt: 10% / 15% / 20% / 24% auf beide Gebühren je nach Treuhand-Guthaben"
   },
   "security": {
@@ -994,8 +994,8 @@
       "fees": {
         "q": "Welche Gebühren erhebt die Plattform?",
         "a1": "Zwei Hauptgebühren plus eine Säumnisstaffel:",
-        "li1": "<s>Kreditstartgebühr — 0,1 %</s> auf ERC-20-Kredite, vom Hauptbetrag des Kreditgebers beim Kreditstart abgezogen. Der Kreditnehmer erhält 99,9 % des angebotenen Betrags, schuldet aber weiterhin den vollen Hauptbetrag.",
-        "li2": "<s>Renditegebühr — 1 %</s> auf von Kreditgebern verdiente Zinsen und auf von NFT-Eignern verdiente Mieteinnahmen.",
+        "li1": "<s>Kreditstartgebühr — 0,2 %</s> auf ERC-20-Kredite, vom Hauptbetrag des Kreditgebers beim Kreditstart abgezogen. Der Kreditnehmer erhält 99,8 % des angebotenen Betrags, schuldet aber weiterhin den vollen Hauptbetrag.",
+        "li2": "<s>Renditegebühr — 2 %</s> auf von Kreditgebern verdiente Zinsen und auf von NFT-Eignern verdiente Mieteinnahmen.",
         "li3": "<s>Säumniszuschläge:</s> 1 % pauschal am Tag des Versäumnisses, plus 0,5 % je weiterem Tag, gedeckelt auf 5 % des Hauptbetrags. Säumniszuschläge fließen an die Treasury.",
         "a2": "VPFI-Halter können <em>beide</em> Hauptgebühren über eine einzige plattformweite Zustimmung reduzieren — siehe den Eintrag zum VPFI-Rabatt unten."
       },
