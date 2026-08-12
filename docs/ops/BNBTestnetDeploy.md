@@ -15,18 +15,27 @@ mesh — canonical VPFI + reward chain remains Base Sepolia (chainId
 >
 > 1. **`DeployCrosschain.s.sol`** — deploys `CcipMessenger`,
 >    `VaipakamRewardMessenger`, `VpfiPoolRateGovernor`,
->    `VpfiBuyAdapter`, `VPFIMirrorToken` proxy, and the CCIP
->    `BurnMintTokenPool` (mirror-side stock pool).
+>    `VPFIMirrorToken` proxy, and the CCIP `BurnMintTokenPool`
+>    (mirror-side stock pool). It does **not** deploy a
+>    `VpfiBuyAdapter` — an earlier version of this banner said it did;
+>    the fixed-rate buy surface was removed entirely in #687-A.
 > 2. **`ConfigureCcip.s.sol`** — channel peers, lane rate limits,
 >    `TokenAdminRegistry` registration, guardian wiring. Idempotent.
+>
+> Chains are keyed by **EVM chain id** throughout (BNB Testnet = `97`),
+> never by an endpoint id. Every "LZ eid" in the body below — including
+> the peer-wiring matrix and the `RewardOApp address parity` check — has
+> no equivalent to translate to: CCIP resolves chains through the
+> messenger's own selector registry, so there is nothing for an operator
+> to set per pair.
 >
 > For the canonical-source equivalent see `contracts/RUNBOOK.md` §2 +
 > §4. The detailed sequence below stays in place as a historical
 > reference until a CCIP-aware BNB testnet cookbook lands.
 
 > Read the [`DeploymentRunbook.md`](./DeploymentRunbook.md) first for
-> the cross-chain plumbing rationale (CREATE2 reward proxy, peer
-> wiring topology, addresses-as-source-of-truth). This document only
+> the cross-chain plumbing rationale (CREATE2 reward-messenger proxy,
+> lane topology, addresses-as-source-of-truth). This document only
 > covers the BNB-specific cookbook + quirks.
 
 All commands run from `contracts/`.

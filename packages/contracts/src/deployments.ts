@@ -1,8 +1,14 @@
 /**
  * Per-chain deployment artifacts — Diamond proxy addresses, facet
- * addresses, vault implementation, LayerZero endpoint + adapter
- * addresses, VPFI token + mirror, reward OApp, mock-token addresses
+ * addresses, vault implementation, the CCIP messenger + VPFI token
+ * pool, VPFI token + mirror, the reward messenger, mock-token addresses
  * for testnets, etc.
+ *
+ * The transport is Chainlink CCIP only. A few LayerZero-era keys
+ * (`lzEndpoint`, `rewardOApp*`) survive on the testnet chains that were
+ * deployed before T-068 — they are provenance, and `rewardOApp` is still
+ * read as a fallback by the deploy scripts for exactly those artifacts.
+ * Nothing new writes them, and `lzEid` is gone entirely.
  *
  * Single source of truth: `contracts/deployments/<chain-slug>/addresses.json`
  * — every deploy script writes there. The merge step in

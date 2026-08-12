@@ -15,7 +15,7 @@
 #
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase contracts \
 #                                           --confirm-i-have-multisig-ready
-#       Deploys Diamond + Timelock + VPFI lane + Reward OApp.
+#       Deploys Diamond + Timelock + VPFI lane + reward messenger.
 #       The confirm flag is a deliberate friction — without it, the
 #       script refuses. The flag asserts: governance multisig is
 #       reachable for the role-rotation ceremony at the end of the
@@ -62,10 +62,12 @@
 #       Safe (direct, no Timelock delay), the five Timelock-bound
 #       roles → Timelock, PAUSER_ROLE → Pauser Safe (direct, fast
 #       incident lever), ERC-173 Diamond ownership → Timelock, and
-#       every LZ OApp's Ownable2Step ownership → governance Safe
-#       (first leg only — the Safe must call acceptOwnership() on
-#       each before the transfer takes effect; the script prints the
-#       calldata to paste into the Safe UI). Then ADMIN renounces
+#       every cross-chain contract's Ownable2Step ownership → TIMELOCK
+#       (first leg only — the TIMELOCK must call acceptOwnership() on
+#       each, scheduled and executed through the governance Safe, before
+#       the transfer takes effect; the script prints the acceptance
+#       targets. A Safe calling acceptOwnership() directly reverts: it
+#       is not the pending owner.) Then ADMIN renounces
 #       every role it held except WATCHER + NOTIF_BILLER (those get
 #       rotated to per-bot EOAs separately via the keeper-auth flow).
 #       The DeployerZeroRolesTest hard exit gate runs after the
@@ -574,7 +576,7 @@ phase_contracts() {
     cat >&2 <<EOF
 Refusing --phase contracts on mainnet without --confirm-i-have-multisig-ready.
 
-This phase deploys Diamond + Timelock + VPFI lane + Reward OApp on $CHAIN_SLUG.
+This phase deploys Diamond + Timelock + VPFI lane + reward messenger on $CHAIN_SLUG.
 Once landed, the role-rotation ceremony (DeploymentRunbook §6) must run on
 the same day to renounce DEPLOYER_ROLE / DEFAULT_ADMIN_ROLE / etc.
 
@@ -633,9 +635,10 @@ $DEPLOY_DIR/.archive/<ISO-8601>/. The second confirm asserts you
 have reviewed the archive and genuinely intend to walk away from the
 prior on-chain deploy.
 
-Bump REWARD_VERSION in .env before re-running so the new Reward OApp
-proxy lands at a fresh CREATE2 address. Current REWARD_VERSION:
-${REWARD_VERSION:-(unset)}
+The re-deploy creates a NEW reward messenger at a NEW address — it is a
+plain deploy, not CREATE2, so nothing needs bumping to force that. Every
+other chain's lane config that names the old address must be re-pointed
+at the one this run writes to addresses.json.
 EOF
       exit 1
     fi
@@ -692,8 +695,9 @@ EOF
     echo "[0a] --fresh + --confirm-purging-prior-mainnet-deploy: archiving prior chain state for $CHAIN_SLUG"
     archive_chain_state "$CHAIN_SLUG"
     echo
-    echo "  ⚠ Bump REWARD_VERSION in .env before this re-deploy lands."
-    echo "    Current REWARD_VERSION: ${REWARD_VERSION:-(unset)}"
+    echo "  ⚠ The re-deploy creates a NEW reward messenger at a NEW"
+    echo "    address (plain deploy, not CREATE2). Re-point every other"
+    echo "    chain's lane config at the address this run records."
     echo
   fi
 
@@ -1173,22 +1177,28 @@ EOF
   fi
   # DeployCrosschain records the reward contract under `.rewardMessenger`.
   # Hand ConfigureRewardReporter that address explicitly via the legacy
-  # env-var name `REWARD_OAPP_PROXY` (kept for back-compat). Pre-PR-#272
+  # env-var name `REWARD_MESSENGER_PROXY` (the legacy `REWARD_OAPP_PROXY`
+  # is still accepted by the script). Pre-PR-#272
   # artifacts store the same address under `.rewardOApp`; fall back to it.
   #
-  # IMPORTANT: explicitly unset `REWARD_OAPP_PROXY` before the read so a
+  # IMPORTANT: explicitly unset the override before the read so a
   # stale carry-over from a prior chain's run in a multi-chain loop
   # cannot silently override this chain's correct artifact resolution.
   # Mirror of the same fix on `deploy-testnet.sh`'s phase_configure.
+  #
+  # BOTH names are cleared — `REWARD_MESSENGER_PROXY` is the current one
+  # and outranks the legacy name in ConfigureRewardReporter, so leaving it
+  # set would let a stale .env value beat the artifact resolved here.
+  unset REWARD_MESSENGER_PROXY
   unset REWARD_OAPP_PROXY
   REWARD_MSGR=$(jq -r '.rewardMessenger // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   if [ -z "$REWARD_MSGR" ]; then
     REWARD_MSGR=$(jq -r '.rewardOApp // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   fi
   if [ -n "$REWARD_MSGR" ]; then
-    export REWARD_OAPP_PROXY="$REWARD_MSGR"
+    export REWARD_MESSENGER_PROXY="$REWARD_MSGR"
   fi
-  # If both keys missed, REWARD_OAPP_PROXY stays unset; ConfigureRewardReporter
+  # If both keys missed, the override stays unset; ConfigureRewardReporter
   # then falls through to `Deployments.readRewardMessenger()` which has
   # its own library-level fallback (and reverts loudly if it also misses).
 
@@ -1219,7 +1229,7 @@ phase_handover() {
 Refusing --phase handover without --confirm-i-have-multisig-ready.
 
 This phase rotates DEFAULT_ADMIN_ROLE / Timelock-bound roles /
-PAUSER_ROLE / ERC-173 ownership / OApp ownership off ADMIN. The
+PAUSER_ROLE / ERC-173 ownership / cross-chain-contract ownership off ADMIN. The
 multi-party Safe ceremony that follows (acceptOwnership on each
 OApp + DeployerZeroRolesTest as exit gate) MUST run within the
 Ownable2Step pending-owner window — i.e. the multisig signers

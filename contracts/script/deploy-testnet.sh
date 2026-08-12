@@ -33,7 +33,7 @@
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase contracts \
 #                                           --confirm-i-have-multisig-ready
-#       Deploys Diamond + Timelock + VPFI lane + Reward OApp.
+#       Deploys Diamond + Timelock + VPFI lane + reward messenger.
 #       The confirm flag is a deliberate friction — without it, the
 #       script refuses. The flag asserts: governance multisig is
 #       reachable for the role-rotation ceremony at the end of the
@@ -76,7 +76,7 @@
 #       Runs Handover.s.sol — same role / ownership rotation as
 #       mainnet (DEFAULT_ADMIN_ROLE → governance Safe direct, five
 #       Timelock-bound roles → Timelock, PAUSER_ROLE → Pauser Safe
-#       direct, ERC-173 + every OApp's Ownable2Step → governance
+#       direct, ERC-173 + every cross-chain contract's Ownable2Step → governance
 #       Safe). Practising this on testnet is the whole point of the
 #       rehearsal.
 #
@@ -708,7 +708,7 @@ phase_contracts() {
     cat >&2 <<EOF
 Refusing --phase contracts on mainnet without --confirm-i-have-multisig-ready.
 
-This phase deploys Diamond + Timelock + VPFI lane + Reward OApp on $CHAIN_SLUG.
+This phase deploys Diamond + Timelock + VPFI lane + reward messenger on $CHAIN_SLUG.
 Once landed, the role-rotation ceremony (DeploymentRunbook §6) must run on
 the same day to renounce DEPLOYER_ROLE / DEFAULT_ADMIN_ROLE / etc.
 
@@ -735,11 +735,10 @@ EOF
 
   # ── Detect-and-refuse: a chain dir with a `diamond` key in
   # addresses.json indicates a prior deploy. Re-running --phase
-  # contracts without --fresh would either (a) collide on a CREATE2
-  # address (Reward OApp proxy at the same REWARD_VERSION salt) or
-  # (b) silently overwrite the addresses.json's CREATE-deployed keys
-  # (Diamond, Timelock, VPFI lane impls) with NEW addresses while
-  # keeping the prior CREATE2 keys, leaving a mixed-state set the
+  # contracts without --fresh would silently overwrite the
+  # addresses.json deployed keys (Diamond, Timelock, VPFI lane impls,
+  # reward messenger) with NEW addresses while other chains' lane
+  # config still names the old ones, leaving a mixed-state set the
   # operator can't tell at a glance is internally consistent. Refuse
   # with --fresh as the explicit opt-in; with --fresh, archive the
   # prior state to .archive/<ISO-8601>/ before wiping.
@@ -761,9 +760,9 @@ To proceed, pass --fresh:
     --confirm-i-have-multisig-ready --fresh
 
 --fresh archives the prior chain state under
-$DEPLOY_DIR/.archive/<ISO-8601>/ and reminds you to bump
-REWARD_VERSION in .env so the new Reward OApp proxy lands at a
-fresh CREATE2 address.
+$DEPLOY_DIR/.archive/<ISO-8601>/. The redeploy creates a NEW reward
+messenger at a new address; nothing needs bumping for that to happen
+(the CREATE2 bootstrap that once required it is gone).
 EOF
       exit 1
     fi
@@ -825,12 +824,11 @@ EOF
     echo "[0b] --fresh: purging D1 rows for chainId=$CHAIN_ID"
     purge_chain_d1
     echo
-    echo "  ⚠ Bump REWARD_VERSION in .env before this re-deploy lands. The"
-    echo "    Reward OApp proxy is CREATE2-addressed off REWARD_VERSION;"
-    echo "    keeping the same value would either re-use the old (now-stale)"
-    echo "    proxy or hit a CreateCollision against the prior deploy's"
-    echo "    bytecode. Current REWARD_VERSION: ${REWARD_VERSION:-(unset)}"
-    echo "    Suggested next: v$(date -u +%Y%m%d)-rehearsal"
+    echo "  ⚠ The re-deploy will create a NEW reward messenger at a NEW"
+    echo "    address (DeployCrosschain.s.sol uses a plain \`new\`, not"
+    echo "    CREATE2). Anything holding the old address — an operator .env,"
+    echo "    a peer registry on another chain — must be re-pointed at the"
+    echo "    address this run writes to addresses.json."
     echo
   elif [ "$FRESH" = "1" ]; then
     # --fresh with no on-disk addresses.json. Could be a clean first
@@ -1279,25 +1277,32 @@ EOF
   fi
   # DeployCrosschain records the reward contract under `.rewardMessenger`.
   # Hand ConfigureRewardReporter that address explicitly via the legacy
-  # env-var name `REWARD_OAPP_PROXY` (kept for back-compat). Pre-PR-#272
+  # env-var name `REWARD_MESSENGER_PROXY` (the legacy `REWARD_OAPP_PROXY`
+  # is still accepted by the script). Pre-PR-#272
   # artifacts store the same address under `.rewardOApp`; fall back to it.
   #
-  # IMPORTANT: explicitly unset `REWARD_OAPP_PROXY` before the read so a
+  # IMPORTANT: explicitly unset the override before the read so a
   # stale carry-over from a prior chain's run in a multi-chain loop
   # cannot silently override this chain's correct artifact resolution.
   # Without the reset, chain B would inherit chain A's exported value if
   # chain B's addresses.json happens to be missing both keys — pointing
   # at the wrong-chain messenger silently.
   # Flagged in the second-round external review of PR #272.
+  #
+  # BOTH names are cleared. `REWARD_MESSENGER_PROXY` is the current one
+  # and takes priority in ConfigureRewardReporter; clearing only the
+  # legacy name would let a value the operator left in .env outrank the
+  # artifact we resolve here and trip the mismatch check.
+  unset REWARD_MESSENGER_PROXY
   unset REWARD_OAPP_PROXY
   REWARD_MSGR=$(jq -r '.rewardMessenger // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   if [ -z "$REWARD_MSGR" ]; then
     REWARD_MSGR=$(jq -r '.rewardOApp // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   fi
   if [ -n "$REWARD_MSGR" ]; then
-    export REWARD_OAPP_PROXY="$REWARD_MSGR"
+    export REWARD_MESSENGER_PROXY="$REWARD_MSGR"
   fi
-  # If both keys missed, REWARD_OAPP_PROXY stays unset; ConfigureRewardReporter
+  # If both keys missed, the override stays unset; ConfigureRewardReporter
   # then falls through to `Deployments.readRewardMessenger()` which has
   # its own library-level fallback (and reverts loudly if it also misses).
 
@@ -1327,7 +1332,7 @@ phase_handover() {
 Refusing --phase handover without --confirm-i-have-multisig-ready.
 
 This phase rotates DEFAULT_ADMIN_ROLE / Timelock-bound roles /
-PAUSER_ROLE / ERC-173 ownership / OApp ownership off ADMIN. The
+PAUSER_ROLE / ERC-173 ownership / cross-chain-contract ownership off ADMIN. The
 multi-party Safe ceremony that follows (acceptOwnership on each
 OApp + DeployerZeroRolesTest as exit gate) MUST run within the
 Ownable2Step pending-owner window — i.e. the multisig signers

@@ -81,7 +81,6 @@
     "rewardClaimFacet": "0x86109Ee01038164Dc8f4e06491D725441D4684f3",
     "rewardCommitmentFacet": "0xf2A2B13270a2AA6187e989a4d1e5C7c8b5D524bc"
   },
-  "lzEid": 40245,
   "rewardMessenger": "0x1132055D90E9cFD77f30b6420a591781Ac3f10Fe",
   "testnetMocks": {
     "ethUsdFeed": "0x81915F4b8FBcc3B32bf4df565EEFb9207E5B25bA",

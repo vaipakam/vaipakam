@@ -359,8 +359,6 @@ library Deployments {
     }
 
     function writeChainSlug() internal { _writeString(".chainSlug", chainSlug()); }
-    function writeLzEndpoint(address a) internal { _writeAddr(".lzEndpoint", a); }
-    function writeLzEid(uint32 eid) internal { _writeUint(".lzEid", uint256(eid)); }
 
     /// @notice Stamp the contract's deployment block, picking the correct
     ///         "block number" per chain semantics.
@@ -436,35 +434,12 @@ library Deployments {
         _writeAddr(jsonKey, a);
     }
 
-    // ── LayerZero EID resolver (per chain) ────────────────────────────────
-    //
-    // Centralised so every script writes a consistent eid into
-    // addresses.json without the operator having to remember the
-    // table. Source: LayerZero V2 deployments index.
-
-    function lzEidForChain() internal view returns (uint32) {
-        uint256 cid = block.chainid;
-        if (cid == 1)         return 30101; // Ethereum
-        if (cid == 8453)      return 30184; // Base
-        if (cid == 84532)     return 40245; // Base Sepolia
-        if (cid == 11155111)  return 40161; // Sepolia
-        if (cid == 421614)    return 40231; // Arb Sepolia
-        if (cid == 11155420)  return 40232; // OP Sepolia
-        if (cid == 80002)     return 40267; // Polygon Amoy
-        if (cid == 1101)      return 30257; // Polygon zkEVM
-        if (cid == 56)        return 30102; // BNB
-        if (cid == 97)        return 40102; // BNB Testnet
-        if (cid == 42161)     return 30110; // Arbitrum
-        if (cid == 10)        return 30111; // Optimism
-        if (cid == 137)       return 30109; // Polygon
-        if (cid == 31337)     return 31337; // Anvil — sentinel only; no real LZ traffic on a local node.
-        revert("Deployments: no LZ EID mapped for chainid");
-    }
-
     // ── CCIP chain-selector resolver (per chain) ──────────────────────────
     //
-    // The Chainlink CCIP analogue of {lzEidForChain}: every chain has a
-    // provider-published 64-bit "chain selector" that CCIP routes on.
+    // Every chain has a provider-published 64-bit "chain selector" that
+    // CCIP routes on. (This replaced a LayerZero endpoint-id resolver,
+    // removed with the last of the LZ deploy residue — the transport is
+    // CCIP-only and no script stamps an eid any more.)
     // Centralised here so `ConfigureCcip.s.sol` and the rehearsal harness
     // resolve a chain → selector without the operator hand-keying the
     // table. Source: Chainlink CCIP "Supported Networks" directory.
