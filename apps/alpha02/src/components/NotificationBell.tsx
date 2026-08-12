@@ -94,7 +94,11 @@ export function NotificationBell() {
     seenAtOpen.current = null;
   }, [readChain.chainId, address]);
 
-  const rows = data?.notifications ?? [];
+  // The `?? []` fallback is what makes this need a memo (#1520): react-query
+  // hands back a stable `data` between renders, but a fresh literal every
+  // render would change identity anyway, recomputing `unreadCount` and
+  // rebuilding `markAllRead` on every pass.
+  const rows = useMemo(() => data?.notifications ?? [], [data?.notifications]);
 
   // Unread = rows strictly newer than the persisted cursor.
   const unreadCount = useMemo(

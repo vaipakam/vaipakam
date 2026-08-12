@@ -29,7 +29,7 @@
  * with a specific message instead of letting the user sign against
  * stale or unverifiable state.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ownLocaleResource } from '../i18n/ownLocaleResource';
@@ -703,7 +703,7 @@ const MAX_SYMBOL_LENGTH = 20;
 function sanitizeTokenSymbol(raw: string): string {
   return raw
     .replace(
-      // eslint-disable-next-line no-control-regex -- stripping controls is the point
+      // Stripping control and bidi-override characters is the point here.
       /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
       '',
     )
@@ -1185,7 +1185,12 @@ export function Recover() {
    *  an identity change lands on, and the state the explicit start-over
    *  actions land on. Deliberately does NOT touch the persisted record;
    *  each caller decides whether that record is theirs to drop. */
-  const clearToFreshForm = () => {
+  // Wrapped so the identity is stable (#1520): the two effects below reset
+  // through it, and as a plain function it was a new value every render —
+  // so it could not be declared as the dependency it actually is. Every
+  // statement in the body is a setState call, so there is nothing to
+  // capture and the callback never needs to change.
+  const clearToFreshForm = useCallback(() => {
     setTokenInput('');
     setSourceInput('');
     setAmountInput('');
@@ -1195,7 +1200,7 @@ export function Recover() {
     setExecutedAcked(false);
     setPersistFailed(false);
     setStep({ kind: 'form' });
-  };
+  }, []);
 
   useEffect(() => {
     genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
@@ -1211,7 +1216,7 @@ export function Recover() {
     if (stored !== null && address && chainId !== undefined) {
       setStep(stepFromRecord(stored, stepOwnerOf(address, chainId)));
     }
-  }, [address, walletChain?.chainId]);
+  }, [address, walletChain?.chainId, clearToFreshForm]);
 
   // The step the RENDER consumes (Codex #1547 r13). A terminal card is
   // tagged with the account + chain it describes, and a card whose tag
@@ -1324,7 +1329,7 @@ export function Recover() {
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [address, walletChain?.chainId]);
+  }, [address, walletChain?.chainId, clearToFreshForm]);
 
   // Fail-safe availability probe: `recoverStuckERC20` HARD-REQUIRES
   // the sanctions oracle (it reverts SanctionsOracleUnavailable when

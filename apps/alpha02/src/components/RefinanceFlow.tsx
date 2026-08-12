@@ -212,7 +212,6 @@ export function RefinanceFlow({
   // against the old numbers must not survive.
   useEffect(() => {
     setConsent(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     payoffStr,
     topUpStr,
