@@ -2,7 +2,7 @@
 
 This document states the intended behaviour of the alpha02 connected app. It is
 the alpha02-specific functional spec distilled from the release notes through
-2026-07-12. It is intentionally written without implementation snippets.
+2026-08-12. It is intentionally written without implementation snippets.
 
 ## Purpose
 
@@ -595,6 +595,18 @@ Thin-market honesty rules apply.
   JavaScript.
 - A crawl policy file and a sitemap of the indexable pages ship with
   every build.
+- The public data service's root address should answer with a
+  self-describing catalogue of keyless public data surfaces, so search
+  crawlers, AI agents, and integrators can discover supported protocol
+  reads without scraping wallet-scoped app pages.
+- Public data discovery must stay read-only and keyless. It may
+  describe endpoints for market, loan, offer, activity, freshness, and
+  transparency reads, but it must not expose wallet-private state,
+  secrets, write authority, or action shortcuts.
+- The crawl policy for alpha02 must be consistent in both rendered
+  pages and response headers: a crawler that does not execute
+  JavaScript sees the same indexable / noindex decision that a browser
+  sees after the app loads.
 
 ## Privacy and Legal Posture
 
