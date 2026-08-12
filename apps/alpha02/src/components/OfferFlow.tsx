@@ -871,9 +871,17 @@ export function OfferFlow({ side }: { side: Side }) {
     // Consent gate (round 1): createOffer reverts
     // RiskAndTermsConsentRequired while the checkbox is unticked —
     // previewing that would cry wolf on every valid offer.
-    if (mode !== 'post' || !walletChain || !form.riskAndTermsConsent) return null;
+    // No longer gated on consent (#1679 r1 F5). While it was, the dry run
+    // could only reveal a revert AFTER the box was ticked — so the warning
+    // it produces was, by construction, always a disclosure that postdated
+    // consent. Forcing consent in the payload (as the receipt path below
+    // already does) lets the preview run first, so a revert is disclosed
+    // BEFORE consent is collected rather than invalidating it afterwards.
+    // That ordering is also what keeps the fix out of a clear-and-disappear
+    // loop: the gate never has to react to a warning it caused.
+    if (mode !== 'post' || !walletChain) return null;
     try {
-      const payload = toCreateOfferPayload(form, {
+      const payload = toCreateOfferPayload({ ...form, riskAndTermsConsent: true }, {
         lending: lendingMeta.data?.decimals,
         collateral: collateralMeta.data?.decimals,
       });
@@ -1225,22 +1233,53 @@ export function OfferFlow({ side }: { side: Side }) {
    * disclosure added later cannot be forgotten here — it only has to be
    * folded into this string to be covered by the gate.
    */
-  const disclosureFingerprint = [
+  const reviewAssertions = [
     `sec:${securityFingerprint}`,
+    // #1679 r1 F2 — an unscreened-token notice (`gateUnsupported`) is a
+    // disclosure as much as a warning is; counting only `securityWarned`
+    // let a tick placed before the screening resolved survive it.
+    `unsupported:${securityUnsupported.map((l) => l.key).join(',')}`,
     `illiquid:${reviewIsIlliquid ? '1' : '0'}`,
     `loanSale:${acceptIsLoanSale ? '1' : '0'}`,
     `sale:${saleFingerprint ?? ''}`,
+    // #1679 r1 F1 — these settle ASYNCHRONOUSLY. While they are pending the
+    // receipt shows fallback numbers and `fees.ready`/`grace.ready` hold the
+    // button closed; when the live values land, the receipt and the gate
+    // become ready in the same render. Consent is given against the terms in
+    // the receipt, so the terms themselves belong here, not just the warnings.
+    `fees:${fees.ready ? `${fees.treasuryFeeBps}/${fees.loanInitiationFeeBps}/${fees.maxOfferDurationDays}` : 'pending'}`,
+    `grace:${grace.ready ? grace.label : 'pending'}`,
+    // #1679 r1 F5 — the dry run's verdict is a disclosure too. It is safe to
+    // include now that the preview no longer waits for consent (see `simTx`).
+    `sim:${preSign.result.status}:${
+      preSign.result.status === 'revert' ? (preSign.result.revertReason ?? '') : ''
+    }`,
   ].join('||');
-  /** Is anything actually disclosed right now? */
-  const anyDisclosure =
-    securityWarned.length > 0 ||
-    reviewIsIlliquid ||
-    acceptIsLoanSale ||
-    saleFingerprint !== null;
-  // The fingerprint that was current when the user LAST ticked the consent
-  // box (stamped in the checkbox handler). canSign requires it to match the
-  // live one whenever anything is disclosed.
-  const consentFpRef = useRef<string | null>(null);
+
+  /**
+   * How many times the review's assertions have CHANGED this session.
+   *
+   * Comparing the stamped assertions to the live ones by equality is not
+   * enough (#1679 r1 F4): a disclosure that leaves and returns identical —
+   * illiquid → liquid → illiquid, or warn A → clean → warn A — ends on a
+   * value equal to what was acknowledged, so the gate would reopen even
+   * though the review changed twice since. An epoch answers the question
+   * that actually matters, "has anything changed since you consented",
+   * rather than "does it look the same as when you consented".
+   *
+   * Advanced by a render-phase adjustment (the pattern from #1677), never
+   * from an effect: an effect would land a render late, which is the exact
+   * window this gate exists to close. State rather than a ref because
+   * `react-hooks/refs` correctly forbids writing a ref during render.
+   */
+  const [seenAssertions, setSeenAssertions] = useState(reviewAssertions);
+  const [assertionEpoch, setAssertionEpoch] = useState(0);
+  if (seenAssertions !== reviewAssertions) {
+    setSeenAssertions(reviewAssertions);
+    setAssertionEpoch((e) => e + 1);
+  }
+  /** The epoch that was current when the user LAST ticked the consent box. */
+  const consentEpochRef = useRef<number | null>(null);
   useEffect(() => {
     if (securityBlocked.length > 0 || securityWarned.length > 0) {
       setForm((f) =>
@@ -1274,14 +1313,17 @@ export function OfferFlow({ side }: { side: Side }) {
     // only, so the illiquid / loan-sale / sale-terms disclosures could be
     // signed against consent that predated them for the one frame before
     // their clearing effect ran).
-    (!anyDisclosure ||
-      // Deliberate, and state would reopen the gap: the only write is the
-      // checkbox handler below, which also sets form state, so a re-render
-      // always follows and the read cannot go stale. Holding it in state
-      // would move the comparison a render later — the exact window this
-      // gate closes.
-      // eslint-disable-next-line react-hooks/refs
-      consentFpRef.current === disclosureFingerprint) &&
+    // Unconditional, not "only when something is disclosed": consent is
+    // given against the whole receipt, and #1679 r1 F1 showed the terms can
+    // change without any warning being present.
+    //
+    // Deliberate ref, and state would reopen the gap: the only write is the
+    // checkbox handler below, which also sets form state, so a re-render
+    // always follows and the read cannot go stale. Holding it in state
+    // would move the comparison a render later — the exact window this
+    // gate closes.
+    // eslint-disable-next-line react-hooks/refs
+    consentEpochRef.current === assertionEpoch &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
@@ -2547,13 +2589,11 @@ export function OfferFlow({ side }: { side: Side }) {
                 type="checkbox"
                 checked={form.riskAndTermsConsent}
                 onChange={(e) => {
-                  // Stamp WHAT was on screen when consent was given —
-                  // canSign requires this to match the live disclosure
-                  // fingerprint while anything is disclosed (#1678: security
-                  // verdicts, the illiquid warning, the loan-sale vehicle
-                  // and the sale terms, all at once).
+                  // Stamp WHEN consent was given, measured in review
+                  // revisions — canSign requires the review to have changed
+                  // zero times since (#1678, #1679 r1 F4).
                   if (e.target.checked) {
-                    consentFpRef.current = disclosureFingerprint;
+                    consentEpochRef.current = assertionEpoch;
                   }
                   set({ riskAndTermsConsent: e.target.checked });
                 }}

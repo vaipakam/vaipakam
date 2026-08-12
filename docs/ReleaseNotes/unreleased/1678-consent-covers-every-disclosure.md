@@ -29,5 +29,27 @@ already loaded. If a warning arrives while you are looking at the screen, the
 consent box clears and signing is unavailable until you tick it again —
 which is what the previous behaviour intended, a fraction of a second sooner.
 
-Folding a future disclosure into this check is now a one-line change, so the
-next one cannot be added without the protection.
+Review of the first attempt found four more ways the same gap could open, and
+the check is broader as a result. It now covers the fee percentages and the
+grace period shown on the receipt — those arrive from the network too, and a
+tick can predate them just as easily as it can predate a warning — along with
+the notice shown when a token cannot be security-screened at all, and the
+outcome of the dry run performed before signing. Consent is given against the
+whole receipt, so the terms belong in the check and not only the warnings.
+
+It also no longer asks whether the screen *looks* the same as when you ticked,
+but whether anything has changed since. Those differ when a warning goes away
+and comes back: the screen matches what was acknowledged, yet the review has
+changed twice, and the older acknowledgement should not carry.
+
+One visible change: the dry run that checks whether an offer would be rejected
+now runs before the consent box is ticked rather than after. Previously its
+warning could only ever appear once consent had been given — meaning that
+warning always arrived too late by construction. It is now disclosed alongside
+the other terms, before you agree to them.
+
+One further case is tracked separately and is not fixed here: the Full-tariff
+control paints its own "unavailable" warning a moment before it tells the
+review screen, so the screen's own check cannot see it in time. That needs the
+two to read the same source rather than one telling the other, and is filed on
+its own.
