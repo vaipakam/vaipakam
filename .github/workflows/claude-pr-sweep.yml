@@ -1,0 +1,156 @@
+# Claude PR sweep — a scheduled agent pass over the open PR set.
+#
+# Why this exists: driving a PR to merge is a poll-shaped job. Codex
+# rounds arrive minutes after a trigger, CI finishes on its own clock,
+# and `main` moves underneath long-lived branches — none of which
+# announces itself. Left to a human (or to an interactive session that
+# has since ended) PRs stall silently: #1653 sat 23 hours on a Codex
+# trigger that was never answered, and #1654 sat with a one-line
+# package.json conflict, both while showing green checks and a clean
+# review.
+#
+# The in-session alternative was tried and is structurally wrong for
+# this: Claude Code's own scheduler is session-scoped, so every timer
+# dies with the terminal, and PR-activity webhooks deliver a Cloudflare
+# preview-deploy comment for every Worker on every push — which burns
+# the GitHub GraphQL quota that resolving review threads needs. Polling
+# on a schedule costs one API budget and survives the session.
+#
+# ── Merge autonomy is deliberately gated ────────────────────────────
+#
+# This workflow will merge a PR ONLY if it carries the `sweep-merge`
+# label. Everything else it does — triaging findings, pushing fixes,
+# re-triggering review, resolving threads, reporting — is unattended,
+# but the irreversible step needs a human to have said yes on that
+# specific PR. Add the label when you have decided a PR should land;
+# remove it to park one. Nothing else about the sweep changes.
+#
+# To grant fuller autonomy, drop the label condition from the prompt
+# below — but do it deliberately, not by drift.
+#
+# ── Cost ─────────────────────────────────────────────────────────────
+#
+# At a 15-minute cadence this is ~96 agent runs/day. Each is a full
+# Claude Code session with repo checkout. If that proves more than the
+# work warrants, widen the cron — the sweep is idempotent and a longer
+# gap costs only latency, never correctness. GitHub also treats
+# `schedule` as best-effort and delays runs under load, so treat the
+# cadence as a floor rather than a guarantee.
+#
+# `workflow_dispatch` is wired so the sweep can be run on demand
+# without waiting for the next tick.
+
+name: Claude PR sweep
+
+on:
+  schedule:
+    # Off the quarter-hour on purpose: :00/:15/:30/:45 are the busiest
+    # minutes on GitHub's scheduler and the most delayed.
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      focus:
+        description: 'Optional PR number to focus this run on (blank = full sweep)'
+        required: false
+        default: ''
+
+concurrency:
+  # One sweep at a time. Two agents pushing to the same PR branch is a
+  # race with no upside; a skipped tick costs 15 minutes.
+  group: claude-pr-sweep
+  cancel-in-progress: false
+
+permissions:
+  contents: write # push review fixes to PR branches
+  pull-requests: write # comment, resolve threads, merge
+  issues: write # file follow-up cards
+  id-token: write
+  actions: read # read CI results
+
+jobs:
+  sweep:
+    name: sweep open PRs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Full history: the sweep does local trial-merges against main
+          # to detect conflicts without spending API calls.
+          fetch-depth: 0
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@2fee15510437d71399d9139ed60433470484a8fb # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          additional_permissions: |
+            actions: read
+          prompt: |
+            You are running as a scheduled, unattended sweep over the open pull
+            requests in this repository. Nobody is watching this run. Prefer doing
+            nothing over doing something you cannot justify from evidence in the
+            repository.
+
+            ${{ github.event.inputs.focus != '' && format('Focus this run on PR #{0} only.', github.event.inputs.focus) || 'Sweep every open PR.' }}
+
+            ## Budget discipline (this is what breaks first)
+
+            GitHub review-thread reads and thread resolution go through the GraphQL
+            API, which has a separate, smaller quota than REST — and exhausting it
+            blocks exactly the operations needed to finish a PR. So:
+
+            - Use REST for status: check runs, PR-level comments, merging.
+            - Use GraphQL (review threads) only when you are about to act on a
+              thread, not to survey.
+            - Detect merge conflicts with a local `git merge --no-commit` trial
+              against `origin/main`, never by attempting a merge through the API.
+
+            ## What to do for each open PR
+
+            1. Is it behind `main` with conflicts? Resolve them locally if the
+               resolution is mechanical and you can verify it (run the package's
+               typecheck / targeted tests). If resolving needs a judgement call
+               about behaviour, leave it and say so in a PR comment.
+            2. Is CI red? Diagnose and push a fix. Do not report a red PR without
+               either a fix or a specific blocker.
+            3. Has the review bot converged? Its trigger is a comment containing
+               `@codex review full`. If a trigger was posted and no review came
+               back within a few hours, re-post it once — an unanswered trigger is
+               the most common cause of a stalled PR here.
+            4. Are there findings? Every one gets exactly one of: accept and fix,
+               refute with evidence quoted from the code, or defer to a follow-up
+               issue you open and link. Reply on the thread, then resolve it. Only
+               accepted fixes may grow the diff.
+            5. Docs-only PRs merge after two review rounds, converged or not.
+               Coding PRs need a round with zero P1/P2 findings.
+
+            ## Merging
+
+            Merge (squash) ONLY a PR that carries the `sweep-merge` label AND has
+            green required checks AND all review conversations resolved. Without
+            that label, drive the PR to ready and leave it — say in a comment that
+            it is ready and waiting on the label.
+
+            Write a squash message that explains what changed and why, including
+            anything a reviewer would want to know that is not obvious from the
+            diff. Do not paste the PR description.
+
+            ## Repository rules that apply to any fix you push
+
+            - Never run the full forge regression. Per-PR verification is targeted:
+              the touched suites via `forge test --match-path`, plus the
+              deploy-sanity suite when selectors or facet sizes change.
+            - Use `FOUNDRY_PROFILE=quick forge build` for compile checks.
+            - Behaviour-changing PRs carry a release-note fragment under
+              `docs/ReleaseNotes/unreleased/` and a matching
+              `docs/FunctionalSpecs/` update in the same diff.
+            - Follow `CLAUDE.md`. Where it and this prompt disagree, `CLAUDE.md`
+              wins and you should flag the conflict.
+
+            ## When there is nothing to do
+
+            Say so in one line and stop. Do not comment on PRs to report no
+            change, do not re-trigger reviews that are already pending, and do not
+            open issues speculatively. A quiet run is a successful run.
+          claude_args: '--allowed-tools Bash,Read,Write,Edit,Glob,Grep'
