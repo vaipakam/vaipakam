@@ -1457,6 +1457,43 @@ the bounds are the design's actual commitment.
    > where it should have reverted exposed it — a partially-applied script
    > is more dangerous than a failed one, because the surviving pieces hide
    > the gap.
+   >
+   > **Round-8 addendum (#1662).** Five more, and THREE are round-7 fixes
+   > that were INCOMPLETE rather than wrong — a pattern worth naming,
+   > because each one *looked* applied.
+   >
+   > 1. **The attribution watermark guarded only the DRAW path.** A late
+   >    consumed ack still sent a legacy receipt through the claw, where
+   >    its per-receipt counters read zero — so it presented its whole
+   >    already-spent credit as unspent and moved a LATER receipt's backing
+   >    into the overage quarantine. The watermark now gates the claw too.
+   > 2. **The refresh script never ARMED the watermark.** It retired the
+   >    unattributed selectors while paused and stopped there, so the guard
+   >    was inert on exactly the upgrade it was written for. Arming later
+   >    is NOT equivalent: the valve snapshots the then-current reservation
+   >    nonce, so any legitimate post-cut receipt created in the interim
+   >    would be retired with the legacy ones. It now arms atomically in
+   >    the same paused block — the only ordering that leaves no window.
+   > 3. **The corrected storage comment was ADDED, not substituted.** The
+   >    superseded attribution-tombstone block still sat immediately above
+   >    it, leaving two contradictory descriptions of one slot.
+   > 4. **The conflict carve-out proxied its own principle.** Round 7
+   >    argued the deciding fact is whether the R6 gate still protects the
+   >    obligation, then keyed on `strandedReturnTerminalized`. A
+   >    NONTERMINAL return chunk clears the gate WITHOUT setting that flag,
+   >    so the proxy skipped the re-close on precisely the path where
+   >    protection had been lost. The condition now reads the gate
+   >    directly: `compensationOutstanding[dstChainId] != remitId`.
+   > 5. The runbook still offered the permissionless clear that round 7
+   >    deleted, so an operator mid-rotation would have waited for an
+   >    acknowledgement that now reverts.
+   >
+   > *Pattern note.* (1), (2) and (3) share a shape with the round-7
+   > process note: a change that is present but not effective. A storage
+   > field with no guard, a guard with no arming, a correction with no
+   > deletion — each compiles, each greps as "done", and none of them do
+   > anything. The habit that catches this class is asking what would FAIL
+   > if the fix were absent, and then checking that exact thing.
 
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates

@@ -840,6 +840,32 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "recoveryAttributionArmed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "recoveryAttributionArmedAt",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "error",
     "name": "ReceivedRemitNotFound",
     "inputs": [

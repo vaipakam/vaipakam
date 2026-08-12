@@ -2196,7 +2196,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](32);
+        selectors = new bytes4[](34);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2241,6 +2241,11 @@ contract HelperTest {
         selectors[31] = RewardRemittanceLensFacet
             .getRecoveryCreditForReceipt
             .selector;
+        // #1662 r8 - the attribution watermark, read by the refresh.
+        selectors[32] =
+            RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
+        selectors[33] =
+            RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

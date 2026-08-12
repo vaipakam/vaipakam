@@ -287,12 +287,17 @@ availability on the one chain it names — new compensation is blocked there
 until the settlement runs — and never value.
 
 **Resolving it.** The carried gate blocks new compensation for that chain
-until the old delivery's fate is proven:
+until the operator settles it with
+`clearImportedOutstanding(chain, recycledInflow)`. That is the ONLY way it
+opens.
 
-- the mirror's re-presented CONSUMED acknowledgement releases it
-  permissionlessly; or
-- the operator settles it with
-  `clearImportedOutstanding(chain, recycledInflow)`.
+There is deliberately no permissionless path. A mistyped import can name
+an unrelated, already-consumed historical receipt, and if that receipt's
+re-presented acknowledgement could release the gate, you would then fund a
+replacement while the genuinely outstanding delivery was still live — both
+would back mirror claims. A re-presented old-era acknowledgement is
+therefore refused outright (`RemitAckSenderMismatch`); do not wait for
+one.
 
 On settlement the recycled component re-enters bucket custody — the call
 asserts those tokens are actually present — and any fresh component simply

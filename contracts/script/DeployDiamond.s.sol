@@ -2774,7 +2774,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](32);
+        s = new bytes4[](34);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2819,6 +2819,11 @@ contract DeployDiamond is Script {
         s[31] = RewardRemittanceLensFacet
             .getRecoveryCreditForReceipt
             .selector;
+        // #1662 r8 - the attribution watermark, read by the refresh.
+        s[32] =
+            RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
+        s[33] =
+            RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

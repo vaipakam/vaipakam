@@ -4151,6 +4151,81 @@ contract RewardRemitLedgerTest is SetupTest {
         comp.armRecoveryAttribution();
     }
 
+    /// r8-h1 - the attribution watermark must gate the CLAW as well as
+    /// the draw. A legacy receipt's spends were GLOBAL-only, so its
+    /// per-receipt counters read zero: without this it would present its
+    /// whole already-spent credit as unspent and move a LATER receipt's
+    /// backing into the overage quarantine. Round 7 guarded only the draw.
+    function test_Recovery_LegacyReceiptCannotClawLaterBacking() public {
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        // The upgrade arms attribution: receipt 1 is legacy.
+        comp.armRecoveryAttribution();
+        // A LATER receipt credits the pooled position.
+        mutator.setRemitReservationCompRaw(90, CHAIN_ARB, 2, 2e18, 4);
+        _armReturnIngress();
+        comp.onStrandedReturnReceived(
+            address(diamond), 90, 4, CHAIN_ARB, address(vpfiTok), 2e18, 2e18, 0
+        );
+        (uint256 recBefore, uint256 redBefore, uint256 ovBefore) =
+            rlens.getRecoveryPosition();
+        // Receipt 1 is now contradicted. Its legacy credit must NOT be
+        // clawed - that would confiscate receipt 90's backing.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, true);
+        (uint256 recAfter, uint256 redAfter, uint256 ovAfter) =
+            rlens.getRecoveryPosition();
+        assertEq(
+            recAfter - redAfter,
+            recBefore - redBefore,
+            "a legacy receipt claws nothing"
+        );
+        assertEq(ovAfter, ovBefore, "and moves nothing into quarantine");
+    }
+
+    /// r8-h5 - the conflict carve-out keys on whether the R6 GATE still
+    /// holds this receipt, not on terminalization.
+    ///
+    /// A RELEASED receipt has its declared funding unwound and the gate
+    /// held. A NONTERMINAL return chunk then CLEARS the gate without
+    /// setting the terminal flag - so keying on the flag skipped the
+    /// re-close on exactly the path where the obligation had already lost
+    /// its protection, letting a charged replacement fund the open day
+    /// while the consumed original also backs mirror claims.
+    function test_Recovery_PartialReturnThenConflictRecloses() public {
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        // RELEASE: declared funding unwound, gate still HELD.
+        vm.warp(block.timestamp + 7 days);
+        comp.releaseRemitReservation(1);
+        (uint256 fl0, uint256 fb0) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertEq(fl0 + fb0, 0, "release unwound the declared split");
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB), 1, "gate still held"
+        );
+        // The quarantine attestation the B1 return needs.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
+        // A PARTIAL chunk: remainder non-zero, so the terminal flag is
+        // NEVER set - but the return settlement clears the gate.
+        _armReturnIngressNoAck();
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 1e18, 1e18,
+            2e18
+        );
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "the PARTIAL return cleared the gate"
+        );
+        // The contradicting consumed ack must RE-CLOSE: nothing else
+        // protects the day now. Keyed on terminalization it would not.
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, true);
+        (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
+        assertGt(fl + fb, 0, "funding re-closed once the gate was gone");
+    }
+
     /// SS8-6 (#1662 r7) - an imported gate has NO permissionless clear.
     ///
     /// A mistyped import can name an unrelated, already-CONSUMED

@@ -1829,6 +1829,19 @@ contract RewardRemittanceFacet is
         LibVaipakam.Storage storage s,
         uint256 receiptId
     ) private returns (uint256 claw, uint256 unspent) {
+        // #1662 r8 — the attribution watermark gates the CLAW as well as
+        // the draw. A legacy receipt's spends were tracked GLOBALLY only,
+        // so its per-receipt counters read zero and it would present its
+        // whole (already-spent) legacy credit as unspent — moving a LATER
+        // receipt's backing into the overage quarantine the moment that
+        // receipt replenished the pool. Round 7 guarded only
+        // `_drawFromRecovery`, which left this path open.
+        if (
+            s.recoveryAttributionArmed
+                && receiptId <= s.recoveryAttributionArmedAt
+        ) {
+            return (0, 0);
+        }
         uint256 credit = s.remitRecoveredForReceipt[receiptId]
             - s.ceremonyRecycledRecovered[receiptId];
         uint256 spent = s.recoveryRedispatchedForReceipt[receiptId]
@@ -1951,8 +1964,15 @@ contract RewardRemittanceFacet is
         //     adds no protection and actively harms: after governance
         //     records the parcel lost, the quote bound would refuse the
         //     replacement the settlement exists to enable.
+        // #1662 r8 — keyed on the GATE, not on terminalization. Round 7
+        // used `strandedReturnTerminalized` as a proxy for "the gate was
+        // cleared", which is wrong for a PARTIAL return: a nonterminal
+        // chunk clears the gate too but never sets the terminal flag, so
+        // the proxy skipped the re-close on exactly the path where the
+        // obligation had already lost its protection. State the principle
+        // directly instead of proxying it.
         if (
-            (!conflict || s.strandedReturnTerminalized[remitId])
+            (!conflict || s.compensationOutstanding[r.dstChainId] != remitId)
                 && r.declaredUnwound
                 && r.dayIds.length == 1
                 && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)

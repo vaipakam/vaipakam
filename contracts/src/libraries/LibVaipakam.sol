@@ -6489,16 +6489,6 @@ library LibVaipakam {
         //   whole remaining credit is voided at the contradiction,
         //   whatever the pool could absorb at that instant.
         mapping(uint256 => uint256) recoveryClawedForReceipt;
-        // BASE-ONLY (#1662 r4) — SETTLED imported tuples, keyed
-        //   `keccak256(abi.encode(oldRemitter, oldRemitId))`, mapping to
-        //   the attribution id their fresh recovery was minted onto.
-        //   A tombstone, not live state: the imported marker is deleted at
-        //   settlement, so a later re-presented CONSUMED attestation from
-        //   the old mirror would otherwise miss the imported branch
-        //   entirely and revert at the era check — leaving the minted
-        //   credit re-dispatchable while the original delivery still backs
-        //   mirror claims. This is the only link back from an old-era
-        //   tuple to the local credit it produced.
         // BASE-ONLY (#1662 r5, re-documented r7) — every imported tuple
         //   ever seen, keyed `keccak256(abi.encode(dstChainId,
         //   oldRemitter, oldRemitId))` — the CHAIN is part of the key.

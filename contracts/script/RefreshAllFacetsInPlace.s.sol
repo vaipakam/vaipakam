@@ -95,6 +95,14 @@ import {
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 /// @dev Minimal ERC-173 view to pre-flight the diamond owner.
+/// @dev #1662 r8 — the per-receipt attribution watermark, armed in the
+///      same paused block that retires the unattributed selectors.
+interface IRecoveryAttribution {
+    function armRecoveryAttribution() external;
+
+    function recoveryAttributionArmed() external view returns (bool);
+}
+
 interface IOwnable {
     function owner() external view returns (address);
 }
@@ -484,6 +492,24 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 console.log(
                     "P2-w6: removed retired UNATTRIBUTED FromRecovery selectors"
                 );
+            }
+
+            // #1662 r8 — ARM per-receipt attribution in the SAME paused
+            // block that retires the unattributed selectors. Removing the
+            // selectors stops new unattributed writes; it repairs nothing
+            // existing. Until the watermark is armed, a pre-upgrade
+            // receipt whose credit was already spent still reads as fully
+            // unspent (its spends were global-only) and can consume a
+            // later receipt's backing through the new wrapper.
+            //
+            // Arming LATER is not equivalent and is not safe: the valve
+            // snapshots the then-current reservation nonce, so any
+            // legitimate post-cut receipt created in the interim would be
+            // retired with the legacy ones. Atomic with the cut, while
+            // paused, is the only ordering that leaves no window.
+            if (!IRecoveryAttribution(diamond).recoveryAttributionArmed()) {
+                IRecoveryAttribution(diamond).armRecoveryAttribution();
+                console.log("P2-w6: armed per-receipt recovery attribution");
             }
         }
 

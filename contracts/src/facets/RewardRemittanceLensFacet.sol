@@ -382,6 +382,21 @@ contract RewardRemittanceLensFacet {
         );
     }
 
+    /// @notice #1434 P2-w6 (#1662 r8) — whether per-receipt recovery
+    ///         attribution has been armed, and the reservation nonce it
+    ///         was armed at. Receipts at or below the watermark predate
+    ///         attribution: their spends were tracked globally only, so
+    ///         they may neither fund an uncharged re-dispatch nor be
+    ///         clawed. Read by the in-place refresh, which arms this in
+    ///         the same paused block that retires the old selectors.
+    function recoveryAttributionArmed() external view returns (bool) {
+        return LibVaipakam.storageSlot().recoveryAttributionArmed;
+    }
+
+    function recoveryAttributionArmedAt() external view returns (uint256) {
+        return LibVaipakam.storageSlot().recoveryAttributionArmedAt;
+    }
+
     /// @notice #1434 P2-w6 (#1662 r2) — the per-receipt TERMINAL-LOSS
     ///         split by provenance. Their sum is {getCeremonyTerminalLoss};
     ///         the recycled half is what leaves the coverage allowance.
