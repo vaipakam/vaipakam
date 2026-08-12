@@ -1458,6 +1458,45 @@ the bounds are the design's actual commitment.
    > is more dangerous than a failed one, because the surviving pieces hide
    > the gap.
    >
+   > **Round-9 addendum (#1662).** Four more, and every one is a
+   > second-order consequence of round 8's arming valve — which is itself
+   > the signal that the valve was the load-bearing change of that round.
+   >
+   > 1. **Arming reverted on MIRRORS.** `armRecoveryAttribution` is
+   >    `onlyCanonical`, and the maintained full-facet refresh runs on
+   >    mirror testnets too (`redeploy-testnet-inplace.sh`), so every
+   >    mirror refresh would abort on `NotCanonicalRewardChain`. Gated on
+   >    the chain being canonical; mirrors hold no recovery position (the
+   >    ledger is Base-only), so there is nothing there to migrate.
+   > 2. **Arming blocked the receipts but never RETIRED the position.**
+   >    The aggregate `recovered − redispatched` stays subtracted from
+   >    ordinary backing by `backingPosition`, and the charged path only
+   >    increments the lifetime figure — it never draws that earmark down.
+   >    So the recovered tokens were reserved forever, reachable by
+   >    nothing. Round 7 CLAIMED the value "stays reachable through the
+   >    ordinary charged path"; that claim was unbacked until this fix.
+   >    Arming now retires the standing position, which is safe as a
+   >    one-shot precisely because the refresh arms while PAUSED, before
+   >    any post-cut receipt can have contributed.
+   > 3. **A FRESH canonical deployment was indistinguishable from a legacy
+   >    one.** Both present as `armed == false`, so a later refresh would
+   >    snapshot the then-current nonce and permanently retire every
+   >    legitimate receipt created since deployment. A fresh canonical
+   >    Diamond now marks itself armed at watermark ZERO the moment it is
+   >    made canonical with no receipts — constraining nothing, and
+   >    telling every later refresh that no migration is owed.
+   > 4. **The lens advertised credit the ledger refuses.** A retired
+   >    receipt reported its full historical figures, so
+   >    `credit − redispatched − clawed` showed spendable capacity that
+   >    every dispatch rejects. It now reports zero across the board.
+   >
+   > *Process note.* The first mutation target for (3) was a test that had
+   > just been changed to construct the legacy shape EXPLICITLY — so it no
+   > longer depended on the auto-arm at all, and the mutation survived. A
+   > test only kills a mutation if the mutated line is on the path it
+   > exercises; reusing a nearby test as a target is how a fix comes to
+   > look verified while nothing checks it.
+   >
    > **Round-8 addendum (#1662).** Five more, and THREE are round-7 fixes
    > that were INCOMPLETE rather than wrong — a pattern worth naming,
    > because each one *looked* applied.

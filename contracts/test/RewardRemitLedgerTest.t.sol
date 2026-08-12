@@ -4128,8 +4128,10 @@ contract RewardRemitLedgerTest is SetupTest {
         _releasedCeremonyFixture();
         vpfiTok.mint(address(diamond), 3e18);
         comp.recordRecoveryCeremony(1, 3e18, 0);
-        // The upgrade arms attribution at the current nonce: receipt 1
-        // predates it.
+        // Model an in-place upgrade from w5: the Diamond predates
+        // per-receipt attribution (a FRESH canonical deploy auto-arms at
+        // zero, so the legacy shape has to be set explicitly).
+        mutator.setRecoveryAttributionRaw(false, 0);
         comp.armRecoveryAttribution();
         _finalizeDay(2);
         mutator.setChainDayRemitIneligibleRaw(2, CHAIN_ARB, true);
@@ -4160,7 +4162,8 @@ contract RewardRemitLedgerTest is SetupTest {
         _releasedCeremonyFixture();
         vpfiTok.mint(address(diamond), 3e18);
         comp.recordRecoveryCeremony(1, 3e18, 0);
-        // The upgrade arms attribution: receipt 1 is legacy.
+        // Model an in-place upgrade from w5 (see above).
+        mutator.setRecoveryAttributionRaw(false, 0);
         comp.armRecoveryAttribution();
         // A LATER receipt credits the pooled position.
         mutator.setRemitReservationCompRaw(90, CHAIN_ARB, 2, 2e18, 4);
@@ -4224,6 +4227,84 @@ contract RewardRemitLedgerTest is SetupTest {
         rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, true);
         (uint256 fl, uint256 fb) = rlens.getCompFunded(CHAIN_ARB, 1);
         assertGt(fl + fb, 0, "funding re-closed once the gate was gone");
+    }
+
+    /// r9-i4 - a FRESH canonical deployment is ATTRIBUTED FROM INCEPTION,
+    /// not legacy. Both states otherwise present as `armed == false`, so
+    /// the maintained full-facet refresh could not tell them apart and
+    /// would snapshot the THEN-current nonce - permanently retiring every
+    /// legitimate receipt created since deployment from both draws and
+    /// claws.
+    ///
+    /// setUp makes this Diamond canonical with no receipts, which is
+    /// exactly the fresh-deploy shape.
+    function test_Recovery_FreshCanonicalIsArmedAtZero() public {
+        assertTrue(
+            rlens.recoveryAttributionArmed(),
+            "a fresh canonical deploy is armed from inception"
+        );
+        assertEq(
+            rlens.recoveryAttributionArmedAt(),
+            0,
+            "at watermark ZERO - constraining nothing"
+        );
+        // A later refresh cannot re-arm and retire live receipts.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RecoveryAttributionAlreadyArmed.selector
+            )
+        );
+        comp.armRecoveryAttribution();
+        // ...and this deployment's own receipts stay fully drawable.
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        (uint256 credit, , ) = rlens.getRecoveryCreditForReceipt(1);
+        assertEq(credit, 3e18, "receipt 1 is NOT retired");
+        comp.remitManualBudgetFromRecovery{value: 0.01 ether}(
+            CHAIN_ARB, 1, 1.8e18, 1.2e18, 1
+        );
+    }
+
+    /// r9-i3 - arming must RETIRE the pooled position, not merely block
+    /// the receipts. The aggregate `recovered - redispatched` stays
+    /// subtracted from ordinary backing, and the charged path never draws
+    /// it down - so without this the recovered tokens are earmarked
+    /// forever, reachable by nothing. (Round 7 CLAIMED the value stayed
+    /// reachable through the charged path; it did not.)
+    function test_Recovery_ArmingRetiresThePooledPosition() public {
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        (uint256 rec0, uint256 red0, ) = rlens.getRecoveryPosition();
+        assertEq(rec0 - red0, 3e18, "a legacy position stands");
+        // Model the in-place upgrade and arm.
+        mutator.setRecoveryAttributionRaw(false, 0);
+        comp.armRecoveryAttribution();
+        (uint256 rec1, uint256 red1, ) = rlens.getRecoveryPosition();
+        assertEq(
+            rec1 - red1,
+            0,
+            "the legacy position is retired back to ordinary backing"
+        );
+    }
+
+    /// r9-i2 - the lens must not advertise credit the ledger refuses. A
+    /// retired receipt reports zero across the board; reporting its raw
+    /// historical figures would show spendable capacity that every
+    /// dispatch rejects.
+    function test_Recovery_LensMasksRetiredReceipt() public {
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        (uint256 c0, , ) = rlens.getRecoveryCreditForReceipt(1);
+        assertEq(c0, 3e18, "before arming the credit is real");
+        mutator.setRecoveryAttributionRaw(false, 0);
+        comp.armRecoveryAttribution();
+        (uint256 c1, uint256 d1, uint256 z1) =
+            rlens.getRecoveryCreditForReceipt(1);
+        assertEq(c1, 0, "retired receipts report no credit");
+        assertEq(d1 + z1, 0, "and no spend history to reason from");
     }
 
     /// SS8-6 (#1662 r7) - an imported gate has NO permissionless clear.

@@ -1313,13 +1313,37 @@ contract RewardCompensationDispatchFacet is
         }
         s.recoveryAttributionArmed = true;
         s.recoveryAttributionArmedAt = s.remitReservationNonce;
-        emit RecoveryAttributionArmed(s.remitReservationNonce);
+        // #1662 r9 — RETIRE the pooled position too. Blocking the receipts
+        // is only half the migration: the aggregate
+        // `recovered − redispatched` stays subtracted from ordinary
+        // backing by {LibVpfiRecycle.backingPosition}, and the charged
+        // dispatch path increments `rewardBudgetRemittedGlobal` without
+        // ever drawing it down — so the recovered tokens would be
+        // earmarked forever, reachable by nothing. (Round 8 claimed the
+        // value "stays reachable through the ordinary charged path";
+        // without this it did not.)
+        //
+        // Safe as a one-shot at arming: the refresh arms while PAUSED,
+        // before any post-cut receipt can have contributed, so the whole
+        // standing position is legacy by construction. Retiring it
+        // releases those tokens back to ordinary unearmarked backing,
+        // which is exactly what the charged path then spends.
+        uint256 retired =
+            s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
+        if (retired != 0) {
+            s.rewardBudgetRedispatched = s.rewardBudgetRecovered;
+        }
+        emit RecoveryAttributionArmed(s.remitReservationNonce, retired);
     }
 
     /// @notice #1662 r7 — per-receipt recovery attribution armed; receipts
-    ///         at or below `watermark` are no longer drawable.
+    ///         at or below `watermark` are no longer drawable or clawable.
+    /// @param  retiredPosition #1662 r9 — the legacy pooled recovery
+    ///         position released back to ordinary backing by the same
+    ///         one-shot, so those tokens are spendable through the charged
+    ///         path rather than earmarked forever.
     /// @custom:event-category state-change/reward-compensation
-    event RecoveryAttributionArmed(uint256 watermark);
+    event RecoveryAttributionArmed(uint256 watermark, uint256 retiredPosition);
 
     /// @dev #1662 r2 — draw `amount` of uncharged re-dispatch capacity
     ///      against the NAMED source receipt's own recovery credit.

@@ -1063,6 +1063,19 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bool old = s.isCanonicalRewardChain;
         s.isCanonicalRewardChain = on;
+        // #1662 r9 — a FRESH canonical deployment uses per-receipt
+        // attribution from inception, so mark it armed at watermark ZERO
+        // (constraining nothing: receipt ids start at 1). Without this it
+        // is indistinguishable from a legacy Diamond, and the maintained
+        // full-facet refresh would later snapshot the THEN-current nonce —
+        // permanently retiring every legitimate receipt created since
+        // deployment. Gated on there being no receipts yet, so an existing
+        // legacy Diamond re-asserting its canonical role is untouched and
+        // still needs the refresh's explicit migration arming.
+        if (on && !s.recoveryAttributionArmed && s.remitReservationNonce == 0)
+        {
+            s.recoveryAttributionArmed = true;
+        }
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("isCanonicalRewardChain"),

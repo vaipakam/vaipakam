@@ -97,6 +97,13 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 /// @dev Minimal ERC-173 view to pre-flight the diamond owner.
 /// @dev #1662 r8 — the per-receipt attribution watermark, armed in the
 ///      same paused block that retires the unattributed selectors.
+interface IRecycleComposition {
+    function getRecycleCompositionPosition()
+        external
+        view
+        returns (uint256, uint256, bool, bool, uint256);
+}
+
 interface IRecoveryAttribution {
     function armRecoveryAttribution() external;
 
@@ -507,9 +514,24 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             // legitimate post-cut receipt created in the interim would be
             // retired with the legacy ones. Atomic with the cut, while
             // paused, is the only ordering that leaves no window.
-            if (!IRecoveryAttribution(diamond).recoveryAttributionArmed()) {
+            // CANONICAL ONLY — `armRecoveryAttribution` is `onlyCanonical`
+            // and would revert `NotCanonicalRewardChain` on every mirror,
+            // aborting the whole maintained refresh that
+            // `redeploy-testnet-inplace.sh` runs for mirror testnets
+            // (#1662 r9). Mirrors hold no recovery position: the ledger is
+            // Base-only, so there is nothing there to migrate.
+            (, , , bool canonicalHere, ) =
+                IRecycleComposition(diamond).getRecycleCompositionPosition();
+            if (
+                canonicalHere
+                    && !IRecoveryAttribution(diamond).recoveryAttributionArmed()
+            ) {
                 IRecoveryAttribution(diamond).armRecoveryAttribution();
                 console.log("P2-w6: armed per-receipt recovery attribution");
+            } else if (!canonicalHere) {
+                console.log(
+                    "P2-w6: mirror chain - no recovery position to migrate"
+                );
             }
         }
 

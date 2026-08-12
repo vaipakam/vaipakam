@@ -430,6 +430,20 @@ contract RewardRemittanceLensFacet {
         returns (uint256 credit, uint256 redispatched, uint256 clawed)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1662 r9 — a RETIRED (pre-attribution) receipt reports zero
+        // across the board. Its historical credit is real but unreachable:
+        // neither `_drawFromRecovery` nor `_voidRecoveryCredit` will act on
+        // it, and the pooled position it belonged to was released at
+        // arming. Reporting the raw figures would advertise
+        // `credit − redispatched − clawed` of spendable capacity that
+        // every dispatch rejects — a lens that disagrees with the ledger
+        // it exists to describe.
+        if (
+            s.recoveryAttributionArmed
+                && remitId <= s.recoveryAttributionArmedAt
+        ) {
+            return (0, 0, 0);
+        }
         uint256 c = s.remitRecoveredForReceipt[remitId]
             - s.ceremonyRecycledRecovered[remitId];
         return (

@@ -1839,6 +1839,19 @@ contract TestMutatorFacet {
         sr.reason = reason;
     }
 
+    /// @notice #1662 r9 test-only — reproduce the LEGACY (pre-attribution)
+    ///         shape. A FRESH canonical Diamond now auto-arms at watermark
+    ///         zero the moment it is made canonical with no receipts, so a
+    ///         test cannot otherwise construct the in-place-upgrade state
+    ///         the watermark exists for.
+    function setRecoveryAttributionRaw(bool armed, uint256 armedAt)
+        external
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.recoveryAttributionArmed = armed;
+        s.recoveryAttributionArmedAt = armedAt;
+    }
+
     /// @notice #1662 r2 test-only — set the GLOBAL recovery position
     ///         directly, so a test can stand up capacity belonging to
     ///         receipts other than the one under test (the claw sizes on
