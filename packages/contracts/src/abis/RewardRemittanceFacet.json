@@ -475,43 +475,6 @@
   },
   {
     "type": "event",
-    "name": "ImportedAttributionVoided",
-    "inputs": [
-      {
-        "name": "sourceChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "oldRemitter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "oldRemitId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "attributionId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "clawed",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "ImportedOutstandingConflict",
     "inputs": [
       {
@@ -1752,38 +1715,6 @@
         "name": "dstChainId",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ImportedParcelFullyResolved",
-    "inputs": [
-      {
-        "name": "oldRemitter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ImportedReservationUnreadable",
-    "inputs": [
-      {
-        "name": "oldRemitter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },

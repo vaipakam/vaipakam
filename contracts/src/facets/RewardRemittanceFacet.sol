@@ -1677,41 +1677,6 @@ contract RewardRemittanceFacet is
                 return;
             }
         }
-        // #1662 r4 — a SETTLED imported tuple: the marker was deleted at
-        // settlement, so a late consumed re-present from the old mirror
-        // would fall through to the era check and revert, leaving the
-        // credit that settlement minted freely re-dispatchable while the
-        // original delivery in fact backs mirror claims. The tombstone is
-        // the only surviving link from the old-era tuple to that credit,
-        // and consumption is exactly the evidence that voids it.
-        {
-            // #1662 r5 — the SOURCE CHAIN is part of the key. Peer
-            // authentication only proves the message came from SOME
-            // configured mirror; the live imported branch binds evidence
-            // through `importedOutstanding[sourceChainId]`, and a
-            // chain-agnostic tombstone would drop that binding — letting
-            // a compromised mirror name another chain's public tuple and
-            // permanently move that chain's capacity into quarantine.
-            bytes32 tomb =
-                keccak256(abi.encode(sourceChainId, remitter, remitId));
-            uint256 attributed = s.importedSettledAttribution[tomb];
-            if (attributed != 0) {
-                if (classification == 1) {
-                    (uint256 claw, uint256 unspent) =
-                        _voidRecoveryCredit(s, attributed);
-                    if (unspent != 0) {
-                        emit ImportedAttributionVoided(
-                            sourceChainId, remitter, remitId, attributed, claw
-                        );
-                    }
-                } else {
-                    emit ImportedOutstandingObserved(
-                        sourceChainId, remitter, remitId, classification
-                    );
-                }
-                return;
-            }
-        }
         if (remitter != address(this)) {
             revert RemitAckSenderMismatch(remitId, remitter);
         }
@@ -1911,20 +1876,6 @@ contract RewardRemittanceFacet is
         uint32 indexed sourceChainId,
         address oldRemitter,
         uint256 oldRemitId
-    );
-
-    /// @notice §5.4 R6e (#1662 r4) — an ALREADY-SETTLED imported tuple's
-    ///         old mirror re-presented a CONSUMED attestation: the credit
-    ///         that settlement minted is void (the delivery backs mirror
-    ///         claims after all). `clawed` is what the pooled position
-    ///         could physically absorb; the entitlement is voided whole.
-    /// @custom:event-category state-change/reward-compensation
-    event ImportedAttributionVoided(
-        uint32 indexed sourceChainId,
-        address oldRemitter,
-        uint256 oldRemitId,
-        uint256 attributionId,
-        uint256 clawed
     );
 
     /// @dev #1662 r4 - ONE implementation of the recovery-credit VOID.

@@ -6489,22 +6489,6 @@ library LibVaipakam {
         //   credit re-dispatchable while the original delivery still backs
         //   mirror claims. This is the only link back from an old-era
         //   tuple to the local credit it produced.
-        //   #1662 r5 — keyed by (sourceChainId, oldRemitter, oldRemitId).
-        //   The CHAIN is part of the key, not incidental: peer
-        //   authentication proves a message came from SOME configured
-        //   mirror, and the live imported branch binds evidence through
-        //   `importedOutstanding[sourceChainId]`. A chain-agnostic
-        //   tombstone would drop that binding, letting a compromised
-        //   mirror void ANOTHER chain's attribution — public tuples,
-        //   permanent effect.
-        mapping(bytes32 => uint256) importedSettledAttribution;
-        // BASE-ONLY (#1662 r5) — every imported tuple ever seen, keyed the
-        //   same way, set at IMPORT and never cleared. The gate returns to
-        //   zero once a settlement clears it, so without this an authentic
-        //   old tuple could be imported and settled REPEATEDLY, each pass
-        //   minting a fresh attribution while overwriting the tombstone —
-        //   a later consumed attestation would void only the last one and
-        //   leave the earlier credits drawable. One parcel, one import.
         mapping(bytes32 => bool) importedTupleSeen;
         // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
         //   outstanding-compensation record for a chain after a Base
@@ -6783,16 +6767,12 @@ library LibVaipakam {
         address oldRemitter;
         uint256 oldRemitId;
         bool quarantineObserved;
-        // #1662 r4 — the OLD reservation's dispatched figures, carried at
-        //   import. The local ceremony binds recovery to `r.total` /
-        //   `r.fresh` / `r.recycled`; an imported settlement has no local
-        //   reservation to bind against, so without these an operator
-        //   typo (or a compromised admin) could import a small old
-        //   receipt and classify any unearmarked Diamond balance as
-        //   recovered — minting arbitrary uncharged re-dispatch capacity.
-        uint256 oldTotal;
-        uint256 oldFresh;
-        uint256 oldRecycled;
+        // #1662 r6 — no parcel figures are carried: an imported
+        //   settlement mints no re-dispatch capacity, so there is nothing
+        //   for a fabricated figure to inflate. Rounds 4-5 carried them
+        //   (operator-supplied, then read from the predecessor) to bound
+        //   that mint; neither authenticates against a compromised ADMIN,
+        //   who supplies the predecessor address as well.
     }
 
     struct RemitReservation {

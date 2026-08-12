@@ -1352,6 +1352,56 @@ the bounds are the design's actual commitment.
    >    OVERWRITING the tombstone, so a later consumed attestation voided
    >    only the last credit and left the earlier ones drawable. One
    >    parcel, one import: a permanent per-tuple marker, never cleared.
+   >
+   > **Round-6 addendum (#1662) — the imported settlement is RESTRUCTURED,
+   > not patched again.** Rounds 4, 5 and 6 all produced findings on one
+   > surface, which is the signal to stop patching across a wrong cut.
+   >
+   > The root cause: an imported settlement could MINT uncharged
+   > re-dispatch capacity, and every attempt to bound that mint failed for
+   > the same reason. Round 4 bounded it on operator-supplied figures
+   > (validating only their internal consistency — which stops a typo, not
+   > a compromised admin). Round 5 bounded it by READING the retiring
+   > deployment — but the predecessor ADDRESS is supplied by the same
+   > caller, so a compromised admin points it at a reader returning
+   > anything. There is no check reachable from this contract that
+   > authenticates an admin-chosen address; only NOT MINTING closes it.
+   >
+   > It is also wrong on its own terms, independent of any adversary.
+   > Uncharged re-dispatch means "this parcel's cap charge already happened
+   > at its ORIGINAL dispatch" — true within ONE deployment's counters, and
+   > false across a rotation: `rewardBudgetRemittedGlobal` has no seeding
+   > path (only `+=`), so a rotated deployment starts at zero and never
+   > charged for the old parcel. Minting uncharged capacity there
+   > double-counts on this deployment's own cap.
+   >
+   > So `clearImportedOutstanding(chain, recycledInflow)` now releases the
+   > gate and may relocate physically-present RECYCLED custody (bounded by
+   > a real balance assertion), and mints nothing. Old-era fresh value that
+   > comes home is ordinary custody: a replacement compensation spends it
+   > through the CHARGED path, correctly charging a cap this deployment
+   > never charged. What that DELETES: the predecessor reader and its
+   > interface, the carried parcel figures, the minted attribution id, the
+   > settled-import tombstone and its ack-ingress branch, and two storage
+   > mappings. The import now carries no parcel data at all — a wrong
+   > import is a liveness cost on one chain (new compensation blocked until
+   > the evidenced clear), never a value leak.
+   >
+   > Two independent findings closed alongside it:
+   >
+   > - **The B1 return ignored recorded terminal loss.** A released receipt
+   >   can have partial loss recorded while a quarantined return is still
+   >   in flight; the return computed headroom from `total − recovered` and
+   >   credited against the gross parcel, so `recovered + terminalLoss`
+   >   could pass what was dispatched — minting lineage that never existed
+   >   and clearing the gate on it. Entitlement now nets both terms, and
+   >   the loss-closure recompute uses the same basis.
+   > - **The claw poisoned the redispatched counter.** `spent` folds in
+   >   clawed credit for the ADMISSION bound, but storing that combined
+   >   figure back double-counts the claw against any recovery governance
+   >   later records for the same receipt (deliberately allowed — operator
+   >   evidence stays the resolution path), leaving the new capacity
+   >   permanently unreadable. Only the redispatched term advances now.
 
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates

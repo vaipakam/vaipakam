@@ -71,3 +71,12 @@ types, and only the part that deployment had not already settled can be
 carried. Each carried-over delivery can be brought across exactly once,
 and the evidence that later voids its recovery is bound to the chain that
 delivery belonged to — so no other chain can reach it.
+
+Settling a compensation carried over from a retired deployment no longer
+creates any spending capacity of its own. It releases the block on that
+chain, and value that physically came home re-enters ordinary custody —
+so a replacement is funded the normal way, which correctly counts against
+this deployment's own lifetime budget rather than assuming an earlier
+deployment's accounting carries across. Recovery of value returned late
+also now accounts for anything already written off, so what is recovered
+plus what was written off can never exceed what was originally sent.

@@ -12,26 +12,6 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RemitWire} from "../crosschain/RemitWire.sol";
 
-/// @notice #1662 r5 — the minimal read surface this facet needs on a
-///         RETIRED canonical deployment during a rotation import. The old
-///         Diamond is a live contract on this same chain, so its own
-///         record is the authenticable evidence for what a carried-over
-///         compensation parcel was, and how much of it that deployment had
-///         already resolved.
-interface IRetiredRemitReader {
-    function getRemitReservation(
-        uint256 remitId
-    ) external view returns (LibVaipakam.RemitReservation memory);
-
-    function getRecoveredForReceipt(
-        uint256 remitId
-    ) external view returns (uint256);
-
-    function getCeremonyTerminalLoss(
-        uint256 remitId
-    ) external view returns (uint256);
-}
-
 /**
  * @title RewardCompensationDispatchFacet — the Base-side COMPENSATION
  *        dispatch surface (manual + supplemental).
@@ -703,9 +683,17 @@ contract RewardCompensationDispatchFacet is
         // Entitlement-bounded credit; the receipt's cumulative can never
         // pass the reservation's dispatched total.
         uint256 already = s.remitRecoveredForReceipt[remitId];
+        // #1662 r6 — net GOVERNANCE-RECORDED LOSS as well as prior
+        // recovery. A released receipt can have partial terminal loss
+        // recorded while a quarantined return is still in flight; without
+        // the loss term the late return credits against the gross total
+        // and `recovered + terminalLoss` passes the dispatched parcel —
+        // minting recovery lineage that never existed and clearing the
+        // gate on it.
         uint256 entitlement = r.total;
+        uint256 resolved = already + s.ceremonyTerminalLoss[remitId];
         uint256 headroom =
-            entitlement > already ? entitlement - already : 0;
+            entitlement > resolved ? entitlement - resolved : 0;
         uint256 credited =
             actualReceived < headroom ? actualReceived : headroom;
         uint256 overage = actualReceived - credited;
@@ -763,9 +751,10 @@ contract RewardCompensationDispatchFacet is
         // order, so a partial chunk may land AFTER the terminal one and
         // must shrink the recorded loss it just recovered).
         if (remainingAfter == 0 || s.strandedReturnTerminalized[remitId]) {
-            uint256 recoveredNow = s.remitRecoveredForReceipt[remitId];
+            uint256 resolvedNow = s.remitRecoveredForReceipt[remitId]
+                + s.ceremonyTerminalLoss[remitId];
             s.strandedReturnShortfall[remitId] =
-                entitlement > recoveredNow ? entitlement - recoveredNow : 0;
+                entitlement > resolvedNow ? entitlement - resolvedNow : 0;
         }
 
         // §5.1 return settlement: clear the R6 gate iff THIS receipt is
@@ -1059,16 +1048,11 @@ contract RewardCompensationDispatchFacet is
     /// @notice §5.4 R6e — a rotated-in deployment imported an OLD-ERA
     ///         outstanding compensation marker for a chain.
     /// @custom:event-category state-change/reward-compensation
-    /// @dev The three figures (#1662 r5) are the UNRESOLVED remainder read
-    ///      from the retiring deployment, not operator input.
     event OutstandingCompensationImported(
         uint32 indexed dstChainId,
         address oldRemitter,
         uint256 oldRemitId,
-        bool quarantineObserved,
-        uint256 oldTotal,
-        uint256 oldFresh,
-        uint256 oldRecycled
+        bool quarantineObserved
     );
 
     /// @notice §5.4 R6e (#1662 r1) — the ADMIN evidenced SETTLEMENT of
@@ -1079,17 +1063,13 @@ contract RewardCompensationDispatchFacet is
     ///         {RewardRemittanceFacet}'s ImportedOutstandingResolved
     ///         instead.
     /// @custom:event-category state-change/reward-compensation
-    /// @dev `attributionId` (#1662 r3) — the freshly minted local receipt
-    ///      id carrying the imported FRESH recovery's drawable credit.
-    ///      Zero when nothing fresh was booked. This is the id a
-    ///      replacement `…FromRecovery` dispatch must name.
+    /// @dev #1662 r6 — recycled only: an imported settlement mints no
+    ///      fresh recovery capacity (see {clearImportedOutstanding}).
     event ImportedOutstandingCleared(
         uint32 indexed dstChainId,
         address oldRemitter,
         uint256 oldRemitId,
-        uint256 freshInflow,
-        uint256 recycledInflow,
-        uint256 attributionId
+        uint256 recycledInflow
     );
 
     /// @dev #1662 r2 (self-review) — a TRUSTED consumption attestation:
@@ -1348,7 +1328,15 @@ contract RewardCompensationDispatchFacet is
         if (amount > position) {
             revert RecoveryPositionInsufficient(amount, position);
         }
-        s.recoveryRedispatchedForReceipt[sourceRemitId] = spent + amount;
+        // #1662 r6 — only the REDISPATCHED term advances. `spent` folds
+        // in clawed credit for the ADMISSION bound, but storing the
+        // combined figure back would double-count the claw against any
+        // recovery governance later records for the same receipt (which
+        // is deliberately allowed — operator evidence stays the
+        // resolution path), leaving that new capacity permanently
+        // unreadable as available.
+        s.recoveryRedispatchedForReceipt[sourceRemitId] =
+            s.recoveryRedispatchedForReceipt[sourceRemitId] + amount;
     }
 
     /// @dev #1662 r1 — book a physically-recovered inflow: ONE combined
@@ -1407,7 +1395,7 @@ contract RewardCompensationDispatchFacet is
      *         old-era evidence clears it (the mirror's re-presented
      *         consumed attestation, or {clearImportedOutstanding}).
      */
-    /// @dev #1662 r5 — the old reservation's figures are READ FROM THE
+
     ///      RETIRING DEPLOYMENT, not supplied by the caller. Round 4
     ///      carried them as ADMIN parameters and validated only their
     ///      internal consistency, which bounds a typo but not a
@@ -1450,113 +1438,58 @@ contract RewardCompensationDispatchFacet is
         }
         // #1662 r5 — ONE import per tuple, ever. The gate returns to
         // zero when a settlement clears it, so without this the same
-        // authentic parcel could be imported and settled repeatedly,
-        // minting a fresh attribution each pass.
+        // parcel could be imported repeatedly.
         bytes32 tupleKey =
             keccak256(abi.encode(dstChainId, oldRemitter, oldRemitId));
         if (s.importedTupleSeen[tupleKey]) {
             revert ImportedTupleAlreadySeen(dstChainId, oldRemitId);
         }
-        // #1662 r5 — AUTHENTICATE against the retiring deployment's own
-        // record, and bound by what it had NOT already resolved.
-        (uint256 oldTotal, uint256 oldFresh, uint256 oldRecycled) =
-            _readRetiredParcel(oldRemitter, oldRemitId);
         s.importedTupleSeen[tupleKey] = true;
         s.importedOutstanding[dstChainId] = LibVaipakam.ImportedOutstanding({
             oldRemitter: oldRemitter,
             oldRemitId: oldRemitId,
-            quarantineObserved: quarantineObserved,
-            oldTotal: oldTotal,
-            oldFresh: oldFresh,
-            oldRecycled: oldRecycled
+            quarantineObserved: quarantineObserved
         });
-        // #1662 r1 — the SENTINEL, never the old id: old-era remit ids
-        // alias this deployment's own nonces, and an ordinary new-era
-        // remit's consumed ack would otherwise clear an imported hold it
-        // never evidenced.
         LibRewardRemitDispatch.setCompensationGate(
             s, dstChainId, IMPORTED_GATE_SENTINEL
         );
         emit OutstandingCompensationImported(
-            dstChainId,
-            oldRemitter,
-            oldRemitId,
-            quarantineObserved,
-            oldTotal,
-            oldFresh,
-            oldRecycled
+            dstChainId, oldRemitter, oldRemitId, quarantineObserved
         );
     }
 
-    /// @dev #1662 r5 — read the retired deployment's own record for this
-    ///      receipt and return the UNRESOLVED parcel: its dispatched split,
-    ///      less whatever that deployment already recovered or wrote off.
-    ///
-    ///      Two things this closes that operator-supplied figures could
-    ///      not. (1) AUTHENTICITY — a self-consistent tuple is trivial to
-    ///      fabricate; the retired Diamond is a live contract on this same
-    ///      chain, so its record is the real evidence. (2) The GROSS split
-    ///      is the wrong bound anyway: a rotation can happen after the old
-    ///      deployment already ran a partial ceremony or recorded partial
-    ///      loss, and importing the gross figures would let the parcel be
-    ///      recovered twice over (4 recovered before rotation + 10 imported
-    ///      = 14 of lineage from a 10-token parcel).
-    ///
-    ///      Fail-closed on an unreadable reservation: no evidence, no
-    ///      import. The terminal-loss read is OPTIONAL by design — a
-    ///      deployment predating the ceremony has no loss state to report,
-    ///      and a failed call there means structurally zero rather than
-    ///      unknown.
-    function _readRetiredParcel(
-        address oldRemitter,
-        uint256 oldRemitId
-    ) private view returns (uint256 total, uint256 fresh, uint256 recycled) {
-        LibVaipakam.RemitReservation memory r =
-            IRetiredRemitReader(oldRemitter).getRemitReservation(oldRemitId);
-        if (r.total == 0 || r.status == 0) {
-            revert ImportedReservationUnreadable(oldRemitter, oldRemitId);
-        }
-        uint256 resolved =
-            IRetiredRemitReader(oldRemitter).getRecoveredForReceipt(oldRemitId);
-        (bool ok, bytes memory ret) = oldRemitter.staticcall(
-            abi.encodeWithSelector(
-                IRetiredRemitReader.getCeremonyTerminalLoss.selector,
-                oldRemitId
-            )
-        );
-        if (ok && ret.length == 32) resolved += abi.decode(ret, (uint256));
-        if (resolved >= r.total) {
-            revert ImportedParcelFullyResolved(oldRemitter, oldRemitId);
-        }
-        total = r.total - resolved;
-        // Attribute the resolved portion to FRESH first: it is the only
-        // component that mints re-dispatch capacity, so crediting it last
-        // would be the permissive direction.
-        fresh = r.fresh > resolved ? r.fresh - resolved : 0;
-        recycled = total > fresh ? total - fresh : 0;
-    }
 
     /**
-     * @notice ADMIN — §5.4 R6e (#1662 r1): the evidenced SETTLEMENT of an
-     *         imported old-era gate (the forced-finalize mould), covering
-     *         the quarantined old-era value a new-era B1 return cannot
-     *         carry (its era check refuses old remitters by design) and
-     *         governance recoveries of the old delivery generally.
-     * @dev    A bare clear would let physically-recovered old-era value
-     *         re-enter custody with no book: the settlement records WHERE
-     *         the recovered value went — the fresh component to the
-     *         recovery position (uncharged re-dispatch capacity), the
-     *         recycled component as relocated bucket custody under the
-     *         ceremony provenance class, refId = the OLD-era remitId.
-     *         Both zero is a pure-loss settlement (nothing came home);
-     *         a non-zero inflow takes the same combined backing assertion
-     *         as the ceremony. No provenance split of the OLD era is
-     *         knowable here, so the components are operator evidence —
-     *         the same trust class as the import itself.
+     * @notice ADMIN — §5.4 R6e: the evidenced SETTLEMENT of an imported
+     *         old-era gate (the forced-finalize mould), covering the
+     *         quarantined old-era value a new-era B1 return cannot carry
+     *         (its era check refuses old remitters by design).
+     * @dev    #1662 r6 — this books NO fresh recovery capacity, and that
+     *         is the point rather than a limitation.
+     *
+     *         Uncharged re-dispatch is justified by "this parcel's cap
+     *         charge already happened at its ORIGINAL dispatch" — true
+     *         within one deployment's counters, and FALSE across a
+     *         rotation: `rewardBudgetRemittedGlobal` is never seeded, so a
+     *         rotated deployment starts at zero and never charged for the
+     *         old parcel. Minting uncharged capacity for it double-counts
+     *         in the permissive direction on this deployment's own cap.
+     *
+     *         Removing the mint also removes the surface that rounds 4 and
+     *         5 tried and failed to bound: the parcel's size cannot be
+     *         authenticated from an ADMIN-supplied predecessor address (a
+     *         compromised admin supplies the address too), so there is no
+     *         check that contains it — only not minting does.
+     *
+     *         Old-era value that physically comes home is therefore
+     *         handled by what it actually is: the RECYCLED half re-enters
+     *         bucket custody, bounded by a real balance assertion, and the
+     *         fresh half sits as ordinary custody that a replacement
+     *         compensation spends through the CHARGED path — correctly
+     *         charging a cap this deployment never charged.
      */
     function clearImportedOutstanding(
         uint32 dstChainId,
-        uint256 freshInflow,
         uint256 recycledInflow
     ) external nonReentrant whenNotPaused onlyCanonical
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -1567,64 +1500,17 @@ contract RewardCompensationDispatchFacet is
         if (im.oldRemitter == address(0)) {
             revert ImportedMarkerMissing(dstChainId);
         }
-        // #1662 r4 — bounded by the OLD reservation, per component, the
-        // same way the local ceremony is bounded by its own.
-        if (freshInflow > im.oldFresh) {
-            revert CeremonyProvenanceExceeded(
-                im.oldRemitId, freshInflow, im.oldFresh
-            );
-        }
-        if (recycledInflow > im.oldRecycled) {
-            revert CeremonyProvenanceExceeded(
-                im.oldRemitId, recycledInflow, im.oldRecycled
-            );
-        }
-        uint256 attributionId;
-        if (freshInflow + recycledInflow != 0) {
-            // #1662 r2 — localStranding FALSE: this value was stranded on
-            // the RETIRED deployment and never entered this one's
-            // stranded cumulative, so it must not net out of the local
-            // coverage allowance.
-            _bookRecoveredInflow(
-                s, im.oldRemitId, freshInflow, recycledInflow, false
-            );
-            // #1662 r3 — the fresh half must be DRAWABLE. Every
-            // from-recovery dispatch names a source receipt, and the
-            // old-era id names nothing here (worse, it could collide with
-            // one of THIS deployment's reservations), so imported
-            // recovery would earmark tokens the position reports as
-            // spendable while no caller could ever legitimately spend
-            // them. Mint a fresh id from the reservation nonce — the
-            // authority for this id space, so collision is impossible —
-            // and publish it: that id is what the operator names in the
-            // replacement dispatch.
-            if (freshInflow != 0) {
-                attributionId = ++s.remitReservationNonce;
-                s.remitRecoveredForReceipt[attributionId] = freshInflow;
-                // #1662 r4 — the marker is deleted below, so a LATER
-                // consumed re-present from the old mirror would miss the
-                // imported branch and revert at the era check, leaving
-                // this credit re-dispatchable while the original delivery
-                // backs mirror claims. The tombstone is the only link
-                // back from the old-era tuple to the credit it minted.
-                s.importedSettledAttribution[
-                    keccak256(
-                        abi.encode(
-                            dstChainId, im.oldRemitter, im.oldRemitId
-                        )
-                    )
-                ] = attributionId;
-            }
+        if (recycledInflow != 0) {
+            // localStranding FALSE (#1662 r2): stranded on the RETIRED
+            // deployment, never in this one's cumulative, so it must not
+            // net out of the local coverage allowance. The credit itself
+            // asserts the tokens are physically present.
+            _bookRecoveredInflow(s, im.oldRemitId, 0, recycledInflow, false);
         }
         delete s.importedOutstanding[dstChainId];
         LibRewardRemitDispatch.clearCompensationGate(s, dstChainId);
         emit ImportedOutstandingCleared(
-            dstChainId,
-            im.oldRemitter,
-            im.oldRemitId,
-            freshInflow,
-            recycledInflow,
-            attributionId
+            dstChainId, im.oldRemitter, im.oldRemitId, recycledInflow
         );
     }
 

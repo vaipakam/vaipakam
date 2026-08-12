@@ -477,15 +477,6 @@ interface IVaipakamErrors {
     ///         deployment's visible gate instead of its imported record).
     error ImportedTupleIsSentinel();
 
-    /// @notice #1662 r5 — the retiring deployment's record for this
-    ///         receipt could not be read, so there is no evidence to
-    ///         import (fail-closed).
-    error ImportedReservationUnreadable(address oldRemitter, uint256 remitId);
-
-    /// @notice #1662 r5 — the retiring deployment already resolved this
-    ///         parcel in full; there is nothing left to carry over.
-    error ImportedParcelFullyResolved(address oldRemitter, uint256 remitId);
-
     /// @notice #1662 r5 — this tuple was already imported once. One
     ///         parcel, one import: the gate returns to zero at settlement,
     ///         so a replay would mint a second attribution.

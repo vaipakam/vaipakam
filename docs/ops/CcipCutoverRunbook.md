@@ -266,13 +266,20 @@ or recovery ceremony + terminal loss), or carry it over: on the NEW
 deployment run `importOutstandingCompensation(chain, oldDeployment,
 oldRemitId, quarantineObserved)` for each open tuple.
 
-The parcel's size is NOT an operator input: the new deployment reads the
-retiring deployment's own reservation record and its already-resolved
-amount, and carries only the UNRESOLVED remainder — so a rotation that
-follows a partial recovery ceremony carries only what is genuinely still
-outstanding. The retiring deployment must therefore still be readable at
-its address when the import runs (do not decommission it first), and each
-tuple may be imported exactly once.
+The import carries no parcel figures at all, and needs none: settling an
+imported gate creates no spending capacity, so there is nothing a wrong
+figure could inflate. A mistaken import costs only liveness on that one
+chain — new compensation is blocked until the evidenced clear runs — and
+each tuple may be imported exactly once.
+
+When old-era value physically comes home, settle with
+`clearImportedOutstanding(chain, recycledInflow)`: the recycled component
+re-enters bucket custody (the call asserts the tokens are actually
+present), and any FRESH component simply remains in custody. Fund the
+replacement compensation through the ordinary charged path — the new
+deployment's lifetime budget counter starts at zero and never charged for
+the old parcel, so charging it now is the correct accounting, not a
+double charge.
 
 Read the tuple from the retiring deployment's `getImportedOutstanding`
 when that deployment was ITSELF holding an imported gate — its visible

@@ -9,11 +9,6 @@
         "internalType": "uint32"
       },
       {
-        "name": "freshInflow",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "recycledInflow",
         "type": "uint256",
         "internalType": "uint256"
@@ -405,19 +400,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "freshInflow",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
         "name": "recycledInflow",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "attributionId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -483,24 +466,6 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
-      },
-      {
-        "name": "oldTotal",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "oldFresh",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "oldRecycled",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1590,38 +1555,6 @@
         "name": "dstChainId",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ImportedParcelFullyResolved",
-    "inputs": [
-      {
-        "name": "oldRemitter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ImportedReservationUnreadable",
-    "inputs": [
-      {
-        "name": "oldRemitter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },

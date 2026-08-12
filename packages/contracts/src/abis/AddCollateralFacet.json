@@ -961,38 +961,6 @@
   },
   {
     "type": "error",
-    "name": "ImportedParcelFullyResolved",
-    "inputs": [
-      {
-        "name": "oldRemitter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ImportedReservationUnreadable",
-    "inputs": [
-      {
-        "name": "oldRemitter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "remitId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ImportedTupleAlreadySeen",
     "inputs": [
       {
