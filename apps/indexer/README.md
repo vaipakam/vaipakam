@@ -14,8 +14,11 @@ The **read-API Worker** of the Vaipakam off-chain stack. Stage 3 PR3 of the Work
   - `/loans/{active,recent,stats,timeseries,by-lender/:addr,by-borrower/:addr,:loanId}`
   - `/activity`
   - `/claimables/:addr`
+  - `/config/:chainId` — the governance-knob display snapshot
 
-The connected app (`apps/defi`) reads from this Worker via `VITE_INDEXER_ORIGIN`. The marketing site (`apps/www`) doesn't talk to it — `apps/www` is on-chain-read-free.
+The connected app (`apps/defi`) reads from this Worker via `VITE_INDEXER_ORIGIN`.
+
+The marketing site (`apps/www`) reads exactly one route: `/config/:chainId`, for the fee and tier figures quoted in its documentation (#1612). `apps/www` remains **on-chain-read-free** — it carries no wallet, no viem and no ABI, and this snapshot is precisely how it states current figures without any of that. Treat that route as having a marketing-site consumer when changing its shape, its CORS policy, or its availability: `apps/www` bounds the request at 4 s and falls back to bundled defaults, so an outage degrades rather than breaks it, but a silent change to the bundle's field ORDER would publish wrong numbers under a "live" badge.
 
 **Non-goals:** no signing keys, no user-facing writes. Reads only. If a request needs to write state on-chain, route it through the connected app + a wallet signature, not through this Worker. The indexer's role is to be the queryable view layer, not an action surface.
 
