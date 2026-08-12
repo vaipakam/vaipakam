@@ -239,6 +239,13 @@ export function OrderTicket({
   // handler, so consent is voided in the same batch as the change; this
   // effect is the backstop for a parent-driven change, where the user has
   // just clicked a control elsewhere and so cannot be mid-click on Post.
+  //
+  // That claim was NOT true when this comment was written (Codex #1682 r1
+  // F2): the two side buttons and the posting-mode chips set their state and
+  // nothing else, so for `side` and `postMode` this effect was the ONLY thing
+  // clearing consent — a commit late, leaving exactly the frame the comment
+  // asserted could not exist. Those three handlers now clear in the same
+  // batch, which is what makes the claim, and this disable, correct.
   // That is what distinguishes it from #1678, where the trigger was an async
   // arrival that could coincide with a click — there, an effect was the wrong
   // mechanism and the gate had to be derived.
@@ -352,15 +359,26 @@ export function OrderTicket({
    * existed where the ticket claimed partial fill in a mode that cannot serve
    * it — and everything computed from it that frame (the payload, the IOC
    * check, the fee preview) described an order that could not be posted.
-   * Fixing it at the source is not available either: the Partial chip is
-   * already disabled in this mode, so the only way in is `side` or `postMode`
-   * CHANGING underneath a stored Partial — and `side` is a prop, so that can
-   * arrive from the parent with no local handler to correct.
-   *
-   * Deriving also makes the chip honest: it now highlights the mode in force
+   * Deriving also makes the chip honest: it highlights the mode in force
    * rather than the one that is about to be overwritten.
+   *
+   * (An earlier version of this comment said a source fix was unavailable
+   * because `side` arrives as a prop. That was simply wrong — `side` is local
+   * state, and the handlers that change it are right here. A source reset is
+   * therefore possible; deriving is kept because it is the stronger of the two
+   * — it cannot be forgotten at a new call site, and it fixes the chip's
+   * display as well as the payload.)
+   *
+   * Coerces PARTIAL only — never IOC (Codex #1682 r1 F1). The collapse this
+   * mirrors, `collapseForSignedPost`, maps `0 → 1` and deliberately leaves
+   * IOC alone because its expiry semantics are load-bearing; and only the
+   * Partial chip is disabled in this mode, so IOC stays selectable. Coercing
+   * every mode therefore signed an AON order for a user who picked IOC, and
+   * `iocNeedsExpiry` stopped seeing an IOC to check — bypassing the #125
+   * GTC-plus-IOC guard on the way.
    */
-  const effectiveFillMode = gaslessLenderSingleFill ? FILL_AON : fillMode;
+  const effectiveFillMode =
+    gaslessLenderSingleFill && fillMode === FILL_PARTIAL ? FILL_AON : fillMode;
 
   // IOC requires an expiry (#125) — GTC + IOC is contract-invalid. Reads the
   // EFFECTIVE mode, so it judges the order that would actually be posted.
@@ -1025,14 +1043,23 @@ export function OrderTicket({
         <button
           type="button"
           className={side === 'lender' ? 'active' : ''}
-          onClick={() => setSide('lender')}
+          onClick={() => {
+            // Same batch as the change (Codex #1682 r1 F2) — the passive
+            // backstop effect lands a commit later, leaving a frame where the
+            // side has flipped but consent and canPost are still true.
+            setSide('lender');
+            clearConsentOnEdit();
+          }}
         >
           {text.sideLend}
         </button>
         <button
           type="button"
           className={side === 'borrower' ? 'active' : ''}
-          onClick={() => setSide('borrower')}
+          onClick={() => {
+            setSide('borrower');
+            clearConsentOnEdit();
+          }}
         >
           {text.sideBorrow}
         </button>
@@ -1241,7 +1268,10 @@ export function OrderTicket({
               type="button"
               className={`desk-chip${postMode === value ? ' active' : ''}`}
               title={hint}
-              onClick={() => setPostMode(value)}
+              onClick={() => {
+                setPostMode(value);
+                clearConsentOnEdit();
+              }}
             >
               {label}
             </button>
