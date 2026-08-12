@@ -866,7 +866,12 @@ export function OfferFlow({ side }: { side: Side }) {
   // carries an EIP-712 AcceptTerms signed at submit time, and
   // fabricating placeholder terms here would duplicate the canonical
   // submit-time builder just to preview a signature-artefact revert.
-  // Never feeds canSign — advisory by design.
+  // Its VERDICT never feeds canSign — advisory by design. Its SETTLEMENT
+  // does, in post mode only (#1679 r3, and this line said otherwise until
+  // r5 P3 caught it): signing waits for the status to be terminal, so the
+  // dry run has answered before consent is acted on. Every terminal status
+  // opens that gate, a revert included — the revert is disclosed in the
+  // footer and fingerprinted into `reviewAssertions`, never a block.
   const simTx = useMemo((): TxSimInput | null => {
     // Consent gate (round 1): createOffer reverts
     // RiskAndTermsConsentRequired while the checkbox is unticked —

@@ -7,10 +7,22 @@
  * against the wallet's own chain — a free, read-only dry run of the
  * exact calldata. Nothing is broadcast.
  *
- * ADVISORY ONLY — it must never gate `canSign` or the submit path.
- * On an RPC hiccup or a preview artefact (placeholder signature,
- * not-yet-granted allowance) it degrades to a subdued "no verdict"
- * footer. The wallet-context plumbing is the only real difference
+ * The VERDICT is ADVISORY ONLY — `revert`, `approval-needed` and
+ * `unavailable` must never block signing or the submit path. On an RPC
+ * hiccup or a preview artefact (placeholder signature, not-yet-granted
+ * allowance) it degrades to a subdued "no verdict" footer.
+ *
+ * SETTLEMENT is a different question, and one caller does gate on it
+ * (Codex #1679 r5 P3 — this header used to say "must never gate
+ * `canSign`" flatly, which stopped being true at #1679 r3). A caller that
+ * shows this preview as a pre-sign disclosure may require the status to be
+ * TERMINAL — anything other than `idle`/`loading` — before enabling
+ * signing, so that consent is given against a verdict in hand rather than
+ * one still in flight. That is a liveness gate on "has it answered", not a
+ * correctness gate on "did it pass": every terminal status, including the
+ * failures above, opens it. Keep the distinction if you touch this — a
+ * caller that blocks on `revert` has misread the contract, and a caller
+ * that treats `loading` as settled has reopened the race r3 closed. The wallet-context plumbing is the only real difference
  * from the defi original: alpha02 uses `useActiveChain` + wagmi's
  * `usePublicClient` bound to the WALLET chain (never the read-chain
  * fallback — simulating on a different network than the one the
