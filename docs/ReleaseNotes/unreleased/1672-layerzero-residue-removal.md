@@ -163,3 +163,21 @@ time pressure is to delete the note rather than the residue. The
 exemption is now per-language, verified against four cases: a Solidity
 comment naming the field passes, Solidity code declaring it fails, an
 artifact key fails, a shell comment passes.
+
+A fourth round found two, both about completeness rather than
+correctness. The per-chain infrastructure stanzas covered the testnets
+but not a single mainnet slug, so the template was unusable for the
+deploy it matters most for; all six mainnet slugs now have their four
+addresses. And retiring the LayerZero event category from the linter
+broke a documented invariant: that taxonomy is a closed list maintained
+in two places, and the specification still declared the retired category
+valid and counted fifteen leaves. Both sides now agree on fourteen, and
+the rule is restated to cover retiring a leaf, not only adding one — the
+direction that was left implicit is exactly the one that went wrong.
+
+A note for whoever picks up the event taxonomy next: the linter reports
+229 violations against that closed list, none of them related to this
+change. They are years of newer categories — reward-governor,
+reward-compensation, buyback-intent and a dozen more — that were used in
+the contracts without being added to either the specification or the
+allow-list. That is a real reconciliation and is not attempted here.
