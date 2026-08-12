@@ -879,7 +879,12 @@ export function OfferFlow({ side }: { side: Side }) {
     // BEFORE consent is collected rather than invalidating it afterwards.
     // That ordering is also what keeps the fix out of a clear-and-disappear
     // loop: the gate never has to react to a warning it caused.
-    if (mode !== 'post' || !walletChain) return null;
+    // Scoped to the REVIEW step (#1679 r2 N4). Dropping the consent
+    // condition also made this non-null on the terms step, where the
+    // borrower flow already mounts CollateralPrecheck with the same
+    // forced-consent createOffer calldata — two debounced eth_calls per
+    // settled edit — and on paths that render no preview at all.
+    if (mode !== 'post' || step !== 'review' || !walletChain) return null;
     try {
       const payload = toCreateOfferPayload({ ...form, riskAndTermsConsent: true }, {
         lending: lendingMeta.data?.decimals,
@@ -900,7 +905,7 @@ export function OfferFlow({ side }: { side: Side }) {
     } catch {
       return null; // form not buildable yet — footer stays hidden
     }
-  }, [mode, walletChain, form, lendingMeta.data, collateralMeta.data]);
+  }, [mode, step, walletChain, form, lendingMeta.data, collateralMeta.data]);
 
   // #1112 — early under-collateral precheck for the borrow TERMS step. Same
   // `createOffer` eth_call the review-step SimulationPreview runs, but with
@@ -1247,8 +1252,25 @@ export function OfferFlow({ side }: { side: Side }) {
     // button closed; when the live values land, the receipt and the gate
     // become ready in the same render. Consent is given against the terms in
     // the receipt, so the terms themselves belong here, not just the warnings.
-    `fees:${fees.ready ? `${fees.treasuryFeeBps}/${fees.loanInitiationFeeBps}/${fees.maxOfferDurationDays}` : 'pending'}`,
+    // The two DISPLAYED percentages only (#1679 r2 N5).
+    // `maxOfferDurationDays` is neither shown in the receipt nor part of an
+    // accepted offer's signed terms — `submitAccept` rechecks just these two
+    // — so including it churned the epoch on accept reviews whenever
+    // governance retuned the creation cap. Post mode already handles an
+    // invalidated duration through `durationValid`, and editing the duration
+    // clears consent by itself.
+    `fees:${fees.ready ? `${fees.treasuryFeeBps}/${fees.loanInitiationFeeBps}` : 'pending'}`,
     `grace:${grace.ready ? grace.label : 'pending'}`,
+    // #1679 r2 N1 — the receipt's own READINESS, and the token metadata it is
+    // built from. A tick can land while the receipt still says "Preparing
+    // your review"; if the remaining gates then settle without changing their
+    // encoded values (liquidity pending → liquid and linked-loan pending → 0
+    // both encode as `false`), the finished receipt would appear against an
+    // acknowledgement of a screen that showed no terms at all.
+    `receipt:${receipt ? 'ready' : 'pending'}`,
+    `meta:${lendingMeta.data?.decimals ?? ''}/${lendingMeta.data?.symbol ?? ''}` +
+      `/${collateralMeta.data?.decimals ?? ''}/${collateralMeta.data?.symbol ?? ''}` +
+      `/${selectedCollateralMeta.data?.decimals ?? ''}/${selectedCollateralMeta.data?.symbol ?? ''}`,
     // #1679 r1 F5 — the dry run's verdict is a disclosure too. It is safe to
     // include now that the preview no longer waits for consent (see `simTx`).
     `sim:${preSign.result.status}:${
@@ -1277,6 +1299,15 @@ export function OfferFlow({ side }: { side: Side }) {
   if (seenAssertions !== reviewAssertions) {
     setSeenAssertions(reviewAssertions);
     setAssertionEpoch((e) => e + 1);
+    // Untick the box in the SAME pass (#1679 r2 N3). The epoch alone closes
+    // signing, but it left a checked box beside a dead button with nothing
+    // explaining why, and the user had to guess that untick/retick was the
+    // remedy — which also contradicted the spec line this PR added. Done
+    // here rather than in an effect for the same reason the epoch is: an
+    // effect lands a render late, which is the window all of this closes.
+    setForm((f) =>
+      f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+    );
   }
   /** The epoch that was current when the user LAST ticked the consent box. */
   const consentEpochRef = useRef<number | null>(null);

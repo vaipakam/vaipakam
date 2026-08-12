@@ -77,12 +77,39 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
   const [result, setResult] = useState<SimResult>({ status: 'idle' });
   const reqIdRef = useRef(0);
 
+  /**
+   * The input's SIGNATURE — what would actually be sent — rather than its
+   * object identity (Codex #1679 r2 N2).
+   *
+   * Callers build this input inside a `useMemo`, so any dependency of that
+   * memo produces a fresh object even when the resulting `eth_call` is
+   * byte-identical. Restarting on identity therefore reset a settled verdict
+   * to `loading` for reasons that could not change the outcome. That was not
+   * merely wasteful: a caller whose gate consumes this status, and whose
+   * memo depends on state the user toggles, could never reach a settled
+   * verdict at all — toggling re-armed the simulation, which re-closed the
+   * gate, which is what the toggle was trying to open.
+   */
+  const inputKey = input
+    ? [
+        input.to,
+        input.data,
+        input.value?.toString() ?? '',
+        input.allowSignatureRevert ?? false,
+        input.allowAllowanceRevert ?? false,
+        input.allowNftApprovalRevert ?? false,
+      ].join('|')
+    : null;
+  /** Read by `simulate` so it does not have to close over the object. */
+  const inputRef = useRef(input);
+
   const simulate = useCallback(async () => {
     // Bump the request id FIRST — before any early return — so a
     // chain switch or cleared input invalidates an `eth_call` still
     // in flight; otherwise it could resolve later and overwrite the
     // verdict with a stale one.
     const myReq = ++reqIdRef.current;
+    const input = inputRef.current;
     if (!input || !address) {
       setResult({ status: 'idle' });
       return;
@@ -114,9 +141,13 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
         ),
       );
     }
-  }, [address, onSupportedChain, publicClient, input]);
+  }, [address, onSupportedChain, publicClient]);
 
   useEffect(() => {
+    // Latest input for `simulate` to read. Kept in a ref so `simulate` does
+    // not change identity per keystroke, and written HERE rather than during
+    // render because `react-hooks/refs` forbids a render-phase ref write.
+    inputRef.current = input;
     // Drop the previous verdict SYNCHRONOUSLY on any input change —
     // a stale "passed" must not sit under a changed receipt during
     // the debounce window (round 1). The bump also invalidates any
@@ -127,7 +158,12 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
       void simulate();
     }, debounceMs);
     return () => clearTimeout(t);
-  }, [input, simulate, debounceMs]);
+    // Keyed on the input's SIGNATURE, not its identity (see `inputKey`): an
+    // object rebuilt with identical calldata must not restart a settled
+    // simulation. `input` is deliberately absent from the deps for exactly
+    // that reason — including it is the bug this guards against.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputKey, simulate, debounceMs]);
 
   return { result, refresh: simulate };
 }
