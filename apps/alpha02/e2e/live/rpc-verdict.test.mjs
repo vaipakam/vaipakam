@@ -551,14 +551,33 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
       expect(out).toEqual({ malformed: [], unreachable: [] });
     });
 
-    it('clears a client fault the same way', () => {
+    it('clears a client fault a DIFFERENT endpoint then answered', () => {
+      // The fallback case. viem's `shouldRetry` is false for a well-formed
+      // JSON-RPC error, so this is never a retry — but `fallback` does move
+      // to its next endpoint on one, and that is a real recovery.
+      const out = summariseRpcLedger(
+        ledgerOf(
+          attempt(400, errBody(1, rpcErr(-32602)), rpcReq(call(1))),
+          attempt(200, okBody(1), rpcReq(call(1)), 'https://backup.example'),
+        ),
+      );
+      expect(out).toEqual({ malformed: [], unreachable: [] });
+    });
+
+    it('keeps a client fault the SAME endpoint later answered (#1583)', () => {
+      // Not a retry chain: viem never retries a -32602 against the same
+      // endpoint, so the later success is the page asking again. The fault
+      // did reach the app once, and that is an app finding.
       const out = summariseRpcLedger(
         ledgerOf(
           attempt(400, errBody(1, rpcErr(-32602)), rpcReq(call(1))),
           attempt(200, okBody(1), rpcReq(call(1))),
         ),
       );
-      expect(out).toEqual({ malformed: [], unreachable: [] });
+      expect(out.malformed).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — json-rpc -32602' },
+      ]);
+      expect(out.unreachable).toEqual([]);
     });
 
     it('does NOT let an earlier success clear a later failure', () => {
@@ -605,6 +624,56 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
         ),
       );
       expect(out.unreachable).toHaveLength(1);
+    });
+
+    describe('bounded absorption (#1583)', () => {
+      // `key` is method|params, so a continuously polled read shares one key
+      // for the whole run. A later poll succeeding cannot mean an earlier
+      // chain that ran out of retries was fine — viem spends at most
+      // retryCount+1 = 4 attempts per endpoint, so a 4-long failure streak
+      // on ONE endpoint has an exhausted chain in it whatever follows.
+      const poll = rpcReq(call(1, 'eth_blockNumber', []));
+      const dead = () => attempt(429, 'slow down', poll);
+
+      it('forgives a streak within one operation budget', () => {
+        const out = summariseRpcLedger(
+          ledgerOf(dead(), dead(), dead(), attempt(200, okBody(1), poll)),
+        );
+        expect(out).toEqual({ malformed: [], unreachable: [] });
+      });
+
+      it('reports a streak that no single operation could have spent', () => {
+        const out = summariseRpcLedger(
+          ledgerOf(dead(), dead(), dead(), dead(), attempt(200, okBody(1), poll)),
+        );
+        expect(out.unreachable).toHaveLength(1);
+        expect(out.unreachable[0].why).toContain('eth_blockNumber');
+      });
+
+      it('widens the budget when a fallback really is in play', () => {
+        // fallback([http, http]) sets retryCount 0 on its children and
+        // retries itself, so one operation can spend 4 passes over 2
+        // endpoints. Seven failures then a success is still one operation.
+        const other = () => attempt(429, 'slow down', poll, 'https://backup.example');
+        const out = summariseRpcLedger(
+          ledgerOf(
+            dead(), other(), dead(), other(), dead(), other(), dead(),
+            attempt(200, okBody(1), poll, 'https://backup.example'),
+          ),
+        );
+        expect(out).toEqual({ malformed: [], unreachable: [] });
+      });
+
+      it('still reports the excess beyond even the widened budget', () => {
+        const other = () => attempt(429, 'slow down', poll, 'https://backup.example');
+        const out = summariseRpcLedger(
+          ledgerOf(
+            dead(), other(), dead(), other(), dead(), other(), dead(), other(),
+            attempt(200, okBody(1), poll, 'https://backup.example'),
+          ),
+        );
+        expect(out.unreachable).toHaveLength(1);
+      });
     });
 
     it('reports a batch sibling that never recovered while clearing one that did', () => {

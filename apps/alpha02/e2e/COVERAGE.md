@@ -154,16 +154,27 @@ cancel it would hide exactly the mid-run degradation the drive exists to
 notice. The driver's OWN reads need no such reconciliation, because
 there the client exhausts its retries internally and throws once.
 
-That reconciliation has a known limit, tracked as issue #1583: method
-plus params is not invocation identity, so two independent reads that
-share both — a repeated `eth_blockNumber` poll, say — are treated as one
-logical call, and an unrelated later success can clear a failure that
-genuinely reached a page. There is no sound fix at this layer: the RPC
-client's retries are indistinguishable on the wire from independent
-calls (each retry carries a fresh id), concurrent duplicate requests are
-identical byte for byte, and no time threshold separates a retry chain
-from the next poll. Closing it means taking operation identity from the
-page rather than inferring it from the wire.
+Bound what a success is allowed to forgive. Method plus params is not
+invocation identity, and identity is not recoverable here — retries are
+indistinguishable on the wire from independent calls (each carries a
+fresh id), concurrent duplicate requests are identical byte for byte,
+and no time threshold separates a retry chain from the next poll. So a
+repeated `eth_blockNumber` poll shares one key for the whole run, and an
+unrelated later success used to clear a failure that genuinely reached a
+page (#1583). The COUNT is recoverable even when identity is not: one
+operation spends at most retry-count-plus-one attempts per endpoint, so
+a longer streak of consecutive failures than that contains a chain which
+ran out of retries, whatever the later traffic did. Forgive the tail
+within that budget and report the excess. Derive the budget from the
+distinct endpoints in the streak rather than a constant, so it widens
+exactly when a fallback really is in play and stays tight — a single
+endpoint, a streak of four — when it is not.
+
+A client fault is the exception: the RPC client never retries a
+well-formed JSON-RPC error, so a later success from the SAME endpoint
+cannot be that operation retrying, only the page asking again, and the
+fault did reach the app. Forgive one only across endpoints, where the
+fallback list genuinely moved on.
 
 Checking OUR client's chain is not checking the PAGE's. The injected
 provider answers `eth_chainId` locally, and the page's reads are neither

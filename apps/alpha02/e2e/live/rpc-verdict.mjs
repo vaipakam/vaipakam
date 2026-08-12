@@ -423,6 +423,42 @@ export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
 }
 
 /**
+ * viem's default `retryCount`, and the most HTTP attempts ONE logical
+ * operation can therefore spend on a single endpoint: the first try plus
+ * three retries.
+ *
+ * `fallback` sets `retryCount: 0` on its children and does the retrying
+ * itself, so a fallback operation spends up to this many PASSES over its
+ * endpoint list rather than this many attempts in total — which is why
+ * the budget below scales with the number of endpoints observed rather
+ * than being a flat constant.
+ */
+const VIEM_RETRY_COUNT = 3;
+const ATTEMPTS_PER_ENDPOINT = VIEM_RETRY_COUNT + 1;
+
+/**
+ * How many consecutive failures a later success is allowed to explain.
+ *
+ * One successful operation emits at most `ATTEMPTS_PER_ENDPOINT` attempts
+ * per endpoint it touched, the last of which is the success — so at most
+ * `4 × endpoints - 1` of the failures immediately preceding a success can
+ * belong to the chain that produced it.
+ *
+ * The endpoint count is taken from the RUN ITSELF (the distinct URLs in
+ * the failure streak, plus the URL that answered) rather than from a
+ * constant. That makes the budget widen exactly when a fallback really is
+ * in play — `wagmi.ts` wraps the mainnet reads in `fallback([http, http])`,
+ * two endpoints, budget 7 — and stay tight when it is not: a plain
+ * single-endpoint poll gets budget 3, so a fourth consecutive failure
+ * cannot be explained away.
+ */
+function absorbableBefore(run, answeringUrl) {
+  const urls = new Set(run.map((e) => e.url));
+  urls.add(answeringUrl);
+  return ATTEMPTS_PER_ENDPOINT * urls.size - 1;
+}
+
+/**
  * Turn the attempt ledger into the two verdict buckets.
  *
  * A failed attempt is only a real failure if the same logical call did
@@ -436,6 +472,27 @@ export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
  * letting the early success cancel it would hide exactly the kind of
  * mid-run degradation this drive is meant to notice.
  *
+ * A later success also clears only a BOUNDED number of failures (#1583).
+ * `key` is `method|params`, which carries no invocation identity — the
+ * page polls `eth_blockNumber|[]` for the whole run, so an unrelated
+ * later poll used to clear a chain that had genuinely exhausted, letting
+ * an incompletely served run exit 0. Identity is not recoverable from the
+ * wire (viem takes a fresh JSON-RPC id per attempt, each retry is its own
+ * Playwright request, and concurrent duplicate reads are identical byte
+ * for byte), but the COUNT is bounded: more consecutive failures than one
+ * operation could possibly spend proves an earlier chain ran out of
+ * retries, whatever the later traffic did. The excess is reported; the
+ * tail within budget is still forgiven, so the round-23 false BLOCKED
+ * stays fixed.
+ *
+ * A `client-fault` is forgiven only by a success from a DIFFERENT
+ * endpoint. viem's `shouldRetry` returns false for a well-formed
+ * JSON-RPC error, so it is never retried against the same endpoint — a
+ * later success there cannot be the same operation, it is the page asking
+ * again, and the earlier fault did reach the app. `fallback` does move to
+ * its next endpoint on one, though, so the cross-endpoint case is a real
+ * recovery and stays cleared.
+ *
  * The wallet path deliberately has no equivalent. There `pub.request` is
  * our own viem client, which exhausts its retries internally and throws
  * once — so what that path records is already a final answer.
@@ -444,26 +501,57 @@ export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
  *            unreachable: Array<{url: string, why: string}>}}
  */
 export function summariseRpcLedger(ledger) {
-  const lastOk = new Map();
+  // Per key, in arrival order: a failure streak is only interpretable
+  // against the other attempts of the SAME logical call.
+  const byKey = new Map();
   ledger.forEach((e, i) => {
-    if (e.verdict === 'ok') lastOk.set(e.key, i);
+    const entry = { ...e, i };
+    const prior = byKey.get(e.key);
+    if (prior) prior.push(entry);
+    else byKey.set(e.key, [entry]);
   });
+
+  const surviving = [];
+  for (const entries of byKey.values()) {
+    let run = [];
+    // `answeringUrl === undefined` means the run ended with no success at
+    // all, so nothing can be absorbed and every failure stands.
+    const settle = (answeringUrl) => {
+      const absorbable =
+        answeringUrl === undefined ? 0 : absorbableBefore(run, answeringUrl);
+      // Only the LAST `absorbable` failures can belong to the chain that
+      // went on to succeed. Anything earlier outlived its own retries.
+      const cut = Math.max(0, run.length - absorbable);
+      run.forEach((e, idx) => {
+        const sameEndpoint = e.verdict === 'client-fault' && e.url === answeringUrl;
+        if (idx < cut || sameEndpoint) surviving.push(e);
+      });
+      run = [];
+    };
+    for (const e of entries) {
+      if (e.verdict === 'ok') settle(e.url);
+      else run.push(e);
+    }
+    settle(undefined);
+  }
 
   const malformed = [];
   const unreachable = [];
   const seen = new Set();
-  ledger.forEach((e, i) => {
-    if (e.verdict === 'ok') return;
-    if ((lastOk.get(e.key) ?? -1) > i) return; // recovered on a later attempt
+  // Back into ledger order — grouping above is an implementation detail,
+  // and a report that reads in the order the run experienced things is
+  // easier to act on.
+  surviving.sort((a, b) => a.i - b.i);
+  for (const e of surviving) {
     // One entry per (verdict, call, reason): a read retried three times
     // and still dead is one problem, not three.
     const dedupe = `${e.verdict}|${e.key}|${e.why}`;
-    if (seen.has(dedupe)) return;
+    if (seen.has(dedupe)) continue;
     seen.add(dedupe);
     (e.verdict === 'client-fault' ? malformed : unreachable).push({
       url: e.url,
       why: `${e.method} — ${e.why}`,
     });
-  });
+  }
   return { malformed, unreachable };
 }
