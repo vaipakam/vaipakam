@@ -66,6 +66,12 @@ const BLOCKING_HOOKS = {
   // REGRESSION — and the sixth, a ref written during render, was fixed.
   // Erroring now keeps that judgement from being re-litigated by drift.
   'react-hooks/refs': 'error',
+  // Promoted on reaching zero (#1520). The four sites were two root causes,
+  // both of them a value that could not be declared as the dependency it
+  // already was: an array rebuilt every render behind a `?? []`, and a reset
+  // helper that was a fresh function each pass. Both are now stable, so the
+  // dependency each effect really has is written down.
+  'react-hooks/exhaustive-deps': 'error',
 }
 
 export default defineConfig([

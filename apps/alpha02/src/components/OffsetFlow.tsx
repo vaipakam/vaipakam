@@ -194,7 +194,6 @@ export function OffsetFlow({
   // must not survive.
   useEffect(() => {
     setConsent(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [principalStr, completionStr]);
 
   async function submit() {
