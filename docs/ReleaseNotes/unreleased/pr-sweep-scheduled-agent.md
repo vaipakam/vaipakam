@@ -37,3 +37,24 @@ reproduce.
 
 The sweep can also be run on demand, optionally pointed at a single change, when
 waiting for the next tick is not worth it.
+
+### And something watching the watcher
+
+The sweep runs on two timers that back each other up, but both are the same
+mechanism on the same job — so neither helps if the job is disabled, or is
+failing on every attempt. Both of those go wrong quietly, and, more awkwardly,
+both look exactly like the sweep running and finding nothing to do. The thing
+built to stop work stalling invisibly would itself stall invisibly.
+
+A second, much cheaper check now runs a few times a day and asks one question:
+when did the sweep last finish successfully? If the answer is longer ago than it
+should be, it raises an alarm on the internal operations channel — the same one
+already used for backup failures and cross-chain drift, kept separate from any
+user-facing channel on purpose. If that channel is not configured, the check
+fails loudly rather than passing quietly, because a watchdog that cannot raise an
+alarm is not a quieter watchdog, it is a broken one.
+
+That check is itself on a timer and so is subject to the same inactivity rule.
+That is not worth chasing further: a repository quiet enough to trip it has
+nobody waiting on changes anyway. The failure worth catching is a broken sweep
+while work is actively going on, and this catches that.

@@ -1,0 +1,165 @@
+# Claude sweep watchdog — notices when the PR sweep has stopped running.
+#
+# The sweep (`claude-pr-sweep.yml`) has two cron cadences backing each
+# other up, but both are the SAME mechanism on the SAME workflow, so
+# neither helps with the failures that silence it for good:
+#
+#   - GitHub disables scheduled workflows after 60 days of repository
+#     inactivity.
+#   - The sweep job starts failing every run (expired token, action
+#     version pulled, permissions change, a prompt that makes it exit
+#     non-zero).
+#
+# Both fail SILENTLY, and — this is the important part — they present
+# exactly like "the sweep ran and found nothing to do". A red scheduled
+# run lands in the Actions tab and nowhere else, and nobody watches the
+# Actions tab for a job whose whole job is to be boring. The automation
+# built to stop PRs stalling invisibly would itself stall invisibly.
+#
+# So this watches from OUTSIDE the sweep: a plain shell job (no agent, no
+# checkout, a couple of API calls) that asks one question — when did the
+# sweep last SUCCEED? — and shouts on the ops Telegram channel if the
+# answer is too long ago.
+#
+# Alerting goes to `TG_OPS_BOT_TOKEN` / `TG_OPS_CHAT_ID`, not the
+# user-facing bot, per the two-bots rule in CLAUDE.md: the audience is
+# the operator, and a token leak on one channel must not reach the other.
+# `ops/mesh-watcher` and `ops/offchain-data-warm` already use this
+# channel for exactly this class of signal.
+#
+# ── The recursion, acknowledged ──────────────────────────────────────
+#
+# This workflow is itself scheduled, so the 60-day inactivity rule can
+# disable it too. That is not worth chasing further: the rule keys on
+# repository activity, so a repo quiet enough to trip it has nobody
+# shipping PRs for the sweep to sweep. The failure this actually catches
+# — a sweep that is broken while the repo is busy — is the one that
+# matters, and this covers it.
+
+name: Claude sweep watchdog
+
+on:
+  schedule:
+    # Every six hours, at a minute nothing else uses. Cheap enough that
+    # cadence is not worth optimising: a couple of API calls and a curl.
+    - cron: '19 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: read # read the sweep's run history
+  contents: read
+
+jobs:
+  check:
+    name: has the sweep run recently
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SWEEP_WORKFLOW: claude-pr-sweep.yml
+      # The sweep runs at worst hourly (its backstop tick), so four hours
+      # is roughly four consecutive misses. Wide enough that GitHub
+      # dropping runs under load does not page anyone; narrow enough that
+      # a genuinely dead sweep is caught within a working day.
+      STALE_AFTER_HOURS: '4'
+    steps:
+      - name: Find the sweep's last successful run
+        id: last
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # `status=success` filters to runs that actually completed
+          # cleanly, so a sweep that is failing every attempt reads the
+          # same as one that is not running at all — which is correct,
+          # because operationally they are the same thing.
+          runs=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/${SWEEP_WORKFLOW}/runs?status=success&per_page=1" \
+            --jq '.workflow_runs | length' 2>/dev/null || echo "ERROR")
+
+          if [ "$runs" = "ERROR" ]; then
+            # A missing workflow file or a permissions problem. Distinct
+            # from "stale" and worth its own message.
+            echo "state=unqueryable" >> "$GITHUB_OUTPUT"
+            echo "detail=could not query ${SWEEP_WORKFLOW} — workflow missing, renamed, or token lacks actions:read" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$runs" = "0" ]; then
+            echo "state=never" >> "$GITHUB_OUTPUT"
+            echo "detail=${SWEEP_WORKFLOW} has no successful run on record" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          last=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/${SWEEP_WORKFLOW}/runs?status=success&per_page=1" \
+            --jq '.workflow_runs[0].updated_at')
+
+          last_epoch=$(date -u -d "$last" +%s)
+          now_epoch=$(date -u +%s)
+          age_h=$(( (now_epoch - last_epoch) / 3600 ))
+
+          echo "Last successful sweep: $last (${age_h}h ago)"
+          echo "age_hours=${age_h}" >> "$GITHUB_OUTPUT"
+          echo "last_run=${last}" >> "$GITHUB_OUTPUT"
+
+          if [ "$age_h" -ge "$STALE_AFTER_HOURS" ]; then
+            echo "state=stale" >> "$GITHUB_OUTPUT"
+            echo "detail=last successful sweep was ${age_h}h ago (threshold ${STALE_AFTER_HOURS}h)" >> "$GITHUB_OUTPUT"
+          else
+            echo "state=ok" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Alert the operator channel
+        if: steps.last.outputs.state != 'ok'
+        env:
+          TG_OPS_BOT_TOKEN: ${{ secrets.TG_OPS_BOT_TOKEN }}
+          TG_OPS_CHAT_ID: ${{ secrets.TG_OPS_CHAT_ID }}
+          STATE: ${{ steps.last.outputs.state }}
+          DETAIL: ${{ steps.last.outputs.detail }}
+        run: |
+          set -euo pipefail
+
+          # A watchdog that cannot reach its channel is not a quieter
+          # watchdog, it is a broken one — and it would fail in the same
+          # silent way it exists to detect. So an unconfigured channel
+          # fails the job LOUDLY rather than skipping.
+          if [ -z "${TG_OPS_BOT_TOKEN:-}" ] || [ -z "${TG_OPS_CHAT_ID:-}" ]; then
+            echo "::error::TG_OPS_BOT_TOKEN / TG_OPS_CHAT_ID are not set as repository secrets," >&2
+            echo "::error::so this watchdog has no way to raise an alarm. Detected: ${STATE} — ${DETAIL}" >&2
+            exit 1
+          fi
+
+          # Heredoc body sits at the YAML block indent; YAML strips that
+          # common indent, so the shell sees the terminator at column 0.
+          text=$(cat <<EOF
+          ⚠️ Claude PR sweep looks dead
+
+          ${DETAIL}
+
+          The sweep is what keeps open PRs moving — conflict resolution, CI fixes, re-triggering unanswered reviews, triaging findings. While it is down, PRs stall the same silent way they did before it existed: converged review, green checks, no progress.
+
+          Worth checking, in order:
+          • Actions tab → 'Claude PR sweep' — is the workflow disabled, or is every run red?
+          • GitHub disables scheduled workflows after 60 days of repo inactivity; re-enabling is a button.
+          • CLAUDE_CODE_OAUTH_TOKEN may have expired.
+
+          ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/workflows/claude-pr-sweep.yml
+          EOF
+          )
+
+          curl -sS --fail-with-body \
+            "https://api.telegram.org/bot${TG_OPS_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TG_OPS_CHAT_ID}" \
+            -d disable_web_page_preview=true \
+            --data-urlencode text="${text}" > /dev/null
+
+          echo "Alert sent: ${STATE} — ${DETAIL}"
+
+      - name: Report
+        run: |
+          if [ "${{ steps.last.outputs.state }}" = "ok" ]; then
+            echo "Sweep healthy — last success ${{ steps.last.outputs.age_hours }}h ago."
+          else
+            echo "Alerted: ${{ steps.last.outputs.detail }}"
+          fi
