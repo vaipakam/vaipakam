@@ -11,11 +11,21 @@ The most important one is the cross-chain channel-peer map. Its comment
 said the local handler "does its own equality check against the peer it
 expects", and the interface it feeds said the adapter "has already
 checked it against the per-channel allowlist". Neither is true. The map
-is routing metadata: the receive path asserts only that an entry exists,
-never that it matches the address that actually sent the message, and no
-handler shipping today compares it — three of them comment the parameter
-out entirely, and the remittance receivers bind identity from the payload
-instead. A peer configured to the wrong non-zero address is caught by
+does two things, and neither is routing. A configured entry switches the
+lane on, and its value is passed to the receiving contract as an advisory
+claim about who sent the message. It steers nothing — messages route by
+other configuration entirely — so pointing it at the wrong address never
+misroutes anything, which is why calling it routing metadata sent
+operators to it to fix faults it cannot cause.
+
+Nor does it authenticate. The receive path asserts only that an entry
+exists, never that it matches the address that actually sent the message,
+and no receiving contract shipping today compares it — all four ignore the
+parameter outright. Two of them bind a sending identity carried in the
+message body instead: the reward remittance receiver reads the sending
+deployment's own address, and the VPFI return receiver reads an issuing
+deployment address that the receiving facet rejects unless it matches
+itself. A peer configured to the wrong non-zero address is caught by
 nothing. The authentication that does hold is one layer up, where the
 CCIP router authenticates the sender and the adapter requires it to be
 the messenger this chain allowlisted for that source chain. That is a

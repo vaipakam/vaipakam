@@ -483,7 +483,14 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
   for reading `block.chainid`. That guard is still right, for a stronger
   reason: `baseChainId` is admin-settable, so a check reading it to
   answer "am I the canonical chain?" could be turned off by a governance
-  write. Canonical-vs-mirror is `isCanonicalRewardChain`.) Note this
+  write. The canonical MARKER is `isCanonicalRewardChain`, set
+  explicitly — but do not read that as this field being irrelevant:
+  `isMirrorRewardChain` is `!isCanonicalRewardChain && baseChainId != 0`,
+  so a non-canonical deployment that leaves `baseChainId` at zero is not
+  classified as a mirror and receives canonical / single-chain semantics,
+  which reaches mirror claim pricing and the commitment / remittance
+  paths. Zero here is a configuration state with consequences, not an
+  absence.) Note this
   is a chain id, NOT a CCIP chain
   selector: since T-068 the reward flow identifies chains by
   `block.chainid` and leaves selector translation to the messenger. The

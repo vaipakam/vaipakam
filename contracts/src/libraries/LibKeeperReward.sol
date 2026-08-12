@@ -46,10 +46,12 @@ library LibKeeperReward {
     ///          quote's price anchor. Unlike these two it is
     ///          governance-settable at runtime, and it has NO default:
     ///          storage starts at zero, which `LibVPFIDiscount` reads as
-    ///          "discount disabled" rather than as any rate. 1e15 is the
-    ///          value an operator would configure to express the same
-    ///          peg, not a value the code falls back to (Codex #1653 r2
-    ///          P2).
+    ///          "discount disabled" rather than as any rate. Nor does
+    ///          anything configure it to 1e15 — `ConfigureVPFIBuy`
+    ///          requires an explicit `VPFI_BUY_WEI_PER_VPFI` and
+    ///          `DeployTestnetVPFI` defaults to `1e12`. So it is a THIRD
+    ///          place the same quantity is expressed, not a third 1e15
+    ///          (Codex #1653 r2 P2).
     ///      Named here rather than left implicit so an audit or a repeg
     ///      that starts from this constant sees the other two (Codex
     ///      #1653 r1 P2).

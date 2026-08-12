@@ -130,21 +130,38 @@ contract CcipMessenger is
     ///         message on an unconfigured (channel, chain) pair reverts
     ///         {NoChannelPeer}.
     ///
-    ///         This is ROUTING METADATA, not an authentication check
-    ///         (#1631). It is surfaced to the local handler as the
-    ///         inbound `sourceSender`, but no handler shipping today
-    ///         compares it against anything — four of them comment the
-    ///         parameter out entirely. What each does instead varies, and
-    ///         only one of them binds identity at all (Codex #1653 r1
-    ///         P2): {RewardRemittanceReceiver} reads a `remitter` — the
-    ///         sending deployment's own address, embedded in the message
-    ///         at send — from its payload, while
-    ///         {BuybackRemittanceReceiver}'s whole payload is a declared
-    ///         token address cross-checked against the delivered one,
-    ///         which proves nothing about WHO sent it. The receive path
-    ///         here likewise only asserts the entry is non-zero, so
-    ///         a peer pointing at the WRONG non-zero address is caught by
-    ///         nothing. Do not read this map as a forgery guard.
+    ///         This entry does two things, and NEITHER is routing
+    ///         (#1631; Codex #1653 r3 P2). A non-zero value ENABLES the
+    ///         (channel, chain) pair — zero reverts {NoChannelPeer} — and
+    ///         the value itself is surfaced to the local handler as an
+    ///         ADVISORY `sourceSender`. It steers nothing: outbound
+    ///         messages route by {remoteMessengerOf}, inbound ones by
+    ///         `handlerOf[channelId]`, so re-pointing a wrong non-zero
+    ///         peer changes neither path. Calling it routing metadata sent
+    ///         operators to this setter to fix a routing fault it cannot
+    ///         cause.
+    ///
+    ///         It is also not an authentication check. All four concrete
+    ///         handlers comment the `sourceSender` parameter out, so none
+    ///         compares it — and the receive path only asserts the entry
+    ///         is non-zero, so a peer pointing at the WRONG non-zero
+    ///         address is caught by nothing here. Do not read this map as
+    ///         a forgery guard.
+    ///
+    ///         What the handlers do instead varies, and TWO of the four
+    ///         bind a payload-carried deployment identity (Codex #1653 r1
+    ///         and r2 P2 — the r1 reply undercounted this):
+    ///           - {RewardRemittanceReceiver} reads a `remitter`, the
+    ///             sending deployment's own address embedded at send.
+    ///           - {VpfiReturnReceiver} decodes an `issuingBase` on both
+    ///             the return and cancel-ack paths and forwards it to
+    ///             {RepatriationFacet}, whose ingresses revert
+    ///             `RepatriationWrongEra` unless it equals
+    ///             `address(this)`.
+    ///         {BuybackRemittanceReceiver} binds nothing: its payload is a
+    ///         declared token address cross-checked against the delivered
+    ///         one, which is a self-consistency check on the delivery and
+    ///         says nothing about WHO sent it.
     ///
     ///         The authentication that does hold is one layer up: the
     ///         CCIP router authenticates the cross-chain sender, and

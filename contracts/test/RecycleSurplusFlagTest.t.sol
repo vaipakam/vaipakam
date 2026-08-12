@@ -372,10 +372,16 @@ contract RecycleSurplusFlagTest is SetupTest {
     /// claim about what canonical deployments look like.
     ///
     /// This is the configuration the rest of the suite does NOT exercise:
-    /// `setUp` calls `setBaseChainId(CHAIN_BASE)`, which is a mirror-shaped
-    /// setting, and under it a `s.baseChainId` guard appears to work. That is
-    /// precisely how the first version of this fix shipped green while not
-    /// working (Codex #1579 r2).
+    /// `setUp` calls `setBaseChainId(CHAIN_BASE)`, and under it a
+    /// `s.baseChainId` guard appears to work. That is precisely how the first
+    /// version of this fix shipped green while not working (Codex #1579 r2).
+    ///
+    /// That call used to be labelled a "mirror-shaped setting" here, which
+    /// the #1641 correction above makes wrong: a canonical deployment stores
+    /// Base's own chain id too, so `setBaseChainId(CHAIN_BASE)` is the
+    /// PRODUCTION canonical shape as much as a mirror one. The synthetic
+    /// value in this test is the zero below, not the setUp default (Codex
+    /// #1653 r2 P2).
     function test_CanonicalGuard_HoldsWhenBaseChainIdIsUnset() public {
         // Force the field to zero. NOT because a real canonical Diamond
         // looks like this — it does not (#1641) — but because zero is where

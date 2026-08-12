@@ -3070,9 +3070,13 @@ library LibVaipakam {
         ///      so a configuration audit should expect 8453 (84532 on
         ///      testnet) here even on Base. It used to say "zero on Base
         ///      itself", which made a correct deployment read as drift
-        ///      (#1641). Canonical-vs-mirror is decided by
-        ///      `isCanonicalRewardChain`, not by this field being zero —
-        ///      see {isMirrorRewardChain}, which requires BOTH.
+        ///      (#1641). The canonical MARKER is `isCanonicalRewardChain`,
+        ///      set explicitly — but this field is not inert:
+        ///      {isMirrorRewardChain} is
+        ///      `!isCanonicalRewardChain && baseChainId != 0`, so a
+        ///      non-canonical deployment that leaves this at zero is not
+        ///      classified as a mirror and gets canonical / single-chain
+        ///      semantics instead (Codex #1653 r2 P2).
         uint32 baseChainId;
         /// @dev Authorized cross-chain messenger address on this chain
         ///      (`VaipakamRewardMessenger`, CCIP-backed post-T-068). Only

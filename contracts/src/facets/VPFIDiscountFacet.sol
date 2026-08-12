@@ -827,8 +827,14 @@ contract VPFIDiscountFacet is
     /// @notice Set the VPFI price anchor used by the fee-discount quote —
     ///         ETH wei per 1 VPFI (18 dec). There is NO default: the slot
     ///         starts at zero and the quote stays disabled until an
-    ///         operator configures it. 1e15 (⇒ 1 VPFI = 0.001 ETH) is the
-    ///         documented reference value to configure, not a fallback.
+    ///         operator configures it — and nothing configures 1e15.
+    ///         `ConfigureVPFIBuy.s.sol` requires an explicit
+    ///         `VPFI_BUY_WEI_PER_VPFI` (`vm.envUint`, no fallback), while
+    ///         `DeployTestnetVPFI.s.sol` defaults to `1e12`. 1e15 is the
+    ///         Phase-1 peg the two OTHER anchors express
+    ///         (`LibVaipakam.VPFI_PER_ETH_FIXED_PHASE1`,
+    ///         `LibKeeperReward.FIXED_VPFI_PER_ETH_RATE_WEI`); this slot
+    ///         is simply not one of them.
     /// @dev Zero disables the discount quote (falls back to the normal fee).
     ///      This line and the previous sentence used to contradict each
     ///      other — the header claimed "Default 1e15" while this one said
