@@ -845,7 +845,7 @@
     "step4Desc": "Remboursez à temps et récupérez le collatéral. Le prêteur retire le principal et les intérêts à l'aide du NFT. En cas de défaut, la liquidation ou le transfert intégral du collatéral suit les règles du protocole.",
     "step4Detail1": "Présenter le NFT pour retirer les fonds",
     "step4Detail2": "Pénalités de retard plafonnées à 5%",
-    "step4Detail3": "Frais d'initiation de prêt de 0,1% + commission de 1% sur le rendement",
+    "step4Detail3": "Frais d'initiation de prêt de 0,2% + commission de 2% sur le rendement",
     "step4Detail4": "Remise VPFI par paliers : 10% / 15% / 20% / 24% sur les deux frais selon le solde dans le vault"
   },
   "security": {
@@ -1009,8 +1009,8 @@
       "fees": {
         "q": "Quels frais la plateforme prélève-t-elle ?",
         "a1": "Deux frais principaux, plus un barème de pénalités de retard :",
-        "li1": "<s>Frais d'initiation du prêt — 0,1 %</s> sur les prêts ERC-20, déduits du principal du prêteur au démarrage du prêt. L'emprunteur reçoit 99,9 % du montant proposé mais doit toujours rembourser le principal en totalité.",
-        "li2": "<s>Frais de rendement — 1 %</s> sur les intérêts perçus par les prêteurs et sur les revenus locatifs perçus par les propriétaires de NFT.",
+        "li1": "<s>Frais d'initiation du prêt — 0,2 %</s> sur les prêts ERC-20, déduits du principal du prêteur au démarrage du prêt. L'emprunteur reçoit 99,8 % du montant proposé mais doit toujours rembourser le principal en totalité.",
+        "li2": "<s>Frais de rendement — 2 %</s> sur les intérêts perçus par les prêteurs et sur les revenus locatifs perçus par les propriétaires de NFT.",
         "li3": "<s>Pénalités de retard :</s> 1 % forfaitaire le jour du défaut, plus 0,5 % par jour supplémentaire, plafonné à 5 % du principal. Les pénalités de retard reviennent au trésor.",
         "a2": "Les détenteurs de VPFI peuvent réduire <em>les deux</em> frais principaux via un consentement plateforme unique — voir l'entrée sur la remise VPFI ci-dessous."
       },

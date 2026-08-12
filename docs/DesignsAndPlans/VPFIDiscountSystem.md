@@ -6,7 +6,7 @@ This spec complements [`CrossChainTierPropagation.md`](CrossChainTierPropagation
 
 ## 1. Purpose
 
-VPFI is the platform's discount-rights token. The protocol charges a yield-fee on lender interest at loan settlement (default 1% of accrued interest; governance-tunable). Users who stake VPFI receive a tiered DISCOUNT on that fee, sized by the amount + age of their stake.
+VPFI is the platform's discount-rights token. The protocol charges a yield-fee on lender interest at loan settlement (default 2% of accrued interest since the rev-8 fee freeze, #1352; governance-tunable, and resolved per loan from the rate stamped at its origination). Users who stake VPFI receive a tiered DISCOUNT on that fee, sized by the amount + age of their stake, capped at a uniform 50% of the gross fee.
 
 The platform's intent is:
 

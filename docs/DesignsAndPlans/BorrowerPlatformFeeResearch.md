@@ -3,6 +3,15 @@
 **Status:** research/design note for a **decision**. No code lands until the
 owner picks an option below.
 
+> **Fee figures below are the pre-#1352 baseline.** This note was written
+> against a 1% treasury cut on interest and a 0.1% LIF. The rev-8 fee
+> freeze (#1352) doubled both: the live rates are **2% of interest** and
+> **0.2% of principal**, and the LIF is charged in the lending asset
+> rather than in VPFI. The comparison to peer venues and the shape of the
+> recommendation are unaffected — the argument is about the FORM a
+> protocol cut takes, not its size — but do not quote the numbers in this
+> note as current. Live values: [`AdminConfigurableKnobsAndSwitches.md`](../ops/AdminConfigurableKnobsAndSwitches.md).
+
 ## The idea (T-096)
 
 Add one more fee layer: **+0.5% APR above the lender's requested interest APR**,

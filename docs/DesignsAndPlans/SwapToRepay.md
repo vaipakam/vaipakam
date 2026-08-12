@@ -69,7 +69,7 @@ This document specifies that entry point as a new facet
 | `LibFallback.expectedSwapOutput(diamond, collateralAsset, principalAsset, collateralAmount)` | [`libraries/LibFallback.sol:23`](../../contracts/src/libraries/LibFallback.sol#L23) | Oracle-derived expected proceeds for the slippage floor. |
 | `LibEntitlement.settlementInterest(loan, nowTime)` | [`libraries/LibEntitlement.sol:57`](../../contracts/src/libraries/LibEntitlement.sol#L57) | Full-term-or-pro-rata interest, respects `loan.useFullTermInterest`. |
 | `LibEntitlement.accruedInterestToTime(loan, nowTime)` | [`libraries/LibEntitlement.sol:45`](../../contracts/src/libraries/LibEntitlement.sol#L45) | Pro-rata interest for the partial path. |
-| `LibEntitlement.splitTreasury(amount)` | [`libraries/LibEntitlement.sol:75`](../../contracts/src/libraries/LibEntitlement.sol#L75) | 99% lender / 1% treasury split (admin-configurable). |
+| `LibEntitlement.splitTreasury(loan, amount)` | [`libraries/LibEntitlement.sol:244`](../../contracts/src/libraries/LibEntitlement.sol#L244) | 98% lender / 2% treasury split at the current default (rev-8 freeze, #1352). Admin-configurable, and resolved from the LOAN's stamped rate — a grandfathered loan still splits 99/1. |
 | `LibSettlement.computeRepayment(loan, lateFee, nowTime)` | [`libraries/LibSettlement.sol:47`](../../contracts/src/libraries/LibSettlement.sol#L47) | The immutable settlement plan for full close-out. |
 | `LibVaipakam.calculateLateFee(loanId, endTime)` | [`libraries/LibVaipakam.sol`](../../contracts/src/libraries/LibVaipakam.sol) | Late-fee math reused. |
 | `Loan.allowsPartialRepay` (storage) | [`libraries/LibVaipakam.sol:1390`](../../contracts/src/libraries/LibVaipakam.sol#L1390) | Snapshotted from `Offer.allowsPartialRepay` at init. Single consent surface — reuse, don't add a new flag. |
@@ -185,7 +185,8 @@ pattern — confirm at implementation time).
         block.timestamp
     ).
     plan.lenderDue is principal + lenderShare; plan.treasuryShare is
-    the 1% cut on (interest + lateFee).
+    the treasury cut on (interest + lateFee) — 2% at the current
+    default, or the loan's own stamped rate if it predates the freeze.
 6.  Compute the required principalAsset output:
         requiredPrincipal = plan.lenderDue + plan.treasuryShare
 7.  Compute the expected swap output via LibFallback.expectedSwapOutput
