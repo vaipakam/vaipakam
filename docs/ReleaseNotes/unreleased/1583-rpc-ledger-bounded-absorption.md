@@ -19,23 +19,37 @@ retries look exactly like independent calls on the wire, and simultaneous
 duplicate reads are indistinguishable by content — which is why the issue
 had been deferred as unfixable at this layer.
 
-The count, however, is recoverable even when the identity is not. One
-logical operation can spend only so many attempts before the client gives
-up, so a longer unbroken streak of failures than that ceiling must contain
-a read that really did die, regardless of what succeeded afterwards. The
-driver now forgives only the tail of a streak that one operation could
-plausibly account for and reports the excess, and it sizes that allowance
-from the endpoints actually involved — so it widens exactly when a
-fallback is genuinely in play and stays tight for an ordinary
-single-endpoint poll. Recovered reads are still forgiven, so the earlier
-false-blocked behaviour stays fixed.
+What *is* recoverable is when each attempt arrived, and that turns out to
+be the missing discriminator. One logical operation's retries are seconds
+apart at most, while the app's repeat polls of the same read are most of a
+minute apart, so the two live on clearly different scales. The driver now
+groups a read's attempts into operations by elapsed time and lets a success
+excuse only failures it could actually have shared an operation with. An
+unrelated later poll can no longer reach back and clear an earlier chain
+that died, however many endpoints were involved.
 
-One related correction: a provider *rejecting* a request is now only
-excused when a different endpoint went on to answer it. The RPC client
-never retries a rejection against the same endpoint, so a later success
-there is the page asking again rather than a recovery, and the rejection
-did reach the application the first time. It had previously been treated
-the same as a transient outage purely by symmetry.
+Within one operation the driver additionally forgives only as many failures
+as a single operation could physically spend, and that ceiling now counts
+the retry the data layer performs on top of the transport's own — omitting
+it made the allowance too small, so a read that exhausted the transport and
+then succeeded on the outer retry was reported as a failure even though the
+page had its data.
+
+An earlier revision of this change tried to do the whole job with that
+count alone, sizing the allowance from how many endpoints appeared in the
+ledger. Review showed a count is unsound in both directions at once: it can
+be inflated by any independent invocation that happens to answer on another
+endpoint, yet still be too small to cover the outer retry — and distinct
+endpoints in the ledger never established that one fallback operation had
+traversed them. Time bounds the window first; the count now only applies
+inside it.
+
+Where a group genuinely cannot be decomposed — simultaneous duplicate reads
+really are identical on the wire — the driver forgives rather than reports.
+For tooling that gates releases, a false alarm that trains people to ignore
+it is worse than a missed degradation, and the case that actually proves a
+run was incompletely served (a read that never succeeded at all) is caught
+without needing to tell those duplicates apart.
 
 Closes #1583. This tightens a verdict, so a live drive may now report
 failures on a run that previously passed — those are real findings that

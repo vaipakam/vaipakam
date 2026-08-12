@@ -412,13 +412,23 @@ export function classifyRpcResponse(status, body, requestBody) {
  * attempt cannot decide the question: see `callKey`. The buckets are
  * filled once, at the end, by `summariseRpcLedger`.
  *
+ * Each entry is STAMPED with an arrival time. Attempt order alone cannot
+ * say whether two attempts belong to one logical operation, but elapsed
+ * time bounds it: one operation's retries are seconds apart at most, while
+ * an independent poll of the same read is a poll interval away. See
+ * `OPERATION_GAP_MS`.
+ *
  * @param {{status: number, body: Buffer|string|undefined,
- *          requestBody: string|undefined, url: string}} response
+ *          requestBody: string|undefined, url: string, at?: number}} response
  * @param {Array} ledger
  */
-export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
+export function recordRpcResponse(
+  { status, body, requestBody, url, at },
+  ledger,
+) {
+  const t = at ?? Date.now();
   for (const outcome of classifyRpcResponse(status, body, requestBody)) {
-    ledger.push({ ...outcome, url });
+    ledger.push({ ...outcome, url, t });
   }
 }
 
@@ -437,25 +447,79 @@ const VIEM_RETRY_COUNT = 3;
 const ATTEMPTS_PER_ENDPOINT = VIEM_RETRY_COUNT + 1;
 
 /**
+ * The query layer retries on top of the transport (Codex #1583 r1): the
+ * shared `QueryClient` in `apps/alpha02/src/main.tsx` sets `retry: 1`, and
+ * wagmi read hooks execute through it. So ONE page read can spend the
+ * transport's whole allowance twice over, and a ceiling that counted only
+ * transport attempts reported a spurious failure on any read that
+ * exhausted viem and then succeeded on the query-layer retry.
+ */
+const QUERY_LAYER_ATTEMPTS = 2;
+
+/**
+ * How far apart two attempts can be and still plausibly belong to the same
+ * logical operation.
+ *
+ * This is the discriminator the earlier revision lacked (Codex #1583 r1).
+ * Bounding absorption by a COUNT alone is unsound in both directions: an
+ * independent later invocation of the same read inflated the allowance and
+ * cleared a chain that had genuinely exhausted, while a wide-enough ceiling
+ * to cover the query-layer retry stops discriminating at all. Elapsed time
+ * does discriminate, because the two cases live on different scales —
+ * viem's retry backoff and the query layer's retry delay put one
+ * operation's attempts a few seconds apart at most, while the app's polls
+ * of the same read are 30-60s apart (see `KEY_MAP` in
+ * `src/chain/IndexerPushSync.tsx` for the poll cadence). 15s sits between
+ * the two with room on both sides.
+ *
+ * Attempts are therefore grouped into per-operation CLUSTERS, and a
+ * success may only forgive failures inside its own cluster.
+ */
+const OPERATION_GAP_MS = 15_000;
+
+/**
  * How many consecutive failures a later success is allowed to explain.
  *
  * One successful operation emits at most `ATTEMPTS_PER_ENDPOINT` attempts
- * per endpoint it touched, the last of which is the success — so at most
- * `4 × endpoints - 1` of the failures immediately preceding a success can
- * belong to the chain that produced it.
+ * per endpoint it touched, twice over if the query layer retried, the last
+ * of which is the success.
  *
- * The endpoint count is taken from the RUN ITSELF (the distinct URLs in
- * the failure streak, plus the URL that answered) rather than from a
- * constant. That makes the budget widen exactly when a fallback really is
- * in play — `wagmi.ts` wraps the mainnet reads in `fallback([http, http])`,
- * two endpoints, budget 7 — and stay tight when it is not: a plain
- * single-endpoint poll gets budget 3, so a fourth consecutive failure
- * cannot be explained away.
+ * The endpoint count is taken from the CLUSTER (the distinct URLs in the
+ * failure streak, plus the URL that answered) rather than from a constant,
+ * so the budget widens exactly when a fallback really is in play —
+ * `wagmi.ts` wraps the mainnet reads in `fallback([http, http])`.
+ *
+ * This count is only meaningful because the caller has already bounded the
+ * window by time: a per-key count over a whole RUN could be inflated by any
+ * independent invocation that happened to answer on another endpoint
+ * (Codex #1583 r1), which is exactly the unsoundness `OPERATION_GAP_MS`
+ * removes. Do not reintroduce a run-wide count here.
  */
 function absorbableBefore(run, answeringUrl) {
   const urls = new Set(run.map((e) => e.url));
   urls.add(answeringUrl);
-  return ATTEMPTS_PER_ENDPOINT * urls.size - 1;
+  return ATTEMPTS_PER_ENDPOINT * QUERY_LAYER_ATTEMPTS * urls.size - 1;
+}
+
+/**
+ * Split one key's attempts, in arrival order, into per-operation clusters:
+ * a gap wider than `OPERATION_GAP_MS` starts a new one.
+ *
+ * @param {Array} entries
+ * @returns {Array<Array>}
+ */
+function clusterByGap(entries) {
+  const clusters = [];
+  let current = null;
+  for (const e of entries) {
+    if (current && e.t - current[current.length - 1].t <= OPERATION_GAP_MS) {
+      current.push(e);
+    } else {
+      current = [e];
+      clusters.push(current);
+    }
+  }
+  return clusters;
 }
 
 /**
@@ -472,26 +536,29 @@ function absorbableBefore(run, answeringUrl) {
  * letting the early success cancel it would hide exactly the kind of
  * mid-run degradation this drive is meant to notice.
  *
- * A later success also clears only a BOUNDED number of failures (#1583).
- * `key` is `method|params`, which carries no invocation identity — the
- * page polls `eth_blockNumber|[]` for the whole run, so an unrelated
- * later poll used to clear a chain that had genuinely exhausted, letting
- * an incompletely served run exit 0. Identity is not recoverable from the
- * wire (viem takes a fresh JSON-RPC id per attempt, each retry is its own
- * Playwright request, and concurrent duplicate reads are identical byte
- * for byte), but the COUNT is bounded: more consecutive failures than one
- * operation could possibly spend proves an earlier chain ran out of
- * retries, whatever the later traffic did. The excess is reported; the
- * tail within budget is still forgiven, so the round-23 false BLOCKED
- * stays fixed.
+ * A later success also clears only failures it could have shared an
+ * OPERATION with (#1583). `key` is `method|params`, which carries no
+ * invocation identity — the page polls `eth_blockNumber|[]` for the whole
+ * run, so an unrelated later poll used to clear a chain that had genuinely
+ * exhausted, letting an incompletely served run exit 0. Identity is not
+ * recoverable from the wire (viem takes a fresh JSON-RPC id per attempt,
+ * each retry is its own Playwright request, and concurrent duplicate reads
+ * are identical byte for byte), so attempts are grouped into clusters by
+ * ARRIVAL TIME (`OPERATION_GAP_MS`) and a success settles only its own
+ * cluster. Within a cluster the count is bounded too: more failures than
+ * one operation could spend proves a chain ran out of retries.
  *
- * A `client-fault` is forgiven only by a success from a DIFFERENT
- * endpoint. viem's `shouldRetry` returns false for a well-formed
- * JSON-RPC error, so it is never retried against the same endpoint — a
- * later success there cannot be the same operation, it is the page asking
- * again, and the earlier fault did reach the app. `fallback` does move to
- * its next endpoint on one, though, so the cross-endpoint case is a real
- * recovery and stays cleared.
+ * A count alone is NOT enough, and an earlier revision of this that used
+ * one was wrong in both directions (Codex #1583 r1) — inflated by
+ * independent invocations answering on another endpoint, yet too tight to
+ * cover the query layer's own retry. Time is what separates the two cases.
+ *
+ * Where a cluster genuinely cannot be decomposed — concurrent duplicate
+ * reads are indistinguishable on the wire — this FORGIVES rather than
+ * retains. For a driver that gates releases a false BLOCKED that cries
+ * wolf is worse than a missed degradation, and the case that actually
+ * proves an incompletely served run (a cluster that never succeeded at
+ * all) is caught without needing to decompose anything.
  *
  * The wallet path deliberately has no equivalent. There `pub.request` is
  * our own viem client, which exhausts its retries internally and throws
@@ -513,26 +580,29 @@ export function summariseRpcLedger(ledger) {
 
   const surviving = [];
   for (const entries of byKey.values()) {
-    let run = [];
-    // `answeringUrl === undefined` means the run ended with no success at
-    // all, so nothing can be absorbed and every failure stands.
-    const settle = (answeringUrl) => {
-      const absorbable =
-        answeringUrl === undefined ? 0 : absorbableBefore(run, answeringUrl);
-      // Only the LAST `absorbable` failures can belong to the chain that
-      // went on to succeed. Anything earlier outlived its own retries.
-      const cut = Math.max(0, run.length - absorbable);
-      run.forEach((e, idx) => {
-        const sameEndpoint = e.verdict === 'client-fault' && e.url === answeringUrl;
-        if (idx < cut || sameEndpoint) surviving.push(e);
-      });
-      run = [];
-    };
-    for (const e of entries) {
-      if (e.verdict === 'ok') settle(e.url);
-      else run.push(e);
+    // Per operation-cluster, not per key: a success may only forgive
+    // failures it could actually have shared an operation with.
+    for (const cluster of clusterByGap(entries)) {
+      let run = [];
+      // `answeringUrl === undefined` means the cluster ended with no
+      // success, so nothing can be absorbed and every failure stands.
+      const settle = (answeringUrl) => {
+        const absorbable =
+          answeringUrl === undefined ? 0 : absorbableBefore(run, answeringUrl);
+        // Only the LAST `absorbable` failures can belong to the chain that
+        // went on to succeed. Anything earlier outlived its own retries.
+        const cut = Math.max(0, run.length - absorbable);
+        run.forEach((e, idx) => {
+          if (idx < cut) surviving.push(e);
+        });
+        run = [];
+      };
+      for (const e of cluster) {
+        if (e.verdict === 'ok') settle(e.url);
+        else run.push(e);
+      }
+      settle(undefined);
     }
-    settle(undefined);
   }
 
   const malformed = [];

@@ -502,11 +502,21 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
     for (const r of responses) recordRpcResponse(r, l);
     return l;
   };
-  const attempt = (status, body, requestBody, url = 'https://rpc.example') => ({
+  // `at` is the arrival stamp the ledger clusters on. Default all attempts
+  // to ONE instant so the existing cases read as a single operation; the
+  // cluster-boundary cases pass it explicitly.
+  const attempt = (
+    status,
+    body,
+    requestBody,
+    url = 'https://rpc.example',
+    at = 1_000,
+  ) => ({
     status,
     body,
     requestBody,
     url,
+    at,
   });
 
   it('files a client fault as an app finding, not as flaky egress', () => {
@@ -564,20 +574,35 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
       expect(out).toEqual({ malformed: [], unreachable: [] });
     });
 
-    it('keeps a client fault the SAME endpoint later answered (#1583)', () => {
-      // Not a retry chain: viem never retries a -32602 against the same
-      // endpoint, so the later success is the page asking again. The fault
-      // did reach the app once, and that is an app finding.
+    it('keeps a client fault the page hit again much LATER (#1583)', () => {
+      // A success a poll interval away is the page asking again, not this
+      // operation recovering — so the fault stands. This is the sound form
+      // of the retired same-endpoint rule (Codex #1583 r1): what makes the
+      // later success unrelated is the GAP, not the endpoint it landed on.
       const out = summariseRpcLedger(
         ledgerOf(
           attempt(400, errBody(1, rpcErr(-32602)), rpcReq(call(1))),
-          attempt(200, okBody(1), rpcReq(call(1))),
+          attempt(200, okBody(1), rpcReq(call(1)), 'https://rpc.example', 61_000),
         ),
       );
       expect(out.malformed).toEqual([
         { url: 'https://rpc.example', why: 'eth_call — json-rpc -32602' },
       ]);
       expect(out.unreachable).toEqual([]);
+    });
+
+    it('forgives a fault the SAME endpoint answered in one operation', () => {
+      // `fallback` walks its endpoint list and can revisit an endpoint on a
+      // later pass, so a same-endpoint success moments later CAN be the same
+      // operation (Codex #1583 r1). Retaining it reported a product FAIL on
+      // a page that got its data.
+      const out = summariseRpcLedger(
+        ledgerOf(
+          attempt(400, errBody(1, rpcErr(-32602)), rpcReq(call(1))),
+          attempt(200, okBody(1), rpcReq(call(1)), 'https://rpc.example', 1_400),
+        ),
+      );
+      expect(out).toEqual({ malformed: [], unreachable: [] });
     });
 
     it('does NOT let an earlier success clear a later failure', () => {
@@ -628,12 +653,12 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
 
     describe('bounded absorption (#1583)', () => {
       // `key` is method|params, so a continuously polled read shares one key
-      // for the whole run. A later poll succeeding cannot mean an earlier
-      // chain that ran out of retries was fine — viem spends at most
-      // retryCount+1 = 4 attempts per endpoint, so a 4-long failure streak
-      // on ONE endpoint has an exhausted chain in it whatever follows.
+      // for the whole run. Absorption is bounded twice over: a success only
+      // settles its own time CLUSTER, and within a cluster only as many
+      // failures as one operation could have spent — viem's 4 attempts per
+      // endpoint, doubled because main.tsx sets the query layer's retry: 1.
       const poll = rpcReq(call(1, 'eth_blockNumber', []));
-      const dead = () => attempt(429, 'slow down', poll);
+      const dead = (at) => attempt(429, 'slow down', poll, 'https://rpc.example', at);
 
       it('forgives a streak within one operation budget', () => {
         const out = summariseRpcLedger(
@@ -642,21 +667,54 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
         expect(out).toEqual({ malformed: [], unreachable: [] });
       });
 
+      it('forgives a streak that only the query-layer retry explains', () => {
+        // Four transport attempts exhausted, then the query layer retried
+        // and got an answer. The page has its data, so this must not report
+        // (Codex #1583 r1) — the old transport-only ceiling of 3 did.
+        const out = summariseRpcLedger(
+          ledgerOf(
+            dead(), dead(), dead(), dead(), dead(), dead(), dead(),
+            attempt(200, okBody(1), poll),
+          ),
+        );
+        expect(out).toEqual({ malformed: [], unreachable: [] });
+      });
+
       it('reports a streak that no single operation could have spent', () => {
         const out = summariseRpcLedger(
-          ledgerOf(dead(), dead(), dead(), dead(), attempt(200, okBody(1), poll)),
+          ledgerOf(
+            dead(), dead(), dead(), dead(), dead(), dead(), dead(), dead(),
+            attempt(200, okBody(1), poll),
+          ),
         );
         expect(out.unreachable).toHaveLength(1);
         expect(out.unreachable[0].why).toContain('eth_blockNumber');
       });
 
+      it('does NOT let an independent later poll widen the budget', () => {
+        // The #1583 bug in its purest form, and the case a count-only
+        // ceiling could not catch (Codex #1583 r1): a chain exhausts on one
+        // endpoint, then an unrelated poll a minute later answers on the
+        // OTHER endpoint. Distinct URLs in the ledger do not mean one
+        // fallback operation traversed them, and the gap proves they did
+        // not, so the exhausted chain still stands.
+        const out = summariseRpcLedger(
+          ledgerOf(
+            dead(), dead(), dead(), dead(), dead(), dead(), dead(), dead(),
+            attempt(200, okBody(1), poll, 'https://backup.example', 61_000),
+          ),
+        );
+        expect(out.unreachable).toHaveLength(1);
+      });
+
       it('widens the budget when a fallback really is in play', () => {
         // fallback([http, http]) sets retryCount 0 on its children and
-        // retries itself, so one operation can spend 4 passes over 2
-        // endpoints. Seven failures then a success is still one operation.
+        // retries itself, so one operation can spend its passes across both
+        // endpoints — within one cluster that is still one operation.
         const other = () => attempt(429, 'slow down', poll, 'https://backup.example');
         const out = summariseRpcLedger(
           ledgerOf(
+            dead(), other(), dead(), other(), dead(), other(), dead(), other(),
             dead(), other(), dead(), other(), dead(), other(), dead(),
             attempt(200, okBody(1), poll, 'https://backup.example'),
           ),
@@ -668,6 +726,7 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
         const other = () => attempt(429, 'slow down', poll, 'https://backup.example');
         const out = summariseRpcLedger(
           ledgerOf(
+            dead(), other(), dead(), other(), dead(), other(), dead(), other(),
             dead(), other(), dead(), other(), dead(), other(), dead(), other(),
             attempt(200, okBody(1), poll, 'https://backup.example'),
           ),
