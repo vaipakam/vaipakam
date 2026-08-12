@@ -1207,14 +1207,40 @@ export function OfferFlow({ side }: { side: Side }) {
         `${l.key}:${l.errored ? 'errored' : verdictFingerprint(l.verdict)}`,
     )
     .join('|');
-  // The fingerprint that was current when the user LAST ticked the
-  // consent box (stamped in the checkbox handler). canSign requires
-  // it to match the live fingerprint whenever a warning is on screen:
-  // the consent-clear effect below runs only AFTER a commit, leaving
-  // one render where a freshly-arrived warn and stale consent coexist
-  // — this derived gate closes that window without waiting for the
-  // effect.
-  const securityConsentFpRef = useRef<string | null>(null);
+  /**
+   * EVERYTHING disclosed on the review screen that consent is given
+   * against — not just the security verdicts (#1678).
+   *
+   * The four late-disclosure rules in this file each clear consent from an
+   * effect, and an effect can never be the guard for a property that has to
+   * hold in the SAME render: it runs after the commit, so the frame where a
+   * freshly-arrived disclosure meets not-yet-cleared consent is already on
+   * screen. The security case was given a derived gate for exactly that
+   * reason; the illiquid, loan-sale and sale-terms disclosures were gated
+   * only on their answer being KNOWN (`liquidityKnown`, `linkedLoanKnown`,
+   * `saleReviewReady`), which stops a signature while an answer is pending
+   * but not on the render where it ARRIVES.
+   *
+   * One combined fingerprint rather than four parallel refs, so a
+   * disclosure added later cannot be forgotten here — it only has to be
+   * folded into this string to be covered by the gate.
+   */
+  const disclosureFingerprint = [
+    `sec:${securityFingerprint}`,
+    `illiquid:${reviewIsIlliquid ? '1' : '0'}`,
+    `loanSale:${acceptIsLoanSale ? '1' : '0'}`,
+    `sale:${saleFingerprint ?? ''}`,
+  ].join('||');
+  /** Is anything actually disclosed right now? */
+  const anyDisclosure =
+    securityWarned.length > 0 ||
+    reviewIsIlliquid ||
+    acceptIsLoanSale ||
+    saleFingerprint !== null;
+  // The fingerprint that was current when the user LAST ticked the consent
+  // box (stamped in the checkbox handler). canSign requires it to match the
+  // live one whenever anything is disclosed.
+  const consentFpRef = useRef<string | null>(null);
   useEffect(() => {
     if (securityBlocked.length > 0 || securityWarned.length > 0) {
       setForm((f) =>
@@ -1242,17 +1268,20 @@ export function OfferFlow({ side }: { side: Side }) {
     linkedLoanKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
     securityGateOk &&
-    // A disclosed security warning requires consent granted AGAINST
-    // the current fingerprint — not merely consent that is still true
-    // from before the warning appeared.
-    (securityWarned.length === 0 ||
+    // ANY disclosure on screen requires consent granted AGAINST the current
+    // set of disclosures — not merely consent that is still true from before
+    // one of them appeared (#1678: this used to cover security warnings
+    // only, so the illiquid / loan-sale / sale-terms disclosures could be
+    // signed against consent that predated them for the one frame before
+    // their clearing effect ran).
+    (!anyDisclosure ||
       // Deliberate, and state would reopen the gap: the only write is the
       // checkbox handler below, which also sets form state, so a re-render
       // always follows and the read cannot go stale. Holding it in state
       // would move the comparison a render later — the exact window this
       // gate closes.
       // eslint-disable-next-line react-hooks/refs
-      securityConsentFpRef.current === securityFingerprint) &&
+      consentFpRef.current === disclosureFingerprint) &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
@@ -2519,10 +2548,12 @@ export function OfferFlow({ side }: { side: Side }) {
                 checked={form.riskAndTermsConsent}
                 onChange={(e) => {
                   // Stamp WHAT was on screen when consent was given —
-                  // canSign requires this to match the live security
-                  // fingerprint while a warning is disclosed.
+                  // canSign requires this to match the live disclosure
+                  // fingerprint while anything is disclosed (#1678: security
+                  // verdicts, the illiquid warning, the loan-sale vehicle
+                  // and the sale terms, all at once).
                   if (e.target.checked) {
-                    securityConsentFpRef.current = securityFingerprint;
+                    consentFpRef.current = disclosureFingerprint;
                   }
                   set({ riskAndTermsConsent: e.target.checked });
                 }}

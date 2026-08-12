@@ -143,6 +143,14 @@ Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.
 
+Clearing it afterwards is not sufficient on its own: at the moment signing is
+offered, the consent on file must be consent given against the disclosures
+currently on screen. A disclosure that has just arrived must therefore block
+signing immediately, in the same breath as it becomes visible — never only
+once a follow-up pass has cleared the tick. The two rules differ exactly when a
+disclosure resolves late, which is the common case for anything the app has to
+fetch before it can warn.
+
 Risk Disclosure and Terms links are real links and must not destroy the flow in
 progress.
 
