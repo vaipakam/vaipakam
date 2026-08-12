@@ -48,6 +48,19 @@ warning could only ever appear once consent had been given — meaning that
 warning always arrived too late by construction. It is now disclosed alongside
 the other terms, before you agree to them.
 
+Two later rounds tightened the same rule further. Signing on a newly posted
+offer now waits for that dry run to actually finish, not merely to have
+started: while the check was in flight the button was already available, so a
+rejection warning could arrive after submission was under way, at which point
+nothing on the review screen can call it back. And the dry run's result is now
+tied to the wallet and network it was performed for. Switching accounts
+mid-review previously left the previous account's "this would go through"
+verdict on screen for an instant, attributed to the new one — a verdict about
+a different party's balances and approvals entirely. Switching accounts or
+networks now clears the consent box outright, on the same reasoning that
+governs every other case here: the receipt describes what a particular account
+is about to sign, and changing that account changes what was agreed to.
+
 One further case is tracked separately and is not fixed here: the Full-tariff
 control paints its own "unavailable" warning a moment before it tells the
 review screen, so the screen's own check cannot see it in time. That needs the

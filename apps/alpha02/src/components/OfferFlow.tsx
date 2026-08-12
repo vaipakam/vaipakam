@@ -1277,6 +1277,13 @@ export function OfferFlow({ side }: { side: Side }) {
       (mode === 'accept'
         ? `/${selectedCollateralMeta.data?.decimals ?? ''}/${selectedCollateralMeta.data?.symbol ?? ''}`
         : `/${collateralMeta.data?.decimals ?? ''}/${collateralMeta.data?.symbol ?? ''}`),
+    // The WALLET this consent was given by (#1679 r4). The receipt describes
+    // what a specific account is about to sign; an account or chain switch
+    // mid-review replaces the party to the transaction, so the previous
+    // account's acknowledgement cannot carry over. `useTxSimulation` now
+    // binds its verdict to the same context, but that only covers reviews
+    // with a live preview — this makes the rule hold for every review.
+    `who:${address ?? ''}/${walletChain?.chainId ?? ''}`,
     // #1679 r1 F5 — the dry run's verdict is a disclosure too. It is safe to
     // include now that the preview no longer waits for consent (see `simTx`).
     `sim:${preSign.result.status}:${
