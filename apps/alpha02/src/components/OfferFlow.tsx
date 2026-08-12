@@ -1257,14 +1257,30 @@ export function OfferFlow({ side }: { side: Side }) {
     // button closed; when the live values land, the receipt and the gate
     // become ready in the same render. Consent is given against the terms in
     // the receipt, so the terms themselves belong here, not just the warnings.
-    // The two DISPLAYED percentages only (#1679 r2 N5).
-    // `maxOfferDurationDays` is neither shown in the receipt nor part of an
-    // accepted offer's signed terms — `submitAccept` rechecks just these two
-    // — so including it churned the epoch on accept reviews whenever
-    // governance retuned the creation cap. Post mode already handles an
-    // invalidated duration through `durationValid`, and editing the duration
-    // clears consent by itself.
-    `fees:${fees.ready ? `${fees.treasuryFeeBps}/${fees.loanInitiationFeeBps}` : 'pending'}`,
+    // The ONE DISPLAYED percentage only — narrowed twice, for the same
+    // reason each time: an assertion the receipt does not render is churn,
+    // and churn makes a user re-acknowledge terms that did not change.
+    // #1679 r2 N5 dropped `maxOfferDurationDays` (neither shown in the
+    // receipt nor part of an accepted offer's signed terms — `submitAccept`
+    // rechecks only the fees; post mode handles an invalidated duration via
+    // `durationValid`, and editing the duration clears consent by itself).
+    // #1679 r6 then dropped the OPPOSITE SIDE's fee: every receipt branch
+    // renders exactly one of the two — `lifPct` on both borrower branches,
+    // `yieldPct` on both lender branches, the loan-sale branch included,
+    // which hard-requires `side === 'lender'` and returns no receipt
+    // otherwise. So a governance retune of the side the user is not on
+    // advanced the epoch against an unchanged screen.
+    // Keyed on `side`, which is the same discriminant the receipt branches
+    // on, so the asserted fee and the displayed fee stay identical by
+    // construction rather than by coincidence — the condition that makes
+    // narrowing safe here, exactly as with the r3 metadata scoping.
+    `fee:${
+      fees.ready
+        ? side === 'lender'
+          ? `y${fees.treasuryFeeBps}`
+          : `l${fees.loanInitiationFeeBps}`
+        : 'pending'
+    }`,
     `grace:${grace.ready ? grace.label : 'pending'}`,
     // #1679 r2 N1 — the receipt's own READINESS, and the token metadata it is
     // built from. A tick can land while the receipt still says "Preparing
