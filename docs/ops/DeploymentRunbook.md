@@ -1371,8 +1371,11 @@ liquidations to the full-collateral-transfer fallback path.
 > `IS_CANONICAL_REWARD`, `BASE_EID`, `LZ_ENDPOINT`, `*_OPTIONS_HEX`) is
 > read by nothing. The reward messenger is deployed by
 > `DeployCrosschain.s.sol` and wired by `ConfigureCcip.s.sol` per the
-> banner at the top of this runbook. Kept for the CREATE2 reasoning,
-> which still explains why `REWARD_VERSION` must match across chains.
+> banner at the top of this runbook. Kept only as a record of the
+> original bootstrap: `REWARD_VERSION` is gone too, and the
+> same-address-on-every-chain property it existed to produce is not a
+> property the current deploy has — `DeployCrosschain.s.sol` uses an
+> ordinary `new`, and each chain's messenger address is its own.
 
 The RewardOApp proxy must live at the **same address on every chain** so LayerZero peer wiring works with a single bytes32 peer value. Because the real impl's ctor takes the chain-specific LZ endpoint, we use a **bootstrap-proxy pattern**: deploy a chain-agnostic bootstrap impl via CREATE2, deploy an `ERC1967Proxy(bootstrap, "")` via CREATE2, then atomically `upgradeToAndCall` to the real chain-specific impl inside the same broadcast.
 

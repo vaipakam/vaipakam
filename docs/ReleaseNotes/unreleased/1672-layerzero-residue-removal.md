@@ -75,12 +75,21 @@ runbook's dead reward-proxy section is now marked dead in place, so
 someone arriving from the table of contents sees it without having to
 scroll back to the banner at the top.
 
-**Not addressed here, and worth stating:** the handover script still does
-not rotate the CCIP stack — the messenger, the token pools and the rate
-governor — to the governance timelock. That is recorded as a known
-follow-up in the cutover runbook, where it remains a manual multisig
-step, and it is real work rather than cleanup. It has not been made worse
-by anything above, but it is the one genuine gap the sweep did not close.
+**One thing this sweep was wrong about, and corrected.** An earlier draft
+of this note repeated the cutover runbook's warning that the handover
+script does not rotate the CCIP stack to the governance timelock, leaving
+it a manual multisig step. That warning is out of date and the script
+does rotate it — messenger, token pool, rate governor, reward messenger,
+mirror token, both remittance receivers and both return endpoints, each
+handed to the timelock, with contracts absent on a given chain skipped
+and any the signing key does not own reported rather than passed over.
+The stale warning has been replaced with what the script actually does.
+
+What remains true is that the handover is **two legs**: the script sends
+the transfer, and the timelock must then accept, scheduled and executed
+through the governance Safe. The mainnet wrapper's own header said the
+Safe should call accept — it cannot, because the timelock is the pending
+owner, so that instruction is corrected too.
 
 **Three defects in the first cut of this change, caught in review.** All
 three were in the new material rather than the removals, and two of them
@@ -135,3 +144,22 @@ A second review round found four more, again all in the new material:
 The pattern across both rounds is worth recording: every defect was in
 something newly written, not in anything removed. Deleting dead code is
 low-risk; describing what replaced it is where the mistakes were.
+
+A third round found seven more, and this is where the loop earned its
+keep — two of them were factual claims this change had itself introduced
+or repeated. The default list of chains the reward aggregator expects
+reports from omitted the canonical chain itself and one live mirror,
+which would have dropped Base's own interest out of the global
+denominator and made the mirror's reports arrive from an unknown source.
+The template's per-chain infrastructure stanzas stopped after four of the
+six supported testnets. The runbook still asserted a version variable
+must match across chains, three paragraphs from the note explaining that
+nothing reads it. The spell's header still pointed at a deploy phase no
+wrapper dispatches. And the comment exemption added in the previous round
+recognised only shell comments, while the scan set had just grown to
+include Solidity files — so a migration note reading `// lzEid was
+removed` would have failed every preflight, and the obvious fix under
+time pressure is to delete the note rather than the residue. The
+exemption is now per-language, verified against four cases: a Solidity
+comment naming the field passes, Solidity code declaring it fails, an
+artifact key fails, a shell comment passes.

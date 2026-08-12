@@ -25,8 +25,9 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *                                       (lendingAsset, collateralAsset)
  *                                       pair.
  *        - ConfigureRewardReporter   — sets the cross-chain reward
- *                                       reporter's localEid + baseEid
- *                                       so reward reports flow.
+ *                                       reporter's canonical base chain
+ *                                       id + messenger so reward reports
+ *                                       flow (EVM chain ids, not eids).
  *        - ConfigureVPFIBuy          — sets the VPFI fee-discount price
  *                                       config; runs on every chain (the
  *                                       discount applies chain-wide).
@@ -72,8 +73,8 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *
  *        1. ConfigureOracle FIRST — every other configure (and every
  *           runtime path) needs oracle prices to be live.
- *        2. ConfigureRewardReporter — wires the reporter's localEid
- *           before the reward-messenger peers are live (no on-chain
+ *        2. ConfigureRewardReporter — wires the reporter's chain ids
+ *           before the reward-messenger lanes are live (no on-chain
  *           dependency on the order, but logically pairs after
  *           Oracle).
  *        3. ConfigureVPFIBuy — sets the VPFI fee-discount price config
@@ -97,9 +98,12 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *          override URIs (NFT artwork; defaults are baked into the
  *          contract so all of these are optional).
  *
- *      ConfigureLZConfig is NOT in this spell — it's signed by the
- *      cross-chain owner key (DEPLOYER_PRIVATE_KEY in many setups, NOT
- *      ADMIN_PRIVATE_KEY) and runs at `--phase lz-config` separately.
+ *      Cross-chain transport config is NOT in this spell. It is
+ *      `ConfigureCcip.s.sol`, run at `--phase ccip-wire` — after the
+ *      contracts phase has landed on EVERY chain in the topology, since
+ *      it reads each one's addresses.json. (The old `--phase lz-config` /
+ *      `ConfigureLZConfig.s.sol` step named here previously is gone with
+ *      LayerZero; no wrapper dispatches that phase.)
  */
 contract DiamondConfigSpell is Script {
     function run() external {

@@ -244,14 +244,25 @@ Every cross-chain contract is `Ownable2Step`:
 
 Rotating the admin multisig → governance timelock is the final step.
 
-> **Known follow-up:** `script/Handover.s.sol` still reads LayerZero-era
-> artifact keys and does **not** yet rotate the CCIP stack
-> (`CcipMessenger`, the TokenPools, `VpfiPoolRateGovernor`) to
-> governance. Until it is updated, the CCIP-stack timelock handover is a
-> **manual multisig step** — `transferOwnership(timelock)` on each
-> cross-chain contract, then `acceptOwnership()` from the timelock. Do
-> not skip it: an admin-EOA-owned cross-chain contract on mainnet
-> violates gate #3.
+> **Resolved — this is no longer a manual step.** An earlier version of
+> this note said `Handover.s.sol` does not rotate the CCIP stack. It
+> does: the script reads `ccipMessenger`, `vpfiTokenPool`,
+> `vpfiPoolRateGovernor`, `rewardMessenger`, `vpfiMirror`, both
+> remittance receivers and both return endpoints, and sends
+> `transferOwnership(timelock)` for each one it finds. Contracts absent
+> on this chain are skipped, and a contract the signing key does not
+> own is reported rather than silently passed over.
+>
+> **Both legs are still required.** The script sends only the first —
+> the **timelock** is then the pending owner and must call
+> `acceptOwnership()` on each target, scheduled and executed through the
+> governance Safe. The Safe calling `acceptOwnership()` itself reverts:
+> it is not the pending owner. Do not skip the second leg — an
+> admin-EOA-owned cross-chain contract on mainnet violates gate #3.
+>
+> The script does still read the LayerZero-era `rewardOApp` artifact key,
+> deliberately, as a fallback for the two testnet chains deployed under
+> that key before the migration.
 
 ---
 

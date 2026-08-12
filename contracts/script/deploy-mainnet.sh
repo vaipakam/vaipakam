@@ -62,10 +62,12 @@
 #       Safe (direct, no Timelock delay), the five Timelock-bound
 #       roles → Timelock, PAUSER_ROLE → Pauser Safe (direct, fast
 #       incident lever), ERC-173 Diamond ownership → Timelock, and
-#       every cross-chain contract's Ownable2Step ownership → governance Safe
-#       (first leg only — the Safe must call acceptOwnership() on
-#       each before the transfer takes effect; the script prints the
-#       calldata to paste into the Safe UI). Then ADMIN renounces
+#       every cross-chain contract's Ownable2Step ownership → TIMELOCK
+#       (first leg only — the TIMELOCK must call acceptOwnership() on
+#       each, scheduled and executed through the governance Safe, before
+#       the transfer takes effect; the script prints the acceptance
+#       targets. A Safe calling acceptOwnership() directly reverts: it
+#       is not the pending owner.) Then ADMIN renounces
 #       every role it held except WATCHER + NOTIF_BILLER (those get
 #       rotated to per-bot EOAs separately via the keeper-auth flow).
 #       The DeployerZeroRolesTest hard exit gate runs after the

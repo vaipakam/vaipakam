@@ -379,14 +379,29 @@ while IFS= read -r _f; do
 done < <(ls "$SCRIPT_DIR"/../deployments/*/addresses.json 2>/dev/null)
 LZ_SCAN+=("../../packages/contracts/src/deployments.json")
 
+# Comment lines are exempt: a note saying "this variable is gone, do not
+# carry it forward" must be allowed to name the thing it retires. The
+# comment syntax is per-language — the scan set spans shell, Solidity and
+# JSON. Getting this wrong in the strict direction is the dangerous one:
+# a Solidity migration note like `// lzEid was removed` would fail every
+# preflight, and the fix a hurried operator reaches for is deleting the
+# note rather than the residue.
+#
+# JSON has no comment syntax, so its filter is the shell one (matching
+# nothing) — correct by construction: a key in an artifact is never a
+# comment.
+_lz_hits() {
+  case "$1" in
+    *.sol) grep -nE "$LZ_RESIDUE" "$1" | grep -vE '^[0-9]+:[[:space:]]*(//|/\*|\*)' ;;
+    *)     grep -nE "$LZ_RESIDUE" "$1" | grep -vE '^[0-9]+:[[:space:]]*#' ;;
+  esac
+}
 for s in "${LZ_SCAN[@]}"; do
   [ -f "$SCRIPT_DIR/$s" ] || continue
-  # Comment lines are exempt: a note saying "this variable is gone, do
-  # not carry it forward" must be allowed to name the thing it retires.
-  if grep -nE "$LZ_RESIDUE" "$SCRIPT_DIR/$s" | grep -vE '^[0-9]+:[[:space:]]*#' >/dev/null 2>&1; then
+  if _lz_hits "$SCRIPT_DIR/$s" >/dev/null 2>&1; then
     echo "  ✗ $s — stale LayerZero deploy residue (removed in T-068" >&2
     echo "    Phase 6.4 — the CCIP migration):" >&2
-    grep -nE "$LZ_RESIDUE" "$SCRIPT_DIR/$s" | grep -vE '^[0-9]+:[[:space:]]*#' | sed 's/^/      /' >&2
+    _lz_hits "$SCRIPT_DIR/$s" | sed 's/^/      /' >&2
     FAIL=1
   else
     echo "  ✓ $s — no stale LayerZero deploy residue"
