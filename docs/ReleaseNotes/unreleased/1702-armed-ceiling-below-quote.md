@@ -14,8 +14,9 @@ way to see why. The offer's creator, meanwhile, was not there to notice.
 The form now says so, naming both the live quote and the ceiling about to be
 authorized, and states what actually follows: a fill priced above the ceiling
 cannot charge the tariff, so it is rejected — or opened without the Full tariff,
-if that is the fallback you chose. The quote shown is for a full-size fill;
-smaller partial fills may still price under your ceiling.
+if that is the fallback you chose. The quote shown is for the largest fill this offer can still
+receive — already-filled amounts are excluded — and smaller partial fills may
+still price under your ceiling.
 
 It does not stop you saving. What the protocol judges is the quote at the
 moment of the fill, and that may fall back below your ceiling before anyone

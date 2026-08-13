@@ -2982,7 +2982,7 @@ const copySource = {
     ),
     raiseCeiling: tmpl('Raise my ceiling to {{ceiling}} VPFI', ['ceiling']),
     armedCeilingBelowQuote: tmpl(
-      'The live tariff quote for a full-size fill is {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you are about to authorize. A fill priced above your ceiling can’t charge the Full tariff, so it would be rejected, or opened without Full if you allowed that below. Smaller partial fills may still price under it. You can save this either way: what counts is the quote when a fill actually happens, and it may fall back.',
+      'The live tariff quote for the largest fill still possible on this offer is {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you are about to authorize. A fill priced above your ceiling can’t charge the Full tariff, so it would be rejected, or opened without Full if you allowed that below. Smaller partial fills may still price under it. You can save this either way: what counts is the quote when a fill actually happens, and it may fall back.',
       ['quote', 'ceiling'],
     ),
     ceilingOvertakenSubmit:

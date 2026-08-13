@@ -636,6 +636,7 @@ function FullTariffArmForm({
       })) as Record<string, unknown>;
       const amount = BigInt((o.amount as bigint) ?? 0n);
       const amountMax = BigInt((o.amountMax as bigint) ?? 0n);
+      const amountFilled = BigInt((o.amountFilled as bigint) ?? 0n);
       return {
         creatorFull: Boolean(o.creatorFull),
         creatorMaxCStar: BigInt((o.creatorMaxCStar as bigint) ?? 0n),
@@ -643,7 +644,18 @@ function FullTariffArmForm({
         // Codex #1412 r2 — the LIVE principal ceiling (an amend on
         // another device / a lagging indexer row must not misprice
         // the suggested maxCStar).
-        principalCeiling: amountMax > amount ? amountMax : amount,
+        //
+        // MINUS what is already filled (Codex #1703 r2): `LibOfferMatch` caps
+        // the next match at `amountMax - amountFilled`, so on a partially
+        // filled offer the original size is not a fill anyone can still get.
+        // Quoting it would price a hypothetical, warn about a ceiling that no
+        // reachable fill would breach, and push the creator to authorize more
+        // VPFI than any remaining fill can consume. Every consumer here wants
+        // the same thing — the largest fill STILL POSSIBLE.
+        principalCeiling: (() => {
+          const size = amountMax > amount ? amountMax : amount;
+          return size > amountFilled ? size - amountFilled : 0n;
+        })(),
       };
     },
   });

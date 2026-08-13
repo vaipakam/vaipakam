@@ -371,8 +371,10 @@ Thin-market honesty rules apply.
   ceiling the live quote already exceeds is called out, with both figures and
   the consequence stated as it actually is — a fill above the ceiling cannot
   charge the tariff, so it is rejected, or opened without Full where that
-  fallback was chosen. The quote shown is for a full-size fill, and the warning
-  says so, because a smaller partial fill can price under the same ceiling. It
+  fallback was chosen. The quote shown is for the largest fill the offer
+  can still receive — what is already filled is excluded, so the figure is one
+  a taker could actually reach — and the warning says so, because a smaller
+  partial fill can price under the same ceiling. It
   appears only while arming is actually available. It warns rather than refuses — what the
   protocol judges is the quote when a fill actually happens, and it may fall
   back before then; saving an offer is reversible in a way an acceptance is
