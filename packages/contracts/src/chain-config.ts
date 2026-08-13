@@ -65,21 +65,15 @@ export interface ChainConfig {
    *  appropriately rather than always "ETH". On native-gas-mode buy
    *  adapter chains this is also what the user actually pays in. */
   nativeGasSymbol: string;
-  /** CoinGecko coin slug for this chain's native gas token. Used to
-   *  render a deep-link from the BuyVPFI asset symbol so users can
-   *  cross-reference exactly which asset they need to acquire (and
-   *  on which chain, since WETH on BNB ≠ WETH on Polygon — different
-   *  bridged contracts even though both use the symbol "WETH").
-   *  Null when no canonical CoinGecko page exists. */
-  nativeGasCoinGeckoSlug: string | null;
-  /** CoinGecko slug for the chain's canonical bridged WETH9 ERC20.
-   *  Only meaningful when the BuyAdapter is in WETH-pull mode
-   *  (`vpfiBuyPaymentToken != null`); the BuyVPFI card uses this
-   *  to link the "WETH" label to the right CoinGecko page for the
-   *  chain's specific bridged variant. Null on chains where the
-   *  adapter is in native-gas mode (no WETH user-facing) or where
-   *  no canonical CoinGecko page tracks the bridged WETH. */
-  bridgedWethCoinGeckoSlug: string | null;
+  // #1651 — `nativeGasCoinGeckoSlug` and `bridgedWethCoinGeckoSlug` stood
+  // here. Both were added by T-038 for one purpose: deep-linking the BuyVPFI
+  // card's asset symbol to the right CoinGecko page, since WETH on BNB is a
+  // different bridged contract from WETH on Polygon. #687-A removed that card
+  // and its `buyAssetInfo.ts` resolver, leaving the fields declared across
+  // three packages and populated for every chain with no reader anywhere.
+  // `nativeGasSymbol` above is NOT removed with them: it is also declared in
+  // apps/alpha02's own chain config, so its fate is a separate question from
+  // this excision.
   /** Canonical wrapped-native ERC20 address on this chain (WETH on
    *  ETH-side chains, WBNB on BNB, WPOL/WMATIC on Polygon PoS, etc.).
    *  Used for chain-native-asset rendering (e.g. "gas-equivalent
