@@ -1058,6 +1058,8 @@ const copySource = {
       'I understand the risk disclosures and the funding terms below and agree to them. My new offer charges the full term’s interest even on an early repayment and does not allow partial repayments.',
     action: 'Review offset offer',
     confirm: 'Confirm — fund and post offer',
+    figuresMoved:
+      'The figures moved while you were reviewing, so the acknowledgement cleared — tick it again to confirm against the current numbers.',
     done:
       'Offset offer posted. When a borrower accepts it, your current loan closes automatically — you don’t need to complete anything. Your collateral then becomes claimable (claim it from the Claim Center). You can cancel the offer below while it’s still open.',
     receiptReceive:

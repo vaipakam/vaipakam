@@ -2108,6 +2108,7 @@
       "consentLabel": "Je comprends les avertissements de risque et les conditions de financement ci-dessous et je les accepte. Ma nouvelle offre facture les intérêts de la durée complète même en cas de remboursement anticipé et n'autorise pas les remboursements partiels.",
       "action": "Examiner l'offre d'offset",
       "confirm": "Confirmer — financer et publier l'offre",
+      "figuresMoved": "Les chiffres ont évolué pendant votre examen, la confirmation a donc été décochée — cochez-la à nouveau pour confirmer sur les chiffres actuels.",
       "done": "Offre d'offset publiée. Quand un emprunteur l'accepte, votre prêt actuel se clôture automatiquement — vous n'avez rien à finaliser. Votre garantie devient alors réclamable (réclamez-la depuis le Centre de réclamations). Vous pouvez annuler l'offre ci-dessous tant qu'elle est ouverte.",
       "receiptReceive": "Vous devenez le prêteur d'un nouveau prêt aux conditions que vous avez choisies, votre ancien prêt se clôture, et votre garantie devient réclamable — réclamez-la ensuite depuis le Centre de réclamations.",
       "receiptLock": "{{principal}} maintenant (l'argent prêté de votre nouvelle offre), bloqué jusqu'à l'acceptation de l'offre ou son annulation.",

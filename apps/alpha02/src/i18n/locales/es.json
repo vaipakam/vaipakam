@@ -2108,6 +2108,7 @@
       "consentLabel": "Entiendo las advertencias de riesgo y las condiciones de financiación de abajo, y las acepto. Mi nueva oferta cobra los intereses del plazo completo incluso si se paga anticipadamente y no permite pagos parciales.",
       "action": "Revisar oferta de offset",
       "confirm": "Confirmar — financiar y publicar oferta",
+      "figuresMoved": "Las cifras cambiaron mientras revisabas, así que la confirmación se desmarcó — vuelve a marcarla para confirmar con los números actuales.",
       "done": "Oferta de offset publicada. Cuando un prestatario la acepte, tu préstamo actual se cierra automáticamente: no tienes que completar nada. Tu garantía pasará entonces a ser reclamable (recláma­la en el Centro de reclamaciones). Puedes cancelar la oferta abajo mientras siga abierta.",
       "receiptReceive": "Te conviertes en prestamista de un préstamo nuevo en tus condiciones, tu préstamo antiguo se cierra y tu garantía pasa a ser reclamable: recláma­la después en el Centro de reclamaciones.",
       "receiptLock": "{{principal}} ahora (el dinero prestable de tu nueva oferta), bloqueado hasta que la oferta se acepte o la canceles.",
