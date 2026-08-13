@@ -16,7 +16,8 @@ confirmation, or a loan that quietly opened without the discount.
 The card now notices, states both figures plainly, and offers a single
 action to raise your ceiling to fit the current quote. If you have NOT ticked
 the box that permits opening without Full, signing is held while the mismatch
-stands, so an acceptance that cannot succeed is never sent. If you have ticked
+stands, so most attempts that would fail never leave the app at all — see the
+limit at the end, which is real and not a formality. If you have ticked
 it, signing proceeds — that box says to open the loan without Full in exactly
 this situation, and the notice is there so the choice is an informed one
 rather than a surprise. Your typed ceiling is still never changed behind your
