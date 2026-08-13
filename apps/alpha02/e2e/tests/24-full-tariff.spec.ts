@@ -133,6 +133,35 @@ test('Full tariff opt-in: dark default hides it; strict Full fails closed; downg
     await expect(card.getByTestId('full-tariff-ceiling')).not.toHaveValue('', {
       timeout: 30_000,
     });
+    // ── 2a. #1694 — a ceiling the live quote has overtaken must BLOCK the
+    // accept and say so, and the offered raise must clear it. No transaction
+    // in this arm: it is the pre-send state that the bug left silent.
+    //
+    // The seeded ceiling is quote x 1.10, so half of it is comfortably below
+    // the quote without this spec having to read `quoteCStar` itself — one
+    // less thing to drift when the headroom constant is retuned.
+    const ceilingInput = card.getByTestId('full-tariff-ceiling');
+    const seeded = await ceilingInput.inputValue();
+    await ceilingInput.fill(String(Number(seeded) / 2));
+    const raise = card.getByTestId('full-tariff-raise-ceiling');
+    await expect(raise).toBeVisible({ timeout: 30_000 });
+    // The refusal is at SUBMIT, not on the button: `useAcceptTerms`
+    // (`resolveFullTariffInput`) THROWS on an engaged-but-blocked Full rather
+    // than the accept control being disabled. I first asserted `toBeDisabled`
+    // here, which would have failed — worth the note so the next reader does
+    // not "fix" this back. Asserting the thrown copy also pins the #1694
+    // half of that refusal: the message must name the CEILING, not the
+    // generic "Full isn't available", which is what the card contradicts.
+    await tickConsent(page);
+    await page.getByRole('button', { name: /borrow this now/i }).click();
+    await expect(page.getByRole('alert').last()).toContainText(/ceiling/i, {
+      timeout: 60_000,
+    });
+    await expect(page.getByText(/loan opened|what happens next/i)).toHaveCount(0);
+    await raise.click();
+    await expect(raise).toHaveCount(0, { timeout: 30_000 });
+    await expect(ceilingInput).toHaveValue(seeded);
+
     await tickConsent(page);
     const accept = page.getByRole('button', { name: /borrow this now/i });
     await expect(accept).toBeEnabled({ timeout: 60_000 });

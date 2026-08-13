@@ -2178,6 +2178,7 @@
       "maxCStarHelp": "सटीक tariff loan खुलने के क्षण पर दोबारा आँका जाता है; यह इस सीमा से कभी ऊपर नहीं जा सकता। इसे quote से थोड़ा ऊपर रखें ताकि तब तक का छोटा उतार-चढ़ाव आपको न रोके।",
       "ceilingOvertaken": "मौजूदा tariff quote अब {{quote}} VPFI है — आपके authorize किए {{ceiling}} VPFI ceiling से ऊपर, इसलिए loan खुलने पर reject हो जाएगा। जारी रखने के लिए ceiling बढ़ाएँ, या option untick करके इसके बिना खोलें।",
       "raiseCeiling": "मेरा ceiling बढ़ाकर मौजूदा quote के बराबर करें",
+      "ceilingOvertakenSubmit": "मौजूदा tariff quote आपके authorize किए ceiling से ऊपर चला गया है, इसलिए यह acceptance reject हो जाएगा। ऊपर दिए option में ceiling बढ़ाएँ, या untick करके Full tariff के बिना loan खोलें।",
       "maxCStarRequired": "opt-in करने से पहले अधिकतम authorize किया जाने वाला tariff (VPFI में) तय करें — बिना सीमा के Full opt-in sign नहीं हो सकता।",
       "balanceShort": "आपके vault में {{balance}} VPFI मुक्त हैं — {{needed}} VPFI के quote से कम, इसलिए loan खुलते समय Full opt-in विफल हो जाएगा।",
       "downgradeLabel": "अगर पूरा tariff पूरा न हो सके, तो loan उसके बिना खोलें",

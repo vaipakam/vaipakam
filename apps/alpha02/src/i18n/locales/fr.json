@@ -2178,6 +2178,7 @@
       "maxCStarHelp": "Le tarif exact est recalculé au moment de l'ouverture du prêt ; il ne peut jamais dépasser ce plafond. Placez-le un peu au-dessus du devis pour qu'un petit mouvement d'ici là ne vous bloque pas.",
       "ceilingOvertaken": "Le devis de tarif en vigueur est désormais de {{quote}} VPFI — au-dessus du plafond de {{ceiling}} VPFI que vous avez autorisé, l'ouverture du prêt serait donc rejetée. Relevez le plafond pour continuer, ou décochez l'option pour ouvrir sans elle.",
       "raiseCeiling": "Relever mon plafond au niveau du devis actuel",
+      "ceilingOvertakenSubmit": "Le devis de tarif en vigueur a dépassé le plafond que vous avez autorisé ; cette acceptation serait donc rejetée. Relevez le plafond dans l'option ci-dessus, ou décochez-la pour ouvrir le prêt sans le tarif Full.",
       "maxCStarRequired": "Fixez le tarif maximum que vous autorisez (en VPFI) avant d'activer l'option — une adhésion à Complet sans plafond ne peut pas être signée.",
       "balanceShort": "Votre vault détient {{balance}} VPFI disponibles — en dessous du devis de {{needed}} VPFI, l'adhésion à Complet échouerait donc à l'ouverture du prêt.",
       "downgradeLabel": "Si le tarif Complet ne peut pas aboutir, ouvrir le prêt sans lui",

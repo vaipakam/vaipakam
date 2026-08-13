@@ -152,6 +152,7 @@ export function useAcceptTermsSigning() {
         maxCStar: bigint;
         allowDowngrade: boolean;
         blocked?: boolean;
+        blockedReason?: 'unavailable' | 'ceiling';
       };
       /** The terms the user REVIEWED (from the indexer row). Compared
        *  against the canonical terms BEFORE the wallet is asked to
@@ -689,6 +690,7 @@ export function useSignedOfferAcceptTermsSigning() {
         maxCStar: bigint;
         allowDowngrade: boolean;
         blocked?: boolean;
+        blockedReason?: 'unavailable' | 'ceiling';
       };
     }): Promise<{ payload: AcceptTermsPayload; orderHash: Hex }> => {
       if (!address || !walletChain) {
@@ -861,6 +863,7 @@ function resolveFullTariffInput(
         maxCStar: bigint;
         allowDowngrade: boolean;
         blocked?: boolean;
+        blockedReason?: 'unavailable' | 'ceiling';
       }
     | undefined,
 ): Pick<
@@ -879,7 +882,14 @@ function resolveFullTariffInput(
   // reject" intent may only become a non-Full accept via their own
   // explicit untick, never via a silent drop.
   if (fullTariff.blocked) {
-    throw new Error(copy.tariff.fullUnavailableNow);
+    // The message has to match the CAUSE (#1694). An overtaken ceiling is
+    // user-fixable and the card says so; throwing "Full isn't available for
+    // this loan" there would contradict the notice the user is looking at.
+    throw new Error(
+      fullTariff.blockedReason === 'ceiling'
+        ? copy.tariff.ceilingOvertakenSubmit
+        : copy.tariff.fullUnavailableNow,
+    );
   }
   if (fullTariff.maxCStar <= 0n) {
     throw new Error(copy.tariff.maxCStarRequired);

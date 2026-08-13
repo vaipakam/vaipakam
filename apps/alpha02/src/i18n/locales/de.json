@@ -2178,6 +2178,7 @@
       "maxCStarHelp": "Die genaue Gebühr wird im Moment der Krediteröffnung neu bepreist; sie kann diese Obergrenze nie überschreiten. Setzen Sie sie etwas über das Angebot, damit eine kleine Bewegung bis dahin Sie nicht blockiert.",
       "ceilingOvertaken": "Das aktuelle Tarifangebot liegt jetzt bei {{quote}} VPFI — über der von Ihnen genehmigten Obergrenze von {{ceiling}} VPFI, sodass die Kreditöffnung abgelehnt würde. Erhöhen Sie die Obergrenze, um fortzufahren, oder entfernen Sie das Häkchen, um ohne die Option zu öffnen.",
       "raiseCeiling": "Obergrenze auf das aktuelle Angebot anheben",
+      "ceilingOvertakenSubmit": "Das aktuelle Tarifangebot liegt über der von Ihnen genehmigten Obergrenze, daher würde diese Annahme abgelehnt. Erhöhen Sie die Obergrenze in der Option oben, oder entfernen Sie das Häkchen, um den Kredit ohne den Full-Tarif zu eröffnen.",
       "maxCStarRequired": "Legen Sie vor dem Aktivieren die höchste von Ihnen autorisierte Gebühr (in VPFI) fest — eine Voll-Aktivierung ohne Obergrenze kann nicht signiert werden.",
       "balanceShort": "Ihr Vault hält {{balance}} VPFI frei — unter dem Angebot von {{needed}} VPFI, daher würde die Voll-Aktivierung bei Krediteröffnung scheitern.",
       "downgradeLabel": "Wenn die volle Gebühr nicht abschließen kann, den Kredit ohne sie eröffnen",

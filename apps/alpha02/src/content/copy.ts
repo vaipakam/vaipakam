@@ -2981,6 +2981,8 @@ const copySource = {
       ['quote', 'ceiling'],
     ),
     raiseCeiling: 'Raise my ceiling to fit the current quote',
+    ceilingOvertakenSubmit:
+      'The live tariff quote has risen above the ceiling you authorized, so this acceptance would be rejected. Raise the ceiling on the option above, or untick it to open the loan without the Full tariff.',
     maxCStarRequired:
       'Set the highest tariff you authorize (in VPFI) before opting in — a Full opt-in without a ceiling can’t be signed.',
     balanceShort: tmpl(

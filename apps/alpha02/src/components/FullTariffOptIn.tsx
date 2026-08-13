@@ -45,6 +45,12 @@ export interface FullTariffChoice {
    *  reject" intent can only become a non-Full accept by their own
    *  explicit untick. Never part of the signed message. */
   blocked?: boolean;
+  /** WHY it is blocked, so the submit-time refusal can say something true.
+   *  `useAcceptTerms` throws on `blocked` and had only one message for every
+   *  cause — which for an overtaken ceiling would have contradicted the card's
+   *  own notice, telling the user Full is unavailable while the card offered
+   *  to raise their ceiling (#1694). */
+  blockedReason?: 'unavailable' | 'ceiling';
 }
 
 export const FULL_TARIFF_OFF: FullTariffChoice = {
@@ -180,10 +186,18 @@ export function FullTariffOptIn({
   const engagedBlocked = !config.enabled || fullBlocked || ceilingOvertaken;
   useEffect(() => {
     if (!value.full) return;
-    if (Boolean(value.blocked) !== engagedBlocked) {
-      onChange({ ...value, blocked: engagedBlocked });
+    const reason = ceilingOvertaken ? 'ceiling' : 'unavailable';
+    if (
+      Boolean(value.blocked) !== engagedBlocked ||
+      (engagedBlocked && value.blockedReason !== reason)
+    ) {
+      onChange({
+        ...value,
+        blocked: engagedBlocked,
+        blockedReason: engagedBlocked ? reason : undefined,
+      });
     }
-  }, [engagedBlocked, value, onChange]);
+  }, [engagedBlocked, ceilingOvertaken, value, onChange]);
 
   // Keep the parent's `maxCStar` in lockstep with the edited ceiling —
   // an unparseable edit propagates as 0n, which the signer refuses, so
@@ -270,6 +284,7 @@ export function FullTariffOptIn({
             <button
               type="button"
               className="btn btn-small"
+              data-testid="full-tariff-raise-ceiling"
               style={{ marginTop: 8 }}
               onClick={() =>
                 setCeilingText(exactAmountString(suggestedCeiling, VPFI_DECIMALS))
