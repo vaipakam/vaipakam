@@ -191,16 +191,43 @@ wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
 - The store is shared, so a secret two Workers declare (e.g. `RPC_BASE`,
   `TG_BOT_TOKEN`) must **not** be created twice.
 
-**(b) Plain per-Worker secrets.** `TG_OPS_BOT_TOKEN` and
-`TG_OPS_CHAT_ID` on `vaipakam-agent` are ordinary Worker secrets, not
-store entries, and these *do* use:
+**(b) Plain per-Worker secrets** (`secret_text`) — ordinary Worker
+secrets, not store entries. These *do* use `wrangler secret put`, run
+from the owning Worker's directory:
 
 ```bash
-cd apps/agent && wrangler secret put TG_OPS_BOT_TOKEN
+( cd apps/agent  && wrangler secret put TG_OPS_BOT_TOKEN )
+( cd apps/agent  && wrangler secret put TG_OPS_CHAT_ID )
+( cd apps/keeper && wrangler secret put KEEPER_ENABLED )   # prompts; enter: true
 ```
 
-While unset, support-ticket ops-notify skips and tickets still land in
-D1 — so this pair is non-blocking for the rollout, unlike (a).
+- `TG_OPS_BOT_TOKEN` / `TG_OPS_CHAT_ID` (agent) — non-blocking for the
+  rollout: while unset, support-ticket ops-notify skips and tickets
+  still land in D1.
+- **`KEEPER_ENABLED` (keeper) — blocking for step 8.** Step 8 arms the
+  keeper by flipping this, and there is no other mechanism to do so.
+  Because it is a secret rather than a var, its value cannot be read
+  back from the API or dashboard, so a missed `secret put` is
+  indistinguishable from a deliberate "off" — the keeper stays dark and
+  step 9's observation window looks quiet while nothing is running
+  (#1475).
+- `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` (keeper) — same
+  mechanism, optional. Both were **absent** on the live Worker as of the
+  2026-07-30 readback (the reward passes are dark). Set them only if
+  the rollout intends to arm those passes, and only after the keeper EOA
+  is authorized on-chain.
+
+> **Do not trust `apps/keeper/wrangler.jsonc`'s comment on these three.**
+> It describes them as "operator-managed vars (non-secret config — plain
+> `vars`)", but the committed `vars` block contains only
+> `TG_BOT_USERNAME`, and `apps/keeper/src/env.ts:76-80` states they are
+> `secret_text`. The mechanism above is the one verified against the live
+> deployment and recorded in
+> [`docs/ops/OffChainRestore.md`](../ops/OffChainRestore.md) ("because
+> this document previously guessed, and guessed wrong"). Correcting that
+> comment, and the separate question of whether the flags should be
+> committed so the arming state is reviewable, is #1465 — not settled
+> here.
 
 ## 5. Wrangler config layout
 
