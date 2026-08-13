@@ -1577,6 +1577,52 @@ the bounds are the design's actual commitment.
    > anything. The habit that catches this class is asking what would FAIL
    > if the fix were absent, and then checking that exact thing.
 
+**Round 11 (3 findings) — the arming rule loses its last branch.**
+
+> The P1 was the interesting one, and it was mine: round 9 gated the
+> refresh's arming call on the live canonical flag, with the stated
+> reason that "mirrors hold no recovery position: the ledger is Base-only,
+> so there is nothing there to migrate". That sentence is true of a chain
+> that was never canonical and false of a **demoted** one, which keeps
+> every reservation and recovered token it accrued. The gate skipped it;
+> re-promotion could not repair the omission either, because the
+> fresh-deploy auto-arm requires a zero nonce that a Diamond with history
+> does not have; so it would resume canonical operation with the watermark
+> off — the exact state arming exists to prevent.
+>
+> The fix is a deletion rather than a sixth guard. `onlyCanonical` came
+> off `armRecoveryAttribution`, and the refresh now arms unconditionally,
+> because arming a genuine mirror is not merely tolerable but **inert**:
+> `remitReservationNonce` only advances on the canonical-gated Base
+> surfaces, so a never-canonical chain is still at 0, the watermark
+> records 0, and every receipt id (which starts at 1) is post-watermark.
+> Nothing is retired and nothing is constrained. One rule, no branch, no
+> chain-status question to get wrong — and the canonical-probe interface
+> the script carried for it is gone.
+>
+> *Process note.* The round-9 gate was justified by a claim about a class
+> ("mirrors") when the property that actually mattered was about a state
+> ("has history"). Those coincide until governance can move a chain
+> between classes, which this one can. Where a guard is justified by a
+> class membership, the question worth asking is whether anything can
+> change that membership while the underlying state persists — and
+> whether the cheaper move is to drop the guard entirely because the
+> protected operation is harmless in the case it was excluding.
+>
+> The other two were the familiar not-effective shape. Round 10 changed
+> `importOutstandingCompensation`'s signature, which on an in-place
+> refresh only ADDS the new selector: the retired four-argument one stayed
+> routed to the old bytecode, callable by stale tooling, still writing the
+> supposedly deleted slot and emitting an event the exported ABI no longer
+> describes. A signature change is a Remove plus an Add, and the omission
+> is invisible until someone calls the ghost. And the FunctionalSpec still
+> described the permissionless imported clear, the fresh credit on an
+> imported settlement, and the quarantine-evidence carry — all removed in
+> r6/r7/r10 — with the same stale claim surviving in the event NatSpec,
+> the storage comment, one ack-path comment sitting directly above the
+> comment that contradicted it, and the release-note fragment. The sweep
+> for siblings found the last two; Codex had named three.
+
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates
 of §2.1/§2.4 in its place.

@@ -50,15 +50,20 @@ identical, with one recovery pattern instead of two.
 A deployment rotation can no longer silently forget an open compensation.
 The outstanding-chain inventory is enumerable, and the rotation ceremony
 carries any still-open chain's gate onto the new deployment, keyed to the
-old deployment's receipt — including any evidence already observed about
-that delivery, so a contradiction seen before the rotation is not
-laundered into a clean outcome after it. Each open delivery can be carried
-across exactly once.
+old deployment's receipt. Each open delivery can be carried across exactly
+once.
 
 The carried gate blocks new compensation for that chain until the old
-delivery's fate is proven. A mirror can permissionlessly re-present its
-receipt, and a consumed outcome releases the gate on the spot; anything
-else stays held for the operator's evidenced settlement.
+delivery's fate is proven, and only the operator's evidenced settlement
+proves it. There is deliberately no permissionless release. The record the
+gate is keyed to is one the operator typed in by hand, and nothing on the
+new deployment can check that it names the delivery genuinely outstanding
+rather than some unrelated, already-settled one — so an attestation
+"verified" against it would prove only that the operator was consistent,
+while the real delivery stayed live and both it and its replacement backed
+the same claims. Stating the release as the governance act it actually is
+keeps a mistyped import to a liveness problem, recoverable by correcting
+the entry, instead of a funding one.
 
 **A carried-over settlement creates no spending capacity of its own.** It
 releases the block, and recycled value that physically came home re-enters

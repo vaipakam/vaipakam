@@ -4300,6 +4300,52 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
+    /// r11-k2 - a DEMOTED former canonical must still arm.
+    ///
+    /// Round 9 gated the refresh's arming call on the live canonical flag
+    /// (so a mirror refresh would not revert on `onlyCanonical`), reasoning
+    /// that mirrors hold no recovery position. A demoted former canonical
+    /// falsifies that: it keeps every reservation and recovered token it
+    /// accrued while canonical, the gate skips it, and re-promotion cannot
+    /// repair the omission either - the fresh-deploy auto-arm requires a
+    /// ZERO nonce, which a Diamond with history does not have. It would
+    /// resume canonical operation with the watermark off, letting a legacy
+    /// receipt consume backing credited to a post-refresh one.
+    function test_Recovery_DemotedFormerCanonicalStillArms() public {
+        RewardReporterFacet rep = RewardReporterFacet(address(diamond));
+        // Real canonical history: a receipt, and a standing position.
+        _releasedCeremonyFixture();
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        (uint256 rec0, uint256 red0, ) = rlens.getRecoveryPosition();
+        assertGt(rec0 - red0, 0, "LIVE: a position genuinely stands");
+        // Pre-upgrade shape: unarmed, with that history behind it.
+        mutator.setRecoveryAttributionRaw(false, 0);
+
+        // Now DEMOTE, and refresh. This is the exact ordering r9 skipped.
+        rep.setIsCanonicalRewardChain(false);
+        comp.armRecoveryAttribution();
+
+        assertTrue(rlens.recoveryAttributionArmed(), "armed while demoted");
+        assertGt(
+            rlens.recoveryAttributionArmedAt(),
+            0,
+            "at its REAL nonce - not the fresh-deploy zero"
+        );
+        (uint256 rec1, uint256 red1, ) = rlens.getRecoveryPosition();
+        assertEq(rec1 - red1, 0, "and the legacy position is retired");
+        (uint256 credit, , ) = rlens.getRecoveryCreditForReceipt(1);
+        assertEq(credit, 0, "the legacy receipt is retired with it");
+
+        // Re-promotion then resumes with the watermark ON, which is the
+        // state the whole migration exists to guarantee.
+        rep.setIsCanonicalRewardChain(true);
+        assertTrue(
+            rlens.recoveryAttributionArmed(),
+            "re-promotion resumes ARMED"
+        );
+    }
+
     /// r10-j1 - THE invariant: the pooled recovery position holds credit
     /// ONLY for post-watermark receipts.
     ///

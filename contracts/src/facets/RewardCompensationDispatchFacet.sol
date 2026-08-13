@@ -1070,16 +1070,19 @@ contract RewardCompensationDispatchFacet is
         uint256 oldRemitId
     );
 
-    /// @notice §5.4 R6e (#1662 r1) — the ADMIN evidenced SETTLEMENT of
-    ///         an imported old-era gate: the recovered inflow it booked
-    ///         (fresh → recovery position, recycled → relocated custody),
-    ///         both zero for a pure-loss settlement. The mirror's
-    ///         re-presented consumed evidence resolves through
-    ///         {RewardRemittanceFacet}'s ImportedOutstandingResolved
-    ///         instead.
+    /// @notice §5.4 R6e — the ADMIN evidenced SETTLEMENT of an imported
+    ///         old-era gate, and (since r7) its ONLY release: the
+    ///         recovered inflow it booked, as relocated bucket custody,
+    ///         zero for a pure-loss settlement.
     /// @custom:event-category state-change/reward-compensation
-    /// @dev #1662 r6 — recycled only: an imported settlement mints no
+    /// @dev #1662 r6 — recycled ONLY: an imported settlement mints no
     ///      fresh recovery capacity (see {clearImportedOutstanding}).
+    /// @dev #1662 r7 — there is no permissionless counterpart. The r1
+    ///      shape let the mirror's re-presented consumed attestation
+    ///      resolve the gate through {RewardRemittanceFacet}; that path
+    ///      was removed once it was clear no reachable check can
+    ///      authenticate an ADMIN-chosen predecessor address, so old-era
+    ///      acks now fail the era check and this is the sole clear.
     event ImportedOutstandingCleared(
         uint32 indexed dstChainId,
         address oldRemitter,
@@ -1317,9 +1320,27 @@ contract RewardCompensationDispatchFacet is
      *         The retired value is not lost: it stays reachable through
      *         the ordinary CHARGED dispatch path.
      */
+    /// @dev #1662 r11 — deliberately NOT `onlyCanonical`. Round 9 gated the
+    /// refresh's arming call on the live canonical flag so a mirror refresh
+    /// would not revert, reasoning that "mirrors hold no recovery position".
+    /// That is false for a DEMOTED former canonical: it keeps every
+    /// reservation and every recovered token it accrued while canonical, so
+    /// a canonical-gated arm skips it, and a later re-promotion cannot
+    /// repair the omission either (the fresh-deploy auto-arm in
+    /// `setIsCanonicalRewardChain` requires a zero nonce, which a Diamond
+    /// with history does not have). It would resume canonical operation
+    /// with the watermark disabled — exactly the state arming exists to
+    /// prevent.
+    ///
+    /// Arming a genuine mirror is harmless rather than merely tolerable:
+    /// `remitReservationNonce` only ever advances on the canonical-gated
+    /// Base surfaces, so a chain that was never canonical is still at 0,
+    /// the watermark records 0, and every receipt id (which starts at 1)
+    /// is post-watermark. Nothing is retired and nothing is constrained.
+    /// So the rule needs no branch: every refresh arms, exactly once,
+    /// whatever the chain's current or future canonical status.
     function armRecoveryAttribution()
         external
-        onlyCanonical
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();

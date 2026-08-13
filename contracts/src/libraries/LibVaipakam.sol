@@ -6513,14 +6513,16 @@ library LibVaipakam {
         // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
         //   outstanding-compensation record for a chain after a Base
         //   deployment rotation: the RAW old-era tuple, not its hash —
-        //   the ack branch matches on it, the evidenced settlement books
-        //   recovered custody against the OLD-era remitId as provenance
-        //   refId. While set, the chain's gate is held at the
-        //   IMPORTED sentinel — OLD-ERA evidence this deployment never
-        //   issued; only the imported-clear paths (the mirror's
-        //   re-presented consumed attestation, or the ADMIN evidenced
-        //   settlement) may release it; new-era acks/returns never
-        //   match it.
+        //   the evidenced settlement books recovered custody against the
+        //   OLD-era remitId as provenance refId. While set, the chain's
+        //   gate is held at the IMPORTED sentinel — OLD-ERA evidence this
+        //   deployment never issued; new-era acks/returns never match it.
+        //   #1662 r7 — the ADMIN evidenced settlement
+        //   ({clearImportedOutstanding}) is the SOLE release. The r1 shape
+        //   also let a mirror re-present its consumed attestation against
+        //   this tuple, but the tuple is operator-supplied and no
+        //   reachable check authenticates it, so that branch was removed
+        //   and old-era acks now fail the era check outright.
         mapping(uint32 => ImportedOutstanding) importedOutstanding;
         // BASE-ONLY (#1662 r2) — Σ of the LOCALLY-stranded
         //   RECYCLED-provenance value that is no longer in transit,

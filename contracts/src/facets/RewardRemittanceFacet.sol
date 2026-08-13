@@ -1615,18 +1615,13 @@ contract RewardRemittanceFacet is
         // restart per deployment, so a stale-era receipt (pre-rotation,
         // possibly same chain id) can never finalize a same-numbered
         // reservation here.
-        // #1434 P2-w6 (§5.4 R6e) — the IMPORTED-marker branch, before the
-        // era check: after a Base rotation, the retired deployment's
-        // outstanding compensation holds this chain's gate under an
-        // imported old-era tuple. The mirror's receipt state survives the
-        // rotation, and its permissionlessly re-presented ack reaches the
-        // CURRENT deployment here — verified against the imported marker,
-        // never against our own reservations (which never contained the
-        // tuple). A CONSUMED attestation resolves the old delivery and
-        // releases the gate; quarantined/provisional old-era value cannot
-        // settle through a new-era return (the B1 era check refuses old
-        // remitters by design) and resolves via the ADMIN evidenced
-        // clear + ceremony instead — observed here, never guessed at.
+        // #1434 P2-w6 (§5.4 R6e) — there is NO imported-marker branch
+        // here any more. The r1 shape put one BEFORE the era check, so a
+        // mirror's re-presented old-era ack could resolve a carried gate;
+        // r7 deleted it (see the note below the classification check), and
+        // old-era remitters now fall through to the ordinary era check
+        // like any other stale sender. An imported gate is released only
+        // by the operator's evidenced {clearImportedOutstanding}.
         // #1660 r6 - the wire offsets classification by one (0 is the
         // RETIRED generation-1 bool-false shape): 1 consumed /
         // 2 quarantined / 3 provisional. Zero or out-of-range fails

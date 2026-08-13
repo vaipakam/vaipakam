@@ -94,16 +94,10 @@ import {
 } from "../src/crosschain/RewardRemittanceReceiver.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
-/// @dev Minimal ERC-173 view to pre-flight the diamond owner.
 /// @dev #1662 r8 — the per-receipt attribution watermark, armed in the
 ///      same paused block that retires the unattributed selectors.
-interface IRecycleComposition {
-    function getRecycleCompositionPosition()
-        external
-        view
-        returns (uint256, uint256, bool, bool, uint256);
-}
-
+///      The companion `IRecycleComposition` canonical probe was removed in
+///      r11 when arming became unconditional; nothing else read it.
 interface IRecoveryAttribution {
     function armRecoveryAttribution() external;
 
@@ -474,20 +468,41 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                     "remitSupplementalBudgetFromRecovery(uint32,uint256,uint256,uint256)"
                 )
             );
+            // #1662 r11 — the round-9 FOUR-argument import entry point
+            // belongs in this same removal. Round 10 dropped its
+            // `quarantineObserved` argument, which only ADDS the new
+            // three-argument selector: an in-place refresh leaves the old
+            // one routed to the old facet bytecode, where stale tooling can
+            // still call it, write the supposedly deleted storage slot and
+            // emit the four-argument event the exported ABI no longer
+            // describes. Changing a signature is a REMOVE plus an Add, and
+            // the omission is invisible until someone calls the ghost.
+            bytes4 oldImport4 = bytes4(
+                keccak256(
+                    "importOutstandingCompensation(uint32,address,uint256,bool)"
+                )
+            );
             bool routedManual =
                 loupe.facetAddress(oldManualFromRecovery) != address(0);
             bool routedSupp =
                 loupe.facetAddress(oldSupplementalFromRecovery) != address(0);
-            if (routedManual || routedSupp) {
+            bool routedImport4 =
+                loupe.facetAddress(oldImport4) != address(0);
+            if (routedManual || routedSupp || routedImport4) {
                 bytes4[] memory rmRecovery = new bytes4[](
                     (routedManual ? 1 : 0) + (routedSupp ? 1 : 0)
+                        + (routedImport4 ? 1 : 0)
                 );
                 uint256 j;
                 if (routedManual) {
                     rmRecovery[j] = oldManualFromRecovery;
                     ++j;
                 }
-                if (routedSupp) rmRecovery[j] = oldSupplementalFromRecovery;
+                if (routedSupp) {
+                    rmRecovery[j] = oldSupplementalFromRecovery;
+                    ++j;
+                }
+                if (routedImport4) rmRecovery[j] = oldImport4;
                 IDiamondCut.FacetCut[] memory rmRecoveryCut =
                     new IDiamondCut.FacetCut[](1);
                 rmRecoveryCut[0] = IDiamondCut.FacetCut({
@@ -497,7 +512,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 });
                 IDiamondCut(diamond).diamondCut(rmRecoveryCut, address(0), "");
                 console.log(
-                    "P2-w6: removed retired UNATTRIBUTED FromRecovery selectors"
+                    "P2-w6: removed retired recovery selectors (FromRecovery + 4-arg import)"
                 );
             }
 
@@ -514,24 +529,23 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             // legitimate post-cut receipt created in the interim would be
             // retired with the legacy ones. Atomic with the cut, while
             // paused, is the only ordering that leaves no window.
-            // CANONICAL ONLY — `armRecoveryAttribution` is `onlyCanonical`
-            // and would revert `NotCanonicalRewardChain` on every mirror,
-            // aborting the whole maintained refresh that
-            // `redeploy-testnet-inplace.sh` runs for mirror testnets
-            // (#1662 r9). Mirrors hold no recovery position: the ledger is
-            // Base-only, so there is nothing there to migrate.
-            (, , , bool canonicalHere, ) =
-                IRecycleComposition(diamond).getRecycleCompositionPosition();
-            if (
-                canonicalHere
-                    && !IRecoveryAttribution(diamond).recoveryAttributionArmed()
-            ) {
+            // UNCONDITIONAL — every chain arms, exactly once (#1662 r11).
+            // Round 9 gated this on the live canonical flag so a mirror
+            // refresh would not revert on `onlyCanonical`, reasoning that
+            // mirrors hold no recovery position. That is false for a
+            // DEMOTED former canonical, which keeps the reservations and
+            // recovered tokens it accrued while canonical: the gate skips
+            // it, and re-promotion cannot repair the omission (the
+            // fresh-deploy auto-arm needs a zero nonce, which a Diamond
+            // with history does not have), so it would resume canonical
+            // operation with the watermark off. Arming a genuine mirror is
+            // harmless — its nonce is still 0, so the watermark records 0
+            // and retires nothing — so the safe rule is the unbranched
+            // one. `armRecoveryAttribution` dropped `onlyCanonical` in the
+            // same round to make this callable everywhere.
+            if (!IRecoveryAttribution(diamond).recoveryAttributionArmed()) {
                 IRecoveryAttribution(diamond).armRecoveryAttribution();
                 console.log("P2-w6: armed per-receipt recovery attribution");
-            } else if (!canonicalHere) {
-                console.log(
-                    "P2-w6: mirror chain - no recovery position to migrate"
-                );
             }
         }
 
