@@ -1283,8 +1283,14 @@ export function Recover() {
     //
     // Moving this to render safely needs identity-tagged guarded writes, an
     // identity fence on the imperative wallet calls, ordered/keyed handling of the
-    // oracle retry budget, and `useSyncExternalStore` for the record — a
-    // concurrency redesign of a signing path, which is not a lint cleanup. Tracked
+    // oracle retry budget, and concurrent-safe reads of the record — EITHER
+    // `useSyncExternalStore` OR subscribe-and-revalidate: install the
+    // identity-keyed `storage` listener in a LAYOUT effect and re-read the record
+    // synchronously right after subscribing, which runs before paint so no storage
+    // task can interleave between the two, and recovers anything missed while the
+    // concurrent render yielded (Codex #1689 r7 — naming only the hook wrongly
+    // excluded this). All of which is a concurrency redesign of a signing path,
+    // which is not a lint cleanup. Tracked
     // as #1691. This effect is RETAINED pending that redesign — deliberately not
     // stated as the better design (Codex #1689 r5): each shape wins a different
     // race window, and #1691's implementer should weigh that trade fresh rather
