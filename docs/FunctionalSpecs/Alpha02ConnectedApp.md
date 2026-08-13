@@ -361,6 +361,23 @@ Thin-market honesty rules apply.
   whole acceptance if the tariff cannot complete, or open the loan without
   Full (and without any tariff charge) in that case. The consequence of the
   current choice is stated next to it.
+- The quote is live and keeps moving while the review is open, so it can rise
+  above the ceiling the user authorized without anyone touching anything. When
+  it does, the app says so plainly, naming both the current quote and the
+  authorized ceiling, and offers a single action to raise the ceiling — stating
+  the figure that action would authorize. The ceiling is never raised on the
+  user's behalf; the choice stays theirs.
+- Whether that warning also HOLDS signing follows the failure posture the user
+  already chose. Under the reject posture the app refuses to send an acceptance
+  it can see would be rejected. Under the open-without-Full posture it does not
+  refuse: that choice says to proceed in exactly this situation, so the warning
+  is there to make proceeding an informed decision rather than a surprise.
+- Any check of this kind is made against a freshly read quote at each point the
+  app is about to ask for a signature or send a transaction — including after an
+  approval step, which is paced by the user and can take arbitrarily long. This
+  narrows the window in which the price can move unnoticed; it cannot close it.
+  The protocol has the final word on the price at the moment a transaction
+  lands, and an acceptance can still be refused there.
 - The copy is dual-fee honest: the tariff never replaces or waives the loan's
   asset fees — it adds a deeper discount on the payer's own side's fees, up to
   the overall cap — and it is non-refundable, priced on the loan's full term
