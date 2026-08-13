@@ -2178,6 +2178,7 @@
       "maxCStarHelp": "确切费率会在贷款开立的那一刻重新定价，但绝不会超过此上限。请设得比报价略高一些，以免期间的小幅变动阻碍您。",
       "ceilingOvertaken": "当前费率报价为 {{quote}} VPFI，已超过你授权的 {{ceiling}} VPFI 上限。此时开仓不会享有 Full 费率：会被拒绝，或在你于下方允许的情况下不使用 Full 开仓。提高上限即可保留 Full 费率；或取消勾选该选项，以不使用它开仓。",
       "raiseCeiling": "将我的上限提高到 {{ceiling}} VPFI",
+      "armedCeilingBelowQuote": "当前费率报价为 {{quote}} VPFI，高于你即将授权的 {{ceiling}} VPFI 上限。在此情况下成交将被拒绝。你仍可保存：真正起作用的是成交时的报价，它可能回落。",
       "ceilingOvertakenSubmit": "当前费率报价已超过你授权的上限，因此本次接受不会享有 Full 费率。请在上面的选项中提高上限，或取消勾选以不使用 Full 费率开仓。",
       "maxCStarRequired": "参与之前请先设定您授权的最高费率（以 VPFI 计）——没有上限的全额参与无法签名。",
       "balanceShort": "您的 Vault 有 {{balance}} VPFI 可用——低于 {{needed}} VPFI 的报价，因此全额参与会在贷款开立时失败。",

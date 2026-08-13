@@ -367,8 +367,13 @@ Thin-market honesty rules apply.
   naming both the current quote and the authorized ceiling, and offers a single
   action to raise the ceiling — stating the figure that action would authorize.
   The ceiling is never raised on the user's behalf; the choice stays theirs.
-  (The standing-offer creator's arm form does not yet do any of this — a
-  divergence recorded in `_CodeVsDocsAudit.md`, not an intent to leave it out.)
+  The standing-offer creator's arm form carries the paired warning: arming a
+  ceiling the live quote already exceeds is called out, with both figures and
+  the consequence for fills stated. It warns rather than refuses — what the
+  protocol judges is the quote when a fill actually happens, and it may fall
+  back before then; saving an offer is reversible in a way an acceptance is
+  not. That matches how the same form already treats a vault balance below the
+  quote.
 - Whether that warning also HOLDS signing follows the failure posture the user
   already chose. Under the reject posture the app refuses to send an acceptance
   it can see would be rejected. Under the open-without-Full posture it does not

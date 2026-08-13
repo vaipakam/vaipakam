@@ -253,5 +253,5 @@ commits first.
 
 **Decision**: candidate BUG, not a stale doc. Found by Codex review of #1701
 while checking that the new spec text did not over-claim for a surface it does
-not describe. Tracked as #1702; the spec bullet names the divergence inline so
-a reader does not mistake the gap for intent.
+not describe. **RESOLVED** by the warning added for #1702; the spec bullet now
+describes the creator side rather than naming a gap.

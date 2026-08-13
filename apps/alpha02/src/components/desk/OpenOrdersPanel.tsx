@@ -698,6 +698,30 @@ function FullTariffArmForm({
     ceiling: string;
     allowDowngrade: boolean;
   } | null>(null);
+
+  // #1702 — the SAME failure as `makerBalanceShort`, from the other input: a
+  // strict Full armed with a ceiling the live quote already exceeds makes every
+  // later fill revert (`FeeEntitlementTariffAboveAuth`) with nothing the taker
+  // can see or fix. Worse than the acceptance-side case #1700 fixed, because
+  // the creator commits FIRST and is not present when the fills fail.
+  //
+  // WARNING-tier, for the reason stated on `makerBalanceShort` directly above
+  // and NOT as a fresh judgement of mine: what the chain judges is the quote at
+  // FILL time, and the quote may fall back — so the app says so and leaves the
+  // decision, exactly as it does for an under-funded vault. Saving is
+  // reversible here; an acceptance is not, which is why that side blocks and
+  // this one does not.
+  const armedCeiling = (() => {
+    if (!fields?.full || !isPlainDecimal(fields.ceiling)) return undefined;
+    try {
+      const v = parseUnits(fields.ceiling, VPFI_DECIMALS);
+      return v > 0n ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  const ceilingBelowQuote =
+    quoted !== undefined && armedCeiling !== undefined && quoted > armedCeiling;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -853,6 +877,18 @@ function FullTariffArmForm({
           {copy.tariff.balanceShort(
             formatTokenAmount(chargeable.data, VPFI_DECIMALS),
             formatTokenAmount(quoted, VPFI_DECIMALS),
+          )}
+        </p>
+      ) : null}
+      {ceilingBelowQuote && quoted !== undefined && armedCeiling !== undefined ? (
+        <p
+          className="muted"
+          role="alert"
+          style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--danger)' }}
+        >
+          {copy.tariff.armedCeilingBelowQuote(
+            exactAmountString(quoted, VPFI_DECIMALS),
+            exactAmountString(armedCeiling, VPFI_DECIMALS),
           )}
         </p>
       ) : null}

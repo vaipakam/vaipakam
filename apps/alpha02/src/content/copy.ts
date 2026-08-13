@@ -2981,6 +2981,10 @@ const copySource = {
       ['quote', 'ceiling'],
     ),
     raiseCeiling: tmpl('Raise my ceiling to {{ceiling}} VPFI', ['ceiling']),
+    armedCeilingBelowQuote: tmpl(
+      'The live tariff quote is {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you are about to authorize. Fills would be rejected while that holds. You can still save it: the quote at fill time is what counts, and it may fall back.',
+      ['quote', 'ceiling'],
+    ),
     ceilingOvertakenSubmit:
       'The live tariff quote has risen above the ceiling you authorized, so this acceptance would not give you the Full tariff. Raise the ceiling on the option above, or untick it to open the loan without the Full tariff.',
     maxCStarRequired:
