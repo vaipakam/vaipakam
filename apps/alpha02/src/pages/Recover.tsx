@@ -1204,6 +1204,15 @@ export function Recover() {
 
   useEffect(() => {
     genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
+    // Deliberately an effect (#1520): this is an IDENTITY TEARDOWN whose state
+    // resets are coupled to a generation-counter ref that invalidates in-flight
+    // async (Codex #1547 r3). Same shape as PositionDetails' chain reset — the
+    // ref is a coherence guard, not an incidental value, so moving the resets to
+    // a render-phase adjustment while `genRef` caught up in an effect would let a
+    // continuation started under the OLD identity pass the generation check and
+    // write its result over the freshly cleared form. The guard and the state it
+    // protects have to advance together, which means after the commit.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     clearToFreshForm();
     oracleAutoRetriesRef.current = 0;
     const chainId = walletChain?.chainId;
@@ -1350,6 +1359,11 @@ export function Recover() {
   >('probing');
   useEffect(() => {
     if (!publicClient || !walletChain) {
+      // Deliberately an effect (#1520): this OWNS an async probe (with a retry
+      // timer and a cancellation flag), and 'probing' is its launch state. There is
+      // nothing to derive from — the value does not exist until the probe answers,
+      // so the load state has to be written by the thing that starts the load.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setOracleState('probing');
       return;
     }
@@ -1414,6 +1428,13 @@ export function Recover() {
       : 'probing';
   useEffect(() => {
     if (!publicClient || !address) {
+      // Deliberately an effect (#1520): it owns an async probe and records the raw
+      // result. Note the STALENESS half is already derived — `accountKind` above
+      // re-checks the recorded address and chainId against the live ones and reads
+      // 'probing' when they disagree, so a stale probe can never be displayed. What
+      // remains here is only the write of an async answer, which no derivation can
+      // replace.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAccountProbe(null);
       return;
     }
@@ -1505,6 +1526,11 @@ export function Recover() {
 
   useEffect(() => {
     if (!validToken || !address || !publicClient || !walletChain) {
+      // Deliberately an effect (#1520): same async-probe shape as the account probe
+      // above — the token lookup does not exist until the chain answers. The null
+      // reset on an incomplete identity is the launch state of that same probe, not
+      // a separate derivable value.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLookup(null);
       setLookupFailed(false);
       return;
