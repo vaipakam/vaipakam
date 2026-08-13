@@ -48,12 +48,19 @@ import {ICrossChainMessenger, ICrossChainMessageRecipient} from "./ICrossChainMe
  *
  * ── Routing envelope ───────────────────────────────────────────────────
  * Outbound, the adapter wraps the domain payload as
- * `abi.encode(channelId, payload)` and addresses the CCIP message to the
- * REMOTE CcipMessenger (`remoteMessengerOf[destChainId]`), never directly
- * to a domain contract. Inbound, the adapter unwraps the envelope and
- * forwards exactly `payload` to the local handler — so a recipient gets
- * back the precise bytes the sender passed (per the {ICrossChainMessenger}
- * contract).
+ * `abi.encode(ENVELOPE_VERSION, channelId, originator, payload)` and
+ * addresses the CCIP message to the REMOTE CcipMessenger
+ * (`remoteMessengerOf[destChainId]`), never directly to a domain contract.
+ * Inbound, the adapter checks the version, VERIFIES `originator` against
+ * the configured channel peer, and forwards exactly `payload` to the local
+ * handler — so a recipient gets back the precise bytes the sender passed
+ * (per the {ICrossChainMessenger} contract).
+ *
+ * `originator` is stamped from `msg.sender` at send and is never
+ * caller-supplied. It exists because `channelPeerOf` alone is a
+ * DECLARATION the receiver cannot check: without a sender on the wire, a
+ * message the previous peer sent before a rotation is indistinguishable
+ * from one the new peer sent after it. See {_ccipReceive}.
  *
  * ── Forgery guards ─────────────────────────────────────────────────────
  *   1. `onlyRouter` — `ccipReceive` accepts calls only from the CCIP
@@ -95,6 +102,26 @@ contract CcipMessenger is
     ICrossChainMessenger
 {
     using SafeERC20 for IERC20;
+
+    // ─── Constants ──────────────────────────────────────────────────────────
+
+    /// @notice Version tag carried as the FIRST word of every outbound
+    ///         routing envelope.
+    /// @dev Exists so a future envelope change is DETECTABLE rather than
+    ///      silently undecodable. A receiver can read this word before
+    ///      trusting anything after it, and refuse a shape it does not
+    ///      speak instead of misreading authentication fields.
+    ///
+    ///      Version 1 was `abi.encode(channelId, payload)` and carried NO
+    ///      tag, which is exactly the problem: a v1 message cannot be
+    ///      recognised as v1, only observed to fail decoding. That makes
+    ///      the v1→v2 upgrade a one-time migration hazard with no in-band
+    ///      remedy — every lane must be drained before both ends are
+    ///      upgraded, because an in-flight v1 message can never be
+    ///      executed afterwards and any tokens riding it are stranded.
+    ///      From v2 onward that is no longer true: the tag makes the next
+    ///      change a branch rather than a break.
+    uint16 internal constant ENVELOPE_VERSION = 2;
 
     // ─── Storage ────────────────────────────────────────────────────────────
 
@@ -193,6 +220,15 @@ contract CcipMessenger is
     error UnknownChannel(bytes32 channelId);
     /// @notice No business peer configured for a (channel, chain) pair.
     error NoChannelPeer(bytes32 channelId, uint256 chainId);
+
+    /// @notice An inbound envelope declared a version this adapter does not
+    ///         speak.
+    /// @dev Reverting (rather than guessing) is deliberate: a version this
+    ///      build does not know may place `channelId` or `originator`
+    ///      anywhere, so any attempt to read it is a guess about
+    ///      authentication data. CCIP records the revert as a failed
+    ///      message, re-executable after an upgrade that understands it.
+    error UnsupportedEnvelopeVersion(uint16 got, uint16 expected);
 
     /// @notice An inbound message's ORIGINATOR did not match the peer
     ///         configured for its (channel, source chain).
@@ -381,8 +417,15 @@ contract CcipMessenger is
         //    `originator` is the remote handler that actually called
         //    `sendMessage` — stamped from `msg.sender` at send, never
         //    caller-supplied.
-        (bytes32 channelId, address originator, bytes memory payload) =
-            abi.decode(message.data, (bytes32, address, bytes));
+        (
+            uint16 version,
+            bytes32 channelId,
+            address originator,
+            bytes memory payload
+        ) = abi.decode(message.data, (uint16, bytes32, address, bytes));
+        if (version != ENVELOPE_VERSION) {
+            revert UnsupportedEnvelopeVersion(version, ENVELOPE_VERSION);
+        }
 
         // 3. Resolve the local handler, and VERIFY the sender.
         //
@@ -509,7 +552,7 @@ contract CcipMessenger is
     ) internal pure returns (Client.EVM2AnyMessage memory) {
         return Client.EVM2AnyMessage({
             receiver: abi.encode(receiver),
-            data: abi.encode(channelId, originator, payload),
+            data: abi.encode(ENVELOPE_VERSION, channelId, originator, payload),
             tokenAmounts: ccipTokens,
             feeToken: address(0),
             extraArgs: Client._argsToBytes(

@@ -469,6 +469,60 @@ contract CcipMessengerTest is Test {
         );
     }
 
+    // ─── Originator verification on receive (#1650) ─────────────────────────
+    //
+    // These cover the control this change actually introduces. The suite was
+    // green WITHOUT them because the happy path is unaffected — handlerA
+    // sends, handlerA is the configured peer, equality holds — so an inverted
+    // or deleted comparison would not have been caught.
+
+    function test_CcipReceive_SourceSenderIsTheVerifiedOriginator() public {
+        bytes memory payload = abi.encode("round-trip");
+        handlerA.send{value: fee}(
+            address(messengerA), CHAIN_B, payload, _noTokens(), 100_000
+        );
+        router.deliver(0, SEL_A);
+
+        // Pins the encode/decode pair: what the handler is told came from
+        // the remote side must be the address that actually sent it.
+        assertEq(
+            handlerB.lastSourceSender(),
+            address(handlerA),
+            "sourceSender must be the true originating handler"
+        );
+        assertEq(handlerB.lastPayload(), payload, "payload survives the envelope");
+    }
+
+    function test_CcipReceive_RevertWhen_PeerRotatedWhileMessageInFlight()
+        public
+    {
+        // The scenario the wire-borne originator exists for. handlerA sends;
+        // the peer is then rotated; the pending message is delivered
+        // afterwards. Before this change it would have been reported to
+        // handlerB as coming from the NEW peer — an authentic message
+        // attributed to a contract that never sent it.
+        address rotatedTo = address(0xBEEF);
+        handlerA.send{value: fee}(
+            address(messengerA), CHAIN_B, abi.encode("pre-rotation"), _noTokens(), 100_000
+        );
+
+        vm.startPrank(owner);
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, address(0));
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, rotatedTo);
+        vm.stopPrank();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.UnauthorizedChannelPeer.selector,
+                CHANNEL,
+                CHAIN_A,
+                address(handlerA),
+                rotatedTo
+            )
+        );
+        router.deliver(0, SEL_A);
+    }
+
     function test_Initialize_RevertWhen_CalledTwice() public {
         vm.expectRevert();
         messengerA.initialize(owner);
