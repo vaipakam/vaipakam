@@ -76,8 +76,15 @@ export function Desk() {
   // The TENOR comes with the pair — a market is the full (pair, tenor)
   // triple, and keeping the hard-coded 30d default would land on an
   // empty book whenever the most active market trades another tenor.
-  useEffect(() => {
-    if (pair !== null) return;
+  // A render-phase adjustment, not an effect (#1520). The default is a pure
+  // function of "no pair chosen yet" and "the list has landed", so an effect
+  // only adds a frame in which the book column still shows the "Pick a market"
+  // card — `pair` is null in that frame, so the ladder is not rendered at all
+  // (Codex #1690 r1 corrected an earlier claim here that the frame showed an
+  // empty 30d book; it cannot, that branch needs a non-null pair). Self-limiting:
+  // the guard is false the moment a pair exists, and while the list is still
+  // loading there is nothing to set.
+  if (pair === null) {
     const first = markets.data?.markets[0];
     if (first) {
       setPair({
@@ -86,7 +93,7 @@ export function Desk() {
       });
       setDays(first.durationDays);
     }
-  }, [markets.data, pair]);
+  }
 
   // Chain switch invalidates the selected pair (addresses are
   // per-chain) — reset to rediscover from that chain's markets. Gated
