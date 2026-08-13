@@ -1260,7 +1260,16 @@ export function Recover() {
     //   post-commit/pre-effect interval captures the intermediate value, is
     //   spuriously invalidated with no identity change, and implicitly releases
     //   its generation-keyed `inFlightRef` claim. The sole bump must MOVE to
-    //   commit time. Deliberately not attempted mid-review-loop on a signing path.
+    //   commit time — but ONLY on some fence branches (Codex #1689 r9). If the
+    //   wallet-event fence advances `genRef` ITSELF, the identity render already
+    //   observes the new generation, which also clears the stale
+    //   `reconcileClaim === genRef.current` state; adding a commit-time bump on
+    //   top then recreates the two-generation failure just described. The
+    //   commit-time bump AND item 6's follow-up rerender are required only under
+    //   the live-provider fence, or a wallet-event fence that advances a SEPARATE
+    //   token and leaves `genRef` to the effect. So this is a per-branch
+    //   requirement, not a standing one.
+    //   Deliberately not attempted mid-review-loop on a signing path.
     //   An identity fence around the imperative wallet calls (including the
     //   reservation write, which has no generation check on its success path) is
     //   the separate live gap, also #1691 — and it cannot be built from `genRef`
