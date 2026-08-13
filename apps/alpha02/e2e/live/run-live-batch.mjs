@@ -60,6 +60,11 @@ const THREE_VERDICT_DRIVERS = new Set([
   'live-desk-i18n-capture.mjs',
   'live-dryrun-review.mjs',
   'live-killswitch-regression.mjs',
+  // Exits 2 when a language cannot be OBSERVED — setup, transport, or a
+  // failed locale activation. Only a chunk it actually read and found
+  // wrong is exit 1, so relabelling its BLOCKED as FAIL would invert the
+  // one distinction the driver exists to keep (#1698).
+  'live-locale-delivery.mjs',
   'live-position-observe.mjs',
   'live-rate-desk.mjs',
   'live-recover.mjs',
