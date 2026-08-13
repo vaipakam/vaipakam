@@ -556,6 +556,184 @@ contract CcipMessengerTest is Test {
         messengerB.setChainSelector(CHAIN_A, 4242);
     }
 
+    // ─── Upgrade migration for the reverse peer index (#1680 r4) ────────────
+    //
+    // The reverse map is appended by this change, so an already-deployed
+    // proxy carries a populated forward map and an empty reverse one. The
+    // messenger is live on three testnets, so this transition is real.
+
+    function test_BackfillChannelPeerIndex_PopulatesReverseMap() public {
+        vm.prank(owner);
+        messengerB.backfillChannelPeerIndex(
+            _channels(CHANNEL), _chains(CHAIN_A)
+        );
+        assertEq(
+            messengerB.channelOfPeer(CHAIN_A, address(handlerA)),
+            CHANNEL,
+            "existing forward binding must be indexed in reverse"
+        );
+    }
+
+    function test_BackfillChannelPeerIndex_IsIdempotent() public {
+        vm.startPrank(owner);
+        messengerB.backfillChannelPeerIndex(
+            _channels(CHANNEL), _chains(CHAIN_A)
+        );
+        vm.stopPrank();
+        // A second run would revert on the reinitializer, which is the
+        // point: the migration is once-only. Re-stating a pair WITHIN one
+        // run is what has to be inert, so that a re-derived list overlapping
+        // an earlier partial migration does not fail.
+        assertEq(
+            messengerB.channelOfPeer(CHAIN_A, address(handlerA)),
+            CHANNEL,
+            "index intact"
+        );
+    }
+
+    function test_BackfillChannelPeerIndex_RevertWhen_PairUnconfigured()
+        public
+    {
+        bytes32 ghost = keccak256("never-configured");
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.NoChannelPeer.selector, ghost, CHAIN_A
+            )
+        );
+        messengerB.backfillChannelPeerIndex(_channels(ghost), _chains(CHAIN_A));
+    }
+
+    function test_BackfillChannelPeerIndex_RevertWhen_LengthsDiffer() public {
+        bytes32[] memory ids = new bytes32[](2);
+        ids[0] = CHANNEL;
+        ids[1] = CHANNEL;
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.ArrayLengthMismatch.selector, uint256(2),
+                uint256(1)
+            )
+        );
+        messengerB.backfillChannelPeerIndex(ids, _chains(CHAIN_A));
+    }
+
+    function test_BackfillChannelPeerIndex_OnlyOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OwnableUpgradeable.OwnableUnauthorizedAccount.selector, stranger
+            )
+        );
+        messengerB.backfillChannelPeerIndex(
+            _channels(CHANNEL), _chains(CHAIN_A)
+        );
+    }
+
+    function test_ClearPeer_DoesNotStealAnotherChannelsReverseEntry() public {
+        // The un-backfilled window: channel X's forward binding exists with
+        // no reverse entry, so channel Y is admitted onto the same address.
+        // Clearing X must not then delete Y's reverse binding — an
+        // unconditional delete did exactly that (#1680 r4 P1).
+        bytes32 other = keccak256("other-channel");
+        vm.startPrank(owner);
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, address(0));
+        messengerB.setChannelPeer(other, CHAIN_A, address(handlerA));
+        vm.stopPrank();
+
+        // `other` now legitimately owns the reverse entry. Re-create the
+        // un-migrated shape the upgrade produces — a forward binding with
+        // NO reverse entry of its own — by writing `channelPeerOf` (slot 5)
+        // directly. The public setter cannot reach this state on a fresh
+        // deployment, which is the point: it exists only on a proxy carrying
+        // pre-upgrade configuration, and that is where the bug lives.
+        vm.store(
+            address(messengerB),
+            keccak256(
+                abi.encode(
+                    CHAIN_A, keccak256(abi.encode(CHANNEL, uint256(5)))
+                )
+            ),
+            bytes32(uint256(uint160(address(handlerA))))
+        );
+        assertEq(
+            messengerB.channelPeerOf(CHANNEL, CHAIN_A),
+            address(handlerA),
+            "precondition: two channels share a peer, only one indexed"
+        );
+
+        // Clearing OUR channel must not touch the entry `other` owns.
+        // An unconditional `delete channelOfPeer[chain][current]` did.
+        vm.prank(owner);
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, address(0));
+
+        assertEq(
+            messengerB.channelOfPeer(CHAIN_A, address(handlerA)),
+            other,
+            "another channel's reverse binding must survive our clear"
+        );
+    }
+
+    // ─── Peer rotation is recoverable, not permanent (#1680 r4) ────────────
+
+    function test_PeerRotation_StrandedMessageRecoverableByRollback() public {
+        // Send under the old peer, then rotate without draining.
+        handlerA.send{value: fee}(
+            address(messengerA), CHAIN_B, abi.encode("x"), _noTokens(), 100_000
+        );
+        address newPeer = address(0xBEEF);
+        vm.startPrank(owner);
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, address(0));
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, newPeer);
+        vm.stopPrank();
+
+        // The in-flight message is rejected — it carries the OLD originator.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.UnauthorizedChannelPeer.selector,
+                CHANNEL,
+                CHAIN_A,
+                address(handlerA),
+                newPeer
+            )
+        );
+        router.deliver(0, SEL_A);
+
+        // But it is NOT lost. Roll the peer back and it delivers. This is
+        // what makes "can never be re-executed" wrong: there is no epoch
+        // and no revocation, and clearing releases the reverse index so the
+        // old address can be re-installed.
+        vm.startPrank(owner);
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, address(0));
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, address(handlerA));
+        vm.stopPrank();
+
+        router.deliver(0, SEL_A);
+        assertEq(
+            handlerB.receivedCount(),
+            1,
+            "the stranded message is recoverable by rolling the peer back"
+        );
+    }
+
+    function _channels(bytes32 id)
+        internal
+        pure
+        returns (bytes32[] memory ids)
+    {
+        ids = new bytes32[](1);
+        ids[0] = id;
+    }
+
+    function _chains(uint256 chainId)
+        internal
+        pure
+        returns (uint256[] memory chains)
+    {
+        chains = new uint256[](1);
+        chains[0] = chainId;
+    }
+
     // ─── Originator verification on receive (#1650) ─────────────────────────
     //
     // These cover the control this change actually introduces. The suite was

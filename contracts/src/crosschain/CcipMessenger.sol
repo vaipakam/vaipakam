@@ -205,6 +205,16 @@ contract CcipMessenger is
         uint256 indexed remoteChainId,
         address peer
     );
+    /// @notice A pre-existing peer binding was indexed into the reverse map
+    ///         during the upgrade migration. Distinct from
+    ///         {ChannelPeerSet} on purpose: nothing was configured here,
+    ///         an existing configuration was recorded in a second place.
+    /// @custom:event-category informational/config
+    event ChannelPeerIndexBackfilled(
+        bytes32 indexed channelId,
+        uint256 indexed remoteChainId,
+        address peer
+    );
 
     // ─── Errors ─────────────────────────────────────────────────────────────
 
@@ -315,6 +325,9 @@ contract CcipMessenger is
     /// @notice The outbound token list named the same token twice; each
     ///         token may appear at most once per message.
     error DuplicateToken(address token);
+    /// @notice {backfillChannelPeerIndex} received positionally-paired
+    ///         arrays of different lengths.
+    error ArrayLengthMismatch(uint256 channelIds, uint256 remoteChainIds);
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -337,6 +350,61 @@ contract CcipMessenger is
         __Ownable_init(owner_);
         __Ownable2Step_init();
         _guardianPausableInit();
+    }
+
+    /// @notice UPGRADE MIGRATION — populate {channelOfPeer} from the
+    ///         {channelPeerOf} entries an already-deployed proxy is
+    ///         carrying. Call it ATOMICALLY with the upgrade, via
+    ///         `upgradeToAndCall`, never as a follow-up transaction.
+    /// @dev The reverse index is a mapping appended by this change, so on
+    ///      an existing proxy it starts EMPTY while the forward map is
+    ///      fully populated. Until this runs, the one-to-one invariant
+    ///      {setChannelPeer} advertises does not hold: the duplicate check
+    ///      reads an empty reverse entry and admits an address that is
+    ///      already some other channel's live peer (Codex #1680 r4 P1).
+    ///      Three deployments are affected — the messenger is live on
+    ///      Base Sepolia, Sepolia and the other testnet chains — so this
+    ///      is a real migration, not a defensive stub.
+    ///
+    ///      **Completeness is the operator's responsibility and cannot be
+    ///      checked here.** Solidity mappings are not enumerable, so this
+    ///      contract cannot discover which `(channelId, remoteChainId)`
+    ///      pairs are configured; derive the list from the
+    ///      {ChannelPeerSet} event log for this proxy, not from memory. A
+    ///      pair omitted from the list stays un-indexed and keeps the hole
+    ///      open for that peer.
+    ///
+    ///      Reverts on a pair whose forward entry is unset, so a wrong or
+    ///      stale entry in the list fails loudly rather than being skipped
+    ///      — the whole point of the call is that the list is exact.
+    ///      Re-stating a pair already indexed is inert, so a migration
+    ///      that has to be re-run against a partially-migrated proxy is
+    ///      safe. Running it on a fresh deployment is a harmless no-op:
+    ///      the maps are maintained in lockstep from the first write.
+    /// @param channelIds     Configured channel ids, positionally paired.
+    /// @param remoteChainIds Their remote chain ids, positionally paired.
+    function backfillChannelPeerIndex(
+        bytes32[] calldata channelIds,
+        uint256[] calldata remoteChainIds
+    ) external onlyOwner reinitializer(2) {
+        uint256 n = channelIds.length;
+        if (n != remoteChainIds.length) {
+            revert ArrayLengthMismatch(n, remoteChainIds.length);
+        }
+        for (uint256 i; i < n; ++i) {
+            bytes32 channelId = channelIds[i];
+            uint256 remoteChainId = remoteChainIds[i];
+            address peer = channelPeerOf[channelId][remoteChainId];
+            if (peer == address(0)) {
+                revert NoChannelPeer(channelId, remoteChainId);
+            }
+            bytes32 bound = channelOfPeer[remoteChainId][peer];
+            if (bound != bytes32(0) && bound != channelId) {
+                revert ChannelPeerAlreadyBound(peer, remoteChainId, bound);
+            }
+            channelOfPeer[remoteChainId][peer] = channelId;
+            emit ChannelPeerIndexBackfilled(channelId, remoteChainId, peer);
+        }
     }
 
     // ─── Outbound — the {ICrossChainMessenger} port ─────────────────────────
@@ -683,6 +751,23 @@ contract CcipMessenger is
         // already-unbound-but-compatible recipient would deliver messages and
         // tokens to it successfully — the loud-failure assumption does not
         // hold here any more than it does for the peer.
+        //
+        // ROTATING A HANDLER ALSO REQUIRES A DRAIN, and this guard does not
+        // provide one (Codex #1680 r4 P1). `_ccipReceive` resolves
+        // `handlerOf[channelId]` at DELIVERY time and the envelope names no
+        // intended handler, so a message — and its tokens — sent while the
+        // old handler was live is forwarded to the replacement if it lands
+        // after the second transaction. Clear-before-repoint only rejects
+        // deliveries during the gap between the two.
+        //
+        // Unlike the peer, this one cannot be closed on the wire. The
+        // originator works because it is a SEND-side fact the sender knows
+        // about itself; the destination's handler is a RECEIVE-side fact
+        // the sender cannot know, and an epoch would have the same problem
+        // — the two chains' epochs are independent state. So the drain is
+        // the control, and it is documented in the admin runbook rather
+        // than enforced here. Quiesce the channel, let in-flight deliveries
+        // land on the old handler, then clear and re-register.
         if (
             previous != address(0) && handler != address(0)
                 && previous != handler
@@ -710,10 +795,23 @@ contract CcipMessenger is
     ///
     ///      Rotating a peer is therefore: clear, wait for in-flight messages
     ///      from the old peer to be delivered or abandoned, then set. The
-    ///      wait is a real requirement, not caution — a message the old peer
-    ///      already sent carries the OLD originator on the wire, so once the
-    ///      new peer is installed that message is rejected by the originator
-    ///      check in `_ccipReceive` and can never be manually re-executed.
+    ///      wait matters — a message the old peer already sent carries the
+    ///      OLD originator on the wire, so once the new peer is installed
+    ///      the originator check in `_ccipReceive` rejects it.
+    ///
+    ///      That rejection is RECOVERABLE, and an earlier revision of this
+    ///      comment wrongly said it was permanent (Codex #1680 r4 P2).
+    ///      There is no epoch and no revocation here: clearing releases the
+    ///      reverse index entry, so the old address can be re-installed.
+    ///      An operator who skipped the drain can clear the new peer,
+    ///      re-assign the old one, manually re-execute the stranded
+    ///      message, then repeat the rotation. Say so rather than imply
+    ///      loss, because an operator who believes a transfer is
+    ///      unrecoverable may abandon one that is not.
+    ///
+    ///      Drain anyway. The recovery re-points a live lane's trust anchor
+    ///      backwards to run it, which is a worse thing to be doing under
+    ///      incident pressure than waiting was.
     function setChannelPeer(
         bytes32 channelId,
         uint256 remoteChainId,
@@ -733,7 +831,21 @@ contract CcipMessenger is
         if (current != address(0) && peer != address(0) && current != peer) {
             revert ChannelPeerAlreadySet(channelId, remoteChainId, current);
         }
-        if (current != address(0)) delete channelOfPeer[remoteChainId][current];
+        // Release the outgoing peer's reverse entry — but ONLY if it is
+        // actually ours. On a proxy upgraded from a build without
+        // `channelOfPeer`, the forward map is already populated while the
+        // reverse map starts empty, so until {backfillChannelPeerIndex} has
+        // run the duplicate check above can pass for an address that is
+        // some other channel's live peer. An unconditional delete would
+        // then clear THAT channel's binding on our clear (Codex #1680 r4
+        // P1). Checking ownership keeps this write correct even while the
+        // two maps disagree.
+        if (
+            current != address(0)
+                && channelOfPeer[remoteChainId][current] == channelId
+        ) {
+            delete channelOfPeer[remoteChainId][current];
+        }
         channelPeerOf[channelId][remoteChainId] = peer;
         if (peer != address(0)) {
             channelOfPeer[remoteChainId][peer] = channelId;

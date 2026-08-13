@@ -3,10 +3,19 @@
 **This changes the cross-chain message format and must be rolled out to both
 sides of a lane together.** A messenger on the new format cannot interpret a
 message from a messenger on the old one, and vice versa; a lane upgraded on
-only one side stops delivering until the other side catches up. Nothing is
-lost while that is true — undelivered messages are recorded as failures and
-can be re-run once both ends match — but the window is real and the upgrade
-has to be planned as a pair rather than as two independent deployments.
+only one side stops delivering until the other side catches up.
+
+**Drain each lane before upgrading it.** A message already in flight keeps the
+format it was sent in, and an upgraded receiver cannot read it — so upgrading
+the other end does not rescue it. Waiting for a refused message to become
+deliverable will not work. Recovering one means rolling the receiving side back
+to the old format, re-running the message, and upgrading forward again: possible,
+but a far worse thing to be doing under pressure than draining was. The same
+applies to anything sent into the one-sided window.
+
+Nothing is destroyed in any of these cases — a refused message is recorded as a
+failure rather than consumed — but "not destroyed" is not the same as "will
+arrive on its own", and the difference is the whole reason to drain.
 
 ### What was wrong
 
@@ -54,13 +63,36 @@ been right on both lanes.
 
 ### What operators need to do differently
 
-Rotating a channel's peer now requires draining the lane first. Because a
-message carries the originator that sent it, a message the old peer had
-already sent will be refused once the new peer is installed, and cannot be
-recovered afterwards. The procedure is: stop the old contract sending, let
-whatever is in flight arrive or be abandoned deliberately, then clear the
-setting and assign the new one. A rotation performed without the drain will
-strand any message caught in between.
+Rotating a channel's partner address now requires draining the lane first.
+Because a message carries the identity of whoever sent it, a message the old
+partner had already sent is refused once the new one is installed. The
+procedure is: stop the old contract sending, let whatever is in flight arrive
+or be abandoned deliberately, then clear the setting and assign the new one.
 
-The same applies to this upgrade itself. Both messengers on a lane must move
-together, and the lane should be drained before they do.
+A message stranded by a rotation done without the drain **is recoverable**, and
+it is worth being exact about that rather than implying loss. There is no
+expiry and no revocation involved: clear the new partner, put the old address
+back, re-run the stranded message, then repeat the rotation properly. An
+operator who believes a transfer is gone might abandon one that isn't. Drain
+anyway — the recovery works by pointing a live lane's trust setting backwards
+for as long as it takes, which is not something to be doing in a hurry.
+
+**Rotating a channel's local handler needs the same drain, for a different
+reason and without the same safety net.** A message names the conversation it
+belongs to, not the contract that should receive it — that is resolved on
+arrival — so a message sent while the old handler was in place is delivered to
+the replacement, along with any tokens it carries. Nothing rejects it, because
+from the protocol's point of view it arrived on the right conversation. This
+one cannot be fixed the way the partner check was: a sender can prove its own
+identity, but it has no way of knowing which contract the far side has
+appointed. Quiesce the channel, let deliveries land on the old handler, then
+change it.
+
+**Upgrading an already-deployed messenger requires a migration step.** The
+one-address-one-channel rule is enforced through a new index that starts empty
+on an existing deployment, so it must be populated from the configuration
+already in place — as part of the upgrade transaction, not afterwards. Until
+that runs, the rule is not actually in force. The list of configured lanes has
+to be supplied by the operator and derived from the deployment's own event
+history, because a contract cannot enumerate its own configuration; a lane left
+off the list stays unprotected.

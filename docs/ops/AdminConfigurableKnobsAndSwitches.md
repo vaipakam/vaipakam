@@ -1124,15 +1124,47 @@ the same chain, mirroring the existing one-handler-one-channel rule.
 
 **Rotating a channel peer requires draining the lane first.** Because a
 message carries the originator that sent it, any message the old peer
-had already dispatched is refused once the new peer is installed, and
-cannot be recovered afterwards — not by manual re-execution, not by
-reverting the configuration, because the clear-then-set procedure leaves
-no state that would accept it. The order is: stop the old contract
-sending, let what is in flight arrive or be abandoned as a deliberate
-decision, then clear and assign. The same holds for any upgrade that
-changes the message format: both messengers on a lane move together, on
-a drained lane, because messengers on different formats cannot interpret
-each other's messages.
+had already dispatched is refused once the new peer is installed. The
+order is: stop the old contract sending, let what is in flight arrive or
+be abandoned as a deliberate decision, then clear and assign.
+
+A message stranded by a rotation done without the drain **is
+recoverable** — an earlier revision of this section said it was not, and
+that was wrong. There is no epoch and no revocation on the peer setting,
+and clearing releases the reverse index entry, so the old address can be
+re-installed. The recovery is: clear the new peer, re-assign the old
+address, manually re-execute the stranded message through CCIP, then
+repeat the rotation with the drain. State this plainly to operators,
+because someone who believes a delivery is unrecoverable may write off
+one that isn't. Drain regardless: the recovery holds a live lane's trust
+anchor pointed backwards for its duration.
+
+**Rotating a channel's local handler needs the same drain, and has no
+equivalent recovery.** `_ccipReceive` resolves `handlerOf[channelId]` at
+delivery time and the envelope names no intended handler, so a message
+dispatched while the old handler was registered is forwarded — with its
+tokens — to the replacement if it lands after the re-registration.
+Nothing rejects it; on the wire it is a valid message for that channel.
+This gap cannot be closed the way the peer's was: the originator works
+because it is a fact the sender knows about ITSELF, whereas the
+destination's handler is remote state the sender cannot know, and a
+per-channel epoch would face the same problem across two chains. Quiesce
+the channel, let in-flight deliveries land on the old handler, then
+clear and re-register.
+
+**Upgrading an already-deployed messenger requires a migration call.**
+The one-channel-per-peer rule is enforced through a reverse index added
+by this change, which starts EMPTY on an existing proxy while the
+forward map is fully populated. Call `backfillChannelPeerIndex` with the
+configured `(channelId, remoteChainId)` pairs **atomically as part of
+the upgrade** (`upgradeToAndCall`), never as a follow-up transaction —
+until it runs the invariant is not in force. The pair list is the
+operator's responsibility and cannot be validated by the contract:
+mappings are not enumerable, so derive it from that proxy's
+`ChannelPeerSet` event log rather than from memory. A pair omitted from
+the list stays un-indexed and its peer keeps the hole open. The call
+reverts on a pair with no configured peer, so a stale entry fails loudly
+rather than being skipped.
 
 A misconfigured selector, remote messenger or channel registration
 surfaces as an undelivered or rejected message. Note that CCIP's transport security is operated by
