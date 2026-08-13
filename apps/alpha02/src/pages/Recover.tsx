@@ -1289,7 +1289,15 @@ export function Recover() {
     // synchronously right after subscribing, which runs before paint so no storage
     // task can interleave between the two, and recovers anything missed while the
     // concurrent render yielded (Codex #1689 r7 — naming only the hook wrongly
-    // excluded this). All of which is a concurrency redesign of a signing path,
+    // excluded this). The two are NOT interchangeable downstream, though (Codex
+    // #1689 r8): subscribe-and-revalidate KEEPS the imperative `storage` handler,
+    // which decides RELEASE from `stepRef.current` at :1381 — so on that branch a
+    // version-safe commit-time `stepRef` update is REQUIRED, not optional, or the
+    // listener must stop consuming `stepRef` altogether. Only the external-store
+    // form removes the handler, `stepRef` and the `setStep` wrapper together and
+    // makes the mirror moot. Widening the storage option in r7 silently invalidated
+    // the mirror's "only if the listener is retained" condition — the entries
+    // interact. All of which is a concurrency redesign of a signing path,
     // which is not a lint cleanup. Tracked
     // as #1691. This effect is RETAINED pending that redesign — deliberately not
     // stated as the better design (Codex #1689 r5): each shape wins a different
