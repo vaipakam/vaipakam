@@ -1969,6 +1969,18 @@ export function OfferFlow({ side }: { side: Side }) {
           // pre-transaction, fall to classic unconditionally; the
           // consumed step is added back to the plan (#1037 honesty).
           stepper.next('permit');
+          // Before the SECOND wallet prompt, not only before the write (Codex
+          // #1701 r3 / #1703 r2): a Permit2 signature is a prompt the user has
+          // to action, and collecting it for an acceptance the final-send check
+          // is about to refuse wastes exactly what these checks exist to spare
+          // them. The spec says a fresh read happens at every signature point;
+          // this is what makes that true rather than something to narrow.
+          await recheckCeiling({
+            lendingAsset: selected.lendingAsset as `0x${string}`,
+            amount: offerPrincipal(selected),
+            durationDays: BigInt(selected.durationDays),
+            fullTariff,
+          });
           let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
             null;
           try {
@@ -2020,6 +2032,19 @@ export function OfferFlow({ side }: { side: Side }) {
         spender: walletChain.diamondAddress,
         amount: payAmount,
         onPrompt: () => stepper.next('approve'),
+        // Before EVERY approve prompt, not once before the helper (Codex
+        // #1703 r3): the zero-first reset path prompts twice, and the gap
+        // between them is a user-held wallet confirmation plus a mined
+        // transaction — easily long enough for the quote to cross. Passing
+        // the gate in covers both, where my earlier standalone call covered
+        // only the first.
+        beforeEachApprove: () =>
+          recheckCeiling({
+            lendingAsset: selected.lendingAsset as `0x${string}`,
+            amount: offerPrincipal(selected),
+            durationDays: BigInt(selected.durationDays),
+            fullTariff,
+          }),
       });
     }
     stepper.next('send');

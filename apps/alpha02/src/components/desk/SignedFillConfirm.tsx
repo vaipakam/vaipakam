@@ -255,6 +255,17 @@ export function SignedFillConfirm({
       // Classic Diamond allowance for the taker's leg (no Permit2 lane
       // on this path — see the header note).
       await ensureAllowance({
+        // The signed-fill path had NO ceiling check before its approval at
+        // all (Codex #1703 r3) — only before the final write — so a quote
+        // crossing while the taker handled the AcceptTerms prompt could
+        // still cost them a mined approval for a fill about to be refused.
+        beforeEachApprove: () =>
+          recheckCeiling({
+            lendingAsset: o.lendingAsset as `0x${string}`,
+            amount: signedOfferCeiling(o),
+            durationDays: BigInt(o.durationDays),
+            fullTariff,
+          }),
         publicClient,
         walletClient,
         token: payToken,

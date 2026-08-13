@@ -247,15 +247,13 @@ figures, and offers to raise it.
 **Code**: the standing-offer creator's arm form (Open Orders) reads the live
 quote and validates that the typed ceiling is a well-formed number, but never
 compares the two. A creator can therefore save a STRICT authorization whose
-ceiling is already below the current quote. The arm form quotes the LARGEST
-permitted principal, while the charge is recomputed from each fill's own
-effective principal — so what is doomed is a full-size fill at the current
-quote, not literally every fill: a smaller partial can price under the same
-ceiling, and the quote can fall back. Still the same failure the acceptance
-side now prevents, on the side that commits first and cannot see the fills
-that fail.
+ceiling is already below the current quote. What is doomed is a fill whose OWN
+effective principal prices above that ceiling — the charge is recomputed per
+fill, so a smaller partial can price under it, and the quote can fall back.
+Still the same failure the acceptance side now prevents, on the side that
+commits first and cannot see the fills that fail.
 
 **Decision**: candidate BUG, not a stale doc. Found by Codex review of #1701
 while checking that the new spec text did not over-claim for a surface it does
-not describe. Tracked as #1702; the spec bullet names the divergence inline so
-a reader does not mistake the gap for intent.
+not describe. **RESOLVED** by the warning added for #1702; the spec bullet now
+describes the creator side rather than naming a gap.
