@@ -1,6 +1,6 @@
 ## Agent worker — configuration explained by a component that was removed (PR #TBD)
 
-The agent worker's configuration was documented — across seven files: both of
+The agent worker's configuration was documented in many places — both of
 its module headers, two interface comments, the chain-resolution helper, its
 deployment config and that config's own header, its database binding, its
 README, its package description, the sibling keeper worker's config, and the

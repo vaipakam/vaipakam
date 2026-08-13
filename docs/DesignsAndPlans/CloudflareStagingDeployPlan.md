@@ -25,7 +25,7 @@ unaffected.
 | **vaipakam-labs** | `labs.vaipakam.com` (today); `vaipakam.com` + `www.vaipakam.com` after cutover | Marketing site, docs, "Launch Vaipakam" button → `defi.vaipakam.com/`. Static, wallet-free. | No |
 | **vaipakam-defi** | `defi.vaipakam.com` | The connected app — wallet connect, Dashboard at root, Offer Book, loan flows, Buy-VPFI, Claim Center, plus three wallet-free public-read tools (`/analytics`, `/nft-verifier`, `/protocol-console`). | No |
 | **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*`. Open-CORS reads. | No |
-| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`, `/scan/blockaid`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). | **NO** (intentional — staging plan §2 contract) |
+| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). | **NO** (intentional — staging plan §2 contract) |
 | **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher loop + autonomous liquidation, daily oracle snapshot signer, future offer matcher. | **YES** — single signing-key holder |
 
 The split follows the **read/index vs write/act** axis. Strict
@@ -38,7 +38,7 @@ least-privilege:
 - `vaipakam-agent` holds no signing key. Notification tokens
   (`TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`) and aggregator API
   keys (`ZEROEX_API_KEY`, `ONEINCH_API_KEY`,
-  `BLOCKAID_API_KEY`) are operational secrets but not
+  the retired `BLOCKAID_API_KEY`, see §4.3) are operational secrets but not
   fund-moving capability.
 - `vaipakam-indexer` is read-only — RPC reads, D1 writes, no
   HTTP-level secrets.
@@ -109,8 +109,12 @@ NO secrets — the frontend bundle is static.
   thresholds, diag_errors, cross-Worker reads of indexer's
   loan tables).
 - **Cron:** `* * * * *` — periodic-interest pre-notify,
-  diag retention. (#1651: `buy-watchdog` was scheduled here;
-  #687-A removed it with the VPFI buy surface.)
+  diag retention, support-ticket retention
+  (`pruneOldSupportTickets`, which ENFORCES the 12-month
+  support-ticket deletion promise — disabling or misconfiguring
+  this schedule stops that deletion happening).
+  (#1651: `buy-watchdog` was scheduled here; #687-A removed it
+  with the VPFI buy surface.)
 - **Secrets:**
   ```
   RPC_*           — same chains as indexer
@@ -118,7 +122,9 @@ NO secrets — the frontend bundle is static.
   PUSH_CHANNEL_PK — STAGING channel signer (NOT prod)
   ZEROEX_API_KEY  — for /quote/0x proxy
   ONEINCH_API_KEY — for /quote/1inch proxy
-  BLOCKAID_API_KEY — for /scan/blockaid proxy (currently missing — fail-soft 503 until set)
+  # (#1651: BLOCKAID_API_KEY was listed here for a /scan/blockaid proxy.
+  #  ET-001 dropped that proxy — index.ts states there is no transaction-scan
+  #  proxy at all; the pre-sign preview is a frontend eth_call. Nothing to set.)
   ```
 - **Vars (non-secret):**
   ```
@@ -180,7 +186,7 @@ Stage 3 PR5.
 | 1 | Operator | Provision Cloudflare resources per §3 (DONE 2026-05-07) |
 | 2 | Author | Patch wrangler.jsonc with `vaipakam-archive` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) |
 | 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote` (one-time schema apply) |
-| 4 | Operator | `wrangler secret put` for the missing secrets per §4.3 + §4.4 (BLOCKAID, ZEROEX, ONEINCH on keeper, etc.) |
+| 4 | Operator | `wrangler secret put` for the missing secrets per §4.3 + §4.4 (ZEROEX, ONEINCH on keeper, etc. — NOT BLOCKAID; that proxy does not exist, #1651) |
 | 5 | Operator | `wrangler deploy` for each of `apps/{keeper,indexer,agent}`. This activates crons + binds `indexer.vaipakam.com`. |
 | 6 | Operator | Update `apps/defi/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; `pnpm build && wrangler deploy` `vaipakam-defi`. |
 | 7 | Both | Smoke-test `defi.vaipakam.com` end-to-end against `agent.vaipakam.com` + `indexer.vaipakam.com`, with `KEEPER_ENABLED=false` (no autonomous liquidation). NOT fully alert-only: `runDailyOracleSnapshot` signs on `KEEPER_PRIVATE_KEY` alone and will broadcast on staging regardless — if the window must be write-free, remove the keeper's trigger in the Cloudflare dashboard (*Settings → Trigger Events*) — editing `wrangler.jsonc` after step 5 has already deployed the active schedule changes nothing live. Allow for propagation before treating it as stopped; see `apps/keeper/README.md` (#1466). **If you take that path, restore the trigger at the end of this step** — step 8 only flips `KEEPER_ENABLED`, so a Worker left with no schedule would make step 9's observation window look quiet while every pass is in fact disabled. |
