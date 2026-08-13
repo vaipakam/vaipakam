@@ -70,7 +70,38 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 
-Placeholder facets (Phase 2): TreasuryFacet, PrecloseFacet, RefinanceFacet, EarlyWithdrawalFacet, PartialWithdrawalFacet.
+**Early-exit / settlement facets — all LIVE, none a placeholder** (#1657). An
+earlier version of this table called these "Placeholder facets (Phase 2)". They
+are not, and had not been for some time: each is cut into the Diamond by
+`DeployDiamond.s.sol` (the test-side `DiamondFacetNames.cutFacetNames()`
+mirrors that `cuts[]` array and is what the deploy-sanity suite checks against
+— update the script when adding a facet, not only the mirror), each moves
+funds, and several
+carry invariants **this document states elsewhere**: the VPFI-LIF
+settle/forfeit rules below name Preclose and Refinance as proper-settlement
+terminal paths, and the retail-deploy section lists both among the Tier-1
+entry points that revert for sanctioned callers. The retired line contradicted
+its own document in two places.
+
+"Placeholder" reads as *do not expect behaviour here*, which is the opposite of
+true on a settlement path, and it cost real time in #1503.
+
+| Facet                      | Role                                                                        |
+| -------------------------- | --------------------------------------------------------------------------- |
+| **PrecloseFacet**          | Borrower early close-out: `precloseDirect`, obligation handover to a replacement borrower (`transferObligationViaOffer`), and the offset route (`offsetWithNewOffer` → completion). Completion has TWO entries: `completeOffset` (external) and `completeOffsetInternal` — the `address(this)`-gated cross-facet entry `_acceptOffer`'s auto-link block invokes when a third party accepts the offset offer, skipping the outer `nonReentrant` because the accept already holds the diamond guard. Don't assume a manual second step |
+| **RefinanceFacet**         | Move a borrower onto better terms — `refinanceLoan`, `refinanceLoanFromAccept`. NOT an in-place edit: the replacement loan is a **separate record** (`s.offerIdToLoanId[borrowerOfferId]` → a new `loanId`) created when the new lender accepted the offer, and the old loan is terminalized **Active → Repaid**. So a completed refinance leaves **two loan records and FOUR position NFTs**: every loan carries both a `lenderTokenId` and a `borrowerTokenId`, and the old pair is *status-updated* to `LoanRepaid` — **not burned** — so `ownerOf` still resolves and the old borrower NFT stays a redeemable receipt on the original position. Load-bearing for indexer state and the terminal-path invariants: an indexer that assumes one NFT per loan, or that a terminal loan's NFTs are gone, is wrong on both counts |
+| **EarlyWithdrawalFacet**   | Lender exit: instant sale into a standing buy offer (`sellLoanViaBuyOffer`) and the listed-sale route (`createLoanSaleOffer`, which carries a MANDATORY finite expiry, → completion). Completion mirrors the offset route's shape: `completeLoanSale` (external) plus `completeLoanSaleInternal`, the `address(this)`-gated entry `_acceptOffer` invokes automatically after a buyer accepts the linked sale offer |
+| **PartialWithdrawalFacet** | Release surplus collateral while a loan is open — `calculateMaxWithdrawable`, `partialWithdrawCollateral` |
+| **TreasuryFacet**          | Treasury operations (56 functions — claims, buyback intents, remittance absorption, asset conversion). Custody is **deployment-mode dependent**: `LibFacet.recordTreasuryAccrual` only credits `treasuryBalances` when `s.treasury == address(this)`, so on the documented mainnet topology (`TREASURY_ADDRESS` = an external multisig) fees leave immediately and the claim / conversion paths have nothing at the Diamond to act on. Those paths are for Diamond-as-treasury deployments |
+
+Two of them do carry a genuine *future-scope* note in their own headers, which
+is what the retired line probably grew out of: TreasuryFacet's "expand for
+Phase 2 (governance distributions, reserves)" and PartialWithdrawalFacet's
+"expand for Phase 2 (multi-collateral, governance-configurable threshold)".
+Those describe work not yet done **on top of** shipped behaviour — they do not
+make either facet a stub. Note also that "Phase 2" appears inside several
+facets as *task* numbering (`T-092 Phase 2a`, `#671 phase 2`); that is
+unrelated to delivery status.
 
 ### Liquid vs Illiquid Assets
 
