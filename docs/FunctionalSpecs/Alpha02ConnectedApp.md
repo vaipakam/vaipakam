@@ -374,10 +374,15 @@ Thin-market honesty rules apply.
   it can see would be rejected. Under the open-without-Full posture it does not
   refuse: that choice says to proceed in exactly this situation, so the warning
   is there to make proceeding an informed decision rather than a surprise.
-- **Under the reject posture**, that check is made against a freshly read quote
-  at each point the app is about to ask for a signature or send a transaction —
+- **Under the reject posture**, the app attempts a fresh read of the quote at
+  each point it is about to ask for a signature or send a transaction —
   including after an approval step, which is paced by the user and can take
-  arbitrarily long. Under the open-without-Full posture no such re-read is
+  arbitrarily long. The attempt is BEST-EFFORT: if the read itself fails (an
+  unreachable node, a selector the deployment does not have), the app proceeds
+  rather than refusing. Its purpose is to spare the user a doomed signature,
+  not to be a second enforcement layer — the protocol enforces regardless, and
+  a preflight that failed closed on its own transport trouble would block
+  acceptances the chain would have allowed. Under the open-without-Full posture no such re-read is
   required, and the displayed warning may lag: the re-read exists to stop a
   signature that is already doomed, and under that posture none is — the loan
   opens either way, which is what the user asked for.
