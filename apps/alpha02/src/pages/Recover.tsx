@@ -1265,13 +1265,19 @@ export function Recover() {
     //   observes the new generation, which also clears the stale
     //   `reconcileClaim === genRef.current` state; a second bump is then
     //   unnecessary — and unsafe IF PASSIVE, recreating the two-generation
-    //   failure just described. A LAYOUT-phase second bump is safe (Codex #1689
-    //   r10): it lands during the identity commit, before the new UI can be
-    //   interacted with, so nothing new-identity can capture the intermediate
-    //   generation, while work started between the wallet event and the commit
-    //   belongs to the OLD UI and SHOULD be invalidated. The failure needs a
-    //   PASSIVE bump — post-commit, with the new UI already painted. That is the
-    //   distinction, not commit-time-vs-not. The
+    //   failure just described. A LAYOUT-phase second bump is safe FROM THAT RACE
+    //   ONLY (Codex #1689 r10, narrowed by r11): it lands during the identity
+    //   commit, before the new UI can be interacted with, so nothing new-identity
+    //   can capture the intermediate generation, while work started between the
+    //   wallet event and the commit belongs to the OLD UI and SHOULD be
+    //   invalidated. The submit failure needs a PASSIVE bump — post-commit, with
+    //   the new UI already painted. But "safe" does NOT extend to item 6: with
+    //   the wallet event at G+1, a reconciliation the user starts from the still-
+    //   committed OLD card stores reconcileClaim = G+1, the new-identity render
+    //   computes `reconciling` true, and a layout bump to G+2 that schedules no
+    //   render leaves the rehydrated card disabled until the old RPC settles. So
+    //   adding the optional bump under b1 DRAGS item 6 back in with it — the row
+    //   saying "item 6 not needed" holds only when no second bump is added. The
     //   commit-time bump AND item 6's follow-up rerender are required only under
     //   the live-provider fence, or a wallet-event fence that advances a SEPARATE
     //   token and leaves `genRef` to the effect. So this is a per-branch
