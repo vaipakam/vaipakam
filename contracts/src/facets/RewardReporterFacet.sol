@@ -1084,6 +1084,55 @@ contract RewardReporterFacet is
         );
     }
 
+    /// @notice #1434 P1-b (Codex #1699 r2) — the pre-P1-b paid-side history
+    ///         was seeded on this mirror, arming the delivered-fresh bound
+    ///         against funding that was already spent before the upgrade.
+    /// @custom:event-category state-change/reward-compensation
+    event ArmedFreshPaidSeeded(uint256 amount);
+
+    /**
+     * @notice #1434 P1-b (Codex #1699 r2) — ONE-SHOT migration seed for the
+     *         delivered-fresh bound's PAID side on an in-place-upgraded
+     *         mirror.
+     * @dev    Why a seed and not a derivation. The bound is
+     *         `received - paid`. On upgrade the received counter already
+     *         holds deliveries for compensated and short-lapsed days — those
+     *         states deliberately BYPASSED the old blanket mirror halt and
+     *         were payable in the parent implementation — while the newly
+     *         appended paid counter starts at zero. Unseeded, that
+     *         already-spent funding reads as available and can be spent
+     *         again.
+     *
+     *         An exact ON-CHAIN derivation does not exist, which is the
+     *         deciding fact rather than a matter of taste.
+     *         `DayCompensation.armedFreshCounted` records what a day ADDED TO
+     *         THE RECEIVED side, not what was paid out of it; the paid figure
+     *         lives in `userSideDayPaidVpfi[user][side][day]`, which cannot be
+     *         summed on-chain over an unbounded user set. So the operator
+     *         computes it off-chain from the indexed payout events and seeds
+     *         it here, once.
+     *
+     *         Direction of error matters and is stated so an operator can
+     *         choose deliberately: seeding LOW re-opens the double-spend this
+     *         exists to close; seeding HIGH strands legitimate funding until
+     *         further deliveries arrive (recoverable, and the conservative
+     *         side). Prefer the high estimate when uncertain.
+     *
+     *         Fresh deploys need no seed — both counters start at zero — so
+     *         this is only for chains carrying pre-P1-b history.
+     * @param  amount Armed fresh already paid out before this upgrade.
+     */
+    function seedArmedFreshPaid(uint256 amount)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.armedFreshPaidSeeded) revert ArmedFreshPaidAlreadySeeded();
+        s.armedFreshPaidSeeded = true;
+        s.rewardBudgetArmedFreshPaid += amount;
+        emit ArmedFreshPaidSeeded(amount);
+    }
+
     /// @notice Adjust the grace window after the first chain report for
     ///         day `D` within which `finalizeDay(D)` may be called even
     ///         if not every expected mirror has reported.

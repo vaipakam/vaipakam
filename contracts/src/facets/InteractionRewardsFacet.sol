@@ -118,16 +118,51 @@ contract InteractionRewardsFacet is
         // same reason the exhaustion check above spares it — it never left the
         // bucket, so it needs no delivered backing and its commitment must
         // still be releasable.
-        if (sweepSplit.armedFresh != 0 && LibVaipakam.isMirrorRewardChain(s)) {
-            uint256 allowance = LibInteractionRewards.deliveredFreshBound(s);
-            if (sweepSplit.armedFresh > allowance) {
-                revert DeliveredFreshShortfall(
-                    sweepSplit.armedFresh, allowance
-                );
-            }
-        }
         uint256 freshWanted = freshSwept;
         if (freshSwept > remaining) freshSwept = remaining;
+
+        // Codex #1699 r2 P2 — gate on what this sweep will ACTUALLY charge,
+        // not on its nominal armed share.
+        //
+        // The clamp above may truncate the fresh spend, and the charge below
+        // is the resulting pro-rata armed portion. Testing the nominal share
+        // made the gate too STRICT in the opposite direction: near 69M
+        // exhaustion a mixed pre-/post-arming forfeiture could revert even
+        // though the amount it would really charge fits the allowance, leaving
+        // the entry AND its commitment stuck waiting for delivery that is
+        // unnecessary — and that could never help, since the binding limit
+        // there is the monotone cap. A bound can fail by refusing too much as
+        // well as by permitting too much; the first revision only guarded the
+        // second.
+        //
+        // Computed here so the gate and the charge below cannot diverge: one
+        // expression, read twice.
+        uint256 armedPaid;
+        if (freshSwept != 0 && sweepSplit.armedFresh != 0) {
+            if (freshSwept >= freshWanted) {
+                armedPaid = sweepSplit.armedFresh;
+            } else {
+                // Codex #1699 r1 P2 — round the pro-rata share UP. Flooring
+                // per sweep discards the remainder every call
+                // (`armedFresh = 1, freshWanted = 2, freshSwept = 1` records
+                // ZERO), and repeating that shape lets delivered funding be
+                // reused without limit. Carrying dust across calls would need
+                // a stored accumulator and a retry-reconciliation rule;
+                // ceiling is the closed-form alternative and errs by at most
+                // one wei in the direction that TIGHTENS the bound.
+                uint256 num0 = sweepSplit.armedFresh * freshSwept;
+                armedPaid = (num0 + freshWanted - 1) / freshWanted;
+                if (armedPaid > sweepSplit.armedFresh) {
+                    armedPaid = sweepSplit.armedFresh;
+                }
+            }
+        }
+        if (armedPaid != 0 && LibVaipakam.isMirrorRewardChain(s)) {
+            uint256 allowance = LibInteractionRewards.deliveredFreshBound(s);
+            if (armedPaid > allowance) {
+                revert DeliveredFreshShortfall(armedPaid, allowance);
+            }
+        }
         swept = freshSwept + sweepSplit.recycled;
         s.interactionPoolPaidOut = paidOut + freshSwept;
 
@@ -159,34 +194,11 @@ contract InteractionRewardsFacet is
         // under-charging lets a mirror pay armed fresh it never received.
         // `consumeArmedFresh`'s argument is again NOT the figure — it is the
         // full commitment, cap-truncated remainder included.
-        if (freshSwept != 0 && LibVaipakam.isMirrorRewardChain(s)) {
-            uint256 armedPaid;
-            if (freshSwept >= freshWanted) {
-                armedPaid = sweepSplit.armedFresh;
-            } else {
-                // Codex #1699 r1 P2 — round the pro-rata share UP, not down.
-                //
-                // Flooring independently on every sweep discards the
-                // remainder each time: `armedFresh = 1, freshWanted = 2,
-                // freshSwept = 1` records ZERO armed spend, and repeating
-                // that shape across loans lets delivered funding be reused
-                // without limit. Carrying a remainder across calls would need
-                // its own stored accumulator and a reconciliation rule for
-                // when a sweep is retried; ceiling is the conservative
-                // closed-form alternative, and conservative in the RIGHT
-                // direction — it can only over-charge by at most one wei per
-                // sweep, which tightens the bound (a day defers a little
-                // early) rather than letting a mirror pay armed fresh it was
-                // never sent. The result is still capped by `armedFresh`
-                // itself, so the ceiling can never charge more than the
-                // sweep's whole armed share.
-                uint256 num = sweepSplit.armedFresh * freshSwept;
-                armedPaid = (num + freshWanted - 1) / freshWanted;
-                if (armedPaid > sweepSplit.armedFresh) {
-                    armedPaid = sweepSplit.armedFresh;
-                }
-            }
-            if (armedPaid != 0) s.rewardBudgetArmedFreshPaid += armedPaid;
+        // Charge the SAME figure the gate above tested — computed once,
+        // read twice, so the amount refused and the amount recorded can never
+        // diverge. (The rounding rationale lives with that computation.)
+        if (armedPaid != 0 && LibVaipakam.isMirrorRewardChain(s)) {
+            s.rewardBudgetArmedFreshPaid += armedPaid;
         }
 
         // Governor PR-3a/PR-3c (#1217 §4) — forfeit source split: the
@@ -282,12 +294,32 @@ contract InteractionRewardsFacet is
         uint256 recycledTotal;
         uint256 armedFreshTotal;
         uint256 armedFreshPaid;
+        // Codex #1699 r2 P1 — the delivered allowance is threaded and depleted
+        // per entry, exactly as `headroom` above it. `sweepExpiredEntry` used
+        // to read the storage figure itself, which is stale for every entry
+        // after the first because this facet only accumulates
+        // `rewardBudgetArmedFreshPaid` AFTER the loop: two 0.4 entries against
+        // 0.5 remaining both passed and 0.8 was credited from unrelated
+        // custody. Same defect the walk had one round earlier — one fix, two
+        // sites, and I shipped only the first.
+        uint256 allowance = LibVaipakam.isMirrorRewardChain(s)
+            ? LibInteractionRewards.deliveredFreshBound(s)
+            : type(uint256).max;
         for (uint256 i = 0; i < entryIds.length; ) {
             (
                 LibInteractionRewards.EntrySplit memory ex,
                 uint256 freshCredited
-            ) = LibInteractionRewards.sweepExpiredEntry(entryIds[i], headroom);
+            ) = LibInteractionRewards.sweepExpiredEntry(
+                entryIds[i], headroom, allowance
+            );
             headroom -= freshCredited;
+            // All-or-nothing per entry, so a credited entry consumed exactly
+            // its armed share of the allowance.
+            if (freshCredited != 0 && ex.armedFresh != 0) {
+                allowance = allowance > ex.armedFresh
+                    ? allowance - ex.armedFresh
+                    : 0;
+            }
             freshTotal += freshCredited;
             recycledTotal += ex.recycled;
             armedFreshTotal += ex.armedFresh;

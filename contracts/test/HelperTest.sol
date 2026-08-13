@@ -2014,7 +2014,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](18);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
@@ -2032,6 +2032,7 @@ contract HelperTest {
         // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
         selectors[3] = RewardReporterFacet.setBaseChainId.selector;
         selectors[4] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
+        selectors[17] = RewardReporterFacet.seedArmedFreshPaid.selector;
         selectors[5] = RewardReporterFacet.setRewardGraceSeconds.selector;
         selectors[6] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
         selectors[7] = RewardReporterFacet.getChainReportSentAt.selector;

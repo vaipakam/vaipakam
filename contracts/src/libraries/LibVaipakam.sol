@@ -6604,6 +6604,21 @@ library LibVaipakam {
         ///      for every later day, which is the failure mode the
         ///      withdrawn B2-d4 attempt was rejected for.
         uint256 rewardBudgetArmedFreshPaid;
+        /// @dev #1434 P1-b (Codex #1699 r2) — the one-shot migration flag for
+        ///      the counter above. TRUE once an in-place-upgraded mirror has
+        ///      seeded its pre-P1-b paid history.
+        ///
+        ///      Needed because the bound goes live the moment this facet set
+        ///      is cut, while the paid counter starts at ZERO — yet
+        ///      `rewardBudgetArmedFreshReceived` already holds deliveries for
+        ///      compensated and short-lapsed days, which BYPASSED the old
+        ///      blanket mirror halt by design and were genuinely payable. Left
+        ///      unseeded, that already-spent funding reads as wholly available
+        ///      and can be spent a second time.
+        ///
+        ///      A fresh deploy needs no seed (both counters start at zero), so
+        ///      this is armed only where there is history to carry.
+        bool armedFreshPaidSeeded;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

@@ -207,6 +207,12 @@ interface IVaipakamErrors {
     /// @param needed    Armed fresh the action would have spent.
     /// @param available Remaining delivered-less-paid allowance.
     error DeliveredFreshShortfall(uint256 needed, uint256 available);
+
+    /// @notice #1434 P1-b (Codex #1699 r2) — the one-shot pre-P1-b paid-side
+    ///         migration seed has already run on this chain.
+    /// @dev    One-shot on purpose: the seed ADDS to the paid counter, so a
+    ///         second call would double-charge the bound and strand funding.
+    error ArmedFreshPaidAlreadySeeded();
     /// @notice #1460 — the claim's FRESH component exceeds the un-earmarked
     ///         VPFI behind it (`balanceOf(diamond) - recycleBucket`), so
     ///         paying it would leave the recycle bucket claiming tokens that

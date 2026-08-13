@@ -2206,7 +2206,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](18);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
@@ -2223,6 +2223,7 @@ contract DeployDiamond is Script {
         // `block.chainid`, no longer a settable endpoint id.
         s[3] = RewardReporterFacet.setBaseChainId.selector;
         s[4] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
+        s[17] = RewardReporterFacet.seedArmedFreshPaid.selector;
         s[5] = RewardReporterFacet.setRewardGraceSeconds.selector;
         s[6] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
         s[7] = RewardReporterFacet.getChainReportSentAt.selector;

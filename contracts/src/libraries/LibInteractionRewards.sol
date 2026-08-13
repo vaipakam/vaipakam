@@ -2408,7 +2408,17 @@ library LibInteractionRewards {
      *                       for this entry — the caller decrements its
      *                       headroom and credits the bucket with this.
      */
-    function sweepExpiredEntry(uint256 id, uint256 freshHeadroom)
+    /// @param deliveredAllowance Remaining MIRROR delivered-fresh allowance for
+    ///        this batch. Threaded and depleted by the caller exactly like
+    ///        `freshHeadroom` (Codex #1699 r2 P1): reading the storage figure
+    ///        per entry let several entries in one batch each measure against
+    ///        the same untouched allowance and collectively over-credit.
+    ///        `type(uint256).max` off-mirror, where the bound does not apply.
+    function sweepExpiredEntry(
+        uint256 id,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance
+    )
         internal
         returns (EntrySplit memory expired, uint256 freshCredited)
     {
@@ -2486,8 +2496,28 @@ library LibInteractionRewards {
         // documented optimistic-estimate caveat; this sweep is the
         // authority.)
         uint256 fundingNeed = userClaimFundingNeed(s, e.user);
+        // Codex #1699 r2 P1 — the MIRROR delivered bound belongs in this
+        // predicate, not only at the terminal.
+        //
+        // The horizon clock measures time during which the claimant COULD
+        // have claimed. If delivered funding cannot cover this entry's armed
+        // share, their own walk defers and they cannot be paid — so time
+        // spent in that state is not executable time. Checking it only at the
+        // terminal let an entry bank its full horizon+notice while unpayable
+        // and then expire the instant funding arrived, without the claimant
+        // ever getting the configured window.
+        //
+        // This is the w4 rule applied to a new clock: a bounded remediation
+        // window must not run while the remedy path is structurally
+        // unreachable. Reads the STORAGE bound deliberately — the batch-local
+        // allowance is about how much one sweep may spend, whereas this asks
+        // whether the entry is payable AT ALL.
+        bool deliveredPayable = toUser.armedFresh == 0
+            || !LibVaipakam.isMirrorRewardChain(s)
+            || toUser.armedFresh <= deliveredFreshBound(s);
         bool executable = !_recycledDrought(s, e.user) &&
             _poolCappedPayable(toUser) != 0 &&
+            deliveredPayable &&
             !LibVaipakam.isSanctionedAddress(e.user) &&
             !LibPausable.paused() &&
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
@@ -2615,9 +2645,12 @@ library LibInteractionRewards {
         // every mirror. The existing defer semantics carry over unchanged —
         // the block is RECORDED so the countdown pauses, and the wait clears
         // when the next remittance lands.
-        bool deliveredShort = split_.armedFresh != 0
-            && LibVaipakam.isMirrorRewardChain(s)
-            && split_.armedFresh > deliveredFreshBound(s);
+        // Codex #1699 r2 P1 — measure against the BATCH-LOCAL allowance the
+        // caller threads and depletes, never the storage figure: the facet
+        // accumulates `rewardBudgetArmedFreshPaid` only after its loop, so a
+        // per-entry storage read is stale for every entry after the first.
+        bool deliveredShort =
+            split_.armedFresh != 0 && split_.armedFresh > deliveredAllowance;
         if (freshShare > freshHeadroom || deliveredShort) {
             s.rewardEntryObsBlocked[id] = true;
             return (expired, 0);

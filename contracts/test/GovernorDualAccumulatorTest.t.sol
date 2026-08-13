@@ -16,6 +16,8 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  GovernorDualAccumulatorTest
@@ -375,6 +377,101 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _mut().getArmedFreshPaidRaw(),
             0,
             "and only then charges the delivered bound"
+        );
+    }
+
+    /// @dev #1434 P1-b (Codex #1699 r2 P1) — the one-shot pre-P1-b paid-side
+    ///      seed, and its refusal to run twice.
+    ///
+    ///      An in-place-upgraded mirror already holds deliveries in the
+    ///      RECEIVED counter for compensated / short-lapsed days that were
+    ///      payable before this slice, while the paid counter starts at zero.
+    ///      Unseeded, that already-spent funding reads as available. The seed
+    ///      is one-shot because it ADDS: a second call would double-charge the
+    ///      bound and strand funding that was never spent.
+    function testP1bSeedArmedFreshPaidIsOneShot() public {
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+
+        // Pre-upgrade shape: delivery recorded, paid side still at zero.
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+        (, uint256 beforeSeed) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
+        assertEq(beforeSeed, 1_000 ether, "LIVE: unseeded reads fully available");
+
+        _rep().seedArmedFreshPaid(400 ether);
+
+        (uint256 paid, uint256 remaining) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
+        assertEq(paid, 400 ether, "the seed lands on the paid side");
+        assertEq(remaining, 600 ether, "and the bound shrinks by exactly that");
+
+        // One-shot: a second call must refuse rather than add again.
+        vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadySeeded.selector);
+        _rep().seedArmedFreshPaid(1 ether);
+
+        (, uint256 after_) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
+        assertEq(after_, 600 ether, "a refused re-seed changes nothing");
+    }
+
+    /// @dev #1434 P1-b (Codex #1699 r2 P2) — the sweep must gate on what it
+    ///      will ACTUALLY charge, so a forfeiture whose post-cap charge fits
+    ///      still goes through.
+    ///
+    ///      This guards the bound's OTHER failure direction. The round-1 gate
+    ///      tested the sweep's NOMINAL armed share while the code charges only
+    ///      the post-cap pro-rata portion, so near 69M exhaustion a mixed
+    ///      forfeiture could revert although its real charge fit — leaving the
+    ///      entry and its commitment stuck, waiting on delivery that could
+    ///      never help (the binding limit there is the monotone cap).
+    ///
+    ///      A test that only checks "the gate refuses when short" would pass
+    ///      against that regression, which is exactly how it shipped.
+    function testP1bSweepSucceedsWhenPostCapChargeFits() public {
+        _armAndFinalize(5, 700 ether);
+
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+
+        // Mixed arming so armedFresh < freshWanted, then squeeze the 69M
+        // headroom so the fresh spend truncates hard.
+        uint256 id = _seedEntry(alice, 77, 4, 6);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(77, id);
+
+        uint256 snap = vm.snapshotState();
+        _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
+        vm.prank(makeAddr("keeper"));
+        uint256 full = _facet().sweepForfeitedInteractionRewards(77);
+        // Unclamped, the charge IS the nominal armed share — no extra getter
+        // needed, and it is measured rather than assumed.
+        uint256 nominalArmed = _mut().getArmedFreshPaidRaw();
+        vm.revertToState(snap);
+        assertGt(full, 0, "LIVE: this forfeiture genuinely sweeps");
+        assertGt(nominalArmed, 0, "LIVE: and it carries an armed share");
+
+        // Headroom for only a quarter of the fresh, and a delivered allowance
+        // far below the NOMINAL armed share but above the POST-CAP charge.
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - (full / 4)
+        );
+        // The allowance must sit BELOW the nominal armed share and ABOVE the
+        // post-cap charge — that gap is the ONLY state where gating on the
+        // nominal figure differs from gating on what is actually charged.
+        // Asserted, not assumed: without the gap both rules agree and this
+        // test cannot see the difference (a mutation run caught exactly that).
+        uint256 allowance = nominalArmed / 2;
+        assertGt(nominalArmed, allowance, "LIVE: nominal exceeds the allowance");
+        _mut().setArmedFreshLedgerRaw(allowance, 0);
+
+        vm.prank(makeAddr("keeper"));
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
+
+        assertGt(swept, 0, "the truncated sweep is NOT refused");
+        assertLe(
+            _mut().getArmedFreshPaidRaw(),
+            allowance,
+            "and charges no more than the allowance it was gated on"
         );
     }
 

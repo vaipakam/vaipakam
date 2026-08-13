@@ -129,6 +129,11 @@
   },
   {
     "type": "error",
+    "name": "ArmedFreshPaidAlreadySeeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {
