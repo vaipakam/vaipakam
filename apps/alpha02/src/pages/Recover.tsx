@@ -1214,13 +1214,18 @@ export function Recover() {
 
   useEffect(() => {
     genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
-    // Deliberately an effect. Three justifications were attempted and refuted
-    // before this one; what finally settled it was not an argument of mine but
-    // Codex #1689 r2 finding three concrete races in the render-phase version.
+    // Deliberately an effect. Three justifications for that were attempted and
+    // REJECTED at the time — but read (1) below before concluding it was wrong:
+    // justification (1) was later RESTORED as the correct reason for this screen
+    // (Codex #1689 r2), so the history is "rejected, then one vindicated", not
+    // "all three refuted and a fourth found" (Codex #1689 r5 caught that this
+    // paragraph contradicted the bullet). What settled it was not an argument of
+    // mine but r2 finding three concrete races in the render-phase version.
     //
-    // Refuted earlier: (1) "`genRef` is a coherence guard so guard and guarded
-    // state must advance together" — dismissed on the *PositionDetails* reset in
-    // #1683 r1, and I wrongly carried that dismissal over to here. (2) "entangled
+    // Rejected at the time: (1) "`genRef` is a coherence guard so guard and
+    // guarded state must advance together" — dismissed on the *PositionDetails*
+    // reset in #1683 r1, and I wrongly carried that dismissal over to here;
+    // r2 showed it holds HERE (see the first bullet). (2) "entangled
     // with the rehydration in this same pass" — wrong, both halves fit one pass.
     // (3) "`setStep` writes `stepRef` synchronously so the reset cannot move" —
     // true of `setStep`, but the reset can bypass it via `setStepState`.
@@ -1248,12 +1253,21 @@ export function Recover() {
     //   bumped `genRef` in a LAYOUT effect during the identity commit, so a
     //   continuation resuming after the commit was rejected before either wallet
     //   call, while this passive effect leaves that post-commit interval open. The
-    //   two trade windows rather than one being better. Combining them — the reset
-    //   here, plus a commit-time generation bump — is a candidate improvement
-    //   recorded in #1691, deliberately not attempted mid-review-loop on a signing
-    //   path. An identity fence around the imperative wallet calls (including the
+    //   two trade windows rather than one being better. Combining them is a
+    //   candidate recorded in #1691 — but NOT by adding a second bump (Codex
+    //   #1689 r5): keeping this one and adding a commit-time one publishes two
+    //   generations per identity change, so a NEW-identity submit starting in the
+    //   post-commit/pre-effect interval captures the intermediate value, is
+    //   spuriously invalidated with no identity change, and implicitly releases
+    //   its generation-keyed `inFlightRef` claim. The sole bump must MOVE to
+    //   commit time. Deliberately not attempted mid-review-loop on a signing path.
+    //   An identity fence around the imperative wallet calls (including the
     //   reservation write, which has no generation check on its success path) is
-    //   the separate live gap, also #1691.
+    //   the separate live gap, also #1691 — and it cannot be built from `genRef`
+    //   or any effect-maintained ref, since during the pre-commit window both
+    //   still describe the OLD identity. It needs the wallet/provider's LIVE
+    //   account+chain, synchronous invalidation from the wallet event, or blanket
+    //   suppression across the transition (Codex #1689 r5).
     // - Mirroring the committed step into `stepRef` from a layout effect can roll
     //   a newer synchronous `setStep(B)` back to `A`, which is precisely the
     //   render-behind bug the synchronous mirror exists to prevent.
@@ -1265,8 +1279,11 @@ export function Recover() {
     // identity fence on the imperative wallet calls, ordered/keyed handling of the
     // oracle retry budget, and `useSyncExternalStore` for the record — a
     // concurrency redesign of a signing path, which is not a lint cleanup. Tracked
-    // as #1691. The effect is the better of the two options today; it is not a
-    // proof that this screen has no races.
+    // as #1691. This effect is RETAINED pending that redesign — deliberately not
+    // stated as the better design (Codex #1689 r5): each shape wins a different
+    // race window, and #1691's implementer should weigh that trade fresh rather
+    // than inherit a ranking from here. It is certainly not a proof that this
+    // screen has no races.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     clearToFreshForm();
     oracleAutoRetriesRef.current = 0;
