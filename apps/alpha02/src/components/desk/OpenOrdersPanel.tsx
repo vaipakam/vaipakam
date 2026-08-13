@@ -58,6 +58,7 @@ import { readAllowance, useAllowanceForPlan } from '../../lib/submitProgress';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { AssetType } from '../../lib/types';
 import { captureTxError, isPlainDecimal } from '../../lib/errors';
+import { armedCeilingOf, shouldWarnCeilingBelowQuote } from './armedCeiling';
 import { WindowedRowList } from '../../lib/visibleWindow';
 import { percentToBps, MAX_INTEREST_BPS } from '../../lib/offerSchema';
 import {
@@ -723,25 +724,15 @@ function FullTariffArmForm({
   // decision, exactly as it does for an under-funded vault. Saving is
   // reversible here; an acceptance is not, which is why that side blocks and
   // this one does not.
-  const armedCeiling = (() => {
-    if (!fields?.full || !isPlainDecimal(fields.ceiling)) return undefined;
-    try {
-      const v = parseUnits(fields.ceiling, VPFI_DECIMALS);
-      return v > 0n ? v : undefined;
-    } catch {
-      return undefined;
-    }
-  })();
-  // Gated on `armAllowed` (Codex #1703 r1): with the feature off, the liquidity
-  // read pending/failed, or the asset illiquid, Save is DISABLED — and a
-  // warning ending "you can save this either way" beside a disabled button
-  // contradicts the actionable unavailability message already shown there. The
-  // acceptance side gates the same way, on `fullOfferable`.
-  const ceilingBelowQuote =
-    armAllowed &&
-    quoted !== undefined &&
-    armedCeiling !== undefined &&
-    quoted > armedCeiling;
+  // Extracted to `armedCeiling.ts` so it can be unit-asserted (#1703 follow-up):
+  // the desk carries no test ids, so the only in-component tier would be a
+  // text-located UI drive, and a flaky spec is worse than the documented gap.
+  const armedCeiling = armedCeilingOf(fields);
+  const ceilingBelowQuote = shouldWarnCeilingBelowQuote({
+    armAllowed,
+    quoted,
+    armedCeiling,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
