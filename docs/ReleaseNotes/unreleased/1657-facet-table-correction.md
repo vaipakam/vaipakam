@@ -16,7 +16,10 @@ operations.
 Two details in the new descriptions were corrected in review, and both are the
 kind of thing this change exists to prevent. Refinancing does **not** edit a
 loan's terms in place: it closes the original and replaces it with a separate
-loan record, which matters to anything tracking loan identity. And the
+loan record, which matters to anything tracking loan identity. The original's
+two position certificates are also kept rather than destroyed — marked as
+settled, so the former borrower keeps a redeemable claim on the position they
+left. And the
 treasury's custody role depends on how the protocol is deployed — on the
 documented mainnet setup, fees leave for an external multisig immediately, so
 the claim and conversion paths have nothing held at the protocol to act on.
