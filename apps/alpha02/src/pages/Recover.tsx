@@ -716,6 +716,9 @@ function sanitizeTokenSymbol(raw: string): string {
  *  token with the current input and gate `canReview` on mismatched
  *  values. Consumers must check `token === tokenInput` before use. */
 interface TokenLookup {
+  /** Identity of the (token, account, chain, client) the read was made for. */
+  key: string;
+  /** The token address itself — data the submit path signs over, not identity. */
   token: string;
   symbol: string;
   decimals: number;
@@ -1204,6 +1207,15 @@ export function Recover() {
 
   useEffect(() => {
     genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
+    // Deliberately an effect (#1520): this is an IDENTITY TEARDOWN whose state
+    // resets are coupled to a generation-counter ref that invalidates in-flight
+    // async (Codex #1547 r3). Same shape as PositionDetails' chain reset — the
+    // ref is a coherence guard, not an incidental value, so moving the resets to
+    // a render-phase adjustment while `genRef` caught up in an effect would let a
+    // continuation started under the OLD identity pass the generation check and
+    // write its result over the freshly cleared form. The guard and the state it
+    // protects have to advance together, which means after the commit.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     clearToFreshForm();
     oracleAutoRetriesRef.current = 0;
     const chainId = walletChain?.chainId;
@@ -1350,6 +1362,11 @@ export function Recover() {
   >('probing');
   useEffect(() => {
     if (!publicClient || !walletChain) {
+      // Deliberately an effect (#1520): this OWNS an async probe (with a retry
+      // timer and a cancellation flag), and 'probing' is its launch state. There is
+      // nothing to derive from — the value does not exist until the probe answers,
+      // so the load state has to be written by the thing that starts the load.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setOracleState('probing');
       return;
     }
@@ -1401,26 +1418,29 @@ export function Recover() {
   // 'eoa' answer until the slower probe answered. A stale tag reads as
   // 'probing', which is what the availability card already covers.
   const [accountProbe, setAccountProbe] = useState<{
-    address: string;
-    chainId: number | undefined;
+    key: string;
     kind: 'eoa' | 'contract';
   } | null>(null);
+  // The probe is keyed on EVERY input that can change its answer (#1520;
+  // Codex #1684 r1). It used to tag only address and chainId, so replacing
+  // `publicClient` while both held steady started a fresh `getCode` without
+  // invalidating the old result — the previous kind stayed on screen until the
+  // new call settled. Pending is now derived from a key mismatch, which is
+  // what lets the synchronous reset go: there is no state to clear, because a
+  // result that does not match the live key is already not being read.
+  const accountProbeKey =
+    publicClient && address
+      ? `${address}|${walletChain?.chainId ?? ''}|${publicClient.uid}`
+      : null;
   const accountKind: 'probing' | 'eoa' | 'contract' =
-    accountProbe !== null &&
-    address !== undefined &&
-    accountProbe.address === address &&
-    accountProbe.chainId === walletChain?.chainId
+    accountProbeKey !== null && accountProbe?.key === accountProbeKey
       ? accountProbe.kind
       : 'probing';
   useEffect(() => {
-    if (!publicClient || !address) {
-      setAccountProbe(null);
-      return;
-    }
-    const probedChainId = walletChain?.chainId;
+    if (!publicClient || !address || accountProbeKey === null) return;
     let cancelled = false;
     const record = (kind: 'eoa' | 'contract') => {
-      if (!cancelled) setAccountProbe({ address, chainId: probedChainId, kind });
+      if (!cancelled) setAccountProbe({ key: accountProbeKey, kind });
     };
     (async () => {
       try {
@@ -1446,12 +1466,16 @@ export function Recover() {
     return () => {
       cancelled = true;
     };
-  }, [publicClient, address, walletChain?.chainId]);
+  }, [publicClient, address, walletChain?.chainId, accountProbeKey]);
 
   // Live token meta + the unsolicited-surplus cap for the entered
   // token: surplus = max(0, balanceOf(vault) − protocol-tracked).
   const [lookup, setLookup] = useState<TokenLookup | null>(null);
-  const [lookupFailed, setLookupFailed] = useState(false);
+  // The failure marker carries the key it belongs to, rather than being a bare
+  // boolean (#1520; Codex #1684 r1). Untagged, a failure recorded for one
+  // account or chain stayed true after the inputs moved, so the "couldn't read
+  // this token" notice outlived the read it described.
+  const [lookupFailedFor, setLookupFailedFor] = useState<string | null>(null);
 
   // NON-ZERO is part of "valid" here (Codex #1547 r9): `isAddress`
   // accepts 0x0000…0000, so without this the user could reach review
@@ -1464,10 +1488,21 @@ export function Recover() {
   const validToken = isAddress(tokenInput) && !isZeroAddressInput(tokenInput);
   const validSource = isAddress(sourceInput) && !isZeroAddressInput(sourceInput);
 
-  // The lookup only counts when it describes the CURRENT input — a
-  // stale object for a previously-entered token must gate nothing.
+  // The lookup only counts when it describes the CURRENT input. The key spans
+  // every input that can change the answer — token, account, chain and client
+  // (#1520; Codex #1684 r1). It previously compared the token alone, so a
+  // result read for a different account or chain stayed current until the
+  // effect's synchronous reset ran a commit later. Deriving both the result
+  // and its failure marker from the key is what lets that reset go.
+  const lookupKey =
+    validToken && address && publicClient && walletChain
+      ? `${tokenInput}|${address}|${walletChain.chainId}|${publicClient.uid}`
+      : null;
   const activeLookup =
-    lookup !== null && lookup.token === tokenInput ? lookup : null;
+    lookup !== null && lookupKey !== null && lookup.key === lookupKey
+      ? lookup
+      : null;
+  const lookupFailed = lookupKey !== null && lookupFailedFor === lookupKey;
 
   const amountWei = useMemo(() => {
     if (!amountInput || !activeLookup) return null;
@@ -1504,11 +1539,8 @@ export function Recover() {
   }, [amountInput, activeLookup]);
 
   useEffect(() => {
-    if (!validToken || !address || !publicClient || !walletChain) {
-      setLookup(null);
-      setLookupFailed(false);
-      return;
-    }
+    if (!validToken || !address || !publicClient || !walletChain) return;
+    if (lookupKey === null) return;
     let cancelled = false;
     (async () => {
       try {
@@ -1616,18 +1648,18 @@ export function Recover() {
         if (cancelled) return;
         // ONE atomic write, stamped with the token it was queried for
         // (Codex #1547 r1) — consumers gate on that stamp.
-        setLookup({ token: tokenInput, symbol, decimals, rawUnits, surplus });
-        setLookupFailed(false);
+        setLookup({ key: lookupKey, token: tokenInput, symbol, decimals, rawUnits, surplus });
+        setLookupFailedFor(null);
       } catch {
         if (cancelled) return;
         setLookup(null);
-        setLookupFailed(true);
+        setLookupFailedFor(lookupKey);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [validToken, tokenInput, address, publicClient, walletChain]);
+  }, [validToken, tokenInput, address, publicClient, walletChain, lookupKey]);
 
   const canReview =
     validToken &&
