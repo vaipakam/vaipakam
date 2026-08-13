@@ -150,13 +150,34 @@ export function FullTariffOptIn({
     }
   }, [ceilingText]);
 
+  // #1694 — the ceiling is seeded ONCE from the first quote (plus headroom)
+  // and then belongs to the user, while the quote refetches on a timer. So a
+  // rise past the ceiling is reachable without anyone touching anything, and
+  // the contract's answer is unforgiving: `resolveAndCharge` reverts
+  // `FeeEntitlementTariffAboveAuth` when `cStar > maxCStar`, or silently
+  // downgrades to HoldOnly if the party ticked `allowDowngrade`. Either way
+  // the accept the user is looking at is already doomed, and nothing on the
+  // card said so — the numbers needed to know it are BOTH on screen.
+  //
+  // Deliberately NOT folded into `fullBlocked`: that one gates whether the
+  // control renders at all while UNENGAGED (see the early return below), and
+  // a user-fixable ceiling must not make the option disappear. It joins
+  // `engagedBlocked` instead, so the signer refuses a doomed accept while the
+  // card stays visible and explains the fix.
+  const ceilingOvertaken =
+    value.full &&
+    quoted !== undefined &&
+    ceiling !== undefined &&
+    ceiling > 0n &&
+    quoted > ceiling;
+
   // Codex #1412 r1/r3/r5 — an ENGAGED Full whose conditions break
   // (kill-switch off / refetch error / unpriceable / illiquid) is
   // marked BLOCKED, never silently cleared: the card stays visible
   // with the unavailable notice, the signer refuses to sign while the
   // mark is set, and only the user's explicit untick turns their
   // "Full or reject" intent into a non-Full accept.
-  const engagedBlocked = !config.enabled || fullBlocked;
+  const engagedBlocked = !config.enabled || fullBlocked || ceilingOvertaken;
   useEffect(() => {
     if (!value.full) return;
     if (Boolean(value.blocked) !== engagedBlocked) {
@@ -234,7 +255,31 @@ export function FullTariffOptIn({
               )
             : copy.tariff.quoteUnavailable}
       </p>
-      {value.full && engagedBlocked ? (
+      {ceilingOvertaken && quoted !== undefined && ceiling !== undefined ? (
+        // Its own notice rather than the generic one: "Full isn't available"
+        // would be false. Full is available; the ceiling is the problem, and
+        // it is the user's to move.
+        <div className="banner banner-warn" role="alert" style={{ marginTop: 8 }}>
+          <span className="banner-body">
+            {copy.tariff.ceilingOvertaken(
+              formatTokenAmount(quoted, VPFI_DECIMALS),
+              formatTokenAmount(ceiling, VPFI_DECIMALS),
+            )}
+          </span>
+          {suggestedCeiling !== undefined ? (
+            <button
+              type="button"
+              className="btn btn-small"
+              style={{ marginTop: 8 }}
+              onClick={() =>
+                setCeilingText(exactAmountString(suggestedCeiling, VPFI_DECIMALS))
+              }
+            >
+              {copy.tariff.raiseCeiling}
+            </button>
+          ) : null}
+        </div>
+      ) : value.full && engagedBlocked ? (
         <div className="banner banner-warn" role="alert" style={{ marginTop: 8 }}>
           <span className="banner-body">
             {copy.tariff.fullUnavailableNow} {copy.tariff.engagedUnavailableHint}

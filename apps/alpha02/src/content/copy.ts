@@ -2976,6 +2976,11 @@ const copySource = {
     maxCStarLabel: 'Highest tariff I authorize (VPFI)',
     maxCStarHelp:
       'The exact tariff is re-priced at the moment the loan opens; it can never exceed this ceiling. Set it a little above the quote so a small move between now and then doesn’t block you.',
+    ceilingOvertaken: tmpl(
+      'The live tariff quote is now {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you authorized, so opening the loan would be rejected. Raise the ceiling to continue, or untick the option to open without it.',
+      ['quote', 'ceiling'],
+    ),
+    raiseCeiling: 'Raise my ceiling to fit the current quote',
     maxCStarRequired:
       'Set the highest tariff you authorize (in VPFI) before opting in — a Full opt-in without a ceiling can’t be signed.',
     balanceShort: tmpl(

@@ -2176,6 +2176,8 @@
       "nonRefundNote": "该费率在贷款开立时按全期定价，贷款提前结清也不退还。",
       "maxCStarLabel": "我授权的最高费率（VPFI）",
       "maxCStarHelp": "确切费率会在贷款开立的那一刻重新定价，但绝不会超过此上限。请设得比报价略高一些，以免期间的小幅变动阻碍您。",
+      "ceilingOvertaken": "当前费率报价为 {{quote}} VPFI，已超过你授权的 {{ceiling}} VPFI 上限，因此开仓将被拒绝。请提高上限以继续，或取消勾选该选项以不使用它开仓。",
+      "raiseCeiling": "将我的上限提高到当前报价",
       "maxCStarRequired": "参与之前请先设定您授权的最高费率（以 VPFI 计）——没有上限的全额参与无法签名。",
       "balanceShort": "您的 Vault 有 {{balance}} VPFI 可用——低于 {{needed}} VPFI 的报价，因此全额参与会在贷款开立时失败。",
       "downgradeLabel": "若全额费率无法完成，则不带它开立贷款",
