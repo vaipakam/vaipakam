@@ -32,7 +32,10 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../../contracts/diamond';
-import { useSignedOfferAcceptTermsSigning } from '../../contracts/useAcceptTerms';
+import {
+  useSignedOfferAcceptTermsSigning,
+  useAcceptorCeilingRecheck,
+} from '../../contracts/useAcceptTerms';
 import { ensureAllowance, useTokenMeta } from '../../contracts/erc20';
 import {
   assertAssetNotPausedLive,
@@ -103,6 +106,10 @@ export function SignedFillConfirm({
   const [fullTariff, setFullTariff] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Same post-approval re-check as the direct accept (Codex #1700 r7): the
+  // allowance step lands after the fill signature, so the quote can cross
+  // before this write and the transaction would revert on-chain.
+  const recheckCeiling = useAcceptorCeilingRecheck();
   const [filledHash, setFilledHash] = useState<string | null>(null);
 
   const killed = flowDisabled('accept-offer');
@@ -315,6 +322,12 @@ export function SignedFillConfirm({
       if (makerFreePreWrite < stakeAmount) {
         throw new Error(text.makerNotFunded);
       }
+      await recheckCeiling({
+        lendingAsset: o.lendingAsset as `0x${string}`,
+        amount: signedOfferCeiling(o),
+        durationDays: BigInt(o.durationDays),
+        fullTariff,
+      });
       const { hash } = await write('acceptSignedOffer', [
         signedOfferTypedMessage(o),
         signed.signature,

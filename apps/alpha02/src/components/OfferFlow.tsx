@@ -36,7 +36,10 @@ import {
   disablePermit2ForSession,
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
-import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
+import {
+  useAcceptTermsSigning,
+  useAcceptorCeilingRecheck,
+} from '../contracts/useAcceptTerms';
 import { SimulationPreview } from './SimulationPreview';
 import { CollateralPrecheck } from './CollateralPrecheck';
 import { SelectMenu } from './SelectMenu';
@@ -275,6 +278,11 @@ export function OfferFlow({ side }: { side: Side }) {
   const { write } = useDiamondWrite();
   const permit2 = usePermit2Signing();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
+  // Re-check the acceptor's tariff ceiling immediately before EVERY final
+  // write (Codex #1700 r7): the approval / Permit2 step runs after the accept
+  // signature, so the quote can cross in between and the transaction would be
+  // sent only to revert `FeeEntitlementTariffAboveAuth`, burning the gas.
+  const recheckCeiling = useAcceptorCeilingRecheck();
   const fees = useProtocolFees();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1982,6 +1990,12 @@ export function OfferFlow({ side }: { side: Side }) {
             // breaker, so a manual retry routes classic.
             stepper.next('send');
           reachedFinalSendRef.current = true;
+            await recheckCeiling({
+              lendingAsset: selected.lendingAsset as `0x${string}`,
+              amount: offerPrincipal(selected),
+              durationDays: BigInt(selected.durationDays),
+              fullTariff,
+            });
             try {
               const { hash } = await write('acceptOfferWithPermit', [
                 BigInt(selected.offerId),
@@ -2010,6 +2024,12 @@ export function OfferFlow({ side }: { side: Side }) {
     }
     stepper.next('send');
     reachedFinalSendRef.current = true;
+    await recheckCeiling({
+      lendingAsset: selected.lendingAsset as `0x${string}`,
+      amount: offerPrincipal(selected),
+      durationDays: BigInt(selected.durationDays),
+      fullTariff,
+    });
     const { hash } = await write('acceptOffer', [
       BigInt(selected.offerId),
       terms,

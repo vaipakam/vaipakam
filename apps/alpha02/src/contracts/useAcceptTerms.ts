@@ -952,7 +952,7 @@ export function useSignedOfferAcceptTermsSigning() {
  *  with the downgrade permitted, `resolveAndCharge` opens the loan without
  *  Full instead of reverting, and `downgradeHelpAllow` promises exactly that.
  *  Refusing there would break a promise the user relied on. */
-async function assertAcceptorCeilingLive(args: {
+export async function assertAcceptorCeilingLive(args: {
   publicClient: NonNullable<ReturnType<typeof usePublicClient>>;
   diamondAddress: Address;
   lendingAsset: Address;
@@ -1044,6 +1044,47 @@ async function assertAcceptorCeilingLive(args: {
     }
     // Transport / selector-shaped failure — proceed; enforced on-chain.
   }
+}
+
+/** Re-check for the FINAL WRITE (Codex #1700 r7 F1).
+ *
+ *  `useAcceptTerms` checks the ceiling before signing, but the approval /
+ *  Permit2 step happens AFTER that signature — so the quote can cross in the
+ *  window between them, and every final-send path would otherwise submit a
+ *  transaction that reverts `FeeEntitlementTariffAboveAuth` and burns the
+ *  gas. The same rule as everywhere else on this path: re-read at the moment
+ *  of the write, never trust what was true at the previous step. */
+export function useAcceptorCeilingRecheck() {
+  const { walletChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const queryClient = useQueryClient();
+  return useCallback(
+    async (args: {
+      lendingAsset: Address;
+      amount: bigint;
+      durationDays: bigint;
+      fullTariff: {
+        full: boolean;
+        maxCStar: bigint;
+        allowDowngrade: boolean;
+      };
+    }) => {
+      if (!publicClient || !walletChain) return;
+      await assertAcceptorCeilingLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        lendingAsset: args.lendingAsset,
+        amount: args.amount,
+        durationDays: args.durationDays,
+        full: args.fullTariff.full,
+        allowDowngrade: args.fullTariff.allowDowngrade,
+        maxCStar: args.fullTariff.maxCStar,
+        queryClient,
+        chainId: walletChain.chainId,
+      });
+    },
+    [publicClient, walletChain, queryClient],
+  );
 }
 
 function resolveFullTariffInput(
