@@ -40,8 +40,24 @@ least-privilege:
   keys (`ZEROEX_API_KEY`, `ONEINCH_API_KEY`,
   the retired `BLOCKAID_API_KEY`, see §4.3) are operational secrets but not
   fund-moving capability.
-- `vaipakam-indexer` is read-only — RPC reads, D1 writes, no
-  HTTP-level secrets.
+- `vaipakam-indexer` is the **chain-read + API** Worker: RPC reads, D1
+  writes, inbound Alchemy webhook verification, and **authenticated
+  outbound publication of Seaport listings to OpenSea**
+  (`openseaPublish.ts`). It holds four HTTP-level secrets —
+  `OPENSEA_API_KEY` and three `ALCHEMY_WEBHOOK_SIGNING_KEY_*`.
+
+  This bullet used to read "read-only — RPC reads, D1 writes, no
+  HTTP-level secrets". Both halves were false, and the second is the
+  kind of line an auditor reasonably relies on to skip a Worker's secret
+  surface entirely.
+
+  **The blast-radius ordering below is stated for the keeper-vs-agent
+  axis and has not been re-derived against this.** A compromised indexer
+  cannot move funds, so the keeper still sits alone at the top — but it
+  can publish listings to a live marketplace under the project's API
+  key, which is not nothing and is not what "read-only" implies. Whether
+  that changes its deploy cadence or reviewer sign-off is an open
+  question (#1715), deliberately not answered here.
 
 A buggy agent produces stale data; a buggy keeper loses funds.
 Different blast radius justifies different deploy cadence +
