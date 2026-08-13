@@ -483,21 +483,6 @@ export function useAcceptTermsSigning() {
         }
       }
 
-      // The ACCEPTOR's own ceiling, re-read live for the same reason the
-      // creator's is (Codex #1700 r3 F2): the click-time snapshot cannot see a
-      // quote that crossed while the preflights above were awaiting.
-      await assertAcceptorCeilingLive({
-        publicClient,
-        diamondAddress: diamondAddr,
-        lendingAsset,
-        amount: roleAmount,
-        durationDays: saleLoan ? saleLoan.durationDays : (o.durationDays as bigint),
-        full: fullTariff.acceptorFull,
-        allowDowngrade: fullTariff.acceptorAllowFullDowngrade,
-        maxCStar: fullTariff.acceptorMaxCStar,
-        queryClient,
-        chainId: walletChain.chainId,
-      });
 
       const terms: AcceptTerms = {
         acceptor: address,
@@ -603,6 +588,29 @@ export function useAcceptTermsSigning() {
           throw new Error(copy.match.termsChanged);
         }
       }
+
+      // AFTER the reviewed-vs-canonical comparison, deliberately (Codex #1700
+      // r7): an amendment that raises the principal enough to cross the
+      // ceiling would otherwise throw the ceiling error first, so the user
+      // would be told to raise a ceiling while the real problem is that the
+      // terms they reviewed no longer exist — and the caller would never
+      // receive `termsChanged`, so it would not invalidate the stale offer.
+      // Terms first, tariff second.
+      // The ACCEPTOR's own ceiling, re-read live for the same reason the
+      // creator's is (Codex #1700 r3 F2): the click-time snapshot cannot see a
+      // quote that crossed while the preflights above were awaiting.
+      await assertAcceptorCeilingLive({
+        publicClient,
+        diamondAddress: diamondAddr,
+        lendingAsset,
+        amount: roleAmount,
+        durationDays: saleLoan ? saleLoan.durationDays : (o.durationDays as bigint),
+        full: fullTariff.acceptorFull,
+        allowDowngrade: fullTariff.acceptorAllowFullDowngrade,
+        maxCStar: fullTariff.acceptorMaxCStar,
+        queryClient,
+        chainId: walletChain.chainId,
+      });
 
       const signature = (await walletClient.signTypedData({
         account: address,
@@ -970,7 +978,20 @@ async function assertAcceptorCeilingLive(args: {
     // in-flight change this helper exists to catch. Only a
     // downgrade-authorized submission may continue, and those never reach
     // here (gated above).
-    if (!enabled) throw new Error(copy.tariff.fullUnavailableNow);
+    if (!enabled) {
+      // Publish it before throwing (Codex #1700 r7), symmetric with the
+      // over-ceiling branch below: otherwise the card keeps showing Full as
+      // available for up to its 30s poll while the banner says it is not, and
+      // every retry hits the same invisible live condition.
+      args.queryClient.setQueryData(
+        ['feeEntitlementConfig', args.chainId],
+        (prev: unknown) =>
+          prev && typeof prev === 'object'
+            ? { ...(prev as object), enabled: false }
+            : prev,
+      );
+      throw new Error(copy.tariff.fullUnavailableNow);
+    }
     const [cStar, numeraireOk] = (await args.publicClient.readContract({
       address: args.diamondAddress,
       abi: DIAMOND_ABI_VIEM,
@@ -980,7 +1001,19 @@ async function assertAcceptorCeilingLive(args: {
     // Likewise unpriceable mid-submit: `resolveAndCharge` treats
     // `!numeraireOk` as a failed Full opt-in, so a strict Full is doomed and
     // must abort rather than proceed on a stale snapshot (Codex #1700 r5).
-    if (!numeraireOk) throw new Error(copy.tariff.fullUnavailableNow);
+    if (!numeraireOk) {
+      args.queryClient.setQueryData(
+        [
+          'cStarQuote',
+          args.chainId,
+          args.lendingAsset.toLowerCase(),
+          args.amount.toString(),
+          Number(args.durationDays),
+        ],
+        { cStar, numeraireOk: false },
+      );
+      throw new Error(copy.tariff.fullUnavailableNow);
+    }
     if (cStar > args.maxCStar) {
       // Publish the fresh quote BEFORE throwing (Codex #1700 r5). When this
       // read is the first to see the crossing, the card still holds the older
