@@ -480,6 +480,20 @@ export function useAcceptTermsSigning() {
         }
       }
 
+      // The ACCEPTOR's own ceiling, re-read live for the same reason the
+      // creator's is (Codex #1700 r3 F2): the click-time snapshot cannot see a
+      // quote that crossed while the preflights above were awaiting.
+      await assertAcceptorCeilingLive({
+        publicClient,
+        diamondAddress: diamondAddr,
+        lendingAsset,
+        amount: roleAmount,
+        durationDays: saleLoan ? saleLoan.durationDays : (o.durationDays as bigint),
+        full: fullTariff.acceptorFull,
+        allowDowngrade: fullTariff.acceptorAllowFullDowngrade,
+        maxCStar: fullTariff.acceptorMaxCStar,
+      });
+
       const terms: AcceptTerms = {
         acceptor: address,
         offerCreator: o.creator as Address,
@@ -788,6 +802,23 @@ export function useSignedOfferAcceptTermsSigning() {
       const lendingAsset = o.lendingAsset as Address;
       const collateralAsset = o.collateralAsset as Address;
 
+
+      // Same live ceiling re-check on the signed-fill path (Codex #1700 r3 F2
+      // names both): this submit closure carries its own click-time snapshot.
+      await assertAcceptorCeilingLive({
+        publicClient,
+        diamondAddress: diamondAddr,
+        lendingAsset,
+        amount: roleAmount,
+        // A signed order carries durationDays as a STRING, unlike the direct
+        // path's bigint — the surrounding code uses BigInt(o.amount) for the
+        // same reason.
+        durationDays: BigInt(o.durationDays),
+        full: fullTariff.acceptorFull,
+        allowDowngrade: fullTariff.acceptorAllowFullDowngrade,
+        maxCStar: fullTariff.acceptorMaxCStar,
+      });
+
       const terms: AcceptTerms = {
         acceptor: address,
         offerCreator: o.signer as Address,
@@ -856,6 +887,67 @@ export function useSignedOfferAcceptTermsSigning() {
  *  fails HERE (mirroring the contract's `FullTariffMaxCStarRequired`)
  *  so a malformed control can never reach the wallet prompt, and a
  *  non-Full choice signs hard zeros — never a leftover ceiling. */
+
+/** Live re-check of the ACCEPTOR's own `maxCStar` ceiling, immediately before
+ *  signing (Codex #1700 r3 F2).
+ *
+ *  The card marks an overtaken ceiling blocked, but that mark travels through
+ *  parent state and a submission already in flight carries the object it
+ *  captured at click time. So a quote that crosses while the live preflights
+ *  are still awaiting reaches the signer with `blocked: false`, and the wallet
+ *  is prompted for a tariff the contract will refuse — the exact outcome the
+ *  card exists to prevent. A captured flag cannot see a later change; only a
+ *  fresh read can.
+ *
+ *  Deliberately mirrors the CREATOR-side preflight above (#1412 r4) rather
+ *  than inventing a second shape: same quote call, same fail-OPEN posture on
+ *  transport or missing-selector failures (the contract enforces regardless;
+ *  this only saves the taker a wasted signature), same throw-to-abort.
+ *
+ *  Gated on `!allowDowngrade`, matching both the contract and the checkbox:
+ *  with the downgrade permitted, `resolveAndCharge` opens the loan without
+ *  Full instead of reverting, and `downgradeHelpAllow` promises exactly that.
+ *  Refusing there would break a promise the user relied on. */
+async function assertAcceptorCeilingLive(args: {
+  publicClient: NonNullable<ReturnType<typeof usePublicClient>>;
+  diamondAddress: Address;
+  lendingAsset: Address;
+  amount: bigint;
+  durationDays: bigint;
+  full: boolean;
+  allowDowngrade: boolean;
+  maxCStar: bigint;
+}): Promise<void> {
+  if (!args.full || args.allowDowngrade || args.maxCStar <= 0n) return;
+  try {
+    const [enabled] = (await args.publicClient.readContract({
+      address: args.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getFeeEntitlementConfig',
+    })) as readonly [boolean, bigint, bigint];
+    // Switched off: `resolveFullTariffInput`'s own rules and the card's
+    // blocked mark already cover that case; nothing to say about a ceiling.
+    if (!enabled) return;
+    const [cStar, numeraireOk] = (await args.publicClient.readContract({
+      address: args.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'quoteCStar',
+      args: [args.lendingAsset, args.amount, args.durationDays],
+    })) as readonly [bigint, boolean];
+    // Unpriceable is a different failure with its own copy; only the
+    // ceiling comparison belongs here.
+    if (!numeraireOk) return;
+    if (cStar > args.maxCStar) {
+      throw new Error(copy.tariff.ceilingOvertakenSubmit);
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message === copy.tariff.ceilingOvertakenSubmit) {
+      throw e;
+    }
+    // Transport / selector-shaped failure — proceed; enforced on-chain.
+  }
+}
+
 function resolveFullTariffInput(
   fullTariff:
     | {
