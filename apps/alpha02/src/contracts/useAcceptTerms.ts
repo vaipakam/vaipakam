@@ -27,11 +27,13 @@ import type { Address, Hex } from 'viem';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import {
   signedOrderHash,
   signedOrderTimeWindowsOpen,
   type SignedOrderWire,
+  signedOfferCeiling,
 } from '../lib/signedOffer';
 import { isAssetIlliquidLive, isMissingSelectorError } from './preflights';
 
@@ -135,6 +137,7 @@ export function useAcceptTermsSigning() {
   const { address, walletChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const queryClient = useQueryClient();
 
   const sign = useCallback(
     async (input: {
@@ -152,6 +155,7 @@ export function useAcceptTermsSigning() {
         maxCStar: bigint;
         allowDowngrade: boolean;
         blocked?: boolean;
+        blockedReason?: 'unavailable' | 'ceiling';
       };
       /** The terms the user REVIEWED (from the indexer row). Compared
        *  against the canonical terms BEFORE the wallet is asked to
@@ -479,6 +483,7 @@ export function useAcceptTermsSigning() {
         }
       }
 
+
       const terms: AcceptTerms = {
         acceptor: address,
         offerCreator: o.creator as Address,
@@ -584,6 +589,29 @@ export function useAcceptTermsSigning() {
         }
       }
 
+      // AFTER the reviewed-vs-canonical comparison, deliberately (Codex #1700
+      // r7): an amendment that raises the principal enough to cross the
+      // ceiling would otherwise throw the ceiling error first, so the user
+      // would be told to raise a ceiling while the real problem is that the
+      // terms they reviewed no longer exist — and the caller would never
+      // receive `termsChanged`, so it would not invalidate the stale offer.
+      // Terms first, tariff second.
+      // The ACCEPTOR's own ceiling, re-read live for the same reason the
+      // creator's is (Codex #1700 r3 F2): the click-time snapshot cannot see a
+      // quote that crossed while the preflights above were awaiting.
+      await assertAcceptorCeilingLive({
+        publicClient,
+        diamondAddress: diamondAddr,
+        lendingAsset,
+        amount: roleAmount,
+        durationDays: saleLoan ? saleLoan.durationDays : (o.durationDays as bigint),
+        full: fullTariff.acceptorFull,
+        allowDowngrade: fullTariff.acceptorAllowFullDowngrade,
+        maxCStar: fullTariff.acceptorMaxCStar,
+        queryClient,
+        chainId: walletChain.chainId,
+      });
+
       const signature = (await walletClient.signTypedData({
         account: address,
         domain: {
@@ -599,7 +627,7 @@ export function useAcceptTermsSigning() {
 
       return { terms, signature };
     },
-    [address, walletChain, walletClient, publicClient],
+    [address, walletChain, walletClient, publicClient, queryClient],
   );
 
   return { sign };
@@ -674,6 +702,7 @@ export function useSignedOfferAcceptTermsSigning() {
   const { address, walletChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const queryClient = useQueryClient();
 
   const sign = useCallback(
     async (input: {
@@ -689,6 +718,7 @@ export function useSignedOfferAcceptTermsSigning() {
         maxCStar: bigint;
         allowDowngrade: boolean;
         blocked?: boolean;
+        blockedReason?: 'unavailable' | 'ceiling';
       };
     }): Promise<{ payload: AcceptTermsPayload; orderHash: Hex }> => {
       if (!address || !walletChain) {
@@ -786,6 +816,33 @@ export function useSignedOfferAcceptTermsSigning() {
       const lendingAsset = o.lendingAsset as Address;
       const collateralAsset = o.collateralAsset as Address;
 
+
+      // Same live ceiling re-check on the signed-fill path (Codex #1700 r3 F2
+      // names both): this submit closure carries its own click-time snapshot.
+      await assertAcceptorCeilingLive({
+        publicClient,
+        diamondAddress: diamondAddr,
+        lendingAsset,
+        // NOT `roleAmount` (Codex #1700 r5): a directly fillable single-value
+        // lender order may encode the supported `amountMax == "0"` sentinel,
+        // making `roleAmount` zero — `signedOfferCeiling` and
+        // `LibSignedOffer.toCreateOfferParams` both normalize that to
+        // `o.amount`. Quoting zero principal would have made this check
+        // silently ineffective on the exact signed-fill race it was added for,
+        // and it is the value `SignedFillConfirm` already passes as
+        // `principal`, so the card and the preflight now agree.
+        amount: signedOfferCeiling(o),
+        // A signed order carries durationDays as a STRING, unlike the direct
+        // path's bigint — the surrounding code uses BigInt(o.amount) for the
+        // same reason.
+        durationDays: BigInt(o.durationDays),
+        full: fullTariff.acceptorFull,
+        allowDowngrade: fullTariff.acceptorAllowFullDowngrade,
+        maxCStar: fullTariff.acceptorMaxCStar,
+        queryClient,
+        chainId: walletChain.chainId,
+      });
+
       const terms: AcceptTerms = {
         acceptor: address,
         offerCreator: o.signer as Address,
@@ -843,7 +900,7 @@ export function useSignedOfferAcceptTermsSigning() {
 
       return { payload: { terms, signature }, orderHash };
     },
-    [address, walletChain, walletClient, publicClient],
+    [address, walletChain, walletClient, publicClient, queryClient],
   );
 
   return { sign };
@@ -854,6 +911,182 @@ export function useSignedOfferAcceptTermsSigning() {
  *  fails HERE (mirroring the contract's `FullTariffMaxCStarRequired`)
  *  so a malformed control can never reach the wallet prompt, and a
  *  non-Full choice signs hard zeros — never a leftover ceiling. */
+
+/** Live re-check of the ACCEPTOR's own `maxCStar` ceiling, immediately before
+ *  signing (Codex #1700 r3 F2).
+ *
+ *  The card marks an overtaken ceiling blocked, but that mark travels through
+ *  parent state and a submission already in flight carries the object it
+ *  captured at click time. So a quote that crosses while the live preflights
+ *  are still awaiting reaches the signer with `blocked: false`, and the wallet
+ *  is prompted for a tariff the contract will refuse — the exact outcome the
+ *  card exists to prevent. A captured flag cannot see a later change; only a
+ *  fresh read can.
+ *
+ *  THE RULE THIS FILE ALREADY FOLLOWED, which my first version broke. Audited
+ *  every input these two callbacks let decide a signature (#1700, after three
+ *  rounds of the same class of finding):
+ *
+ *    - the canonical offer `o` — LIVE `getOffer` at submit, precisely so the
+ *      signed terms match stored state field-for-field;
+ *    - the clock — LIVE `block.timestamp`, never the device's;
+ *    - sanctions, pause, balance, illiquidity, the creator's ceiling — all
+ *      LIVE re-reads at submit;
+ *    - `input.consent` — a snapshot, CORRECTLY: it is the user's own act, and
+ *      the signature is what it acknowledges;
+ *    - `input.expected` — a snapshot, CORRECTLY: it is the reviewed side of a
+ *      comparison against the live read, never the authority.
+ *
+ *  So: a snapshot may be the REVIEWED side of a comparison, never the
+ *  AUTHORITY for a gate. `fullTariff.blocked` arrived as a snapshot and was
+ *  trusted as authority — the single exception in the file, and the reason
+ *  three consecutive rounds found the same shape of hole in it. Anything added
+ *  here later should be classified against that rule before it is wired in.
+ *
+ *  Deliberately mirrors the CREATOR-side preflight above (#1412 r4) rather
+ *  than inventing a second shape: same quote call, same fail-OPEN posture on
+ *  transport or missing-selector failures (the contract enforces regardless;
+ *  this only saves the taker a wasted signature), same throw-to-abort.
+ *
+ *  Gated on `!allowDowngrade`, matching both the contract and the checkbox:
+ *  with the downgrade permitted, `resolveAndCharge` opens the loan without
+ *  Full instead of reverting, and `downgradeHelpAllow` promises exactly that.
+ *  Refusing there would break a promise the user relied on. */
+export async function assertAcceptorCeilingLive(args: {
+  publicClient: NonNullable<ReturnType<typeof usePublicClient>>;
+  diamondAddress: Address;
+  lendingAsset: Address;
+  amount: bigint;
+  durationDays: bigint;
+  full: boolean;
+  allowDowngrade: boolean;
+  maxCStar: bigint;
+  queryClient: QueryClient;
+  chainId: number;
+}): Promise<void> {
+  if (!args.full || args.allowDowngrade || args.maxCStar <= 0n) return;
+  try {
+    const [enabled] = (await args.publicClient.readContract({
+      address: args.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getFeeEntitlementConfig',
+    })) as readonly [boolean, bigint, bigint];
+    // Switched off MID-SUBMIT is doomed for a strict Full, not benign
+    // (Codex #1700 r5): `resolveAndCharge` reverts `FeeEntitlementDisabled`,
+    // and the click-time snapshot still says blocked:false, so returning here
+    // let the wallet be prompted for an accept that cannot succeed — the very
+    // in-flight change this helper exists to catch. Only a
+    // downgrade-authorized submission may continue, and those never reach
+    // here (gated above).
+    if (!enabled) {
+      // Publish it before throwing (Codex #1700 r7), symmetric with the
+      // over-ceiling branch below: otherwise the card keeps showing Full as
+      // available for up to its 30s poll while the banner says it is not, and
+      // every retry hits the same invisible live condition.
+      args.queryClient.setQueryData(
+        ['feeEntitlementConfig', args.chainId],
+        (prev: unknown) =>
+          prev && typeof prev === 'object'
+            ? { ...(prev as object), enabled: false }
+            : prev,
+      );
+      throw new Error(copy.tariff.fullUnavailableNow);
+    }
+    const [cStar, numeraireOk] = (await args.publicClient.readContract({
+      address: args.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'quoteCStar',
+      args: [args.lendingAsset, args.amount, args.durationDays],
+    })) as readonly [bigint, boolean];
+    // Likewise unpriceable mid-submit: `resolveAndCharge` treats
+    // `!numeraireOk` as a failed Full opt-in, so a strict Full is doomed and
+    // must abort rather than proceed on a stale snapshot (Codex #1700 r5).
+    if (!numeraireOk) {
+      args.queryClient.setQueryData(
+        [
+          'cStarQuote',
+          args.chainId,
+          args.lendingAsset.toLowerCase(),
+          args.amount.toString(),
+          Number(args.durationDays),
+        ],
+        { cStar, numeraireOk: false },
+      );
+      throw new Error(copy.tariff.fullUnavailableNow);
+    }
+    if (cStar > args.maxCStar) {
+      // Publish the fresh quote BEFORE throwing (Codex #1700 r5). When this
+      // read is the first to see the crossing, the card still holds the older
+      // below-ceiling quote — so it renders no raise action, the error tells
+      // the user to raise a ceiling on a control that offers nothing, and
+      // retries keep failing until the 30s refetch catches up. Seeding the
+      // same query key `useCStarQuote` reads makes the recovery available in
+      // the same tick as the refusal.
+      args.queryClient.setQueryData(
+        [
+          'cStarQuote',
+          args.chainId,
+          args.lendingAsset.toLowerCase(),
+          args.amount.toString(),
+          Number(args.durationDays),
+        ],
+        { cStar, numeraireOk },
+      );
+      throw new Error(copy.tariff.ceilingOvertakenSubmit);
+    }
+  } catch (e) {
+    if (
+      e instanceof Error &&
+      (e.message === copy.tariff.ceilingOvertakenSubmit ||
+        e.message === copy.tariff.fullUnavailableNow)
+    ) {
+      throw e;
+    }
+    // Transport / selector-shaped failure — proceed; enforced on-chain.
+  }
+}
+
+/** Re-check for the FINAL WRITE (Codex #1700 r7 F1).
+ *
+ *  `useAcceptTerms` checks the ceiling before signing, but the approval /
+ *  Permit2 step happens AFTER that signature — so the quote can cross in the
+ *  window between them, and every final-send path would otherwise submit a
+ *  transaction that reverts `FeeEntitlementTariffAboveAuth` and burns the
+ *  gas. The same rule as everywhere else on this path: re-read at the moment
+ *  of the write, never trust what was true at the previous step. */
+export function useAcceptorCeilingRecheck() {
+  const { walletChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const queryClient = useQueryClient();
+  return useCallback(
+    async (args: {
+      lendingAsset: Address;
+      amount: bigint;
+      durationDays: bigint;
+      fullTariff: {
+        full: boolean;
+        maxCStar: bigint;
+        allowDowngrade: boolean;
+      };
+    }) => {
+      if (!publicClient || !walletChain) return;
+      await assertAcceptorCeilingLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        lendingAsset: args.lendingAsset,
+        amount: args.amount,
+        durationDays: args.durationDays,
+        full: args.fullTariff.full,
+        allowDowngrade: args.fullTariff.allowDowngrade,
+        maxCStar: args.fullTariff.maxCStar,
+        queryClient,
+        chainId: walletChain.chainId,
+      });
+    },
+    [publicClient, walletChain, queryClient],
+  );
+}
+
 function resolveFullTariffInput(
   fullTariff:
     | {
@@ -861,6 +1094,7 @@ function resolveFullTariffInput(
         maxCStar: bigint;
         allowDowngrade: boolean;
         blocked?: boolean;
+        blockedReason?: 'unavailable' | 'ceiling';
       }
     | undefined,
 ): Pick<
@@ -879,7 +1113,14 @@ function resolveFullTariffInput(
   // reject" intent may only become a non-Full accept via their own
   // explicit untick, never via a silent drop.
   if (fullTariff.blocked) {
-    throw new Error(copy.tariff.fullUnavailableNow);
+    // The message has to match the CAUSE (#1694). An overtaken ceiling is
+    // user-fixable and the card says so; throwing "Full isn't available for
+    // this loan" there would contradict the notice the user is looking at.
+    throw new Error(
+      fullTariff.blockedReason === 'ceiling'
+        ? copy.tariff.ceilingOvertakenSubmit
+        : copy.tariff.fullUnavailableNow,
+    );
   }
   if (fullTariff.maxCStar <= 0n) {
     throw new Error(copy.tariff.maxCStarRequired);

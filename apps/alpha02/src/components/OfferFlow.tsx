@@ -36,7 +36,10 @@ import {
   disablePermit2ForSession,
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
-import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
+import {
+  useAcceptTermsSigning,
+  useAcceptorCeilingRecheck,
+} from '../contracts/useAcceptTerms';
 import { SimulationPreview } from './SimulationPreview';
 import { CollateralPrecheck } from './CollateralPrecheck';
 import { SelectMenu } from './SelectMenu';
@@ -275,6 +278,11 @@ export function OfferFlow({ side }: { side: Side }) {
   const { write } = useDiamondWrite();
   const permit2 = usePermit2Signing();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
+  // Re-check the acceptor's tariff ceiling immediately before EVERY final
+  // write (Codex #1700 r7): the approval / Permit2 step runs after the accept
+  // signature, so the quote can cross in between and the transaction would be
+  // sent only to revert `FeeEntitlementTariffAboveAuth`, burning the gas.
+  const recheckCeiling = useAcceptorCeilingRecheck();
   const fees = useProtocolFees();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1982,6 +1990,12 @@ export function OfferFlow({ side }: { side: Side }) {
             // breaker, so a manual retry routes classic.
             stepper.next('send');
           reachedFinalSendRef.current = true;
+            await recheckCeiling({
+              lendingAsset: selected.lendingAsset as `0x${string}`,
+              amount: offerPrincipal(selected),
+              durationDays: BigInt(selected.durationDays),
+              fullTariff,
+            });
             try {
               const { hash } = await write('acceptOfferWithPermit', [
                 BigInt(selected.offerId),
@@ -2010,6 +2024,12 @@ export function OfferFlow({ side }: { side: Side }) {
     }
     stepper.next('send');
     reachedFinalSendRef.current = true;
+    await recheckCeiling({
+      lendingAsset: selected.lendingAsset as `0x${string}`,
+      amount: offerPrincipal(selected),
+      durationDays: BigInt(selected.durationDays),
+      fullTariff,
+    });
     const { hash } = await write('acceptOffer', [
       BigInt(selected.offerId),
       terms,
@@ -2627,6 +2647,26 @@ export function OfferFlow({ side }: { side: Side }) {
                 value={fullTariff}
                 onChange={(v) => {
                   setFullTariff(v);
+                  // Any tariff edit also clears a STALE submit error (Codex
+                  // #1700 r3): a ceiling-blocked submit leaves this banner up,
+                  // and the prescribed recovery — raise the ceiling, or untick
+                  // Full — would otherwise clear the card's own notice while
+                  // the banner kept saying the quote exceeds a ceiling that is
+                  // no longer exceeded. The two surfaces must not disagree.
+                  //
+                  // ONLY the tariff messages (Codex #1700 r8): this onChange
+                  // ALSO fires from FullTariffOptIn's layout effect when a
+                  // BACKGROUND refresh flips the blocked mark, with no user
+                  // edit at all — so an unconditional clear would erase a
+                  // wallet rejection, a balance failure or a changed-terms
+                  // error the instant the quote crossed or recovered, leaving
+                  // the user no trace of why their attempt failed.
+                  setSubmitError((prev) =>
+                    prev === copy.tariff.ceilingOvertakenSubmit ||
+                    prev === copy.tariff.fullUnavailableNow
+                      ? null
+                      : prev,
+                  );
                   // Codex #1412 r1 — a tariff edit changes the terms
                   // the accept signature will carry, so an already-
                   // given consent no longer covers them: clear it,

@@ -20,7 +20,7 @@
  */
 import type { Page } from '@playwright/test';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, formatUnits, parseUnits } from 'viem';
 import {
   postLenderOffer,
   newestOfferIdFor,
@@ -133,6 +133,77 @@ test('Full tariff opt-in: dark default hides it; strict Full fails closed; downg
     await expect(card.getByTestId('full-tariff-ceiling')).not.toHaveValue('', {
       timeout: 30_000,
     });
+    // ── 2a. #1694 — a ceiling the live quote has overtaken must BLOCK the
+    // accept and say so, and the offered raise must clear it. No transaction
+    // in this arm: it is the pre-send state that the bug left silent.
+    //
+    // The seeded ceiling is quote x 1.10, so half of it is comfortably below
+    // the quote without this spec having to read `quoteCStar` itself — one
+    // less thing to drift when the headroom constant is retuned.
+    const ceilingInput = card.getByTestId('full-tariff-ceiling');
+    const seeded = await ceilingInput.inputValue();
+    // Halve in BigInt, not floating point. `String(Number(x) / 2)` yields
+    // exponential notation for a small quote ("1.1e-17"), and the card's
+    // `isPlainDecimal` guard (/^\d+(\.\d+)?$/) REJECTS that — the ceiling
+    // would parse as undefined, `maxCStar` would be 0, and the arm would fail
+    // on the wrong condition (`maxCStarRequired`, not the overtake) for any
+    // sufficiently small C*. `formatUnits` never returns an exponent.
+    const halved = formatUnits(parseUnits(seeded, 18) / 2n, 18);
+    await ceilingInput.fill(halved);
+    const raise = card.getByTestId('full-tariff-raise-ceiling');
+    await expect(raise).toBeVisible({ timeout: 30_000 });
+    // The BLOCK half of this arm depends on the downgrade box being UNticked
+    // (Codex #1700 r3): with it ticked the contract downgrades instead of
+    // reverting, and the card deliberately lets that through. Asserted rather
+    // than assumed, so a change to the default cannot make this arm pass
+    // while testing nothing.
+    await expect(card.locator('input[type="checkbox"]').nth(1)).not.toBeChecked();
+    // The refusal is at SUBMIT, not on the button: `useAcceptTerms`
+    // (`resolveFullTariffInput`) THROWS on an engaged-but-blocked Full rather
+    // than the accept control being disabled. I first asserted `toBeDisabled`
+    // here, which would have failed — worth the note so the next reader does
+    // not "fix" this back. Asserting the thrown copy also pins the #1694
+    // half of that refusal: the message must name the CEILING, not the
+    // generic "Full isn't available", which is what the card contradicts.
+    // The loan count BEFORE the doomed click, so "nothing was created" is an
+    // on-chain fact rather than the absence of a success banner (Codex #1700
+    // r2). A UI-only absence check can pass while a transaction is still in
+    // flight, which would let a removal of the resolver refusal leave this arm
+    // green — the precise regression it claims to exclude.
+    const loansBefore = (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getUserPositionLoansPaginated',
+      args: [borrower.account.address, 0n, 100n],
+    })) as [readonly bigint[], readonly bigint[], bigint];
+
+    await tickConsent(page);
+    await page.getByRole('button', { name: /borrow this now/i }).click();
+    // Scoped to the SUBMIT message, not any role=alert containing "ceiling":
+    // the card's own notice is itself an alert mentioning the ceiling, so a
+    // loose matcher passes the instant the click lands, before the submit path
+    // has run at all. "has risen above" appears only in the thrown copy.
+    await expect(page.getByText(/has risen above the ceiling/i)).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByText(/loan opened|what happens next/i)).toHaveCount(0);
+    const loansAfter = (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getUserPositionLoansPaginated',
+      args: [borrower.account.address, 0n, 100n],
+    })) as [readonly bigint[], readonly bigint[], bigint];
+    expect(loansAfter[0].length).toBe(loansBefore[0].length);
+
+    await raise.click();
+    // The notice clearing IS the assertion. Deliberately NOT
+    // `toHaveValue(seeded)`: the quote refetches on a ~30s cadence, so the
+    // raise can legitimately write a different figure than the one seeded at
+    // mount, and pinning equality would make this arm flaky for a reason that
+    // has nothing to do with the behaviour under test.
+    await expect(raise).toHaveCount(0, { timeout: 30_000 });
+    await expect(ceilingInput).not.toHaveValue(halved);
+
     await tickConsent(page);
     const accept = page.getByRole('button', { name: /borrow this now/i });
     await expect(accept).toBeEnabled({ timeout: 60_000 });

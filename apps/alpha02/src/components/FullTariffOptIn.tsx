@@ -17,7 +17,7 @@
  * between review and fill doesn't spuriously block (the user can edit
  * it to any value they actually authorize).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { parseUnits } from 'viem';
@@ -45,6 +45,12 @@ export interface FullTariffChoice {
    *  reject" intent can only become a non-Full accept by their own
    *  explicit untick. Never part of the signed message. */
   blocked?: boolean;
+  /** WHY it is blocked, so the submit-time refusal can say something true.
+   *  `useAcceptTerms` throws on `blocked` and had only one message for every
+   *  cause — which for an overtaken ceiling would have contradicted the card's
+   *  own notice, telling the user Full is unavailable while the card offered
+   *  to raise their ceiling (#1694). */
+  blockedReason?: 'unavailable' | 'ceiling';
 }
 
 export const FULL_TARIFF_OFF: FullTariffChoice = {
@@ -150,19 +156,74 @@ export function FullTariffOptIn({
     }
   }, [ceilingText]);
 
+  // #1694 — the ceiling is seeded ONCE from the first quote (plus headroom)
+  // and then belongs to the user, while the quote refetches on a timer. So a
+  // rise past the ceiling is reachable without anyone touching anything, and
+  // the contract's answer is unforgiving: `resolveAndCharge` reverts
+  // `FeeEntitlementTariffAboveAuth` when `cStar > maxCStar`, or silently
+  // downgrades to HoldOnly if the party ticked `allowDowngrade`. Either way
+  // the accept the user is looking at is already doomed, and nothing on the
+  // card said so — the numbers needed to know it are BOTH on screen.
+  //
+  // Deliberately NOT folded into `fullBlocked`: that one gates whether the
+  // control renders at all while UNENGAGED (see the early return below), and
+  // a user-fixable ceiling must not make the option disappear. It joins
+  // `engagedBlocked` instead, so the signer refuses a doomed accept while the
+  // card stays visible and explains the fix.
+  //
+  // Gated on Full being OTHERWISE available (Codex #1700 r1): a cached
+  // successful quote can keep this true after liquidity turns illiquid or the
+  // kill switch goes off, and then the ceiling notice would mask the real
+  // blocker — promising that raising the ceiling lets the user continue when
+  // `engagedBlocked` stays true regardless. Unavailability wins.
+  const ceilingOvertaken =
+    value.full &&
+    config.enabled &&
+    !fullBlocked &&
+    quoted !== undefined &&
+    ceiling !== undefined &&
+    ceiling > 0n &&
+    quoted > ceiling;
+
   // Codex #1412 r1/r3/r5 — an ENGAGED Full whose conditions break
   // (kill-switch off / refetch error / unpriceable / illiquid) is
   // marked BLOCKED, never silently cleared: the card stays visible
   // with the unavailable notice, the signer refuses to sign while the
   // mark is set, and only the user's explicit untick turns their
   // "Full or reject" intent into a non-Full accept.
-  const engagedBlocked = !config.enabled || fullBlocked;
-  useEffect(() => {
+  // The NOTICE fires on any overtake; the BLOCK does not (Codex #1700 r3 led
+  // me to read `downgradeHelpAllow`, which promises in so many words: "If the
+  // tariff can't be charged when the loan opens (ABOVE YOUR CEILING, vault
+  // balance short, or the option switched off), the loan still opens — without
+  // Full"). Refusing to sign when that box is ticked would break the promise
+  // the user relied on, and would refuse an accept the CONTRACT is happy to
+  // complete via `_downgrade`. So: tell them either way, hold signing only
+  // when they did NOT permit the downgrade.
+  const ceilingBlocks = ceilingOvertaken && !value.allowDowngrade;
+  const engagedBlocked = !config.enabled || fullBlocked || ceilingBlocks;
+  // LAYOUT effect, not passive (Codex #1700 r1): both callers derive the submit
+  // button and the signed payload from the PARENT's copy of this mark, so a
+  // passive effect leaves one PAINTED frame in which a background quote refresh
+  // has already crossed the ceiling while the parent still holds
+  // `blocked: false` — a click there reaches the wallet with the overtaken
+  // ceiling and is rejected or silently downgraded, which is the exact outcome
+  // this change exists to prevent. A layout effect commits during the same
+  // commit phase, so no such frame is ever painted. Same fix as #1670's
+  // address-ref sync, and the same one-frame hazard as #1695's consent clear.
+  useLayoutEffect(() => {
     if (!value.full) return;
-    if (Boolean(value.blocked) !== engagedBlocked) {
-      onChange({ ...value, blocked: engagedBlocked });
+    const reason = ceilingBlocks ? 'ceiling' : 'unavailable';
+    if (
+      Boolean(value.blocked) !== engagedBlocked ||
+      (engagedBlocked && value.blockedReason !== reason)
+    ) {
+      onChange({
+        ...value,
+        blocked: engagedBlocked,
+        blockedReason: engagedBlocked ? reason : undefined,
+      });
     }
-  }, [engagedBlocked, value, onChange]);
+  }, [engagedBlocked, ceilingBlocks, value, onChange]);
 
   // Keep the parent's `maxCStar` in lockstep with the edited ceiling —
   // an unparseable edit propagates as 0n, which the signer refuses, so
@@ -234,7 +295,38 @@ export function FullTariffOptIn({
               )
             : copy.tariff.quoteUnavailable}
       </p>
-      {value.full && engagedBlocked ? (
+      {ceilingOvertaken && quoted !== undefined && ceiling !== undefined ? (
+        // Its own notice rather than the generic one: "Full isn't available"
+        // would be false. Full is available; the ceiling is the problem, and
+        // it is the user's to move.
+        <div className="banner banner-warn" role="alert" style={{ marginTop: 8 }}>
+          <span className="banner-body">
+            {/* exactAmountString, NOT formatTokenAmount (Codex #1700 r1): the
+                display formatter rounds to four digits, so a quote that
+                overtakes the ceiling by less than that renders as "1 VPFI is
+                above 1 VPFI" — hiding the very mismatch being explained. */}
+            {copy.tariff.ceilingOvertaken(
+              exactAmountString(quoted, VPFI_DECIMALS),
+              exactAmountString(ceiling, VPFI_DECIMALS),
+            )}
+          </span>
+          {suggestedCeiling !== undefined ? (
+            <button
+              type="button"
+              className="btn btn-small"
+              data-testid="full-tariff-raise-ceiling"
+              style={{ marginTop: 8 }}
+              onClick={() =>
+                setCeilingText(exactAmountString(suggestedCeiling, VPFI_DECIMALS))
+              }
+            >
+              {copy.tariff.raiseCeiling(
+                exactAmountString(suggestedCeiling, VPFI_DECIMALS),
+              )}
+            </button>
+          ) : null}
+        </div>
+      ) : value.full && engagedBlocked ? (
         <div className="banner banner-warn" role="alert" style={{ marginTop: 8 }}>
           <span className="banner-body">
             {copy.tariff.fullUnavailableNow} {copy.tariff.engagedUnavailableHint}
