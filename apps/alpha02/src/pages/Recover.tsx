@@ -1286,7 +1286,15 @@ export function Recover() {
     //     (i) the COMMIT-TIME BUMP is per-branch — required under the
     //         live-provider fence, or a wallet-event fence advancing a SEPARATE
     //         token and leaving `genRef` to the effect; not needed when the event
-    //         advances `genRef` itself.
+    //         advances `genRef` itself. But NOTE (Codex #1689 r15): advancing
+    //         `genRef` from the wallet event is NOT ITSELF A FENCE. `signAndSubmit`
+    //         captures `genRef.current` at call time (:1840), so work launched from
+    //         the still-committed OLD UI *after* the event captures the NEW value
+    //         and passes every later check — free to reserve, sign and submit for
+    //         the old account. A bump only invalidates work that started BEFORE
+    //         it. Any fence must compare the callback's CAPTURED IDENTITY against
+    //         the live one (latched identity or a suppression state), never a
+    //         counter alone.
     //     (ii) item 6 requires RESETTING / REKEYING the reconciliation claim, on
     //         every branch, bump or no bump. A bare follow-up RERENDER is NOT an
     //         equivalent option and is not offered as one (Codex #1689 r14): when
@@ -1295,7 +1303,13 @@ export function Recover() {
     //         the equality — and the disabled card — survives it. Rerender alone
     //         works only where something also advances the ref, so requiring the
     //         reset everywhere is both simpler and strictly safer than splitting
-    //         this per branch again.
+    //         this per branch again. And the reset must cover BOTH pieces of
+    //         reconciliation ownership (Codex #1689 r15), not just the rendered
+    //         predicate: `reconcileRef` is the mutex (:2488 early-return, written
+    //         with `setReconcileClaim` at :2509). Rekey only the claim and the new
+    //         card looks enabled while `reconcilePending` still early-returns on
+    //         the stale mutex; reset only the ref and the OLD `finally` can clear a
+    //         NEW same-generation claim. Identity/op-key both.
     //   Deliberately not attempted mid-review-loop on a signing path.
     //   An identity fence around the imperative wallet calls (including the
     //   reservation write, which has no generation check on its success path) is
