@@ -82,8 +82,6 @@ function buildChainConfig(getEnv: EnvGetter, meta: ChainMeta): ChainConfig {
     riskFacetAddress: dep?.facets?.riskFacet ?? null,
     profileFacetAddress: dep?.facets?.profileFacet ?? null,
     nativeGasSymbol: meta.nativeGasSymbol,
-    nativeGasCoinGeckoSlug: meta.testnet ? 'ethereum' : 'ethereum',
-    bridgedWethCoinGeckoSlug: null,
     wrappedNativeAddress,
     bridgedWethAddress: null,
     predominantStableAddress,
