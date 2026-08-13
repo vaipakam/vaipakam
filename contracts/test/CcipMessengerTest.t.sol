@@ -245,9 +245,12 @@ contract CcipMessengerTest is Test {
             address(messengerA), CHAIN_B, abi.encode("x"), _noTokens(), 100_000
         );
         // Re-point chain A's messenger to an impostor — the inbound message
-        // still carries the real messengerA as its sender.
-        vm.prank(owner);
+        // still carries the real messengerA as its sender. Clear-before-
+        // repoint applies here too, so this takes the two-step form.
+        vm.startPrank(owner);
+        messengerB.setRemoteMessenger(CHAIN_A, address(0));
         messengerB.setRemoteMessenger(CHAIN_A, address(0xDEAD));
+        vm.stopPrank();
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -382,9 +385,13 @@ contract CcipMessengerTest is Test {
     function test_SetChainSelector_MaintainsReverseMap() public {
         assertEq(messengerA.chainIdOf(SEL_B), CHAIN_B, "reverse set");
 
-        vm.prank(owner);
-        messengerA.setChainSelector(CHAIN_B, 777);
+        // Re-pointing is clear-then-set; the reverse map must be maintained
+        // across both halves — released on the clear, rebuilt on the set.
+        vm.startPrank(owner);
+        messengerA.setChainSelector(CHAIN_B, 0);
         assertEq(messengerA.chainIdOf(SEL_B), 0, "stale reverse cleared");
+        messengerA.setChainSelector(CHAIN_B, 777);
+        vm.stopPrank();
         assertEq(messengerA.chainIdOf(777), CHAIN_B, "new reverse set");
     }
 
@@ -467,6 +474,86 @@ contract CcipMessengerTest is Test {
             address(handlerA),
             "re-setting the same peer must be a no-op, not a revert"
         );
+    }
+
+    function test_SetChannelPeer_RevertWhen_PeerBoundToAnotherChannel()
+        public
+    {
+        // The copy-paste mistake: an operator drops an address that is
+        // already channel X's peer into channel Y's empty slot. The source
+        // side stamps one channel per originator, so at most one of the two
+        // lanes could ever be right — reject it at configuration time.
+        bytes32 otherChannel = keccak256("other-channel");
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.ChannelPeerAlreadyBound.selector,
+                address(handlerA),
+                CHAIN_A,
+                CHANNEL
+            )
+        );
+        messengerB.setChannelPeer(otherChannel, CHAIN_A, address(handlerA));
+    }
+
+    function test_SetChannelPeer_ReverseBindingReleasedOnClear() public {
+        // Clearing must release the reverse binding, or the address could
+        // never be re-declared anywhere — including on the channel it just
+        // left.
+        bytes32 otherChannel = keccak256("other-channel");
+        vm.startPrank(owner);
+        messengerB.setChannelPeer(CHANNEL, CHAIN_A, address(0));
+        messengerB.setChannelPeer(otherChannel, CHAIN_A, address(handlerA));
+        vm.stopPrank();
+        assertEq(
+            messengerB.channelOfPeer(CHAIN_A, address(handlerA)),
+            otherChannel,
+            "the reverse binding must follow the peer to its new channel"
+        );
+    }
+
+    // ─── Clear-before-repoint on the sibling lane setters ───────────────────
+    //
+    // The peer is the setting whose misconfiguration is silent, but the rule
+    // is applied uniformly: no live lane setting is overwritten in place.
+
+    function test_SetRemoteMessenger_RevertWhen_RepointingLive() public {
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.RemoteMessengerAlreadySet.selector,
+                CHAIN_A,
+                address(messengerA)
+            )
+        );
+        messengerB.setRemoteMessenger(CHAIN_A, address(0xDEAD));
+    }
+
+    function test_RegisterChannel_RevertWhen_RepointingLiveHandler() public {
+        // Codex P1: `HandlerAlreadyBound` only stops one handler serving two
+        // channels. Pointing a LIVE channel at a different, so-far-unbound
+        // recipient used to be accepted, and if that recipient is
+        // ABI-compatible the messages and tokens land there successfully.
+        address stranger = address(0xBEEF);
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.ChannelHandlerAlreadySet.selector,
+                CHANNEL,
+                address(handlerB)
+            )
+        );
+        messengerB.registerChannel(CHANNEL, stranger);
+    }
+
+    function test_SetChainSelector_RevertWhen_RepointingLive() public {
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CcipMessenger.ChainSelectorAlreadySet.selector, CHAIN_A, SEL_A
+            )
+        );
+        messengerB.setChainSelector(CHAIN_A, 4242);
     }
 
     // ─── Originator verification on receive (#1650) ─────────────────────────

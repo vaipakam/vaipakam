@@ -1089,18 +1089,50 @@ inbound delivery rejects a missing handler as `UnknownChannel`.
   counterpart domain contract on the remote chain, passed to the local
   handler as the inbound `sourceSender`.
 
-  **Read what this does and does not authenticate.** The messenger
-  checks only that the peer is set (a zero entry rejects the message);
-  it does not compare the CCIP sender against it. And no handler
-  shipping today compares it either — `VaipakamRewardMessenger`,
-  `RewardRemittanceReceiver`, `BuybackRemittanceReceiver` and
-  `VpfiReturnReceiver` all ignore the argument, the remittance receivers
-  binding deployment identity from the payload instead. So a peer set to
-  the WRONG non-zero address is not caught here. The authentication that
-  does hold is one layer up: `CcipMessenger` allowlists the source
-  messenger per chain (`setRemoteMessenger`) and the router's own
-  sender check. Treat the peer map as routing metadata, not as a
-  forgery guard.
+  **This is now an authentication input, not routing metadata.** A
+  message carries the identity of the contract that sent it, and the
+  messenger compares that identity against this entry before dispatching
+  to the local handler; a mismatch is refused. It is no longer the case
+  that a peer set to the wrong non-zero address goes uncaught — but the
+  consequence has moved rather than disappeared, because a wrong peer
+  now silently *stops* a lane instead of silently mis-labelling it. The
+  older layer of protection still holds underneath: the source messenger
+  is allowlisted per chain (`setRemoteMessenger`) and the router applies
+  its own sender check.
+
+  Individual handlers still need not compare the argument themselves —
+  `VaipakamRewardMessenger`, `RewardRemittanceReceiver`,
+  `BuybackRemittanceReceiver` and `VpfiReturnReceiver` do not, the
+  remittance receivers binding deployment identity from the payload
+  instead — and that is now correct rather than a gap, because the check
+  has been done for them one layer up.
+
+**All four of these settings refuse to be re-pointed in place.** An
+assignment that conflicts with a live value reverts; re-stating a value
+a setting already holds is accepted and inert, so a redeploy script that
+reasserts its own configuration is safe to re-run. A genuine change is
+two transactions — clear the setting to its zero value, then assign the
+new one — which puts two entries in the event log and makes a re-point
+distinguishable from a first-time assignment.
+
+Do not read the uniformity as belt-and-braces. The intuition that a
+mis-set selector or channel registration announces itself by failing to
+deliver is not dependable: a channel pointed at a wrong but otherwise
+compatible recipient delivers its messages and tokens successfully. A
+remote address also cannot be declared as the peer of two channels on
+the same chain, mirroring the existing one-handler-one-channel rule.
+
+**Rotating a channel peer requires draining the lane first.** Because a
+message carries the originator that sent it, any message the old peer
+had already dispatched is refused once the new peer is installed, and
+cannot be recovered afterwards — not by manual re-execution, not by
+reverting the configuration, because the clear-then-set procedure leaves
+no state that would accept it. The order is: stop the old contract
+sending, let what is in flight arrive or be abandoned as a deliberate
+decision, then clear and assign. The same holds for any upgrade that
+changes the message format: both messengers on a lane move together, on
+a drained lane, because messengers on different formats cannot interpret
+each other's messages.
 
 A misconfigured selector, remote messenger or channel registration
 surfaces as an undelivered or rejected message. Note that CCIP's transport security is operated by

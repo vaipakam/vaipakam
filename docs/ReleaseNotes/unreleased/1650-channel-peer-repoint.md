@@ -1,34 +1,66 @@
-### Re-pointing a cross-chain partner address now takes two deliberate steps
+## Cross-chain messages now carry proof of who sent them, and lane settings refuse to be quietly re-pointed
+
+**This changes the cross-chain message format and must be rolled out to both
+sides of a lane together.** A messenger on the new format cannot interpret a
+message from a messenger on the old one, and vice versa; a lane upgraded on
+only one side stops delivering until the other side catches up. Nothing is
+lost while that is true — undelivered messages are recorded as failures and
+can be re-run once both ends match — but the window is real and the upgrade
+has to be planned as a pair rather than as two independent deployments.
+
+### What was wrong
 
 Each cross-chain lane records the address of the contract it expects to be
-talking to on the other network. That record does not steer anything — messages
-find their way by other configuration entirely — but it is passed to the
-receiving contract as the answer to "who sent this", and some receivers act on
-that answer.
+talking to on the other network. That record was passed to the receiving
+contract as the answer to "who sent this", and some receivers act on that
+answer — but it was an answer read out of local configuration, not one
+recovered from the message. So the receiving side was not verifying the
+sender at all. It was repeating a claim, and the claim was only as good as
+the configuration behind it.
 
-Changing it used to be a single write that overwrote whatever was there. That is
-the shape of change worth slowing down, because of how it fails: getting it wrong
-breaks nothing visible. Messages keep arriving, nothing errors, and the only
-consequence is that the receiving side is told the wrong originator. Every
-neighbouring setting already refuses to be silently reassigned for less
-dangerous reasons — pointing a network or a handler at the wrong place makes
-delivery fail loudly, which announces itself.
+That is a weak place to be even with careful operators, and it was made
+weaker by how easily the configuration could move: the record could be
+overwritten in a single write, with nothing to distinguish a deliberate
+re-point from a first-time assignment.
 
-So a lane's partner address can now only be changed by clearing it first and then
-setting the new one. Two transactions, two entries in the event log, and a
-re-point that reads as a re-point rather than as a first-time assignment.
-Re-stating the address a lane already has is still accepted and does nothing, so
-a deployment script that reasserts its own configuration does not need to know
-whether it has run before.
+### What changed
 
-Nothing about how messages are delivered or authenticated changes. Worth being
-precise about that, because the original report of this described the address as
-unchecked, and it is not: only the network's own registered messenger can deliver
-at all, and the lane a message claims is derived from the contract that sent it
-rather than from anything the sender chose. Those two facts already mean a
-message can only have come from the expected contract — what was missing was
-protection against an operator quietly changing what "expected" means.
+A message now carries the identity of the contract that actually sent it, and
+the receiving messenger checks that identity against the configured peer
+before handing anything to the local contract. A mismatch is refused rather
+than reported as though it were the truth. The message format also carries a
+version, and a version the receiver does not recognise is refused rather than
+interpreted — reading sender information out of a layout you do not recognise
+is guessing, and guessing about who sent a message is the thing this change
+exists to stop.
 
-A cross-chain safety review had also asked for exactly this: partner assignments
-that conflict with an existing one should be rejected rather than overwritten.
-The neighbouring settings already honoured that rule. This one now does too.
+Alongside that, all four lane settings — the chain's network selector, its
+remote messenger, a channel's local handler, and a channel's remote peer —
+now behave the same way. A change that conflicts with a live value is
+rejected. Re-stating a value a setting already holds is still accepted and
+does nothing, so a deployment script that reasserts its own configuration
+does not need to know whether it has run before. A genuine change is made by
+clearing the setting and then assigning the new value: two transactions, two
+entries in the event log, and a re-point that reads as a re-point.
+
+The uniformity is the point. The earlier version of this change protected
+only the peer, on the reasoning that the other three fail loudly when
+mis-set. That reasoning does not hold: a channel pointed at a wrong but
+otherwise compatible address delivers its messages and tokens successfully.
+None of the four announces itself reliably, so none of them is overwritten in
+place. A remote address can also no longer be declared as the peer of two
+different channels at once, which is a configuration that could never have
+been right on both lanes.
+
+### What operators need to do differently
+
+Rotating a channel's peer now requires draining the lane first. Because a
+message carries the originator that sent it, a message the old peer had
+already sent will be refused once the new peer is installed, and cannot be
+recovered afterwards. The procedure is: stop the old contract sending, let
+whatever is in flight arrive or be abandoned deliberately, then clear the
+setting and assign the new one. A rotation performed without the drain will
+strand any message caught in between.
+
+The same applies to this upgrade itself. Both messengers on a lane must move
+together, and the lane should be drained before they do.

@@ -158,9 +158,20 @@ contract CcipMessenger is
     ///         check against the peer it expects. Zero = unconfigured.
     mapping(bytes32 => mapping(uint256 => address)) public channelPeerOf;
 
-    /// @dev Reserved storage for upgrade-safe appends. 6 slots used above.
+    /// @notice Remote chain id → peer address → the channelId that peer is
+    ///         declared for. The reverse of {channelPeerOf}, kept in lockstep
+    ///         by {setChannelPeer}; exists so a peer cannot be declared for
+    ///         two channels at once. Zero = that address is not a peer on
+    ///         that chain.
+    /// @dev The source side already enforces one channel per originator
+    ///      ({channelOf}), so two channels naming the same remote address is
+    ///      a configuration that cannot be right on both lanes — at most one
+    ///      of them matches what that contract actually sends.
+    mapping(uint256 => mapping(address => bytes32)) public channelOfPeer;
+
+    /// @dev Reserved storage for upgrade-safe appends. 7 slots used above.
     // forge-lint: disable-next-line(mixed-case-variable)
-    uint256[44] private __gap;
+    uint256[43] private __gap;
 
     // ─── Events ─────────────────────────────────────────────────────────────
 
@@ -247,17 +258,46 @@ contract CcipMessenger is
         address expected
     );
 
-    /// @notice A configured channel peer was re-pointed at a different
-    ///         address without first being cleared.
-    /// @dev Silent re-pointing is the failure this guards. The inbound
-    ///      `sourceSender` a local handler acts on is READ FROM CONFIG, not
-    ///      recovered from the message, so an operator who overwrites a live
-    ///      peer changes what every subsequent message on that lane claims to
-    ///      be — with no on-chain evidence that anything moved. Clearing first
-    ///      (`setChannelPeer(id, chain, address(0))`) makes the re-point two
-    ///      deliberate transactions and two events.
+    /// @notice A live lane setting was re-pointed at a different value
+    ///         without first being cleared. One error per setter; one rule.
+    /// @dev Every one of the four lane settings below is a silent-failure
+    ///      surface: none of them is recovered from the message, all are read
+    ///      from config, so overwriting one changes what the lane means with
+    ///      no on-chain evidence that anything moved. The rule is uniform —
+    ///      an assignment that CONFLICTS with a live value is rejected;
+    ///      clearing first (pass the zero value) makes a re-point two
+    ///      deliberate transactions and two events, so it reads as a
+    ///      re-point in the log rather than as a first-time assignment.
+    ///      Re-stating the value a setting already holds is always allowed
+    ///      and idempotent, so a redeploy script that reasserts its own
+    ///      configuration need not know whether it has run before.
+    error ChainSelectorAlreadySet(uint256 chainId, uint64 current);
+    /// @notice As {ChainSelectorAlreadySet}, for the remote messenger.
+    error RemoteMessengerAlreadySet(uint256 chainId, address current);
+    /// @notice As {ChainSelectorAlreadySet}, for a channel's local handler.
+    error ChannelHandlerAlreadySet(bytes32 channelId, address current);
+    /// @notice As {ChainSelectorAlreadySet}, for a channel's remote peer.
+    ///         This is the one where the failure is completely silent: the
+    ///         peer is what a delivered message is authenticated AGAINST, so
+    ///         overwriting it re-points the lane's trust anchor while every
+    ///         other observable stays identical.
     error ChannelPeerAlreadySet(
         bytes32 channelId, uint256 remoteChainId, address current
+    );
+
+    /// @notice A remote address is already declared as the peer of a
+    ///         different channel on that chain — the (chain, peer)↔channel
+    ///         map must stay one-to-one.
+    /// @dev The mirror of {HandlerAlreadyBound} for the remote side. The
+    ///      source messenger stamps a channel onto an outbound message from
+    ///      its ORIGINATOR ({channelOf}), which permits one channel per
+    ///      address; so if two local channels name the same remote address,
+    ///      at most one of them can match what that address actually sends,
+    ///      and the other lane's messages are rejected by the originator
+    ///      check. Rejecting the duplicate at configuration time turns a
+    ///      lane that would be dead on arrival into a failed transaction.
+    error ChannelPeerAlreadyBound(
+        address peer, uint256 remoteChainId, bytes32 boundChannelId
     );
     /// @notice An inbound message's decoded sender is not the registered
     ///         CcipMessenger for its source chain.
@@ -586,7 +626,11 @@ contract CcipMessenger is
             }
         }
         uint64 previous = chainSelectorOf[chainId];
-        // Drop a stale reverse entry if this chain's selector changes.
+        // Clear-before-repoint, the rule shared by all four lane setters.
+        if (previous != 0 && selector != 0 && previous != selector) {
+            revert ChainSelectorAlreadySet(chainId, previous);
+        }
+        // Drop the reverse entry when this chain's selector is cleared.
         if (previous != 0 && previous != selector) delete chainIdOf[previous];
         chainSelectorOf[chainId] = selector;
         if (selector != 0) chainIdOf[selector] = chainId;
@@ -601,6 +645,16 @@ contract CcipMessenger is
         address messenger
     ) external onlyOwner {
         if (chainId == 0) revert ZeroChainId();
+        // Clear-before-repoint. This one is the inbound ALLOWLIST: overwrite
+        // it and every subsequent message from the old messenger is refused
+        // while the new address is trusted unconditionally.
+        address current = remoteMessengerOf[chainId];
+        if (
+            current != address(0) && messenger != address(0)
+                && current != messenger
+        ) {
+            revert RemoteMessengerAlreadySet(chainId, current);
+        }
         remoteMessengerOf[chainId] = messenger;
         emit RemoteMessengerSet(chainId, messenger);
     }
@@ -623,6 +677,18 @@ contract CcipMessenger is
             }
         }
         address previous = handlerOf[channelId];
+        // Clear-before-repoint. `HandlerAlreadyBound` above only stops ONE
+        // handler serving TWO channels; without this, the forward entry is
+        // freely overwritten, so a channel accidentally pointed at some other
+        // already-unbound-but-compatible recipient would deliver messages and
+        // tokens to it successfully — the loud-failure assumption does not
+        // hold here any more than it does for the peer.
+        if (
+            previous != address(0) && handler != address(0)
+                && previous != handler
+        ) {
+            revert ChannelHandlerAlreadySet(channelId, previous);
+        }
         if (previous != address(0)) delete channelOf[previous];
         handlerOf[channelId] = handler;
         if (handler != address(0)) channelOf[handler] = channelId;
@@ -632,21 +698,22 @@ contract CcipMessenger is
     /// @notice Configure (or, with `address(0)`, clear) the domain contract
     ///         on a remote chain for a channel — the inbound `sourceSender`
     ///         the local handler is told a message came from.
-    /// @dev Re-pointing a live peer requires clearing it first. This is the
-    ///      "conflicting operator assignments must be rejected rather than
-    ///      overwritten" rule from the CCIP lane-hardening spec, and it
-    ///      matters more here than for the sibling setters: a selector or
-    ///      handler misconfiguration makes messages fail to route, loudly,
-    ///      whereas a wrong peer routes everything perfectly while telling
-    ///      the handler the wrong originator. That is the failure mode with
-    ///      no symptom.
+    /// @dev Two guards, both instances of rules this contract applies
+    ///      uniformly (see {ChainSelectorAlreadySet} for the first and
+    ///      {HandlerAlreadyBound} for the second):
     ///
-    ///      Clearing and re-setting is two transactions and two
-    ///      `ChannelPeerSet` events, so a re-point is legible in the log
-    ///      rather than indistinguishable from a first-time assignment.
-    ///      Re-setting a peer to the value it already holds is allowed and
-    ///      idempotent — a redeploy script that reasserts its configuration
-    ///      should not need to know whether it ran before.
+    ///      1. Clear-before-repoint — a live peer cannot be overwritten with
+    ///         a different address; clear it, then set the new one.
+    ///      2. One channel per peer — an address already declared as some
+    ///         other channel's peer on that chain is rejected, keeping the
+    ///         (chain, peer)↔channel map one-to-one in both directions.
+    ///
+    ///      Rotating a peer is therefore: clear, wait for in-flight messages
+    ///      from the old peer to be delivered or abandoned, then set. The
+    ///      wait is a real requirement, not caution — a message the old peer
+    ///      already sent carries the OLD originator on the wire, so once the
+    ///      new peer is installed that message is rejected by the originator
+    ///      check in `_ccipReceive` and can never be manually re-executed.
     function setChannelPeer(
         bytes32 channelId,
         uint256 remoteChainId,
@@ -654,11 +721,23 @@ contract CcipMessenger is
     ) external onlyOwner {
         if (channelId == bytes32(0)) revert ZeroChannelId();
         if (remoteChainId == 0) revert ZeroChainId();
+        if (peer != address(0)) {
+            bytes32 boundChannel = channelOfPeer[remoteChainId][peer];
+            if (boundChannel != bytes32(0) && boundChannel != channelId) {
+                revert ChannelPeerAlreadyBound(
+                    peer, remoteChainId, boundChannel
+                );
+            }
+        }
         address current = channelPeerOf[channelId][remoteChainId];
         if (current != address(0) && peer != address(0) && current != peer) {
             revert ChannelPeerAlreadySet(channelId, remoteChainId, current);
         }
+        if (current != address(0)) delete channelOfPeer[remoteChainId][current];
         channelPeerOf[channelId][remoteChainId] = peer;
+        if (peer != address(0)) {
+            channelOfPeer[remoteChainId][peer] = channelId;
+        }
         emit ChannelPeerSet(channelId, remoteChainId, peer);
     }
 
