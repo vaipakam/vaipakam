@@ -241,12 +241,18 @@
   //   - RPC_*                — per-chain RPC URLs (carry API keys).
   //                            periodicPreNotify needs every Diamond
   //                            chain; the 1inch Fusion commit preflight
-  //                            resolves one per request chain, which is
-  //                            what RPC_POLYGON / RPC_POLYGON_AMOY
-  //                            (agent-only) serve. `RPC_ZKEVM` is
-  //                            omitted (Polygon zkEVM out of scope).
+  //                            resolves one per request chain. Both
+  //                            gate on a deployment record first.
+  //                            `RPC_ZKEVM` is omitted (Polygon zkEVM
+  //                            out of scope).
   //                            #1651: previously justified by a
   //                            buy-watchdog that #687-A removed.
+  //                            RPC_POLYGON / RPC_POLYGON_AMOY are
+  //                            currently UNREACHABLE — no Polygon
+  //                            deployment record exists — so they are
+  //                            provisioned ahead of need. Only
+  //                            RPC_POLYGON is agent-only; apps/indexer
+  //                            binds RPC_POLYGON_AMOY as well.
   //   - TG_BOT_TOKEN         — Telegram bot (handshake + notifications).
   //   - PUSH_CHANNEL_PK      — Push channel signer.
   //   - ZEROEX_API_KEY,

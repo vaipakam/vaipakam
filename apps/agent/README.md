@@ -9,7 +9,7 @@
 The **proactive-notifications + public-Frame + operator-services Worker**. Stage 3 PR4 of the Worker split (see [Stage3WorkerSplitPlan.md](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md)). Five responsibilities:
 
 - **Proactive notifications** — periodic interest pre-notify; Push + Telegram dispatchers (`PUSH_CHANNEL_PK` + `TG_BOT_TOKEN`).
-- **Cross-chain monitoring** — buy-watchdog reconciliation across the CCIP buy flow.
+- **Cross-chain monitoring** — periodic interest pre-notify scans across every deployed chain. (#1651: this line read "buy-watchdog reconciliation across the CCIP buy flow" until #687-A removed the VPFI buy surface and its watchdog.)
 - **Public Farcaster Frame** — `/frames/active-loans` GET + POST + image rendering.
 - **Operator services** — server-side aggregator quote proxies at `/quote/{0x,1inch}` + Blockaid scan proxy at `/scan/blockaid`.
 - **Frontend-facing endpoints** — Telegram-bot webhook `/tg/webhook`; diagnostics record capture `/diag/record`; settings endpoints `/thresholds PUT` + `/link/telegram POST`; support-ticket capture `/support/ticket POST` (#1040 phase 1 — D1 row + ops-Telegram notify via `TG_OPS_BOT_TOKEN`/`TG_OPS_CHAT_ID`, plain `wrangler secret put` secrets; while unset the notify skips and tickets still land in D1).
@@ -36,7 +36,7 @@ pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
 
 - Stage 3 Worker split: [`docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md).
 - Staging plan §2 least-privilege contract — the load-bearing reason this Worker holds no signing key.
-- ADR-0004 (CCIP migration) — context for the cross-chain buy-watchdog responsibility.
+- ADR-0004 (CCIP migration) — cross-chain context. (#1651: previously cited for the buy-watchdog responsibility, removed with #687-A.)
 
 ## Configuration
 
