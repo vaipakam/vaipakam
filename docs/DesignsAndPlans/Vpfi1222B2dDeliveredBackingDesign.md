@@ -695,6 +695,60 @@ invented a hazard that did not exist.
    **bound**, and **deferral rather than truncation** when a mirror's fresh
    budget is short — matching the recycled side, whose shortfall already
    defers.
+   **P1-b implementation pin (2026-08-13, scouted post-w6 on
+   `feat/1434-p1b-halt-lift`).** The two parts land at two different sites, and
+   the whole slice turns on ONE distinction that neither the §2g text above nor
+   the §8 summary makes explicit:
+
+   - **Part 1 — the bound.** `delivered fresh − armed fresh PAID`. The receipt
+     half shipped as #1556 (`rewardBudgetArmedFreshReceived`); **the paid half
+     does not exist anywhere in the tree and must be created** (tail-appended
+     storage, written at every armed-fresh payout site).
+     `interactionPoolPaidOut` is explicitly FORBIDDEN as a proxy — it counts
+     lifetime payouts including ordinary-schedule ones no delivery funded, so
+     charging them would defer every later day on any chain with prior
+     activity. The receipt figure is **not monotone**: it carries a saturating
+     UNWIND (`RewardRemittanceFacet.sol:1422-1423`) for a released or
+     reclassified delivery, so the bound must be computed saturating in both
+     terms — a paid side charged against a receipt figure that has since shrunk
+     would otherwise underflow or wedge.
+
+   - **Part 2 — defer, not truncate — and where.** The two behaviours sit four
+     lines apart in `processUserSideDay`. The RECYCLED leg
+     (`LibInteractionRewards.sol:4692`) does
+     `if (pool.recycled < user_.recycled) return (charge, slices);` — returning
+     with `charge.advanced` still false, so nothing persists, the cursor does
+     not move, and the day stays retryable. The FRESH leg immediately after
+     does the opposite: it folds `freshTrimmed` into `cappedOff.armedFresh` and
+     falls through to `advanced = true`, retiring the commitment terminally.
+     The caller's contract at `:1652-1657` states this in as many words ("A
+     FRESH shortfall never lands here — the day primitive settles it terminally
+     (truncate-and-consume) and still advances") and is therefore ON THE SWEEP
+     LIST: P1-b falsifies it for mirrors.
+
+   - **THE DISTINCTION, which is the crux.** A mirror must NOT simply defer on
+     any fresh trim. Fresh can be trimmed for reasons that are genuinely
+     terminal (the loan-side cap; the global 69M pool exhausting) and reasons
+     that are merely not-yet-funded (the delivered bound). Deferring on a
+     terminal cause would wedge the cursor forever — the precise failure the
+     withdrawn B2-d4 drew four P1s for. So the delivered bound must be
+     evaluated as its OWN term, and the day defers only when the **delivered**
+     bound is the binding one; a cap-bound trim still truncates and advances,
+     exactly as on Base. The design's own distinguishing test is the reason:
+     *"can the condition that stopped it always be satisfied"* — a delivered
+     shortfall can be (another remit lands), an exhausted cap cannot.
+
+   - **The mutant this must kill**, stated so the test suite can target it:
+     wiring the delivered budget into `ctx.pool.fresh` and reusing the existing
+     shortfall path. That satisfies Part 1's value bound and reads as done,
+     but it inherits truncate-and-consume — so a day whose funding is merely in
+     flight is permanently underpaid. A phase-A-only test (zero delivered
+     funding ⇒ pays zero) passes under it, which is why the post-lift test must
+     be the three-phase fixture asserting STORED state (cursor +
+     `outstandingCommitFresh`): B (delivered but short ⇒ still zero, cursor
+     STILL unmoved) and C (topped up ⇒ pays the canonical control's amount,
+     cursor advances exactly one day) are the phases that kill it.
+
 2. **Deliberately-zeroed days would retire entries for zero.** A grace/force
    finalization that excludes a mirror's interest report broadcasts an all-zero
    stamp and marks the day `remitIneligible` for later operator-sized funding.
