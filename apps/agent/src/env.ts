@@ -41,29 +41,24 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *                            tables for periodic-pre-notify scans).
  *                            Native binding — not a secret.
  *   - `RPC_*`              — per-chain RPC URLs, the broadest set of
- *                            the three Workers. Two consumers:
- *                            periodicPreNotify (via `getChainConfigs`)
- *                            and the 1inch Fusion commit preflight
- *                            (`intentFusionPost.rpcForChain`). Both
- *                            gate on `getDeployment` FIRST, so a chain
- *                            with no deployment record never reaches
- *                            its RPC. Secrets Store bindings (T-078).
+ *                            the three Workers. Secrets Store bindings
+ *                            (T-078). Consumers: every caller of
+ *                            `getChainConfigs` below, and
+ *                            `intentFusionPost.rpcForChain`. Read those
+ *                            for missing-RPC behaviour — it DIFFERS per
+ *                            consumer, so no summary is given here.
  *
- *                            #1651: the breadth used to be attributed
- *                            to a buy-watchdog reconciling every chain
- *                            with a VPFIBuyAdapter — #687-A removed
- *                            both. `RPC_POLYGON` / `RPC_POLYGON_AMOY`
- *                            are MAPPED by `rpcForChain` but currently
- *                            UNREACHABLE: `deployments.json` holds
- *                            only 97 / 84532 / 421614, and the handler
- *                            returns `no-deployment-for-chain` before
- *                            the RPC lookup. They become live if a
- *                            Polygon deployment lands; until then they
- *                            are provisioned ahead of need, which is a
- *                            deliberate operator call, not evidence of
- *                            a consumer. Only `RPC_POLYGON` is
- *                            agent-only — apps/indexer binds
- *                            `RPC_POLYGON_AMOY` too.
+ *                            #1651: the breadth was attributed to a
+ *                            buy-watchdog reconciling every chain with
+ *                            a VPFIBuyAdapter. #687-A removed both;
+ *                            neither exists in this Worker. What is
+ *                            verified: `RPC_POLYGON` / `RPC_POLYGON_AMOY`
+ *                            are unreachable today — no Polygon record
+ *                            in `deployments.json`, and every consumer
+ *                            gates on `getDeployment` first — so they
+ *                            are provisioned ahead of need. Keeping or
+ *                            dropping them is a Polygon-deployment
+ *                            question, not a cleanup one.
  *   - `TG_BOT_TOKEN`       — Telegram bot token. Powers the
  *                            `/tg/webhook` handshake AND the outbound
  *                            notifications dispatched by
@@ -244,12 +239,8 @@ interface BaseEnv {
  * `getChainConfigs` simply skips that chain.
  */
 export interface WorkerEnv extends BaseEnv {
-  // Per-chain RPC URLs. Most expansive set of the three Workers:
-  // periodicPreNotify needs every Diamond chain, and the 1inch Fusion
-  // commit preflight resolves one per request chain.
-  // #1651: this used to say "buy-watchdog needs every chain with a
-  // VPFIBuyAdapter"; #687-A removed both. See the module header for
-  // why POLYGON / POLYGON_AMOY are mapped but not currently reachable.
+  // Per-chain RPC URLs. See the module header — #1651 replaced a
+  // buy-watchdog justification that #687-A had made void.
   RPC_BASE?: SecretBinding;
   RPC_ETH?: SecretBinding;
   RPC_ARB?: SecretBinding;
@@ -284,14 +275,10 @@ export interface WorkerEnv extends BaseEnv {
  * is `undefined` and the dependent code path skips it.
  */
 export interface Env extends BaseEnv {
-  // Per-chain RPC URLs. The two consumers behave DIFFERENTLY when one
-  // is missing, and conflating them misleads operators (#1651):
-  //   - `getChainConfigs` (periodicPreNotify): `if (!m.rpc) continue`
-  //     — the chain drops out of the scan entirely.
-  //   - `intentFusionPost`: the `if (rpcUrl)` block is skipped, so the
-  //     on-chain commit PREFLIGHT is bypassed and the request is still
-  //     submitted upstream. Omitting an RPC there removes a safety
-  //     check; it does not disable Fusion for that chain.
+  // Per-chain RPC URLs. Missing-RPC behaviour differs per consumer
+  // (`getChainConfigs` drops the chain; `intentFusionPost` skips only
+  // its preflight) — read the call sites rather than trusting a
+  // summary here. #1651.
   RPC_BASE?: string;
   RPC_ETH?: string;
   RPC_ARB?: string;

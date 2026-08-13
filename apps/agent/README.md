@@ -9,7 +9,7 @@
 The **proactive-notifications + public-Frame + operator-services Worker**. Stage 3 PR4 of the Worker split (see [Stage3WorkerSplitPlan.md](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md)). Five responsibilities:
 
 - **Proactive notifications** — periodic interest pre-notify; Push + Telegram dispatchers (`PUSH_CHANNEL_PK` + `TG_BOT_TOKEN`).
-- **Cross-chain monitoring** — periodic interest pre-notify scans across every deployed chain. (#1651: this line read "buy-watchdog reconciliation across the CCIP buy flow" until #687-A removed the VPFI buy surface and its watchdog.)
+<!-- #1651: a "Cross-chain monitoring — buy-watchdog reconciliation across the CCIP buy flow" bullet stood here. #687-A removed that surface and its watchdog, and this Worker has no other cross-chain-monitoring concern, so the responsibility is gone rather than renamed. -->
 - **Public Farcaster Frame** — `/frames/active-loans` GET + POST + image rendering.
 - **Operator services** — server-side aggregator quote proxies at `/quote/{0x,1inch}` + Blockaid scan proxy at `/scan/blockaid`.
 - **Frontend-facing endpoints** — Telegram-bot webhook `/tg/webhook`; diagnostics record capture `/diag/record`; settings endpoints `/thresholds PUT` + `/link/telegram POST`; support-ticket capture `/support/ticket POST` (#1040 phase 1 — D1 row + ops-Telegram notify via `TG_OPS_BOT_TOKEN`/`TG_OPS_CHAT_ID`, plain `wrangler secret put` secrets; while unset the notify skips and tickets still land in D1).

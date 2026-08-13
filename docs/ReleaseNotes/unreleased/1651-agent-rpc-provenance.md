@@ -1,46 +1,43 @@
-## Agent worker — six notes explaining its configuration by a component that was removed (PR #TBD)
+## Agent worker — configuration explained by a component that was removed (PR #TBD)
 
-The agent worker carries the widest set of network endpoints of the three
-workers. Six places — its module header, two interface comments, the
-chain-resolution helper, the deployment config's secret inventory, and its
-database binding — all explained that breadth the same way: a monitoring
-component that reconciled the removed VPFI purchase flow across every chain it
-was deployed on. Its README and package description said the same.
+The agent worker's configuration was documented in nine places — its module
+header, two interface comments, the chain-resolution helper, its deployment
+config, its database binding, its README, its package description, and the
+sibling keeper worker's config — by reference to a monitoring component that
+reconciled the removed VPFI purchase flow. That component went with the
+purchase flow. The explanations stayed.
 
-That component was removed along with the purchase flow. The endpoints were
-not, and the open question was whether they are now dead configuration — which
-on a worker holding credentials matters more than an out-of-date comment.
-
-The honest answer is narrower than either guess. Two Polygon endpoints are
-*mapped* by the request-chain resolver, so they are not orphaned — but neither
-consumer can reach them today, because both check for a deployment record
-first and no Polygon deployment exists. They are provisioned ahead of need.
-That is a legitimate operator choice, and it is now written down as such,
-rather than being justified by a component that no longer exists or quietly
-removed on the assumption that unreachable means unwanted. Whether to keep
-them is a question about Polygon deployment plans, and belongs to whoever owns
-that decision.
-
-Three related claims were also wrong and are corrected:
-
-The chain-resolution helper said its table covers every chain with a diamond
-**or** a purchase adapter. It was never derived from adapters: a chain is
-included only when both its endpoint is configured and a deployment record
-exists, so the set is deployment-driven and limits itself.
-
-The two consumers behave *differently* when an endpoint is missing, and the
-old note flattened them into one rule. For the periodic scan, a missing
-endpoint drops the chain entirely. For the aggregator path it does not: the
-on-chain validation step is skipped and the request is still submitted. An
-operator reading the old wording could believe omitting an endpoint disables
-that chain, when it actually removes a safety check.
+Three of those were false in ways that mattered beyond tidiness:
 
 The database binding listed a family of purchase-reconciliation tables among
 what this worker reads. No such tables exist — nothing creates them and
-nothing reads them. That one has consequences beyond tidiness: anyone auditing
-what this worker can reach was told it reads data that was never there.
+nothing reads them. Anyone auditing what this worker can reach was told it
+reads data that was never there.
 
-Also corrected: only one of the two Polygon endpoints is unique to this
-worker. The other is bound by the indexer as well.
+Two configs claimed both Polygon endpoints were unique to this worker. One is
+also used by the indexer.
 
-No behaviour changes — comments and configuration documentation only.
+The README and package description advertised cross-chain reconciliation as a
+current responsibility. It was removed rather than renamed: the worker has no
+other cross-chain-monitoring concern, and inventing a replacement to preserve
+the bullet would have been the same defect in a new coat.
+
+**What this change deliberately does not do** is replace the old explanations
+with new ones. Two review rounds produced eight findings, every one of them in
+prose written to describe how this worker uses its endpoints — how many
+consumers there are, what happens when one is missing, whether a request still
+reaches upstream. Each answer was close but wrong, and the wrongness was
+invisible without tracing the code.
+
+So the descriptions are now pointers, not summaries: the comments name the
+consumers and say to read them, and state only what was verified end to end.
+The one substantive finding is recorded plainly — the two Polygon endpoints
+are unreachable today, because no Polygon deployment record exists and every
+consumer checks for one first. They are provisioned ahead of need, which is a
+legitimate operator choice; whether to keep them is a deployment question, not
+a cleanup one.
+
+A configuration comment that is confidently wrong is worse than one that tells
+you where to look.
+
+No behaviour changes.
