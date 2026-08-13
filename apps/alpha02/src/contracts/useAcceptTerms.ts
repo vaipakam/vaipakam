@@ -915,6 +915,26 @@ export function useSignedOfferAcceptTermsSigning() {
  *  card exists to prevent. A captured flag cannot see a later change; only a
  *  fresh read can.
  *
+ *  THE RULE THIS FILE ALREADY FOLLOWED, which my first version broke. Audited
+ *  every input these two callbacks let decide a signature (#1700, after three
+ *  rounds of the same class of finding):
+ *
+ *    - the canonical offer `o` — LIVE `getOffer` at submit, precisely so the
+ *      signed terms match stored state field-for-field;
+ *    - the clock — LIVE `block.timestamp`, never the device's;
+ *    - sanctions, pause, balance, illiquidity, the creator's ceiling — all
+ *      LIVE re-reads at submit;
+ *    - `input.consent` — a snapshot, CORRECTLY: it is the user's own act, and
+ *      the signature is what it acknowledges;
+ *    - `input.expected` — a snapshot, CORRECTLY: it is the reviewed side of a
+ *      comparison against the live read, never the authority.
+ *
+ *  So: a snapshot may be the REVIEWED side of a comparison, never the
+ *  AUTHORITY for a gate. `fullTariff.blocked` arrived as a snapshot and was
+ *  trusted as authority — the single exception in the file, and the reason
+ *  three consecutive rounds found the same shape of hole in it. Anything added
+ *  here later should be classified against that rule before it is wired in.
+ *
  *  Deliberately mirrors the CREATOR-side preflight above (#1412 r4) rather
  *  than inventing a second shape: same quote call, same fail-OPEN posture on
  *  transport or missing-selector failures (the contract enforces regardless;
