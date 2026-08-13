@@ -1214,21 +1214,146 @@ export function Recover() {
 
   useEffect(() => {
     genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
-    // Still an effect, but the earlier justification for that was WRONG and is
-    // recorded here so it is not repeated. It argued that `genRef` is a
-    // coherence guard, so the resets could not move to a render-phase
-    // adjustment without letting a continuation started under the OLD identity
-    // pass the generation check and overwrite the freshly cleared form — and
-    // therefore that guard and guarded state had to advance together after the
-    // commit. Codex #1683 r1 dismantled that on the identical PositionDetails
-    // reset: a LAYOUT effect advances the ref synchronously during the commit,
-    // before any continuation can resume, and a continuation resolving before
-    // the commit restarts the render and reapplies the reset. The trade the
-    // argument assumed does not exist.
-    // What keeps this one here is narrower and unrelated to that: the same pass
-    // also REHYDRATES a persisted card from storage, so it is not a pure reset.
-    // Untangling teardown from rehydration on the signing form is #1687, not a
-    // tail-end edit to this PR.
+    // Deliberately an effect. Three justifications for that were attempted and
+    // REJECTED at the time — but read (1) below before concluding it was wrong:
+    // justification (1) was later RESTORED as the correct reason for this screen
+    // (Codex #1689 r2), so the history is "rejected, then one vindicated", not
+    // "all three refuted and a fourth found" (Codex #1689 r5 caught that this
+    // paragraph contradicted the bullet). What settled it was not an argument of
+    // mine but r2 finding three concrete races in the render-phase version.
+    //
+    // Rejected at the time: (1) "`genRef` is a coherence guard so guard and
+    // guarded state must advance together" — dismissed on the *PositionDetails*
+    // reset in #1683 r1, and I wrongly carried that dismissal over to here;
+    // r2 showed it holds HERE (see the first bullet). (2) "entangled
+    // with the rehydration in this same pass" — wrong, both halves fit one pass.
+    // (3) "`setStep` writes `stepRef` synchronously so the reset cannot move" —
+    // true of `setStep`, but the reset can bypass it via `setStepState`.
+    //
+    // So (3) fell, the split was built — and #1689 r2 showed it broke three
+    // things the effect gets right, ALL of them specific to this screen:
+    //
+    // - A render can yield after the render-phase reset but before a commit-phase
+    //   `genRef` bump. An in-flight `signAndSubmit` continuation resumes in that
+    //   window, still passes `genRef.current === gen`, and lands old-identity
+    //   state AFTER the reset — and because the seen-identity key has committed,
+    //   the adjustment does not reapply. Untagged states (`review`, `error`) then
+    //   sit under the new wallet, and a stale flow can walk into another wallet
+    //   prompt. Here, reset and invalidation are in ONE post-commit effect, so a
+    //   continuation that sneaks in has its STATE clobbered by the reset that
+    //   follows it. This is justification (1), which was correct at THIS site all
+    //   along — the #1683 refutation did not transfer, because PositionDetails has
+    //   no signing continuation that can advance to a wallet prompt.
+    //   NOT a full safety guarantee, though (Codex #1689 r3): a continuation
+    //   queued before the account change can still run before this passive effect,
+    //   pass the old generation check, and OPEN a `signTypedData` / `writeContract`
+    //   prompt. Resetting state cannot retract a prompt or un-broadcast a tx.
+    //   What this effect wins is EXACTLY the pre-commit state race, and no more
+    //   (Codex #1689 r4). It does not dominate the render-phase version: that one
+    //   bumped `genRef` in a LAYOUT effect during the identity commit, so a
+    //   continuation resuming after the commit was rejected before either wallet
+    //   call, while this passive effect leaves that post-commit interval open. The
+    //   two trade windows rather than one being better. Combining them is a
+    //   candidate recorded in #1691 — but NOT by adding a second bump (Codex
+    //   #1689 r5): keeping this one and adding a commit-time one publishes two
+    //   generations per identity change, so a NEW-identity submit starting in the
+    //   post-commit/pre-effect interval captures the intermediate value, is
+    //   spuriously invalidated with no identity change, and implicitly releases
+    //   its generation-keyed `inFlightRef` claim. The sole bump must MOVE to
+    //   commit time — but ONLY on some fence branches (Codex #1689 r9). If the
+    //   wallet-event fence advances `genRef` ITSELF, the identity render already
+    //   observes the new generation, which also clears the stale
+    //   `reconcileClaim === genRef.current` state; a second bump is then
+    //   unnecessary — and unsafe IF PASSIVE, recreating the two-generation
+    //   failure just described. A LAYOUT-phase second bump is safe FROM THAT RACE
+    //   ONLY (Codex #1689 r10, narrowed by r11): it lands during the identity
+    //   commit, before the new UI can be interacted with, so nothing new-identity
+    //   can capture the intermediate generation, while work started between the
+    //   wallet event and the commit belongs to the OLD UI and SHOULD be
+    //   invalidated. The submit failure needs a PASSIVE bump — post-commit, with
+    //   the new UI already painted. But "safe" does NOT extend to item 6, and
+    //   item 6 applies under b1 WITH OR WITHOUT a second bump (Codex #1689 r11
+    //   then r12 — I claimed the exemption three times and it was wrong three
+    //   times, so the exemption is GONE rather than narrowed again). The wallet
+    //   event advances to G+1 BEFORE the reconciliation claim is recorded, so a
+    //   reconciliation the user starts from the still-committed OLD card stores
+    //   reconcileClaim = G+1; the new-identity render then computes `reconciling`
+    //   true and, with nothing further advancing the ref, it STAYS true until the
+    //   old RPC settles. My r9 reasoning assumed the claim was recorded BEFORE
+    //   the advance; it need not be. TWO SEPARATE RULES, and conflating them is
+    //   what produced three wrong exemptions (Codex #1689 r13 caught the second
+    //   one still standing here after r12 fixed the first):
+    //     (i) the COMMIT-TIME BUMP is per-branch — required under the
+    //         live-provider fence, or a wallet-event fence advancing a SEPARATE
+    //         token and leaving `genRef` to the effect; not needed when the event
+    //         advances `genRef` itself. But NOTE (Codex #1689 r15): advancing
+    //         `genRef` from the wallet event is NOT ITSELF A FENCE. `signAndSubmit`
+    //         captures `genRef.current` at call time (:1840), so work launched from
+    //         the still-committed OLD UI *after* the event captures the NEW value
+    //         and passes every later check — free to reserve, sign and submit for
+    //         the old account. A bump only invalidates work that started BEFORE
+    //         it. Any fence must compare the callback's CAPTURED IDENTITY against
+    //         the live one (latched identity or a suppression state), never a
+    //         counter alone.
+    //     (ii) item 6 requires RESETTING / REKEYING the reconciliation claim, on
+    //         every branch, bump or no bump. A bare follow-up RERENDER is NOT an
+    //         equivalent option and is not offered as one (Codex #1689 r14): when
+    //         the wallet event advanced `genRef` to G+1 and old UI then stored
+    //         reconcileClaim = G+1, re-rendering leaves BOTH values untouched, so
+    //         the equality — and the disabled card — survives it. Rerender alone
+    //         works only where something also advances the ref, so requiring the
+    //         reset everywhere is both simpler and strictly safer than splitting
+    //         this per branch again. And the reset must cover BOTH pieces of
+    //         reconciliation ownership (Codex #1689 r15), not just the rendered
+    //         predicate: `reconcileRef` is the mutex (:2488 early-return, written
+    //         with `setReconcileClaim` at :2509). Rekey only the claim and the new
+    //         card looks enabled while `reconcilePending` still early-returns on
+    //         the stale mutex; reset only the ref and the OLD `finally` can clear a
+    //         NEW same-generation claim. Identity/op-key both.
+    //   Deliberately not attempted mid-review-loop on a signing path.
+    //   An identity fence around the imperative wallet calls (including the
+    //   reservation write, which has no generation check on its success path) is
+    //   the separate live gap, also #1691 — and it cannot be built from `genRef`
+    //   or any effect-maintained ref, since during the pre-commit window both
+    //   still describe the OLD identity (Codex #1689 r5). `useActiveChain` reads
+    //   identity from wagmi's `useAccount()`, so there is NO React-side
+    //   "transition in progress" signal that turns on before the commit either —
+    //   which leaves exactly TWO viable fences (Codex #1689 r6): read the
+    //   wallet/provider's LIVE account+chain at call time, or invalidate
+    //   synchronously from the wallet event. A "suppress across the transition"
+    //   flag is NOT a third option: driven from render or any effect it has the
+    //   same pre-commit hole, and set synchronously from the wallet event it just
+    //   IS the second option.
+    // - Mirroring the committed step into `stepRef` from a layout effect can roll
+    //   a newer synchronous `setStep(B)` back to `A`, which is precisely the
+    //   render-behind bug the synchronous mirror exists to prevent.
+    // - Reading the persisted record during render is an unsubscribed external
+    //   read, so a concurrent yield can commit a card that was already removed in
+    //   another tab, with no later event to correct it.
+    //
+    // Moving this to render safely needs identity-tagged guarded writes, an
+    // identity fence on the imperative wallet calls, ordered/keyed handling of the
+    // oracle retry budget, and concurrent-safe reads of the record — EITHER
+    // `useSyncExternalStore` OR subscribe-and-revalidate: install the
+    // identity-keyed `storage` listener in a LAYOUT effect and re-read the record
+    // synchronously right after subscribing, which runs before paint so no storage
+    // task can interleave between the two, and recovers anything missed while the
+    // concurrent render yielded (Codex #1689 r7 — naming only the hook wrongly
+    // excluded this). The two are NOT interchangeable downstream, though (Codex
+    // #1689 r8): subscribe-and-revalidate KEEPS the imperative `storage` handler,
+    // which decides RELEASE from `stepRef.current` at :1381 — so on that branch a
+    // version-safe commit-time `stepRef` update is REQUIRED, not optional, or the
+    // listener must stop consuming `stepRef` altogether. Only the external-store
+    // form removes the handler, `stepRef` and the `setStep` wrapper together and
+    // makes the mirror moot. Widening the storage option in r7 silently invalidated
+    // the mirror's "only if the listener is retained" condition — the entries
+    // interact. All of which is a concurrency redesign of a signing path,
+    // which is not a lint cleanup. Tracked
+    // as #1691. This effect is RETAINED pending that redesign — deliberately not
+    // stated as the better design (Codex #1689 r5): each shape wins a different
+    // race window, and #1691's implementer should weigh that trade fresh rather
+    // than inherit a ranking from here. It is certainly not a proof that this
+    // screen has no races.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     clearToFreshForm();
     oracleAutoRetriesRef.current = 0;
