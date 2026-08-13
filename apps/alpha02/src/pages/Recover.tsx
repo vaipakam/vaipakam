@@ -1263,8 +1263,15 @@ export function Recover() {
     //   commit time — but ONLY on some fence branches (Codex #1689 r9). If the
     //   wallet-event fence advances `genRef` ITSELF, the identity render already
     //   observes the new generation, which also clears the stale
-    //   `reconcileClaim === genRef.current` state; adding a commit-time bump on
-    //   top then recreates the two-generation failure just described. The
+    //   `reconcileClaim === genRef.current` state; a second bump is then
+    //   unnecessary — and unsafe IF PASSIVE, recreating the two-generation
+    //   failure just described. A LAYOUT-phase second bump is safe (Codex #1689
+    //   r10): it lands during the identity commit, before the new UI can be
+    //   interacted with, so nothing new-identity can capture the intermediate
+    //   generation, while work started between the wallet event and the commit
+    //   belongs to the OLD UI and SHOULD be invalidated. The failure needs a
+    //   PASSIVE bump — post-commit, with the new UI already painted. That is the
+    //   distinction, not commit-time-vs-not. The
     //   commit-time bump AND item 6's follow-up rerender are required only under
     //   the live-provider fence, or a wallet-event fence that advances a SEPARATE
     //   token and leaves `genRef` to the effect. So this is a per-branch
