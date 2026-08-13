@@ -6568,6 +6568,32 @@ library LibVaipakam {
         //   discarded portion would read as still-in-transit forever,
         //   restoring the exact phantom allowance this counter removes.
         uint256 recycleReleasedRemitResolvedCumulative;
+        /// @dev #1434 P1-b — APPENDED AT THE TAIL (same in-place-upgrade
+        ///      rule as every counter above). The PAID half of the
+        ///      delivered-fresh bound, and the counterpart of
+        ///      `rewardBudgetArmedFreshReceived`: Σ of ARMED fresh this
+        ///      chain has actually paid out, written at every armed-fresh
+        ///      payout site. P1-a shipped only the received half, which is
+        ///      why the halt could not lift on that slice alone.
+        ///
+        ///      `interactionPoolPaidOut` is deliberately NOT reused as a
+        ///      proxy (an earlier revision was withdrawn for exactly that,
+        ///      Codex #1556 r1): it counts LIFETIME payouts including
+        ///      ordinary-schedule days that no delivery ever funded, so
+        ///      charging them against delivered fresh would defer every
+        ///      later day on any chain with prior activity. Only
+        ///      armed-day fresh belongs here, because only armed-day fresh
+        ///      is what a remittance delivers.
+        ///
+        ///      The bound `received − paid` MUST be evaluated SATURATING
+        ///      in both terms. The received side is NOT monotone: it
+        ///      carries its own saturating unwind for a released or
+        ///      reclassified delivery, so a paid figure charged against a
+        ///      received figure that has since shrunk would otherwise
+        ///      underflow — and a reverting pricing path wedges the walk
+        ///      for every later day, which is the failure mode the
+        ///      withdrawn B2-d4 attempt was rejected for.
+        uint256 rewardBudgetArmedFreshPaid;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

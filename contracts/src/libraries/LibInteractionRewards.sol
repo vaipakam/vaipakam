@@ -958,12 +958,19 @@ library LibInteractionRewards {
         returns (uint256 freshHalf, uint256 recycledHalf, bool halt)
     {
         if (_isArmedDay(s, d)) {
-            // Mirror armed-day pricing stays HALTED — see the two outstanding
-            // prerequisites in the natspec above. B2-d4's removal of this line
-            // was withdrawn after review; Base never arms a mirror before the
-            // full mesh ships, so this is the backstop that makes that a code
-            // invariant rather than only an operational one.
-            if (LibVaipakam.isMirrorRewardChain(s)) return (0, 0, true);
+            // #1434 P1-b — the blanket mirror halt that stood here is GONE.
+            // Both prerequisites are now discharged: prerequisite 2 by w3's
+            // `_p2DayDeltas` ladder (consulted before this function and
+            // itself the per-day §2.1 gate), and prerequisite 1 by the
+            // delivered-fresh bound this slice adds — which supplies the
+            // missing VALUE bound AND, crucially, the DEFERRAL semantics
+            // that bound needs (see {PoolBudget.deliveredFresh}). B2-d4's
+            // removal of this line was withdrawn precisely because it
+            // shipped neither.
+            //
+            // A mirror now prices its armed days from its own stamped
+            // funding exactly as Base does; what stops it overpaying is no
+            // longer a blanket halt but a bound that can actually clear.
             LibVaipakam.ChainDayFunding storage f =
                 s.chainDayRecycledFunding[d][uint32(block.chainid)];
             if (!f.stamped) return (0, 0, true);
@@ -1534,7 +1541,8 @@ library LibInteractionRewards {
         WalkCtx memory ctx = WalkCtx({
             pool: PoolBudget({
                 fresh: freshLeft,
-                recycled: s.recycleBucket
+                recycled: s.recycleBucket,
+                deliveredFresh: deliveredFreshBound(s)
             }),
             advanced: false,
             daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
@@ -1649,17 +1657,47 @@ library LibInteractionRewards {
 
             (DayCharge memory charge, DaySlice[] memory slices) =
                 processUserSideDay(user, d, set, ctx.pool, _noDryRun());
-            // Not advanced ⇒ a recycled-bucket shortfall or an unready RPN
-            // row — both legitimately transient (#1351 2d-0: the bucket
-            // refills; the row finalizes). Nothing was charged, so STOP
-            // rather than spin: the day stays retryable. A FRESH shortfall
-            // never lands here — the day primitive settles it terminally
-            // (truncate-and-consume) and still advances.
+            // Not advanced ⇒ a recycled-bucket shortfall, an unready RPN row,
+            // or (#1434 P1-b) a MIRROR's DELIVERED-fresh shortfall — all
+            // legitimately transient (#1351 2d-0: the bucket refills; the row
+            // finalizes; the next remittance lands). Nothing was charged, so
+            // STOP rather than spin: the day stays retryable.
+            //
+            // P1-b corrects what stood here. It read "A FRESH shortfall never
+            // lands here — the day primitive settles it terminally
+            // (truncate-and-consume) and still advances", which is true of a
+            // CAP-bound shortfall on any chain and was true of every fresh
+            // shortfall while the mirror halt stood. It is no longer true of a
+            // mirror's delivered bound, whose budget GROWS with each
+            // remittance, so truncating there would permanently underpay a day
+            // whose funding was merely in flight. A cap-bound trim still
+            // settles terminally and still advances.
             if (!charge.advanced) break;
 
             _persistDay(s, user, side, d, set, slices);
-            ctx.pool.fresh -=
+            uint256 freshSpent =
                 charge.toUser.armedFresh + charge.toTreasury.armedFresh;
+            ctx.pool.fresh -= freshSpent;
+            // #1434 P1-b — charge the delivered-fresh bound with EXACTLY what
+            // the pool just spent, on ARMED days only.
+            //
+            // This quantity, and not `consumeArmedFresh`'s argument, is the
+            // paid side. That function retires COMMITMENTS: its amount
+            // deliberately includes `cappedOff.armedFresh`, which moves no
+            // tokens at all, and on Base it is also called when a remittance
+            // is SENT. Charging either against delivered fresh would repeat
+            // the mistake `interactionPoolPaidOut` was rejected for —
+            // counting value the chain never paid out of a delivery, and so
+            // deferring later days that are in fact fully funded.
+            //
+            // Both legs are counted because both genuinely spend fresh: the
+            // user leg pays out, and the forfeit leg's fresh share is real
+            // absorption that credits the recycle bucket. That is the same
+            // pairing the pool decrement above uses, which is the point —
+            // the bound tracks the spend, so the two can never drift.
+            if (freshSpent != 0 && _isArmedDay(s, d)) {
+                s.rewardBudgetArmedFreshPaid += freshSpent;
+            }
             ctx.pool.recycled -= charge.toUser.recycled;
             _foldSplit(toUser, charge.toUser);
             _foldSplit(toTreasury, charge.toTreasury);
@@ -2040,11 +2078,18 @@ library LibInteractionRewards {
         // ctx.pool is: a recycled shortfall DEFERS a day and stops the side
         // (walk behaviour the preview must mirror). FRESH stays unbounded on
         // purpose — the 69M truncation is payment-time behaviour (the facet
-        // scaler / the terminal trim), the one documented axis on which the
-        // preview stays an upper bound.
+        // scaler / the terminal trim) — and #1434 P1-b leaves the MIRROR
+        // delivered-fresh bound unbounded here for the same reason. Those
+        // are now TWO documented axes on which the preview stays an upper
+        // bound rather than one. Binding delivered fresh here would not
+        // merely tighten the figure: a delivered shortfall DEFERS, which
+        // stops the side, so the preview would silently under-report every
+        // day whose funding is simply still in flight — the opposite of an
+        // upper bound, and a worse answer than the one it gives today.
         PoolBudget memory pool = PoolBudget({
             fresh: type(uint256).max,
-            recycled: s.recycleBucket
+            recycled: s.recycleBucket,
+            deliveredFresh: type(uint256).max
         });
         for (uint8 sideIdx; sideIdx < 2; ) {
             LibVaipakam.RewardSide side = sideIdx == 0
@@ -2846,6 +2891,34 @@ library LibInteractionRewards {
             LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
                 ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
                 : 0;
+    }
+
+    /// @notice #1434 P1-b — the MIRROR delivered-fresh bound: armed fresh
+    ///         this chain has actually RECEIVED, less armed fresh it has
+    ///         already PAID.
+    /// @dev    Unbounded (`type(uint256).max`) on anything that is not a
+    ///         mirror reward chain. Base funds its own armed days from the
+    ///         69M cap directly — it receives no remittances, so an
+    ///         unconditional bound here would read zero and BRICK Base
+    ///         entirely. That scope control is what
+    ///         `test_D4_CanonicalArmedDayPricesNormally` exists to hold.
+    ///
+    ///         SATURATING in both directions, and that is load-bearing
+    ///         rather than defensive. The received side is NOT monotone:
+    ///         it carries a saturating unwind for a released or
+    ///         reclassified delivery, so `paid` can legitimately exceed
+    ///         `received` after an unwind of value that was already paid
+    ///         out. Reverting there would wedge the walk for every later
+    ///         day — the failure mode the withdrawn B2-d4 attempt was
+    ///         rejected for — so the bound floors at zero and the day
+    ///         simply defers until fresh delivery restores headroom.
+    function deliveredFreshBound(
+        LibVaipakam.Storage storage s
+    ) internal view returns (uint256) {
+        if (!LibVaipakam.isMirrorRewardChain(s)) return type(uint256).max;
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        uint256 paid = s.rewardBudgetArmedFreshPaid;
+        return received > paid ? received - paid : 0;
     }
 
     // ─── Internals ───────────────────────────────────────────────────────────
@@ -4036,6 +4109,17 @@ library LibInteractionRewards {
         EntrySplit toTreasury;
         EntrySplit cappedOff;
         uint256 freshShortfall;
+        /// @dev #1434 P1-b — how much of `freshShortfall` a MIRROR's
+        ///      DELIVERED bound caused, as opposed to the monotone cap.
+        ///      Non-zero ⇒ the day DEFERS instead of retiring the remainder,
+        ///      because that shortfall clears when the next remittance lands.
+        ///
+        ///      Carried on this struct rather than returned alongside
+        ///      `freshTrimmed`: a fourth return value from {_attributeLegs}
+        ///      put `processUserSideDay` one slot over the viaIR stack
+        ///      ceiling. Writing into a memory struct the caller already
+        ///      holds costs no extra stack slot.
+        uint256 freshShortfallDelivered;
         bool advanced;
     }
 
@@ -4049,6 +4133,27 @@ library LibInteractionRewards {
     struct PoolBudget {
         uint256 fresh;
         uint256 recycled;
+        /// @dev #1434 P1-b — the MIRROR delivered-fresh bound, carried as
+        ///      its OWN term rather than folded into `fresh`. On Base (and
+        ///      on any chain with no delivered constraint) this is
+        ///      `type(uint256).max` and never binds.
+        ///
+        ///      Folding it into `fresh` is the obvious implementation and
+        ///      is WRONG — it is the one §2g literally suggests, and it is
+        ///      the mutant this slice exists to avoid. `fresh` is bounded
+        ///      by the 69M cap and the D1 ceiling, whose shortfalls are
+        ///      TERMINAL (monotone non-increasing ⇒ the remainder can
+        ///      never be funded, so it is trimmed and retired). A
+        ///      delivered shortfall is the opposite: it clears the moment
+        ///      the next remittance lands. Sharing one term makes the two
+        ///      indistinguishable at the trim site, so the delivered case
+        ///      would inherit truncate-and-consume and permanently underpay
+        ///      a day whose funding was merely in flight.
+        ///
+        ///      Kept separate, "which bound actually bound?" is answerable,
+        ///      and the day can defer for the satisfiable reason while
+        ///      still truncating for the unsatisfiable one.
+        uint256 deliveredFresh;
     }
 
     /// @dev Per-claim walk state, threaded by reference through both side
@@ -4321,10 +4426,17 @@ library LibInteractionRewards {
     ///
     ///      Extracted from {processUserSideDay} to keep that function under the
     ///      viaIR stack ceiling.
-    ///      #1351 slice 2d-0 — `freshBudget` is the caller's remaining 69M
+    ///      #1351 slice 2d-0 — `pool.fresh` is the caller's remaining 69M
     ///      headroom, and this function applies the TERMINAL truncate-and-
     ///      consume rule to it: each slice keeps its recycled component whole
     ///      and its fresh component is trimmed to what the budget still holds.
+    ///
+    ///      #1434 P1-b — that terminal rule now applies to the 69M headroom
+    ///      ONLY. `pool.deliveredFresh` is a SECOND fresh bound with the
+    ///      opposite settlement: what it trims is reported separately in
+    ///      `charge.freshShortfallDelivered` and DEFERS the day rather than
+    ///      retiring the remainder, because a delivered shortfall clears when
+    ///      the next remittance lands while an exhausted cap never does.
     ///      The trimmed-off fresh is returned as `freshTrimmed`; MUTATED
     ///      `amounts[i]` reflect what is actually transferred. With ample
     ///      budget nothing trims and this is the plain composition split.
@@ -4340,7 +4452,8 @@ library LibInteractionRewards {
         uint256[] memory amounts,
         uint256[] memory freshCap,
         uint256[] memory cEff,
-        uint256 freshBudget
+        PoolBudget memory pool,
+        DayCharge memory charge
     )
         private
         pure
@@ -4350,6 +4463,14 @@ library LibInteractionRewards {
             uint256 freshTrimmed
         )
     {
+        // Copied to locals: the running decrements below are this function's
+        // own bookkeeping, and the caller's `pool` must not be mutated (it
+        // still has to decrement by the SETTLED spend after a defer decision,
+        // and a defer discards this frame entirely). Taking the struct rather
+        // than two scalars also costs one stack slot instead of two, which is
+        // what keeps `processUserSideDay` under the viaIR ceiling.
+        uint256 freshBudget = pool.fresh;
+        uint256 deliveredBudget = pool.deliveredFresh;
         uint256 n = slices.length;
         for (uint256 pass; pass < 2; ) {
             bool userPass = pass == 0;
@@ -4385,13 +4506,38 @@ library LibInteractionRewards {
                     ? 0
                     : ((cEff[i] - freshCap[i]) * amt) / cEff[i];
                 uint256 f = amt - r;
-                // Terminal fresh trim: pay what headroom allows; the
-                // remainder can never be funded (the headroom is monotone
-                // non-increasing), so it is trimmed here and retired by the
-                // caller, never deferred.
-                uint256 fKept = f < freshBudget ? f : freshBudget;
+                // Fresh trim: pay what the binding bound allows. #1434 P1-b
+                // splits what used to be one decision, because the two
+                // bounds differ in whether their shortfall can EVER clear:
+                //
+                //   • `freshBudget` (69M headroom / D1 ceiling) is MONOTONE
+                //     NON-INCREASING, so a remainder it trims can never be
+                //     funded by any future state. That one is trimmed here
+                //     and retired terminally by the caller — the original
+                //     behaviour, unchanged, and still correct on Base.
+                //   • `deliveredBudget` (a MIRROR's delivered-fresh bound)
+                //     GROWS with every remittance, so a remainder it trims
+                //     is merely not-yet-funded. The caller DEFERS the whole
+                //     day on this one instead of retiring it.
+                //
+                // Attribution on a tie goes to the CAP, and that is
+                // principled rather than merely conservative: if the cap
+                // binds at or below the delivered bound, the day cannot be
+                // paid in full no matter how much later funding arrives, so
+                // truncating is the correct settlement. Reversing the tie
+                // would defer a day that can never clear — wedging the
+                // cursor for every later day, which is precisely why the
+                // B2-d4 attempt was withdrawn.
+                uint256 bound =
+                    freshBudget < deliveredBudget ? freshBudget : deliveredBudget;
+                uint256 fKept = f < bound ? f : bound;
                 freshBudget -= fKept;
-                freshTrimmed += f - fKept;
+                deliveredBudget -= fKept;
+                uint256 shortfall = f - fKept;
+                freshTrimmed += shortfall;
+                if (shortfall != 0 && deliveredBudget < freshBudget) {
+                    charge.freshShortfallDelivered += shortfall;
+                }
                 amounts[i] = r + fKept;
                 if (userPass) {
                     user_.total += r + fKept;
@@ -4638,7 +4784,14 @@ library LibInteractionRewards {
             EntrySplit memory user_,
             EntrySplit memory treas_,
             uint256 freshTrimmed
-        ) = _attributeLegs(slices, amounts, freshCap, cEff, pool.fresh);
+        ) = _attributeLegs(
+            slices,
+            amounts,
+            freshCap,
+            cEff,
+            pool,
+            charge
+        );
 
         // ─── Per-leg pool boundary (#1351 slice 2d-0) ────────────────────────
         //
@@ -4670,6 +4823,29 @@ library LibInteractionRewards {
         //     applied (`min(freshShare, poolRoom)`), extended to the armed
         //     tail rather than a second invented one.
         //
+        //   • DELIVERED-FRESH shortfall (#1434 P1-b, MIRRORS only) → DEFER,
+        //     like recycled and unlike the cap. Read the fresh bullet above
+        //     and note precisely WHY it truncates: the 69M headroom is
+        //     monotone non-increasing, so its shortfall "can never be funded
+        //     later" and deferring would livelock. A mirror's delivered
+        //     budget has the opposite dynamics — it GROWS with every
+        //     remittance — so for it the reasoning inverts: truncating would
+        //     permanently underpay a day whose funding was merely in flight,
+        //     and deferring is the settlement that can actually clear.
+        //
+        //     This is why the two fresh bounds are carried as SEPARATE terms
+        //     (`pool.fresh` vs `pool.deliveredFresh`) rather than minimised
+        //     into one. Sharing a term would make the binding bound
+        //     unidentifiable at the trim, and the delivered case would
+        //     silently inherit truncate-and-consume — which is exactly the
+        //     shape the withdrawn B2-d4 attempt shipped. `_attributeLegs`
+        //     therefore reports the delivered-caused portion separately in
+        //     `charge.freshShortfallDelivered`, and a TIE is attributed to
+        //     the cap: if the cap binds at or below the delivered bound, no
+        //     future remittance can complete the day, so truncating is the
+        //     correct settlement and deferring would park the cursor on a
+        //     condition that can never be satisfied.
+        //
         // Ordering: the recycled check runs on the post-trim legs, which is
         // exact — trimming touches only fresh components, so `user_.recycled`
         // is identical either way. On a defer nothing is persisted, so the
@@ -4690,6 +4866,23 @@ library LibInteractionRewards {
         //     recycled-funded forfeit (and its commitment) behind unrelated
         //     payout budget that the release does not need.
         if (pool.recycled < user_.recycled) {
+            return (charge, slices);
+        }
+        // #1434 P1-b — the FRESH leg gains the same treatment, but ONLY for
+        // the part of the trim a DELIVERED bound caused. `charge.advanced`
+        // is still false here, so returning leaves nothing persisted, the
+        // cursor unmoved and the day retryable — identical to the recycled
+        // defer above, and for the identical reason: the bound that stopped
+        // it is one the next remittance can satisfy.
+        //
+        // Note what this deliberately does NOT do: defer on any fresh trim.
+        // A cap-bound trim falls through to the terminal retirement below,
+        // because no future remittance can clear it and a day parked on an
+        // unsatisfiable condition would wedge the cursor for every later
+        // day. "Can the condition that stopped it always be satisfied" is
+        // the distinguishing test, and it is answerable here only because
+        // `deliveredFresh` is carried as its own bound.
+        if (charge.freshShortfallDelivered != 0) {
             return (charge, slices);
         }
         if (freshTrimmed != 0) {

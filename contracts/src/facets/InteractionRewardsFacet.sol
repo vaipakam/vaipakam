@@ -100,6 +100,7 @@ contract InteractionRewardsFacet is
         if (remaining == 0 && sweepSplit.recycled == 0) {
             revert InteractionPoolExhausted();
         }
+        uint256 freshWanted = freshSwept;
         if (freshSwept > remaining) freshSwept = remaining;
         swept = freshSwept + sweepSplit.recycled;
         s.interactionPoolPaidOut = paidOut + freshSwept;
@@ -107,6 +108,37 @@ contract InteractionRewardsFacet is
         // PR-3c consume-at-sweep: retire the FULL armed-fresh commitment —
         // the entries are processed either way (see the claim path note).
         LibInteractionRewards.consumeArmedFresh(sweepSplit.armedFresh);
+
+        // #1434 P1-b — charge the mirror's delivered-fresh bound with the
+        // ARMED portion of what this sweep actually spent.
+        //
+        // Unlike the expiry batch (all-or-nothing per entry), the cap here can
+        // truncate PARTIALLY, so the armed share of the surviving spend has to
+        // be attributed. This uses PRO-RATA, deliberately:
+        //
+        //   • The truncation is a pool-exhaustion clamp on the aggregate. It
+        //     expresses no preference between the armed and unarmed days
+        //     inside the sweep, so scaling both by the same factor is the
+        //     neutral reading of what was paid.
+        //   • The FRESH-FIRST precedent nearby ({_applyLoanSideCap}, and the
+        //     trim in {_dayCaps}) is NOT authority for armed-first here: it
+        //     attributes fresh-vs-RECYCLED, and it is fresh-first only because
+        //     `_applyLoanSideCap` genuinely fills headroom from fresh before
+        //     recycled. No comparable ordering exists between armed and
+        //     unarmed fresh, so borrowing that rule would invent one.
+        //
+        // Both mis-attributions are harmful, which is why this is stated
+        // rather than defaulted: over-charging shrinks the bound permanently
+        // and would eventually defer fully-funded days (a wedge), while
+        // under-charging lets a mirror pay armed fresh it never received.
+        // `consumeArmedFresh`'s argument is again NOT the figure — it is the
+        // full commitment, cap-truncated remainder included.
+        if (freshSwept != 0 && LibVaipakam.isMirrorRewardChain(s)) {
+            uint256 armedPaid = freshSwept >= freshWanted
+                ? sweepSplit.armedFresh
+                : (sweepSplit.armedFresh * freshSwept) / freshWanted;
+            if (armedPaid != 0) s.rewardBudgetArmedFreshPaid += armedPaid;
+        }
 
         // Governor PR-3a/PR-3c (#1217 §4) — forfeit source split: the
         // FRESH share stays in Diamond custody and credits the recycle
@@ -200,6 +232,7 @@ contract InteractionRewardsFacet is
         uint256 freshTotal;
         uint256 recycledTotal;
         uint256 armedFreshTotal;
+        uint256 armedFreshPaid;
         for (uint256 i = 0; i < entryIds.length; ) {
             (
                 LibInteractionRewards.EntrySplit memory ex,
@@ -209,6 +242,25 @@ contract InteractionRewardsFacet is
             freshTotal += freshCredited;
             recycledTotal += ex.recycled;
             armedFreshTotal += ex.armedFresh;
+            // #1434 P1-b — charge the mirror's delivered-fresh bound with the
+            // ARMED portion actually credited.
+            //
+            // Exact here, with no new per-entry figure needed, because this
+            // sweep is ALL-OR-NOTHING per entry (Codex #1317): it terminalises
+            // only if the entry's FULL fresh share fits the remaining
+            // creditable headroom, and otherwise blocks and credits ZERO. So
+            // `freshCredited` is never a partial share, and when it is
+            // non-zero the armed portion credited is exactly `ex.armedFresh`
+            // — which the entry path builds strictly armed-only from
+            // `cumArmEnd - cumArmStart`, so an entry straddling
+            // `armedFromDay` already contributes only its armed part.
+            //
+            // NOT `armedFreshTotal`: that is the full COMMITMENT retired by
+            // `consumeArmedFresh` below, which deliberately includes the
+            // cap-truncated remainder that moved no tokens. Charging it would
+            // shrink the bound for value never paid out of a delivery — the
+            // same defect `interactionPoolPaidOut` was rejected for.
+            if (freshCredited != 0) armedFreshPaid += ex.armedFresh;
             unchecked { ++i; }
         }
         if (freshTotal + recycledTotal == 0) return 0;
@@ -222,6 +274,12 @@ contract InteractionRewardsFacet is
         // in the outstanding-commitment sum forever (same rule as the claim
         // and forfeit paths).
         LibInteractionRewards.consumeArmedFresh(armedFreshTotal);
+        // #1434 P1-b — mirror-only: Base funds its armed days from the 69M cap
+        // directly and receives no remittances, so it has no delivered bound
+        // to charge (and charging one would read zero and brick it).
+        if (armedFreshPaid != 0 && LibVaipakam.isMirrorRewardChain(s)) {
+            s.rewardBudgetArmedFreshPaid += armedFreshPaid;
+        }
 
         if (freshTotal > 0) {
             LibVpfiRecycle.credit(
