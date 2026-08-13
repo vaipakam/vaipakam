@@ -1743,7 +1743,30 @@ library LibInteractionRewards {
             // absorption that credits the recycle bucket. That is the same
             // pairing the pool decrement above uses, which is the point —
             // the bound tracks the spend, so the two can never drift.
-            if (freshSpent != 0 && _isArmedDay(s, d)) {
+            // Codex #1699 r3 P2 — MIRROR-scoped, matching the forfeit and
+            // expiry writers.
+            //
+            // This write was unconditional while the other two guarded on
+            // `isMirrorRewardChain`. Three writers of one counter, and I had
+            // checked each against its own intent rather than against each
+            // other. The consequence is a real one: a CANONICAL Diamond pays
+            // armed days from the 69M cap with no delivered receipts behind
+            // them, so if it is later demoted those payouts sit in a
+            // mirror-only ledger and `deliveredFreshBound` floors at zero
+            // until fresh deliveries exceed the entire canonical history —
+            // the chain cannot pay anything in the meantime.
+            //
+            // Scoping to mirrors is the rebaseline: the counter means "armed
+            // fresh this chain paid out of DELIVERED funding", and a canonical
+            // chain has none by construction. A demotion therefore starts the
+            // paid side from whatever mirror-era spending exists (zero, or the
+            // operator's `seedArmedFreshPaid` figure), which is the only
+            // reading under which received and paid describe the same era.
+            if (
+                freshSpent != 0
+                    && _isArmedDay(s, d)
+                    && LibVaipakam.isMirrorRewardChain(s)
+            ) {
                 s.rewardBudgetArmedFreshPaid += freshSpent;
                 // Codex #1699 r1 P1 — deplete the IN-MEMORY bound too, not
                 // just the storage counter.
@@ -1993,6 +2016,44 @@ library LibInteractionRewards {
                     // rather than by an upper bound.
                     fresh += toTreasury.total - toTreasury.recycled;
                 }
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev #1434 P1-b (Codex #1699 r3 P1) — the user's AGGREGATE armed-fresh
+    ///      requirement across every unprocessed entry, both payable and
+    ///      forfeited.
+    ///
+    ///      The delivered bound is a per-CLAIM-GROUP constraint, not a
+    ///      per-entry one: `processUserSideDay` groups a user's entries per
+    ///      (side, day) and defers the WHOLE group when the allowance is
+    ///      short. Testing one entry's own `armedFresh` therefore answers a
+    ///      question the claim never asks — two 0.4 entries against 0.5
+    ///      delivered each look payable while the real claim pays neither, so
+    ///      an expiry clock reading per-entry would accrue executable time the
+    ///      claimant never had.
+    ///
+    ///      Modelled on {_userClaimFundingNeedView}, which already aggregates
+    ///      the BALANCE requirement for exactly this reason — the delivered
+    ///      requirement is the same shape and belongs beside it. Forfeited
+    ///      legs are included because they spend armed fresh too (the forfeit
+    ///      share is absorption that credits the bucket).
+    function _userArmedFreshNeed(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256 armed) {
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 len = ids.length;
+        for (uint256 i; i < len; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[ids[i]];
+            if (!e.processed && e.user != address(0)) {
+                (
+                    EntrySplit memory toUser_,
+                    EntrySplit memory toTreasury_,
+                    ,
+                ) = _entryPriceCore(s, ids[i], e);
+                armed += toUser_.armedFresh + toTreasury_.armedFresh;
             }
             unchecked { ++i; }
         }
@@ -2512,9 +2573,14 @@ library LibInteractionRewards {
         // unreachable. Reads the STORAGE bound deliberately — the batch-local
         // allowance is about how much one sweep may spend, whereas this asks
         // whether the entry is payable AT ALL.
-        bool deliveredPayable = toUser.armedFresh == 0
+        // Codex #1699 r3 P1 — the AGGREGATE requirement, not this entry's own.
+        // The claim groups a user's entries and defers the whole group, so a
+        // per-entry test would keep the clock running through exactly the
+        // state in which the claimant cannot be paid.
+        uint256 armedNeed = _userArmedFreshNeed(s, e.user);
+        bool deliveredPayable = armedNeed == 0
             || !LibVaipakam.isMirrorRewardChain(s)
-            || toUser.armedFresh <= deliveredFreshBound(s);
+            || armedNeed <= deliveredFreshBound(s);
         bool executable = !_recycledDrought(s, e.user) &&
             _poolCappedPayable(toUser) != 0 &&
             deliveredPayable &&
@@ -2762,6 +2828,24 @@ library LibInteractionRewards {
         if (_recycledDrought(s, e.user)) return false; // clock pauses (r6)
         (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
         if (_poolCappedPayable(toUser) == 0) return false; // nothing to pay
+        // Codex #1699 r3 P2 — the SAME delivered predicate the sweep applies.
+        //
+        // This view mirrors the authoritative clock, so when the two disagree
+        // the countdown lies: with balance, bucket and pool cap all ample it
+        // would fold the pending interval and report an imminent expiry that a
+        // sweep in the same block discards as non-executable. That is the
+        // preview-versus-claim divergence this slice already closed once, in
+        // its countdown form.
+        //
+        // Deliberately the AGGREGATE need (`_userArmedFreshNeed`), matching
+        // the sweep exactly — a per-entry figure here would re-open the very
+        // gap the sweep's fix closed, one abstraction layer away.
+        if (LibVaipakam.isMirrorRewardChain(s)) {
+            uint256 armedNeed = _userArmedFreshNeed(s, e.user);
+            if (armedNeed != 0 && armedNeed > deliveredFreshBound(s)) {
+                return false;
+            }
+        }
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
             _userClaimFundingNeedView(s, e.user);

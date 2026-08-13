@@ -43,6 +43,13 @@ it. Rewards earned before coordinated mode was switched on are also unaffected:
 no delivery ever funded them, so they are not measured against delivered
 funding and continue to pay as they always have.
 
-**What you will see.** A reward estimate on a receiving chain now matches what
-a claim will actually pay. Previously an estimate could quote the full amount
-for a day that a claim would decline to pay; estimate and claim now agree.
+**What you will see.** A reward estimate on a receiving chain no longer quotes
+an amount that a claim will decline to pay **for want of delivered funding**.
+Previously an estimate could promise a full day's reward while the claim paid
+nothing at all, because the estimate did not know what had been delivered.
+
+One limit is deliberately outside that guarantee: near the platform's lifetime
+emission ceiling an estimate can still read higher than the claim pays, because
+estimates do not model that ceiling — they are an upper bound with respect to
+it, by long-standing design. The new agreement is specifically about delivered
+funding, where the gap was not a bound but a wrong answer.

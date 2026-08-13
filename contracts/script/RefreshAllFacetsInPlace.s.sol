@@ -98,6 +98,13 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 ///      same paused block that retires the unattributed selectors.
 ///      The companion `IRecycleComposition` canonical probe was removed in
 ///      r11 when arming became unconditional; nothing else read it.
+/// @dev #1434 P1-b — the paid-side migration seed, invoked INSIDE the paused
+///      block so no window exists where historical delivered funding is
+///      spendable again.
+interface IArmedFreshPaidSeed {
+    function seedArmedFreshPaid(uint256 amount) external;
+}
+
 interface IRecoveryAttribution {
     function armRecoveryAttribution() external;
 
@@ -745,6 +752,48 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
         }
         console.log("Verified: all selectors route to the fresh implementations.");
+
+        // ─── #1434 P1-b (Codex #1699 r3 P1) — SEED THE PAID SIDE WHILE PAUSED ──
+        //
+        // The delivered-fresh bound is `received - paid`, and the paid counter
+        // is newly appended, so it reads ZERO the instant these facets are
+        // cut. On a mirror carrying pre-P1-b history that is not merely
+        // incomplete, it is unsafe: compensated and short-lapsed days
+        // BYPASSED the old blanket halt and were genuinely payable, so their
+        // deliveries already sit in the received counter and would be
+        // spendable a second time.
+        //
+        // Seeding after the unpause — or in a later manual transaction —
+        // leaves exactly that window open on the live chain. This is the
+        // "armed, not merely present" rule the w1 ceremony and w6 attribution
+        // watermark both follow: a guard that exists but is never armed by
+        // the ceremony that reaches it is not a guard. Same paused block, same
+        // reason.
+        //
+        // Operator-supplied because no exact on-chain derivation exists
+        // (`armedFreshCounted` records the RECEIVED side; the paid figure
+        // lives in a per-user mapping that cannot be summed on-chain). Set
+        // `ARMED_FRESH_PAID_SEED` from the indexed payout history. Zero is the
+        // correct value for a FRESH deploy and for a chain with no pre-P1-b
+        // armed payouts, so an unset variable is not silently wrong — but it
+        // IS wrong for a mirror with history, which is why the log states
+        // which case was taken.
+        // Idempotent via the one-shot revert itself, deliberately: the seed
+        // already refuses a second call, so that refusal IS the "already
+        // migrated" signal. Reading a dedicated getter would add a selector,
+        // a wiring site and an ABI re-export to learn something the existing
+        // guard already tells us — and a rerun of this refresh (which happens)
+        // must not abort on a chain that is simply already seeded.
+        {
+            uint256 seed = vm.envOr("ARMED_FRESH_PAID_SEED", uint256(0));
+            try IArmedFreshPaidSeed(diamond).seedArmedFreshPaid(seed) {
+                console.log("P1-b: seeded armed-fresh paid history:", seed);
+            } catch {
+                console.log(
+                    "P1-b: armed-fresh paid history already seeded - skipped"
+                );
+            }
+        }
 
         if (!wasPaused) AdminFacet(diamond).unpause();
 

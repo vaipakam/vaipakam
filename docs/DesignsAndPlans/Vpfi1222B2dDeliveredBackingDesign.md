@@ -702,16 +702,21 @@ invented a hazard that did not exist.
 
    - **Part 1 — the bound.** `delivered fresh − armed fresh PAID`. The receipt
      half shipped as #1556 (`rewardBudgetArmedFreshReceived`); **the paid half
-     does not exist anywhere in the tree and must be created** (tail-appended
-     storage, written at every armed-fresh payout site).
+     did not exist anywhere in the tree and was created by P1-b** as
+     `rewardBudgetArmedFreshPaid` (tail-appended storage, written at every
+     armed-fresh payout site — the claim walk, the forfeiture sweep, the expiry
+     batch — each scoped to mirrors, plus the one-shot migration seed
+     `seedArmedFreshPaid` for chains carrying pre-P1-b history).
      `interactionPoolPaidOut` is explicitly FORBIDDEN as a proxy — it counts
      lifetime payouts including ordinary-schedule ones no delivery funded, so
      charging them would defer every later day on any chain with prior
      activity. The receipt figure is **not monotone**: it carries a saturating
-     UNWIND (`RewardRemittanceFacet.sol:1422-1423`) for a released or
-     reclassified delivery, so the bound must be computed saturating in both
-     terms — a paid side charged against a receipt figure that has since shrunk
-     would otherwise underflow or wedge.
+     UNWIND (the reclassification unwind in `RewardRemittanceFacet`'s ack
+     ingress) for a released or reclassified delivery, so the bound is computed
+     saturating in both terms — a paid side charged against a receipt figure
+     that has since shrunk would otherwise underflow or wedge. Read it through
+     `LibInteractionRewards.deliveredFreshBound`, never by differencing the two
+     counters by hand.
 
    - **Part 2 — defer, not truncate — and where.** The two behaviours sit a few
      lines apart near the end of `LibInteractionRewards.processUserSideDay`,
