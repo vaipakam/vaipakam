@@ -17,53 +17,16 @@
  * `pnpm --filter @vaipakam/www typecheck`, which CI already runs.
  *
  * Deliberately NOT a copy of another app's config with rules switched
- * off: that would drift. It declares only what it needs.
+ * off: that would drift. The guard declares only what it needs, and
+ * since #1609 it is declared ONCE in `@vaipakam/eslint-config/hooks`.
  *
- * When www gets a full config, fold this rule into it and delete the
+ * When www gets a full config, fold the rule into it and delete the
  * file — the guard belongs there, not here.
  */
-import reactHooks from 'eslint-plugin-react-hooks'
-import reactRefresh from 'eslint-plugin-react-refresh'
-import tseslint from 'typescript-eslint'
-import { defineConfig, globalIgnores } from 'eslint/config'
+import hooksGuard from '@vaipakam/eslint-config/hooks'
 
-export default defineConfig([
-  // `scripts/**` are Node build scripts, not React code — nothing in
-  // them can violate the rules of hooks. They are ignored so their
-  // `no-console` disable comments don't surface as unused-directive
-  // warnings from a guard that deliberately enables no such rule.
-  globalIgnores(['dist', 'scripts/**']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    // The other two plugins are REGISTERED but none of their rules are
-    // enabled. Without registration, every existing
-    // `eslint-disable-next-line @typescript-eslint/no-explicit-any` /
-    // `react-refresh/only-export-components` in the source becomes a
-    // hard "Definition for rule ... was not found" error, and the
-    // guard fails for reasons that have nothing to do with hooks. (www
-    // carries such comments even though nothing has ever linted it.) A
-    // guard that reports problems it does not care about is one people
-    // learn to ignore.
-    plugins: {
-      'react-hooks': reactHooks,
-      'react-refresh': reactRefresh,
-      '@typescript-eslint': tseslint.plugin,
-    },
-    languageOptions: {
-      parser: tseslint.parser,
-      ecmaVersion: 2020,
-      parserOptions: {
-        ecmaFeatures: { jsx: true },
-      },
-    },
-    linterOptions: {
-      // Those same disable comments ARE unused here, by design — the
-      // rules they suppress are off. Reporting them would add 33
-      // warnings saying nothing about hook order.
-      reportUnusedDisableDirectives: 'off',
-    },
-    rules: {
-      'react-hooks/rules-of-hooks': 'error',
-    },
-  },
-])
+// `scripts/**` are Node build scripts, not React code — nothing in them
+// can violate the rules of hooks. They are ignored so their `no-console`
+// disable comments don't surface as unused-directive warnings from a
+// guard that deliberately enables no such rule.
+export default hooksGuard({ extraIgnores: ['scripts/**'] })
