@@ -782,6 +782,11 @@ function RentNftFlow() {
       return;
     }
     clear(null);
+    // Resolving a deep link: the inputs are the URL (read and then
+    // rewritten via `setSearchParams` — an external system both ways) and
+    // an async query result. Neither exists at render time on the pass
+    // that must act on them.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelected(row);
     setConsent(false);
     setStep('review');
@@ -865,7 +870,15 @@ function RentNftFlow() {
   // disclosed — the clear-effect below only runs after a commit,
   // leaving one render where a fresh warn and stale consent coexist.
   const prepayConsentFpRef = useRef<string | null>(null);
+  // The ONLY site here that is a consent gate, and the only one whose
+  // suppression is meant to be temporary. The authority is the ref
+  // comparison in `canSign` above; this clear is the cosmetic half, and it
+  // trails by one render — which is precisely why the gate exists. #1696
+  // asks whether it should instead clear during render as `OffsetFlow`
+  // does (`prepaySecFingerprint` IS render-derivable, so the option is
+  // open); if that lands, this effect and its suppression go with it.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (prepaySecBlocked || prepaySecWarned) setConsent(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prepaySecFingerprint, prepaySecBlocked]);

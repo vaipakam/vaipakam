@@ -245,6 +245,11 @@ export function RateLadder({
     const listed = [...ladder.asks, ...ladder.bids].some((lvl) =>
       lvl.offers.some((o) => o.signed?.orderHash === fillTarget.orderHash),
     );
+    // Driven by the ladder REFETCHING, so there is no render-time
+    // comparison to make instead: the containment check is against data
+    // that arrives asynchronously, and the `ladder === null` early return
+    // above is deliberately a hold rather than a clear.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!listed) setFillTarget(null);
   }, [ladder, fillTarget]);
 

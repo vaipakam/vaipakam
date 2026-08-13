@@ -161,6 +161,12 @@ export function EarlyExitFlow({
   const [driftNotice, setDriftNotice] = useState(false);
   useEffect(() => {
     if (selectedId !== null) {
+      // The effect's job is `onCloseConfirm()` — a write to the PAGE's
+      // confirm slot, which is external to this component. The setState
+      // only records why, so the close reads as an explanation rather
+      // than a glitch. Neither is derivable: the trigger is the live loan
+      // refetching, not a prop this render can compare against.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (confirmOpen) setDriftNotice(true);
       onCloseConfirm();
     }
