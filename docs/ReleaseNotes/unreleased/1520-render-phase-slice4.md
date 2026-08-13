@@ -15,8 +15,10 @@ a visible jump, and briefly more of the new account's rows than the first page
 is meant to reveal.
 
 The trading desk's default market is now chosen as the market list arrives,
-instead of after a frame showing the empty 30-day book. Nothing about which
-market is chosen has changed — only that the wrong one is never displayed.
+instead of a frame later. Previously the order book area still showed its "pick a
+market" placeholder for one frame after the list had landed, even though the
+default was about to be filled in. Nothing about which market is chosen has
+changed — only that the placeholder no longer appears once the answer is known.
 
 None of these change what the screens end up showing. They remove the moment
 where the screen showed something else first.

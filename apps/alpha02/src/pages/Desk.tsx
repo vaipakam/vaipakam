@@ -78,9 +78,12 @@ export function Desk() {
   // empty book whenever the most active market trades another tenor.
   // A render-phase adjustment, not an effect (#1520). The default is a pure
   // function of "no pair chosen yet" and "the list has landed", so an effect
-  // only adds a frame that paints the empty 30d book before the real default
-  // arrives. Self-limiting: the guard is false the moment a pair exists, and
-  // while the list is still loading there is nothing to set.
+  // only adds a frame in which the book column still shows the "Pick a market"
+  // card — `pair` is null in that frame, so the ladder is not rendered at all
+  // (Codex #1690 r1 corrected an earlier claim here that the frame showed an
+  // empty 30d book; it cannot, that branch needs a non-null pair). Self-limiting:
+  // the guard is false the moment a pair exists, and while the list is still
+  // loading there is nothing to set.
   if (pair === null) {
     const first = markets.data?.markets[0];
     if (first) {
