@@ -1200,7 +1200,10 @@ export function Recover() {
   // so it could not be declared as the dependency it actually is. Every
   // statement in the body is a setState call, so there is nothing to
   // capture and the callback never needs to change.
-  const clearToFreshForm = useCallback(() => {
+  /** Every reset EXCEPT the step. Split out so the identity teardown below can
+   *  reuse the exact same field list while committing its step through
+   *  `setStepState` instead of `setStep` — one list, two step disciplines. */
+  const clearFormFieldsOnly = useCallback(() => {
     setTokenInput('');
     setSourceInput('');
     setAmountInput('');
@@ -1209,50 +1212,68 @@ export function Recover() {
     setReconcileError(null);
     setExecutedAcked(false);
     setPersistFailed(false);
-    setStep({ kind: 'form' });
   }, []);
+  /** The handler/listener form: commits the step through `setStep`, so the ref
+   *  mirror advances synchronously. Correct everywhere OUTSIDE render. */
+  const clearToFreshForm = useCallback(() => {
+    clearFormFieldsOnly();
+    setStep({ kind: 'form' });
+  }, [clearFormFieldsOnly]);
 
-  useEffect(() => {
-    genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
-    // Deliberately an effect, on the THIRD reason attempted — the first two were
-    // wrong and are recorded so they are not tried again.
-    //
-    // (1) The original claim was that `genRef` is a coherence guard, so guard and
-    // guarded state had to advance together after the commit. Codex #1683 r1
-    // dismantled that on the identical PositionDetails reset: a LAYOUT effect
-    // advances the ref during the commit, before any continuation can resume.
-    // (2) #1687 then claimed the blocker was entanglement with the REHYDRATION in
-    // this same pass. Also wrong — both halves can share one render-phase pass.
-    //
-    // The actual blocker is `setStep`, which every line here goes through. It is
-    // not a plain setter: it writes `stepRef.current` SYNCHRONOUSLY, and that is
-    // load-bearing, not incidental. A passive mirror was a render behind, so when
-    // two cross-tab `storage` events arrived in one task React batched them with
-    // no render between and the removal handler read a mirror still showing
-    // `form`, leaving this tab stuck on a card it had just adopted.
-    //
-    // A render may be discarded or restarted. Writing that ref from render would
-    // therefore publish a step this tab never committed, and the cross-tab handler
-    // reads exactly that ref to decide whether an event concerns it. `react-hooks/
-    // refs` reports this directly if the call is moved into render, which is what
-    // proved the #1687 premise wrong rather than any argument of mine.
-    //
-    // So this stays an effect until `setStep`'s synchronous mirror is itself
-    // redesigned — a change to the cross-tab protocol, not a lint cleanup.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    clearToFreshForm();
-    oracleAutoRetriesRef.current = 0;
+  // Identity teardown + rehydration as a render-phase adjustment (#1687). Three
+  // earlier justifications for keeping this in an effect were all wrong, and the
+  // third is the interesting one: I argued that because every line here goes
+  // through `setStep` — which writes `stepRef.current` synchronously, and must,
+  // since a passive mirror was a render behind and left a tab stuck on a card it
+  // had just adopted — the reset could not move to render. `react-hooks/refs`
+  // agreed, which I mistook for proof.
+  //
+  // Codex #1689 r1 showed the linter only proves that CALLING `setStep` in render
+  // is unsafe, not that the reset must be an effect. This pass commits through
+  // `setStepState`, touching no ref, and a layout effect mirrors the COMMITTED
+  // step into `stepRef`. A discarded render never reaches that layout effect; a
+  // committed one runs it during the commit, before the browser can deliver
+  // another `storage` task. The cross-tab path still uses synchronous `setStep`
+  // and is untouched, so the batching incident that motivated the mirror does not
+  // apply to this path at all.
+  const identityKey = `${address ?? ''}|${walletChain?.chainId ?? ''}`;
+  // Seeded null, NOT with the live key, so the pass also runs on MOUNT — the old
+  // effect rehydrated on mount, and seeding it would silently drop a persisted
+  // card on a fresh load.
+  const [seenIdentity, setSeenIdentity] = useState<string | null>(null);
+  if (seenIdentity !== identityKey) {
+    setSeenIdentity(identityKey);
+    clearFormFieldsOnly();
+    setStepState({ kind: 'form' });
     const chainId = walletChain?.chainId;
     const stored =
       address && chainId !== undefined
         ? readPendingRecovery(chainId, address)
         : null;
     // A rehydrated card is TAGGED with the identity it was read for
-    // (Codex #1547 r13), exactly like a freshly-built one.
+    // (Codex #1547 r13), exactly like a freshly-built one. Teardown and
+    // rehydration share this ONE pass so no frame paints the empty form first.
     if (stored !== null && address && chainId !== undefined) {
-      setStep(stepFromRecord(stored, stepOwnerOf(address, chainId)));
+      setStepState(stepFromRecord(stored, stepOwnerOf(address, chainId)));
     }
-  }, [address, walletChain?.chainId, clearToFreshForm]);
+  }
+  // Mirrors the COMMITTED step and advances the generation guard, both during the
+  // commit — so an in-flight `signAndSubmit` continuation can never resume
+  // between the reset above and the invalidation that disowns it (Codex #1547 r3),
+  // and `stepRef` never publishes a step this tab did not commit.
+  useLayoutEffect(() => {
+    genRef.current += 1; // invalidate any in-flight signAndSubmit
+    oracleAutoRetriesRef.current = 0;
+  }, [identityKey]);
+  // Mirrors the COMMITTED step on EVERY commit, not just identity changes. For
+  // the paths that go through `setStep` this is a no-op re-affirming the value
+  // that setter already wrote synchronously; for the render-phase pass above,
+  // which deliberately touches no ref, it is the only writer. Keying it on the
+  // step itself rather than on the identity is what keeps it honest — the ref's
+  // invariant is "equals the last committed step", and that is exactly this dep.
+  useLayoutEffect(() => {
+    stepRef.current = rawStep;
+  }, [rawStep]);
 
   // The step the RENDER consumes (Codex #1547 r13). A terminal card is
   // tagged with the account + chain it describes, and a card whose tag
