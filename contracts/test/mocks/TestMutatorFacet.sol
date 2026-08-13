@@ -886,7 +886,15 @@ contract TestMutatorFacet {
             entryIds,
             LibInteractionRewards.PoolBudget({
                 fresh: poolFresh,
-                recycled: poolRecycled
+                recycled: poolRecycled,
+                // #1434 P1-b - this direct primitive harness stages the pool
+                // itself, so the delivered bound is left SLACK: a test driving
+                // `processUserSideDay` here is exercising the cap/ceiling
+                // arithmetic, and a binding delivered term would silently turn
+                // those cases into defers. Delivered-bound behaviour is
+                // covered through the real walk instead, where the bound is
+                // read from storage.
+                deliveredFresh: type(uint256).max
             }),
             LibInteractionRewards._noDryRun()
         );
@@ -1844,6 +1852,28 @@ contract TestMutatorFacet {
     ///         zero the moment it is made canonical with no receipts, so a
     ///         test cannot otherwise construct the in-place-upgrade state
     ///         the watermark exists for.
+    /// @notice #1434 P1-b test-only — set the mirror delivered-fresh ledger
+    ///         directly: `received` is what remittances credited, `paid` is
+    ///         what armed-day payouts have consumed. The bound the pricing
+    ///         path reads is `received - paid`, saturating.
+    /// @dev    One setter for BOTH halves on purpose. They are only ever
+    ///         meaningful relative to each other, and a test that could move
+    ///         one without the other would make it easy to stage a state the
+    ///         production writers cannot actually produce.
+    function setArmedFreshLedgerRaw(uint256 received, uint256 paid)
+        external
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardBudgetArmedFreshReceived = received;
+        s.rewardBudgetArmedFreshPaid = paid;
+    }
+
+    /// @notice #1434 P1-b test-only — read the paid half back, so a test can
+    ///         assert what a claim CHARGED rather than only what it paid.
+    function getArmedFreshPaidRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardBudgetArmedFreshPaid;
+    }
+
     function setRecoveryAttributionRaw(bool armed, uint256 armedAt)
         external
     {

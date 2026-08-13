@@ -908,17 +908,23 @@ library LibInteractionRewards {
     ///      relocated custody), and the recycled leg is separately safe because
     ///      the ShareOfPool walk budgets it against the live bucket and DEFERS
     ///      a day it cannot cover. But review found the halt is load-bearing
-    ///      for two further things d5 never addressed:
+    ///      for two further things d5 never addressed — **both since
+    ///      DISCHARGED, which is why the halt is gone (#1434 P1-b)**:
     ///
-    ///        1. **The FRESH side has no delivered-funding bound on a mirror.**
+    ///        1. **The FRESH side had no delivered-funding bound on a mirror.**
     ///           All fresh funding is Base-funded and arrives with the remit,
-    ///           yet the walk bounds fresh only by `poolRemaining()` — on a
+    ///           yet the walk bounded fresh only by `poolRemaining()` — on a
     ///           mirror that is the GLOBAL 69M cap less LOCAL payouts, not
-    ///           what has been received. Pricing fresh before the remit lands
+    ///           what has been received. Pricing fresh before the remit landed
     ///           would pay out of VPFI the Diamond holds for other obligations
-    ///           (LIF custody, earlier days' unclaimed budget). The fix is a
-    ///           delivered-fresh budget for `PoolBudget.fresh` on mirrors, in
-    ///           the same VALUE shape the recycled side already uses.
+    ///           (LIF custody, earlier days' unclaimed budget). DISCHARGED by
+    ///           `PoolBudget.deliveredFresh` — but NOT, as this note once
+    ///           proposed, by giving `PoolBudget.fresh` the delivered budget:
+    ///           that supplies the VALUE bound while inheriting the fresh
+    ///           path's TERMINAL truncate-and-consume, which is wrong for a
+    ///           budget that grows. The bound is carried as its own term and
+    ///           its shortfall DEFERS. See {PoolBudget} and the per-leg
+    ///           asymmetry note in {processUserSideDay}.
     ///        2. **Deliberately-zeroed days would retire entries for zero.**
     ///           A grace/force finalization that excludes a mirror's interest
     ///           report broadcasts an all-zero stamp and marks the day
@@ -946,8 +952,12 @@ library LibInteractionRewards {
     /// @return recycledHalf This side's recycled global-equivalent numerator
     ///                      (0 pre-cutover).
     /// @return halt         True ⇒ armed day not priceable here: stop
-    ///                      advancing (no stamp yet, OR a mirror — see the
-    ///                      standing halt above; B2-d4 did not lift it).
+    ///                      advancing. Since #1434 P1-b this means ONE thing —
+    ///                      no funding stamp yet. The blanket mirror arm is
+    ///                      gone; a mirror that is merely under-funded now
+    ///                      defers through the delivered bound instead, which
+    ///                      is a per-day, self-clearing wait rather than a
+    ///                      chain-wide stop.
     function _dayPoolHalves(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardSide side,
@@ -974,6 +984,25 @@ library LibInteractionRewards {
             LibVaipakam.ChainDayFunding storage f =
                 s.chainDayRecycledFunding[d][uint32(block.chainid)];
             if (!f.stamped) return (0, 0, true);
+            // #1434 P1-b — NOTE FOR ANYONE TEMPTED TO GATE HERE. An earlier
+            // revision of this slice halted an armed MIRROR day whose
+            // `deliveredFreshBound` did not cover this side's stamped fresh
+            // half, reasoning that the fold must be gated so one check covers
+            // the walk AND the bulk entry path. It is WRONG and the suite
+            // proves it: the stamped half is the day's CAPACITY, not its
+            // liability — what actually pays is bounded by the D1 ceiling and
+            // by which claimants exist, typically far less — so requiring
+            // full coverage halts days the chain can comfortably fund.
+            //
+            // The w3 compensated-day gate looks like a precedent and is not:
+            // it compares delivered funding against the side's QUOTED SUM,
+            // and a quote IS that day's liability, so full coverage is the
+            // right test there. Same shape, different quantity.
+            //
+            // PRICING IS NOT PAYMENT. This function advances a counterfactual
+            // entitlement cursor; the delivered bound belongs on every
+            // PAYMENT route (the walk, and the bulk entry pricing), where the
+            // spend is actually known.
             return side == LibVaipakam.RewardSide.Lender
                 ? (f.freshLenderHalf, f.lenderHalfEquiv, false)
                 : (f.freshBorrowerHalf, f.borrowerHalfEquiv, false);
@@ -1045,8 +1074,14 @@ library LibInteractionRewards {
      *      on a message arrival. Prerequisite 2 (zero-retirement of
      *      compensable entries) is exactly what the defer arm prevents,
      *      while the w4 lapse terminal is the deliberate reopening.
-     *      Unflagged armed mirror days keep the blanket halt unchanged
-     *      until P1-b.
+     *      Unflagged armed mirror days kept the blanket halt until
+     *      #1434 P1-b, which lifted it: they now price from the same
+     *      stamp as any other armed day, bounded by
+     *      `PoolBudget.deliveredFresh` and DEFERRING (never truncating)
+     *      when that bound is short. This ladder is unaffected — it still
+     *      governs deliberately-zeroed days only, and its funding gate
+     *      remains keyed on the AMOUNT present, the same standing
+     *      constraint P1-b's bound satisfies.
      *
      *      Crossing is LOAD-BEARING for both payment paths at once: the
      *      cum fold writes this day's row, and `_rpnReady` (walk) plus the
@@ -1260,14 +1295,17 @@ library LibInteractionRewards {
     /// @notice #1222 M3 B2-d1 — the day-`d` per-side RPN delta Δ_d computed
     ///         HALT-INDEPENDENTLY from this chain's OWN funding stamp, for the
     ///         mirror→Base commitment REPORT.
-    /// @dev    The report is a READ-ONLY liability estimate that must work
-    ///         while mirror armed-day CLAIM pricing is still halted (the
-    ///         `isMirrorRewardChain` halt in {_dayPoolHalves} — which B2-d4
-    ///         attempted to remove and did NOT: it STAYS pending the two
-    ///         prerequisites recorded there and on #1434). It therefore reads
-    ///         the stamp DIRECTLY and NEVER touches the halted cumulative
-    ///         cursor (`cumRpn18`, advanced by {advanceCumLenderThrough} which
-    ///         breaks on that same halt). The per-day math MIRRORS
+    /// @dev    The report is a READ-ONLY liability estimate. It was written
+    ///         while mirror armed-day CLAIM pricing was blanket-halted (the
+    ///         `isMirrorRewardChain` arm in {_dayPoolHalves}, which B2-d4
+    ///         attempted to remove and did not; #1434 P1-b has since removed
+    ///         it behind a delivered-fresh bound). It STILL reads the stamp
+    ///         DIRECTLY and never touches the cumulative cursor, and that is
+    ///         still load-bearing rather than vestigial: the cursor now
+    ///         advances only as far as DELIVERED funding allows, so a report
+    ///         derived from it would shrink to what has already been funded —
+    ///         while the whole purpose of the report is to state the liability
+    ///         that funding has NOT yet covered. The per-day math MIRRORS
     ///         {advanceCumLenderThrough} exactly — stamp halves → per-side
     ///         daily (floored) → summed — so the commitment's `rawPay`
     ///         (`perDayNumeraire18 × Δ_d / 1e18`) equals what the claim path
@@ -2078,18 +2116,25 @@ library LibInteractionRewards {
         // ctx.pool is: a recycled shortfall DEFERS a day and stops the side
         // (walk behaviour the preview must mirror). FRESH stays unbounded on
         // purpose — the 69M truncation is payment-time behaviour (the facet
-        // scaler / the terminal trim) — and #1434 P1-b leaves the MIRROR
-        // delivered-fresh bound unbounded here for the same reason. Those
-        // are now TWO documented axes on which the preview stays an upper
-        // bound rather than one. Binding delivered fresh here would not
-        // merely tighten the figure: a delivered shortfall DEFERS, which
-        // stops the side, so the preview would silently under-report every
-        // day whose funding is simply still in flight — the opposite of an
-        // upper bound, and a worse answer than the one it gives today.
+        // scaler / the terminal trim), the one documented axis on which the
+        // preview stays an upper bound.
+        //
+        // #1434 P1-b — the MIRROR delivered-fresh bound is NOT a second such
+        // axis: it is BOUND here, exactly as in the walk. The cap's
+        // truncation only ever shaves a payout the claimant still receives,
+        // which is why overstating it is tolerable. A delivered shortfall
+        // DEFERS instead — the day pays NOTHING and the claim reverts
+        // `NoInteractionRewardsToClaim` — so leaving it unbounded would
+        // quote a mirror claimant the full amount against a claim that
+        // cannot succeed. That is not a loose upper bound, it is a wrong
+        // answer, and it would be a REGRESSION from the halt this slice
+        // removes: the halt lived inside {_dayPoolHalves}, which this
+        // preview also calls, so preview and claim always agreed about an
+        // unpayable mirror day. Binding here preserves that agreement.
         PoolBudget memory pool = PoolBudget({
             fresh: type(uint256).max,
             recycled: s.recycleBucket,
-            deliveredFresh: type(uint256).max
+            deliveredFresh: deliveredFreshBound(s)
         });
         for (uint8 sideIdx; sideIdx < 2; ) {
             LibVaipakam.RewardSide side = sideIdx == 0

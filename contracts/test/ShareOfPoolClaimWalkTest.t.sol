@@ -607,29 +607,28 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         rep.setBaseChainId(8453);
     }
 
-    /// @dev B2-d4 set out to lift the mirror armed-day pricing halt, and the
-    ///      attempt was WITHDRAWN after review. This test PINS the halt so the
-    ///      next attempt cannot remove it silently.
+    /// @dev #1434 P1-b — the three-phase proof that the mirror halt was
+    ///      replaced by a bound that DEFERS, not one that trims.
     ///
-    ///      B2-d5 discharged the halt's originally-stated precondition (the
-    ///      arriving recycled share now credits the mirror bucket), and the
-    ///      recycled leg is separately safe because the walk budgets it against
-    ///      the live bucket. But the halt is ALSO load-bearing for two things
-    ///      d5 never addressed, both of which must land first:
+    ///      This REPLACES `test_D4_MirrorArmedDayPricingStaysHalted`, which
+    ///      was retired rather than renamed. That test delivered NO funding,
+    ///      so it still passes after a correct lift (the day defers and pays
+    ///      zero) — but it also passes under a bound that ALWAYS defers, and
+    ///      under the halt it was written for. It could not tell the three
+    ///      apart, so keeping it under a new name would have been a test that
+    ///      asserts nothing about this slice.
     ///
-    ///        1. the FRESH side has no delivered-funding bound on a mirror —
-    ///           `poolRemaining()` there is the GLOBAL cap less LOCAL payouts,
-    ///           so fresh could be paid before the remit arrives, out of VPFI
-    ///           held for other obligations;
-    ///        2. a deliberately-zeroed (`remitIneligible`) day would advance
-    ///           the cursor at zero delta and retire its entries before
-    ///           `remitManualBudget` can compensate them.
+    ///      Phases B and C are what kill the mutant this slice exists to
+    ///      avoid: wiring the delivered budget into `PoolBudget.fresh` and
+    ///      reusing the fresh shortfall path. That mutant TRIMS instead of
+    ///      deferring, so under it phase B pays a partial amount and ADVANCES
+    ///      the cursor, and phase C then finds nothing left to pay.
     ///
-    ///      Identical setup to `test_ClaimIsBoundedByTheDailyCeilingAcrossDays`
-    ///      — which pays `0.8e18` — differing ONLY by the mirror flags. That
-    ///      contrast is the assertion: the halt, and nothing else, is what
-    ///      stops payment here.
-    function test_D4_MirrorArmedDayPricingStaysHalted() public {
+    ///      Same setup as `test_ClaimIsBoundedByTheDailyCeilingAcrossDays`
+    ///      (which pays `0.8e18`), differing only by the mirror flags and the
+    ///      delivered ledger — so the delivered bound, and nothing else, is
+    ///      what moves between the phases.
+    function test_P1b_MirrorArmedDayDefersUntilDelivered() public {
         _configureMirror();
         _armedDay(1, 0.4e18);
         _armedDay(2, 0.4e18);
@@ -638,10 +637,198 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         _entry(1, 3);
         _mut().userClaimFundingNeedRaw(alice);
 
-        assertEq(_preview(), 0, "mirror armed-day pricing is halted");
+        // ── Phase A: nothing delivered ⇒ pays nothing, charges nothing ──────
+        assertEq(_preview(), 0, "A: undelivered armed days price to zero");
+        assertEq(
+            _mut().getArmedFreshPaidRaw(), 0, "A: and charge the bound nothing"
+        );
         vm.prank(alice);
         vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        // ── Phase B: delivered, but SHORT of day 1 ⇒ STILL nothing ──────────
+        //
+        // The distinguishing phase. A TRIMMING implementation pays the
+        // delivered 0.2e18 here and advances past day 1, permanently
+        // underpaying a day whose funding was merely still in flight.
+        _mut().setArmedFreshLedgerRaw(0.2e18, 0);
+        assertEq(_preview(), 0, "B: a short delivery defers, never trims");
+        vm.prank(alice);
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(
+            _mut().getArmedFreshPaidRaw(),
+            0,
+            "B: a deferred day charges the bound nothing"
+        );
+
+        // ── Phase C: fully delivered ⇒ pays the canonical control's amount ──
+        //
+        // Equal to `test_D4_CanonicalArmedDayPricesNormally`, which is the
+        // point: once funded, a mirror prices exactly as Base does. That the
+        // day was DEFERRED and not TRIMMED in phase B is what makes the full
+        // amount still available here.
+        _mut().setArmedFreshLedgerRaw(0.8e18, 0);
+        assertEq(
+            _claim(),
+            0.8e18,
+            "C: a funded mirror pays exactly what canonical pays"
+        );
+        assertEq(
+            _mut().getArmedFreshPaidRaw(),
+            0.8e18,
+            "C: and charges the delivered bound exactly what it paid"
+        );
+    }
+
+    /// @dev #1434 P1-b — the OTHER half of the rule: a CAP-bound trim on a
+    ///      mirror must still truncate and ADVANCE.
+    ///
+    ///      Delivered funding is abundant here, so the only thing that can
+    ///      bind is the day's own D1 ceiling. If the implementation deferred
+    ///      on ANY fresh trim rather than only on a delivered one, this claim
+    ///      would pay zero and park the cursor on a condition no future
+    ///      remittance can ever satisfy — the wedge that got B2-d4 withdrawn.
+    ///      Payment here is the proof the two causes stayed distinguishable.
+    function test_P1b_MirrorCapBoundTrimStillTruncatesAndAdvances() public {
+        _configureMirror();
+        _armedDay(1, 0.4e18);
+        _armedDay(2, 0.4e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+        _mut().userClaimFundingNeedRaw(alice);
+        // Far more delivered than the days can pay: the delivered bound is
+        // slack, so any trim that happens is the D1 ceiling's doing.
+        _mut().setArmedFreshLedgerRaw(100e18, 0);
+
+        assertEq(
+            _claim(),
+            0.8e18,
+            "a cap-bound trim pays what the ceiling allows and advances"
+        );
+    }
+
+    /// @dev #1434 P1-b — the ENTRY-PATH question, settled by experiment.
+    ///
+    ///      A claim has TWO legs: `_processEntry` prices each entry's window
+    ///      from the cum rows, and the ShareOfPool walk prices armed days
+    ///      per-day. Only the walk consults the delivered bound, so the
+    ///      obvious worry is that the entry leg pays armed fresh unbounded.
+    ///
+    ///      This fixture is the one that can tell: arming starts at day 2, so
+    ///      the entry's window straddles it — day 1 is pre-`D*` legacy, days
+    ///      2-3 are armed — with ZERO delivered funding. If the entry leg paid
+    ///      armed value, this claim would exceed day 1's legacy share.
+    ///
+    ///      Bounding pre-`D*` fresh by delivered funding would be WRONG, note:
+    ///      that value predates arming and no remittance ever funded it, so
+    ///      the legacy leg paying while the armed days defer is the correct
+    ///      split, not a leak.
+    function test_P1b_EntryLegPaysLegacyOnly_ArmedStaysBounded() public {
+        _configureMirror();
+        _armedDay(1, 0.4e18);
+        _armedDay(2, 0.4e18);
+        _armedDay(3, 0.4e18);
+        // Arming starts at day 2 — day 1 is pre-D* legacy.
+        _mut().setGovernorCommitArmedFromDayRaw(2);
+        _loanSideOpen(3);
+        _entry(1, 4);
+        _mut().userClaimFundingNeedRaw(alice);
+        // Nothing delivered: every ARMED day must defer.
+        _mut().setArmedFreshLedgerRaw(0, 0);
+
+        uint256 legacyPaid = _claim();
+
+        // (1) The armed days contributed nothing: the delivered bound was
+        //     never charged. This is what would break if the entry leg paid
+        //     armed value behind the walk's back.
+        assertEq(
+            _mut().getArmedFreshPaidRaw(),
+            0,
+            "no ARMED fresh is paid while nothing is delivered"
+        );
+        // (2) The legacy leg DID pay, and is deliberately not bounded by
+        //     delivered funding. Asserting it is non-zero keeps this test
+        //     honest: if the legacy leg silently stopped paying, assertion
+        //     (1) alone would still hold and the test would go vacuous.
+        assertGt(legacyPaid, 0, "the pre-D* legacy leg pays, unbounded");
+
+        // (3) The armed days were DEFERRED, not consumed — so funding them
+        //     later still pays. This is the assertion that distinguishes
+        //     "deferred" from "paid" and from "silently dropped"; a naive
+        //     upper bound on the figure in (2) cannot, because the legacy
+        //     leg draws on the ordinary schedule pool rather than the armed
+        //     day caps (which is what an earlier revision of this test got
+        //     wrong).
+        _mut().setArmedFreshLedgerRaw(100e18, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        assertGt(_claim(), 0, "the deferred armed days pay once funded");
+        assertGt(
+            _mut().getArmedFreshPaidRaw(),
+            0,
+            "and only THEN is the delivered bound charged"
+        );
+    }
+
+    /// @dev #1434 P1-b — an UNARMED day's fresh must NOT charge the
+    ///      delivered bound.
+    ///
+    ///      The walk's paid-side write is filtered by `_isArmedDay`, and that
+    ///      filter is load-bearing rather than defensive: the DAY path labels
+    ///      every day's fresh component `armedFresh` (see `_splitDayAmount`),
+    ///      so only the day itself distinguishes armed from ordinary. Drop the
+    ///      filter and ordinary schedule payouts start consuming a mirror's
+    ///      delivered headroom, deferring armed days that were fully funded —
+    ///      the same defect that got `interactionPoolPaidOut` rejected as a
+    ///      proxy for the paid side.
+    function test_P1b_UnarmedDayFreshNeverChargesTheDeliveredBound() public {
+        _configureMirror();
+        // Days are FINALIZED but arming is never set, so `_isArmedDay` is
+        // false for both: ordinary schedule days, which is the whole point.
+        _armedDay(1, 0.4e18);
+        _armedDay(2, 0.4e18);
+        _mut().setArmedFreshLedgerRaw(100e18, 0);
+        _loanSideOpen(2);
+        _entry(1, 3);
+        _mut().userClaimFundingNeedRaw(alice);
+
+        uint256 paid = _claim();
+
+        assertGt(paid, 0, "LIVE: the unarmed days genuinely paid");
+        assertEq(
+            _mut().getArmedFreshPaidRaw(),
+            0,
+            "ordinary-day fresh never charges the delivered bound"
+        );
+    }
+
+    /// @dev #1434 P1-b — the preview and the claim must AGREE on a mirror.
+    ///
+    ///      The dry-run preview reads the delivered bound for the same reason
+    ///      the walk does. An earlier revision left it unbounded, reasoning
+    ///      that a preview is allowed to be an upper bound — but that licence
+    ///      only holds where a shortfall TRIMS a payout the claimant still
+    ///      receives. A delivered shortfall DEFERS to zero, so an unbounded
+    ///      preview quotes the full amount against a claim that reverts. This
+    ///      pins the agreement in both directions.
+    function test_P1b_PreviewAgreesWithClaimOnAMirror() public {
+        _configureMirror();
+        _armedDay(1, 0.4e18);
+        _armedDay(2, 0.4e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+        _mut().userClaimFundingNeedRaw(alice);
+
+        // Unfunded: preview must say zero, matching a claim that cannot pay.
+        assertEq(_preview(), 0, "unfunded: preview quotes nothing");
+
+        // Funded: preview must quote what the claim then actually pays.
+        _mut().setArmedFreshLedgerRaw(0.8e18, 0);
+        uint256 quoted = _preview();
+        assertEq(quoted, 0.8e18, "funded: preview quotes the payable amount");
+        assertEq(_claim(), quoted, "and the claim pays exactly that");
     }
 
     /// @dev The CANONICAL chain is unaffected by the halt and prices its own

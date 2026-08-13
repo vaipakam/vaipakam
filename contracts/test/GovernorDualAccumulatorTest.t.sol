@@ -234,6 +234,53 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev #1434 P1-b — the forfeit sweep charges the delivered bound with
+    ///      the ARMED portion of what it actually spent.
+    ///
+    ///      This is the slice's least self-evident decision and is flagged for
+    ///      review. Unlike the expiry batch (all-or-nothing per entry, so the
+    ///      armed share is exact), this sweep can truncate PARTIALLY against
+    ///      the 69M headroom, so the armed share of the surviving spend must
+    ///      be ATTRIBUTED. It uses PRO-RATA: the truncation is an aggregate
+    ///      exhaustion clamp that expresses no preference between the armed
+    ///      and unarmed days inside the sweep, so scaling both by one factor
+    ///      is the neutral reading. FRESH-FIRST is deliberately NOT borrowed
+    ///      from `_applyLoanSideCap` — that rule attributes fresh-vs-RECYCLED
+    ///      and is fresh-first only because the cap genuinely fills from fresh
+    ///      first; no such ordering exists between armed and unarmed fresh.
+    ///
+    ///      Both mis-attributions are harmful, which is why this is pinned:
+    ///      over-charging shrinks the bound permanently and would eventually
+    ///      defer fully-funded days, while under-charging lets a mirror pay
+    ///      armed fresh it never received.
+    function testP1bForfeitSweepChargesArmedPortionOfWhatItSpent() public {
+        // Arm + finalize while still CANONICAL — finalization is Base-only,
+        // so flipping to the mirror first reverts `NotCanonicalRewardChain`.
+        _armAndFinalize(5, 700 ether);
+
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+
+        uint256 id = _seedEntry(alice, 77, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(77, id);
+
+        // Abundant delivered funding, so nothing here is delivered-bound and
+        // the charge reflects the sweep's own spend rather than a clamp.
+        _mut().setArmedFreshLedgerRaw(10_000 ether, 0);
+
+        vm.prank(makeAddr("keeper"));
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
+
+        assertGt(swept, 0, "LIVE: the sweep genuinely moved value");
+        // The armed portion was charged, and never more than the sweep's own
+        // armed share — the bound tracks spend, not the retired commitment.
+        uint256 charged = _mut().getArmedFreshPaidRaw();
+        assertGt(charged, 0, "the armed portion charges the delivered bound");
+        assertLe(charged, swept, "and never exceeds what the sweep spent");
+    }
+
     // ─── 2. Recycled forfeit = release, not credit ───────────────────────────
 
     function testRecycledForfeitReleasesWithoutCredit() public {
@@ -773,8 +820,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
             })
         );
 
-        _seedEntry(alice, 90, 5, 6); // day-5 lender entry (armed, halts)
+        _seedEntry(alice, 90, 5, 6); // day-5 lender entry (armed)
 
+        // ── Unfunded: the day DEFERS, so nothing is priced or consumed ──────
         vm.prank(alice);
         try
             RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
@@ -782,13 +830,34 @@ contract GovernorDualAccumulatorTest is SetupTest {
             )
         returns (uint256, uint256, uint256) {} catch {}
 
-        // Whether the claim reverts (nothing claimable) or pays 0, the
-        // mirror recycle bucket is never debited: the armed day halted, so
-        // no recycled leg was priced or consumed.
         assertEq(
             _cfg().getRecycleBucket(),
             100 ether,
-            "mirror bucket never debited on an armed day (halted pre-B2-d)"
+            "unfunded armed day: bucket untouched"
+        );
+
+        // ── Funded: the SAME day prices and DOES debit the bucket ───────────
+        //
+        // #1434 P1-b — this half is what keeps the test honest. Before the
+        // halt lift, the assertion above held because armed mirror days never
+        // priced at all; it now holds because an UNFUNDED day defers. Those
+        // are different reasons and the first assertion cannot tell them
+        // apart — it passes under the old halt, under a correct delivered
+        // bound, and under a bound that never releases. Only showing the
+        // bucket move ONCE FUNDED distinguishes a deferral from a permanent
+        // stop, which is the property the slice actually delivers.
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+        vm.prank(alice);
+        try
+            RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
+                LibVaipakam.RewardDelivery.Wallet
+            )
+        returns (uint256, uint256, uint256) {} catch {}
+
+        assertLt(
+            _cfg().getRecycleBucket(),
+            100 ether,
+            "funded armed day: the deferred recycled leg is now consumed"
         );
     }
 

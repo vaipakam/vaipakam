@@ -298,10 +298,12 @@ contract RewardRemittanceLensFacet {
      *
      *         NEITHER is a spendable balance, and neither is a bound. This
      *         is a RECEIPT-side ledger: it says what arrived and how it was
-     *         attributed, not what remains. The bound it will feed — armed
-     *         fresh delivered LESS armed fresh paid — needs the paid side,
-     *         which lands with P1-b (see the storage docs for why the splits
-     *         cannot report it today). Do not subtract
+     *         attributed, not what remains. The bound it feeds — armed fresh
+     *         delivered LESS armed fresh paid — is live as of #1434 P1-b,
+     *         which added the paid side (`rewardBudgetArmedFreshPaid`); read
+     *         it via {LibInteractionRewards.deliveredFreshBound}, which
+     *         saturates because the received side is not monotone. Do not
+     *         subtract
      *         `interactionPoolPaidOut` from `counted` and read the result as
      *         headroom: that cumulative also counts legacy-schedule payouts
      *         this funding never owed, and an earlier revision of this slice

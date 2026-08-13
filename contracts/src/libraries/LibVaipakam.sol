@@ -6069,10 +6069,20 @@ library LibVaipakam {
         ///      loan-side-capped split keeps `armedFresh` whole for
         ///      commitment retirement while `total` sheds the capped-off
         ///      part, so no combination of the returned fields is the amount
-        ///      actually paid. That lands with P1-b, which consumes it, and
-        ///      which is itself blocked behind P2 lifting the mirror
-        ///      armed-day pricing halt (#1434 §2g): while that halt stands,
-        ///      armed mirror days never price and there is nothing to bound.
+        ///      actually paid.
+        ///
+        ///      #1434 P1-b LANDED that paid side as
+        ///      `rewardBudgetArmedFreshPaid` (see the tail of this struct)
+        ///      and lifted the mirror armed-day pricing halt this note was
+        ///      waiting on, so the bound is now live: read it through
+        ///      {LibInteractionRewards.deliveredFreshBound}, never by
+        ///      differencing these fields by hand — it must SATURATE,
+        ///      because the received side below carries an unwind and can
+        ///      legitimately fall below the paid side after a released or
+        ///      reclassified delivery. The paid side is written at the three
+        ///      sites that actually spend armed fresh (the claim walk, the
+        ///      expiry batch, the forfeit sweep) rather than derived from
+        ///      these splits, precisely because of the shape described above.
         uint256 rewardBudgetArmedFreshReceived;
         /// @dev The reconciliation counterpart: Σ of the fresh-looking
         ///      amount of every delivery this chain declined to count above.

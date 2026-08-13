@@ -90,7 +90,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](170);
+        selectors = new bytes4[](172);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -425,6 +425,9 @@ contract HelperTest {
         // #1662 r9 - reproduce the legacy pre-attribution shape.
         selectors[n++] =
             TestMutatorFacet.setRecoveryAttributionRaw.selector;
+        // #1434 P1-b - stage / read back the mirror delivered-fresh ledger.
+        selectors[n++] = TestMutatorFacet.setArmedFreshLedgerRaw.selector;
+        selectors[n++] = TestMutatorFacet.getArmedFreshPaidRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
