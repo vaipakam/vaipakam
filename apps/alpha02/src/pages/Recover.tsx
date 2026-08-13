@@ -1271,13 +1271,16 @@ export function Recover() {
     //   can capture the intermediate generation, while work started between the
     //   wallet event and the commit belongs to the OLD UI and SHOULD be
     //   invalidated. The submit failure needs a PASSIVE bump — post-commit, with
-    //   the new UI already painted. But "safe" does NOT extend to item 6: with
-    //   the wallet event at G+1, a reconciliation the user starts from the still-
-    //   committed OLD card stores reconcileClaim = G+1, the new-identity render
-    //   computes `reconciling` true, and a layout bump to G+2 that schedules no
-    //   render leaves the rehydrated card disabled until the old RPC settles. So
-    //   adding the optional bump under b1 DRAGS item 6 back in with it — the row
-    //   saying "item 6 not needed" holds only when no second bump is added. The
+    //   the new UI already painted. But "safe" does NOT extend to item 6, and
+    //   item 6 applies under b1 WITH OR WITHOUT a second bump (Codex #1689 r11
+    //   then r12 — I claimed the exemption three times and it was wrong three
+    //   times, so the exemption is GONE rather than narrowed again). The wallet
+    //   event advances to G+1 BEFORE the reconciliation claim is recorded, so a
+    //   reconciliation the user starts from the still-committed OLD card stores
+    //   reconcileClaim = G+1; the new-identity render then computes `reconciling`
+    //   true and, with nothing further advancing the ref, it STAYS true until the
+    //   old RPC settles. My r9 reasoning assumed the claim was recorded BEFORE
+    //   the advance; it need not be. Item 6 is required on every branch. The
     //   commit-time bump AND item 6's follow-up rerender are required only under
     //   the live-provider fence, or a wallet-event fence that advances a SEPARATE
     //   token and leaves `genRef` to the effect. So this is a per-branch
