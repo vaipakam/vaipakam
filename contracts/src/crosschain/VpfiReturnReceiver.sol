@@ -55,7 +55,16 @@ interface IRepatriationReturnIngress {
  *
  * Trust + behaviour (the {BuybackRemittanceReceiver} posture):
  *   - `onCrossChainMessage` is callable only by the registered {messenger},
- *     which has already authenticated the CCIP source chain + channel peer.
+ *     which has already authenticated the CCIP source chain and the remote
+ *     MESSENGER (its per-chain allowlist, on top of the router's own sender
+ *     authentication). It has NOT authenticated the channel peer —
+ *     {CcipMessenger.channelPeerOf} is only asserted non-zero, never
+ *     compared to the sender (#1631, Codex #1653 r4 P2) — and this contract
+ *     ignores `sourceSender` too. The payload-carried `issuingBase` it
+ *     forwards is a different question and not a substitute: the receiving
+ *     facet accepts it only if it equals ITSELF, which proves the message
+ *     belongs to this deployment's own outstanding authorisation, not who
+ *     sent it (the sender is the mirror deployment).
  *   - A RETURN delivery carries exactly one `TokenAmount` whose amount must
  *     equal the payload-declared amount; the tokens are forwarded to the
  *     Diamond BEFORE the ingress call and credited from the Diamond's

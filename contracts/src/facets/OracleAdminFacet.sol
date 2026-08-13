@@ -116,18 +116,30 @@ contract OracleAdminFacet {
      *        the bridged-WETH9**, never WPOL.
      *
      *      Nothing in the protocol enforces this — it is purely an
-     *      operator responsibility, and the addresses listed above are
-     *      the reference. There is no runtime check that the address is
-     *      WETH-shaped, so verify against the chain's official bridge
-     *      registry before setting it.
+     *      operator responsibility. There is no runtime check that the
+     *      address is WETH-shaped, so verify against the chain's official
+     *      bridge registry before setting it. **That registry, not this
+     *      comment, is the source for the address itself.**
+     *
+     *      Read the two addresses above as worked examples of the policy,
+     *      not as an address table (Codex #1653 r4 P2). They are spelled
+     *      out because BNB Chain and Polygon PoS are where the
+     *      wrapped-native-vs-bridged-WETH distinction actually bites and
+     *      picking the wrong one is silent; on the ETH-gas chains the two
+     *      coincide, so there is no trap to warn about and no address is
+     *      given. An operator who needs a specific address for any chain
+     *      should be reading the bridge registry regardless — a hardcoded
+     *      list in a contract comment is exactly the kind of thing that
+     *      goes stale without anyone noticing.
      *
      *      This note previously deferred the guarantee to "the
      *      VPFIBuyAdapter's payment-token policy", which was removed in
      *      the #687-A legal excision along with the cross-chain buy lane
      *      it governed — so the check this setter leans on had no
      *      enforcer left anywhere (#1641). It also pointed at a CLAUDE.md
-     *      section that no longer exists; the canonical addresses live in
-     *      this comment.
+     *      section that no longer exists. Its replacement claimed the
+     *      canonical addresses lived here, which was equally untrue for
+     *      five of the seven chains named above.
      *
      * @param weth The bridged-WETH9 ERC-20 contract address on the active
      *             network (NOT the wrapped-native on non-ETH-gas chains).

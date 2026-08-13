@@ -4233,10 +4233,11 @@ library LibVaipakam {
         // NOT WIRED UP as of #1641: no code reads or writes this slot.
         // The comment here used to say it was "validated via the
         // messenger's existing `channelPeer` mapping"; neither half
-        // holds. `CcipMessenger.channelPeerOf` is routing metadata whose
-        // receive path only asserts the entry is non-zero — it never
-        // compares it to the sender (#1631) — and no handler compares it
-        // either. What actually authenticates an inbound `TierUpdated`
+        // holds. `CcipMessenger.channelPeerOf` steers no routing and
+        // enforces only an enablement gate: the receive path asserts the
+        // entry is non-zero and then passes it on as an advisory label —
+        // it never compares it to the sender (#1631) — and no handler
+        // compares it either. What actually authenticates a `TierUpdated`
         // on a mirror today is {MirrorTierReceiverFacet}:
         // `msg.sender == s.rewardMessenger` (the local, owner-registered
         // messenger) plus `sourceChainId == s.baseChainId`. That is a

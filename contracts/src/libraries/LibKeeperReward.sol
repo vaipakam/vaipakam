@@ -37,21 +37,24 @@ library LibKeeperReward {
     ///      (#1641). The constant stays because keeper gas reimbursement
     ///      still needs a wei→VPFI conversion.
     ///
-    ///      Two OTHER `1e15` anchors express the same 1 VPFI = 0.001 ETH
+    ///      Two OTHER anchors express the same 1 VPFI = 0.001 ETH
     ///      relationship for different features, and none of the three
     ///      reads the others — changing one does NOT move the rest:
     ///        - `LibVaipakam.VPFI_PER_ETH_FIXED_PHASE1` — the documented
-    ///          Phase-1 peg, dormant since Recycling M1 (#1346).
+    ///          Phase-1 peg, dormant since Recycling M1 (#1346). Like this
+    ///          one, a compile-time constant.
     ///        - `VPFIDiscountFacet.setVPFIDiscountRate` — the fee-discount
-    ///          quote's price anchor. Unlike these two it is
-    ///          governance-settable at runtime, and it has NO default:
-    ///          storage starts at zero, which `LibVPFIDiscount` reads as
-    ///          "discount disabled" rather than as any rate. Nor does
-    ///          anything configure it to 1e15 — `ConfigureVPFIBuy`
-    ///          requires an explicit `VPFI_BUY_WEI_PER_VPFI` and
-    ///          `DeployTestnetVPFI` defaults to `1e12`. So it is a THIRD
-    ///          place the same quantity is expressed, not a third 1e15
-    ///          (Codex #1653 r2 P2).
+    ///          quote's price anchor, and NOT a constant: it is a
+    ///          governance-settable runtime slot with no built-in value.
+    ///          Storage starts at zero, which `LibVPFIDiscount` reads as
+    ///          "discount disabled" rather than as any rate, and nothing in
+    ///          the code puts 1e15 there — `ConfigureVPFIBuy` requires an
+    ///          explicit `VPFI_BUY_WEI_PER_VPFI` and `DeployTestnetVPFI`
+    ///          defaults to `1e12`. It nonetheless HOLDS 1e15 on Base
+    ///          Sepolia, because `docs/ops/BaseSepoliaDeploy.md` §4 tells
+    ///          the operator to configure exactly that (Codex #1653 r4 P2).
+    ///          So it is a third place the same quantity is expressed, but
+    ///          the only one that can silently diverge on a live deploy.
     ///      Named here rather than left implicit so an audit or a repeg
     ///      that starts from this constant sees the other two (Codex
     ///      #1653 r1 P2).

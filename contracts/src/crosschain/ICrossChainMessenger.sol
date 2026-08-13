@@ -106,16 +106,31 @@ interface ICrossChainMessageRecipient {
      *      solely from the payload (see the migration design §5).
      * @param sourceChainId EVM chain id the message originated on.
      * @param sourceSender  The channel peer the adapter has CONFIGURED
-     *                      for `sourceChainId` — routing metadata, not a
-     *                      verified sender. The adapter only asserts the
-     *                      entry is non-zero; it never compares it to the
+     *                      for `sourceChainId` — an ADVISORY label, not a
+     *                      verified sender, and not routing (it steers
+     *                      nothing; the adapter routes by its own handler
+     *                      and messenger maps). Its only enforced role is
+     *                      an enablement gate: a zero entry rejects the
+     *                      message. The adapter never compares it to the
      *                      address that actually sent the message, so a
      *                      misconfigured peer arrives here looking
-     *                      authoritative (#1631). An implementer that
-     *                      wants peer-level authentication must perform
-     *                      the comparison itself; none does today, and
-     *                      whether the adapter should do it once for all
-     *                      channels is #1650.
+     *                      authoritative (#1631).
+     *
+     *                      **Do NOT try to close that gap by comparing
+     *                      this value yourself** (Codex #1653 r4 P2). It
+     *                      is read from THIS chain's own
+     *                      `channelPeerOf[channelId][sourceChainId]`, so
+     *                      checking it against the peer you expect
+     *                      compares one local configuration value with
+     *                      another and authenticates nothing — while
+     *                      looking, in review, like a real guard. Genuine
+     *                      peer-level authentication requires the remote
+     *                      sender's identity to be carried through the
+     *                      authenticated envelope, which is adapter-level
+     *                      work tracked as #1650. Until that lands, the
+     *                      boundary that holds is the adapter's
+     *                      per-chain messenger allowlist plus the CCIP
+     *                      router's own sender authentication.
      * @param payload       The exact bytes the sender passed to
      *                      {ICrossChainMessenger.sendMessage}.
      * @param tokens        Tokens delivered with the message, now held by

@@ -21,11 +21,16 @@ operators to it to fix faults it cannot cause.
 Nor does it authenticate. The receive path asserts only that an entry
 exists, never that it matches the address that actually sent the message,
 and no receiving contract shipping today compares it — all four ignore the
-parameter outright. Two of them bind a sending identity carried in the
-message body instead: the reward remittance receiver reads the sending
-deployment's own address, and the VPFI return receiver reads an issuing
-deployment address that the receiving facet rejects unless it matches
-itself. A peer configured to the wrong non-zero address is caught by
+parameter outright. Two of them bind an identity carried in the message
+body instead, and the two bindings are not the same kind of thing. The
+reward remittance receiver reads the sending deployment's own address —
+that one is genuinely about who sent the message. The VPFI return
+receiver reads the address of the deployment that issued the original
+authorisation, which the receiving side accepts only if it is itself;
+that proves the message belongs to this deployment's own outstanding
+work, and says nothing about which contract sent it. Neither is a
+substitute for the missing check, and the second is not even the same
+question. A peer configured to the wrong non-zero address is caught by
 nothing. The authentication that does hold is one layer up, where the
 CCIP router authenticates the sender and the adapter requires it to be
 the messenger this chain allowlisted for that source chain. That is a
@@ -79,8 +84,12 @@ with the test commentary that repeated the original reasoning and the
 operator runbook paragraph that described the struct comment as still
 wrong. And the keeper-reward constant is now described as the
 keeper-specific anchor rather than the only place the rate is stated,
-because two other constants express the same relationship for different
-features and none of the three reads the others.
+because the same relationship is expressed in two other places for
+different features and none of the three reads the others. The three are
+not alike, which is part of why treating any one as authoritative is a
+mistake: one is a second compile-time constant, and the other is a
+governance-configurable setting with no built-in value at all, which can
+therefore already hold something different on a live deployment.
 
 A repository-wide sweep for the removed purchase surface found more
 residue outside the contracts — including two app-side filters that skip

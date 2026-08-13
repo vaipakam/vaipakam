@@ -42,8 +42,10 @@ interface ITreasuryBuybackIngress {
  *   - It has NOT authenticated the channel peer, and this contract does
  *     not either — the header used to say the messenger "validates the
  *     channel-peer identity before forwarding", which is not what
- *     {CcipMessenger.channelPeerOf} does: that map is routing metadata
- *     whose entry is only asserted non-zero (#1631). Nothing here binds
+ *     {CcipMessenger.channelPeerOf} does: that map steers no routing at
+ *     all, and its only enforced role is an enablement gate — the entry
+ *     is asserted non-zero and then passed along as an advisory label
+ *     (#1631). Nothing here binds
  *     the sending DEPLOYMENT: `sourceSender` is ignored, and the payload
  *     is a declared token address cross-checked against the delivered
  *     one, which proves the delivery is self-consistent and nothing

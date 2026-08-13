@@ -876,10 +876,25 @@ contract RewardAggregatorFacet is
      *         `block.chainid`, read directly."* Reading a
      *         governance-settable field to answer "am I Base?" is the wrong
      *         question whichever value it happens to hold — an admin write
-     *         could then turn the guard off. This surface only runs on the
-     *         canonical Diamond (the ledger it reads is Base's), so "is this
-     *         me?" is exactly the question, and only `block.chainid` answers
-     *         it unconditionally.
+     *         could then turn the guard off. "Is this me?" is exactly the
+     *         question the guard needs to ask, and only `block.chainid`
+     *         answers it unconditionally.
+     *
+     *         **This view is NOT gated to the canonical deployment, and the
+     *         caller must enforce that context** (Codex #1653 r4 P2). The
+     *         `block.chainid` check above only refuses to report on the
+     *         chain it is running on; it says nothing about whether this
+     *         Diamond is the canonical one. The selector is cut into every
+     *         deployment (`DeployDiamond.s.sol`), so on a mirror this
+     *         function is callable and will read that mirror's copy of a
+     *         ledger only Base populates — returning an unpopulated
+     *         position that is indistinguishable from a real zero. An
+     *         earlier revision of this comment asserted the surface "only
+     *         runs on the canonical Diamond", which is a deployment
+     *         convention rather than anything the code enforces. Gating the
+     *         view on `isCanonicalRewardChain` would make it enforced, and
+     *         is a behaviour change deliberately out of scope for a
+     *         comment correction.
      * @param  chainId    The MIRROR chain to inspect.
      * @param  throughDay Inclusive last day of the trailing window.
      */

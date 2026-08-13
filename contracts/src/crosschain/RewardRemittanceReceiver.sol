@@ -89,8 +89,16 @@ interface ICompensationBudgetIngress {
  * fee-on-transfer handling, differing only in direction and the payload shape.
  *
  * Trust + behaviour:
- *   - `onCrossChainMessage` is callable only by the registered {messenger}
- *     (which has already authenticated the CCIP source chain + channel peer).
+ *   - `onCrossChainMessage` is callable only by the registered {messenger},
+ *     which has already authenticated the CCIP source chain and the remote
+ *     MESSENGER (its per-chain allowlist, on top of the router's own sender
+ *     authentication). It has NOT authenticated the channel peer —
+ *     {CcipMessenger.channelPeerOf} is only asserted non-zero, never
+ *     compared to the sender (#1631, Codex #1653 r4 P2) — and this contract
+ *     ignores `sourceSender` too. What it binds instead is the `remitter`
+ *     carried IN the payload: the sending deployment's own address,
+ *     embedded at send, which is a message-carried fact rather than a
+ *     local configuration lookup.
  *   - Exactly one `TokenAmount` per delivery; the token must equal the
  *     configured local {vpfiToken} and the delivered amount must equal the
  *     `total` declared in the payload (delivered-vs-declared cross-check).

@@ -148,8 +148,15 @@ interface IRepatriationInstructionIngress {
  * ── Trust ──────────────────────────────────────────────────────────────
  * The sender-side methods are callable only by the paired {diamond}.
  * {onCrossChainMessage} is callable only by the registered {messenger},
- * which has already authenticated the CCIP source + channel peer; on top
- * of that a strict payload-length pin rejects any padded/forged packet.
+ * which has already authenticated the CCIP source chain and the remote
+ * MESSENGER (its per-chain allowlist, on top of the router's own sender
+ * authentication). It has NOT authenticated the channel peer, and this
+ * contract does not either — `sourceSender` is ignored here, and
+ * {CcipMessenger.channelPeerOf} is only asserted non-zero rather than
+ * compared to the sender (#1631, Codex #1653 r4 P2). On top of the
+ * boundary that does hold, a strict payload-length pin rejects any
+ * padded/forged packet. See #1650 for whether a peer-level check should
+ * exist at the adapter.
  *
  * @dev UUPS-upgradeable; guardian + owner pause. The sender pays the
  *      cross-chain fee as `msg.value`; the exact quoted fee is forwarded

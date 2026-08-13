@@ -827,14 +827,23 @@ contract VPFIDiscountFacet is
     /// @notice Set the VPFI price anchor used by the fee-discount quote —
     ///         ETH wei per 1 VPFI (18 dec). There is NO default: the slot
     ///         starts at zero and the quote stays disabled until an
-    ///         operator configures it — and nothing configures 1e15.
-    ///         `ConfigureVPFIBuy.s.sol` requires an explicit
-    ///         `VPFI_BUY_WEI_PER_VPFI` (`vm.envUint`, no fallback), while
-    ///         `DeployTestnetVPFI.s.sol` defaults to `1e12`. 1e15 is the
-    ///         Phase-1 peg the two OTHER anchors express
+    ///         operator configures it. `ConfigureVPFIBuy.s.sol` requires an
+    ///         explicit `VPFI_BUY_WEI_PER_VPFI` (`vm.envUint`, no fallback),
+    ///         and `DeployTestnetVPFI.s.sol` defaults to `1e12`.
+    ///
+    ///         Distinguish "no default" from "never 1e15" — the two are not
+    ///         the same claim, and an earlier revision of this comment
+    ///         asserted the second (Codex #1653 r4 P2).
+    ///         `docs/ops/BaseSepoliaDeploy.md` §4 instructs the operator to
+    ///         set `VPFI_BUY_WEI_PER_VPFI=1000000000000000` and run that
+    ///         script, so 1e15 IS the documented Base Sepolia value — it
+    ///         just arrives by operator configuration rather than from
+    ///         anything in the code. The two other anchors
     ///         (`LibVaipakam.VPFI_PER_ETH_FIXED_PHASE1`,
-    ///         `LibKeeperReward.FIXED_VPFI_PER_ETH_RATE_WEI`); this slot
-    ///         is simply not one of them.
+    ///         `LibKeeperReward.FIXED_VPFI_PER_ETH_RATE_WEI`) are
+    ///         compile-time constants; this one is a runtime slot that can
+    ///         hold anything, which is why it must not be read as a third
+    ///         statement of the peg.
     /// @dev Zero disables the discount quote (falls back to the normal fee).
     ///      This line and the previous sentence used to contradict each
     ///      other — the header claimed "Default 1e15" while this one said
