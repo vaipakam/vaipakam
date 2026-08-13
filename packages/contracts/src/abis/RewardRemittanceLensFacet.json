@@ -250,11 +250,6 @@
         "name": "oldRemitId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "quarantineObserved",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"

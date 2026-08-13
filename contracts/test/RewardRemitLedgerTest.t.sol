@@ -3937,7 +3937,7 @@ contract RewardRemitLedgerTest is SetupTest {
         r;
 
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
         vpfiTok.mint(address(diamond), 1e18);
         comp.clearImportedOutstanding(CHAIN_ARB, 1e18);
         (, , , , uint256 resolvedAfter) = RewardAggregatorFacet(
@@ -4080,7 +4080,7 @@ contract RewardRemitLedgerTest is SetupTest {
     /// unreachable by the evidence that should void it.
     function test_Import_ReplayAfterSettlementRefused() public {
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
         vpfiTok.mint(address(diamond), 3e18);
         comp.clearImportedOutstanding(CHAIN_ARB, 0);
         assertEq(rlens.getCompensationOutstanding(CHAIN_ARB), 0, "settled");
@@ -4091,7 +4091,7 @@ contract RewardRemitLedgerTest is SetupTest {
                 7
             )
         );
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
     }
 
 
@@ -4266,6 +4266,85 @@ contract RewardRemitLedgerTest is SetupTest {
         );
     }
 
+    /// r10-j1 (ceremony path) - the same invariant on the OTHER writer. A
+    /// governance ceremony for a legacy receipt AFTER arming must not
+    /// refill the position either. The return-path test cannot cover this:
+    /// they are two separate credit sites.
+    function test_Recovery_LateCeremonyForLegacyReceiptSkipsThePosition()
+        public
+    {
+        _releasedCeremonyFixture();
+        // The in-place upgrade arms FIRST - receipt 1 is legacy.
+        mutator.setRecoveryAttributionRaw(false, 0);
+        comp.armRecoveryAttribution();
+        (uint256 rec0, uint256 red0, ) = rlens.getRecoveryPosition();
+        assertEq(rec0 - red0, 0, "nothing standing after arming");
+
+        // A governance ceremony now settles that legacy receipt.
+        vpfiTok.mint(address(diamond), 3e18);
+        comp.recordRecoveryCeremony(1, 3e18, 0);
+        (uint256 rec1, uint256 red1, ) = rlens.getRecoveryPosition();
+        assertEq(
+            rec1 - red1,
+            0,
+            "a late legacy ceremony never enters the position"
+        );
+        // The custody-resolution term still advances, so the gate can
+        // still reach full resolution - only the spendable position is
+        // withheld.
+        assertEq(rlens.getRecoveredForReceipt(1), 3e18, "resolution recorded");
+        assertEq(
+            rlens.getCompensationOutstanding(CHAIN_ARB),
+            0,
+            "and the gate still resolves"
+        );
+    }
+
+    /// r10-j1 - THE invariant: the pooled recovery position holds credit
+    /// ONLY for post-watermark receipts.
+    ///
+    /// Round 9 retired the position AT arming, but nothing stopped it
+    /// being REFILLED afterwards. A pre-cut receipt can still have a
+    /// return in flight when the upgrade arms; crediting it would add to a
+    /// position that receipt can never draw from (the watermark blocks the
+    /// draw) and that can never be clawed back out (the watermark blocks
+    /// the claw) - so `backingPosition` would subtract it forever and the
+    /// tokens would be unreachable.
+    function test_Recovery_LateCreditForLegacyReceiptSkipsThePosition()
+        public
+    {
+        // A legacy receipt with a return still in flight at upgrade time.
+        _finalizeDay(1);
+        mutator.setChainDayRemitIneligibleRaw(1, CHAIN_ARB, true);
+        rewardMessenger.deliverCompQuote(CHAIN_ARB, 1, 3e18, 2e18);
+        comp.remitManualBudget{value: 0.01 ether}(CHAIN_ARB, 1, 2e18, 1e18);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, 3e18, false);
+        // The in-place upgrade arms while that return is still out.
+        mutator.setRecoveryAttributionRaw(false, 0);
+        comp.armRecoveryAttribution();
+        (uint256 rec0, uint256 red0, ) = rlens.getRecoveryPosition();
+        assertEq(rec0 - red0, 0, "arming retired the standing position");
+
+        // The late return lands for the LEGACY receipt.
+        _armReturnIngressNoAck();
+        comp.onStrandedReturnReceived(
+            address(diamond), 1, 1, CHAIN_ARB, address(vpfiTok), 3e18, 3e18, 0
+        );
+        (uint256 rec1, uint256 red1, ) = rlens.getRecoveryPosition();
+        assertEq(
+            rec1 - red1,
+            0,
+            "a late legacy credit never enters the position"
+        );
+        // The custody-resolution term still records it (the gate identity
+        // depends on that), it simply earns no spendable position.
+        assertEq(
+            rlens.getRecoveredForReceipt(1),
+            3e18,
+            "the receipt's own resolution cumulative still advances"
+        );
+    }
+
     /// r9-i3 - arming must RETIRE the pooled position, not merely block
     /// the receipts. The aggregate `recovered - redispatched` stays
     /// subtracted from ordinary backing, and the charged path never draws
@@ -4320,7 +4399,7 @@ contract RewardRemitLedgerTest is SetupTest {
     /// is what makes a mistaken import genuinely liveness-only.
     function test_Import_HasNoPermissionlessClear() public {
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
         assertEq(
             rlens.getCompensationOutstanding(CHAIN_ARB),
             type(uint256).max,
@@ -4354,7 +4433,7 @@ contract RewardRemitLedgerTest is SetupTest {
     /// double clear refuses.
     function test_Import_EvidencedSettlementBooksAndWrongTuple() public {
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.RemitAckSenderMismatch.selector,
@@ -4411,7 +4490,7 @@ contract RewardRemitLedgerTest is SetupTest {
     /// the old parcel.
     function test_Import_SettlementMintsNoFreshCapacity() public {
         address oldBase = address(0x01dBA5E);
-        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7, false);
+        comp.importOutstandingCompensation(CHAIN_ARB, oldBase, 7);
         (uint256 recBefore, uint256 redBefore, ) = rlens.getRecoveryPosition();
         vpfiTok.mint(address(diamond), 5e18);
         // Even a large physically-present balance mints nothing: the

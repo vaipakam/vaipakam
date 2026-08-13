@@ -6515,10 +6515,7 @@ library LibVaipakam {
         //   deployment rotation: the RAW old-era tuple, not its hash —
         //   the ack branch matches on it, the evidenced settlement books
         //   recovered custody against the OLD-era remitId as provenance
-        //   refId, and `quarantineObserved` remembers a re-presented
-        //   QUARANTINED attestation so a later consumed re-present
-        //   CONTRADICTS the mirror's own record (the own-era conflict
-        //   rule, imported). While set, the chain's gate is held at the
+        //   refId. While set, the chain's gate is held at the
         //   IMPORTED sentinel — OLD-ERA evidence this deployment never
         //   issued; only the imported-clear paths (the mirror's
         //   re-presented consumed attestation, or the ADMIN evidenced
@@ -6781,12 +6778,10 @@ library LibVaipakam {
     ///         OLD-ERA outstanding compensation for a chain: the retired
     ///         deployment's receipt tuple, carried onto the rotated-in
     ///         deployment so its R6 gate cannot silently forget an
-    ///         unresolved delivery. `quarantineObserved` is the imported
-    ///         twin of the own-era classification-conflict evidence.
+    ///         unresolved delivery.
     struct ImportedOutstanding {
         address oldRemitter;
         uint256 oldRemitId;
-        bool quarantineObserved;
         // #1662 r6 — no parcel figures are carried: an imported
         //   settlement mints no re-dispatch capacity, so there is nothing
         //   for a fabricated figure to inflate. Rounds 4-5 carried them

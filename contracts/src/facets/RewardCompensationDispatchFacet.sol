@@ -699,7 +699,23 @@ contract RewardCompensationDispatchFacet is
         uint256 overage = actualReceived - credited;
 
         s.remitRecoveredForReceipt[remitId] = already + credited;
-        s.rewardBudgetRecovered += credited;
+        // #1662 r10 — THE invariant for legacy receipts: the pooled
+        // recovery position holds credit ONLY for post-watermark receipts.
+        //
+        // A pre-cut receipt can still have a return in flight when the
+        // upgrade arms. Crediting it here would add to a position it can
+        // never draw from (the watermark blocks `_drawFromRecovery`) and
+        // that can never be clawed back out (the watermark blocks
+        // `_voidRecoveryCredit`) — so `backingPosition` would subtract it
+        // forever and the tokens would be unreachable. Arming retires the
+        // position standing AT that instant; this is the other half of the
+        // same rule, stopping it from being refilled afterwards.
+        //
+        // The tokens are not lost: they stay as ordinary unearmarked
+        // balance, which is exactly what the CHARGED dispatch path spends.
+        if (!_receiptPredatesAttribution(s, remitId)) {
+            s.rewardBudgetRecovered += credited;
+        }
         if (overage != 0) s.strandedReturnOverage += overage;
         // #1660 r1 — a short actual is TRANSPORT LOSS, not recoverable
         // headroom: the mirror's one-shot record retired at the declared
@@ -1051,8 +1067,7 @@ contract RewardCompensationDispatchFacet is
     event OutstandingCompensationImported(
         uint32 indexed dstChainId,
         address oldRemitter,
-        uint256 oldRemitId,
-        bool quarantineObserved
+        uint256 oldRemitId
     );
 
     /// @notice §5.4 R6e (#1662 r1) — the ADMIN evidenced SETTLEMENT of
@@ -1345,6 +1360,21 @@ contract RewardCompensationDispatchFacet is
     /// @custom:event-category state-change/reward-compensation
     event RecoveryAttributionArmed(uint256 watermark, uint256 retiredPosition);
 
+    /// @dev #1662 r10 — the ONE predicate every legacy-receipt rule reads.
+    ///      A receipt at or below the armed watermark predates per-receipt
+    ///      attribution: its spends and claws were tracked GLOBALLY only,
+    ///      so no per-receipt figure about it can be trusted. The rule that
+    ///      follows is single — such a receipt never touches the pooled
+    ///      recovery position: it cannot draw from it, cannot be clawed
+    ///      out of it, and (r10) cannot be credited INTO it either.
+    function _receiptPredatesAttribution(
+        LibVaipakam.Storage storage s,
+        uint256 receiptId
+    ) private view returns (bool) {
+        return s.recoveryAttributionArmed
+            && receiptId <= s.recoveryAttributionArmedAt;
+    }
+
     /// @dev #1662 r2 — draw `amount` of uncharged re-dispatch capacity
     ///      against the NAMED source receipt's own recovery credit.
     ///
@@ -1374,10 +1404,7 @@ contract RewardCompensationDispatchFacet is
         // the FULL credit however much was already drawn — and it could
         // then consume a LATER receipt's backing. Refused outright; the
         // value stays reachable through the ordinary charged path.
-        if (
-            s.recoveryAttributionArmed
-                && sourceRemitId <= s.recoveryAttributionArmedAt
-        ) {
+        if (_receiptPredatesAttribution(s, sourceRemitId)) {
             revert RecoveryReceiptPredatesAttribution(sourceRemitId);
         }
         uint256 credit = s.remitRecoveredForReceipt[sourceRemitId]
@@ -1438,7 +1465,15 @@ contract RewardCompensationDispatchFacet is
         if (bal < earmarks) {
             revert CeremonyInflowNotBacked(refId, bal, earmarks);
         }
-        s.rewardBudgetRecovered += freshInflow;
+        // #1662 r10 — same invariant as the return path: a late ceremony
+        // for a pre-cut receipt must not refill a position that receipt
+        // can neither draw nor have clawed. (`refId` is the OLD-era remit
+        // id on the imported path, which is never a local receipt, so the
+        // predicate correctly leaves imported settlements alone — they
+        // credit no fresh position at all since r6.)
+        if (!_receiptPredatesAttribution(s, refId)) {
+            s.rewardBudgetRecovered += freshInflow;
+        }
         if (recycledInflow != 0) {
             LibVpfiRecycle.creditCustodyRelocated(
                 refId,
@@ -1462,34 +1497,36 @@ contract RewardCompensationDispatchFacet is
      *         CLOSED for a chain whose compensation was outstanding on the
      *         RETIRED deployment, keyed by the old-era receipt tuple. No
      *         unresolved compensation may be silently forgotten by a
-     *         redeploy: the imported marker holds new dispatches until the
-     *         old-era evidence clears it (the mirror's re-presented
-     *         consumed attestation, or {clearImportedOutstanding}).
+     *         redeploy: the imported marker holds new dispatches for that
+     *         chain until the operator's evidenced
+     *         {clearImportedOutstanding} settles it.
+     * @dev    The import carries NOTHING about the parcel, and needs
+     *         nothing: a settlement mints no re-dispatch capacity (r6), so
+     *         there is no figure for a fabricated one to inflate, and
+     *         there is no permissionless clear (r7), so a wrong tuple
+     *         cannot be used to open the gate. Rounds 4 and 5 tried to
+     *         bound the mint — first on operator-supplied figures, then by
+     *         READING the retiring deployment — and neither authenticates
+     *         against a compromised ADMIN, who supplies the predecessor
+     *         address too. Removing the mint removed the question.
+     *
+     *         #1662 r10 — the `quarantineObserved` carry-over is likewise
+     *         GONE. It existed to stop a second rotation laundering a
+     *         mirror's self-contradiction into a clean consumption, which
+     *         was a real hazard only while the permissionless clear
+     *         existed. Since r7 deleted that clear, nothing read the flag:
+     *         it was stored, emitted and published by the lens while no
+     *         path enforced it, and the runbook was crediting it with a
+     *         security effect it did not have.
+     *
+     *         What remains is a BLOCK. A mistaken import costs liveness on
+     *         the one chain it names, recoverable by the evidenced
+     *         settlement — never value.
      */
-
-    ///      RETIRING DEPLOYMENT, not supplied by the caller. Round 4
-    ///      carried them as ADMIN parameters and validated only their
-    ///      internal consistency, which bounds a typo but not a
-    ///      compromised admin: any self-consistent tuple would do, and the
-    ///      settlement mints uncharged re-dispatch capacity against it.
-    ///      The retired deployment is a live contract on this same chain,
-    ///      so its own record is authenticable — and it also carries how
-    ///      much of the parcel it had ALREADY resolved, which the gross
-    ///      split does not. Both come from the same read.
-    /// @param quarantineObserved #1662 r2 — carry the RETIRING
-    ///        deployment's observed-quarantine evidence (read
-    ///        `getImportedOutstanding` on it, or pass false for a
-    ///        first-generation import). Without this a SECOND rotation
-    ///        silently launders a contradiction: the retiring deployment's
-    ///        record already held quarantine evidence, and re-importing
-    ///        the tuple fresh would reset the flag, converting a
-    ///        quarantine→consumed contradiction into a clean consumption
-    ///        that clears the newest deployment's gate.
     function importOutstandingCompensation(
         uint32 dstChainId,
         address oldRemitter,
-        uint256 oldRemitId,
-        bool quarantineObserved
+        uint256 oldRemitId
     ) external onlyCanonical onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (oldRemitter == address(0) || oldRemitter == address(this)) {
@@ -1518,14 +1555,13 @@ contract RewardCompensationDispatchFacet is
         s.importedTupleSeen[tupleKey] = true;
         s.importedOutstanding[dstChainId] = LibVaipakam.ImportedOutstanding({
             oldRemitter: oldRemitter,
-            oldRemitId: oldRemitId,
-            quarantineObserved: quarantineObserved
+            oldRemitId: oldRemitId
         });
         LibRewardRemitDispatch.setCompensationGate(
             s, dstChainId, IMPORTED_GATE_SENTINEL
         );
         emit OutstandingCompensationImported(
-            dstChainId, oldRemitter, oldRemitId, quarantineObserved
+            dstChainId, oldRemitter, oldRemitId
         );
     }
 

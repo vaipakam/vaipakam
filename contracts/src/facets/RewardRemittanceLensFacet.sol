@@ -461,15 +461,11 @@ contract RewardRemittanceLensFacet {
     )
         external
         view
-        returns (
-            address oldRemitter,
-            uint256 oldRemitId,
-            bool quarantineObserved
-        )
+        returns (address oldRemitter, uint256 oldRemitId)
     {
         LibVaipakam.ImportedOutstanding storage im =
             LibVaipakam.storageSlot().importedOutstanding[dstChainId];
-        return (im.oldRemitter, im.oldRemitId, im.quarantineObserved);
+        return (im.oldRemitter, im.oldRemitId);
     }
 
     /// @dev Local twins of the mutating facet's errors (same selectors).

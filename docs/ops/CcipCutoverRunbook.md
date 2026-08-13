@@ -267,17 +267,14 @@ deployment. No unresolved compensation may be silently forgotten by a
 redeploy.
 
 **Carrying one over.** On the NEW deployment, run
-`importOutstandingCompensation(chain, oldDeployment, oldRemitId,
-quarantineObserved)` for each open tuple.
+`importOutstandingCompensation(chain, oldDeployment, oldRemitId)` for each
+open tuple.
 
 - Read the tuple from the retiring deployment's `getImportedOutstanding`
   when that deployment was ITSELF holding a carried-over gate. Its visible
   `getCompensationOutstanding` reads a sentinel in that case, and
   importing the sentinel is refused — no old-era acknowledgement could
   ever match it.
-- Carry `quarantineObserved` across. Dropping it would turn a mirror's
-  already-observed quarantine-then-consumed contradiction back into a
-  clean consumption on the new deployment.
 - Each tuple may be imported exactly once.
 
 The import carries no figures about the parcel, and needs none: settling a

@@ -1497,6 +1497,49 @@ the bounds are the design's actual commitment.
    > exercises; reusing a nearby test as a target is how a fix comes to
    > look verified while nothing checks it.
    >
+   > **Round-10 addendum (#1662) — the attribution machinery, closed.**
+   > Two findings, the smallest round of the review, and both closed by
+   > structure rather than by another guard.
+   >
+   > Rounds 7-9 had each been dominated by second-order effects of the
+   > previous round's fix, all on this one surface. Rather than patch a
+   > fourth time, the whole surface was enumerated — every writer of the
+   > pooled position, every reader of the watermark — which located the
+   > actual gap: round 9 retired the position AT arming, but nothing
+   > stopped it being REFILLED afterwards by a return still in flight or a
+   > late ceremony for a pre-cut receipt. Such a credit could never be
+   > drawn (the watermark blocks the draw) and never clawed back out (the
+   > watermark blocks the claw), so `backingPosition` would subtract it
+   > forever and the tokens would be unreachable.
+   >
+   > The close is ONE stated invariant —
+   >
+   > > **the pooled recovery position holds credit only for POST-watermark
+   > > receipts**
+   >
+   > — enforced at BOTH writers through a single
+   > `_receiptPredatesAttribution` predicate that the draw guard reads as
+   > well. Four scattered guards become consequences of one rule: a legacy
+   > receipt never touches the position, in any direction. The tokens stay
+   > as ordinary unearmarked balance, which is what the CHARGED path
+   > spends — the claim round 7 made and round 9 had to make true.
+   >
+   > The second finding removed `quarantineObserved` entirely. It was
+   > introduced in r2 to stop a second rotation laundering a mirror's
+   > self-contradiction into a clean consumption — a real hazard only while
+   > the PERMISSIONLESS imported clear existed. r7 deleted that clear, and
+   > nothing has read the flag since: it was stored, emitted and published
+   > by the lens while no path enforced it, and the runbook was crediting
+   > it with a security effect it did not have. A dead field carrying a
+   > documented guarantee is worse than no field.
+   >
+   > *Process note.* A reused mutation target survived for the THIRD time
+   > this review — the ceremony-path guard was tested by a case that ran
+   > its ceremony BEFORE arming, so the receipt was never legacy at the
+   > moment of credit and the guard never executed. The general rule: when
+   > a fix touches N call sites, it needs N mutation targets, each on a
+   > sequence that actually reaches its site.
+   >
    > **Round-8 addendum (#1662).** Five more, and THREE are round-7 fixes
    > that were INCOMPLETE rather than wrong — a pattern worth naming,
    > because each one *looked* applied.
