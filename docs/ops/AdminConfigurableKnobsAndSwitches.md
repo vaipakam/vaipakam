@@ -894,13 +894,33 @@ inbound delivery rejects a missing handler as `UnknownChannel`.
   it does not compare the CCIP sender against it. And no handler
   shipping today compares it either — `VaipakamRewardMessenger`,
   `RewardRemittanceReceiver`, `BuybackRemittanceReceiver` and
-  `VpfiReturnReceiver` all ignore the argument, the remittance receivers
-  binding deployment identity from the payload instead. So a peer set to
-  the WRONG non-zero address is not caught here. The authentication that
+  `VpfiReturnReceiver` all ignore the argument. So a peer set to the
+  WRONG non-zero address is not caught here. The authentication that
   does hold is one layer up: `CcipMessenger` allowlists the source
   messenger per chain (`setRemoteMessenger`) and the router's own
-  sender check. Treat the peer map as routing metadata, not as a
-  forgery guard.
+  sender check.
+
+  **This map is NOT routing.** It steers nothing — outbound messages
+  route by the remote-messenger map, inbound ones by the channel's
+  registered handler — so re-pointing a wrong non-zero peer changes
+  neither path. During a routing incident this is the wrong setter to
+  reach for. What it actually does is enable the `(channel, chain)`
+  pair by being non-zero, and supply an advisory `sourceSender` label.
+
+  **Do not assume a payload-carried identity makes up the difference.**
+  It varies by receiver and, for one of them, by wire generation:
+
+  - `RewardRemittanceReceiver` binds a `remitter` — the sending
+    deployment's own address — but only on the newer payload shapes.
+    The legacy two-field shape is still accepted for delayed and
+    replayed deliveries and carries no remitter at all.
+  - `VpfiReturnReceiver` binds an `issuingBase`, which answers a
+    different question: the receiving side accepts it only if it equals
+    itself, proving the message belongs to this deployment's own
+    outstanding work rather than identifying the sender.
+  - `BuybackRemittanceReceiver` binds nothing. Its payload is a declared
+    token cross-checked against the delivered one, which proves the
+    delivery is self-consistent and says nothing about who sent it.
 
 A misconfigured selector, remote messenger or channel registration
 surfaces as an undelivered or rejected message. Note that CCIP's transport security is operated by

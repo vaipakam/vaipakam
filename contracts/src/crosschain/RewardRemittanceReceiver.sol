@@ -99,6 +99,14 @@ interface ICompensationBudgetIngress {
  *     carried IN the payload: the sending deployment's own address,
  *     embedded at send, which is a message-carried fact rather than a
  *     local configuration lookup.
+ *   - **That binding is per-wire-generation, not universal** (Codex
+ *     #1653 r5 P2). The legacy two-field shape carries no `remitter`
+ *     and is still accepted — deliberately, for delayed deliveries and
+ *     governance replays under the M3 backward-decodability rule — so
+ *     it decodes with `remitter == address(0)` and has NO secondary
+ *     identity binding whatsoever. Only the d2 / d5 / compensation
+ *     shapes carry one. An auditor reasoning about a legacy delivery
+ *     should assume the messenger allowlist is the only boundary.
  *   - Exactly one `TokenAmount` per delivery; the token must equal the
  *     configured local {vpfiToken} and the delivered amount must equal the
  *     `total` declared in the payload (delivered-vs-declared cross-check).

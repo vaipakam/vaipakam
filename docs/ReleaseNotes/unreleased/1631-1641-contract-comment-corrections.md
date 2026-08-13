@@ -24,7 +24,10 @@ and no receiving contract shipping today compares it — all four ignore the
 parameter outright. Two of them bind an identity carried in the message
 body instead, and the two bindings are not the same kind of thing. The
 reward remittance receiver reads the sending deployment's own address —
-that one is genuinely about who sent the message. The VPFI return
+that one is genuinely about who sent the message, though only on its
+newer message formats; the older format it still accepts, so that
+delayed and replayed deliveries keep working, carries no such address
+and has no secondary binding at all. The VPFI return
 receiver reads the address of the deployment that issued the original
 authorisation, which the receiving side accepts only if it is itself;
 that proves the message belongs to this deployment's own outstanding
