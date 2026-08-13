@@ -211,7 +211,9 @@ must be true before any real value is routed**:
 
 1. **CCIP lanes enabled and each `CcipMessenger`'s registry configured.**
    `ConfigureCcip` sets chainId↔CCIP-selector, remote messengers, and the
-   `vpfi-buy` + `vpfi-reward` channel peers. Confirm with `--phase
+   `vpfi-reward` / `vpfi-buyback` / `vpfi-reward-budget` / `vpfi-return`
+   channel peers (#687-A: `vpfi-buy` was listed here and no longer
+   exists — see §"Canonical vs mirror"). Confirm with `--phase
    verify` and by spot-reading `chainSelectorOf` / `remoteMessengerOf` /
    `handlerOf` / `channelPeerOf` on each `CcipMessenger`.
 
@@ -236,8 +238,10 @@ must be true before any real value is routed**:
 Every cross-chain contract is `Ownable2Step`:
 
 - The **proxies** (`CcipMessenger`, `VpfiPoolRateGovernor`,
-  `VaipakamRewardMessenger`, `VPFIMirrorToken`, `VpfiBuyAdapter` /
-  `VpfiBuyReceiver`) are initialized with the admin multisig as owner.
+  `VaipakamRewardMessenger`, `VPFIMirrorToken`) are initialized with the
+  admin multisig as owner. (#687-A: `VpfiBuyAdapter` / `VpfiBuyReceiver`
+  were listed here; §"Canonical vs mirror" above already records that
+  they are not deployed in the CCIP stack.)
 - The **TokenPools** are deployed by the EOA, then `transferOwnership`'d
   to the admin multisig by `DeployCrosschain`; `ConfigureCcip`'s
   `acceptOwnership()` completes that handover.
@@ -317,11 +321,14 @@ lifetime budget counter starts at zero and never charged for the old
 parcel, so charging it now is the correct accounting rather than a double
 charge.
 
-- **Fund the `VpfiBuyReceiver` ETH float.** The cross-chain buy is two
-  legs; the receiver pays leg 2's CCIP fee from a held ETH balance. Send
-  ETH to the receiver via `fundETH()` after deploy — an unfunded receiver
-  soft-fails leg 2 and parks the minted VPFI as stuck (recoverable via
-  `retryStuckDelivery` once funded).
+<!-- #687-A: a "Fund the VpfiBuyReceiver ETH float" step stood here,
+     instructing `fundETH()` after deploy with `retryStuckDelivery` as the
+     recovery path. Neither the contract nor either function exists — the
+     two-leg cross-chain buy went with the sale surface. Removed rather
+     than marked historical because this is an operator action list; the
+     §"Canonical vs mirror" note above already records why the contracts
+     are absent. -->
+
 - **Register VPFI as a CCT** in the CCIP `TokenAdminRegistry`.
   `ConfigureCcip` does this (`registerAdminViaOwner` → `acceptAdminRole`
   → `setPool`); on mainnet it is part of the multisig batch. The token's
@@ -467,8 +474,9 @@ flight, in this order when **lowering**:
 - [ ] `--phase verify` green on every chain (pool `rateLimitAdmin` =
       governor; ≥ 1 lane configured).
 - [ ] Each `CcipMessenger`: `chainSelectorOf` / `remoteMessengerOf` set
-      for every peer chain; `vpfi-buy` + `vpfi-reward` channels have a
-      local handler and a remote peer.
+      for every peer chain; the `vpfi-reward` / `vpfi-buyback` /
+      `vpfi-reward-budget` / `vpfi-return` channels have a local handler
+      and a remote peer.
 - [ ] Each VPFI TokenPool: lane present for every remote chain; inbound +
       outbound rate limits enabled at the design §10 values.
 - [ ] Mirror chains: `VPFIMirrorToken.tokenPool()` = the Burn/Mint pool.
@@ -476,7 +484,6 @@ flight, in this order when **lowering**:
       every mirror chain id.
 - [ ] VPFI registered in each chain's `TokenAdminRegistry` with the pool
       set.
-- [ ] `VpfiBuyReceiver` ETH float funded.
 - [ ] Mainnet: every cross-chain contract owner + the CCT admin =
       governance timelock (gate #3).
 

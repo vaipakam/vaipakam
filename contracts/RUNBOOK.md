@@ -70,14 +70,16 @@ ADMIN_ADDRESS=0x…         # the admin EOA's address — read by
                           # owner-transfer target.
 
 # Treasury (Diamond-managed; deployer-controlled multi-sig on mainnet)
-TREASURY_ADDRESS=0x…      # read by DeployCrosschain.s.sol on MIRROR
-                          # chains — wired into VpfiBuyAdapter as the
-                          # treasury address that receives refunded /
-                          # settled buy-flow funds. Canonical (Base)
-                          # branch does not read this env var; the
-                          # treasury for the buy-flow settlement on
-                          # canonical is configured via the Diamond's
-                          # own AdminFacet setter after deploy.
+TREASURY_ADDRESS=0x…      # read by DeployDiamond.s.sol and
+                          # DeployVPFIToken.s.sol (plus the deploy-*.sh
+                          # wrappers). #687-A: this entry used to say it
+                          # was read by DeployCrosschain.s.sol and wired
+                          # into VpfiBuyAdapter for buy-flow refunds.
+                          # DeployCrosschain does not reference
+                          # TREASURY_ADDRESS at all, and the adapter is
+                          # gone — the var is the protocol treasury, not
+                          # a buy-flow setting. The Diamond's treasury is
+                          # also settable post-deploy via AdminFacet.
 
 # Chainlink CCIP wiring (post-T-068, 2026-05-18)
 # Per-chain Router + RMN proxy + TokenAdminRegistry addresses from
@@ -101,18 +103,21 @@ CCIP_GUARDIAN=             # incident-response guardian; default unset → skipp
 CCIP_RATE_CAPACITY=        # per-lane token-bucket capacity; default 50,000 VPFI
 CCIP_RATE_REFILL=          # per-lane refill rate, VPFI/s; default ~5.8 VPFI/s
 CCIP_DEST_GAS_LIMIT=       # CCIP message dest-gas limit; default 400,000
-VPFI_BUY_PAYMENT_TOKEN=    # mirror-chain ONLY buy-adapter payment token —
-                           # canonical Base ignores this env var (Base
-                           # deploys VpfiBuyReceiver, not the adapter, so
-                           # there's no adapter-side payment-token slot
-                           # to configure). On the mirror branch:
-                           # 0x0 ⇒ native gas (Ethereum / Arbitrum /
-                           # Optimism / Polygon zkEVM + their testnets);
-                           # bridged WETH9 address ⇒ WETH-pull (BNB Chain
-                           # mainnet, Polygon PoS mainnet). See CLAUDE.md
-                           # § "VpfiBuyAdapter — payment-token mode by chain."
-VPFI_BUY_REFUND_TIMEOUT=   # seconds before stuck buys can be refunded;
-                           # default 900 (15 min)
+# VPFI fee-discount price config — read by ConfigureVPFIBuy.s.sol.
+# BOTH are mandatory: the script reads them with vm.envUint /
+# vm.envAddress and reverts before broadcast if either is unset.
+VPFI_BUY_WEI_PER_VPFI=     # discount price anchor, wei per VPFI
+<CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET=
+                           # the chain's canonical WETH token address
+                           # (a token, NOT an oracle feed). The prefix
+                           # is the script's own per-chain prefix, e.g.
+                           # BASE_, BASE_SEPOLIA_, ARBITRUM_, BNB_.
+#
+# #687-A: VPFI_BUY_PAYMENT_TOKEN and VPFI_BUY_REFUND_TIMEOUT were
+# documented here. Both are dead — neither appears anywhere in
+# contracts/script/ or contracts/src/. Do not set them; nothing reads
+# them. Note VPFI_BUY_WEI_PER_VPFI above is a DIFFERENT var and IS
+# live, despite the shared prefix.
 CHAIN_ID=                  # override block.chainid (rarely needed)
 ```
 
@@ -138,14 +143,14 @@ Per-chain, branches on `block.chainid ∈ {8453, 84532}` = canonical:
   (deployed by the prior Diamond / VPFI bootstrap step — written to
   `deployments/<chain>/addresses.json` via `Deployments.readVPFIToken()`),
   then deploys the stock CCIP `LockReleaseTokenPool` over it +
-  `VpfiBuyReceiver` + `CcipMessenger` + `VaipakamRewardMessenger` +
+  `CcipMessenger` + `VaipakamRewardMessenger` +
   `VpfiPoolRateGovernor`. `VPFIToken` itself is NOT redeployed here.
   Prerequisite: `VPFIToken` must already be live on this chain with
   its address recorded in the per-chain deployments artifact, or
   `Deployments.readVPFIToken()` will return `address(0)` and the
   script will revert at the `LockReleaseTokenPool` constructor.
 - **Mirrors**: deploys `VPFIMirrorToken` (proxy) + stock CCIP
-  `BurnMintTokenPool` + `VpfiBuyAdapter` + `CcipMessenger` +
+  `BurnMintTokenPool` + `CcipMessenger` +
   `VaipakamRewardMessenger` + `VpfiPoolRateGovernor`. Mirror token
   supply is driven by the BurnMintPool; no independent minter
   surface.
@@ -185,8 +190,11 @@ run `ConfigureCcip.s.sol` on each chain (idempotent — re-runs are safe).
 It wires four things in one pass:
 
 - **`CcipMessenger`**: chainId ↔ CCIP selector, the remote-messenger
-  allowlist, the `vpfi-buy` + `vpfi-reward` channels (local handler +
-  remote peers), the guardian.
+  allowlist, the `vpfi-reward` / `vpfi-buyback` / `vpfi-reward-budget` /
+  `vpfi-return` channels (local handler + remote peers), the guardian.
+  (#687-A: a `vpfi-buy` channel was listed here; `ConfigureCcip.s.sol`
+  records that it was removed "along with the cross-chain VPFI sale"
+  and `_registerChannels` no longer registers it.)
 - **VPFI CCIP `TokenPool`**: accepts the pending ownership handover
   from the deployer, registers `VpfiPoolRateGovernor` as
   `rateLimitAdmin`, adds a lane per remote chain
@@ -205,9 +213,8 @@ CCIP_LANE_CHAIN_IDS=11155111,421614,… \
     --rpc-url $<LOCAL>_RPC_URL --broadcast -vvv
 ```
 
-Channel topology is hub-and-spoke (the `vpfi-buy` and `vpfi-reward`
-channels always pair a mirror with canonical Base, never
-mirror ↔ mirror). The TokenPool **lane** topology, by contrast, is
+Channel topology is hub-and-spoke (the channels always pair a mirror
+with canonical Base, never mirror ↔ mirror). The TokenPool **lane** topology, by contrast, is
 whatever `CCIP_LANE_CHAIN_IDS` lists — pass Base-only on each mirror
 for a hub-spoke token graph, or the full chain set for a full mesh
 (direct mirror ↔ mirror VPFI transfers).
@@ -235,9 +242,9 @@ runs through §4's `ConfigureCcip.s.sol`:
 - **CCT admin** (`TokenAdminRegistry`) + every cross-chain contract
   owner = the admin multisig → governance timelock at mainnet.
 - **GuardianPausable** on every cross-chain contract with a runtime
-  send / receive path: `CcipMessenger`, `VaipakamRewardMessenger`,
-  `VpfiBuyAdapter`, `VpfiBuyReceiver`, and the mirror-chain
-  `VPFIMirrorToken` (see §6 below).
+  send / receive path: `CcipMessenger`, `VaipakamRewardMessenger`, and
+  the mirror-chain `VPFIMirrorToken` (see §6 below). (#687-A:
+  `VpfiBuyAdapter` / `VpfiBuyReceiver` were listed here; both removed.)
 
 The 2024 LayerZero-era DVN hardening script (`ConfigureLZConfig.s.sol`)
 and the `LZConfig.t.sol` assertion suite are deleted — they have no
@@ -291,12 +298,36 @@ Per chain, via timelock-originated txs:
 - `OracleFacet.set*PriceFeed(...)` — Chainlink feed addresses per
   `AssetRegistry`.
 - `ProfileFacet.setKYCThresholds(...)` — USD-denominated tier cutoffs.
-- `AdminFacet.setBridgedBuyReceiver(receiver)` on Base only (links the
-  Diamond to the `VpfiBuyReceiver` for `processBridgedBuy` access control).
-- `VPFIDiscountFacet.setVPFIBuyRate(...)` on Base only — fixed rate for the
-  early-stage buy program.
-- `VPFIDiscountFacet.setVPFIBuyCaps(globalCap, perWalletCap)` on Base only.
-- `VPFIDiscountFacet.setVPFIBuyEnabled(true)` on Base only — opens the buy.
+<!-- #687-A: four steps stood here — `AdminFacet.setBridgedBuyReceiver`,
+     `VPFIDiscountFacet.setVPFIBuyRate` / `setVPFIBuyCaps` /
+     `setVPFIBuyEnabled` — configuring the fixed-rate VPFI sale. None of
+     those functions exists any more, so an operator running them gets a
+     "function selector not found" revert. REMOVED rather than marked
+     historical: this runbook states every step below it is a hard
+     prerequisite, so a step that cannot be performed does not belong in
+     it at all. The surviving fee-discount price config is
+     `ConfigureVPFIBuy.s.sol` (contract name retained deliberately), which
+     reads `VPFI_BUY_WEI_PER_VPFI` — that env var is live and is NOT part
+     of the removed sale. -->
+- `VPFIDiscountFacet` fee-discount price config — see
+  `contracts/script/ConfigureVPFIBuy.s.sol`. Sets the VPFI price anchor
+  (`VPFI_BUY_WEI_PER_VPFI`) plus the chain's ETH reference asset
+  (`<CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET`; both mandatory — see §1's env
+  block). Unlike the removed canonical-only sale, the discount applies
+  wherever a loan can be opened, so both must be set on every chain the
+  protocol runs on or `LibVPFIDiscount._feeAssetWeiToVpfi` returns
+  `(false, 0)` and no discount resolves.
+
+  **Chain support is narrower than this runbook's scope, and the mismatch
+  is a real gate problem.** `ConfigureVPFIBuy._prefix()` recognises
+  1 / 8453 / 42161 / 10 / 56 / 137 and the testnets — i.e. Polygon **PoS**,
+  which §Scope places OUT of Phase 1 — and does **not** recognise Polygon
+  **zkEVM** (1101 / 1442), which §Scope places IN it. On zkEVM the script
+  reverts `unsupported chainId`, so this step cannot be completed on a
+  declared Phase-1 target. Do not treat that as a tickable box: either the
+  script gains the zkEVM prefixes or the chain scope is corrected first.
+  Tracked as **#1721**; run this step on the chains the script supports
+  and resolve zkEVM before launch.
 
 Every `ConfigFacet` / `AdminFacet` setter emits an event. Capture all event
 receipts in `deployments/<network>/initial-config.json` for audit trail.
@@ -341,10 +372,12 @@ someone's spam folder" patterns.
    or the owner):
    - `VPFIMirrorToken` on each affected mirror — freezes mirror
      token transfers + the BurnMintPool path.
-   - `VpfiBuyAdapter` (mirror) + `VpfiBuyReceiver` (Base) —
-     freezes the buy mesh.
    - `CcipMessenger` (all chains) — freezes the channel-message
-     path (BUY_REQUEST / REWARD_REPORT / REWARD_BROADCAST).
+     path (REWARD_REPORT / REWARD_BROADCAST). (#687-A: a
+     `VpfiBuyAdapter` / `VpfiBuyReceiver` "freezes the buy mesh"
+     step stood above this one, and `BUY_REQUEST` was listed as a
+     message type here. Both contracts and that message type are
+     gone — there is no buy mesh to freeze.)
    - `VaipakamRewardMessenger` (all chains) — freezes reward
      aggregation. A paused inbound is recorded by CCIP as a
      failed message and is manually re-executable once unpaused
@@ -356,9 +389,12 @@ someone's spam folder" patterns.
    - If RMN-wide: stay paused, coordinate with Chainlink CCIP
      operators + the protocol's incident commander.
 5. If funds at risk:
-   - Check pending refunds on `VpfiBuyAdapter` — buyers can call
-     `reclaimTimedOutBuy` after the refund window (default 15 min);
-     the pause doesn't block reclaim.
+<!-- #687-A: a "check pending refunds on VpfiBuyAdapter, buyers can call
+     reclaimTimedOutBuy" step stood here. Neither the contract nor that
+     function exists. Removed rather than annotated inline: this is a
+     funds-at-risk incident checklist, and a step that cannot be
+     performed costs responder time at the worst moment. -->
+
    - Pool lock balance on Base (`LockReleaseTokenPool`) is
      ultimately l1-recoverable via a timelock-governed admin call
      if the mesh is fully compromised.
@@ -387,17 +423,16 @@ Tick every box before opening the frontend to public traffic.
     limits + TokenAdminRegistry registration).
 [ ] CCIP_GUARDIAN set on every cross-chain contract with
     GuardianPausable (CcipMessenger, VaipakamRewardMessenger,
-    VpfiBuyAdapter/VpfiBuyReceiver, VPFIMirrorToken on mirrors).
+    VPFIMirrorToken on mirrors).
 [ ] Per-lane rate limits set on every VPFI TokenPool through
     VpfiPoolRateGovernor (default 50,000 capacity / ~5.8 VPFI/s refill).
-[ ] VpfiBuyAdapter.setRateLimits called on every mirror chain to
-    move the adapter's own per-request + 24h-rolling buy caps off
-    their `type(uint256).max` boot defaults (separate from the
-    TokenPool lane caps — the adapter has its own pre-CCIP-send
-    throttle on `amountIn`). Recommended starting values match the
-    pre-T-068 LayerZero-era defaults: per-request 50,000 VPFI,
-    24h-rolling 500,000 VPFI. Pre-mainnet gate.
-[ ] Initial protocol config (grace period, HF, oracles, KYC, buy rate) set.
+<!-- #687-A: a "VpfiBuyAdapter.setRateLimits on every mirror chain"
+     box stood here, and VpfiBuyAdapter/VpfiBuyReceiver were listed in
+     the CCIP_GUARDIAN box above. Neither contract exists, so neither
+     box could ever be ticked. The surviving cross-chain value-flow
+     throttle is the TokenPool per-lane limit directly above. -->
+[ ] Initial protocol config (grace period, HF, oracles, KYC, VPFI
+    fee-discount price anchor) set.
 [ ] Monitoring live; test alerts received end-to-end.
 [ ] Incident runbook drilled (pause + unpause on a test OApp).
 [ ] Frontend deployed on production domain, TLS + HSTS verified.
