@@ -152,12 +152,36 @@ test('Full tariff opt-in: dark default hides it; strict Full fails closed; downg
     // not "fix" this back. Asserting the thrown copy also pins the #1694
     // half of that refusal: the message must name the CEILING, not the
     // generic "Full isn't available", which is what the card contradicts.
+    // The loan count BEFORE the doomed click, so "nothing was created" is an
+    // on-chain fact rather than the absence of a success banner (Codex #1700
+    // r2). A UI-only absence check can pass while a transaction is still in
+    // flight, which would let a removal of the resolver refusal leave this arm
+    // green — the precise regression it claims to exclude.
+    const loansBefore = (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getUserPositionLoansPaginated',
+      args: [borrower.account.address, 0n, 100n],
+    })) as [readonly bigint[], readonly bigint[], bigint];
+
     await tickConsent(page);
     await page.getByRole('button', { name: /borrow this now/i }).click();
-    await expect(page.getByRole('alert').last()).toContainText(/ceiling/i, {
+    // Scoped to the SUBMIT message, not any role=alert containing "ceiling":
+    // the card's own notice is itself an alert mentioning the ceiling, so a
+    // loose matcher passes the instant the click lands, before the submit path
+    // has run at all. "has risen above" appears only in the thrown copy.
+    await expect(page.getByText(/has risen above the ceiling/i)).toBeVisible({
       timeout: 60_000,
     });
     await expect(page.getByText(/loan opened|what happens next/i)).toHaveCount(0);
+    const loansAfter = (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getUserPositionLoansPaginated',
+      args: [borrower.account.address, 0n, 100n],
+    })) as [readonly bigint[], readonly bigint[], bigint];
+    expect(loansAfter[0].length).toBe(loansBefore[0].length);
+
     await raise.click();
     await expect(raise).toHaveCount(0, { timeout: 30_000 });
     await expect(ceilingInput).toHaveValue(seeded);

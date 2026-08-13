@@ -17,7 +17,7 @@
  * between review and fill doesn't spuriously block (the user can edit
  * it to any value they actually authorize).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { parseUnits } from 'viem';
@@ -170,8 +170,16 @@ export function FullTariffOptIn({
   // a user-fixable ceiling must not make the option disappear. It joins
   // `engagedBlocked` instead, so the signer refuses a doomed accept while the
   // card stays visible and explains the fix.
+  //
+  // Gated on Full being OTHERWISE available (Codex #1700 r1): a cached
+  // successful quote can keep this true after liquidity turns illiquid or the
+  // kill switch goes off, and then the ceiling notice would mask the real
+  // blocker — promising that raising the ceiling lets the user continue when
+  // `engagedBlocked` stays true regardless. Unavailability wins.
   const ceilingOvertaken =
     value.full &&
+    config.enabled &&
+    !fullBlocked &&
     quoted !== undefined &&
     ceiling !== undefined &&
     ceiling > 0n &&
@@ -184,7 +192,16 @@ export function FullTariffOptIn({
   // mark is set, and only the user's explicit untick turns their
   // "Full or reject" intent into a non-Full accept.
   const engagedBlocked = !config.enabled || fullBlocked || ceilingOvertaken;
-  useEffect(() => {
+  // LAYOUT effect, not passive (Codex #1700 r1): both callers derive the submit
+  // button and the signed payload from the PARENT's copy of this mark, so a
+  // passive effect leaves one PAINTED frame in which a background quote refresh
+  // has already crossed the ceiling while the parent still holds
+  // `blocked: false` — a click there reaches the wallet with the overtaken
+  // ceiling and is rejected or silently downgraded, which is the exact outcome
+  // this change exists to prevent. A layout effect commits during the same
+  // commit phase, so no such frame is ever painted. Same fix as #1670's
+  // address-ref sync, and the same one-frame hazard as #1695's consent clear.
+  useLayoutEffect(() => {
     if (!value.full) return;
     const reason = ceilingOvertaken ? 'ceiling' : 'unavailable';
     if (
@@ -275,9 +292,13 @@ export function FullTariffOptIn({
         // it is the user's to move.
         <div className="banner banner-warn" role="alert" style={{ marginTop: 8 }}>
           <span className="banner-body">
+            {/* exactAmountString, NOT formatTokenAmount (Codex #1700 r1): the
+                display formatter rounds to four digits, so a quote that
+                overtakes the ceiling by less than that renders as "1 VPFI is
+                above 1 VPFI" — hiding the very mismatch being explained. */}
             {copy.tariff.ceilingOvertaken(
-              formatTokenAmount(quoted, VPFI_DECIMALS),
-              formatTokenAmount(ceiling, VPFI_DECIMALS),
+              exactAmountString(quoted, VPFI_DECIMALS),
+              exactAmountString(ceiling, VPFI_DECIMALS),
             )}
           </span>
           {suggestedCeiling !== undefined ? (
@@ -290,7 +311,9 @@ export function FullTariffOptIn({
                 setCeilingText(exactAmountString(suggestedCeiling, VPFI_DECIMALS))
               }
             >
-              {copy.tariff.raiseCeiling}
+              {copy.tariff.raiseCeiling(
+                exactAmountString(suggestedCeiling, VPFI_DECIMALS),
+              )}
             </button>
           ) : null}
         </div>
