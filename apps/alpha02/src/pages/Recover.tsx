@@ -1287,8 +1287,15 @@ export function Recover() {
     //         live-provider fence, or a wallet-event fence advancing a SEPARATE
     //         token and leaving `genRef` to the effect; not needed when the event
     //         advances `genRef` itself.
-    //     (ii) item 6's reconciliation RESET/RERENDER is UNCONDITIONAL — every
-    //         branch, bump or no bump.
+    //     (ii) item 6 requires RESETTING / REKEYING the reconciliation claim, on
+    //         every branch, bump or no bump. A bare follow-up RERENDER is NOT an
+    //         equivalent option and is not offered as one (Codex #1689 r14): when
+    //         the wallet event advanced `genRef` to G+1 and old UI then stored
+    //         reconcileClaim = G+1, re-rendering leaves BOTH values untouched, so
+    //         the equality — and the disabled card — survives it. Rerender alone
+    //         works only where something also advances the ref, so requiring the
+    //         reset everywhere is both simpler and strictly safer than splitting
+    //         this per branch again.
     //   Deliberately not attempted mid-review-loop on a signing path.
     //   An identity fence around the imperative wallet calls (including the
     //   reservation write, which has no generation check on its success path) is
