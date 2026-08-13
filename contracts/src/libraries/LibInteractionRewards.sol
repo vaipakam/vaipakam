@@ -1719,6 +1719,16 @@ library LibInteractionRewards {
             // #1434 P1-b — charge the delivered-fresh bound with EXACTLY what
             // the pool just spent, on ARMED days only.
             //
+            // The `_isArmedDay` filter is REACHABLE, not belt-and-braces, and
+            // a mutation run is what settled it. ShareOfPool mode has TWO
+            // stamping sites: {setDayCapModeArmed} guards on `armed`, but
+            // `RewardReporterFacet`'s broadcast ingress stamps it straight
+            // from the wire's `capMode` with NO arming guard — so a MIRROR can
+            // hold a ShareOfPool day that its own `governorCommitArmedFromDay`
+            // does not cover, and the walk will price it. Without this filter
+            // that day's ordinary fresh would charge the delivered bound and
+            // defer armed days that were fully funded.
+            //
             // This quantity, and not `consumeArmedFresh`'s argument, is the
             // paid side. That function retires COMMITMENTS: its amount
             // deliberately includes `cappedOff.armedFresh`, which moves no
@@ -4056,8 +4066,9 @@ library LibInteractionRewards {
     }
 
     /// @dev Attribute one leg's VPFI total to its funding sources using the
-    ///      day's composition. A ShareOfPool day is ARMED by construction (2a
-    ///      only stamps the mode under {_isArmedDay}), so there is NO pre-`D*`
+    ///      day's composition. A ShareOfPool day is ARMED by construction on
+    ///      the CANONICAL chain (2a stamps the mode only under {_isArmedDay}),
+    ///      so there is NO pre-`D*`
     ///      component and `total == armedFresh + recycled` exactly.
     ///
     ///      `recycled` FLOORS and fresh takes the rounding dust — the same

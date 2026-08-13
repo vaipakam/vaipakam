@@ -262,23 +262,61 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(false);
 
-        uint256 id = _seedEntry(alice, 77, 5, 6);
+        // MIXED ARMING — the entry starts at day 4, one day BEFORE arming, so
+        // its fresh is part legacy and part armed (`armedFresh < freshWanted`).
+        //
+        // This shape is load-bearing and two earlier restagings failed without
+        // it. With an all-armed entry `armedFresh == freshWanted`, and the two
+        // attribution rules become ALGEBRAICALLY IDENTICAL: pro-rata
+        // `armedFresh x freshSwept / freshWanted` reduces to `freshSwept`,
+        // which is exactly what armed-first `min(armedFresh, freshSwept)`
+        // returns under any clamp. No amount of clamp tuning can separate
+        // them; only a mixed window can.
+        uint256 id = _seedEntry(alice, 77, 4, 6);
         _mut().setRewardEntryForfeitedRaw(id);
         _mut().setLoanActiveLenderEntryId(77, id);
 
-        // Abundant delivered funding, so nothing here is delivered-bound and
-        // the charge reflects the sweep's own spend rather than a clamp.
+        // Delivered funding is abundant, so the DELIVERED bound never binds
+        // here — the clamp under test is the 69M headroom's.
         _mut().setArmedFreshLedgerRaw(10_000 ether, 0);
+
+        // Establish what the sweep WOULD spend unclamped.
+        uint256 snap = vm.snapshotState();
+        vm.prank(makeAddr("keeper"));
+        uint256 fullSweep = _facet().sweepForfeitedInteractionRewards(77);
+        uint256 fullCharge = _mut().getArmedFreshPaidRaw();
+        vm.revertToState(snap);
+
+        assertGt(fullSweep, 0, "LIVE: the sweep genuinely moves value");
+        assertGt(fullCharge, 0, "LIVE: and charges the bound when unclamped");
+
+        // Now force a PARTIAL truncation: leave headroom for only part of the
+        // fresh share. This is the ONLY state in which pro-rata and
+        // armed-first differ — with slack headroom both compute the same
+        // number, which is exactly why the first version of this test let the
+        // armed-first mutant survive.
+        uint256 cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
+        uint256 headroom = fullSweep / 4;
+        _mut().setInteractionPoolPaidOut(cap - headroom);
 
         vm.prank(makeAddr("keeper"));
         uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
-
-        assertGt(swept, 0, "LIVE: the sweep genuinely moved value");
-        // The armed portion was charged, and never more than the sweep's own
-        // armed share — the bound tracks spend, not the retired commitment.
         uint256 charged = _mut().getArmedFreshPaidRaw();
-        assertGt(charged, 0, "the armed portion charges the delivered bound");
-        assertLe(charged, swept, "and never exceeds what the sweep spent");
+
+        assertLt(swept, fullSweep, "LIVE: the headroom genuinely truncated");
+        // The discriminating assertion: pro-rata SCALES the armed share by the
+        // truncation ratio, while armed-first would pass the armed portion
+        // through WHOLE (it fits inside the surviving spend). Asserting the
+        // charge is merely "less than unclamped" is satisfied by BOTH rules —
+        // that is precisely why the first version of this test let the mutant
+        // live. Compare against armed-first's answer directly.
+        uint256 armedFirst = fullCharge <= swept ? fullCharge : swept;
+        assertLt(
+            charged,
+            armedFirst,
+            "pro-rata scales the armed charge; armed-first would not"
+        );
+        assertGt(charged, 0, "but a truncated sweep still charges its share");
     }
 
     // ─── 2. Recycled forfeit = release, not credit ───────────────────────────

@@ -698,14 +698,39 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         _loanSideOpen(2);
         _entry(1, 3);
         _mut().userClaimFundingNeedRaw(alice);
-        // Far more delivered than the days can pay: the delivered bound is
-        // slack, so any trim that happens is the D1 ceiling's doing.
-        _mut().setArmedFreshLedgerRaw(100e18, 0);
+
+        // THE TIE, staged so the attribution line actually runs.
+        //
+        // Two earlier versions of this test failed to exercise it. The
+        // mutated comparison only executes when a SHORTFALL exists, and a
+        // shortfall needs a budget — not the D1 ceiling — to bind. So BOTH
+        // budgets are pinned to the SAME figure, below what the two days want:
+        //   * `poolRemaining()` -> 0.5e18 via the paid-out counter,
+        //   * delivered        -> 0.5e18 via the ledger.
+        // The days want 0.4e18 each. Day 1 takes its full 0.4e18; day 2 then
+        // meets 0.1e18 of BOTH budgets at once — an exact tie with a real
+        // 0.3e18 shortfall.
+        //
+        // On a tie the cap binds at the same figure as the delivered bound, so
+        // no future remittance could complete day 2: it must TRUNCATE and
+        // ADVANCE. Attributing the tie to DELIVERED instead would defer it
+        // forever, and the totals below are what separate the two — 0.5e18
+        // (truncated) versus 0.4e18 (day 2 deferred).
+        uint256 tie = 0.5e18;
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - tie
+        );
+        _mut().setArmedFreshLedgerRaw(tie, 0);
 
         assertEq(
             _claim(),
-            0.8e18,
-            "a cap-bound trim pays what the ceiling allows and advances"
+            tie,
+            "the tie truncates and advances: day 1 in full, day 2 clipped"
+        );
+        assertEq(
+            _mut().getArmedFreshPaidRaw(),
+            tie,
+            "and charges the bound exactly what it paid"
         );
     }
 
@@ -788,6 +813,16 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         // false for both: ordinary schedule days, which is the whole point.
         _armedDay(1, 0.4e18);
         _armedDay(2, 0.4e18);
+        // ShareOfPool mode WITHOUT local arming — the state that makes the
+        // `_isArmedDay` filter reachable rather than decorative. Production
+        // reaches it through `RewardReporterFacet`'s broadcast ingress, which
+        // stamps the mode straight from the wire's `capMode` with no arming
+        // guard (only the canonical-side stamp checks `armed`). Without this
+        // the walk never sees the day at all and the filter is untestable —
+        // which is exactly why the first version of this test let the
+        // filter-removal mutant survive.
+        _mut().setDayCapModeRaw(1, 1);
+        _mut().setDayCapModeRaw(2, 1);
         _mut().setArmedFreshLedgerRaw(100e18, 0);
         _loanSideOpen(2);
         _entry(1, 3);
