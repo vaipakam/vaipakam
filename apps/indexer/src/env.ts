@@ -36,8 +36,9 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *                                       30 inside the prune helper.
  *
  * What's deliberately NOT here (lives on apps/{keeper,agent}):
- *   - QUOTE_*_RATELIMIT / SCAN_BLOCKAID_RATELIMIT /
- *     DIAG_RECORD_RATELIMIT — agent (HTTP rate-limit buckets)
+ *   - QUOTE_*_RATELIMIT / DIAG_RECORD_RATELIMIT — agent (HTTP
+ *     rate-limit buckets). #1651: a `SCAN_BLOCKAID_RATELIMIT` was
+ *     listed here; no such binding is declared on any Worker.
  *   - DIAG_SAMPLE_RATE / DIAG_RETENTION_DAYS — agent
  *   - TG_BOT_TOKEN / TG_BOT_USERNAME / PUSH_CHANNEL_PK — keeper +
  *     agent (notification dispatch)

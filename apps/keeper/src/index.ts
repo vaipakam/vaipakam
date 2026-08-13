@@ -79,7 +79,9 @@
  *
  * NO HTTP routes. The connected app's read-API surface
  * (`/loans/*`, `/offers/*`), the operator services
- * (`/quote/0x`, `/quote/1inch`, `/scan/blockaid`), the Telegram
+ * (`/quote/0x`, `/quote/1inch` — #1651: a `/scan/blockaid` proxy
+ * was listed here too; ET-001 dropped it, see `apps/agent/src/index.ts`),
+ * the Telegram
  * webhook (`/tg/webhook`), the Farcaster Frame
  * (`/frames/active-loans`) and the diagnostics record endpoint
  * (`/diag/record`) all live on `apps/{indexer,agent}`. The keeper
