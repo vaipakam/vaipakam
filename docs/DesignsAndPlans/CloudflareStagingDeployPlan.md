@@ -154,11 +154,13 @@ NO secrets — the frontend bundle is static.
   ZEROEX_API_KEY      — for serverQuotes liquidation orchestration (currently missing — DEX-only fallback)
   ONEINCH_API_KEY     — same (currently missing)
   ```
-- **Vars (non-secret):**
-  ```
-  KEEPER_ENABLED=false  — initial. Flip to "true" only after the
-                          validation window in §6.
-  ```
+- **Vars (non-secret):** none beyond `TG_BOT_USERNAME` and the optional
+  `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning knobs.
+
+  `KEEPER_ENABLED` used to be listed here as a var. It is **not** one —
+  it is a per-Worker `secret_text`, provisioned `false` at step 4 and
+  flipped to `true` at step 8. See §4.5(b) for the mechanism and why the
+  distinction matters.
 
 ### 4.5 How to actually provision the secrets above — two mechanisms
 
@@ -198,14 +200,22 @@ from the owning Worker's directory:
 ```bash
 ( cd apps/agent  && wrangler secret put TG_OPS_BOT_TOKEN )
 ( cd apps/agent  && wrangler secret put TG_OPS_CHAT_ID )
-( cd apps/keeper && wrangler secret put KEEPER_ENABLED )   # prompts; enter: true
+( cd apps/keeper && wrangler secret put KEEPER_ENABLED )   # prompts; enter: false
 ```
+
+> **Enter `false` here — not `true`.** Step 5 deploys the keeper and
+> activates its cron, so a keeper armed at step 4 starts liquidating
+> before step 7's validation window, which that step assumes is running
+> with `KEEPER_ENABLED=false`. The value is deliberately set now and
+> flipped later: step 8 is where it becomes `true`, by re-running the
+> same command and entering `true`.
 
 - `TG_OPS_BOT_TOKEN` / `TG_OPS_CHAT_ID` (agent) — non-blocking for the
   rollout: while unset, support-ticket ops-notify skips and tickets
   still land in D1.
-- **`KEEPER_ENABLED` (keeper) — blocking for step 8.** Step 8 arms the
-  keeper by flipping this, and there is no other mechanism to do so.
+- **`KEEPER_ENABLED` (keeper) — blocking for step 8, provisioned
+  `false` at step 4.** Step 8 arms the keeper by re-running the command
+  above and entering `true`; there is no other mechanism to do so.
   Because it is a secret rather than a var, its value cannot be read
   back from the API or dashboard, so a missed `secret put` is
   indistinguishable from a deliberate "off" — the keeper stays dark and
@@ -259,7 +269,7 @@ Stage 3 PR5.
 | 5 | Operator | `wrangler deploy` for each of `apps/{keeper,indexer,agent}`. This activates crons + binds `indexer.vaipakam.com`. |
 | 6 | Operator | Update `apps/defi/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; `pnpm build && wrangler deploy` `vaipakam-defi`. |
 | 7 | Both | Smoke-test `defi.vaipakam.com` end-to-end against `agent.vaipakam.com` + `indexer.vaipakam.com`, with `KEEPER_ENABLED=false` (no autonomous liquidation). NOT fully alert-only: `runDailyOracleSnapshot` signs on `KEEPER_PRIVATE_KEY` alone and will broadcast on staging regardless — if the window must be write-free, remove the keeper's trigger in the Cloudflare dashboard (*Settings → Trigger Events*) — editing `wrangler.jsonc` after step 5 has already deployed the active schedule changes nothing live. Allow for propagation before treating it as stopped; see `apps/keeper/README.md` (#1466). **If you take that path, restore the trigger at the end of this step** — step 8 only flips `KEEPER_ENABLED`, so a Worker left with no schedule would make step 9's observation window look quiet while every pass is in fact disabled. |
-| 8 | Operator | Read back the keeper's cron and confirm it is the canonical `* * * * *` from `apps/keeper/wrangler.jsonc` — **not merely that some trigger exists**, since a hand-recreated daily schedule would pass a presence check while exercising the keeper far less than intended, leaving step 9's window just as falsely quiet. Only removed if step 7 took the write-free path. Then flip `KEEPER_ENABLED=true`; the flag alone arms nothing without a schedule to run on. |
+| 8 | Operator | Read back the keeper's cron and confirm it is the canonical `* * * * *` from `apps/keeper/wrangler.jsonc` — **not merely that some trigger exists**, since a hand-recreated daily schedule would pass a presence check while exercising the keeper far less than intended, leaving step 9's window just as falsely quiet. Only removed if step 7 took the write-free path. Then arm the keeper with `( cd apps/keeper && wrangler secret put KEEPER_ENABLED )`, entering `true` — it is a per-Worker secret, not a var, so there is no `--var` form (§4.5(b)). The flag alone arms nothing without a schedule to run on. |
 | 9 | Both | Run for N days observing for divergence vs prod. |
 | 10 | Both | If green: bind `vaipakam.com` + `www.vaipakam.com` to `vaipakam-labs` (replacing the older `vaipakam` Worker); decommission `vaipakam-hf-watcher` + unbind `api.vaipakam.com`. |
 |   |   | If issues: revert (env-var rollback on `vaipakam-defi`); no prod impact. |
@@ -279,9 +289,10 @@ Stage 3 PR5.
    so growth is bounded. If quota tightens, lower retention
    on the staging instance further.
 
-4. **`KEEPER_ENABLED`** — set as a non-secret var on
-   `vaipakam-keeper` with initial value `"false"`. Flip to
-   `"true"` only after §6 step 7's validation window passes.
+4. **`KEEPER_ENABLED`** — set on `vaipakam-keeper` with initial value
+   `"false"`. Flip to `"true"` only after §6 step 7's validation window
+   passes. It is a per-Worker `secret_text`, **not** a var — an earlier
+   revision of this section said otherwise. See §4.5(b).
 
 ## 8. Effort
 
