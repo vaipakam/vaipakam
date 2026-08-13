@@ -1104,6 +1104,525 @@ the bounds are the design's actual commitment.
 6. **P2-w6 — R6d/R6e terminals + ceremony reconciliation per §5.3(a)** —
    carries the FunctionalSpec amendment if (a) is ratified.
 
+   > **Implementation note (P2-w6, 2026-08-11).** Shipped per the ratified
+   > §5.3 unification. "Cancellation" needed no new surface — the existing
+   > release IS the terminal message-state record (status 3, gate held).
+   > What w6 adds is the settlement the held gate waits for:
+   > `recordRecoveryCeremony(remitId, freshInflow, recycledInflow)` and
+   > `recordRecoveryTerminalLoss(remitId, freshLoss, recycledLoss)`
+   > (ADMIN evidenced, the
+   > forced-finalize mould, Released reservations only, consumed receipts
+   > refused). The fresh half credits the SAME recovery position the B1
+   > return feeds — folded into the ONE per-receipt recovered cumulative,
+   > so returns and ceremonies compose in a single custody-resolution
+   > identity: `recovered + terminalLoss == r.total` releases the gate,
+   > partial recoveries hold it, over-recording refuses, and a ceremony
+   > credit shrinks the standing loss record exactly like an out-of-order
+   > return chunk. The recycled half re-enters through
+   > `creditCustodyRelocated` under a NEW append-only provenance class
+   > (`RecoveryCeremonyRelocation`, refId = the remitId). A physical-
+   > backing assertion (`balance >= bucket + position + overage + fresh`)
+   > rolls back a books-only recovery at the record. R6e landed as the
+   > `importOutstandingCompensation` marker (keccak of the OLD-era tuple,
+   > set beside the gate; only imported-clear paths release it), the
+   > ack-ingress imported-marker branch BEFORE the era check (a
+   > re-presented CONSUMED attestation resolves; non-consumed observes —
+   > quarantined old-era value cannot ride a new-era B1 return, its era
+   > check refuses old remitters by design, so it resolves via the
+   > evidenced `clearImportedOutstanding` + ceremony), and the rotation
+   > runbook step (inventory `getCompensationOutstandingChains()` empty
+   > or imported before cutover).
+   >
+   > **r1 addendum (#1662).** Six hardenings from review round 1: the
+   > ceremony's physical-backing assertion is ONE combined check over
+   > BOTH halves (fresh + recycled earmarked together — neither half may
+   > lean on float the other is about to claim); each half is
+   > additionally bounded by the reservation's own dispatched provenance
+   > split (fresh ≤ r.fresh, recycled ≤ r.recycled — a fresh-only
+   > compensation cannot "recover as recycled" and relabel uncharged
+   > value into claimable bucket custody); the terminal-loss record
+   > refuses consumed receipts exactly like the ceremony (consumed value
+   > backs mirror claims — it is neither lost nor recoverable); the
+   > imported gate holds a SENTINEL (max uint256), never the old-era id —
+   > old ids alias this deployment's own nonces, and an ordinary remit's
+   > consumed ack would otherwise clear an imported hold it never
+   > evidenced; the imported record stores the RAW old-era tuple and
+   > REMEMBERS a quarantined re-present, so a later consumed re-present
+   > CONFLICTS (the own-era contradiction rule, imported; provisional →
+   > consumed stays legitimate), and a malformed classification fails
+   > closed before the imported branch; and the evidenced clear became an
+   > evidenced SETTLEMENT that books any recovered old-era inflow (fresh
+   > → the recovery position, recycled → relocated custody, refId = the
+   > old-era remitId) under the same combined backing assertion — both
+   > components zero is the pure-loss shape.
+   >
+   > **Self-review addendum (#1662, pre-round-2).** An adversarial pass
+   > over the r1 fixes found five more, four of them in the seam the
+   > ceremony opened between the w5 recovery ledger and the w6 settlement:
+   >
+   > 1. **The a3 guard bricked the gate.** A released reservation that
+   >    later takes a CONSUMED ack had, after a3, no clearing writer left
+   >    at all — the return path, the ceremony and the loss record all
+   >    refuse consumption, so the chain could never receive another
+   >    compensation. Fixed at the cause: a CLEAN consumption on a
+   >    released reservation now CLEARS the gate itself (it is §5.1's
+   >    clearing evidence — the delivery funded the obligation after all),
+   >    and the refusals narrowed from `consumedAcked` to a TRUSTED
+   >    consumption (consumed with no standing quarantine attestation). A
+   >    mirror that contradicted itself earns no trust, which is exactly
+   >    why the operator's evidenced settlement must stay open for that
+   >    case — closing it too is what left no path at all.
+   > 2. **The conflict claw over-drew by the recycled half.** Pre-w6 the
+   >    per-receipt recovered cumulative was 1:1 with position credits;
+   >    the ceremony folds its RECYCLED half into the same cumulative
+   >    while sending that half to the bucket, so the claw debited the
+   >    GLOBAL position for value that never entered it — draining
+   >    unrelated receipts' capacity into the permanent quarantine. The
+   >    claw now sizes on the position-provenance part only.
+   > 3. **Ceremony credit escaped the claw entirely.** The claw fired only
+   >    on a quarantine contradiction, and a ceremony requires no
+   >    quarantine attestation (its evidence is governance + physical
+   >    backing), so ceremony-minted uncharged capacity survived a later
+   >    consumed attestation — capacity backing value that also backs
+   >    mirror claims. The claw now fires on ANY standing position credit;
+   >    the returned conflict signal stays mirror-self-contradiction,
+   >    since governance-vs-mirror does not impeach the ack's own
+   >    privileges.
+   > 4. **The recycled half double-counted against coverage.** A release
+   >    moves value from paid-out into the released-stranded record; the
+   >    ceremony puts it back in the bucket while that record — monotone
+   >    history the composition relation still needs un-netted — stays. An
+   >    external checker's allowance `bucket + stranded` therefore backed
+   >    the same VPFI twice, permanently. A recovered cumulative (capped
+   >    at the stranded figure) is now published beside it, and the
+   >    mesh-watcher nets it out of the coverage allowance only.
+   > 5. **The a4 accumulator was unobservable and untested.** A lens
+   >    getter now exposes the per-provenance cumulatives, and a
+   >    two-ceremony test pins that the bound is CUMULATIVE — a mutant
+   >    bounding each call rather than the running total previously passed
+   >    the whole suite.
+   >
+   > **Round-2 addendum (#1662).** Five more, four of them consequences of
+   > the ceremony being a SECOND writer into ledgers the w5 return path
+   > had to itself:
+   >
+   > 1. **The obligation re-close was scoped to B1-terminalized receipts.**
+   >    A receipt settled by CEREMONY (or terminal loss) alone never
+   >    terminalizes, so a later clean consumed ack re-closed nothing: the
+   >    declared contribution stayed unwound, and governance could dispatch
+   >    a replacement against a quote the original had in fact funded —
+   >    overfunding the obligation. The re-close is now keyed on the unwind
+   >    flag itself (which is its own one-shot) plus the compensation
+   >    shape, and still never clobbers a successor's day closure.
+   > 2. **The claw sized on the POOLED position.** Once a receipt's own
+   >    recovery had been re-dispatched, the remaining balance belonged to
+   >    OTHER receipts, and clawing against it confiscated capacity they
+   >    could never re-earn (their own entitlement being exhausted). Fixed
+   >    by making the position ATTRIBUTABLE: every from-recovery dispatch
+   >    now NAMES its source receipt, the draw is bounded by that receipt's
+   >    own unspent credit, and the claw is bounded by the same quantity.
+   >    The already-spent slice stays genuinely unrecoverable and is
+   >    reported as such.
+   > 3. **Terminal loss left dead tokens in the coverage allowance.** The
+   >    recycled half of a released reservation that is written off is
+   >    gone, but nothing retired it from the in-transit figure, so a dead
+   >    balance would back live reservations forever. Terminal loss now
+   >    carries a provenance split (bounded JOINTLY with recovery against
+   >    the same dispatched components) and retires its recycled half.
+   >    With that, the counter's meaning widened from "recovered" to
+   >    "RESOLVED — no longer in transit, whether returned or written off".
+   > 4. **Imported settlements were netting against LOCAL stranding.** An
+   >    old-era recovery retires the RETIRED deployment's stranding, which
+   >    was never in this deployment's cumulative; netting it
+   >    under-recognises local backing and pages a false CRITICAL. The
+   >    booking helper now takes an explicit local-stranding flag.
+   > 5. **A SECOND rotation could not carry imported evidence.** Copying
+   >    the retiring deployment's visible gate yields the SENTINEL (which
+   >    no old-era ack can match), and re-importing the tuple fresh reset
+   >    `quarantineObserved` — laundering a quarantine→consumed
+   >    contradiction into a clean consumption that clears the newest gate.
+   >    The import now carries the flag explicitly and refuses the
+   >    sentinel outright.
+   >
+   > **Round-3 addendum (#1662).** Four more, three of them the second-order
+   > consequences of round 2's own remedies — the recurring shape being that
+   > a per-receipt ledger and a pooled balance must agree in BOTH directions:
+   >
+   > 1. **Clawed credit stayed spendable.** The contradiction claw reduced
+   >    only the pooled counter, leaving the receipt's own credit and spent
+   >    figures untouched — so once ANOTHER receipt replenished the pool,
+   >    a dispatch naming the contradicted receipt passed both checks and
+   >    drew against backing that was never its own. The claw now VOIDS the
+   >    receipt's whole remaining credit, not merely the slice the pool
+   >    could absorb at that instant: the physical claw is bounded by the
+   >    balance, the entitlement is not.
+   > 2. **Imported fresh recovery was unspendable.** The settlement credited
+   >    the pooled position but created no drawable per-receipt credit, and
+   >    the old-era id names nothing locally (and could collide with a live
+   >    reservation), so those tokens were earmarked forever with the
+   >    position reporting them as capacity. The settlement now mints a
+   >    fresh attribution id from the reservation nonce — the authority for
+   >    that id space, so collision is impossible — and publishes it in the
+   >    event as the id a replacement dispatch must name.
+   > 3. **Resolutions before the stranded SEED were discarded.** The
+   >    resolved counter saturated against a stranded floor that the
+   >    one-time seed ceremony has not finished establishing on an
+   >    in-place-upgraded Diamond, and the seed recomputes nothing — so
+   >    value genuinely returned or written off in that window would read as
+   >    in-transit forever, restoring the phantom allowance. It now accrues
+   >    UNCAPPED and is capped where PUBLISHED.
+   > 4. **The joint provenance bound was one-directional.** The loss path
+   >    netted prior recovery, but the ceremony ignored prior loss — so
+   >    ordering the calls loss-first spends one component twice and still
+   >    satisfies the aggregate identity by borrowing the other component's
+   >    slack. Both paths now carry both terms.
+   >
+   > **Round-4 addendum (#1662).** Four more. One is the round-3 fix's own
+   > regression, and the rest close the imported-settlement surface that
+   > round 3 opened:
+   >
+   > 1. **The joint bound value was PERSISTED as recovered.** Round 3 made
+   >    `cf`/`cr` fold in prior loss for the bound check — and then stored
+   >    them into the recovered counters, recording loss as recovery. The
+   >    per-receipt draw then subtracts a recycled figure that never entered
+   >    the position: zero published capacity for a receipt that has some,
+   >    or an outright revert once the fictitious subtrahend exceeds the
+   >    credit. The counters now take the INFLOW; the joint values validate
+   >    and are discarded. (Lesson: a value computed for a CHECK is not a
+   >    value to STORE — give it a name that says so, or it will be reused.)
+   > 2. **A settled import had no path back from old-era evidence.** The
+   >    marker is deleted at settlement, so a later consumed re-present from
+   >    the old mirror missed the imported branch and reverted at the era
+   >    check — leaving the credit that settlement minted re-dispatchable
+   >    while the original delivery backs mirror claims. A tuple→attribution
+   >    TOMBSTONE now survives settlement, and consumption voids the credit
+   >    through it (same shape as the own-era claw: the pooled balance
+   >    bounds what physically moves, the entitlement is voided whole).
+   > 3. **The retired UNATTRIBUTED wrappers stayed callable.** Adding
+   >    `sourceRemitId` changes both `…FromRecovery` selectors, and the
+   >    in-place refresh Replaces/Adds but never Removes — so the old
+   >    four-argument entry points stay routed to the previous facet,
+   >    debiting the pooled position while updating no per-receipt ledger.
+   >    That is exactly the accounting the argument exists to enforce. The
+   >    refresh now Removes both, gated on their being routed so a rerun
+   >    cannot abort the whole script.
+   > 4. **Imported settlement was unbounded.** It has no local reservation
+   >    to bind against, so an operator typo (or a compromised admin) could
+   >    import a small old receipt and classify any unearmarked Diamond
+   >    balance as recovered — minting arbitrary uncharged re-dispatch
+   >    capacity. The OLD reservation's total and provenance split are now
+   >    carried at import and enforced per component at settlement,
+   >    mirroring how the local ceremony binds to its own reservation.
+   >    (Superseded in round 5: carried figures bound a TYPO, not a
+   >    compromised admin — the parcel is now READ from the retiring
+   >    deployment.)
+   >
+   > **Round-5 addendum (#1662).** Four more, and the pair that matters
+   > most turns on a distinction round 4 got wrong: **validating operator
+   > input for self-consistency is not authentication.**
+   >
+   > 1. **The carried bounds were never checked against anything.** Any
+   >    self-consistent `(total, fresh, recycled)` tuple passed, so a
+   >    compromised admin could still mint arbitrary capacity — the bound
+   >    was decorative against exactly the adversary it was added for.
+   > 2. **The GROSS split was the wrong bound regardless.** A rotation can
+   >    follow a PARTIAL ceremony or partial terminal loss on the retiring
+   >    deployment; importing gross figures lets the same parcel be
+   >    recovered twice (4 recovered pre-rotation + 10 imported = 14 of
+   >    lineage from a 10-token parcel).
+   >
+   >    Both close with one move. The retired deployment is a live contract
+   >    on this same chain, so its own record is the evidence: the import
+   >    READS the reservation and the already-resolved amount, and carries
+   >    only the UNRESOLVED remainder. The caller supplies nothing but the
+   >    tuple. Fail-closed on an unreadable or fully-resolved record; a
+   >    MISSING terminal-loss getter is a structural zero rather than an
+   >    unknown, because a deployment predating the ceremony has no loss
+   >    state to miss.
+   > 3. **The settled-import tombstone was chain-agnostic.** Peer
+   >    authentication proves a message came from SOME configured mirror,
+   >    and the live imported branch binds evidence through
+   >    `importedOutstanding[sourceChainId]` — the tombstone dropped that
+   >    binding, so a compromised mirror could name another chain's public
+   >    tuple and permanently move that chain's capacity into quarantine.
+   >    The source chain is now part of the key.
+   > 4. **A settled tuple could be re-imported.** The gate returns to zero
+   >    at settlement, so an authentic parcel could be imported and settled
+   >    repeatedly — each pass minting a fresh attribution while
+   >    OVERWRITING the tombstone, so a later consumed attestation voided
+   >    only the last credit and left the earlier ones drawable. One
+   >    parcel, one import: a permanent per-tuple marker, never cleared.
+   >
+   > **Round-6 addendum (#1662) — the imported settlement is RESTRUCTURED,
+   > not patched again.** Rounds 4, 5 and 6 all produced findings on one
+   > surface, which is the signal to stop patching across a wrong cut.
+   >
+   > The root cause: an imported settlement could MINT uncharged
+   > re-dispatch capacity, and every attempt to bound that mint failed for
+   > the same reason. Round 4 bounded it on operator-supplied figures
+   > (validating only their internal consistency — which stops a typo, not
+   > a compromised admin). Round 5 bounded it by READING the retiring
+   > deployment — but the predecessor ADDRESS is supplied by the same
+   > caller, so a compromised admin points it at a reader returning
+   > anything. There is no check reachable from this contract that
+   > authenticates an admin-chosen address; only NOT MINTING closes it.
+   >
+   > It is also wrong on its own terms, independent of any adversary.
+   > Uncharged re-dispatch means "this parcel's cap charge already happened
+   > at its ORIGINAL dispatch" — true within ONE deployment's counters, and
+   > false across a rotation: `rewardBudgetRemittedGlobal` has no seeding
+   > path (only `+=`), so a rotated deployment starts at zero and never
+   > charged for the old parcel. Minting uncharged capacity there
+   > double-counts on this deployment's own cap.
+   >
+   > So `clearImportedOutstanding(chain, recycledInflow)` now releases the
+   > gate and may relocate physically-present RECYCLED custody (bounded by
+   > a real balance assertion), and mints nothing. Old-era fresh value that
+   > comes home is ordinary custody: a replacement compensation spends it
+   > through the CHARGED path, correctly charging a cap this deployment
+   > never charged. What that DELETES: the predecessor reader and its
+   > interface, the carried parcel figures, the minted attribution id, the
+   > settled-import tombstone and its ack-ingress branch, and two storage
+   > mappings. The import now carries no parcel data at all — a wrong
+   > import is a liveness cost on one chain (new compensation blocked until
+   > the evidenced clear), never a value leak.
+   >
+   > Two independent findings closed alongside it:
+   >
+   > - **The B1 return ignored recorded terminal loss.** A released receipt
+   >   can have partial loss recorded while a quarantined return is still
+   >   in flight; the return computed headroom from `total − recovered` and
+   >   credited against the gross parcel, so `recovered + terminalLoss`
+   >   could pass what was dispatched — minting lineage that never existed
+   >   and clearing the gate on it. Entitlement now nets both terms, and
+   >   the loss-closure recompute uses the same basis.
+   > - **The claw poisoned the redispatched counter.** `spent` folds in
+   >   clawed credit for the ADMISSION bound, but storing that combined
+   >   figure back double-counts the claw against any recovery governance
+   >   later records for the same receipt (deliberately allowed — operator
+   >   evidence stays the resolution path), leaving the new capacity
+   >   permanently unreadable. Only the redispatched term advances now.
+   >
+   > **Round-7 addendum (#1662).** Four more, and the first retracts a
+   > rebuttal made in round 6.
+   >
+   > 1. **A mistaken import was NOT liveness-only.** Round 6 argued that
+   >    since a settlement mints nothing, a wrong import costs only
+   >    availability. The counter-case: a mistyped import can name an
+   >    unrelated, ALREADY-CONSUMED historical receipt, whose
+   >    permissionlessly re-presented ack then clears the sentinel — after
+   >    which the operator funds a charged replacement while the genuinely
+   >    outstanding delivery is still live, and BOTH back mirror claims.
+   >    Binding the import to the real outstanding gate needs the
+   >    predecessor read round 6 removed as unauthenticatable, so the
+   >    PERMISSIONLESS CLEAR goes instead: an imported gate now opens only
+   >    through the operator's evidenced settlement. That is what makes the
+   >    liveness-only claim true rather than asserted.
+   > 2. **The funding re-close was neither trusted nor reconciled.** It
+   >    restored the full DECLARED split regardless of what arrived (so a
+   >    short delivery recorded the day as fully funded and blocked its
+   >    legitimate supplement), and regardless of a quarantine→consumed
+   >    contradiction.
+   >
+   >    The conflict carve-out is CONDITIONAL, because two findings pull
+   >    opposite ways and the deciding fact is whether the R6 gate still
+   >    protects the obligation. A TERMINAL RETURN both cleared the gate
+   >    and re-opened the day (#1660 r11), so nothing else blocks a
+   >    replacement and the re-close is the only protection. A plain
+   >    RELEASE holds the gate pending governance, so re-closing adds no
+   >    protection and actively harms — after the loss is recorded, the
+   >    quote bound would refuse the very replacement the settlement
+   >    exists to enable. Both findings' tests pass under the conditional.
+   > 3. **An upgrade seam in per-receipt attribution.** On an in-place
+   >    upgrade from w5, recovery credit exists per receipt but the spends
+   >    and claws against it were tracked GLOBALLY only, so the new
+   >    per-receipt counters start at zero and a legacy receipt reads its
+   >    already-spent credit as unspent — letting it consume a later
+   >    receipt's backing. Removing the old unattributed selectors stops
+   >    new bad writes but repairs nothing existing. Legacy receipts are
+   >    therefore refused outright behind a one-shot armed watermark
+   >    (`armRecoveryAttribution`), retiring that capacity conservatively
+   >    rather than attempting a migration the chain has no per-receipt
+   >    history to reconstruct. The value stays reachable through the
+   >    ordinary CHARGED path.
+   > 4. The `importedTupleSeen` storage comment still described the
+   >    attribution tombstone deleted in round 6, and documented the wrong
+   >    key.
+   >
+   > *Process note.* The round-3 guard for (3) was silently ABSENT for a
+   > while: an edit script wrote two files and aborted before the third, so
+   > the storage field, the arming valve and the wired selector all existed
+   > while the guard enforcing them did not. Compile, grep and
+   > selector-coverage all read as "applied". Only a test that SUCCEEDED
+   > where it should have reverted exposed it — a partially-applied script
+   > is more dangerous than a failed one, because the surviving pieces hide
+   > the gap.
+   >
+   > **Round-9 addendum (#1662).** Four more, and every one is a
+   > second-order consequence of round 8's arming valve — which is itself
+   > the signal that the valve was the load-bearing change of that round.
+   >
+   > 1. **Arming reverted on MIRRORS.** `armRecoveryAttribution` is
+   >    `onlyCanonical`, and the maintained full-facet refresh runs on
+   >    mirror testnets too (`redeploy-testnet-inplace.sh`), so every
+   >    mirror refresh would abort on `NotCanonicalRewardChain`. Gated on
+   >    the chain being canonical; mirrors hold no recovery position (the
+   >    ledger is Base-only), so there is nothing there to migrate.
+   > 2. **Arming blocked the receipts but never RETIRED the position.**
+   >    The aggregate `recovered − redispatched` stays subtracted from
+   >    ordinary backing by `backingPosition`, and the charged path only
+   >    increments the lifetime figure — it never draws that earmark down.
+   >    So the recovered tokens were reserved forever, reachable by
+   >    nothing. Round 7 CLAIMED the value "stays reachable through the
+   >    ordinary charged path"; that claim was unbacked until this fix.
+   >    Arming now retires the standing position, which is safe as a
+   >    one-shot precisely because the refresh arms while PAUSED, before
+   >    any post-cut receipt can have contributed.
+   > 3. **A FRESH canonical deployment was indistinguishable from a legacy
+   >    one.** Both present as `armed == false`, so a later refresh would
+   >    snapshot the then-current nonce and permanently retire every
+   >    legitimate receipt created since deployment. A fresh canonical
+   >    Diamond now marks itself armed at watermark ZERO the moment it is
+   >    made canonical with no receipts — constraining nothing, and
+   >    telling every later refresh that no migration is owed.
+   > 4. **The lens advertised credit the ledger refuses.** A retired
+   >    receipt reported its full historical figures, so
+   >    `credit − redispatched − clawed` showed spendable capacity that
+   >    every dispatch rejects. It now reports zero across the board.
+   >
+   > *Process note.* The first mutation target for (3) was a test that had
+   > just been changed to construct the legacy shape EXPLICITLY — so it no
+   > longer depended on the auto-arm at all, and the mutation survived. A
+   > test only kills a mutation if the mutated line is on the path it
+   > exercises; reusing a nearby test as a target is how a fix comes to
+   > look verified while nothing checks it.
+   >
+   > **Round-10 addendum (#1662) — the attribution machinery, closed.**
+   > Two findings, the smallest round of the review, and both closed by
+   > structure rather than by another guard.
+   >
+   > Rounds 7-9 had each been dominated by second-order effects of the
+   > previous round's fix, all on this one surface. Rather than patch a
+   > fourth time, the whole surface was enumerated — every writer of the
+   > pooled position, every reader of the watermark — which located the
+   > actual gap: round 9 retired the position AT arming, but nothing
+   > stopped it being REFILLED afterwards by a return still in flight or a
+   > late ceremony for a pre-cut receipt. Such a credit could never be
+   > drawn (the watermark blocks the draw) and never clawed back out (the
+   > watermark blocks the claw), so `backingPosition` would subtract it
+   > forever and the tokens would be unreachable.
+   >
+   > The close is ONE stated invariant —
+   >
+   > > **the pooled recovery position holds credit only for POST-watermark
+   > > receipts**
+   >
+   > — enforced at BOTH writers through a single
+   > `_receiptPredatesAttribution` predicate that the draw guard reads as
+   > well. Four scattered guards become consequences of one rule: a legacy
+   > receipt never touches the position, in any direction. The tokens stay
+   > as ordinary unearmarked balance, which is what the CHARGED path
+   > spends — the claim round 7 made and round 9 had to make true.
+   >
+   > The second finding removed `quarantineObserved` entirely. It was
+   > introduced in r2 to stop a second rotation laundering a mirror's
+   > self-contradiction into a clean consumption — a real hazard only while
+   > the PERMISSIONLESS imported clear existed. r7 deleted that clear, and
+   > nothing has read the flag since: it was stored, emitted and published
+   > by the lens while no path enforced it, and the runbook was crediting
+   > it with a security effect it did not have. A dead field carrying a
+   > documented guarantee is worse than no field.
+   >
+   > *Process note.* A reused mutation target survived for the THIRD time
+   > this review — the ceremony-path guard was tested by a case that ran
+   > its ceremony BEFORE arming, so the receipt was never legacy at the
+   > moment of credit and the guard never executed. The general rule: when
+   > a fix touches N call sites, it needs N mutation targets, each on a
+   > sequence that actually reaches its site.
+   >
+   > **Round-8 addendum (#1662).** Five more, and THREE are round-7 fixes
+   > that were INCOMPLETE rather than wrong — a pattern worth naming,
+   > because each one *looked* applied.
+   >
+   > 1. **The attribution watermark guarded only the DRAW path.** A late
+   >    consumed ack still sent a legacy receipt through the claw, where
+   >    its per-receipt counters read zero — so it presented its whole
+   >    already-spent credit as unspent and moved a LATER receipt's backing
+   >    into the overage quarantine. The watermark now gates the claw too.
+   > 2. **The refresh script never ARMED the watermark.** It retired the
+   >    unattributed selectors while paused and stopped there, so the guard
+   >    was inert on exactly the upgrade it was written for. Arming later
+   >    is NOT equivalent: the valve snapshots the then-current reservation
+   >    nonce, so any legitimate post-cut receipt created in the interim
+   >    would be retired with the legacy ones. It now arms atomically in
+   >    the same paused block — the only ordering that leaves no window.
+   > 3. **The corrected storage comment was ADDED, not substituted.** The
+   >    superseded attribution-tombstone block still sat immediately above
+   >    it, leaving two contradictory descriptions of one slot.
+   > 4. **The conflict carve-out proxied its own principle.** Round 7
+   >    argued the deciding fact is whether the R6 gate still protects the
+   >    obligation, then keyed on `strandedReturnTerminalized`. A
+   >    NONTERMINAL return chunk clears the gate WITHOUT setting that flag,
+   >    so the proxy skipped the re-close on precisely the path where
+   >    protection had been lost. The condition now reads the gate
+   >    directly: `compensationOutstanding[dstChainId] != remitId`.
+   > 5. The runbook still offered the permissionless clear that round 7
+   >    deleted, so an operator mid-rotation would have waited for an
+   >    acknowledgement that now reverts.
+   >
+   > *Pattern note.* (1), (2) and (3) share a shape with the round-7
+   > process note: a change that is present but not effective. A storage
+   > field with no guard, a guard with no arming, a correction with no
+   > deletion — each compiles, each greps as "done", and none of them do
+   > anything. The habit that catches this class is asking what would FAIL
+   > if the fix were absent, and then checking that exact thing.
+
+**Round 11 (3 findings) — the arming rule loses its last branch.**
+
+> The P1 was the interesting one, and it was mine: round 9 gated the
+> refresh's arming call on the live canonical flag, with the stated
+> reason that "mirrors hold no recovery position: the ledger is Base-only,
+> so there is nothing there to migrate". That sentence is true of a chain
+> that was never canonical and false of a **demoted** one, which keeps
+> every reservation and recovered token it accrued. The gate skipped it;
+> re-promotion could not repair the omission either, because the
+> fresh-deploy auto-arm requires a zero nonce that a Diamond with history
+> does not have; so it would resume canonical operation with the watermark
+> off — the exact state arming exists to prevent.
+>
+> The fix is a deletion rather than a sixth guard. `onlyCanonical` came
+> off `armRecoveryAttribution`, and the refresh now arms unconditionally,
+> because arming a genuine mirror is not merely tolerable but **inert**:
+> `remitReservationNonce` only advances on the canonical-gated Base
+> surfaces, so a never-canonical chain is still at 0, the watermark
+> records 0, and every receipt id (which starts at 1) is post-watermark.
+> Nothing is retired and nothing is constrained. One rule, no branch, no
+> chain-status question to get wrong — and the canonical-probe interface
+> the script carried for it is gone.
+>
+> *Process note.* The round-9 gate was justified by a claim about a class
+> ("mirrors") when the property that actually mattered was about a state
+> ("has history"). Those coincide until governance can move a chain
+> between classes, which this one can. Where a guard is justified by a
+> class membership, the question worth asking is whether anything can
+> change that membership while the underlying state persists — and
+> whether the cheaper move is to drop the guard entirely because the
+> protected operation is harmless in the case it was excluding.
+>
+> The other two were the familiar not-effective shape. Round 10 changed
+> `importOutstandingCompensation`'s signature, which on an in-place
+> refresh only ADDS the new selector: the retired four-argument one stayed
+> routed to the old bytecode, callable by stale tooling, still writing the
+> supposedly deleted slot and emitting an event the exported ABI no longer
+> describes. A signature change is a Remove plus an Add, and the omission
+> is invisible until someone calls the ghost. And the FunctionalSpec still
+> described the permissionless imported clear, the fresh credit on an
+> imported settlement, and the quarantine-evidence carry — all removed in
+> r6/r7/r10 — with the same stale claim surviving in the event NatSpec,
+> the storage comment, one ack-path comment sitting directly above the
+> comment that contradicted it, and the release-note fragment. The sweep
+> for siblings found the last two; Codex had named three.
+
 Then **P1-b** consumes the delivered-fresh bound and lifts the halt,
 retiring `test_D4_MirrorArmedDayPricingStaysHalted` with the per-day gates
 of §2.1/§2.4 in its place.

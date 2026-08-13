@@ -268,6 +268,55 @@ Rotating the admin multisig → governance timelock is the final step.
 
 ## 8. Post-deploy operational steps
 
+### Rotation: outstanding compensations must survive the cutover (#1434 P2-w6)
+
+Before retiring a canonical Base deployment, read
+`getCompensationOutstandingChains()` on it. For every chain listed, either
+settle the compensation first (consumption ack, stranded return, or
+recovery ceremony + terminal loss), or carry it over to the new
+deployment. No unresolved compensation may be silently forgotten by a
+redeploy.
+
+**Carrying one over.** On the NEW deployment, run
+`importOutstandingCompensation(chain, oldDeployment, oldRemitId)` for each
+open tuple.
+
+- Read the tuple from the retiring deployment's `getImportedOutstanding`
+  when that deployment was ITSELF holding a carried-over gate. Its visible
+  `getCompensationOutstanding` reads a sentinel in that case, and
+  importing the sentinel is refused — no old-era acknowledgement could
+  ever match it.
+- Each tuple may be imported exactly once.
+
+The import carries no figures about the parcel, and needs none: settling a
+carried-over gate creates no spending capacity, so there is nothing a
+wrong figure could inflate. A mistaken import therefore costs only
+availability on the one chain it names — new compensation is blocked there
+until the settlement runs — and never value.
+
+**Resolving it.** The carried gate blocks new compensation for that chain
+until the operator settles it with
+`clearImportedOutstanding(chain, recycledInflow)`. That is the ONLY way it
+opens.
+
+There is deliberately no permissionless path. A mistyped import can name
+an unrelated, already-consumed historical receipt, and if that receipt's
+re-presented acknowledgement could release the gate, you would then fund a
+replacement while the genuinely outstanding delivery was still live — both
+would back mirror claims. A re-presented old-era acknowledgement is
+therefore refused outright (`RemitAckSenderMismatch`); do not wait for
+one.
+
+On settlement the recycled component re-enters bucket custody — the call
+asserts those tokens are actually present — and any fresh component simply
+remains in ordinary custody. Pass `0` when nothing came home.
+
+**Funding the replacement.** Use the ordinary CHARGED path
+(`remitManualBudget`), not a from-recovery dispatch. The new deployment's
+lifetime budget counter starts at zero and never charged for the old
+parcel, so charging it now is the correct accounting rather than a double
+charge.
+
 - **Fund the `VpfiBuyReceiver` ETH float.** The cross-chain buy is two
   legs; the receiver pays leg 2's CCIP fee from a held ETH balance. Send
   ETH to the receiver via `fundETH()` after deploy — an unfunded receiver

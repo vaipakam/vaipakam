@@ -184,24 +184,16 @@ contract RewardRemittanceFacet is
         bool forced
     );
 
-    /// @notice #1222 M3 B2-d2 — an ADMIN released a reservation the operator
-    ///         verified can never execute: its days re-opened for funding and
-    ///         the outstanding commitments were restored. The VALUE counters
-    ///         stay reserved (r4): the sent VPFI — fresh and recycled alike —
-    ///         sits locked in the CCIP token pool outside Diamond custody, so
-    ///         neither the 69M headroom nor the bucket is re-credited (a
-    ///         re-remit consumes NEW headroom/backing; physical recovery
-    ///         restores both through the B2-d5 governance ceremony).
-    ///         `recycledStranded` is the stranded recycled share.
-    /// @custom:event-category informational/reward-transport
-    event RemitReservationReleased(
-        uint256 indexed remitId,
-        uint32 indexed dstChainId,
-        uint256 total,
-        uint256 fresh,
-        uint256 recycledStranded
-    );
-
+    // #1662 r12 — the `RemitReservationReleased` NatSpec that used to sit
+    //   here was ORPHANED when r4 relocated that event to
+    //   {RewardCompensationDispatchFacet} for EIP-170. NatSpec binds to the
+    //   next declaration, so it had silently become the documentation for
+    //   `RemitAckAfterRelease` below — describing an ADMIN release and a
+    //   `recycledStranded` field that event does not have. Deleted rather
+    //   than moved: the relocated event carries its own, and this copy also
+    //   still claimed physical recovery "restores both", which the §5.3
+    //   unification superseded (recovery restores NEITHER; it credits the
+    //   recovery position and relocated bucket custody instead).
     /// @notice #1222 M3 B2-d2 — an ack arrived for a RELEASED reservation:
     ///         the operator released in error and the mirror WAS funded
     ///         (double-funding if its days were re-remitted). Surfaced for
@@ -1623,17 +1615,37 @@ contract RewardRemittanceFacet is
         // restart per deployment, so a stale-era receipt (pre-rotation,
         // possibly same chain id) can never finalize a same-numbered
         // reservation here.
+        // #1434 P2-w6 (§5.4 R6e) — there is NO imported-marker branch
+        // here any more. The r1 shape put one BEFORE the era check, so a
+        // mirror's re-presented old-era ack could resolve a carried gate;
+        // r7 deleted it (see the note below the classification check), and
+        // old-era remitters now fall through to the ordinary era check
+        // like any other stale sender. An imported gate is released only
+        // by the operator's evidenced {clearImportedOutstanding}.
+        // #1660 r6 - the wire offsets classification by one (0 is the
+        // RETIRED generation-1 bool-false shape): 1 consumed /
+        // 2 quarantined / 3 provisional. Zero or out-of-range fails
+        // closed and re-executable - never guessed at. (#1662 r1 -
+        // validated BEFORE the imported branch, so an imported tuple's
+        // malformed ack fails closed too, never "observes".)
+        if (classification == 0 || classification > 3) {
+            revert RemitAckClassificationInvalid(classification);
+        }
+        // #1662 r7 — there is NO permissionless clear for an imported
+        // gate. A mistyped import can name an unrelated, already-CONSUMED
+        // historical receipt, and that receipt's re-presented ack would
+        // clear the sentinel while the genuinely outstanding delivery is
+        // still live — the replacement and the original would then BOTH
+        // back mirror claims. Binding the import to the real outstanding
+        // gate would need the predecessor read that r6 removed (it cannot
+        // be authenticated), so the permissionless path goes instead:
+        // an imported gate clears ONLY through the operator's evidenced
+        // {clearImportedOutstanding}. That is what makes a mistaken
+        // import genuinely liveness-only.
         if (remitter != address(this)) {
             revert RemitAckSenderMismatch(remitId, remitter);
         }
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        // #1660 r6 - the wire offsets classification by one (0 is the
-        // RETIRED generation-1 bool-false shape): 1 consumed /
-        // 2 quarantined / 3 provisional. Zero or out-of-range fails
-        // closed and re-executable - never guessed at.
-        if (classification == 0 || classification > 3) {
-            revert RemitAckClassificationInvalid(classification);
-        }
         bool consumed = classification == 1;
         bool quarantined = classification == 2;
         if (r.status == 2) {
@@ -1648,7 +1660,7 @@ contract RewardRemittanceFacet is
                 // re-presentation can reconcile.
                 bool ackConflict;
                 if (consumed) {
-                    ackConflict = _stampConsumedAck(s, r, remitId);
+                    ackConflict = _stampConsumedAck(s, r, remitId, amountReceived);
                 }
                 if (quarantined) _stampQuarantineAck(r, remitId);
                 if (r.forcedFinalized && consumed && !ackConflict) {
@@ -1691,9 +1703,33 @@ contract RewardRemittanceFacet is
             // consumed lineage is the r4/r5 bypass).
             if (r.dstChainId == sourceChainId) {
                 if (consumed) {
-                    // conflict claw runs here too; released reservations
-                    // have no consumed-ack privileges to withhold.
-                    _stampConsumedAck(s, r, remitId);
+                    bool relConflict = _stampConsumedAck(s, r, remitId, amountReceived);
+                    // #1662 r2 (self-review) — a CLEAN consumption on a
+                    // released reservation CLEARS the gate. The release
+                    // held it pending the value's fate; a consumed
+                    // delivery IS that fate settled (§5.1's clearing
+                    // evidence — the compensation funded the obligation
+                    // after all), so the gate's premise is discharged and
+                    // nothing needs recovering. Withholding the clear
+                    // here bricked the chain permanently: consumption
+                    // closes the return path AND both governance
+                    // settlement records, leaving no writer able to
+                    // clear. A CONTRADICTED consumption still clears
+                    // nothing (w5's withheld privileges) — that case
+                    // resolves through the operator's evidenced
+                    // settlement, which {_consumptionTrusted} keeps open.
+                    if (
+                        !relConflict
+                            && s.compensationOutstanding[r.dstChainId]
+                                == remitId
+                    ) {
+                        LibRewardRemitDispatch.clearCompensationGate(
+                            s, r.dstChainId
+                        );
+                        emit RemitAckLateConsumption(
+                            remitId, sourceChainId, amountReceived
+                        );
+                    }
                 }
                 if (quarantined) _stampQuarantineAck(r, remitId);
             }
@@ -1729,102 +1765,6 @@ contract RewardRemittanceFacet is
         _finalizeReservation(s, r, remitId, 0, true, true, false);
     }
 
-    /**
-     * @notice ADMIN valve — release a PENDING reservation the operator has
-     *         verified can NEVER execute: re-opens its days for funding and
-     *         restores the outstanding commitments (the VALUE counters stay
-     *         reserved — see the event doc).
-     * @dev    LAST-RESORT + evidenced: CCIP failed messages stay manually
-     *         re-executable indefinitely, so the normal recovery is
-     *         re-execution → delivery → ack, with the reservation simply
-     *         staying Pending meanwhile. Release is for a message with
-     *         permanent-failure evidence (e.g. an unrecoverable receiver).
-     *         The recycled share's TOKENS sit locked in the CCIP token pool —
-     *         genuinely outside Diamond custody — so `recycleBucket` is
-     *         deliberately NOT re-credited (see
-     *         {LibVpfiRecycle.restoreReleasedRemit}); the release event
-     *         records the stranded figure and physical recovery rides the
-     *         B2-d5 custody-credit class. If the message executes AFTER a
-     *         release, the late ack surfaces via {RemitAckAfterRelease}.
-     */
-    function releaseRemitReservation(
-        uint256 remitId
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) onlyCanonical {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
-        if (r.status != 1) revert RemitReservationNotPending(remitId);
-        // r5 — §M3's reconciliation timeout, on-chain: a merely-delayed
-        // message must age out before its days may re-open.
-        uint256 earliest = uint256(r.sentAt) + REMIT_RELEASE_MIN_AGE;
-        if (block.timestamp < earliest) {
-            revert RemitReleaseTooEarly(remitId, earliest);
-        }
-        r.status = 3;
-        // #1448 r10 — beside the status flip, deliberately: the seed
-        // ceremony's race guard keys on this, and a release that moved the
-        // status without moving the count would be invisible to it.
-        ++s.remitReleasedCount;
-        uint32 dst = r.dstChainId;
-        uint256[] storage closed = r.dayIds;
-        uint256 n = closed.length;
-        for (uint256 i; i < n; ) {
-            uint256 d = closed[i];
-            // #1656 r1 - delete the day markers ONLY when this reservation
-            // OWNS the closure: a SUPPLEMENTAL reservation names the same
-            // day for its record/ACK lifecycle, but the closure belongs to
-            // the original acknowledged manual remit - releasing a failed
-            // supplement must not erase it (that would re-open funding on
-            // an already-funded day and free its standing quote).
-            if (s.dayClosedByRemitId[dst][d] == remitId) {
-                delete s.rewardBudgetRemitted[dst][d];
-                delete s.dayClosedByRemitId[dst][d];
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        // #1656 r6 - a released COMPENSATION reservation takes its
-        // DECLARED per-side contribution out of the funded cumulative:
-        // the release means those tokens never funded the obligation
-        // (the reservation can never execute), and leaving them counted
-        // would make the recovery ceremony's re-dispatch impossible -
-        // the per-side bound would reject the replacement as exceeding
-        // the quote. Saturating; contributions from OTHER reservations
-        // on the same day (the original under a released supplemental,
-        // or vice versa) remain counted, correctly.
-        if (
-            n == 1
-                && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
-                // #1660 r4 - once, whichever unwind path ran first.
-                && !r.declaredUnwound
-        ) {
-            r.declaredUnwound = true;
-            uint256 cd = closed[0];
-            uint256 curL = s.compFundedLender18[dst][cd];
-            uint256 curB = s.compFundedBorrower18[dst][cd];
-            s.compFundedLender18[dst][cd] = curL > r.declaredLender18
-                ? curL - r.declaredLender18
-                : 0;
-            s.compFundedBorrower18[dst][cd] = curB > r.declaredBorrower18
-                ? curB - r.declaredBorrower18
-                : 0;
-        }
-        // Codex #1426 r4 — the FRESH counters stay UN-restored, exactly
-        // like the recycled bucket: the sent VPFI is physically outside
-        // Diamond custody (locked in the CCIP pool), so re-opening 69M
-        // headroom here would let the re-remit's transfer draw commingled
-        // custody (bucket tokens, LIF holds) as "fresh". The re-remit
-        // consumes NEW headroom (two real outflows happened); physical
-        // recovery restores the counters through the same governance
-        // ceremony that re-credits the bucket (B2-d5 class).
-        uint256 pending = s.remitPendingTotal[dst];
-        s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
-        LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
-        LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled);
-        emit RemitReservationReleased(
-            remitId, dst, r.total, r.fresh, r.recycled
-        );
-    }
 
     /// @dev #1656 r2/r3 - the declared-to-received reconciliation of the
     ///      per-side funded cumulative for a COMPENSATION reservation
@@ -1871,6 +1811,48 @@ contract RewardRemittanceFacet is
         uint256 unrecoverable
     );
 
+    /// @dev #1662 r4 - ONE implementation of the recovery-credit VOID.
+    ///      Both the own-era contradiction claw and the settled-import
+    ///      tombstone need exactly this rule, and writing it twice is how
+    ///      the two drifted in the first place: the ENTITLEMENT is voided
+    ///      whole, while only what the pooled position can absorb moves
+    ///      PHYSICALLY to the overage quarantine. Idempotent - a replay
+    ///      recomputes `unspent` as zero and does nothing.
+    /// @return claw    what physically moved to the quarantine.
+    /// @return unspent the entitlement voided (always >= claw).
+    function _voidRecoveryCredit(
+        LibVaipakam.Storage storage s,
+        uint256 receiptId
+    ) private returns (uint256 claw, uint256 unspent) {
+        // #1662 r8 — the attribution watermark gates the CLAW as well as
+        // the draw. A legacy receipt's spends were tracked GLOBALLY only,
+        // so its per-receipt counters read zero and it would present its
+        // whole (already-spent) legacy credit as unspent — moving a LATER
+        // receipt's backing into the overage quarantine the moment that
+        // receipt replenished the pool. Round 7 guarded only
+        // `_drawFromRecovery`, which left this path open.
+        if (
+            s.recoveryAttributionArmed
+                && receiptId <= s.recoveryAttributionArmedAt
+        ) {
+            return (0, 0);
+        }
+        uint256 credit = s.remitRecoveredForReceipt[receiptId]
+            - s.ceremonyRecycledRecovered[receiptId];
+        uint256 spent = s.recoveryRedispatchedForReceipt[receiptId]
+            + s.recoveryClawedForReceipt[receiptId];
+        unspent = credit > spent ? credit - spent : 0;
+        if (unspent == 0) return (0, 0);
+        uint256 avail =
+            s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
+        claw = unspent < avail ? unspent : avail;
+        if (claw != 0) {
+            s.rewardBudgetRecovered -= claw;
+            s.strandedReturnOverage += claw;
+        }
+        s.recoveryClawedForReceipt[receiptId] += unspent;
+    }
+
     /// @dev #1660 r8 - stamp a CONSUMED attestation. Returns true when it
     ///      CONTRADICTS a prior quarantine attestation: the caller must
     ///      then withhold the consumed-ack privileges (gate clear +
@@ -1879,10 +1861,26 @@ contract RewardRemittanceFacet is
     ///      return credit: the unspent slice moves to the overage
     ///      quarantine (not claimable, not re-dispatchable), and
     ///      `consumedAcked` blocks every further B1 credit.
+    ///      #1662 r2 (self-review) - the CLAW now fires on ANY standing
+    ///      recovery credit for the receipt, not only on a
+    ///      mirror-self-contradiction. A w6 recovery ceremony credits the
+    ///      position WITHOUT requiring a quarantine attestation (its
+    ///      evidence is governance + physical backing, not the mirror), so
+    ///      gating the claw on `quarantineAcked` let ceremony-minted
+    ///      UNCHARGED re-dispatch capacity survive a later consumed
+    ///      attestation - capacity backing value that also backs mirror
+    ///      claims, the exact 69M bypass the claw exists to prevent. The
+    ///      RETURN value stays the mirror-self-contradiction signal: a
+    ///      ceremony contradicted by consumption is governance-vs-mirror,
+    ///      which does not impeach the ack's own privileges.
     function _stampConsumedAck(
         LibVaipakam.Storage storage s,
         LibVaipakam.RemitReservation storage r,
-        uint256 remitId
+        uint256 remitId,
+        // #1662 r7 — the authenticated received figure, so the funding
+        // re-close below can reconcile a SHORT delivery instead of
+        // recording the day as fully funded and blocking its supplement.
+        uint256 amountReceived
     ) private returns (bool conflict) {
         conflict = r.quarantineAcked;
         r.consumedAcked = true;
@@ -1892,43 +1890,104 @@ contract RewardRemittanceFacet is
         // position balance, and a replay after another receipt's
         // legitimate credit would drain unrelated capacity into the
         // overage quarantine.
-        if (conflict && !r.conflictClawed) {
+        // #1662 r2 (self-review) - the POSITION-provenance part only.
+        // Pre-w6 the per-receipt cumulative was 1:1 with position credits
+        // (B1 returns credit the position in full), but a ceremony folds
+        // its RECYCLED half into the same cumulative while sending that
+        // half to the BUCKET - clawing on the raw cumulative would debit
+        // the global position for value that never entered it, i.e. drain
+        // UNRELATED receipts' legitimate capacity into the permanent
+        // overage quarantine. The recycled half is physically-present
+        // bucket custody (the settlement's backing assertion proved the
+        // tokens are here); freezing it would strand real tokens outside
+        // every ledger, and it mints no uncharged emission capacity.
+        // #1662 r2 - this receipt's OWN UNSPENT credit, never the
+        // pooled balance. The position is fungible but the claw is not:
+        // once receipt A's credit has been re-dispatched, `avail` is
+        // made of OTHER receipts' credits, and clawing against it
+        // permanently confiscates capacity they can never re-earn
+        // (their own per-receipt entitlement is already exhausted).
+        // A's already-spent slice is genuinely unrecoverable on-chain
+        // and is reported as such in the event.
+        uint256 rec = s.remitRecoveredForReceipt[remitId]
+            - s.ceremonyRecycledRecovered[remitId];
+        if ((conflict || rec != 0) && !r.conflictClawed) {
             r.conflictClawed = true;
-            uint256 rec = s.remitRecoveredForReceipt[remitId];
-            uint256 avail = s.rewardBudgetRecovered
-                - s.rewardBudgetRedispatched;
-            uint256 claw = rec < avail ? rec : avail;
-            if (claw != 0) {
-                s.rewardBudgetRecovered -= claw;
-                s.strandedReturnOverage += claw;
-            }
-            // #1660 r11 - the terminal return RE-OPENED the obligation
-            // (day markers + declared funding) on the strength of the
-            // quarantine attestation this consumed ack now contradicts:
-            // the consumed delivery still backs mirror claims, so the
-            // re-opened funding path must CLOSE again. The day re-closes
-            // under the original receipt if still open (a successor's
-            // closure is never clobbered), and the declared split
-            // re-enters the funded cumulative either way - reflecting
-            // the consumed reality and, via the cumulative quote bound,
-            // freezing further manual/supplemental headroom. Inside the
-            // terminalized guard the reservation is compensation-shaped
-            // (only B1 terminalizes, and B1 requires the shape).
-            if (s.strandedReturnTerminalized[remitId]) {
-                uint32 cdst = r.dstChainId;
-                uint256 cday = r.dayIds[0];
-                if (s.dayClosedByRemitId[cdst][cday] == 0) {
-                    s.dayClosedByRemitId[cdst][cday] = remitId;
-                    s.rewardBudgetRemitted[cdst][cday] = r.total;
-                }
-                if (r.declaredUnwound) {
-                    r.declaredUnwound = false;
-                    s.compFundedLender18[cdst][cday] += r.declaredLender18;
-                    s.compFundedBorrower18[cdst][cday] +=
-                        r.declaredBorrower18;
-                }
-            }
+            (uint256 claw, ) = _voidRecoveryCredit(s, remitId);
             emit RemitAckClassificationConflict(remitId, claw, rec - claw);
+        }
+        // #1660 r11 / #1662 r2 - a settled released receipt whose
+        // delivery turns out to have been CONSUMED must have its funding
+        // accounting RE-CLOSED: the release (or the terminal return)
+        // unwound the declared contribution on the premise that the
+        // message never executed, and a consumed delivery falsifies
+        // that premise - the value does back mirror claims after all.
+        // Leaving it unwound lets governance dispatch a replacement
+        // against a quote the original already funded, OVERFUNDING the
+        // obligation.
+        //
+        // r2 widened this beyond terminalized (B1-returned) receipts: a
+        // receipt settled by CEREMONY or terminal loss alone never
+        // terminalizes, so it took no re-close at all. `declaredUnwound`
+        // is itself the one-shot - clearing it IS the closure - and the
+        // compensation shape is checked here rather than inherited from
+        // the terminalized guard. The day re-closes under the original
+        // receipt only if still open, so a successor's closure (and its
+        // gate) is never clobbered.
+        // #1662 r7 — only a TRUSTED, RECONCILED re-close.
+        //
+        // (a) NOT under contradiction. A quarantine→consumed sequence
+        //     earns no trust anywhere else — the gate stays held for
+        //     governance — so re-closing funding on it would leave the
+        //     operator unable to fund a replacement even after recording
+        //     the old parcel as lost: the quote bound would refuse it.
+        //
+        // (b) RECONCILED to what actually arrived. Restoring the full
+        //     DECLARED split for a short delivery records the day as
+        //     fully funded and blocks the legitimate supplement for the
+        //     shortfall — the same declared-vs-received reconciliation
+        //     the ordinary ack path performs.
+        // The CONFLICT carve-out is conditional, because two findings pull
+        // opposite ways and the deciding fact is whether the R6 gate is
+        // still protecting this obligation:
+        //   - a TERMINAL RETURN both cleared the gate and re-opened the
+        //     day (#1660 r11). Nothing blocks a replacement there, so a
+        //     contradicting consumption MUST re-close or the day is
+        //     funded twice while the consumed value also backs claims.
+        //   - a plain RELEASE holds the gate pending governance (#1662
+        //     r7). The gate already blocks the replacement, so re-closing
+        //     adds no protection and actively harms: after governance
+        //     records the parcel lost, the quote bound would refuse the
+        //     replacement the settlement exists to enable.
+        // #1662 r8 — keyed on the GATE, not on terminalization. Round 7
+        // used `strandedReturnTerminalized` as a proxy for "the gate was
+        // cleared", which is wrong for a PARTIAL return: a nonterminal
+        // chunk clears the gate too but never sets the terminal flag, so
+        // the proxy skipped the re-close on exactly the path where the
+        // obligation had already lost its protection. State the principle
+        // directly instead of proxying it.
+        if (
+            (!conflict || s.compensationOutstanding[r.dstChainId] != remitId)
+                && r.declaredUnwound
+                && r.dayIds.length == 1
+                && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
+        ) {
+            uint32 cdst = r.dstChainId;
+            uint256 cday = r.dayIds[0];
+            uint256 total = r.total;
+            uint256 restoreL = r.declaredLender18;
+            uint256 restoreB = r.declaredBorrower18;
+            if (amountReceived < total && total != 0) {
+                restoreL = (restoreL * amountReceived) / total;
+                restoreB = (restoreB * amountReceived) / total;
+            }
+            if (s.dayClosedByRemitId[cdst][cday] == 0) {
+                s.dayClosedByRemitId[cdst][cday] = remitId;
+                s.rewardBudgetRemitted[cdst][cday] = restoreL + restoreB;
+            }
+            r.declaredUnwound = false;
+            s.compFundedLender18[cdst][cday] += restoreL;
+            s.compFundedBorrower18[cdst][cday] += restoreB;
         }
     }
 
@@ -1981,7 +2040,7 @@ contract RewardRemittanceFacet is
         // dispatch's cap lineage). Stamped whether or not the gate
         // still names this remit.
         bool ackConflict;
-        if (consumed) ackConflict = _stampConsumedAck(s, r, remitId);
+        if (consumed) ackConflict = _stampConsumedAck(s, r, remitId, amountReceived);
         else if (quarantined) _stampQuarantineAck(r, remitId);
         if (consumed && !ackConflict && s.compensationOutstanding[dst] == remitId) {
             LibRewardRemitDispatch.clearCompensationGate(s, dst);

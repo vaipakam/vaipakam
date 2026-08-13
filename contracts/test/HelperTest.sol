@@ -90,7 +90,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](168);
+        selectors = new bytes4[](170);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -419,6 +419,12 @@ contract HelperTest {
         selectors[n++] =
             TestMutatorFacet.setRemitReservationCompRaw.selector;
         selectors[n++] = TestMutatorFacet.setCompensationGateRaw.selector;
+        // #1662 r2 — unrelated recovery-position capacity, so an over-claw
+        // on one receipt is observable against another's credit.
+        selectors[n++] = TestMutatorFacet.setRecoveryPositionRaw.selector;
+        // #1662 r9 - reproduce the legacy pre-attribution shape.
+        selectors[n++] =
+            TestMutatorFacet.setRecoveryAttributionRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2120,7 +2126,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](12);
         selectors[0] = RewardRemittanceFacet.onCompensationBudgetReceived.selector;
         selectors[1] = RewardRemittanceFacet.onCompensationDayBroadcastArrived.selector;
         selectors[2] = RewardRemittanceFacet.remitRewardBudget.selector;
@@ -2132,8 +2138,7 @@ contract HelperTest {
         selectors[8] = RewardRemittanceFacet.sendRemitAck.selector;
         selectors[9] = RewardRemittanceFacet.onRemitAckReceived.selector;
         selectors[10] = RewardRemittanceFacet.finalizeRemitReservation.selector;
-        selectors[11] = RewardRemittanceFacet.releaseRemitReservation.selector;
-        selectors[12] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
+        selectors[11] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
@@ -2142,7 +2147,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](14);
         selectors[0] =
             RewardCompensationDispatchFacet.remitManualBudget.selector;
         selectors[1] =
@@ -2166,6 +2171,24 @@ contract HelperTest {
         selectors[7] = RewardCompensationDispatchFacet
             .resetReleasedRemitStrandedSeed
             .selector;
+        // #1434 P2-w6 - the recovery ceremony + R6e rotation.
+        selectors[8] =
+            RewardCompensationDispatchFacet.recordRecoveryCeremony.selector;
+        selectors[9] = RewardCompensationDispatchFacet
+            .recordRecoveryTerminalLoss
+            .selector;
+        selectors[10] = RewardCompensationDispatchFacet
+            .importOutstandingCompensation
+            .selector;
+        selectors[11] = RewardCompensationDispatchFacet
+            .clearImportedOutstanding
+            .selector;
+        // #1662 r4 - relocated off the remittance facet (EIP-170).
+        selectors[12] =
+            RewardCompensationDispatchFacet.releaseRemitReservation.selector;
+        // #1662 r7 - the one-shot attribution watermark.
+        selectors[13] =
+            RewardCompensationDispatchFacet.armRecoveryAttribution.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
@@ -2176,7 +2199,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](27);
+        selectors = new bytes4[](34);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2210,6 +2233,22 @@ contract HelperTest {
             RewardRemittanceLensFacet.getStrandedReturnShortfall.selector;
         // #1660 r8 - moved off the mutating facet for EIP-170 headroom.
         selectors[26] = RewardRemittanceLensFacet.quoteRemitAckFee.selector;
+        selectors[27] =
+            RewardRemittanceLensFacet.getCeremonyTerminalLoss.selector;
+        selectors[28] =
+            RewardRemittanceLensFacet.getImportedOutstanding.selector;
+        selectors[29] =
+            RewardRemittanceLensFacet.getCeremonyRecovered.selector;
+        selectors[30] =
+            RewardRemittanceLensFacet.getCeremonyLoss.selector;
+        selectors[31] = RewardRemittanceLensFacet
+            .getRecoveryCreditForReceipt
+            .selector;
+        // #1662 r8 - the attribution watermark, read by the refresh.
+        selectors[32] =
+            RewardRemittanceLensFacet.recoveryAttributionArmed.selector;
+        selectors[33] =
+            RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

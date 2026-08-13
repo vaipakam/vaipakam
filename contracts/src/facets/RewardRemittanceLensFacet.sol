@@ -358,6 +358,116 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().strandedReturnedCumulative;
     }
 
+    /// @notice #1434 P2-w6 (§5.3) — governance-recorded terminal loss for
+    ///         a released reservation's stranded value (one term of the
+    ///         custody-resolution identity the R6 gate clears on).
+    function getCeremonyTerminalLoss(
+        uint256 remitId
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().ceremonyTerminalLoss[remitId];
+    }
+
+    /// @notice #1434 P2-w6 (#1662 r1) — the per-receipt ceremony-recovered
+    ///         cumulatives BY PROVENANCE component. Each is bounded by the
+    ///         reservation's own dispatched split, and the recycled figure
+    ///         is what the consumed-ack claw excludes from the position
+    ///         debit (#1662 r2).
+    function getCeremonyRecovered(
+        uint256 remitId
+    ) external view returns (uint256 fresh, uint256 recycled) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.ceremonyFreshRecovered[remitId],
+            s.ceremonyRecycledRecovered[remitId]
+        );
+    }
+
+    /// @notice #1434 P2-w6 (#1662 r8) — whether per-receipt recovery
+    ///         attribution has been armed, and the reservation nonce it
+    ///         was armed at. Receipts at or below the watermark predate
+    ///         attribution: their spends were tracked globally only, so
+    ///         they may neither fund an uncharged re-dispatch nor be
+    ///         clawed. Read by the in-place refresh, which arms this in
+    ///         the same paused block that retires the old selectors.
+    function recoveryAttributionArmed() external view returns (bool) {
+        return LibVaipakam.storageSlot().recoveryAttributionArmed;
+    }
+
+    function recoveryAttributionArmedAt() external view returns (uint256) {
+        return LibVaipakam.storageSlot().recoveryAttributionArmedAt;
+    }
+
+    /// @notice #1434 P2-w6 (#1662 r2) — the per-receipt TERMINAL-LOSS
+    ///         split by provenance. Their sum is {getCeremonyTerminalLoss};
+    ///         the recycled half is what leaves the coverage allowance.
+    function getCeremonyLoss(
+        uint256 remitId
+    ) external view returns (uint256 fresh, uint256 recycled) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.ceremonyFreshLoss[remitId],
+            s.ceremonyRecycledLoss[remitId]
+        );
+    }
+
+    /// @notice #1434 P2-w6 (#1662 r2) — the uncharged re-dispatch already
+    ///         drawn against this receipt's own recovery credit, and the
+    ///         credit itself (the fresh-provenance part of what it
+    ///         recovered — the recycled half went to bucket custody, not
+    ///         to the position). Their difference is the receipt's
+    ///         UNSPENT capacity: what a further from-recovery dispatch may
+    ///         draw, and the most a contradicting consumed ack may claw.
+    /// @dev `clawed` (#1662 r3) — credit VOIDED by a contradicting
+    ///      consumed attestation. Unspent capacity is
+    ///      `credit − redispatched − clawed`; the clawed term is what
+    ///      stops confiscated credit becoming spendable again once
+    ///      another receipt replenishes the pooled position.
+    function getRecoveryCreditForReceipt(
+        uint256 remitId
+    )
+        external
+        view
+        returns (uint256 credit, uint256 redispatched, uint256 clawed)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1662 r9 — a RETIRED (pre-attribution) receipt reports zero
+        // across the board. Its historical credit is real but unreachable:
+        // neither `_drawFromRecovery` nor `_voidRecoveryCredit` will act on
+        // it, and the pooled position it belonged to was released at
+        // arming. Reporting the raw figures would advertise
+        // `credit − redispatched − clawed` of spendable capacity that
+        // every dispatch rejects — a lens that disagrees with the ledger
+        // it exists to describe.
+        if (
+            s.recoveryAttributionArmed
+                && remitId <= s.recoveryAttributionArmedAt
+        ) {
+            return (0, 0, 0);
+        }
+        uint256 c = s.remitRecoveredForReceipt[remitId]
+            - s.ceremonyRecycledRecovered[remitId];
+        return (
+            c,
+            s.recoveryRedispatchedForReceipt[remitId],
+            s.recoveryClawedForReceipt[remitId]
+        );
+    }
+
+    /// @notice #1434 P2-w6 (§5.4 R6e, reshaped #1662 r1) — the imported
+    ///         old-era outstanding record for a chain (zero remitter =
+    ///         none).
+    function getImportedOutstanding(
+        uint32 dstChainId
+    )
+        external
+        view
+        returns (address oldRemitter, uint256 oldRemitId)
+    {
+        LibVaipakam.ImportedOutstanding storage im =
+            LibVaipakam.storageSlot().importedOutstanding[dstChainId];
+        return (im.oldRemitter, im.oldRemitId);
+    }
+
     /// @dev Local twins of the mutating facet's errors (same selectors).
     error RewardMessengerNotSet();
     error ReceivedRemitNotFound(uint256 remitId);

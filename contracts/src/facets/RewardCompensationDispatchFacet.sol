@@ -3,6 +3,9 @@ pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardRemitDispatch} from "../libraries/LibRewardRemitDispatch.sol";
+import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -105,7 +108,7 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitManualBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, false
+            dstChainId, dayId, lenderAmount18, borrowerAmount18, false, 0
         );
     }
 
@@ -116,11 +119,17 @@ contract RewardCompensationDispatchFacet is
     ///         source differs — the 69M cap is NOT charged (the parcel's
     ///         charge happened at its original dispatch) and the draw is
     ///         bounded by the position balance instead.
+    /// @param sourceRemitId #1662 r2 — the receipt whose recovery credit
+    ///        funds this dispatch. The position is a pooled balance, but
+    ///        it is NOT anonymous: a contradicted receipt may only have
+    ///        ITS OWN unspent credit clawed back, so every draw must be
+    ///        attributable. Bounded by that receipt's own unspent credit.
     function remitManualBudgetFromRecovery(
         uint32 dstChainId,
         uint256 dayId,
         uint256 lenderAmount18,
-        uint256 borrowerAmount18
+        uint256 borrowerAmount18,
+        uint256 sourceRemitId
     )
         external
         payable
@@ -131,7 +140,12 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitManualBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, true
+            dstChainId,
+            dayId,
+            lenderAmount18,
+            borrowerAmount18,
+            true,
+            sourceRemitId
         );
     }
 
@@ -142,7 +156,8 @@ contract RewardCompensationDispatchFacet is
         uint256 dayId,
         uint256 lenderAmount18,
         uint256 borrowerAmount18,
-        bool fromRecovery
+        bool fromRecovery,
+        uint256 sourceRemitId
     ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // #1434 P2-w2 (R1/R1b) — the compensation is sized PER SIDE on the
@@ -253,11 +268,7 @@ contract RewardCompensationDispatchFacet is
         // charge happened at its ORIGINAL dispatch and never repeats
         // (#1586 ratified).
         if (fromRecovery) {
-            uint256 position =
-                s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
-            if (amount > position) {
-                revert RecoveryPositionInsufficient(amount, position);
-            }
+            _drawFromRecovery(s, sourceRemitId, amount);
         } else {
             uint256 remaining = LibRewardRemitDispatch.freshHeadroomNet(s, 0);
             if (amount > remaining) {
@@ -369,7 +380,7 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitSupplementalBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, false
+            dstChainId, dayId, lenderAmount18, borrowerAmount18, false, 0
         );
     }
 
@@ -377,11 +388,14 @@ contract RewardCompensationDispatchFacet is
     ///         POSITION (#1434 P2-w5, §4.2): the uncharged re-dispatch
     ///         of returned value into the same receipt-bound obligation.
     ///         Same bounds and gates as {remitSupplementalBudget}.
+    /// @param sourceRemitId #1662 r2 — the receipt whose recovery credit
+    ///        funds this top-up; see {remitManualBudgetFromRecovery}.
     function remitSupplementalBudgetFromRecovery(
         uint32 dstChainId,
         uint256 dayId,
         uint256 lenderAmount18,
-        uint256 borrowerAmount18
+        uint256 borrowerAmount18,
+        uint256 sourceRemitId
     )
         external
         payable
@@ -392,7 +406,12 @@ contract RewardCompensationDispatchFacet is
         returns (bytes32 messageId)
     {
         return _remitSupplementalBudget(
-            dstChainId, dayId, lenderAmount18, borrowerAmount18, true
+            dstChainId,
+            dayId,
+            lenderAmount18,
+            borrowerAmount18,
+            true,
+            sourceRemitId
         );
     }
 
@@ -402,7 +421,8 @@ contract RewardCompensationDispatchFacet is
         uint256 dayId,
         uint256 lenderAmount18,
         uint256 borrowerAmount18,
-        bool fromRecovery
+        bool fromRecovery,
+        uint256 sourceRemitId
     ) private returns (bytes32 messageId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 amount = lenderAmount18 + borrowerAmount18;
@@ -478,11 +498,7 @@ contract RewardCompensationDispatchFacet is
         // manual send it tops up. From-recovery: position-bounded,
         // uncharged (#1434 P2-w5).
         if (fromRecovery) {
-            uint256 position =
-                s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
-            if (amount > position) {
-                revert RecoveryPositionInsufficient(amount, position);
-            }
+            _drawFromRecovery(s, sourceRemitId, amount);
         } else {
             uint256 remaining = LibRewardRemitDispatch.freshHeadroomNet(s, 0);
             if (amount > remaining) {
@@ -667,15 +683,39 @@ contract RewardCompensationDispatchFacet is
         // Entitlement-bounded credit; the receipt's cumulative can never
         // pass the reservation's dispatched total.
         uint256 already = s.remitRecoveredForReceipt[remitId];
+        // #1662 r6 — net GOVERNANCE-RECORDED LOSS as well as prior
+        // recovery. A released receipt can have partial terminal loss
+        // recorded while a quarantined return is still in flight; without
+        // the loss term the late return credits against the gross total
+        // and `recovered + terminalLoss` passes the dispatched parcel —
+        // minting recovery lineage that never existed and clearing the
+        // gate on it.
         uint256 entitlement = r.total;
+        uint256 resolved = already + s.ceremonyTerminalLoss[remitId];
         uint256 headroom =
-            entitlement > already ? entitlement - already : 0;
+            entitlement > resolved ? entitlement - resolved : 0;
         uint256 credited =
             actualReceived < headroom ? actualReceived : headroom;
         uint256 overage = actualReceived - credited;
 
         s.remitRecoveredForReceipt[remitId] = already + credited;
-        s.rewardBudgetRecovered += credited;
+        // #1662 r10 — THE invariant for legacy receipts: the pooled
+        // recovery position holds credit ONLY for post-watermark receipts.
+        //
+        // A pre-cut receipt can still have a return in flight when the
+        // upgrade arms. Crediting it here would add to a position it can
+        // never draw from (the watermark blocks `_drawFromRecovery`) and
+        // that can never be clawed back out (the watermark blocks
+        // `_voidRecoveryCredit`) — so `backingPosition` would subtract it
+        // forever and the tokens would be unreachable. Arming retires the
+        // position standing AT that instant; this is the other half of the
+        // same rule, stopping it from being refilled afterwards.
+        //
+        // The tokens are not lost: they stay as ordinary unearmarked
+        // balance, which is exactly what the CHARGED dispatch path spends.
+        if (!_receiptPredatesAttribution(s, remitId)) {
+            s.rewardBudgetRecovered += credited;
+        }
         if (overage != 0) s.strandedReturnOverage += overage;
         // #1660 r1 — a short actual is TRANSPORT LOSS, not recoverable
         // headroom: the mirror's one-shot record retired at the declared
@@ -727,9 +767,10 @@ contract RewardCompensationDispatchFacet is
         // order, so a partial chunk may land AFTER the terminal one and
         // must shrink the recorded loss it just recovered).
         if (remainingAfter == 0 || s.strandedReturnTerminalized[remitId]) {
-            uint256 recoveredNow = s.remitRecoveredForReceipt[remitId];
+            uint256 resolvedNow = s.remitRecoveredForReceipt[remitId]
+                + s.ceremonyTerminalLoss[remitId];
             s.strandedReturnShortfall[remitId] =
-                entitlement > recoveredNow ? entitlement - recoveredNow : 0;
+                entitlement > resolvedNow ? entitlement - resolvedNow : 0;
         }
 
         // §5.1 return settlement: clear the R6 gate iff THIS receipt is
@@ -867,6 +908,740 @@ contract RewardCompensationDispatchFacet is
             remitId
         );
     }
+    /// @notice #1222 M3 — a PENDING reservation was operator-RELEASED.
+    ///         The VALUE counters stay reserved (the tokens sit in the
+    ///         transport's custody): `recycledStranded` is what the
+    ///         release recorded as stranded, not a re-credit.
+    /// @custom:event-category state-change/reward-compensation
+    event RemitReservationReleased(
+        uint256 indexed remitId,
+        uint32 indexed dstChainId,
+        uint256 total,
+        uint256 fresh,
+        uint256 recycledStranded
+    );
+
+    // ── #1222 M3: the RELEASE valve ─────────────────────────────────
+    // (#1662 r4 — relocated off the mutating remittance facet for EIP-170
+    // headroom, exactly as `quoteRemitAckFee` and the B2-d5 seed pair were
+    // in w5. Base-only ADMIN evidence, which is this facet's character;
+    // no behaviour change, and the selector is unchanged so the in-place
+    // refresh simply Replaces its route.)
+
+    /// @dev #1222 M3 — the reconciliation timeout a release must clear.
+    uint256 internal constant REMIT_RELEASE_MIN_AGE = 7 days;
+
+    /**
+     * @notice ADMIN valve — release a PENDING reservation the operator has
+     *         verified can NEVER execute: re-opens its days for funding and
+     *         restores the outstanding commitments (the VALUE counters stay
+     *         reserved — see the event doc).
+     * @dev    LAST-RESORT + evidenced: CCIP failed messages stay manually
+     *         re-executable indefinitely, so the normal recovery is
+     *         re-execution → delivery → ack, with the reservation simply
+     *         staying Pending meanwhile. Release is for a message with
+     *         permanent-failure evidence (e.g. an unrecoverable receiver).
+     *         The recycled share's TOKENS sit locked in the CCIP token pool —
+     *         genuinely outside Diamond custody — so `recycleBucket` is
+     *         deliberately NOT re-credited (see
+     *         {LibVpfiRecycle.restoreReleasedRemit}); the release event
+     *         records the stranded figure and physical recovery rides the
+     *         B2-d5 custody-credit class. If the message executes AFTER a
+     *         release, the late ack surfaces via {RemitAckAfterRelease}.
+     */
+    function releaseRemitReservation(
+        uint256 remitId
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        if (r.status != 1) revert RemitReservationNotPending(remitId);
+        // r5 — §M3's reconciliation timeout, on-chain: a merely-delayed
+        // message must age out before its days may re-open.
+        uint256 earliest = uint256(r.sentAt) + REMIT_RELEASE_MIN_AGE;
+        if (block.timestamp < earliest) {
+            revert RemitReleaseTooEarly(remitId, earliest);
+        }
+        r.status = 3;
+        // #1448 r10 — beside the status flip, deliberately: the seed
+        // ceremony's race guard keys on this, and a release that moved the
+        // status without moving the count would be invisible to it.
+        ++s.remitReleasedCount;
+        uint32 dst = r.dstChainId;
+        uint256[] storage closed = r.dayIds;
+        uint256 n = closed.length;
+        for (uint256 i; i < n; ) {
+            uint256 d = closed[i];
+            // #1656 r1 - delete the day markers ONLY when this reservation
+            // OWNS the closure: a SUPPLEMENTAL reservation names the same
+            // day for its record/ACK lifecycle, but the closure belongs to
+            // the original acknowledged manual remit - releasing a failed
+            // supplement must not erase it (that would re-open funding on
+            // an already-funded day and free its standing quote).
+            if (s.dayClosedByRemitId[dst][d] == remitId) {
+                delete s.rewardBudgetRemitted[dst][d];
+                delete s.dayClosedByRemitId[dst][d];
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        // #1656 r6 - a released COMPENSATION reservation takes its
+        // DECLARED per-side contribution out of the funded cumulative:
+        // the release means those tokens never funded the obligation
+        // (the reservation can never execute), and leaving them counted
+        // would make the recovery ceremony's re-dispatch impossible -
+        // the per-side bound would reject the replacement as exceeding
+        // the quote. Saturating; contributions from OTHER reservations
+        // on the same day (the original under a released supplemental,
+        // or vice versa) remain counted, correctly.
+        if (
+            n == 1
+                && (r.declaredLender18 != 0 || r.declaredBorrower18 != 0)
+                // #1660 r4 - once, whichever unwind path ran first.
+                && !r.declaredUnwound
+        ) {
+            r.declaredUnwound = true;
+            uint256 cd = closed[0];
+            uint256 curL = s.compFundedLender18[dst][cd];
+            uint256 curB = s.compFundedBorrower18[dst][cd];
+            s.compFundedLender18[dst][cd] = curL > r.declaredLender18
+                ? curL - r.declaredLender18
+                : 0;
+            s.compFundedBorrower18[dst][cd] = curB > r.declaredBorrower18
+                ? curB - r.declaredBorrower18
+                : 0;
+        }
+        // Codex #1426 r4 — the FRESH counters stay UN-restored, exactly
+        // like the recycled bucket: the sent VPFI is physically outside
+        // Diamond custody (locked in the CCIP pool), so re-opening 69M
+        // headroom here would let the re-remit's transfer draw commingled
+        // custody (bucket tokens, LIF holds) as "fresh". The re-remit
+        // consumes NEW headroom (two real outflows happened); physical
+        // recovery restores the counters through the same governance
+        // ceremony that re-credits the bucket (B2-d5 class).
+        uint256 pending = s.remitPendingTotal[dst];
+        s.remitPendingTotal[dst] = pending > r.total ? pending - r.total : 0;
+        LibInteractionRewards.restoreArmedFresh(r.armedFreshFull);
+        LibVpfiRecycle.restoreReleasedRemit(r.recycledFull, r.recycled);
+        emit RemitReservationReleased(
+            remitId, dst, r.total, r.fresh, r.recycled
+        );
+    }
+
+    // ── #1434 P2-w6: the recovery ceremony + R6e rotation (§5.3/§5.4) ──
+
+    /// @dev #1662 r1 — the gate value an IMPORTED old-era outstanding
+    ///      holds: no real reservation ever carries this id (nonces are
+    ///      sequential from 1), so a new-era ack's own-gate clear
+    ///      (`compensationOutstanding[chain] == remitId`) can never alias
+    ///      an imported hold — only the imported-clear paths release it.
+    uint256 internal constant IMPORTED_GATE_SENTINEL = type(uint256).max;
+
+    /// @notice §5.3 — a governance recovery ceremony settled part of a
+    ///         released reservation's stranded value back into Diamond
+    ///         custody (fresh → the recovery position; recycled →
+    ///         relocated bucket custody).
+    /// @custom:event-category state-change/reward-compensation
+    event RecoveryCeremonyRecorded(
+        uint256 indexed remitId,
+        uint256 freshInflow,
+        uint256 recycledInflow,
+        uint256 recoveredCumulative,
+        bool gateCleared
+    );
+
+    /// @notice §5.3 — governance recorded TERMINAL LOSS for a released
+    ///         reservation's residue (neither recovered nor in pool).
+    /// @custom:event-category state-change/reward-compensation
+    event RecoveryTerminalLossRecorded(
+        uint256 indexed remitId,
+        uint256 freshLoss,
+        uint256 recycledLoss,
+        uint256 lossCumulative,
+        bool gateCleared
+    );
+
+    /// @notice §5.4 R6e — a rotated-in deployment imported an OLD-ERA
+    ///         outstanding compensation marker for a chain.
+    /// @custom:event-category state-change/reward-compensation
+    event OutstandingCompensationImported(
+        uint32 indexed dstChainId,
+        address oldRemitter,
+        uint256 oldRemitId
+    );
+
+    /// @notice §5.4 R6e — the ADMIN evidenced SETTLEMENT of an imported
+    ///         old-era gate, and (since r7) its ONLY release: the
+    ///         recovered inflow it booked, as relocated bucket custody,
+    ///         zero for a pure-loss settlement.
+    /// @custom:event-category state-change/reward-compensation
+    /// @dev #1662 r6 — recycled ONLY: an imported settlement mints no
+    ///      fresh recovery capacity (see {clearImportedOutstanding}).
+    /// @dev #1662 r7 — there is no permissionless counterpart. The r1
+    ///      shape let the mirror's re-presented consumed attestation
+    ///      resolve the gate through {RewardRemittanceFacet}; that path
+    ///      was removed once it was clear no reachable check can
+    ///      authenticate an ADMIN-chosen predecessor address, so old-era
+    ///      acks now fail the era check and this is the sole clear.
+    event ImportedOutstandingCleared(
+        uint32 indexed dstChainId,
+        address oldRemitter,
+        uint256 oldRemitId,
+        uint256 recycledInflow
+    );
+
+    /// @dev #1662 r2 (self-review) — a TRUSTED consumption attestation:
+    ///      consumed, with NO contradicting quarantine attestation
+    ///      standing. Load-bearing that this is not merely `consumedAcked`:
+    ///      a mirror that attested QUARANTINE and then CONSUMED contradicted
+    ///      itself, and w5's rule is that such an ack earns no further trust
+    ///      (its privileges are withheld). Closing the governance settlement
+    ///      paths on it as well would leave the chain's R6 gate with NO
+    ///      clear at all — a permanent brick. Under contradiction the
+    ///      operator's evidenced settlement is the ONLY remaining source of
+    ///      truth, so it must stay open; a CLEAN consumption still refuses
+    ///      (that value backs mirror claims — it is neither lost nor
+    ///      recoverable) and clears the gate on its own at the ack.
+    function _consumptionTrusted(
+        LibVaipakam.RemitReservation storage r
+    ) private view returns (bool) {
+        return r.consumedAcked && !r.quarantineAcked;
+    }
+
+    /**
+     * @notice ADMIN — record one recovery-ceremony settlement (§5.3): the
+     *         governance ceremony brought `freshInflow + recycledInflow`
+     *         of a RELEASED reservation's stranded transport-custody value
+     *         physically back to the Diamond, and this call books it.
+     * @dev    The ratified §5.3 UNIFICATION: the fresh half credits the
+     *         SAME recovery position the B1 return feeds (`recovered`
+     *         cumulative — uncharged re-dispatch capacity via the
+     *         `…FromRecovery` wrappers), NEVER emission headroom; the
+     *         recycled half enters as relocated bucket custody under its
+     *         own provenance class. Folded into the ONE per-receipt
+     *         recovered cumulative, so B1 returns and ceremonies compose
+     *         in a single custody-resolution identity:
+     *         `recovered + terminalLoss == r.total` clears the R6 gate —
+     *         partial recoveries HOLD it (§5.3), over-recording past the
+     *         reservation's dispatched total is refused, and each
+     *         component is bounded by the reservation's OWN dispatched
+     *         provenance split (#1662 r1). Status-3
+     *         (Released) reservations only — a live reservation's value
+     *         settles through acks/returns, and a consumed receipt is
+     *         not recoverable (its value backs mirror claims).
+     */
+    function recordRecoveryCeremony(
+        uint256 remitId,
+        uint256 freshInflow,
+        uint256 recycledInflow
+    ) external nonReentrant whenNotPaused onlyCanonical
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        uint256 amount = freshInflow + recycledInflow;
+        if (amount == 0) revert NothingToRemit();
+        if (r.status != 3) revert CeremonyReservationNotReleased(remitId);
+        if (_consumptionTrusted(r)) {
+            revert StrandedReturnConsumedReceipt(remitId);
+        }
+        uint256 recovered = s.remitRecoveredForReceipt[remitId] + amount;
+        uint256 loss = s.ceremonyTerminalLoss[remitId];
+        if (recovered + loss > r.total) {
+            revert CeremonyExceedsStranded(remitId, recovered + loss, r.total);
+        }
+        // #1662 r1 — component bounds against the reservation's OWN
+        // dispatched provenance split: the total bound cannot see a
+        // relabel (a fresh-only compensation "recovered as recycled"
+        // would move uncharged value into the bucket's claimable
+        // custody).
+        // #1662 r3 — JOINT with prior loss, in BOTH directions. The
+        // loss path already netted prior recovery; without the mirror
+        // term here, ordering the calls loss-first-recovery-second spends
+        // one component twice and still satisfies the aggregate identity
+        // by borrowing the other component's slack — clearing the gate
+        // over value that was only ever accounted once.
+        uint256 cf = s.ceremonyFreshRecovered[remitId]
+            + s.ceremonyFreshLoss[remitId] + freshInflow;
+        if (cf > r.fresh) {
+            revert CeremonyProvenanceExceeded(remitId, cf, r.fresh);
+        }
+        uint256 cr = s.ceremonyRecycledRecovered[remitId]
+            + s.ceremonyRecycledLoss[remitId] + recycledInflow;
+        if (cr > r.recycled) {
+            revert CeremonyProvenanceExceeded(remitId, cr, r.recycled);
+        }
+        // #1662 r4 — `cf`/`cr` are JOINT bound values (they fold in
+        // prior LOSS) and must not be persisted as recovered: doing so
+        // records loss as recovery, and `_drawFromRecovery` then
+        // subtracts a recycled figure that never entered the position —
+        // publishing zero per-receipt capacity, or reverting outright
+        // once the fictitious subtrahend exceeds the credit.
+        s.ceremonyFreshRecovered[remitId] += freshInflow;
+        s.ceremonyRecycledRecovered[remitId] += recycledInflow;
+        s.remitRecoveredForReceipt[remitId] = recovered;
+        _bookRecoveredInflow(s, remitId, freshInflow, recycledInflow, true);
+        // The recovered value is no longer lost: the loss record shrinks
+        // exactly like an out-of-order B1 chunk's recompute.
+        uint256 sf = s.strandedReturnShortfall[remitId];
+        if (sf != 0) {
+            s.strandedReturnShortfall[remitId] =
+                sf > amount ? sf - amount : 0;
+        }
+        bool gateCleared = _maybeClearResolvedGate(s, r, remitId, recovered);
+        emit RecoveryCeremonyRecorded(
+            remitId, freshInflow, recycledInflow, recovered, gateCleared
+        );
+    }
+
+    /**
+     * @notice ADMIN — record governance-evidenced TERMINAL LOSS (§5.3):
+     *         the residue of a released reservation's stranded value that
+     *         is neither recovered nor still in pool custody. The
+     *         evidenced counterpart of the ceremony record; together they
+     *         complete the custody-resolution identity that clears the
+     *         R6 gate.
+     * @dev    #1662 r2 — split BY PROVENANCE, exactly like the ceremony,
+     *         and bounded per component against the reservation's own
+     *         dispatched split net of what is already recorded. The
+     *         recycled half is not bookkeeping detail: those tokens were
+     *         locally stranded and are now GONE, so they must leave the
+     *         coverage allowance. Leaving them in lets a dead balance
+     *         back live reservations forever — the same phantom-headroom
+     *         failure the recovered half closes, arrived at from the
+     *         other end.
+     */
+    function recordRecoveryTerminalLoss(
+        uint256 remitId,
+        uint256 freshLoss,
+        uint256 recycledLoss
+    ) external nonReentrant whenNotPaused onlyCanonical
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        uint256 amount = freshLoss + recycledLoss;
+        if (amount == 0) revert NothingToRemit();
+        if (r.status != 3) revert CeremonyReservationNotReleased(remitId);
+        // #1662 r1 — a CONSUMED receipt's value backs mirror claims:
+        // recording it as "terminal loss" would clear the gate over
+        // value that is neither lost nor recoverable. #1662 r2 — only a
+        // TRUSTED consumption closes this path; see {_consumptionTrusted}.
+        if (_consumptionTrusted(r)) {
+            revert StrandedReturnConsumedReceipt(remitId);
+        }
+        uint256 recovered = s.remitRecoveredForReceipt[remitId];
+        uint256 loss = s.ceremonyTerminalLoss[remitId] + amount;
+        if (recovered + loss > r.total) {
+            revert CeremonyExceedsStranded(remitId, recovered + loss, r.total);
+        }
+        // Per-component provenance bounds — recovery and loss are both
+        // draws on the SAME dispatched split, so they bound jointly.
+        uint256 cf = s.ceremonyFreshRecovered[remitId]
+            + s.ceremonyFreshLoss[remitId] + freshLoss;
+        if (cf > r.fresh) {
+            revert CeremonyProvenanceExceeded(remitId, cf, r.fresh);
+        }
+        uint256 cr = s.ceremonyRecycledRecovered[remitId]
+            + s.ceremonyRecycledLoss[remitId] + recycledLoss;
+        if (cr > r.recycled) {
+            revert CeremonyProvenanceExceeded(remitId, cr, r.recycled);
+        }
+        s.ceremonyFreshLoss[remitId] += freshLoss;
+        s.ceremonyRecycledLoss[remitId] += recycledLoss;
+        s.ceremonyTerminalLoss[remitId] = loss;
+        // The lost recycled tokens leave the coverage allowance.
+        _resolveStrandedRecycled(s, recycledLoss);
+        bool gateCleared = _maybeClearResolvedGate(s, r, remitId, recovered);
+        emit RecoveryTerminalLossRecorded(
+            remitId, freshLoss, recycledLoss, loss, gateCleared
+        );
+    }
+
+    /// @dev #1662 r2 — record that `amount` of LOCALLY-stranded
+    ///      recycled-provenance value is no longer in transit, saturating
+    ///      at the stranded record. Fed by BOTH resolutions: a recovery
+    ///      settlement (the tokens came home) and a terminal loss (they
+    ///      are gone). Both must leave the coverage allowance — a dead 50
+    ///      that still counts as in-transit backing masks a real shortfall
+    ///      forever, which is the same phantom-headroom failure the
+    ///      recovered half of this counter exists to close.
+    function _resolveStrandedRecycled(
+        LibVaipakam.Storage storage s,
+        uint256 amount
+    ) private {
+        if (amount == 0) return;
+        // #1662 r3 — accumulate UNCAPPED and cap where it is published.
+        // Saturating here against a stranded floor that the one-time seed
+        // ceremony has not finished establishing silently discards the
+        // excess, and the seed's later assignment recomputes nothing — so
+        // value genuinely returned or written off would read as still in
+        // transit forever.
+        s.recycleReleasedRemitResolvedCumulative += amount;
+    }
+
+    /// @dev §5.3 — the FULL-custody-resolution gate clear: recovered plus
+    ///      recorded terminal loss must equal the reservation's dispatched
+    ///      total, and the gate must still name this receipt. Partial
+    ///      recoveries hold (the B1 return path has its own §5.1
+    ///      return-settlement clear; this identity governs the ceremony
+    ///      path, where no wire remainder exists and operator evidence
+    ///      defines completeness). An imported hold carries
+    ///      {IMPORTED_GATE_SENTINEL} and can never match a real remitId
+    ///      here.
+    function _maybeClearResolvedGate(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RemitReservation storage r,
+        uint256 remitId,
+        uint256 recovered
+    ) private returns (bool cleared) {
+        if (
+            recovered + s.ceremonyTerminalLoss[remitId] == r.total
+                && s.compensationOutstanding[r.dstChainId] == remitId
+        ) {
+            LibRewardRemitDispatch.clearCompensationGate(s, r.dstChainId);
+            cleared = true;
+        }
+    }
+
+    /**
+     * @notice ADMIN — #1662 r7: arm PER-RECEIPT recovery attribution on an
+     *         in-place-upgraded Diamond, fixing the watermark at the
+     *         current reservation nonce.
+     * @dev    One-shot. Everything at or below the watermark predates
+     *         attribution: recovery credit was recorded per receipt, but
+     *         the spending and claws against it were tracked only
+     *         GLOBALLY, so the new per-receipt counters start at zero and
+     *         would report already-spent credit as still unspent. Arming
+     *         retires that legacy capacity conservatively rather than
+     *         attempting a migration the chain has no per-receipt history
+     *         to reconstruct — removing the old unattributed selectors
+     *         stops new unattributed writes but repairs nothing existing.
+     *         The retired value is not lost: it stays reachable through
+     *         the ordinary CHARGED dispatch path.
+     */
+    /// @dev #1662 r11 — deliberately NOT `onlyCanonical`. Round 9 gated the
+    /// refresh's arming call on the live canonical flag so a mirror refresh
+    /// would not revert, reasoning that "mirrors hold no recovery position".
+    /// That is false for a DEMOTED former canonical: it keeps every
+    /// reservation and every recovered token it accrued while canonical, so
+    /// a canonical-gated arm skips it, and a later re-promotion cannot
+    /// repair the omission either (the fresh-deploy auto-arm in
+    /// `setIsCanonicalRewardChain` requires a zero nonce, which a Diamond
+    /// with history does not have). It would resume canonical operation
+    /// with the watermark disabled — exactly the state arming exists to
+    /// prevent.
+    ///
+    /// Arming a genuine mirror is harmless rather than merely tolerable:
+    /// `remitReservationNonce` only ever advances on the canonical-gated
+    /// Base surfaces, so a chain that was never canonical is still at 0,
+    /// the watermark records 0, and every receipt id (which starts at 1)
+    /// is post-watermark. Nothing is retired and nothing is constrained.
+    /// So the rule needs no branch: every refresh arms, exactly once,
+    /// whatever the chain's current or future canonical status.
+    function armRecoveryAttribution()
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.recoveryAttributionArmed) {
+            revert RecoveryAttributionAlreadyArmed();
+        }
+        s.recoveryAttributionArmed = true;
+        s.recoveryAttributionArmedAt = s.remitReservationNonce;
+        // #1662 r9 — RETIRE the pooled position too. Blocking the receipts
+        // is only half the migration: the aggregate
+        // `recovered − redispatched` stays subtracted from ordinary
+        // backing by {LibVpfiRecycle.backingPosition}, and the charged
+        // dispatch path increments `rewardBudgetRemittedGlobal` without
+        // ever drawing it down — so the recovered tokens would be
+        // earmarked forever, reachable by nothing. (Round 8 claimed the
+        // value "stays reachable through the ordinary charged path";
+        // without this it did not.)
+        //
+        // Safe as a one-shot at arming: the refresh arms while PAUSED,
+        // before any post-cut receipt can have contributed, so the whole
+        // standing position is legacy by construction. Retiring it
+        // releases those tokens back to ordinary unearmarked backing,
+        // which is exactly what the charged path then spends.
+        uint256 retired =
+            s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
+        if (retired != 0) {
+            s.rewardBudgetRedispatched = s.rewardBudgetRecovered;
+        }
+        emit RecoveryAttributionArmed(s.remitReservationNonce, retired);
+    }
+
+    /// @notice #1662 r7 — per-receipt recovery attribution armed; receipts
+    ///         at or below `watermark` are no longer drawable or clawable.
+    /// @param  retiredPosition #1662 r9 — the legacy pooled recovery
+    ///         position released back to ordinary backing by the same
+    ///         one-shot, so those tokens are spendable through the charged
+    ///         path rather than earmarked forever.
+    /// @custom:event-category state-change/reward-compensation
+    event RecoveryAttributionArmed(uint256 watermark, uint256 retiredPosition);
+
+    /// @dev #1662 r10 — the ONE predicate every legacy-receipt rule reads.
+    ///      A receipt at or below the armed watermark predates per-receipt
+    ///      attribution: its spends and claws were tracked GLOBALLY only,
+    ///      so no per-receipt figure about it can be trusted. The rule that
+    ///      follows is single — such a receipt never touches the pooled
+    ///      recovery position: it cannot draw from it, cannot be clawed
+    ///      out of it, and (r10) cannot be credited INTO it either.
+    function _receiptPredatesAttribution(
+        LibVaipakam.Storage storage s,
+        uint256 receiptId
+    ) private view returns (bool) {
+        return s.recoveryAttributionArmed
+            && receiptId <= s.recoveryAttributionArmedAt;
+    }
+
+    /// @dev #1662 r2 — draw `amount` of uncharged re-dispatch capacity
+    ///      against the NAMED source receipt's own recovery credit.
+    ///
+    ///      Per-receipt, not pooled, and that distinction is load-bearing.
+    ///      The position balance is fungible, but the CLAW is not: when a
+    ///      receipt's recovery is later contradicted by a consumed
+    ///      attestation, only that receipt's own unspent credit may be
+    ///      confiscated. Sizing draws (or claws) on the global balance
+    ///      lets receipt A's contradiction consume receipt B's capacity,
+    ///      which B can never re-credit because its own entitlement is
+    ///      already exhausted. Naming the source at dispatch is what makes
+    ///      "A's unspent" a computable quantity.
+    ///
+    ///      The RECYCLED half of a ceremony never enters the position (it
+    ///      goes to bucket custody), so the credit is the fresh-provenance
+    ///      part alone. The global balance is still asserted as a physical
+    ///      backstop — the per-receipt sum can never exceed it, so a
+    ///      failure there is an invariant breach, not a user error.
+    function _drawFromRecovery(
+        LibVaipakam.Storage storage s,
+        uint256 sourceRemitId,
+        uint256 amount
+    ) private {
+        // #1662 r7 — a receipt that predates per-receipt attribution has
+        // credit on record but no per-receipt spend/claw history (those
+        // were tracked GLOBALLY only), so its unspent figure would read as
+        // the FULL credit however much was already drawn — and it could
+        // then consume a LATER receipt's backing. Refused outright; the
+        // value stays reachable through the ordinary charged path.
+        if (_receiptPredatesAttribution(s, sourceRemitId)) {
+            revert RecoveryReceiptPredatesAttribution(sourceRemitId);
+        }
+        uint256 credit = s.remitRecoveredForReceipt[sourceRemitId]
+            - s.ceremonyRecycledRecovered[sourceRemitId];
+        // #1662 r3 — CONFISCATED credit is not merely un-clawable, it is
+        // unspendable: a contradiction voids the receipt's whole remaining
+        // credit even where the pool could only absorb part of it, or the
+        // next receipt's credit would silently become its backing.
+        uint256 spent = s.recoveryRedispatchedForReceipt[sourceRemitId]
+            + s.recoveryClawedForReceipt[sourceRemitId];
+        uint256 unspent = credit > spent ? credit - spent : 0;
+        if (amount > unspent) {
+            revert RecoveryReceiptCreditInsufficient(
+                sourceRemitId, amount, unspent
+            );
+        }
+        uint256 position =
+            s.rewardBudgetRecovered - s.rewardBudgetRedispatched;
+        if (amount > position) {
+            revert RecoveryPositionInsufficient(amount, position);
+        }
+        // #1662 r6 — only the REDISPATCHED term advances. `spent` folds
+        // in clawed credit for the ADMISSION bound, but storing the
+        // combined figure back would double-count the claw against any
+        // recovery governance later records for the same receipt (which
+        // is deliberately allowed — operator evidence stays the
+        // resolution path), leaving that new capacity permanently
+        // unreadable as available.
+        s.recoveryRedispatchedForReceipt[sourceRemitId] =
+            s.recoveryRedispatchedForReceipt[sourceRemitId] + amount;
+    }
+
+    /// @dev #1662 r1 — book a physically-recovered inflow: ONE combined
+    ///      backing assertion over BOTH halves (fresh earmarks the
+    ///      recovery position, recycled earmarks the bucket — asserted
+    ///      together so neither half can lean on float the other is
+    ///      about to claim), then the position credit and the
+    ///      relocated-custody credit. A books-only "recovery" with no
+    ///      tokens behind it rolls back here, not at claim time.
+    /// @param localStranding #1662 r2 — whether the recycled component
+    ///        retires stranding recorded in THIS deployment's cumulative.
+    ///        False for an IMPORTED old-era settlement: that value was
+    ///        stranded on the RETIRED deployment and never entered this
+    ///        one's `recycleReleasedRemitStrandedCumulative`, so netting
+    ///        it would under-recognise local backing and page a false
+    ///        CRITICAL shortfall on legitimate commitments.
+    function _bookRecoveredInflow(
+        LibVaipakam.Storage storage s,
+        uint256 refId,
+        uint256 freshInflow,
+        uint256 recycledInflow,
+        bool localStranding
+    ) private {
+        uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));
+        uint256 earmarks = s.recycleBucket + recycledInflow
+            + (s.rewardBudgetRecovered - s.rewardBudgetRedispatched)
+            + s.strandedReturnOverage + freshInflow;
+        if (bal < earmarks) {
+            revert CeremonyInflowNotBacked(refId, bal, earmarks);
+        }
+        // #1662 r10 — same invariant as the return path: a late ceremony
+        // for a pre-cut receipt must not refill a position that receipt
+        // can neither draw nor have clawed. (`refId` is the OLD-era remit
+        // id on the imported path, which is never a local receipt, so the
+        // predicate correctly leaves imported settlements alone — they
+        // credit no fresh position at all since r6.)
+        if (!_receiptPredatesAttribution(s, refId)) {
+            s.rewardBudgetRecovered += freshInflow;
+        }
+        if (recycledInflow != 0) {
+            LibVpfiRecycle.creditCustodyRelocated(
+                refId,
+                recycledInflow,
+                LibVpfiRecycle.RecycleSource.RecoveryCeremonyRelocation
+            );
+            // #1662 r2 — the release moved this value
+            // `paidOutRecycled -> releasedRemitStranded`, and the credit
+            // above just put it back in the bucket. The stranded record
+            // deliberately STAYS (the composition bound needs it as the
+            // un-netted destination term, and it is a monotone history),
+            // so without this counter an external checker's coverage
+            // allowance `bucket + stranded` would count the same VPFI
+            // twice — permanently weakening a CRITICAL invariant.
+            if (localStranding) _resolveStrandedRecycled(s, recycledInflow);
+        }
+    }
+
+    /**
+     * @notice ADMIN — §5.4 R6e: seed a rotated-in deployment's R6 gate
+     *         CLOSED for a chain whose compensation was outstanding on the
+     *         RETIRED deployment, keyed by the old-era receipt tuple. No
+     *         unresolved compensation may be silently forgotten by a
+     *         redeploy: the imported marker holds new dispatches for that
+     *         chain until the operator's evidenced
+     *         {clearImportedOutstanding} settles it.
+     * @dev    The import carries NOTHING about the parcel, and needs
+     *         nothing: a settlement mints no re-dispatch capacity (r6), so
+     *         there is no figure for a fabricated one to inflate, and
+     *         there is no permissionless clear (r7), so a wrong tuple
+     *         cannot be used to open the gate. Rounds 4 and 5 tried to
+     *         bound the mint — first on operator-supplied figures, then by
+     *         READING the retiring deployment — and neither authenticates
+     *         against a compromised ADMIN, who supplies the predecessor
+     *         address too. Removing the mint removed the question.
+     *
+     *         #1662 r10 — the `quarantineObserved` carry-over is likewise
+     *         GONE. It existed to stop a second rotation laundering a
+     *         mirror's self-contradiction into a clean consumption, which
+     *         was a real hazard only while the permissionless clear
+     *         existed. Since r7 deleted that clear, nothing read the flag:
+     *         it was stored, emitted and published by the lens while no
+     *         path enforced it, and the runbook was crediting it with a
+     *         security effect it did not have.
+     *
+     *         What remains is a BLOCK. A mistaken import costs liveness on
+     *         the one chain it names, recoverable by the evidenced
+     *         settlement — never value.
+     */
+    function importOutstandingCompensation(
+        uint32 dstChainId,
+        address oldRemitter,
+        uint256 oldRemitId
+    ) external onlyCanonical onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (oldRemitter == address(0) || oldRemitter == address(this)) {
+            revert ImportedTupleInvalid(oldRemitter);
+        }
+        // #1662 r2 — the retiring deployment's VISIBLE gate reads the
+        // sentinel when it was itself holding an imported gate. Copying
+        // that across produces a tuple no old-era ack can ever match, so
+        // refuse it and make the operator read the imported RECORD.
+        if (oldRemitId == IMPORTED_GATE_SENTINEL) {
+            revert ImportedTupleIsSentinel();
+        }
+        if (s.compensationOutstanding[dstChainId] != 0) {
+            revert CompensationGateHeld(
+                dstChainId, s.compensationOutstanding[dstChainId]
+            );
+        }
+        // #1662 r5 — ONE import per tuple, ever. The gate returns to
+        // zero when a settlement clears it, so without this the same
+        // parcel could be imported repeatedly.
+        bytes32 tupleKey =
+            keccak256(abi.encode(dstChainId, oldRemitter, oldRemitId));
+        if (s.importedTupleSeen[tupleKey]) {
+            revert ImportedTupleAlreadySeen(dstChainId, oldRemitId);
+        }
+        s.importedTupleSeen[tupleKey] = true;
+        s.importedOutstanding[dstChainId] = LibVaipakam.ImportedOutstanding({
+            oldRemitter: oldRemitter,
+            oldRemitId: oldRemitId
+        });
+        LibRewardRemitDispatch.setCompensationGate(
+            s, dstChainId, IMPORTED_GATE_SENTINEL
+        );
+        emit OutstandingCompensationImported(
+            dstChainId, oldRemitter, oldRemitId
+        );
+    }
+
+
+    /**
+     * @notice ADMIN — §5.4 R6e: the evidenced SETTLEMENT of an imported
+     *         old-era gate (the forced-finalize mould), covering the
+     *         quarantined old-era value a new-era B1 return cannot carry
+     *         (its era check refuses old remitters by design).
+     * @dev    #1662 r6 — this books NO fresh recovery capacity, and that
+     *         is the point rather than a limitation.
+     *
+     *         Uncharged re-dispatch is justified by "this parcel's cap
+     *         charge already happened at its ORIGINAL dispatch" — true
+     *         within one deployment's counters, and FALSE across a
+     *         rotation: `rewardBudgetRemittedGlobal` is never seeded, so a
+     *         rotated deployment starts at zero and never charged for the
+     *         old parcel. Minting uncharged capacity for it double-counts
+     *         in the permissive direction on this deployment's own cap.
+     *
+     *         Removing the mint also removes the surface that rounds 4 and
+     *         5 tried and failed to bound: the parcel's size cannot be
+     *         authenticated from an ADMIN-supplied predecessor address (a
+     *         compromised admin supplies the address too), so there is no
+     *         check that contains it — only not minting does.
+     *
+     *         Old-era value that physically comes home is therefore
+     *         handled by what it actually is: the RECYCLED half re-enters
+     *         bucket custody, bounded by a real balance assertion, and the
+     *         fresh half sits as ordinary custody that a replacement
+     *         compensation spends through the CHARGED path — correctly
+     *         charging a cap this deployment never charged.
+     */
+    function clearImportedOutstanding(
+        uint32 dstChainId,
+        uint256 recycledInflow
+    ) external nonReentrant whenNotPaused onlyCanonical
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.ImportedOutstanding memory im =
+            s.importedOutstanding[dstChainId];
+        if (im.oldRemitter == address(0)) {
+            revert ImportedMarkerMissing(dstChainId);
+        }
+        if (recycledInflow != 0) {
+            // localStranding FALSE (#1662 r2): stranded on the RETIRED
+            // deployment, never in this one's cumulative, so it must not
+            // net out of the local coverage allowance. The credit itself
+            // asserts the tokens are physically present.
+            _bookRecoveredInflow(s, im.oldRemitId, 0, recycledInflow, false);
+        }
+        delete s.importedOutstanding[dstChainId];
+        LibRewardRemitDispatch.clearCompensationGate(s, dstChainId);
+        emit ImportedOutstandingCleared(
+            dstChainId, im.oldRemitter, im.oldRemitId, recycledInflow
+        );
+    }
+
     // ── #1448 B2-d5: the released-remit stranded-SEED ceremony ──────
     // (#1660 r11 — moved off the mutating remittance facet for EIP-170
     // headroom; self-contained storage ceremony, Base-only like the

@@ -6442,6 +6442,132 @@ library LibVaipakam {
         //   consumed inside one atomic accept-then-complete transaction, so a
         //   non-zero value observed between transactions would be a bug.
         mapping(uint256 => uint256) saleProceedsEscrow;
+        // ── #1434 P2-w6 (design §5.3/§5.4) — the recovery ceremony ──
+        //
+        // BASE-ONLY — governance-evidenced TERMINAL LOSS recorded against
+        //   a released reservation's stranded value (§5.3: the residue
+        //   neither ceremony-recovered nor still in pool custody). One
+        //   term of the full-custody-resolution identity the R6 gate
+        //   clears on: recovered + terminalLoss == stranded (r.total).
+        mapping(uint256 => uint256) ceremonyTerminalLoss;
+        // BASE-ONLY (#1662 r1) — the ceremony-recovered cumulatives BY
+        //   PROVENANCE component, each bounded by the reservation's own
+        //   dispatched split (fresh ≤ r.fresh, recycled ≤ r.recycled): a
+        //   compensation reservation is fresh-only by construction, so a
+        //   ceremony crediting "recycled" custody for one would relabel
+        //   fresh-provenance value into the bucket's claimable custody —
+        //   the total bound alone cannot see that.
+        mapping(uint256 => uint256) ceremonyFreshRecovered;
+        mapping(uint256 => uint256) ceremonyRecycledRecovered;
+        // BASE-ONLY (#1662 r2) — the per-receipt TERMINAL-LOSS split by
+        //   provenance. Their sum is `ceremonyTerminalLoss` (kept as the
+        //   custody-resolution term); the split exists because the
+        //   RECYCLED half of a loss retires locally-stranded backing
+        //   exactly as a recovery does — the value is gone, so an
+        //   external checker must stop counting it as in-transit.
+        mapping(uint256 => uint256) ceremonyFreshLoss;
+        mapping(uint256 => uint256) ceremonyRecycledLoss;
+        // BASE-ONLY (#1662 r2) — the per-receipt UNCHARGED re-dispatch
+        //   drawn against THIS receipt's recovery credit. The position is
+        //   a pooled balance, but a contradicted receipt may only ever
+        //   have ITS OWN unspent credit clawed: sizing the claw on the
+        //   global balance confiscates other receipts' capacity, which
+        //   they can never re-credit (their per-receipt entitlement is
+        //   already exhausted). Every from-recovery dispatch therefore
+        //   NAMES its source receipt and is bounded by that receipt's
+        //   own unspent credit.
+        mapping(uint256 => uint256) recoveryRedispatchedForReceipt;
+        // BASE-ONLY (#1662 r3) — the per-receipt recovery credit VOIDED by
+        //   a contradicting consumed attestation. Distinct from the
+        //   redispatched counter (that value was legitimately spent; this
+        //   was confiscated), and load-bearing rather than cosmetic: the
+        //   physical claw is bounded by the POOLED balance, so a receipt
+        //   whose contradiction could only be partly absorbed would
+        //   otherwise still read as having unspent credit — and become
+        //   spendable again the moment ANOTHER receipt replenished the
+        //   pool, drawing against backing that was never its own. The
+        //   whole remaining credit is voided at the contradiction,
+        //   whatever the pool could absorb at that instant.
+        mapping(uint256 => uint256) recoveryClawedForReceipt;
+        // BASE-ONLY (#1662 r5, re-documented r7) — every imported tuple
+        //   ever seen, keyed `keccak256(abi.encode(dstChainId,
+        //   oldRemitter, oldRemitId))` — the CHAIN is part of the key.
+        //   Set at IMPORT and never cleared: permanent replay protection,
+        //   one parcel one import. (It is a boolean marker only; the
+        //   fresh-recovery attribution this once pointed at was removed
+        //   in r6 along with the mint that needed it.)
+        mapping(bytes32 => bool) importedTupleSeen;
+        // EVERY CHAIN (#1662 r7, delabelled r11) — the reservation nonce
+        //   at which PER-RECEIPT recovery attribution was armed. Receipts
+        //   at or below it predate attribution: their recovery credit was
+        //   recorded, but the spending and claws against it were only
+        //   ever tracked GLOBALLY, so their per-receipt counters read
+        //   zero and would report already-spent credit as unspent —
+        //   letting a legacy receipt draw against a later receipt's
+        //   backing. Legacy receipts are therefore not drawable at all;
+        //   their value remains reachable through the ordinary charged
+        //   path.
+        //
+        //   NOT Base-only, despite everything it governs being so. The
+        //   refresh arms UNCONDITIONALLY (r11), because a chain's
+        //   canonical status is mutable: a DEMOTED former canonical still
+        //   holds real history, and a canonical-gated arm would skip it
+        //   and could never catch up (the fresh-deploy auto-arm requires a
+        //   zero nonce). So a populated slot on a mirror is EXPECTED, not
+        //   a migration defect — it reads armed at nonce ZERO, which
+        //   constrains nothing, since every receipt id starts at 1 and
+        //   `remitReservationNonce` only advances on canonical-gated
+        //   surfaces. A fresh canonical deploy arms at zero for the same
+        //   reason: no receipts exist yet.
+        uint256 recoveryAttributionArmedAt;
+        bool recoveryAttributionArmed;
+        // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
+        //   outstanding-compensation record for a chain after a Base
+        //   deployment rotation: the RAW old-era tuple, not its hash —
+        //   the evidenced settlement books recovered custody against the
+        //   OLD-era remitId as provenance refId. While set, the chain's
+        //   gate is held at the IMPORTED sentinel — OLD-ERA evidence this
+        //   deployment never issued; new-era acks/returns never match it.
+        //   #1662 r7 — the ADMIN evidenced settlement
+        //   ({clearImportedOutstanding}) is the SOLE release. The r1 shape
+        //   also let a mirror re-present its consumed attestation against
+        //   this tuple, but the tuple is operator-supplied and no
+        //   reachable check authenticates it, so that branch was removed
+        //   and old-era acks now fail the era check outright.
+        mapping(uint32 => ImportedOutstanding) importedOutstanding;
+        // BASE-ONLY (#1662 r2) — Σ of the LOCALLY-stranded
+        //   RECYCLED-provenance value that is no longer in transit,
+        //   whether because a recovery settlement returned it to bucket
+        //   custody or because governance recorded it as terminally LOST.
+        //   Capped at `recycleReleasedRemitStrandedCumulative`.
+        //
+        //   Why it exists: the release moved `paidOutRecycled -> stranded`;
+        //   a ceremony moves that same value back into `recycleBucket`
+        //   WITHOUT retiring the stranded record (the composition bound
+        //   needs the un-netted destination term to stay balanced). So the
+        //   coverage allowance `bucket + stranded` would back the same
+        //   VPFI twice forever — permanent phantom headroom on a CRITICAL
+        //   invariant. External checkers net THIS out of the ALLOWANCE
+        //   while reading composition un-netted (mesh-watcher's
+        //   `bucket-coverage` rule).
+        //
+        //   Two exclusions matter. (1) TERMINAL LOSS counts here too: the
+        //   tokens are gone, so leaving them in the allowance lets a dead
+        //   50 back live reservations forever. (2) An IMPORTED old-era
+        //   settlement does NOT count: its stranding happened on the
+        //   RETIRED deployment and was never in this deployment's
+        //   cumulative, so netting it would under-recognise local backing
+        //   and page a false CRITICAL shortfall.
+        //
+        //   #1662 r3 — stored UNCAPPED, capped only where it is PUBLISHED.
+        //   On an in-place-upgraded Diamond the stranded cumulative stays
+        //   zero or partial until the one-time seed ceremony finishes, and
+        //   a resolution recorded in that window would have been saturated
+        //   away against a floor that had not been established yet — with
+        //   the seed's later assignment doing no recomputation, the
+        //   discarded portion would read as still-in-transit forever,
+        //   restoring the exact phantom allowance this counter removes.
+        uint256 recycleReleasedRemitResolvedCumulative;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -6645,6 +6771,22 @@ library LibVaipakam {
         // pending)`. 0 until reported.
         uint256 liabilityLender18;
         uint256 liabilityBorrower18;
+    }
+
+    /// @notice #1434 P2-w6 (§5.4 R6e, reshaped #1662 r1) — an imported
+    ///         OLD-ERA outstanding compensation for a chain: the retired
+    ///         deployment's receipt tuple, carried onto the rotated-in
+    ///         deployment so its R6 gate cannot silently forget an
+    ///         unresolved delivery.
+    struct ImportedOutstanding {
+        address oldRemitter;
+        uint256 oldRemitId;
+        // #1662 r6 — no parcel figures are carried: an imported
+        //   settlement mints no re-dispatch capacity, so there is nothing
+        //   for a fabricated figure to inflate. Rounds 4-5 carried them
+        //   (operator-supplied, then read from the predecessor) to bound
+        //   that mint; neither authenticates against a compromised ADMIN,
+        //   who supplies the predecessor address as well.
     }
 
     /// @notice #1222 M3 B2-d2 — one reward-budget remittance's delivered-

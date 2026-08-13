@@ -124,6 +124,15 @@ const EXPECTED_VIEWS: ReadonlyArray<{
       'releasedRemitStranded:uint256',
       'accountingSeeded:bool',
       'isCanonicalRewardChain:bool',
+      // #1662 P2-w6 r2 — the RESOLVED counterpart of the stranded
+      // figure: locally-stranded recycled value that is no longer in
+      // transit, whether recovered into the bucket or recorded as
+      // terminally lost. The stranded cumulative is monotone HISTORY and
+      // retires on neither, so the coverage ALLOWANCE must net this out
+      // or the same VPFI backs `bucket + stranded` twice forever — and
+      // terminally lost tokens keep backing live reservations after
+      // there is nothing left.
+      'releasedRemitResolved:uint256',
     ],
   },
   // #1568 C2 — the repatriation ledger views, on `RepatriationFacet`.

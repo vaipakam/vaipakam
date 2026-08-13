@@ -319,10 +319,13 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
         releasedRemitStranded: bigint;
         accountingSeeded: boolean;
         isCanonicalRewardChain: boolean;
+        releasedRemitResolved: bigint;
       }
     | undefined;
   try {
-    const c = await readView<readonly [bigint, bigint, boolean, boolean]>(
+    const c = await readView<
+      readonly [bigint, bigint, boolean, boolean, bigint]
+    >(
       target.client,
       target.diamond,
       'getRecycleCompositionPosition',
@@ -334,6 +337,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
       releasedRemitStranded: c[1],
       accountingSeeded: c[2],
       isCanonicalRewardChain: c[3],
+      releasedRemitResolved: c[4],
     };
   } catch (err) {
     composition = undefined;

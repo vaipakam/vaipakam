@@ -443,6 +443,60 @@ interface IVaipakamErrors {
     ///         shape, refused re-executably rather than misread.
     error RemitAckClassificationInvalid(uint8 classification);
 
+    // -- #1434 P2-w6 - the recovery ceremony + R6e rotation --
+
+    /// @notice Ceremony records apply to RELEASED reservations only.
+    error CeremonyReservationNotReleased(uint256 remitId);
+
+    /// @notice recovered + terminal loss would pass the reservation's
+    ///         dispatched total - over-recording refused.
+    error CeremonyExceedsStranded(uint256 remitId, uint256 sum, uint256 total);
+
+    /// @notice The Diamond does not hold the value the ceremony claims
+    ///         arrived - a books-only recovery must roll back here.
+    error CeremonyInflowNotBacked(uint256 remitId, uint256 bal, uint256 need);
+
+    /// @notice #1662 r1 — a ceremony component exceeds the reservation's
+    ///         own dispatched provenance split (fresh vs recycled).
+    error CeremonyProvenanceExceeded(
+        uint256 remitId,
+        uint256 component,
+        uint256 bound
+    );
+
+    /// @notice #1662 r2 — an uncharged re-dispatch exceeds the NAMED
+    ///         source receipt's own unspent recovery credit.
+    error RecoveryReceiptCreditInsufficient(
+        uint256 sourceRemitId,
+        uint256 requested,
+        uint256 unspent
+    );
+
+    /// @notice #1662 r2 — the imported tuple names the gate SENTINEL as
+    ///         its old-era remit id (the operator read the retiring
+    ///         deployment's visible gate instead of its imported record).
+    error ImportedTupleIsSentinel();
+
+    /// @notice #1662 r7 — this receipt predates per-receipt recovery
+    ///         attribution, so its unspent figure is not reconstructible
+    ///         and it may not fund an uncharged re-dispatch.
+    error RecoveryReceiptPredatesAttribution(uint256 sourceRemitId);
+
+    /// @notice #1662 r7 — attribution is a one-shot arming.
+    error RecoveryAttributionAlreadyArmed();
+
+    /// @notice #1662 r5 — this tuple was already imported once. One
+    ///         parcel, one import: the gate returns to zero at settlement,
+    ///         so a replay would mint a second attribution.
+    error ImportedTupleAlreadySeen(uint32 dstChainId, uint256 oldRemitId);
+
+    /// @notice Imported tuple names zero or THIS deployment (an own-era
+    ///         reservation needs no import).
+    error ImportedTupleInvalid(address oldRemitter);
+
+    /// @notice No imported marker stands for this chain.
+    error ImportedMarkerMissing(uint32 dstChainId);
+
     /// @notice A from-recovery dispatch exceeds the recovery position
     ///         balance (recovered − redispatched).
     error RecoveryPositionInsufficient(uint256 requested, uint256 available);

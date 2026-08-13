@@ -1424,6 +1424,26 @@ contract RewardAggregatorFacet is
      *                               therefore apply the allowance only while
      *                               the role still holds, rather than assuming
      *                               a mirror's total is structurally zero.
+     * @return releasedRemitResolved #1662 r2 — Σ of the LOCALLY-stranded
+     *                               RECYCLED-provenance value that is no
+     *                               longer in transit: returned to bucket
+     *                               custody by a recovery settlement, OR
+     *                               recorded as terminally LOST. The
+     *                               stranded figure above deliberately does
+     *                               NOT retire on either: it is monotone
+     *                               history, and the composition relation
+     *                               needs it un-netted as a destination
+     *                               term. So a checker's coverage ALLOWANCE
+     *                               — and only the allowance — must net
+     *                               this out (`stranded - resolved`), or
+     *                               the same VPFI backs reservations twice
+     *                               forever, and terminally lost tokens go
+     *                               on backing live reservations after
+     *                               there is nothing left. Bounded on-chain
+     *                               by the stranded figure. Excludes
+     *                               IMPORTED old-era settlements, whose
+     *                               stranding was never in this
+     *                               deployment's cumulative.
      */
     function getRecycleCompositionPosition()
         external
@@ -1432,7 +1452,8 @@ contract RewardAggregatorFacet is
             uint256 creditedRaw,
             uint256 releasedRemitStranded,
             bool accountingSeeded,
-            bool isCanonicalRewardChain
+            bool isCanonicalRewardChain,
+            uint256 releasedRemitResolved
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -1440,7 +1461,15 @@ contract RewardAggregatorFacet is
             s.recycleCreditedCumulative,
             s.recycleReleasedRemitStrandedCumulative,
             s.recycleAccountingSeeded || s.recycleCreditedCumulative != 0,
-            s.isCanonicalRewardChain
+            s.isCanonicalRewardChain,
+            // #1662 r3 — capped HERE, not at the write site: the stored
+            // cumulative accrues uncapped so resolutions recorded before
+            // the one-time stranded seed completes are not silently
+            // discarded against a floor that does not exist yet.
+            s.recycleReleasedRemitResolvedCumulative
+                > s.recycleReleasedRemitStrandedCumulative
+                ? s.recycleReleasedRemitStrandedCumulative
+                : s.recycleReleasedRemitResolvedCumulative
         );
     }
 
