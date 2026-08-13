@@ -1153,21 +1153,33 @@ contract MeshThreeChainE2ETest is Test {
      *         P1 — a correct finding, recorded rather than papered over).**
      *         It establishes the decay directly: two armed days, strictly
      *         growing outstanding, strictly falling availability, zero
-     *         retirement on both sides. It does NOT establish the stronger
-     *         counterfactual "the halt is the sole cause", because that
-     *         counterfactual is not constructible today: lifting the halt in
-     *         a mutation still retires nothing, since the armed-day mirror
-     *         claim path has never been reachable and #1434's own two
-     *         prerequisites (a delivered-fresh bound; zeroed-day repricing)
-     *         are exactly what would make it pay. An earlier version of this
-     *         test asserted the negative from a claim that paid only for the
-     *         UNARMED day — which would have passed whether or not the halt
-     *         had anything to do with it. The claim below is kept as a
-     *         live-path WITNESS (it pays, and consumes zero recycled), not as
-     *         proof of causation.
+     *         retirement on both sides. It does NOT itself establish the
+     *         stronger counterfactual "the halt is the sole cause". An
+     *         earlier version asserted that negative from a claim which paid
+     *         only for the UNARMED day — and would have passed whether or not
+     *         the halt had anything to do with it. The claim below is kept as
+     *         a live-path WITNESS (it pays, and consumes zero recycled), not
+     *         as proof of causation.
      *
-     *         The halt itself is pinned separately by
-     *         `test_D4_MirrorArmedDayPricingStaysHalted`.
+     *         **#1434 P1-b UPDATE — the counterfactual IS constructible now,
+     *         and is established elsewhere.** This note used to say it was
+     *         not, because the armed-day mirror claim path had never been
+     *         reachable and #1434's own prerequisites were exactly what would
+     *         make it pay. P1-b shipped them (zeroed-day repricing landed in
+     *         w3; the delivered-fresh bound and its deferral semantics in
+     *         P1-b), so causation is now demonstrable by holding the fixture
+     *         fixed and varying ONLY the delivered funding.
+     *         `ShareOfPoolClaimWalkTest.test_P1b_MirrorArmedDayDefersUntilDelivered`
+     *         does exactly that across three phases — unfunded pays zero with
+     *         the cursor unmoved, short-funded still pays zero, fully funded
+     *         pays the canonical control's amount — which is the causal claim
+     *         this test could not make on its own.
+     *
+     *         The blanket halt is GONE as of P1-b, so the pin it used to
+     *         carry (`test_D4_MirrorArmedDayPricingStaysHalted`) is retired
+     *         rather than renamed: its fixture delivered no funding, so it
+     *         would still have passed after a correct lift and could not tell
+     *         a halt from a deferral.
      */
     function test_E2E_ArmingWithoutMirrorSettlementDecaysBaseAvailability()
         public
