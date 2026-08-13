@@ -24,11 +24,11 @@ other cross-chain-monitoring concern, and inventing a replacement to preserve
 the bullet would have been the same defect in a new coat.
 
 **What this change deliberately does not do** is replace the old explanations
-with new ones. Two review rounds produced eight findings, every one of them in
-prose written to describe how this worker uses its endpoints — how many
-consumers there are, what happens when one is missing, whether a request still
-reaches upstream. Each answer was close but wrong, and the wrongness was
-invisible without tracing the code.
+with new ones. Review repeatedly caught the replacements being wrong in the
+same way: any sentence summarising how this worker uses its endpoints — how
+many consumers there are, what happens when one is missing, whether a request
+still reaches upstream — read as plausible and turned out not to survive
+tracing the actual code path.
 
 So the descriptions are now pointers, not summaries: the comments name the
 consumers and say to read them, and state only what was verified end to end.
