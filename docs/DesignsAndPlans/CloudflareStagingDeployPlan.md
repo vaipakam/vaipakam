@@ -32,9 +32,20 @@ The split follows the **read/index vs write/act** axis. Strict
 least-privilege:
 
 - `vaipakam-keeper` carries `KEEPER_PRIVATE_KEY` and is the
-  ONLY Worker that signs on-chain transactions. Three
-  signing tasks co-located there: HF liquidation, daily
-  oracle snapshot, future offer matching.
+  ONLY Worker that signs on-chain transactions. **Eight** modules
+  sign (`keeper`, `liquidityConfidence`, `matcher`, `autoLifecycle`,
+  `dailyOracleSnapshot`, `commitmentReport`, `remitAck`,
+  `rewardBudgetRemit`), covering at least thirteen state-changing
+  calls: `triggerLiquidation` / `triggerLiquidationSplit` /
+  `triggerPartialLiquidation`, `captureDailyPriceSnapshot`,
+  `matchOffers` / `matchIntent`, `extendLoanInPlace` /
+  `rollIntentLoan`, `setKeeperTier`, `submitCommitmentBatch`,
+  `sendCommitmentReport`, `sendRemitAck`, `remitRewardBudget`.
+  Derive this list from `writeContract` call sites rather than
+  trusting this sentence — it said "three signing tasks: HF
+  liquidation, daily oracle snapshot, **future** offer matching"
+  while the matcher was already live and nine other signed calls
+  existed.
 - `vaipakam-agent` holds no signing key. Notification tokens
   (`TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`) and aggregator API
   keys (`ZEROEX_API_KEY`, `ONEINCH_API_KEY`,
@@ -68,21 +79,50 @@ least-privilege:
   walks a streak counter persisted in D1 and, once the threshold is met,
   signs `setKeeperTier` (`:768-771`) — a privileged risk-parameter
   write. An attacker holding the indexer can poison that persisted
-  streak and induce the signing Worker to submit the transaction for
-  them. The indexer never signs anything, and funds still move.
+  streak, and the signing Worker submits the transaction.
+
+  **The bound on that attack is narrower than it first looks, and the
+  precision matters.** Promotion is not fabricable from D1 alone:
+  `runRelayForChain` computes a *fresh* `aggregatorConfirmedTier` each
+  tick, skips the asset when every quote fails (`:722`), and
+  `nextKeeperTier` promotes only when that live tier exceeds the current
+  on-chain tier. So a D1 attacker still needs at least one qualifying
+  live quote and can only accelerate to the next tier, not choose one.
+
+  What they bypass is the **durability** requirement — the
+  `LIQ_CONFIDENCE_MIN_CHECKS` consecutive ticks over
+  `LIQ_CONFIDENCE_MIN_WINDOW_DAYS` that exist precisely so a single
+  transient quote cannot move a risk parameter. That is still a real
+  loss (the relay's whole purpose is defeated), but it is
+  "promote on one lucky quote", not "promote from nothing".
 
   So the honest statement is: a compromised indexer cannot move funds
   **directly**, but it can (a) publish listings to a live marketplace
-  under the project's API key, and (b) reach fund-relevant on-chain
-  state indirectly via keeper inputs it can write. Whether the answer is
-  storage isolation, per-Worker databases, or the keeper validating D1
-  inputs it did not produce is a real architectural decision, tracked as
-  **#1722** — not settled here, and deliberately not papered over with a
-  cadence tweak.
+  under the project's API key, and (b) strip the time-based safety
+  margin from a keeper-signed risk-parameter change. Whether the answer
+  is storage isolation, per-Worker databases, or the keeper validating
+  D1 inputs it did not produce is a real architectural decision, tracked
+  as **#1722** — not settled here, and deliberately not papered over
+  with a cadence tweak.
 
-A buggy agent produces stale data; a buggy keeper loses funds.
-Different blast radius justifies different deploy cadence +
-reviewer sign-off.
+"A buggy agent produces stale data; a buggy keeper loses funds.
+Different blast radius justifies different deploy cadence + reviewer
+sign-off." **That conclusion is suspended pending #1722, not restated
+here.**
+
+It holds for the *bug* case it was written for — an agent defect
+really does stop at stale data. It does not hold for the *compromise*
+case, because the agent and indexer share the keeper's
+database-scoped D1 binding and can therefore corrupt state the keeper
+acts on. Deploy cadence and reviewer sign-off are decided against the
+compromise case, so the premise no longer carries the conclusion for
+either non-signing Worker — not just the indexer this PR set out to
+correct.
+
+Until #1722 resolves the isolation question, treat the current
+cadences as **inherited, not derived**: keep them, and do not cite
+this paragraph as the reason a change to a non-signing Worker needs
+less scrutiny.
 
 ## 3. Cloudflare provisioning state (as-deployed)
 

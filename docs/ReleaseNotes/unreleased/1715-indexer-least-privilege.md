@@ -17,17 +17,30 @@ database, and access to it is granted per-database, not per-table — so any of
 them can write anything in it, whatever its own code happens to do. The
 signing Worker reads a counter from that shared store and, once it crosses a
 threshold, submits a privileged risk-parameter transaction. An attacker who
-holds the indexer can therefore write the counter and have the signing Worker
-send the transaction for them. No funds move through the indexer, and funds
-still move.
+holds a non-signing Worker can write that counter and have the signing Worker
+send the transaction.
 
-So the corrected position is narrower than the old one: the indexer cannot move
-funds directly, but it can publish listings under the project's marketplace
-credentials, and it can reach fund-relevant on-chain state indirectly through
-inputs the signing Worker trusts. Whether the fix is separate databases,
+The bound on that is worth stating precisely, because overstating it would
+misdirect the fix. The transaction cannot be conjured from the shared store
+alone — the signing Worker independently re-checks live market data each cycle
+and does nothing when that check fails. What an attacker gains is the removal
+of the *waiting period*: the requirement that the favourable reading persist
+across many checks over several days, which exists so that one momentary
+reading cannot move a risk setting. So the attack is "act on a single lucky
+moment instead of a sustained trend", not "invent a result".
+
+The corrected position is therefore narrower than the old one: the indexer
+cannot move funds directly, but it can publish listings under the project's
+marketplace credentials, and it can strip the time-based safety margin from a
+change the signing Worker makes. Whether the fix is separate databases,
 per-table isolation, or having the signing Worker validate state it did not
 itself produce is an architectural decision, filed separately rather than
 resolved by adjusting a deploy cadence.
+
+The same reasoning applies to the other non-signing Worker, which holds the
+same database access — so the deploy-cadence rationale that section states is
+now marked as suspended for both, rather than corrected for one and left
+standing for the other.
 
 The specific phrase that was removed is the kind an auditor relies on to decide
 a component does not need looking at. That is what makes it worth correcting
