@@ -1,0 +1,17 @@
+{
+  "name": "@vaipakam/eslint-config",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./hooks": "./hooks.js"
+  },
+  "dependencies": {
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "typescript-eslint": "^8.58.0"
+  },
+  "peerDependencies": {
+    "eslint": "^9.39.4"
+  }
+}
