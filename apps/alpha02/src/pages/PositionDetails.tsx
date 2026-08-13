@@ -401,8 +401,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // between our own teardown and its refetch, where resetting would
   // unmount the confirmation it exists to preserve.
   const [saleHoldDrained, setSaleHoldDrained] = useState(false);
+  // Deliberately an effect (#1520): this is a HISTORY-dependent latch, not a
+  // derivable value. `saleHoldDrained` records that a `'none'` probe has been
+  // observed SINCE the latch was set, which no function of the current
+  // `saleHold.data` can reconstruct — 'clearable' means "our own teardown,
+  // keep the confirmation" before the drain and "a new lifecycle, unlatch it"
+  // after, and only the recorded history separates the two. Deriving it would
+  // collapse exactly the distinction Codex #1511 r6 and r10 established.
   useEffect(() => {
     if (!saleHoldCleared) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (saleHoldDrained) setSaleHoldDrained(false);
       return;
     }
@@ -434,8 +442,24 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // chain moved under them and discard their result instead of
   // re-latching the freshly reset state (Codex #1511 r11).
   const saleHoldChainRef = useRef(readChain.chainId);
+  // Deliberately an effect, and NOT the render-phase adjustment used for the
+  // sibling resets in `loanSalePending` (#1520). The difference is what the
+  // ref is for. There, the ref holds a probe budget nobody compares against
+  // state, so resetting it a commit late is unobservable. Here it is a
+  // COHERENCE GUARD: the async continuations below discard their result when
+  // `saleHoldChainRef.current !== startedOnChainId`.
+  //
+  // Splitting this — resetting the state during render while the ref catches
+  // up in an effect — would open a window in which a continuation sees a ref
+  // that still equals the chain it started on, passes the guard, and
+  // re-latches the state the render just reset. That is precisely the
+  // re-latch the guard exists to prevent, so the split would trade a
+  // one-frame stale display for a wrong-chain confirmation. The ref and the
+  // state it protects have to move together, which means both move after the
+  // commit.
   useEffect(() => {
     saleHoldChainRef.current = readChain.chainId;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSaleHoldCleared(false);
     setSaleHoldDrained(false);
     // The open REVIEW is chain-scoped too. Leaving the slot set would
@@ -524,8 +548,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   );
   // The listing ended off-page (a buyer accepted, or it was cancelled
   // elsewhere) — surface the outcome once via the page banner.
+  // Deliberately an effect (#1520): this CONSUMES a one-shot notice rather
+  // than rendering a value. The flag arrives asynchronously (a buyer accepted
+  // off-page, or the listing was cancelled elsewhere) and is cleared as it is
+  // read, so the pair has to run as a post-commit side effect — a render-phase
+  // adjustment that called `clearEndedNotice` would mutate the hook's store
+  // during render. Deriving the banner from `sale.endedNotice` instead is not
+  // equivalent either: `doneMessage` is shared with the other flows on this
+  // page, and a derived banner would re-appear on every refetch that re-set
+  // the flag rather than being shown once.
   useEffect(() => {
     if (sale.endedNotice) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDoneMessage(copy.loanSale.ended);
       sale.clearEndedNotice();
     }
