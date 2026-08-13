@@ -194,6 +194,23 @@ contract CcipMessenger is
     /// @notice No business peer configured for a (channel, chain) pair.
     error NoChannelPeer(bytes32 channelId, uint256 chainId);
 
+    /// @notice An inbound message's ORIGINATOR did not match the peer
+    ///         configured for its (channel, source chain).
+    /// @dev The message is authentic — it came from the allowlisted remote
+    ///      messenger — but was sent by a different contract than this
+    ///      chain expects to own that channel. Two ways to reach it: a
+    ///      mis-configured peer, or a message the previous peer had already
+    ///      sent arriving after a rotation. Both used to be reported to the
+    ///      handler as if the CONFIGURED peer had sent them; reverting means
+    ///      CCIP records a failed message, re-executable once the
+    ///      configuration is right, rather than delivering a wrong claim.
+    error UnauthorizedChannelPeer(
+        bytes32 channelId,
+        uint256 chainId,
+        address originator,
+        address expected
+    );
+
     /// @notice A configured channel peer was re-pointed at a different
     ///         address without first being cleared.
     /// @dev Silent re-pointing is the failure this guards. The inbound
@@ -278,7 +295,7 @@ contract CcipMessenger is
         Client.EVMTokenAmount[] memory ccipTokens = _pullTokens(tokens);
 
         Client.EVM2AnyMessage memory message = _buildMessage(
-            remoteMessenger, channelId, payload, ccipTokens, destGasLimit
+            remoteMessenger, channelId, msg.sender, payload, ccipTokens, destGasLimit
         );
 
         IRouterClient router = IRouterClient(getRouter());
@@ -328,7 +345,7 @@ contract CcipMessenger is
         }
 
         Client.EVM2AnyMessage memory message = _buildMessage(
-            remoteMessenger, channelId, payload, ccipTokens, destGasLimit
+            remoteMessenger, channelId, msg.sender, payload, ccipTokens, destGasLimit
         );
         nativeFee = IRouterClient(getRouter()).getFee(selector, message);
     }
@@ -361,39 +378,43 @@ contract CcipMessenger is
         }
 
         // 2. Unwrap the routing envelope written by the remote adapter.
-        (bytes32 channelId, bytes memory payload) =
-            abi.decode(message.data, (bytes32, bytes));
+        //    `originator` is the remote handler that actually called
+        //    `sendMessage` — stamped from `msg.sender` at send, never
+        //    caller-supplied.
+        (bytes32 channelId, address originator, bytes memory payload) =
+            abi.decode(message.data, (bytes32, address, bytes));
 
-        // 3. Resolve the local handler and the configured business peer.
+        // 3. Resolve the local handler, and VERIFY the sender.
         //
-        //    `sourceSender` is READ FROM CONFIG, not recovered from the
-        //    message — the envelope carries `(channelId, payload)` and never
-        //    the originating contract's address. Read on its own that looks
-        //    like an unverified claim, so state why it is not:
+        //    `channelPeerOf` is the operator's declaration of which remote
+        //    contract owns this channel. Until #1650 it was only asserted:
+        //    the receive path checked it was non-zero and handed it to the
+        //    handler as `sourceSender` without ever comparing it to who
+        //    actually sent. That was ALMOST sound — `sendMessage` derives
+        //    the channel from its caller and `registerChannel` keeps that
+        //    map one-to-one, so a message on this channel could only come
+        //    from the remote handler registered to it — but "almost" broke
+        //    across a peer rotation: the envelope carried no sender, so a
+        //    message the OLD handler had already sent, delivered or
+        //    manually retried after the peer was re-pointed, was reported
+        //    to the handler as coming from the NEW one. Clearing the peer
+        //    first only reverts messages arriving during the gap; it
+        //    cannot invalidate one that lands afterwards.
         //
-        //      - step 1 above allowlists the source MESSENGER, so only our
-        //        own adapter on `sourceChainId` can deliver here at all;
-        //      - on that adapter, `sendMessage` derives the channel from the
-        //        CALLER (`channelOf[msg.sender]`) rather than accepting it as
-        //        an argument, and `registerChannel` keeps that map one-to-one.
-        //
-        //    So a message stamped `channelId` from `sourceChainId` can only
-        //    have originated from that chain's registered handler for that
-        //    channel. `channelPeerOf` is the operator's declaration of WHICH
-        //    address that is; the binding that makes the declaration true
-        //    lives on the send side.
-        //
-        //    That leaves operator configuration as the sole way this can be
-        //    wrong, which is why `setChannelPeer` refuses to silently
-        //    re-point a live peer. Verifying the originator on the wire
-        //    instead would mean transmitting it and breaking the message
-        //    format, to re-prove a property the send-side binding already
-        //    guarantees.
+        //    So the originator now rides on the wire and is compared here.
+        //    A mismatch reverts rather than mis-attributing, which also
+        //    turns a mis-configured peer from a silent wrong answer into a
+        //    loud failure.
         address handler = handlerOf[channelId];
         if (handler == address(0)) revert UnknownChannel(channelId);
         address sourceSender = channelPeerOf[channelId][sourceChainId];
         if (sourceSender == address(0)) {
             revert NoChannelPeer(channelId, sourceChainId);
+        }
+        if (originator != sourceSender) {
+            revert UnauthorizedChannelPeer(
+                channelId, sourceChainId, originator, sourceSender
+            );
         }
 
         // 4. Forward any delivered tokens to the handler, translating the
@@ -472,16 +493,23 @@ contract CcipMessenger is
     /// @dev `GenericExtraArgsV2` is the CCIP v1.6 name for what v1.5 called
     ///      `EVMExtraArgsV2` — identical fields and tag, renamed because the
     ///      tag is now valid across multiple chain families.
+    /// @dev `originator` is the LOCAL handler that called {sendMessage}. It
+    ///      rides on the wire so the receiving side can VERIFY the sender
+    ///      rather than assert it from its own configuration (#1650).
+    ///      Without it, `channelPeerOf` is a declaration the receiver cannot
+    ///      check, and a peer rotation mis-attributes any message the old
+    ///      handler had already sent — see {_ccipReceive}.
     function _buildMessage(
         address receiver,
         bytes32 channelId,
+        address originator,
         bytes calldata payload,
         Client.EVMTokenAmount[] memory ccipTokens,
         uint256 destGasLimit
     ) internal pure returns (Client.EVM2AnyMessage memory) {
         return Client.EVM2AnyMessage({
             receiver: abi.encode(receiver),
-            data: abi.encode(channelId, payload),
+            data: abi.encode(channelId, originator, payload),
             tokenAmounts: ccipTokens,
             feeToken: address(0),
             extraArgs: Client._argsToBytes(
