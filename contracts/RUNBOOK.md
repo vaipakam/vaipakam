@@ -103,11 +103,21 @@ CCIP_GUARDIAN=             # incident-response guardian; default unset → skipp
 CCIP_RATE_CAPACITY=        # per-lane token-bucket capacity; default 50,000 VPFI
 CCIP_RATE_REFILL=          # per-lane refill rate, VPFI/s; default ~5.8 VPFI/s
 CCIP_DEST_GAS_LIMIT=       # CCIP message dest-gas limit; default 400,000
+# VPFI fee-discount price config — read by ConfigureVPFIBuy.s.sol.
+# BOTH are mandatory: the script reads them with vm.envUint /
+# vm.envAddress and reverts before broadcast if either is unset.
+VPFI_BUY_WEI_PER_VPFI=     # discount price anchor, wei per VPFI
+<CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET=
+                           # the chain's canonical WETH token address
+                           # (a token, NOT an oracle feed). The prefix
+                           # is the script's own per-chain prefix, e.g.
+                           # BASE_, BASE_SEPOLIA_, ARBITRUM_, BNB_.
+#
 # #687-A: VPFI_BUY_PAYMENT_TOKEN and VPFI_BUY_REFUND_TIMEOUT were
 # documented here. Both are dead — neither appears anywhere in
 # contracts/script/ or contracts/src/. Do not set them; nothing reads
-# them. (VPFI_BUY_WEI_PER_VPFI is a DIFFERENT var and IS live: it is
-# the fee-discount price anchor read by ConfigureVPFIBuy.s.sol.)
+# them. Note VPFI_BUY_WEI_PER_VPFI above is a DIFFERENT var and IS
+# live, despite the shared prefix.
 CHAIN_ID=                  # override block.chainid (rarely needed)
 ```
 
@@ -180,8 +190,11 @@ run `ConfigureCcip.s.sol` on each chain (idempotent — re-runs are safe).
 It wires four things in one pass:
 
 - **`CcipMessenger`**: chainId ↔ CCIP selector, the remote-messenger
-  allowlist, the `vpfi-buy` + `vpfi-reward` channels (local handler +
-  remote peers), the guardian.
+  allowlist, the `vpfi-reward` / `vpfi-buyback` / `vpfi-reward-budget` /
+  `vpfi-return` channels (local handler + remote peers), the guardian.
+  (#687-A: a `vpfi-buy` channel was listed here; `ConfigureCcip.s.sol`
+  records that it was removed "along with the cross-chain VPFI sale"
+  and `_registerChannels` no longer registers it.)
 - **VPFI CCIP `TokenPool`**: accepts the pending ownership handover
   from the deployer, registers `VpfiPoolRateGovernor` as
   `rateLimitAdmin`, adds a lane per remote chain
@@ -200,9 +213,8 @@ CCIP_LANE_CHAIN_IDS=11155111,421614,… \
     --rpc-url $<LOCAL>_RPC_URL --broadcast -vvv
 ```
 
-Channel topology is hub-and-spoke (the `vpfi-buy` and `vpfi-reward`
-channels always pair a mirror with canonical Base, never
-mirror ↔ mirror). The TokenPool **lane** topology, by contrast, is
+Channel topology is hub-and-spoke (the channels always pair a mirror
+with canonical Base, never mirror ↔ mirror). The TokenPool **lane** topology, by contrast, is
 whatever `CCIP_LANE_CHAIN_IDS` lists — pass Base-only on each mirror
 for a hub-spoke token graph, or the full chain set for a full mesh
 (direct mirror ↔ mirror VPFI transfers).
@@ -297,12 +309,25 @@ Per chain, via timelock-originated txs:
      `ConfigureVPFIBuy.s.sol` (contract name retained deliberately), which
      reads `VPFI_BUY_WEI_PER_VPFI` — that env var is live and is NOT part
      of the removed sale. -->
-- `VPFIDiscountFacet` fee-discount price config on **every** chain — see
+- `VPFIDiscountFacet` fee-discount price config — see
   `contracts/script/ConfigureVPFIBuy.s.sol`. Sets the VPFI price anchor
-  (`VPFI_BUY_WEI_PER_VPFI`, wei per VPFI) plus the per-chain ETH/USD
-  reference asset. Unlike the removed canonical-only sale, the discount
-  applies wherever a loan can be opened, so both values must be set on
-  every chain or `LibVPFIDiscount._feeAssetWeiToVpfi` returns `(false, 0)`.
+  (`VPFI_BUY_WEI_PER_VPFI`) plus the chain's ETH reference asset
+  (`<CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET`; both mandatory — see §1's env
+  block). Unlike the removed canonical-only sale, the discount applies
+  wherever a loan can be opened, so both must be set on every chain the
+  protocol runs on or `LibVPFIDiscount._feeAssetWeiToVpfi` returns
+  `(false, 0)` and no discount resolves.
+
+  **Chain support is narrower than this runbook's scope, and the mismatch
+  is a real gate problem.** `ConfigureVPFIBuy._prefix()` recognises
+  1 / 8453 / 42161 / 10 / 56 / 137 and the testnets — i.e. Polygon **PoS**,
+  which §Scope places OUT of Phase 1 — and does **not** recognise Polygon
+  **zkEVM** (1101 / 1442), which §Scope places IN it. On zkEVM the script
+  reverts `unsupported chainId`, so this step cannot be completed on a
+  declared Phase-1 target. Do not treat that as a tickable box: either the
+  script gains the zkEVM prefixes or the chain scope is corrected first.
+  Tracked as **#1721**; run this step on the chains the script supports
+  and resolve zkEVM before launch.
 
 Every `ConfigFacet` / `AdminFacet` setter emits an event. Capture all event
 receipts in `deployments/<network>/initial-config.json` for audit trail.

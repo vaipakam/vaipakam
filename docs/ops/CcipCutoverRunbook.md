@@ -211,7 +211,9 @@ must be true before any real value is routed**:
 
 1. **CCIP lanes enabled and each `CcipMessenger`'s registry configured.**
    `ConfigureCcip` sets chainId↔CCIP-selector, remote messengers, and the
-   `vpfi-buy` + `vpfi-reward` channel peers. Confirm with `--phase
+   `vpfi-reward` / `vpfi-buyback` / `vpfi-reward-budget` / `vpfi-return`
+   channel peers (#687-A: `vpfi-buy` was listed here and no longer
+   exists — see §"Canonical vs mirror"). Confirm with `--phase
    verify` and by spot-reading `chainSelectorOf` / `remoteMessengerOf` /
    `handlerOf` / `channelPeerOf` on each `CcipMessenger`.
 
@@ -472,8 +474,9 @@ flight, in this order when **lowering**:
 - [ ] `--phase verify` green on every chain (pool `rateLimitAdmin` =
       governor; ≥ 1 lane configured).
 - [ ] Each `CcipMessenger`: `chainSelectorOf` / `remoteMessengerOf` set
-      for every peer chain; `vpfi-buy` + `vpfi-reward` channels have a
-      local handler and a remote peer.
+      for every peer chain; the `vpfi-reward` / `vpfi-buyback` /
+      `vpfi-reward-budget` / `vpfi-return` channels have a local handler
+      and a remote peer.
 - [ ] Each VPFI TokenPool: lane present for every remote chain; inbound +
       outbound rate limits enabled at the design §10 values.
 - [ ] Mirror chains: `VPFIMirrorToken.tokenPool()` = the Burn/Mint pool.
