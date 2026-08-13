@@ -349,11 +349,11 @@ const BNB_TESTNET = buildChainConfig({
   blockExplorer: "https://testnet.bscscan.com",
   isCanonicalVPFI: false,
   testnet: true,
-  // Testnet currently runs the BuyAdapter in native-gas mode (per
-  // BNBTestnetDeploy.md §4 — symbolic rate, dev-loop convenience).
-  // Mainnet flips to WETH-pull. We populate both slugs so the
-  // BuyVPFI card shows the right asset for whichever mode the
-  // adapter actually reports at runtime.
+  // #1651 — this comment described the BuyAdapter running in native-gas
+  // mode here versus WETH-pull on mainnet, and said "we populate both
+  // slugs" so the BuyVPFI card could pick the right asset at runtime.
+  // Those are the two slug fields this change deletes, and #687-A removed
+  // the adapter and the card, so every clause of it was false.
   nativeGasSymbol: "tBNB",
 });
 

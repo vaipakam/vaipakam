@@ -60,10 +60,15 @@ export interface ChainConfig {
   /** Standalone ProfileFacet implementation address. Null falls back
    *  to the Diamond proxy. */
   profileFacetAddress: string | null;
-  /** Symbol of this chain's native gas token — used in the BuyVPFI
-   *  card and balance displays so the UI says "ETH" / "BNB" / "POL"
-   *  appropriately rather than always "ETH". On native-gas-mode buy
-   *  adapter chains this is also what the user actually pays in. */
+  /** Symbol of this chain's native gas token — "ETH" / "BNB" / "POL"
+   *  rather than always "ETH".
+   *
+   *  #1651: added by T-038 alongside the two CoinGecko slugs below, for
+   *  the BuyVPFI card that #687-A removed. It currently has NO reader —
+   *  it is declared and copied, never rendered. Kept anyway, unlike the
+   *  slugs, because `apps/alpha02` declares its own `nativeGasSymbol`
+   *  independently: whether this shape is still wanted is a question
+   *  about that app, not about the excision. Decide it there. */
   nativeGasSymbol: string;
   // #1651 — `nativeGasCoinGeckoSlug` and `bridgedWethCoinGeckoSlug` stood
   // here. Both were added by T-038 for one purpose: deep-linking the BuyVPFI
