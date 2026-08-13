@@ -1207,14 +1207,21 @@ export function Recover() {
 
   useEffect(() => {
     genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
-    // Deliberately an effect (#1520): this is an IDENTITY TEARDOWN whose state
-    // resets are coupled to a generation-counter ref that invalidates in-flight
-    // async (Codex #1547 r3). Same shape as PositionDetails' chain reset — the
-    // ref is a coherence guard, not an incidental value, so moving the resets to
-    // a render-phase adjustment while `genRef` caught up in an effect would let a
-    // continuation started under the OLD identity pass the generation check and
-    // write its result over the freshly cleared form. The guard and the state it
-    // protects have to advance together, which means after the commit.
+    // Still an effect, but the earlier justification for that was WRONG and is
+    // recorded here so it is not repeated. It argued that `genRef` is a
+    // coherence guard, so the resets could not move to a render-phase
+    // adjustment without letting a continuation started under the OLD identity
+    // pass the generation check and overwrite the freshly cleared form — and
+    // therefore that guard and guarded state had to advance together after the
+    // commit. Codex #1683 r1 dismantled that on the identical PositionDetails
+    // reset: a LAYOUT effect advances the ref synchronously during the commit,
+    // before any continuation can resume, and a continuation resolving before
+    // the commit restarts the render and reapplies the reset. The trade the
+    // argument assumed does not exist.
+    // What keeps this one here is narrower and unrelated to that: the same pass
+    // also REHYDRATES a persisted card from storage, so it is not a pure reset.
+    // Untangling teardown from rehydration on the signing form is #1687, not a
+    // tail-end edit to this PR.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     clearToFreshForm();
     oracleAutoRetriesRef.current = 0;
@@ -1357,32 +1364,54 @@ export function Recover() {
   // 'unreachable' is a passing read failure the user can retry out of
   // — collapsing them told a user on a flaky RPC that recovery would
   // never work here, with a page reload as the only way back.
-  const [oracleState, setOracleState] = useState<
-    'probing' | 'ready' | 'unset' | 'unreachable'
-  >('probing');
+  // Keyed to every input that can change the verdict, with 'probing' DERIVED
+  // from a key mismatch (#1520 / #1686). The old shape recorded a bare verdict
+  // and cleared it from an effect, so a render could read the PREVIOUS chain's
+  // answer for one commit — and this value is a gate, not a caption: signing is
+  // enabled on `oracleState === 'ready' && accountKind === 'eoa'`, so a stale
+  // 'ready' briefly enabled recovery on a chain whose oracle is unset.
+  //
+  // `oracleAttempt` is part of the key on purpose. Retrying bumps it, which
+  // re-runs the probe AND makes the derivation read 'probing' again — which is
+  // why the effect no longer writes that launch state itself. There is nothing
+  // left for it to write: the load state is a function of the key.
+  const [oracleProbe, setOracleProbe] = useState<{
+    key: string;
+    state: 'ready' | 'unset' | 'unreachable';
+  } | null>(null);
+  const oracleKey =
+    publicClient && walletChain
+      ? `${walletChain.chainId}|${walletChain.diamondAddress}|${publicClient.uid}|${oracleAttempt}`
+      : null;
+  const oracleState: 'probing' | 'ready' | 'unset' | 'unreachable' =
+    oracleKey !== null && oracleProbe?.key === oracleKey
+      ? oracleProbe.state
+      : 'probing';
+  // The submit path re-observes the oracle and refreshes this gate from that
+  // fresh read, so those writes must stamp the same key the probe does —
+  // otherwise they record a verdict the derivation immediately discards. Each
+  // call site keeps its existing `genRef` generation check: that guard says the
+  // identity has not moved since the submit began, which is what makes the key
+  // captured by this render still the live one at the moment of the write.
+  const recordOracle = (state: 'ready' | 'unset' | 'unreachable') => {
+    if (oracleKey !== null) setOracleProbe({ key: oracleKey, state });
+  };
   useEffect(() => {
-    if (!publicClient || !walletChain) {
-      // Deliberately an effect (#1520): this OWNS an async probe (with a retry
-      // timer and a cancellation flag), and 'probing' is its launch state. There is
-      // nothing to derive from — the value does not exist until the probe answers,
-      // so the load state has to be written by the thing that starts the load.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setOracleState('probing');
-      return;
-    }
+    if (!publicClient || !walletChain || oracleKey === null) return;
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    setOracleState('probing');
     (async () => {
       try {
         const ready = await probeSanctionsOracle(
           publicClient,
           walletChain.diamondAddress,
         );
-        if (!cancelled) setOracleState(ready ? 'ready' : 'unset');
+        if (!cancelled)
+          setOracleProbe({ key: oracleKey, state: ready ? 'ready' : 'unset' });
       } catch {
         if (cancelled) return;
-        setOracleState('unreachable'); // fail-safe: blocked, but retryable
+        // fail-safe: blocked, but retryable
+        setOracleProbe({ key: oracleKey, state: 'unreachable' });
         if (oracleAutoRetriesRef.current < ORACLE_PROBE_AUTO_RETRIES) {
           oracleAutoRetriesRef.current += 1;
           retryTimer = setTimeout(
@@ -1396,7 +1425,7 @@ export function Recover() {
       cancelled = true;
       if (retryTimer !== undefined) clearTimeout(retryTimer);
     };
-  }, [publicClient, walletChain, oracleAttempt]);
+  }, [publicClient, walletChain, oracleAttempt, oracleKey]);
 
   // Contract-account gate (Codex #1547 r6): `recoverStuckERC20`
   // authorises with ECDSA.recover and requires the recovered signer to
@@ -1779,13 +1808,13 @@ export function Recover() {
           // Refill the auto-retry budget: this is a NEW observation,
           // not a continuation of an earlier failing chain.
           oracleAutoRetriesRef.current = 0;
-          setOracleState('unreachable');
+          recordOracle('unreachable');
         }
         abortToReview(copy.recover.errOracleUnreachable);
         return;
       }
       if (!oracleLive) {
-        if (genRef.current === gen) setOracleState('unset');
+        if (genRef.current === gen) recordOracle('unset');
         abortToReview(copy.recover.errOracleUnset);
         return;
       }
@@ -1820,7 +1849,7 @@ export function Recover() {
           // Refill the auto-retry budget: a NEW observation, exactly as
           // the availability probe's own catch does.
           oracleAutoRetriesRef.current = 0;
-          setOracleState('unreachable');
+          recordOracle('unreachable');
         }
         abortToReview(captureTxError(err));
         return;
