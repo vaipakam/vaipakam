@@ -144,11 +144,17 @@ export function AppShell() {
   const { readChain, isConnected, onSupportedChain, walletChain } =
     useActiveChain();
   const { pathname, search } = useLocation();
-  // Phone More sheet (UX-011) — closes on any navigation.
+  // Phone More sheet (UX-011) — closes on any navigation. A render-phase
+  // adjustment, not an effect (#1520): with an effect the sheet at the bottom of
+  // this file is still mounted for the first frame of the new route, sitting over
+  // the page just navigated to, and the More tab keeps its active styling for
+  // that frame. Self-limiting — the seen-path key commits with the reset.
   const [moreOpen, setMoreOpen] = useState(false);
-  useEffect(() => {
+  const [seenPathname, setSeenPathname] = useState(pathname);
+  if (seenPathname !== pathname) {
+    setSeenPathname(pathname);
     setMoreOpen(false);
-  }, [pathname]);
+  }
 
   // UX-031 — move focus to the main content region on route change so
   // a keyboard / screen-reader user lands on the new page instead of
