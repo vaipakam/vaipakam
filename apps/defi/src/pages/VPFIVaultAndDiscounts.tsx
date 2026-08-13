@@ -647,7 +647,7 @@ export default function VPFIVaultAndDiscounts() {
               // Phase 8b.2 preview: encode the classic-path
               // `depositVPFIToVault(amount)` calldata. Even when the
               // submit handler picks the Permit2 single-sig variant,
-              // the underlying state change the preview shows (VPFI from
+              // the underlying state transition being previewed (VPFI from
               // wallet → vault) is identical, and the classic path
               // does not require a yet-to-be-signed permit / signature
               // pair to render meaningful preview output.

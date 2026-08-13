@@ -40,8 +40,9 @@ The split unblocks four follow-on changes that are awkward today:
 time and is left unedited on purpose** — it is the sizing evidence the
 split decision rested on. Two of the files it names have since been
 deleted: `buyWatchdog.ts` (#687-A) and `scanProxy.ts` (PR #41). Do not
-read this table as a description of any current Worker; the destination
-mapping below is the live view, and it has been corrected.
+read this table as a description of any current Worker — and note that
+the destination mapping in §4 is not one either; it records where each
+file was routed at split time, annotated with what changed since.
 
 | # | Concern | Files | LOC |
 | ---: | --- | --- | ---: |
@@ -98,30 +99,42 @@ Each Worker gets its own:
 | `loanRoutes.ts` | `apps/indexer` | `GET /loans/*` HTTP |
 | `offerRoutes.ts` | `apps/indexer` | `GET /offers/*` HTTP |
 | `periodicPreNotify.ts` | `apps/agent` | Push before interest payment |
-| `push.ts` | `apps/agent` | Push channel client |
-| `telegram.ts` | `apps/agent` | Telegram bot client |
-| `i18n.ts` | `apps/agent` | Notification copy bundle |
+| `buyWatchdog.ts` | `apps/agent` | Cross-chain VPFI reconciliation — **deleted since (#687-A)** |
+| `push.ts` | `apps/agent` | Push channel client — **also copied to `apps/keeper`** |
+| `telegram.ts` | `apps/agent` | Telegram bot client — **also copied to `apps/keeper`** |
+| `i18n.ts` | `apps/agent` | Notification copy bundle — **also copied to `apps/keeper`** |
 | `quoteProxy.ts` | `apps/agent` | `/quote/0x` + `/quote/1inch` |
-| `serverQuotes.ts` | **`apps/keeper`** | Server-side quote bundling for liquidation orchestration. This table said `apps/agent`; the file is at `apps/keeper/src/serverQuotes.ts` |
-
-Three rows were removed from this table because the modules no longer
-exist, and one destination was corrected. Recorded here because a
-destination table that lists a module is a claim about that Worker's
-surface, and an auditor reading it has no way to tell a stale row from a
-live one:
-
-- **`buyWatchdog.ts` → `apps/agent`** — removed with the #687-A VPFI
-  purchase excision. No cross-chain VPFI reconciliation pass exists.
-- **`scanProxy.ts` → `apps/agent`** — removed in PR #41. The pre-sign
-  transaction preview began as Blockaid, briefly became a GoPlus proxy,
-  and is now a frontend-only viem `eth_call`
-  (`apps/defi/src/hooks/useTxSimulation.ts`). `apps/agent` has no scan
-  proxy and no `/scan/blockaid` route.
-- **`serverQuotes.ts`** landed on `apps/keeper`, not `apps/agent` — it
-  serves liquidation orchestration, so it belongs with the signing
-  Worker. The row above is corrected rather than removed.
+| `scanProxy.ts` | `apps/agent` | Blockaid scan — **deleted since (PR #41)** |
+| `serverQuotes.ts` | `apps/agent` | Server-side quote bundling — **now at `apps/keeper/src/serverQuotes.ts`** |
 | `frames.ts` | `apps/agent` | Public Farcaster Frame |
 | `index.ts` | (split into 3 entry files, one per Worker) | Each Worker rebuilds its own `scheduled()` + `fetch()` from the subset that lives there |
+
+**This table is the Stage-3 migration classification — where each
+monolith file was routed at split time. It is NOT a current map of any
+Worker's surface, and must not be read as one.** Every original row is
+kept; what changed afterwards is annotated in place:
+
+- **`buyWatchdog.ts`** — deleted with the #687-A VPFI purchase excision.
+  No cross-chain VPFI reconciliation pass exists on any Worker.
+- **`scanProxy.ts`** — deleted in PR #41. The pre-sign transaction
+  preview began as Blockaid, briefly became a GoPlus proxy, and is now a
+  frontend-only viem `eth_call`
+  (`apps/defi/src/hooks/useTxSimulation.ts`). `apps/agent` has no scan
+  proxy and no `/scan/blockaid` route.
+- **`push.ts` / `telegram.ts` / `i18n.ts`** — landed on `apps/agent` as
+  planned, but copies also exist under `apps/keeper/src/`, and
+  `apps/keeper/src/watcher.ts` imports the keeper-local ones for its
+  HF-band alerts. **The signing Worker therefore has notification
+  capability this table's single destination column cannot express** —
+  which is precisely why the table must not be used to bound what a
+  Worker can do.
+- **`serverQuotes.ts`** — now lives at `apps/keeper/src/serverQuotes.ts`,
+  serving liquidation orchestration. Whether it was routed there during
+  the split or moved later is not recorded; the row states where it is
+  now rather than asserting the original classification was wrong.
+
+To audit what a Worker actually does, read its `src/index.ts` and
+`wrangler.jsonc` — not this table.
 
 ## 5. Shared infrastructure approach
 
