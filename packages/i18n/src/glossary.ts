@@ -71,7 +71,6 @@ export const GLOSSARY_KEEP_VERBATIM = [
   '0x',
   '1inch',
   'Permit2',
-  'Blockaid',
   'Push Protocol',
   'Telegram',
 

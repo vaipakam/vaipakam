@@ -88,10 +88,34 @@ Vaipakam does not currently perform traditional customer due diligence because t
 Vaipakam uses or is designed to use the following screening and security controls:
 
 - On-chain sanctions oracle: Chainalysis-style sanctions oracle integration where configured on the active chain.
-- Blockaid transaction simulation: frontend review modals may call a server-side Blockaid proxy before final transaction submission. API keys remain server-side.
+- ~~Blockaid transaction simulation: frontend review modals may call a server-side Blockaid proxy before final transaction submission. API keys remain server-side.~~ **[INACCURATE — see §3.4 correction note below]**
 - Oracle quorum checks: Chainlink primary pricing with Tellor/API3/DIA secondary checks where configured.
 - Sequencer uptime checks: L2 sequencer health checks before price-dependent liquidation/default paths.
 - Slippage and liquidity simulation: liquidation and asset-liquidity checks use oracle-anchored slippage controls.
+
+> **§3.4 CORRECTION (#1717) — the Blockaid answer above is inaccurate and
+> the original wording is struck through rather than rewritten, because
+> this file may be a record of what was actually submitted.**
+>
+> **What is true:** the pre-sign transaction preview is a **frontend-only
+> `eth_call` via viem** (`apps/defi/src/hooks/useTxSimulation.ts`). There
+> is no server-side Blockaid proxy, no Blockaid API key, and no
+> `/scan/blockaid` route on any Worker. The feature began as Blockaid,
+> briefly became a GoPlus proxy, and both were dropped in PR #41.
+>
+> The claim "API keys remain server-side" defends a design that no longer
+> exists — there is no key to keep anywhere. The hedge "may call" and
+> §3.4's "uses **or is designed to use**" soften it but do not rescue it:
+> there is no such proxy, deployed or planned.
+>
+> **Open — needs a human decision, deliberately not made here:** whether
+> this questionnaire was actually returned to 1inch. §1.1 carries a legal
+> entity name and the covering text states that service access may be
+> suspended depending on the results, so if it was submitted this is an
+> inaccurate representation to a counterparty in a contractual compliance
+> process, and a proactive correction is likely owed. If it is an
+> unsent draft, this note is sufficient. Do not assume the second
+> reading because it is the more comfortable one.
 - Monitoring alerts: operational alerting for invalid state transitions and runtime anomalies.
 - Cloudflare Worker protections: API keys are kept server-side; quote and worker routes can apply upstream rate limits.
 - Wallet and action gating: sanctions banners, blocked-state UI, Terms acceptance gate, and transaction review modals.
@@ -198,7 +222,7 @@ Credential controls include:
 
 - Separate secrets for local development, testnet, and production.
 - API keys stored in deployment/runtime secret systems such as Cloudflare Worker secrets, hosting-provider environment variables, or local-only operator environment files.
-- Browser clients do not receive sensitive API keys. External quote/scanning providers such as 1inch, 0x, Blockaid, or RPC providers are accessed through server-side proxy routes where needed.
+- Browser clients do not receive sensitive API keys. External quote/scanning providers such as 1inch, 0x, ~~Blockaid,~~ or RPC providers are accessed through server-side proxy routes where needed. **[#1717: `Blockaid` struck — no Blockaid proxy or key exists; see the §3.4 correction note. The claim remains accurate for 1inch, 0x and RPC providers, which are genuinely proxied server-side.]**
 - Smart-contract admin and operational keys are separated by role.
 - Keeper/liquidation bots use hot keys with no administrative smart-contract authority.
 - Emergency/admin signer access is limited to authorized operators.

@@ -471,8 +471,6 @@
     "errorSuffix": ". The on-chain tx is unaffected — proceed with caution.",
     "expectedStateChanges": "Expected state changes",
     "plusMore": "… plus {{count}} more",
-    "titleMalicious": "Blockaid flagged this transaction as malicious. Do NOT proceed.",
-    "titleWarning": "Blockaid surfaced warnings — review state changes before signing.",
     "titlePreview": "Transaction preview"
   },
   "consent": {

@@ -1395,8 +1395,6 @@
     "errorSuffix": "。オンチェーントランザクションには影響しません — 注意して進めてください。",
     "expectedStateChanges": "予想される状態変化",
     "plusMore": "… さらに{{count}}件",
-    "titleMalicious": "Blockaidはこのトランザクションを悪意あるものとしてフラグしました。続行しないでください。",
-    "titleWarning": "Blockaidが警告を表示しました — 署名前に状態変化を確認してください。",
     "titlePreview": "トランザクションプレビュー"
   },
   "consent": {
