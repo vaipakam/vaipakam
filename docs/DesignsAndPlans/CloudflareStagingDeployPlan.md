@@ -96,18 +96,36 @@ NO secrets — the frontend bundle is static.
 - **D1:** `vaipakam-archive`, `migrations_dir: "migrations"`.
 - **Cron:** `* * * * *` — chain-event scan + cancelled-offer
   retention prune.
-- **Secrets** (all `RPC_*`):
+- **Secrets** — all Secrets Store entries (§4.5(a)); this Worker has no
+  per-Worker `secret_text`. Fifteen bindings, not the three this section
+  used to list:
   ```
-  RPC_BASE_SEPOLIA, RPC_OP_SEPOLIA, RPC_ARB_SEPOLIA
+  RPC_BASE, RPC_ETH, RPC_ARB, RPC_OP, RPC_BNB,
+  RPC_SEPOLIA, RPC_BASE_SEPOLIA, RPC_ARB_SEPOLIA,
+  RPC_OP_SEPOLIA, RPC_BNB_TESTNET, RPC_POLYGON_AMOY
+  OPENSEA_API_KEY
+  ALCHEMY_WEBHOOK_SIGNING_KEY_84532
+  ALCHEMY_WEBHOOK_SIGNING_KEY_421614
+  ALCHEMY_WEBHOOK_SIGNING_KEY_97
   ```
-  Add others as new chains come online.
+  The `ALCHEMY_WEBHOOK_SIGNING_KEY_*` set is **not optional at deploy
+  time**: `apps/indexer/wrangler.jsonc` notes that a binding can only
+  exist once its secret does, because wrangler validates at deploy. A
+  missing one fails `wrangler deploy` outright — it does not degrade.
+  Add others as new chains come online, and keep this list matched to
+  the `secrets_store_secrets` block rather than to the chain set.
 
 ### 4.3 `vaipakam-agent`
 
 - **Custom domain:** `agent.vaipakam.com` ✓
-- **D1:** `vaipakam-archive` (read-mostly: link_codes,
-  thresholds, diag_errors, cross-Worker reads of indexer's
-  loan tables).
+- **D1:** `vaipakam-archive`. Eight tables, derived from the Worker's
+  own SQL call sites (#1713): `diag_errors`, `diag_legal_holds`,
+  `diag_legal_hold_audit`, `loans`, `notify_state`, `support_tickets`,
+  `telegram_links`, `user_thresholds`. **Not read-mostly** — the agent
+  writes every table it touches, including the indexer-owned `loans`.
+  (This entry previously read "read-mostly: link_codes, thresholds …";
+  neither of those table names exists — they are `telegram_links` and
+  `user_thresholds`.)
 - **Cron:** `* * * * *` — periodic-interest pre-notify,
   diag retention, support-ticket retention
   (`pruneOldSupportTickets`, which ENFORCES the 12-month
@@ -117,11 +135,15 @@ NO secrets — the frontend bundle is static.
   with the VPFI buy surface.)
 - **Secrets:**
   ```
-  RPC_*           — same chains as indexer
+  RPC_*           — twelve chains. NOT the same set as the indexer:
+                    the agent additionally binds RPC_POLYGON, which the
+                    indexer does not. (Both bind RPC_POLYGON_AMOY.)
   TG_BOT_TOKEN    — STAGING bot token (NOT prod)
   PUSH_CHANNEL_PK — STAGING channel signer (NOT prod)
   ZEROEX_API_KEY  — for /quote/0x proxy
   ONEINCH_API_KEY — for /quote/1inch proxy
+  OPENSEA_API_KEY — listing/offer reads
+  DIAG_WALLET_HMAC_KEY — diagnostics wallet pseudonymisation
   # (#1651: BLOCKAID_API_KEY was listed here for a /scan/blockaid proxy.
   #  ET-001 dropped that proxy — index.ts states there is no transaction-scan
   #  proxy at all; the pre-sign preview is a frontend eth_call. Nothing to set.)
@@ -138,8 +160,16 @@ NO secrets — the frontend bundle is static.
 ### 4.4 `vaipakam-keeper`
 
 - No public domain (cron-only, no fetch handler).
-- **D1:** `vaipakam-archive` (reads notify_state + thresholds,
-  cross-Worker reads of indexer's loan + offer tables).
+- **D1:** `vaipakam-archive`. Writes thirteen tables of its own
+  (`hf_band_state`, `notify_state`, `pre_grace_notify_state`,
+  `notifications`, `telegram_links`, `user_thresholds`,
+  `liquidity_confidence`, `oracle_snapshot_state`, and the
+  `keeper_commitment_*` / `keeper_remit_ack*` families), plus genuine
+  cross-Worker **read-only** access to the indexer's `loans`, `offers`
+  and `indexer_cursor` (#1713). Unlike the agent, this Worker does have
+  a read-only surface. (Previously written as "reads notify_state +
+  thresholds"; `thresholds` is not a table — it is `user_thresholds` —
+  and `notify_state` is written here, not merely read.)
 - **Cron:** `* * * * *` — HF watcher loop. The daily oracle
   snapshot pass internally pre-checks the 00:00–00:09 UTC
   window + a D1 last-day guard, so most ticks exit
@@ -265,7 +295,7 @@ Stage 3 PR5.
 | 1 | Operator | Provision Cloudflare resources per §3 (DONE 2026-05-07) |
 | 2 | Author | Patch wrangler.jsonc with `vaipakam-archive` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) |
 | 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote` (one-time schema apply) |
-| 4 | Operator | Provision secrets per §4.3 + §4.4 — **two different mechanisms, see §4.5** (NOT BLOCKAID; that proxy does not exist, #1651) |
+| 4 | Operator | Provision **every declared binding on all three Workers** — §4.2 (indexer) + §4.3 (agent) + §4.4 (keeper), by the two mechanisms in §4.5. Do not skip the indexer: wrangler validates Secrets Store bindings at deploy, so a missing `ALCHEMY_WEBHOOK_SIGNING_KEY_*` fails step 5 rather than degrading. (NOT BLOCKAID; that proxy does not exist, #1651) |
 | 5 | Operator | `wrangler deploy` for each of `apps/{keeper,indexer,agent}`. This activates crons + binds `indexer.vaipakam.com`. |
 | 6 | Operator | Update `apps/defi/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; `pnpm build && wrangler deploy` `vaipakam-defi`. |
 | 7 | Both | Smoke-test `defi.vaipakam.com` end-to-end against `agent.vaipakam.com` + `indexer.vaipakam.com`, with `KEEPER_ENABLED=false` (no autonomous liquidation). NOT fully alert-only: `runDailyOracleSnapshot` signs on `KEEPER_PRIVATE_KEY` alone and will broadcast on staging regardless — if the window must be write-free, remove the keeper's trigger in the Cloudflare dashboard (*Settings → Trigger Events*) — editing `wrangler.jsonc` after step 5 has already deployed the active schedule changes nothing live. Allow for propagation before treating it as stopped; see `apps/keeper/README.md` (#1466). **If you take that path, restore the trigger at the end of this step** — step 8 only flips `KEEPER_ENABLED`, so a Worker left with no schedule would make step 9's observation window look quiet while every pass is in fact disabled. |
