@@ -6,12 +6,12 @@
 
 ## What is this
 
-The **proactive-notifications + public-Frame + operator-services Worker**. Stage 3 PR4 of the Worker split (see [Stage3WorkerSplitPlan.md](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md)). Five responsibilities:
+The **proactive-notifications + public-Frame + operator-services Worker**. Stage 3 PR4 of the Worker split (see [Stage3WorkerSplitPlan.md](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md)). Four responsibilities:
 
 - **Proactive notifications** — periodic interest pre-notify; Push + Telegram dispatchers (`PUSH_CHANNEL_PK` + `TG_BOT_TOKEN`).
-- **Cross-chain monitoring** — buy-watchdog reconciliation across the CCIP buy flow.
+<!-- #1651: a "Cross-chain monitoring — buy-watchdog reconciliation across the CCIP buy flow" bullet stood here. #687-A removed that surface and its watchdog, and this Worker has no other cross-chain-monitoring concern, so the responsibility is gone rather than renamed. -->
 - **Public Farcaster Frame** — `/frames/active-loans` GET + POST + image rendering.
-- **Operator services** — server-side aggregator quote proxies at `/quote/{0x,1inch}` + Blockaid scan proxy at `/scan/blockaid`.
+- **Operator services** — server-side aggregator quote proxies at `/quote/{0x,1inch}`. (#1651: a Blockaid scan proxy at `/scan/blockaid` was listed here; ET-001 dropped it — `index.ts` documents that no transaction-scan proxy exists and the pre-sign preview is a frontend `eth_call`.)
 - **Frontend-facing endpoints** — Telegram-bot webhook `/tg/webhook`; diagnostics record capture `/diag/record`; settings endpoints `/thresholds PUT` + `/link/telegram POST`; support-ticket capture `/support/ticket POST` (#1040 phase 1 — D1 row + ops-Telegram notify via `TG_OPS_BOT_TOKEN`/`TG_OPS_CHAT_ID`, plain `wrangler secret put` secrets; while unset the notify skips and tickets still land in D1).
 
 **Crucially: this Worker holds NO signing key.** The Stage 3 architectural-rebalance moved `KEEPER_PRIVATE_KEY` (and the daily oracle snapshot signer it powered) to `apps/keeper`. A compromised agent produces stale data but **can't move funds** — that's the staging plan §2 least-privilege contract.
@@ -36,7 +36,7 @@ pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
 
 - Stage 3 Worker split: [`docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md).
 - Staging plan §2 least-privilege contract — the load-bearing reason this Worker holds no signing key.
-- ADR-0004 (CCIP migration) — context for the cross-chain buy-watchdog responsibility.
+- ADR-0004 (CCIP migration) — cross-chain context. (#1651: previously cited for the buy-watchdog responsibility, removed with #687-A.)
 
 ## Configuration
 
@@ -70,5 +70,5 @@ Agent reads-only: (none — every table the agent reads, it also writes.)
 
 - `apps/keeper` — sibling signing Worker; this one defers all on-chain submissions to it.
 - `apps/indexer` — sibling read-API Worker; this Worker reads from there for stats it doesn't compute locally.
-- `apps/defi` — primary consumer of `/quote/*`, `/scan/blockaid`, `/diag/record`, `/thresholds`, `/link/telegram`.
+- `apps/defi` — primary consumer of `/quote/*`, `/diag/record`, `/thresholds`, `/link/telegram`.
 - `packages/contracts` — ABI / deployment source.

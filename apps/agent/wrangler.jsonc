@@ -1,7 +1,9 @@
 {
-  // Vaipakam agent Worker — proactive notifications + cross-chain
-  // monitoring + operator services + public Frames + Telegram bot
-  // + diagnostics record + frontend-facing settings.
+  // Vaipakam agent Worker — proactive notifications + operator
+  // services + public Frames + Telegram bot + diagnostics record
+  // + frontend-facing settings.
+  // (#1651: "cross-chain monitoring" was listed here for the
+  // buy-watchdog #687-A removed.)
   //
   // Stage 3 PR4 of the Worker split — see
   // docs/DesignsAndPlans/Stage3WorkerSplitPlan.md for the full
@@ -34,8 +36,14 @@
   //   - `diag_errors`       (POST /diag/record + cron retention)
   //   - `loan_index_*`      (cross-Worker read of indexer's loan
   //                          tables for periodic-pre-notify scans)
-  //   - `vpfi_buy_*`        (buy-watchdog reconciliation reads)
   //   - `oracle_snapshot_*` (daily snapshot dedupe)
+  //
+  // #1651: a `vpfi_buy_*` entry stood in that list, described as
+  // buy-watchdog reconciliation reads. No such tables exist — no
+  // migration under apps/indexer/migrations defines them, and no agent
+  // code reads them — and #687-A removed the watchdog. Listing them
+  // overstated this Worker's data access to anyone auditing the binding.
+  //
   // Cross-Worker D1 sharing is the deliberate coupling that lets
   // the three Workers stay independent without a message-bus
   // layer (Stage 3 plan §5).
@@ -233,11 +241,22 @@
   //
   // Agent carries the broadest secret surface of the three Workers:
   //   - RPC_*                — per-chain RPC URLs (carry API keys).
-  //                            Buy-watchdog needs every chain with a
-  //                            VPFIBuyAdapter (mainnet + testnet);
-  //                            includes RPC_POLYGON / RPC_POLYGON_AMOY
-  //                            which are agent-only. `RPC_ZKEVM` is
-  //                            omitted (Polygon zkEVM out of scope).
+  //                            Consumers: every caller of
+  //                            `getChainConfigs` (env.ts) plus
+  //                            `intentFusionPost.rpcForChain`. Read
+  //                            those for the per-consumer consequences
+  //                            of a missing URL — they differ, and no
+  //                            summary is kept here (#1651).
+  //                            `RPC_ZKEVM` is omitted (Polygon zkEVM
+  //                            out of scope).
+  //                            #1651: previously justified by a
+  //                            buy-watchdog that #687-A removed.
+  //                            RPC_POLYGON / RPC_POLYGON_AMOY are
+  //                            currently UNREACHABLE — no Polygon
+  //                            deployment record exists — so they are
+  //                            provisioned ahead of need. Only
+  //                            RPC_POLYGON is agent-only; apps/indexer
+  //                            binds RPC_POLYGON_AMOY as well.
   //   - TG_BOT_TOKEN         — Telegram bot (handshake + notifications).
   //   - PUSH_CHANNEL_PK      — Push channel signer.
   //   - ZEROEX_API_KEY,

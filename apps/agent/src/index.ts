@@ -1,7 +1,8 @@
 /**
- * apps/agent Worker entry — proactive notifications + cross-chain
- * monitoring + operator services + public Frames + Telegram bot +
- * diagnostics record.
+ * apps/agent Worker entry — proactive notifications + operator
+ * services + public Frames + Telegram bot + diagnostics record.
+ * (#1651: "cross-chain monitoring" was listed here for the
+ * buy-watchdog #687-A removed.)
  *
  * Stage 3 PR4 of the Worker split (see
  * `docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`). The agent is
