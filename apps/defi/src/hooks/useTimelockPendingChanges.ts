@@ -256,11 +256,9 @@ export function useTimelockPendingChanges(): Hook {
 function buildSelectorMap(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const knob of ADMIN_KNOBS) {
-    // Skip VPFIBuyReceiver knobs — those target the standalone
-    // contract, not the diamond, so the timelock won't see them
-    // unless they're also routed through the timelock (which
-    // they aren't on the standalone receiver path).
-    if (knob.setter.facet === 'VPFIBuyReceiver') continue;
+    // #1651 — a `VPFIBuyReceiver` skip stood here. Every knob now targets
+    // the diamond: #687-A removed the standalone receiver, and no entry in
+    // `ADMIN_KNOBS` has named it since, so the guard could never fire.
     const selector = computeSelector(knob.setter.fn, DIAMOND_ABI_VIEM);
     if (selector) out[selector] = knob.id;
   }
