@@ -72,8 +72,11 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 
 **Early-exit / settlement facets — all LIVE, none a placeholder** (#1657). An
 earlier version of this table called these "Placeholder facets (Phase 2)". They
-are not, and had not been for some time: each is cut into the production
-Diamond by `DiamondFacetNames.cutFacetNames()`, each moves funds, and several
+are not, and had not been for some time: each is cut into the Diamond by
+`DeployDiamond.s.sol` (the test-side `DiamondFacetNames.cutFacetNames()`
+mirrors that `cuts[]` array and is what the deploy-sanity suite checks against
+— update the script when adding a facet, not only the mirror), each moves
+funds, and several
 carry invariants **this document states elsewhere**: the VPFI-LIF
 settle/forfeit rules below name Preclose and Refinance as proper-settlement
 terminal paths, and the retail-deploy section lists both among the Tier-1
@@ -86,10 +89,10 @@ true on a settlement path, and it cost real time in #1503.
 | Facet                      | Role                                                                        |
 | -------------------------- | --------------------------------------------------------------------------- |
 | **PrecloseFacet**          | Borrower early close-out: `precloseDirect`, obligation handover to a replacement borrower (`transferObligationViaOffer`), and the offset route (`offsetWithNewOffer` → `completeOffset`) |
-| **RefinanceFacet**         | Replace a loan's terms in place — `refinanceLoan`, `refinanceLoanFromAccept` |
+| **RefinanceFacet**         | Move a borrower onto better terms — `refinanceLoan`, `refinanceLoanFromAccept`. NOT an in-place edit: the replacement loan is a **separate record** (`s.offerIdToLoanId[borrowerOfferId]` → a new `loanId`) created when the new lender accepted the offer, and the old loan is terminalized **Active → Repaid**. Two loan ids, two position NFTs — load-bearing for indexer state and the terminal-path invariants |
 | **EarlyWithdrawalFacet**   | Lender exit: instant sale into a standing buy offer (`sellLoanViaBuyOffer`) and the listed-sale route (`createLoanSaleOffer` → `completeLoanSale`) |
 | **PartialWithdrawalFacet** | Release surplus collateral while a loan is open — `calculateMaxWithdrawable`, `partialWithdrawCollateral` |
-| **TreasuryFacet**          | Fee custody and treasury operations (56 functions — claims, buyback intents, remittance absorption, asset conversion) |
+| **TreasuryFacet**          | Treasury operations (56 functions — claims, buyback intents, remittance absorption, asset conversion). Custody is **deployment-mode dependent**: `LibFacet.recordTreasuryAccrual` only credits `treasuryBalances` when `s.treasury == address(this)`, so on the documented mainnet topology (`TREASURY_ADDRESS` = an external multisig) fees leave immediately and the claim / conversion paths have nothing at the Diamond to act on. Those paths are for Diamond-as-treasury deployments |
 
 Two of them do carry a genuine *future-scope* note in their own headers, which
 is what the retired line probably grew out of: TreasuryFacet's "expand for

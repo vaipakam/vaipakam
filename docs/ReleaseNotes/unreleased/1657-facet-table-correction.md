@@ -10,8 +10,16 @@ None of them is a placeholder, and none had been for some time. Every one is
 cut into the production Diamond, every one moves funds, and each has a real
 surface: borrower close-out including handing the obligation to a replacement
 borrower, lender exit by instant sale or by listing, releasing surplus
-collateral on an open loan, and the treasury's fee custody and buyback
+collateral on an open loan, and the treasury's claim, conversion and buyback
 operations.
+
+Two details in the new descriptions were corrected in review, and both are the
+kind of thing this change exists to prevent. Refinancing does **not** edit a
+loan's terms in place: it closes the original and replaces it with a separate
+loan record, which matters to anything tracking loan identity. And the
+treasury's custody role depends on how the protocol is deployed — on the
+documented mainnet setup, fees leave for an external multisig immediately, so
+the claim and conversion paths have nothing held at the protocol to act on.
 
 The document also contradicted itself twice over, which is what makes this
 worth more than a typo fix: its own settlement rules name two of these facets
