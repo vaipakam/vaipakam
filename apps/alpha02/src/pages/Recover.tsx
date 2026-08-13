@@ -1214,21 +1214,31 @@ export function Recover() {
 
   useEffect(() => {
     genRef.current += 1; // invalidate any in-flight signAndSubmit (Codex #1547 r3)
-    // Still an effect, but the earlier justification for that was WRONG and is
-    // recorded here so it is not repeated. It argued that `genRef` is a
-    // coherence guard, so the resets could not move to a render-phase
-    // adjustment without letting a continuation started under the OLD identity
-    // pass the generation check and overwrite the freshly cleared form — and
-    // therefore that guard and guarded state had to advance together after the
-    // commit. Codex #1683 r1 dismantled that on the identical PositionDetails
-    // reset: a LAYOUT effect advances the ref synchronously during the commit,
-    // before any continuation can resume, and a continuation resolving before
-    // the commit restarts the render and reapplies the reset. The trade the
-    // argument assumed does not exist.
-    // What keeps this one here is narrower and unrelated to that: the same pass
-    // also REHYDRATES a persisted card from storage, so it is not a pure reset.
-    // Untangling teardown from rehydration on the signing form is #1687, not a
-    // tail-end edit to this PR.
+    // Deliberately an effect, on the THIRD reason attempted — the first two were
+    // wrong and are recorded so they are not tried again.
+    //
+    // (1) The original claim was that `genRef` is a coherence guard, so guard and
+    // guarded state had to advance together after the commit. Codex #1683 r1
+    // dismantled that on the identical PositionDetails reset: a LAYOUT effect
+    // advances the ref during the commit, before any continuation can resume.
+    // (2) #1687 then claimed the blocker was entanglement with the REHYDRATION in
+    // this same pass. Also wrong — both halves can share one render-phase pass.
+    //
+    // The actual blocker is `setStep`, which every line here goes through. It is
+    // not a plain setter: it writes `stepRef.current` SYNCHRONOUSLY, and that is
+    // load-bearing, not incidental. A passive mirror was a render behind, so when
+    // two cross-tab `storage` events arrived in one task React batched them with
+    // no render between and the removal handler read a mirror still showing
+    // `form`, leaving this tab stuck on a card it had just adopted.
+    //
+    // A render may be discarded or restarted. Writing that ref from render would
+    // therefore publish a step this tab never committed, and the cross-tab handler
+    // reads exactly that ref to decide whether an event concerns it. `react-hooks/
+    // refs` reports this directly if the call is moved into render, which is what
+    // proved the #1687 premise wrong rather than any argument of mine.
+    //
+    // So this stays an effect until `setStep`'s synchronous mirror is itself
+    // redesigned — a change to the cross-tab protocol, not a lint cleanup.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     clearToFreshForm();
     oracleAutoRetriesRef.current = 0;
