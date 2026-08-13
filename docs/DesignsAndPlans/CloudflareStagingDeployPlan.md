@@ -25,7 +25,7 @@ unaffected.
 | **vaipakam-labs** | `labs.vaipakam.com` (today); `vaipakam.com` + `www.vaipakam.com` after cutover | Marketing site, docs, "Launch Vaipakam" button → `defi.vaipakam.com/`. Static, wallet-free. | No |
 | **vaipakam-defi** | `defi.vaipakam.com` | The connected app — wallet connect, Dashboard at root, Offer Book, loan flows, Buy-VPFI, Claim Center, plus three wallet-free public-read tools (`/analytics`, `/nft-verifier`, `/protocol-console`). | No |
 | **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*`. Open-CORS reads. | No |
-| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), cross-chain monitoring (buy-watchdog), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`, `/scan/blockaid`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). | **NO** (intentional — staging plan §2 contract) |
+| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`, `/scan/blockaid`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). | **NO** (intentional — staging plan §2 contract) |
 | **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher loop + autonomous liquidation, daily oracle snapshot signer, future offer matcher. | **YES** — single signing-key holder |
 
 The split follows the **read/index vs write/act** axis. Strict
@@ -109,7 +109,8 @@ NO secrets — the frontend bundle is static.
   thresholds, diag_errors, cross-Worker reads of indexer's
   loan tables).
 - **Cron:** `* * * * *` — periodic-interest pre-notify,
-  buy-watchdog, diag retention.
+  diag retention. (#1651: `buy-watchdog` was scheduled here;
+  #687-A removed it with the VPFI buy surface.)
 - **Secrets:**
   ```
   RPC_*           — same chains as indexer

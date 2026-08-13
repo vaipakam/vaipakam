@@ -1,9 +1,10 @@
 ## Agent worker — configuration explained by a component that was removed (PR #TBD)
 
-The agent worker's configuration was documented in nine places — its module
-header, two interface comments, the chain-resolution helper, its deployment
-config, its database binding, its README, its package description, and the
-sibling keeper worker's config — by reference to a monitoring component that
+The agent worker's configuration was documented in eleven places — both of
+its module headers, two interface comments, the chain-resolution helper, its
+deployment config and that config's own header, its database binding, its
+README, its package description, the sibling keeper worker's config, and the
+active Cloudflare staging plan — by reference to a monitoring component that
 reconciled the removed VPFI purchase flow. That component went with the
 purchase flow. The explanations stayed.
 
