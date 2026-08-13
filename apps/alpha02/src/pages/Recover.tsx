@@ -1242,10 +1242,18 @@ export function Recover() {
     //   NOT a full safety guarantee, though (Codex #1689 r3): a continuation
     //   queued before the account change can still run before this passive effect,
     //   pass the old generation check, and OPEN a `signTypedData` / `writeContract`
-    //   prompt. Resetting state cannot retract a prompt or un-broadcast a tx. The
-    //   effect is strictly better than the render-phase version — it wins the state
-    //   race the adjustment loses — but an identity fence around the imperative
-    //   wallet calls is a separate gap, tracked in #1691.
+    //   prompt. Resetting state cannot retract a prompt or un-broadcast a tx.
+    //   What this effect wins is EXACTLY the pre-commit state race, and no more
+    //   (Codex #1689 r4). It does not dominate the render-phase version: that one
+    //   bumped `genRef` in a LAYOUT effect during the identity commit, so a
+    //   continuation resuming after the commit was rejected before either wallet
+    //   call, while this passive effect leaves that post-commit interval open. The
+    //   two trade windows rather than one being better. Combining them — the reset
+    //   here, plus a commit-time generation bump — is a candidate improvement
+    //   recorded in #1691, deliberately not attempted mid-review-loop on a signing
+    //   path. An identity fence around the imperative wallet calls (including the
+    //   reservation write, which has no generation check on its success path) is
+    //   the separate live gap, also #1691.
     // - Mirroring the committed step into `stepRef` from a layout effect can roll
     //   a newer synchronous `setStep(B)` back to `A`, which is precisely the
     //   render-behind bug the synchronous mirror exists to prevent.
