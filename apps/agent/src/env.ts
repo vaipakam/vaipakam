@@ -40,14 +40,17 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *                            cross-Worker reads of indexer's loan
  *                            tables for periodic-pre-notify scans).
  *                            Native binding — not a secret.
- *   - `RPC_*`              — per-chain RPC URLs. Buy-watchdog needs
- *                            EVERY chain that has a VPFIBuyAdapter
- *                            deployed (mainnet + testnet) for
- *                            cross-chain reconciliation, so this is
- *                            the broadest RPC set of the three
- *                            Workers (includes POLYGON + POLYGON_AMOY
- *                            — agent-only — plus every other chain).
- *                            Secrets Store bindings (T-078).
+ *   - `RPC_*`              — per-chain RPC URLs, the broadest set of
+ *                            the three Workers (includes POLYGON +
+ *                            POLYGON_AMOY — agent-only — plus every
+ *                            other chain). periodicPreNotify needs
+ *                            every Diamond chain; the 1inch Fusion
+ *                            commit preflight resolves one per request
+ *                            chain. Secrets Store bindings (T-078).
+ *                            #1651: the breadth used to be attributed
+ *                            to a buy-watchdog reconciling every chain
+ *                            with a VPFIBuyAdapter — #687-A removed
+ *                            both, and neither exists in this Worker.
  *   - `TG_BOT_TOKEN`       — Telegram bot token. Powers the
  *                            `/tg/webhook` handshake AND the outbound
  *                            notifications dispatched by
@@ -228,9 +231,14 @@ interface BaseEnv {
  * `getChainConfigs` simply skips that chain.
  */
 export interface WorkerEnv extends BaseEnv {
-  // Per-chain RPC URLs — buy-watchdog needs every chain with a
-  // VPFIBuyAdapter; periodicPreNotify needs every Diamond chain.
-  // Most expansive RPC set of the three Workers.
+  // Per-chain RPC URLs. Most expansive RPC set of the three Workers:
+  // periodicPreNotify needs every Diamond chain, and the 1inch Fusion
+  // commit preflight (`intentFusionPost.rpcForChain`) resolves one per
+  // request chain — that is what RPC_POLYGON / RPC_POLYGON_AMOY serve.
+  // #1651: this used to say "buy-watchdog needs every chain with a
+  // VPFIBuyAdapter". #687-A removed the adapter and the watchdog; the
+  // bindings stayed because they have a live consumer, but the reason
+  // given for them did not survive.
   RPC_BASE?: SecretBinding;
   RPC_ETH?: SecretBinding;
   RPC_ARB?: SecretBinding;
@@ -265,8 +273,9 @@ export interface WorkerEnv extends BaseEnv {
  * is `undefined` and the dependent code path skips it.
  */
 export interface Env extends BaseEnv {
-  // Per-chain RPC URLs — buy-watchdog + periodicPreNotify. Each
-  // missing URL skips that chain.
+  // Per-chain RPC URLs — periodicPreNotify + the 1inch Fusion commit
+  // preflight. Each missing URL skips that chain. (#1651: "buy-watchdog"
+  // stood here; #687-A removed it.)
   RPC_BASE?: string;
   RPC_ETH?: string;
   RPC_ARB?: string;
@@ -454,9 +463,15 @@ export interface ChainConfig {
 
 /**
  * Resolve chain configs from env + the consolidated deployments
- * JSON. Same shape as apps/{keeper,indexer} versions — the meta
- * table here matches the agent's RPC-set superset (every chain
- * with a Diamond OR a VPFIBuyAdapter).
+ * JSON. Same shape as apps/{keeper,indexer} versions.
+ *
+ * #1651 — this said the meta table covers "every chain with a Diamond
+ * OR a VPFIBuyAdapter". There is no adapter since #687-A, and the set
+ * was never derived from one: a row survives only if BOTH its RPC
+ * secret is set AND `getDeployment` returns a record, so the result is
+ * Diamond-driven and self-limiting. Listing a chain here that has
+ * neither is inert, which is why `RPC_ZKEVM` can sit in the table while
+ * being deliberately never set.
  */
 export function getChainConfigs(env: Env): ChainConfig[] {
   const meta: { id: number; name: string; rpc: string | undefined }[] = [
