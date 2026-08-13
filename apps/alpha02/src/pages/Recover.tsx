@@ -1280,11 +1280,15 @@ export function Recover() {
     //   reconcileClaim = G+1; the new-identity render then computes `reconciling`
     //   true and, with nothing further advancing the ref, it STAYS true until the
     //   old RPC settles. My r9 reasoning assumed the claim was recorded BEFORE
-    //   the advance; it need not be. Item 6 is required on every branch. The
-    //   commit-time bump AND item 6's follow-up rerender are required only under
-    //   the live-provider fence, or a wallet-event fence that advances a SEPARATE
-    //   token and leaves `genRef` to the effect. So this is a per-branch
-    //   requirement, not a standing one.
+    //   the advance; it need not be. TWO SEPARATE RULES, and conflating them is
+    //   what produced three wrong exemptions (Codex #1689 r13 caught the second
+    //   one still standing here after r12 fixed the first):
+    //     (i) the COMMIT-TIME BUMP is per-branch — required under the
+    //         live-provider fence, or a wallet-event fence advancing a SEPARATE
+    //         token and leaving `genRef` to the effect; not needed when the event
+    //         advances `genRef` itself.
+    //     (ii) item 6's reconciliation RESET/RERENDER is UNCONDITIONAL — every
+    //         branch, bump or no bump.
     //   Deliberately not attempted mid-review-loop on a signing path.
     //   An identity fence around the imperative wallet calls (including the
     //   reservation write, which has no generation check on its success path) is
