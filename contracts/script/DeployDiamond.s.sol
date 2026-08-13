@@ -2167,7 +2167,7 @@ contract DeployDiamond is Script {
     ///      the answer and it cannot go stale. If you find a count for this
     ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2191,6 +2191,7 @@ contract DeployDiamond is Script {
         s[17] = InteractionRewardsLensFacet.getRecycleDayMetrics.selector;
         s[18] = InteractionRewardsLensFacet.getRecycleBackingSnapshot.selector;
         s[19] = InteractionRewardsLensFacet.getRecycledCreditedPreLaunch.selector;
+        s[20] = InteractionRewardsLensFacet.getUserArmedFreshNeed.selector;
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for

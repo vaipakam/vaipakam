@@ -796,34 +796,51 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         );
     }
 
-    /// @dev #1434 P1-b — an UNARMED day's fresh must NOT charge the
-    ///      delivered bound.
+    /// @dev #1434 P1-b — with NO arming set, a mirror's ordinary payouts must
+    ///      leave the armed-paid ledger untouched.
     ///
-    ///      The walk's paid-side write is filtered by `_isArmedDay`, and that
-    ///      filter is load-bearing rather than defensive: the DAY path labels
-    ///      every day's fresh component `armedFresh` (see `_splitDayAmount`),
-    ///      so only the day itself distinguishes armed from ordinary. Drop the
-    ///      filter and ordinary schedule payouts start consuming a mirror's
-    ///      delivered headroom, deferring armed days that were fully funded —
-    ///      the same defect that got `interactionPoolPaidOut` rejected as a
-    ///      proxy for the paid side.
+    ///      Read what this does and does NOT prove. It does NOT prove the
+    ///      walk's `_isArmedDay` filter is load-bearing; an earlier version of
+    ///      this comment claimed exactly that and was wrong. With
+    ///      `governorCommitArmedFromDay == 0` the ShareOfPool walk returns
+    ///      before doing anything, so the whole payout below comes from the
+    ///      ENTRY path. Both the filter and the unarmed-day exemption are
+    ///      equivalent mutants — a mutation run measured byte-identical gas
+    ///      with each removed — because no unarmed day can ever reach the
+    ///      walk (early return with no arming; cursor floored at `armedFrom`
+    ///      otherwise). Do not "strengthen" this test to kill them; it can't,
+    ///      and neither can any other.
+    ///
+    ///      What it DOES pin is still worth having: on an un-armed mirror the
+    ///      entry path pays normally (`paid` is large here) while
+    ///      `rewardBudgetArmedFreshPaid` stays exactly zero. That ledger is
+    ///      mirror-era armed spending only, and a chain with no arming has
+    ///      none — the property that keeps `deliveredFreshBound` from
+    ///      flooring at zero and bricking the chain.
     function test_P1b_UnarmedDayFreshNeverChargesTheDeliveredBound() public {
         _configureMirror();
         // Days are FINALIZED but arming is never set, so `_isArmedDay` is
         // false for both: ordinary schedule days, which is the whole point.
         _armedDay(1, 0.4e18);
         _armedDay(2, 0.4e18);
-        // ShareOfPool mode WITHOUT local arming — the state that makes the
-        // `_isArmedDay` filter reachable rather than decorative. Production
-        // reaches it through `RewardReporterFacet`'s broadcast ingress, which
-        // stamps the mode straight from the wire's `capMode` with no arming
-        // guard (only the canonical-side stamp checks `armed`). Without this
-        // the walk never sees the day at all and the filter is untestable —
-        // which is exactly why the first version of this test let the
-        // filter-removal mutant survive.
+        // ShareOfPool mode WITHOUT local arming — the shape a mirror really
+        // can hold, since `RewardReporterFacet`'s broadcast ingress stamps the
+        // mode straight from the wire's `capMode` with no arming guard (only
+        // the canonical-side stamp checks `armed`). It does NOT make the walk
+        // filter testable: the cap mode is irrelevant while
+        // `governorCommitArmedFromDay` is zero, because the walk returns
+        // before reading it. Setting it here documents the reachable state,
+        // nothing more.
         _mut().setDayCapModeRaw(1, 1);
         _mut().setDayCapModeRaw(2, 1);
-        _mut().setArmedFreshLedgerRaw(100e18, 0);
+        // The delivered bound is ZERO, not merely generous. An earlier
+        // revision funded it at 100e18 against a sub-1e18 payout, so the
+        // bound could never bind and BOTH the exemption and the paid-side
+        // `_isArmedDay` filter were unobservable — the test passed whether
+        // or not either existed. At zero, an unarmed day that wrongly
+        // consulted the bound would find nothing and DEFER, so `paid`
+        // collapsing to zero is what proves the exemption is load-bearing.
+        _mut().setArmedFreshLedgerRaw(0, 0);
         _loanSideOpen(2);
         _entry(1, 3);
         _mut().userClaimFundingNeedRaw(alice);

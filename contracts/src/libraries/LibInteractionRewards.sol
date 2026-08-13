@@ -1301,11 +1301,18 @@ library LibInteractionRewards {
     ///         attempted to remove and did not; #1434 P1-b has since removed
     ///         it behind a delivered-fresh bound). It STILL reads the stamp
     ///         DIRECTLY and never touches the cumulative cursor, and that is
-    ///         still load-bearing rather than vestigial: the cursor now
-    ///         advances only as far as DELIVERED funding allows, so a report
-    ///         derived from it would shrink to what has already been funded —
-    ///         while the whole purpose of the report is to state the liability
-    ///         that funding has NOT yet covered. The per-day math MIRRORS
+    ///         still load-bearing rather than vestigial — though NOT for the
+    ///         reason an earlier revision of this note gave (Codex #1699 r4).
+    ///         That revision claimed the cursor advances only as far as
+    ///         delivered funding allows; it does not. Neither
+    ///         {advanceCumLenderThrough} nor {_dayPoolHalves} reads the
+    ///         delivered bound — the bound is applied later, at PAYMENT, by
+    ///         {processUserSideDay}. The real distinction is STAMP-READINESS:
+    ///         the cursor lags any finalized day the user has not yet had
+    ///         processed, so a report derived from it would understate the
+    ///         liability simply because nobody has claimed recently — while
+    ///         the whole purpose of the report is to state what this chain
+    ///         owes regardless of claim activity. The per-day math MIRRORS
     ///         {advanceCumLenderThrough} exactly — stamp halves → per-side
     ///         daily (floored) → summed — so the commitment's `rawPay`
     ///         (`perDayNumeraire18 × Δ_d / 1e18`) equals what the claim path
@@ -1719,15 +1726,29 @@ library LibInteractionRewards {
             // #1434 P1-b — charge the delivered-fresh bound with EXACTLY what
             // the pool just spent, on ARMED days only.
             //
-            // The `_isArmedDay` filter is REACHABLE, not belt-and-braces, and
-            // a mutation run is what settled it. ShareOfPool mode has TWO
-            // stamping sites: {setDayCapModeArmed} guards on `armed`, but
-            // `RewardReporterFacet`'s broadcast ingress stamps it straight
-            // from the wire's `capMode` with NO arming guard — so a MIRROR can
-            // hold a ShareOfPool day that its own `governorCommitArmedFromDay`
-            // does not cover, and the walk will price it. Without this filter
-            // that day's ordinary fresh would charge the delivered bound and
-            // defer armed days that were fully funded.
+            // The `_isArmedDay` filter is REDUNDANT here, and a mutation run
+            // is what settled it — the opposite of what an earlier revision of
+            // this comment asserted. This walk cannot be handed an unarmed
+            // day at all, by two independent constructions:
+            //
+            //   • {_walkShareOfPoolDays} returns immediately when
+            //     `governorCommitArmedFromDay == 0`, so with no arming set
+            //     there is no walk to filter; and
+            //   • when it IS set, {_shareOfPoolCursorDay} floors every entry's
+            //     cursor at `armedFrom`, so a day BELOW it is never selected
+            //     by {_lowestPendingDay} and never reaches
+            //     {processUserSideDay}.
+            //
+            // Deleting the filter therefore changes neither behaviour nor gas
+            // (measured: byte-identical gas). It is an equivalent mutant; no
+            // test can kill it and none should be written claiming to.
+            //
+            // KEPT as defence-in-depth. Broadcast ingress genuinely can stamp
+            // ShareOfPool `capMode` on a day this chain's arming does not
+            // cover — that part of the concern is real — but the CURSOR, not
+            // this filter, is what keeps such a day out of the walk. Should
+            // that floor ever be relaxed, this line becomes load-bearing
+            // exactly as written.
             //
             // This quantity, and not `consumeArmedFresh`'s argument, is the
             // paid side. That function retires COMMITMENTS: its amount
@@ -2039,24 +2060,61 @@ library LibInteractionRewards {
     ///      requirement is the same shape and belongs beside it. Forfeited
     ///      legs are included because they spend armed fresh too (the forfeit
     ///      share is absorption that credits the bucket).
+    /// @notice #1434 P1-b (Codex #1699 r4) — the INTERNAL entry point the lens
+    ///         view calls. Only the facet that exposes this pays the dry-run
+    ///         engine's bytecode; every other caller reaches it by staticcall
+    ///         through the Diamond (see {_userArmedFreshNeed}).
+    function userArmedFreshNeedView(
+        address user
+    ) internal view returns (uint256 armed) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (, armed) = _dryRunShareOfPoolDays(s, user, type(uint256).max);
+    }
+
     function _userArmedFreshNeed(
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (uint256 armed) {
-        uint256[] storage ids = s.userRewardEntryIds[user];
-        uint256 len = ids.length;
-        for (uint256 i; i < len; ) {
-            LibVaipakam.RewardEntry storage e = s.rewardEntries[ids[i]];
-            if (!e.processed && e.user != address(0)) {
-                (
-                    EntrySplit memory toUser_,
-                    EntrySplit memory toTreasury_,
-                    ,
-                ) = _entryPriceCore(s, ids[i], e);
-                armed += toUser_.armedFresh + toTreasury_.armedFresh;
-            }
-            unchecked { ++i; }
-        }
+        // Codex #1699 r4 P2 — read the CLAIM'S OWN grouped, capped figure.
+        //
+        // The first version summed `_entryPriceCore` outputs per entry, which
+        // overstates any `(user, side, day)` group sharing a D1 ceiling: two
+        // 0.4 entries capped collectively to 0.5 reported 0.8, so the clock
+        // waited forever on 0.3 that no remittance owes. Aggregating was right;
+        // aggregating at the pre-cap STAGE was not.
+        //
+        // `type(uint256).max` for the delivered cap is load-bearing: this
+        // measures what the group NEEDS, and clamping that by the allowance it
+        // is about to be compared against would make every user look exactly
+        // affordable.
+        //
+        // Codex #1699 r4 — reached by CROSS-FACET STATICCALL, not a direct
+        // call, and that is an EIP-170 requirement rather than a style choice.
+        // Calling `_dryRunShareOfPoolDays` from here inlines the whole
+        // dry-run engine (side loop → `processUserSideDay` → worklist and
+        // cursor machinery) into EVERY facet that transitively reaches this
+        // helper; doing so pushed `InteractionRewardsFacet` to 29,613 bytes,
+        // 5,037 over the limit. In a Diamond, sharing an internal helper is
+        // free at the call site and paid for in each facet's bytecode.
+        //
+        // The staticcall keeps ONE implementation — re-deriving the capped
+        // group figure here is the second-computation trap that caused the
+        // finding this fix answers — while the engine itself lives only in
+        // the lens facet, which already hosts the preview that uses it.
+        // A staticcall to a view cannot trip the caller's `nonReentrant`
+        // guard, so it is safe from the sweep path (same pattern as
+        // `AddCollateralFacet` / `MetricsDashboardFacet`).
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeWithSelector(
+                bytes4(keccak256("getUserArmedFreshNeed(address)")),
+                user
+            )
+        );
+        // Fail CLOSED on an unrouted selector (a partially-refreshed Diamond):
+        // a zero need would read as "nothing required" and let an entry expire
+        // while unpayable, which is the defect this gate exists to prevent.
+        require(ok && ret.length == 32, "armed-need view unavailable");
+        armed = abi.decode(ret, (uint256));
     }
 
     /// @dev #1351 slice 2e — the CHEAP per-entry sum: each entry's
@@ -2157,7 +2215,9 @@ library LibInteractionRewards {
             }
             unchecked { ++i; }
         }
-        userTotal += _dryRunShareOfPoolDays(s, user);
+        (uint256 dryTotal, ) =
+            _dryRunShareOfPoolDays(s, user, deliveredFreshBound(s));
+        userTotal += dryTotal;
     }
 
     /// @dev The ENTRY-PATH leg of one entry's preview — what {_processEntry}
@@ -2196,11 +2256,23 @@ library LibInteractionRewards {
     ///      {previewForUserEntries}. A day the walk would defer for a
     ///      transient reason (unfinalized RPN row) stops the side here
     ///      exactly as it stops the real walk.
+    /// @param deliveredCap The delivered-fresh allowance this run should
+    ///        respect. The PREVIEW passes the live bound, so a quote cannot
+    ///        promise what a claim would defer. A NEED measurement passes
+    ///        `type(uint256).max` — bounding the need by the very allowance it
+    ///        will then be compared against is circular, and would report every
+    ///        user as exactly affordable (Codex #1699 r4 P2).
+    /// @return userTotal   Capped payable total across the walked days.
+    /// @return armedTotal  Capped ARMED-FRESH sum across those same days —
+    ///         grouped and D1-capped exactly as the claim computes it, because
+    ///         it IS the claim's computation. Summing per-entry prices instead
+    ///         overstates any `(user, side, day)` group that shares a ceiling.
     function _dryRunShareOfPoolDays(
         LibVaipakam.Storage storage s,
-        address user
-    ) private view returns (uint256 userTotal) {
-        if (s.governorCommitArmedFromDay == 0) return 0;
+        address user,
+        uint256 deliveredCap
+    ) private view returns (uint256 userTotal, uint256 armedTotal) {
+        if (s.governorCommitArmedFromDay == 0) return (0, 0);
         uint256 daysLeft = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
         // Codex #1410 r2 — the RECYCLED budget is the REAL bucket, shared
         // across both sides and depleted per day exactly as the live walk's
@@ -2225,7 +2297,7 @@ library LibInteractionRewards {
         PoolBudget memory pool = PoolBudget({
             fresh: type(uint256).max,
             recycled: s.recycleBucket,
-            deliveredFresh: deliveredFreshBound(s)
+            deliveredFresh: deliveredCap
         });
         for (uint8 sideIdx; sideIdx < 2; ) {
             LibVaipakam.RewardSide side = sideIdx == 0
@@ -2234,10 +2306,11 @@ library LibInteractionRewards {
             uint256[] memory work =
                 _shareOfPoolWorklist(s, user, side, true);
             if (work.length != 0) {
-                (uint256 paid, uint256 spent) =
+                (uint256 paid, uint256 spent, uint256 armed) =
                     _dryRunSideDays(s, user, work, daysLeft, pool);
                 userTotal += paid;
                 daysLeft -= spent;
+                armedTotal += armed;
             }
             unchecked { ++sideIdx; }
         }
@@ -2253,7 +2326,11 @@ library LibInteractionRewards {
         uint256[] memory work,
         uint256 daysLeft,
         PoolBudget memory pool
-    ) private view returns (uint256 userTotal, uint256 daysSpent) {
+    )
+        private
+        view
+        returns (uint256 userTotal, uint256 daysSpent, uint256 armedTotal)
+    {
         uint256[] memory cur = new uint256[](work.length);
         for (uint256 i; i < work.length; ) {
             cur[i] = _shareOfPoolCursorDay(s, work[i], s.rewardEntries[work[i]]);
@@ -2289,6 +2366,8 @@ library LibInteractionRewards {
             if (_isArmedDay(s, d)) {
                 uint256 spent =
                     charge.toUser.armedFresh + charge.toTreasury.armedFresh;
+                // The grouped, D1-capped armed figure — the claim's own number.
+                armedTotal += spent;
                 uint256 db = pool.deliveredFresh;
                 pool.deliveredFresh = db > spent ? db - spent : 0;
             }
@@ -2507,7 +2586,7 @@ library LibInteractionRewards {
 
         (
             EntrySplit memory toUser,
-            ,
+            EntrySplit memory toTreasury,
             ,
             EntryPriceState memory st
         ) = _entryPriceCore(s, id, e);
@@ -2715,8 +2794,18 @@ library LibInteractionRewards {
         // caller threads and depletes, never the storage figure: the facet
         // accumulates `rewardBudgetArmedFreshPaid` only after its loop, so a
         // per-entry storage read is stale for every entry after the first.
+        // Codex #1699 r4 P2 — measure the CAPPED armed obligation, not the raw
+        // one. `split_` is `st.rawSplit`, deliberately PRE-cap because the
+        // forfeit day accrual needs it; but Base remits against the CAPPED
+        // liability the commitment report states. An entry with 1 raw demand
+        // and a 0.4 D1 cap is fully claimable and fully funded at 0.4, so
+        // demanding 1 of delivered allowance defers it forever — nobody owes
+        // the discarded 0.6. Same class as the other round-4 findings:
+        // comparing the bound against a quantity larger than anything a
+        // remittance will fund turns a satisfiable wait into a wedge.
+        uint256 cappedArmed = toUser.armedFresh + toTreasury.armedFresh;
         bool deliveredShort =
-            split_.armedFresh != 0 && split_.armedFresh > deliveredAllowance;
+            cappedArmed != 0 && cappedArmed > deliveredAllowance;
         if (freshShare > freshHeadroom || deliveredShort) {
             s.rewardEntryObsBlocked[id] = true;
             return (expired, 0);
@@ -4348,6 +4437,25 @@ library LibInteractionRewards {
         ///      ceiling. Writing into a memory struct the caller already
         ///      holds costs no extra stack slot.
         uint256 freshShortfallDelivered;
+        /// @dev #1434 P1-b (Codex #1699 r4 P1) — the delivered allowance THIS
+        ///      day may draw, set by the caller which knows whether the day is
+        ///      armed. `type(uint256).max` on an UNARMED day.
+        ///
+        ///      NOT load-bearing today — defence-in-depth. The walk cannot be
+        ///      handed an unarmed day (it returns early with no arming set,
+        ///      and the entry cursor is floored at `armedFrom` otherwise), so
+        ///      the unarmed arm is unreachable and the exemption is an
+        ///      equivalent mutant — measured, not argued. It encodes a rule
+        ///      worth keeping: bounding a day no remittance was made against
+        ///      would stall the walk on a shortfall that can never clear,
+        ///      since the delivered bound never grows for such a day. A wait
+        ///      must stay satisfiable, which is the whole premise of
+        ///      deferring rather than truncating.
+        ///
+        ///      Carried on this struct rather than passed as a parameter for
+        ///      the same reason `freshShortfallDelivered` is: `_attributeLegs`
+        ///      is one argument from the viaIR stack ceiling.
+        uint256 deliveredCapForDay;
         bool advanced;
     }
 
@@ -4698,7 +4806,9 @@ library LibInteractionRewards {
         // than two scalars also costs one stack slot instead of two, which is
         // what keeps `processUserSideDay` under the viaIR ceiling.
         uint256 freshBudget = pool.fresh;
-        uint256 deliveredBudget = pool.deliveredFresh;
+        // Codex #1699 r4 P1 — the caller's PER-DAY cap, not the running pool
+        // figure: an unarmed day is exempt (see {DayCharge.deliveredCapForDay}).
+        uint256 deliveredBudget = charge.deliveredCapForDay;
         uint256 n = slices.length;
         for (uint256 pass; pass < 2; ) {
             bool userPass = pass == 0;
@@ -5008,6 +5118,29 @@ library LibInteractionRewards {
 
         uint256[] memory amounts =
             _proRataFloorWithCapacityBoundedDust(budget, cEff, rawPay, entryIds);
+        // Codex #1699 r4 P1 — EXEMPT unarmed days from the delivered bound.
+        //
+        // ACCEPTED AS DEFENCE-IN-DEPTH, NOT AS A BUG FIX. The reported wedge
+        // cannot occur: an unarmed day never reaches this function.
+        // {_walkShareOfPoolDays} returns early when
+        // `governorCommitArmedFromDay == 0`, and when it is set
+        // {_shareOfPoolCursorDay} floors every cursor at `armedFrom`, so no
+        // day below it is ever selected. `_isArmedDay(s, d)` is true here by
+        // construction and this ternary always takes the first arm.
+        //
+        // Measured, not argued: forcing it to `pool.deliveredFresh`
+        // unconditionally, with the delivered bound at ZERO, changes nothing
+        // — an equivalent mutant. Do not write a test claiming to kill it.
+        //
+        // Kept because the rule it encodes is sound and free: bounding a day
+        // no remittance was made against would stall the walk on a shortfall
+        // that can never clear, inverting this slice's premise that a wait
+        // must always be satisfiable. If the cursor floor is ever relaxed —
+        // letting broadcast-stamped ShareOfPool days below `armedFrom` into
+        // the walk — this becomes load-bearing.
+        charge.deliveredCapForDay = _isArmedDay(s, d)
+            ? pool.deliveredFresh
+            : type(uint256).max;
         (
             EntrySplit memory user_,
             EntrySplit memory treas_,

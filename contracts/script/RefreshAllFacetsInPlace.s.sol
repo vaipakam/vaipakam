@@ -105,6 +105,10 @@ interface IArmedFreshPaidSeed {
     function seedArmedFreshPaid(uint256 amount) external;
 }
 
+/// @dev #1434 P1-b — declared so the refresh can match THIS revert and only
+///      this one; every other failure must abort the migration while paused.
+error ArmedFreshPaidAlreadySeeded();
+
 interface IRecoveryAttribution {
     function armRecoveryAttribution() external;
 
@@ -785,10 +789,44 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // guard already tells us — and a rerun of this refresh (which happens)
         // must not abort on a chain that is simply already seeded.
         {
-            uint256 seed = vm.envOr("ARMED_FRESH_PAID_SEED", uint256(0));
+            // Codex #1699 r4 P1 — the seed must be stated, never defaulted.
+            //
+            // This migration is IRREVERSIBLE: the seed adds to the paid
+            // counter and permanently sets the one-shot flag. Defaulting a
+            // missing env var to zero would therefore write a wrong figure,
+            // close the door behind it, and unpause — recreating precisely
+            // the double-spend the seed exists to prevent, with no way to
+            // repair it through this path. An operator who genuinely has no
+            // pre-P1-b payouts says so explicitly instead.
+            uint256 seed = vm.envOr("ARMED_FRESH_PAID_SEED", type(uint256).max);
+            bool ackNoHistory =
+                vm.envOr("ARMED_FRESH_PAID_NO_HISTORY", false);
+            require(
+                seed != type(uint256).max || ackNoHistory,
+                "P1-b: set ARMED_FRESH_PAID_SEED (armed fresh already paid "
+                "before this upgrade), or ARMED_FRESH_PAID_NO_HISTORY=true to "
+                "declare there is none. Refusing to default an irreversible "
+                "accounting migration to zero."
+            );
+            if (seed == type(uint256).max) seed = 0;
+
+            // Codex #1699 r4 P1 — swallow ONLY the replay, never every revert.
+            //
+            // The previous catch-all reported ANY failure as "already
+            // migrated" and then unpaused with an unseeded ledger — an
+            // ADMIN_ROLE loss or an overflow would have looked identical to a
+            // benign rerun. Reusing an existing failure signal is sound, but
+            // it has to discriminate WHICH failure; anything unexpected must
+            // abort while the Diamond is still PAUSED.
             try IArmedFreshPaidSeed(diamond).seedArmedFreshPaid(seed) {
                 console.log("P1-b: seeded armed-fresh paid history:", seed);
-            } catch {
+            } catch (bytes memory err) {
+                require(
+                    err.length >= 4
+                        && bytes4(err) == ArmedFreshPaidAlreadySeeded.selector,
+                    "P1-b: seed failed for a reason other than a replay - "
+                    "aborting while paused"
+                );
                 console.log(
                     "P1-b: armed-fresh paid history already seeded - skipped"
                 );
