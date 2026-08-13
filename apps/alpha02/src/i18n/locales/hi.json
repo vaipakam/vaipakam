@@ -2108,6 +2108,7 @@
       "consentLabel": "मैं नीचे दिए जोखिम प्रकटीकरण और funding शर्तों को समझता/समझती हूँ और उनसे सहमत हूँ। मेरा नया offer जल्दी repay होने पर भी पूरे term का interest लेता है और partial repayment की अनुमति नहीं देता।",
       "action": "Offset offer की समीक्षा करें",
       "confirm": "पुष्टि करें — fund करें और offer post करें",
+      "figuresMoved": "Review करते समय figures बदल गए, इसलिए acknowledgement हट गया — current numbers पर confirm करने के लिए इसे फिर से tick करें।",
       "done": "Offset offer post हो गया। जब कोई Borrower इसे स्वीकार करेगा, आपका मौजूदा loan अपने आप बंद हो जाएगा — आपको कुछ पूरा नहीं करना है। उसके बाद आपका Collateral claim करने योग्य हो जाएगा (Claim Center से claim करें)। जब तक offer खुला है, आप इसे नीचे से रद्द कर सकते हैं।",
       "receiptReceive": "आप अपनी चुनी शर्तों पर एक नए loan के Lender बन जाते हैं, आपका पुराना loan बंद हो जाता है, और आपका Collateral claim करने योग्य हो जाता है — बाद में उसे Claim Center से claim करें।",
       "receiptLock": "अभी {{principal}} (आपके नए offer का lending पैसा), offer स्वीकार होने या आपके रद्द करने तक lock।",

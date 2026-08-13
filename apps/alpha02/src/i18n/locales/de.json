@@ -2108,6 +2108,7 @@
       "consentLabel": "Ich verstehe die Risikohinweise und die folgenden Finanzierungsbedingungen und stimme ihnen zu. Mein neues Angebot berechnet die Zinsen der vollen Laufzeit auch bei vorzeitiger Rückzahlung und lässt keine Teilrückzahlungen zu.",
       "action": "Offset-Angebot prüfen",
       "confirm": "Bestätigen — finanzieren und veröffentlichen",
+      "figuresMoved": "Die Zahlen haben sich während Ihrer Prüfung geändert, daher wurde die Bestätigung zurückgesetzt — setzen Sie das Häkchen erneut, um die aktuellen Zahlen zu bestätigen.",
       "done": "Offset-Angebot veröffentlicht. Nimmt ein Kreditnehmer es an, schließt sich Ihr aktueller Kredit automatisch — Sie müssen nichts abschließen. Ihre Sicherheit wird dann beanspruchbar (im Anspruchszentrum). Solange das Angebot offen ist, können Sie es unten stornieren.",
       "receiptReceive": "Sie werden Kreditgeber eines neuen Kredits zu Ihren gewählten Konditionen, Ihr alter Kredit schließt sich, und Ihre Sicherheit wird beanspruchbar — beanspruchen Sie sie danach im Anspruchszentrum.",
       "receiptLock": "{{principal}} jetzt (das Kreditgeld Ihres neuen Angebots), gesperrt bis zur Annahme oder Stornierung.",
