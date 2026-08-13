@@ -2977,7 +2977,7 @@ const copySource = {
     maxCStarHelp:
       'The exact tariff is re-priced at the moment the loan opens; it can never exceed this ceiling. Set it a little above the quote so a small move between now and then doesn’t block you.',
     ceilingOvertaken: tmpl(
-      'The live tariff quote is now {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you authorized. Opening the loan now would not give you the Full tariff: it would be rejected, or opened without Full if you allowed that below. Signing is held until you raise the ceiling, or untick the option to open without the Full tariff.',
+      'The live tariff quote is now {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you authorized. Opening the loan now would not give you the Full tariff: it would be rejected, or opened without Full if you allowed that below. Raise the ceiling to keep the Full tariff, or untick the option to open without it.',
       ['quote', 'ceiling'],
     ),
     raiseCeiling: tmpl('Raise my ceiling to {{ceiling}} VPFI', ['ceiling']),
