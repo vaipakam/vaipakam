@@ -866,6 +866,48 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         assertEq(_claim(), quoted, "and the claim pays exactly that");
     }
 
+    /// @dev #1434 P1-b (Codex #1699 r1 P1) — the delivered bound must DEPLETE
+    ///      across days within a single claim, not just across transactions.
+    ///
+    ///      The bound is read ONCE when the walk builds its `PoolBudget`. The
+    ///      first revision decremented only `ctx.pool.fresh` per settled day,
+    ///      so every day in the same claim was measured against the ORIGINAL
+    ///      delivered allowance: two 0.4 days against 0.5 delivered each
+    ///      passed their own check and 0.8 transferred, drawing the excess
+    ///      from custody held for other obligations.
+    ///
+    ///      This is the same defect the note above `_walkShareOfPoolDays`
+    ///      records for the 69M pool — a leg pricing against an allowance a
+    ///      sibling leg has already spoken for. `ctx.pool.fresh` is threaded
+    ///      for exactly that reason; the delivered bound now is too.
+    function test_P1b_DeliveredBoundDepletesAcrossDaysInOneClaim() public {
+        _configureMirror();
+        _armedDay(1, 0.4e18);
+        _armedDay(2, 0.4e18);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+        _mut().userClaimFundingNeedRaw(alice);
+
+        // Enough for EITHER day alone, not for BOTH: the aggregate is what
+        // an un-depleted bound fails to notice.
+        _mut().setArmedFreshLedgerRaw(0.5e18, 0);
+
+        uint256 paid = _claim();
+
+        assertLe(
+            paid,
+            0.5e18,
+            "a claim never pays out more armed fresh than was delivered"
+        );
+        assertLe(
+            _mut().getArmedFreshPaidRaw(),
+            0.5e18,
+            "and the charge never exceeds the delivered figure either"
+        );
+        assertGt(paid, 0, "LIVE: the funded day did pay");
+    }
+
     /// @dev The CANONICAL chain is unaffected by the halt and prices its own
     ///      armed days normally — the control proving the test above isolates
     ///      the mirror flags rather than a broken setup.

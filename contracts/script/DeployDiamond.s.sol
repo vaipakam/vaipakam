@@ -2771,7 +2771,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](34);
+        s = new bytes4[](35);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2794,6 +2794,7 @@ contract DeployDiamond is Script {
         s[19] = RewardRemittanceLensFacet.getRewardRemittanceReceiver.selector;
         s[20] = RewardRemittanceLensFacet.getRewardBudgetReceivedTotal.selector;
         s[21] = RewardRemittanceLensFacet.getDeliveredFreshPosition.selector;
+        s[34] = RewardRemittanceLensFacet.getDeliveredFreshBound.selector;
         // #1434 P2-w5 — the recovery-position reads.
         s[22] = RewardRemittanceLensFacet.getRecoveryPosition.selector;
         s[23] =

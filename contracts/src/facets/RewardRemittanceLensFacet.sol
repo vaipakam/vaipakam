@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 
 /**
@@ -320,6 +321,37 @@ contract RewardRemittanceLensFacet {
      *                   funding UNDERSTATES what Base sent — the safe
      *                   direction, but one an operator must see.
      */
+    /**
+     * @notice #1434 P1-b (Codex #1699 r1) — the PAID side of the
+     *         delivered-fresh bound, and the allowance that remains.
+     * @dev    A NEW selector rather than a third return on
+     *         {getDeliveredFreshPosition}: widening an existing return keeps
+     *         the same selector while changing the decode, which is the
+     *         silent-drift failure mode an ABI-supplied client cannot see.
+     *
+     *         `remaining` is the SATURATING difference, and reading it here
+     *         rather than differencing the two figures by hand is the point:
+     *         the received side is not monotone (it carries an unwind for a
+     *         released or reclassified delivery), so `paid` can legitimately
+     *         exceed it and a hand-rolled subtraction would underflow.
+     *
+     *         Zero `remaining` means armed-day payouts WAIT on this chain —
+     *         a satisfiable wait that the next remittance clears, not an
+     *         exhausted cap. On the canonical chain the bound does not apply
+     *         and `remaining` reads `type(uint256).max`.
+     * @return paid      Armed fresh this chain has paid out.
+     * @return remaining Delivered-less-paid allowance still spendable.
+     */
+    function getDeliveredFreshBound()
+        external
+        view
+        returns (uint256 paid, uint256 remaining)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        paid = s.rewardBudgetArmedFreshPaid;
+        remaining = LibInteractionRewards.deliveredFreshBound(s);
+    }
+
     function getDeliveredFreshPosition()
         external
         view

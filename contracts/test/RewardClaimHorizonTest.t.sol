@@ -16,6 +16,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 
 /**
  * @title  RewardClaimHorizonTest

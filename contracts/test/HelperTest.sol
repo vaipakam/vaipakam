@@ -2202,7 +2202,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](34);
+        selectors = new bytes4[](35);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2225,6 +2225,7 @@ contract HelperTest {
         selectors[19] = RewardRemittanceLensFacet.getRewardRemittanceReceiver.selector;
         selectors[20] = RewardRemittanceLensFacet.getRewardBudgetReceivedTotal.selector;
         selectors[21] = RewardRemittanceLensFacet.getDeliveredFreshPosition.selector;
+        selectors[34] = RewardRemittanceLensFacet.getDeliveredFreshBound.selector;
         // #1434 P2-w5 — the recovery-position reads.
         selectors[22] = RewardRemittanceLensFacet.getRecoveryPosition.selector;
         selectors[23] =

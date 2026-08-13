@@ -278,7 +278,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         // Delivered funding is abundant, so the DELIVERED bound never binds
         // here — the clamp under test is the 69M headroom's.
-        _mut().setArmedFreshLedgerRaw(10_000 ether, 0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
 
         // Establish what the sweep WOULD spend unclamped.
         uint256 snap = vm.snapshotState();
@@ -317,6 +317,65 @@ contract GovernorDualAccumulatorTest is SetupTest {
             "pro-rata scales the armed charge; armed-first would not"
         );
         assertGt(charged, 0, "but a truncated sweep still charges its share");
+    }
+
+    /// @dev #1434 P1-b (Codex #1699 r1 P1) — the forfeit sweep REFUSES when the
+    ///      delivered bound cannot cover its armed fresh, and refuses BEFORE
+    ///      any of its effects are final.
+    ///
+    ///      The first revision charged the bound AFTER `sweepForfeitedByLoanId`
+    ///      had already processed the entries, which records an overspend
+    ///      rather than preventing one: a permissionless caller could absorb
+    ///      armed fresh that was never delivered, backed by VPFI the Diamond
+    ///      holds for other obligations.
+    ///
+    ///      Asserting the revert alone would NOT establish the rollback — the
+    ///      entry could still have been consumed by a partially-applied call.
+    ///      So this also proves the sweep is STILL AVAILABLE afterwards, and
+    ///      that it succeeds once funding lands. A refusal that cannot clear
+    ///      would be a wedge; this one is a satisfiable wait.
+    function testP1bForfeitSweepRefusesWhenDeliveredIsShort() public {
+        _armAndFinalize(5, 700 ether);
+
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+
+        uint256 id = _seedEntry(alice, 77, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(77, id);
+
+        // Nothing delivered: the armed fresh this sweep would spend is
+        // entirely unbacked.
+        _mut().setArmedFreshLedgerRaw(0, 0);
+
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+
+        vm.prank(makeAddr("keeper"));
+        vm.expectRevert();
+        _facet().sweepForfeitedInteractionRewards(77);
+
+        // Nothing moved — the refusal happened before any effect landed.
+        assertEq(
+            _cfg().getRecycleBucket(),
+            bucketBefore,
+            "a refused sweep absorbs nothing"
+        );
+        assertEq(
+            _mut().getArmedFreshPaidRaw(), 0, "and charges the bound nothing"
+        );
+
+        // FUNDED: the same call now succeeds, so the refusal was a wait and
+        // the entry was genuinely left intact rather than consumed.
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        vm.prank(makeAddr("keeper"));
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
+        assertGt(swept, 0, "the same sweep succeeds once funding lands");
+        assertGt(
+            _mut().getArmedFreshPaidRaw(),
+            0,
+            "and only then charges the delivered bound"
+        );
     }
 
     // ─── 2. Recycled forfeit = release, not credit ───────────────────────────

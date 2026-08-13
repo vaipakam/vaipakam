@@ -1745,6 +1745,26 @@ library LibInteractionRewards {
             // the bound tracks the spend, so the two can never drift.
             if (freshSpent != 0 && _isArmedDay(s, d)) {
                 s.rewardBudgetArmedFreshPaid += freshSpent;
+                // Codex #1699 r1 P1 — deplete the IN-MEMORY bound too, not
+                // just the storage counter.
+                //
+                // `deliveredFreshBound` is read ONCE when the walk builds its
+                // `PoolBudget`, so without this every day in the same claim
+                // sees the original allowance. Two 0.4 days against 0.5
+                // delivered would each pass their own check and transfer 0.8
+                // before storage ever caught up — drawing the excess from
+                // custody held for other obligations.
+                //
+                // This is the SAME defect the note above `_walkShareOfPoolDays`
+                // records for the 69M pool ("a leg that priced itself against
+                // the raw `poolRemaining()` while a sibling leg had already
+                // spoken for part of it"). `ctx.pool.fresh` is threaded for
+                // exactly that reason; the delivered bound now is too.
+                // Saturating because the two are decremented independently and
+                // a rounding wei must never underflow the walk.
+                uint256 db = ctx.pool.deliveredFresh;
+                ctx.pool.deliveredFresh =
+                    db > freshSpent ? db - freshSpent : 0;
             }
             ctx.pool.recycled -= charge.toUser.recycled;
             _foldSplit(toUser, charge.toUser);
@@ -2195,6 +2215,22 @@ library LibInteractionRewards {
             if (!charge.advanced) break;
 
             pool.recycled -= charge.toUser.recycled;
+            // Codex #1699 r1 P1 — mirror the WALK's delivered-bound depletion.
+            //
+            // `pool.fresh` is deliberately unbounded here (the 69M truncation
+            // is payment-time behaviour), but `deliveredFresh` is NOT: this
+            // preview binds it so a quote cannot promise what a claim would
+            // defer. A bound that is read once and never depleted would let
+            // every day in a multi-day window be measured against the same
+            // untouched allowance — the same defect the finding raised
+            // against the walk, and quoting it here would re-open the
+            // preview-versus-claim divergence this slice already closed.
+            if (_isArmedDay(s, d)) {
+                uint256 spent =
+                    charge.toUser.armedFresh + charge.toTreasury.armedFresh;
+                uint256 db = pool.deliveredFresh;
+                pool.deliveredFresh = db > spent ? db - spent : 0;
+            }
             userTotal += charge.toUser.total;
             _dryFoldDay(s, dry.loanSide, set, slices);
             // Advance the simulated cursors of the set members.
@@ -2563,7 +2599,26 @@ library LibInteractionRewards {
         // a creditable state (never a fresh accrual — the claimant already
         // served the full window; the defer is a protocol-side crediting
         // constraint, and the claim path stays open to them throughout).
-        if (freshShare > freshHeadroom) {
+        //
+        // Codex #1699 r1 P1 — the DELIVERED allowance joins this same
+        // all-or-nothing decision, rather than being charged afterwards.
+        // Terminalising an armed entry the claimant's own walk would have
+        // DEFERRED for missing delivery destroys the entry and credits its
+        // fresh share out of custody held for other obligations; recording
+        // the spend after the fact cannot undo that. Folded into the existing
+        // gate deliberately — a second, separate check could disagree with
+        // this one about whether the entry is creditable.
+        //
+        // Only the ARMED portion is bounded (`split_.armedFresh`): an entry's
+        // pre-`D*` fresh predates arming and no remittance funded it, so
+        // bounding the whole `freshShare` would strand ordinary expiries on
+        // every mirror. The existing defer semantics carry over unchanged —
+        // the block is RECORDED so the countdown pauses, and the wait clears
+        // when the next remittance lands.
+        bool deliveredShort = split_.armedFresh != 0
+            && LibVaipakam.isMirrorRewardChain(s)
+            && split_.armedFresh > deliveredFreshBound(s);
+        if (freshShare > freshHeadroom || deliveredShort) {
             s.rewardEntryObsBlocked[id] = true;
             return (expired, 0);
         }

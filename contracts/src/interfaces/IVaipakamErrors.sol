@@ -195,6 +195,18 @@ interface IVaipakamErrors {
     error NoInteractionRewardsToClaim();
     /// @notice The 69M VPFI interaction rewards cap has been fully paid out.
     error InteractionPoolExhausted();
+
+    /// @notice #1434 P1-b (Codex #1699 r1) — a MIRROR path tried to spend more
+    ///         ARMED fresh than has been delivered to this chain, so the
+    ///         action is refused rather than allowed to draw on custody held
+    ///         for other obligations.
+    /// @dev    A SATISFIABLE refusal, not a permanent one: the delivered bound
+    ///         grows with every remittance, so the same call succeeds once
+    ///         funding lands. Distinct from {InteractionPoolExhausted}, which
+    ///         reports the monotone 69M ceiling and can never clear.
+    /// @param needed    Armed fresh the action would have spent.
+    /// @param available Remaining delivered-less-paid allowance.
+    error DeliveredFreshShortfall(uint256 needed, uint256 available);
     /// @notice #1460 — the claim's FRESH component exceeds the un-earmarked
     ///         VPFI behind it (`balanceOf(diamond) - recycleBucket`), so
     ///         paying it would leave the recycle bucket claiming tokens that
