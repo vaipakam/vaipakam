@@ -6,7 +6,7 @@
 
 ## What is this
 
-The **proactive-notifications + public-Frame + operator-services Worker**. Stage 3 PR4 of the Worker split (see [Stage3WorkerSplitPlan.md](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md)). Five responsibilities:
+The **proactive-notifications + public-Frame + operator-services Worker**. Stage 3 PR4 of the Worker split (see [Stage3WorkerSplitPlan.md](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md)). Four responsibilities:
 
 - **Proactive notifications** — periodic interest pre-notify; Push + Telegram dispatchers (`PUSH_CHANNEL_PK` + `TG_BOT_TOKEN`).
 <!-- #1651: a "Cross-chain monitoring — buy-watchdog reconciliation across the CCIP buy flow" bullet stood here. #687-A removed that surface and its watchdog, and this Worker has no other cross-chain-monitoring concern, so the responsibility is gone rather than renamed. -->

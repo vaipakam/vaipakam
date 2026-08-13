@@ -6,9 +6,11 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  * Stage 3 PR4 of the Worker split (see
  * `docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`). Agent inherits
  * the broadest env shape of the three Workers because it owns the
- * most concerns — proactive notifications + cross-chain monitoring +
- * operator services + public Frames + Telegram bot + diagnostics
- * record. What it does NOT own:
+ * most concerns — proactive notifications + operator services +
+ * public Frames + Telegram bot + diagnostics record.
+ * (#1651: "cross-chain monitoring" was listed here for the
+ * buy-watchdog #687-A removed; nothing in this Worker monitors
+ * cross-chain state now.) What it does NOT own:
  *
  *   - HF watcher loop / autonomous liquidation         → apps/keeper
  *   - chain-event scan / D1 indexer / public read-API  → apps/indexer

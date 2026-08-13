@@ -1,7 +1,9 @@
 {
-  // Vaipakam agent Worker — proactive notifications + cross-chain
-  // monitoring + operator services + public Frames + Telegram bot
-  // + diagnostics record + frontend-facing settings.
+  // Vaipakam agent Worker — proactive notifications + operator
+  // services + public Frames + Telegram bot + diagnostics record
+  // + frontend-facing settings.
+  // (#1651: "cross-chain monitoring" was listed here for the
+  // buy-watchdog #687-A removed.)
   //
   // Stage 3 PR4 of the Worker split — see
   // docs/DesignsAndPlans/Stage3WorkerSplitPlan.md for the full
@@ -239,10 +241,12 @@
   //
   // Agent carries the broadest secret surface of the three Workers:
   //   - RPC_*                — per-chain RPC URLs (carry API keys).
-  //                            periodicPreNotify needs every Diamond
-  //                            chain; the 1inch Fusion commit preflight
-  //                            resolves one per request chain. Both
-  //                            gate on a deployment record first.
+  //                            Consumers: every caller of
+  //                            `getChainConfigs` (env.ts) plus
+  //                            `intentFusionPost.rpcForChain`. Read
+  //                            those for the per-consumer consequences
+  //                            of a missing URL — they differ, and no
+  //                            summary is kept here (#1651).
   //                            `RPC_ZKEVM` is omitted (Polygon zkEVM
   //                            out of scope).
   //                            #1651: previously justified by a
