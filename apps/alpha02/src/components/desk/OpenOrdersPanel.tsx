@@ -720,8 +720,16 @@ function FullTariffArmForm({
       return undefined;
     }
   })();
+  // Gated on `armAllowed` (Codex #1703 r1): with the feature off, the liquidity
+  // read pending/failed, or the asset illiquid, Save is DISABLED — and a
+  // warning ending "you can save this either way" beside a disabled button
+  // contradicts the actionable unavailability message already shown there. The
+  // acceptance side gates the same way, on `fullOfferable`.
   const ceilingBelowQuote =
-    quoted !== undefined && armedCeiling !== undefined && quoted > armedCeiling;
+    armAllowed &&
+    quoted !== undefined &&
+    armedCeiling !== undefined &&
+    quoted > armedCeiling;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);

@@ -369,7 +369,11 @@ Thin-market honesty rules apply.
   The ceiling is never raised on the user's behalf; the choice stays theirs.
   The standing-offer creator's arm form carries the paired warning: arming a
   ceiling the live quote already exceeds is called out, with both figures and
-  the consequence for fills stated. It warns rather than refuses — what the
+  the consequence stated as it actually is — a fill above the ceiling cannot
+  charge the tariff, so it is rejected, or opened without Full where that
+  fallback was chosen. The quote shown is for a full-size fill, and the warning
+  says so, because a smaller partial fill can price under the same ceiling. It
+  appears only while arming is actually available. It warns rather than refuses — what the
   protocol judges is the quote when a fill actually happens, and it may fall
   back before then; saving an offer is reversible in a way an acceptance is
   not. That matches how the same form already treats a vault balance below the
