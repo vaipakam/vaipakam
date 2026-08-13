@@ -1235,10 +1235,17 @@ export function Recover() {
     //   the adjustment does not reapply. Untagged states (`review`, `error`) then
     //   sit under the new wallet, and a stale flow can walk into another wallet
     //   prompt. Here, reset and invalidation are in ONE post-commit effect, so a
-    //   continuation that sneaks in is clobbered by the reset that follows it.
-    //   This is justification (1), which was correct at THIS site all along — the
-    //   #1683 refutation did not transfer, because PositionDetails has no signing
-    //   continuation that can advance to a wallet prompt.
+    //   continuation that sneaks in has its STATE clobbered by the reset that
+    //   follows it. This is justification (1), which was correct at THIS site all
+    //   along — the #1683 refutation did not transfer, because PositionDetails has
+    //   no signing continuation that can advance to a wallet prompt.
+    //   NOT a full safety guarantee, though (Codex #1689 r3): a continuation
+    //   queued before the account change can still run before this passive effect,
+    //   pass the old generation check, and OPEN a `signTypedData` / `writeContract`
+    //   prompt. Resetting state cannot retract a prompt or un-broadcast a tx. The
+    //   effect is strictly better than the render-phase version — it wins the state
+    //   race the adjustment loses — but an identity fence around the imperative
+    //   wallet calls is a separate gap, tracked in #1691.
     // - Mirroring the committed step into `stepRef` from a layout effect can roll
     //   a newer synchronous `setStep(B)` back to `A`, which is precisely the
     //   render-behind bug the synchronous mirror exists to prevent.
@@ -1246,10 +1253,12 @@ export function Recover() {
     //   read, so a concurrent yield can commit a card that was already removed in
     //   another tab, with no later event to correct it.
     //
-    // Fixing all three needs identity-tagged guarded writes, a versioned mirror,
-    // and `useSyncExternalStore` for the record — a concurrency redesign of a
-    // signing path, which is not a lint cleanup. Tracked as #1691 if it is ever
-    // worth doing; the effect is correct today.
+    // Moving this to render safely needs identity-tagged guarded writes, an
+    // identity fence on the imperative wallet calls, ordered/keyed handling of the
+    // oracle retry budget, and `useSyncExternalStore` for the record — a
+    // concurrency redesign of a signing path, which is not a lint cleanup. Tracked
+    // as #1691. The effect is the better of the two options today; it is not a
+    // proof that this screen has no races.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     clearToFreshForm();
     oracleAutoRetriesRef.current = 0;
