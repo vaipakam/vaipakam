@@ -70,7 +70,35 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 
-Placeholder facets (Phase 2): TreasuryFacet, PrecloseFacet, RefinanceFacet, EarlyWithdrawalFacet, PartialWithdrawalFacet.
+**Early-exit / settlement facets — all LIVE, none a placeholder** (#1657). An
+earlier version of this table called these "Placeholder facets (Phase 2)". They
+are not, and had not been for some time: each is cut into the production
+Diamond by `DiamondFacetNames.cutFacetNames()`, each moves funds, and several
+carry invariants **this document states elsewhere**: the VPFI-LIF
+settle/forfeit rules below name Preclose and Refinance as proper-settlement
+terminal paths, and the retail-deploy section lists both among the Tier-1
+entry points that revert for sanctioned callers. The retired line contradicted
+its own document in two places.
+
+"Placeholder" reads as *do not expect behaviour here*, which is the opposite of
+true on a settlement path, and it cost real time in #1503.
+
+| Facet                      | Role                                                                        |
+| -------------------------- | --------------------------------------------------------------------------- |
+| **PrecloseFacet**          | Borrower early close-out: `precloseDirect`, obligation handover to a replacement borrower (`transferObligationViaOffer`), and the offset route (`offsetWithNewOffer` → `completeOffset`) |
+| **RefinanceFacet**         | Replace a loan's terms in place — `refinanceLoan`, `refinanceLoanFromAccept` |
+| **EarlyWithdrawalFacet**   | Lender exit: instant sale into a standing buy offer (`sellLoanViaBuyOffer`) and the listed-sale route (`createLoanSaleOffer` → `completeLoanSale`) |
+| **PartialWithdrawalFacet** | Release surplus collateral while a loan is open — `calculateMaxWithdrawable`, `partialWithdrawCollateral` |
+| **TreasuryFacet**          | Fee custody and treasury operations (56 functions — claims, buyback intents, remittance absorption, asset conversion) |
+
+Two of them do carry a genuine *future-scope* note in their own headers, which
+is what the retired line probably grew out of: TreasuryFacet's "expand for
+Phase 2 (governance distributions, reserves)" and PartialWithdrawalFacet's
+"expand for Phase 2 (multi-collateral, governance-configurable threshold)".
+Those describe work not yet done **on top of** shipped behaviour — they do not
+make either facet a stub. Note also that "Phase 2" appears inside several
+facets as *task* numbering (`T-092 Phase 2a`, `#671 phase 2`); that is
+unrelated to delivery status.
 
 ### Liquid vs Illiquid Assets
 
