@@ -2585,7 +2585,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               // must not render while either says the offset would
               // revert.
               <OffsetFlow
-                key={`offset-${readChain.chainId}`}
+                // Keyed on the LOAN as well as the chain (#1697). React Router
+                // reuses this page's instance when only `:loanId` changes, and a
+                // chain-only key let OffsetFlow survive a loan switch with every
+                // mount-time seed intact — loan A's rate, duration and collateral
+                // sitting in the form for loan B, and `figuresMoved` latching a
+                // "figures moved while you were reviewing" notice for what was
+                // actually a navigation. Same shape as the stale-instance bug
+                // Codex #1412 r6 found in FullTariffOptIn; a remount is the
+                // cheapest correct answer here because EVERY piece of this form's
+                // state is loan-scoped.
+                key={`offset-${readChain.chainId}-${row.loanId}`}
                 row={row}
                 live={loanLive.data.live}
                 chainNow={loanLive.data.chainNow}
