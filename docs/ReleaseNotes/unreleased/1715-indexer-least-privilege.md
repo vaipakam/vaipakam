@@ -11,22 +11,34 @@ over HTTP — one marketplace API key and three webhook-verification keys — an
 it makes authenticated calls out to a third-party marketplace to publish
 listings on users' behalf. It is not read-only and it is not credential-free.
 
-The ordering it was used to justify may well still be right: nothing that
-Worker holds can move funds, so the signing Worker still deserves the strictest
-handling. But that conclusion should follow from what the Worker actually does,
-not from a description written before it started publishing listings. The
-section now states the real surface and flags explicitly that the ordering has
-not been re-derived against it, rather than quietly restating a conclusion on a
-new premise.
+The ordering those statements were used to justify does not survive scrutiny
+either, and that is the more serious half. All three Workers share one
+database, and access to it is granted per-database, not per-table — so any of
+them can write anything in it, whatever its own code happens to do. The
+signing Worker reads a counter from that shared store and, once it crosses a
+threshold, submits a privileged risk-parameter transaction. An attacker who
+holds the indexer can therefore write the counter and have the signing Worker
+send the transaction for them. No funds move through the indexer, and funds
+still move.
+
+So the corrected position is narrower than the old one: the indexer cannot move
+funds directly, but it can publish listings under the project's marketplace
+credentials, and it can reach fund-relevant on-chain state indirectly through
+inputs the signing Worker trusts. Whether the fix is separate databases,
+per-table isolation, or having the signing Worker validate state it did not
+itself produce is an architectural decision, filed separately rather than
+resolved by adjusting a deploy cadence.
 
 The specific phrase that was removed is the kind an auditor relies on to decide
 a component does not need looking at. That is what makes it worth correcting
 rather than leaving as an imprecision.
 
-Two sibling descriptions of the same Worker were checked and deliberately left
-alone: they say "read-only — no signing keys", which pairs the shorthand with
-the claim that is actually true and is the one that matters for fund safety,
-and the Worker's own entry point already documents its single write path
-precisely.
+Two sibling descriptions of the same Worker were left alone, but for a
+narrower reason than first stated: they pair the shorthand with "no signing
+keys", which remains true and is the claim that matters for fund safety.
+An earlier draft of this note also cited the Worker's entry point as
+documenting its single write path — that was itself wrong. There are three
+write-accepting endpoints, not one, and using a false claim to justify leaving
+other descriptions alone would have propagated the same error sideways.
 
 No behaviour changes.

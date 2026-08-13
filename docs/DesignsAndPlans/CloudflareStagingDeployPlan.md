@@ -43,21 +43,42 @@ least-privilege:
 - `vaipakam-indexer` is the **chain-read + API** Worker: RPC reads, D1
   writes, inbound Alchemy webhook verification, and **authenticated
   outbound publication of Seaport listings to OpenSea**
-  (`openseaPublish.ts`). It holds four HTTP-level secrets —
-  `OPENSEA_API_KEY` and three `ALCHEMY_WEBHOOK_SIGNING_KEY_*`.
+  (`openseaPublish.ts`). It binds **fifteen** Secrets Store entries: four
+  non-RPC HTTP authentication secrets (`OPENSEA_API_KEY` plus three
+  `ALCHEMY_WEBHOOK_SIGNING_KEY_*`) and eleven `RPC_*` URLs which
+  themselves carry provider API keys and are used over HTTP. Both numbers
+  matter — the four are what an auditor thinks of as credentials, the
+  eleven are equally leakable and equally billable.
 
   This bullet used to read "read-only — RPC reads, D1 writes, no
   HTTP-level secrets". Both halves were false, and the second is the
   kind of line an auditor reasonably relies on to skip a Worker's secret
   surface entirely.
 
-  **The blast-radius ordering below is stated for the keeper-vs-agent
-  axis and has not been re-derived against this.** A compromised indexer
-  cannot move funds, so the keeper still sits alone at the top — but it
-  can publish listings to a live marketplace under the project's API
-  key, which is not nothing and is not what "read-only" implies. Whether
-  that changes its deploy cadence or reviewer sign-off is an open
-  question (#1715), deliberately not answered here.
+  **The blast-radius ordering below does not survive contact with the
+  shared D1 binding, and "cannot move funds" is not the boundary it
+  looks like.** All three Workers bind the same `vaipakam-archive`
+  database, and **a D1 binding is database-scoped, not table-scoped** —
+  there is no per-table grant, so any Worker with the binding can write
+  any table regardless of what its own code does today. Which Worker
+  "owns" a table is a convention in our source, not an enforced
+  boundary.
+
+  That turns the keeper into a confused deputy. `liquidityConfidence.ts`
+  walks a streak counter persisted in D1 and, once the threshold is met,
+  signs `setKeeperTier` (`:768-771`) — a privileged risk-parameter
+  write. An attacker holding the indexer can poison that persisted
+  streak and induce the signing Worker to submit the transaction for
+  them. The indexer never signs anything, and funds still move.
+
+  So the honest statement is: a compromised indexer cannot move funds
+  **directly**, but it can (a) publish listings to a live marketplace
+  under the project's API key, and (b) reach fund-relevant on-chain
+  state indirectly via keeper inputs it can write. Whether the answer is
+  storage isolation, per-Worker databases, or the keeper validating D1
+  inputs it did not produce is a real architectural decision, tracked as
+  **#1722** — not settled here, and deliberately not papered over with a
+  cadence tweak.
 
 A buggy agent produces stale data; a buggy keeper loses funds.
 Different blast radius justifies different deploy cadence +
