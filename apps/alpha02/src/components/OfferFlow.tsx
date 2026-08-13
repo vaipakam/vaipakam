@@ -287,9 +287,18 @@ export function OfferFlow({ side }: { side: Side }) {
   // scoped to the selected offer and must reset with it.
   const [fullTariff, setFullTariff] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
   const selectedOfferId = selected?.offerId;
-  useEffect(() => {
+  // Reset as a render-phase ADJUSTMENT rather than in an effect (#1520).
+  // The effect version committed one frame in which the PREVIOUS offer's
+  // tariff choice was live against the newly selected offer — and this choice
+  // is fee-bearing, so that frame mispriced the receipt the user was looking
+  // at. React re-runs the render before painting, so the stale choice is
+  // never displayed. An initializer alone cannot do this: it would freeze the
+  // first offer's choice, which is what the effect was there for.
+  const [fullTariffFor, setFullTariffFor] = useState(selectedOfferId);
+  if (fullTariffFor !== selectedOfferId) {
+    setFullTariffFor(selectedOfferId);
     setFullTariff(FULL_TARIFF_OFF);
-  }, [selectedOfferId]);
+  }
   const [form, setForm] = useState<OfferFormState>({
     ...initialOfferForm,
     offerType: side,
@@ -385,6 +394,14 @@ export function OfferFlow({ side }: { side: Side }) {
       clear(copy.match.offerGone);
       return;
     }
+    // Deliberately an effect (#1520): this is a DEEP-LINK arrival, not a
+    // derived value. The row does not exist until the indexer query resolves,
+    // and what happens on arrival is a multi-step flow transition — select the
+    // offer, switch to accept mode, jump to the review step. There is no
+    // render-phase expression of "when this async row lands, move the flow",
+    // and the guards above (wrong side, wrong kind, own offer, gone) all read
+    // the resolved row.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm((f) => ({ ...f, lendingAsset: row.lendingAsset, riskAndTermsConsent: false }));
     setSelected(row);
     setMode('accept');
@@ -458,15 +475,6 @@ export function OfferFlow({ side }: { side: Side }) {
   const linkedLoanKnown = mode !== 'accept' || linkedLoan.data !== undefined;
   const acceptIsLoanSale =
     mode === 'accept' && linkedLoan.data !== undefined && linkedLoan.data !== '0';
-  // Same late-disclosure rule as the illiquid warning: consent given
-  // before the sale-vehicle banner appeared must be re-given.
-  useEffect(() => {
-    if (acceptIsLoanSale) {
-      setForm((f) =>
-        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-      );
-    }
-  }, [acceptIsLoanSale]);
 
   // #986 P3 — the honest buy-a-running-loan review. A sale-vehicle
   // offer's stored fields misdescribe the deal (zero collateral, a
@@ -533,16 +541,6 @@ export function OfferFlow({ side }: { side: Side }) {
           saleData.selfBuyBlocked,
         ].join(':')
       : null;
-  const prevSaleFingerprint = useRef(saleFingerprint);
-  useEffect(() => {
-    if (prevSaleFingerprint.current === saleFingerprint) return;
-    prevSaleFingerprint.current = saleFingerprint;
-    if (saleFingerprint !== null) {
-      setForm((f) =>
-        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-      );
-    }
-  }, [saleFingerprint]);
 
   const lockedAmount = useMemo(() => {
     if (mode === 'accept' && selected) {
@@ -821,13 +819,6 @@ export function OfferFlow({ side }: { side: Side }) {
   // The liquidity query resolves asynchronously — if the illiquid
   // warning appears AFTER the user already ticked consent, that
   // consent predates the disclosure and must be re-given.
-  useEffect(() => {
-    if (reviewIsIlliquid) {
-      setForm((f) =>
-        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-      );
-    }
-  }, [reviewIsIlliquid]);
 
 
   // Receipts must show the grace window repayment is actually judged
@@ -1345,14 +1336,6 @@ export function OfferFlow({ side }: { side: Side }) {
   }
   /** The epoch that was current when the user LAST ticked the consent box. */
   const consentEpochRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (securityBlocked.length > 0 || securityWarned.length > 0) {
-      setForm((f) =>
-        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-      );
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [securityFingerprint]);
 
   const canSign =
     allChecksPass(checks) &&
