@@ -619,7 +619,7 @@ export function useAcceptTermsSigning() {
 
       return { terms, signature };
     },
-    [address, walletChain, walletClient, publicClient],
+    [address, walletChain, walletClient, publicClient, queryClient],
   );
 
   return { sign };
@@ -892,7 +892,7 @@ export function useSignedOfferAcceptTermsSigning() {
 
       return { payload: { terms, signature }, orderHash };
     },
-    [address, walletChain, walletClient, publicClient],
+    [address, walletChain, walletClient, publicClient, queryClient],
   );
 
   return { sign };
