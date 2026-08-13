@@ -12,7 +12,7 @@
  * in docs/FunctionalSpecs/_CodeVsDocsAudit.md — the spec wants the
  * three-way distinction; that needs a contract view.)
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useEnsName, usePublicClient } from 'wagmi';
@@ -66,12 +66,16 @@ export function NftVerifier() {
   const { readChain } = useActiveChain();
   const readClient = usePublicClient({ chainId: readChain.chainId });
   const [input, setInput] = useState(tokenIdParam ?? '');
-  // The route element is reused across /nft/:id transitions
-  // (back/forward, in-page links) — keep the input in step with the
-  // verdict being shown.
-  useEffect(() => {
+  // The route element is reused across /nft/:id transitions (back/forward,
+  // in-page links), so the input has to follow the verdict being shown. Done as
+  // a render-phase adjustment rather than an effect (#1520): an effect commits
+  // one frame in which the box still holds the PREVIOUS token id beside the new
+  // token's verdict, which reads as the page having mismatched the two.
+  const [seenTokenIdParam, setSeenTokenIdParam] = useState(tokenIdParam);
+  if (seenTokenIdParam !== tokenIdParam) {
+    setSeenTokenIdParam(tokenIdParam);
     if (tokenIdParam !== undefined) setInput(tokenIdParam);
-  }, [tokenIdParam]);
+  }
 
   const validId = tokenIdParam !== undefined && /^[1-9]\d*$/.test(tokenIdParam);
 

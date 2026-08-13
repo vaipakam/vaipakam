@@ -3,7 +3,7 @@
  * Rows come from the indexer; kinds are shown as readable labels with
  * loan/offer links back into the app.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ExternalLink, History, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -137,12 +137,18 @@ export function Activity() {
   const loans = useMyLoansFull();
   // Client-side reveal count (UX-008 pagination).
   const [visible, setVisible] = useState(PAGE);
-  // Reset the reveal depth when the feed IDENTITY changes (Codex #1171
-  // r2): otherwise a wallet/chain switch keeps a previously-expanded
-  // count and the new account skips its intended 25-row first page.
-  useEffect(() => {
+  // Reset the reveal depth when the feed IDENTITY changes (Codex #1171 r2):
+  // otherwise a wallet/chain switch keeps a previously-expanded count and the
+  // new account skips its intended 25-row first page. A render-phase adjustment
+  // rather than an effect (#1520) — an effect renders the new account's feed
+  // once at the old expanded depth before collapsing it, which is a visible
+  // jump AND briefly reveals more of the new account's rows than intended.
+  const feedIdentity = `${address ?? ''}|${readChain.chainId}`;
+  const [seenFeedIdentity, setSeenFeedIdentity] = useState(feedIdentity);
+  if (seenFeedIdentity !== feedIdentity) {
+    setSeenFeedIdentity(feedIdentity);
     setVisible(PAGE);
-  }, [address, readChain.chainId]);
+  }
 
   // The worker's actor column is non-exhaustive (a keeper-triggered
   // LoanDefaulted has actor null; OfferAccepted stores only the
