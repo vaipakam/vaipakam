@@ -2024,15 +2024,6 @@ export function OfferFlow({ side }: { side: Side }) {
           }
         }
       }
-      // Same reasoning as the Permit2 prompt above: the classic lane's approval
-      // is itself a wallet prompt AND an on-chain send, so it gets the same
-      // check rather than waiting for the one before the final write.
-      await recheckCeiling({
-        lendingAsset: selected.lendingAsset as `0x${string}`,
-        amount: offerPrincipal(selected),
-        durationDays: BigInt(selected.durationDays),
-        fullTariff,
-      });
       await ensureAllowance({
         publicClient,
         walletClient,
@@ -2041,6 +2032,19 @@ export function OfferFlow({ side }: { side: Side }) {
         spender: walletChain.diamondAddress,
         amount: payAmount,
         onPrompt: () => stepper.next('approve'),
+        // Before EVERY approve prompt, not once before the helper (Codex
+        // #1703 r3): the zero-first reset path prompts twice, and the gap
+        // between them is a user-held wallet confirmation plus a mined
+        // transaction — easily long enough for the quote to cross. Passing
+        // the gate in covers both, where my earlier standalone call covered
+        // only the first.
+        beforeEachApprove: () =>
+          recheckCeiling({
+            lendingAsset: selected.lendingAsset as `0x${string}`,
+            amount: offerPrincipal(selected),
+            durationDays: BigInt(selected.durationDays),
+            fullTariff,
+          }),
       });
     }
     stepper.next('send');

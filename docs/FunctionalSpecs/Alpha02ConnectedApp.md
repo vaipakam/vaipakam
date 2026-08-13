@@ -388,7 +388,10 @@ Thin-market honesty rules apply.
 - **Under the reject posture**, the app attempts a fresh read of the quote at
   each point it is about to ask for a signature or send a transaction —
   including before each additional wallet prompt the flow needs, whether a
-  separate permit signature or a token approval, since those are paced by the
+  separate permit signature or a token approval — and before EACH approval
+  prompt where a token needs its allowance reset to zero first, since that
+  path prompts twice with a mined transaction between them. This holds on the
+  signed-fill path as well as the direct accept. Those steps are paced by the
   user and can take arbitrarily long, and a signature collected for an
   acceptance about to be refused is exactly the waste these checks exist to
   prevent. The attempt is BEST-EFFORT: if the read itself fails (an unreachable
