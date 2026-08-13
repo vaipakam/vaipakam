@@ -390,6 +390,12 @@ export function SignedFillConfirm({
           value={fullTariff}
           onChange={(v) => {
             setFullTariff(v);
+            // Clear a STALE submit error too (Codex #1700 r3): a
+            // ceiling-blocked fill leaves this banner up, and the
+            // prescribed recovery (raise the ceiling, or untick Full)
+            // would clear the card's notice while the banner still
+            // said the quote exceeds a ceiling that no longer applies.
+            setError(null);
             // Codex #1412 r1 — a tariff edit changes the signed
             // terms, so a prior consent no longer covers them.
             setConsent(false);

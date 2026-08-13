@@ -152,6 +152,12 @@ test('Full tariff opt-in: dark default hides it; strict Full fails closed; downg
     await ceilingInput.fill(halved);
     const raise = card.getByTestId('full-tariff-raise-ceiling');
     await expect(raise).toBeVisible({ timeout: 30_000 });
+    // The BLOCK half of this arm depends on the downgrade box being UNticked
+    // (Codex #1700 r3): with it ticked the contract downgrades instead of
+    // reverting, and the card deliberately lets that through. Asserted rather
+    // than assumed, so a change to the default cannot make this arm pass
+    // while testing nothing.
+    await expect(card.locator('input[type="checkbox"]').nth(1)).not.toBeChecked();
     // The refusal is at SUBMIT, not on the button: `useAcceptTerms`
     // (`resolveFullTariffInput`) THROWS on an engaged-but-blocked Full rather
     // than the accept control being disabled. I first asserted `toBeDisabled`

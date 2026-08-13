@@ -2627,6 +2627,13 @@ export function OfferFlow({ side }: { side: Side }) {
                 value={fullTariff}
                 onChange={(v) => {
                   setFullTariff(v);
+                  // Any tariff edit also clears a STALE submit error (Codex
+                  // #1700 r3): a ceiling-blocked submit leaves this banner up,
+                  // and the prescribed recovery — raise the ceiling, or untick
+                  // Full — would otherwise clear the card's own notice while
+                  // the banner kept saying the quote exceeds a ceiling that is
+                  // no longer exceeded. The two surfaces must not disagree.
+                  setSubmitError(null);
                   // Codex #1412 r1 — a tariff edit changes the terms
                   // the accept signature will carry, so an already-
                   // given consent no longer covers them: clear it,

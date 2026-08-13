@@ -191,7 +191,16 @@ export function FullTariffOptIn({
   // with the unavailable notice, the signer refuses to sign while the
   // mark is set, and only the user's explicit untick turns their
   // "Full or reject" intent into a non-Full accept.
-  const engagedBlocked = !config.enabled || fullBlocked || ceilingOvertaken;
+  // The NOTICE fires on any overtake; the BLOCK does not (Codex #1700 r3 led
+  // me to read `downgradeHelpAllow`, which promises in so many words: "If the
+  // tariff can't be charged when the loan opens (ABOVE YOUR CEILING, vault
+  // balance short, or the option switched off), the loan still opens — without
+  // Full"). Refusing to sign when that box is ticked would break the promise
+  // the user relied on, and would refuse an accept the CONTRACT is happy to
+  // complete via `_downgrade`. So: tell them either way, hold signing only
+  // when they did NOT permit the downgrade.
+  const ceilingBlocks = ceilingOvertaken && !value.allowDowngrade;
+  const engagedBlocked = !config.enabled || fullBlocked || ceilingBlocks;
   // LAYOUT effect, not passive (Codex #1700 r1): both callers derive the submit
   // button and the signed payload from the PARENT's copy of this mark, so a
   // passive effect leaves one PAINTED frame in which a background quote refresh
@@ -203,7 +212,7 @@ export function FullTariffOptIn({
   // address-ref sync, and the same one-frame hazard as #1695's consent clear.
   useLayoutEffect(() => {
     if (!value.full) return;
-    const reason = ceilingOvertaken ? 'ceiling' : 'unavailable';
+    const reason = ceilingBlocks ? 'ceiling' : 'unavailable';
     if (
       Boolean(value.blocked) !== engagedBlocked ||
       (engagedBlocked && value.blockedReason !== reason)
@@ -214,7 +223,7 @@ export function FullTariffOptIn({
         blockedReason: engagedBlocked ? reason : undefined,
       });
     }
-  }, [engagedBlocked, ceilingOvertaken, value, onChange]);
+  }, [engagedBlocked, ceilingBlocks, value, onChange]);
 
   // Keep the parent's `maxCStar` in lockstep with the edited ceiling —
   // an unparseable edit propagates as 0n, which the signer refuses, so
