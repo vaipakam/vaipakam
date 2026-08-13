@@ -385,8 +385,10 @@ Thin-market honesty rules apply.
   is there to make proceeding an informed decision rather than a surprise.
 - **Under the reject posture**, that check is made against a freshly read quote
   at each point the app is about to ask for a signature or send a transaction —
-  including after an approval step, which is paced by the user and can take
-  arbitrarily long. Under the open-without-Full posture no such re-read is
+  including before each additional wallet prompt the flow needs — a separate
+  permit signature, or a token approval — since those are paced by the user and
+  can take arbitrarily long, and a signature collected for an acceptance that
+  is about to be refused is exactly the waste these checks exist to prevent. Under the open-without-Full posture no such re-read is
   required, and the displayed warning may lag: the re-read exists to stop a
   signature that is already doomed, and under that posture none is — the loan
   opens either way, which is what the user asked for.

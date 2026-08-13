@@ -1969,6 +1969,18 @@ export function OfferFlow({ side }: { side: Side }) {
           // pre-transaction, fall to classic unconditionally; the
           // consumed step is added back to the plan (#1037 honesty).
           stepper.next('permit');
+          // Before the SECOND wallet prompt, not only before the write (Codex
+          // #1701 r3 / #1703 r2): a Permit2 signature is a prompt the user has
+          // to action, and collecting it for an acceptance the final-send check
+          // is about to refuse wastes exactly what these checks exist to spare
+          // them. The spec says a fresh read happens at every signature point;
+          // this is what makes that true rather than something to narrow.
+          await recheckCeiling({
+            lendingAsset: selected.lendingAsset as `0x${string}`,
+            amount: offerPrincipal(selected),
+            durationDays: BigInt(selected.durationDays),
+            fullTariff,
+          });
           let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
             null;
           try {
@@ -2012,6 +2024,15 @@ export function OfferFlow({ side }: { side: Side }) {
           }
         }
       }
+      // Same reasoning as the Permit2 prompt above: the classic lane's approval
+      // is itself a wallet prompt AND an on-chain send, so it gets the same
+      // check rather than waiting for the one before the final write.
+      await recheckCeiling({
+        lendingAsset: selected.lendingAsset as `0x${string}`,
+        amount: offerPrincipal(selected),
+        durationDays: BigInt(selected.durationDays),
+        fullTariff,
+      });
       await ensureAllowance({
         publicClient,
         walletClient,

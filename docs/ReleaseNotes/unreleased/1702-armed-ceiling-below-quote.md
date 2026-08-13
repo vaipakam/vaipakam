@@ -6,9 +6,9 @@ is eventually filled. Until now the form checked only that the number was
 well formed. It did not check it against the live quote sitting next to it.
 
 So it was possible to save a strict authorization whose ceiling the quote had
-already passed. Nothing looked wrong. Every later fill against that offer
-would then be rejected, and the rejection landed on the person trying to
-accept it — someone who had done nothing wrong, could not fix it, and had no
+already passed. Nothing looked wrong. Any fill whose own price sat above that
+ceiling would then be rejected — and the rejection landed on the person trying
+to accept it, someone who had done nothing wrong, could not fix it, and had no
 way to see why. The offer's creator, meanwhile, was not there to notice.
 
 The form now says so, naming both the live quote and the ceiling about to be
