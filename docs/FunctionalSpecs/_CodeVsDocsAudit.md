@@ -247,9 +247,11 @@ figures, and offers to raise it.
 **Code**: the standing-offer creator's arm form (Open Orders) reads the live
 quote and validates that the typed ceiling is a well-formed number, but never
 compares the two. A creator can therefore save a STRICT authorization whose
-ceiling is already below the current quote, leaving every subsequent fill
-doomed — the same failure the acceptance side now prevents, on the side that
-commits first.
+ceiling is already below the current quote. What is doomed is a fill whose OWN
+effective principal prices above that ceiling — the charge is recomputed per
+fill, so a smaller partial can price under it, and the quote can fall back.
+Still the same failure the acceptance side now prevents, on the side that
+commits first and cannot see the fills that fail.
 
 **Decision**: candidate BUG, not a stale doc. Found by Codex review of #1701
 while checking that the new spec text did not over-claim for a surface it does
