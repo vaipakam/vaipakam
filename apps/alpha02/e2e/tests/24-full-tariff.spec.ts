@@ -20,7 +20,7 @@
  */
 import type { Page } from '@playwright/test';
 import { test, expect, connectWallet } from '../lib/wallet-fixture';
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, formatUnits, parseUnits } from 'viem';
 import {
   postLenderOffer,
   newestOfferIdFor,
@@ -142,7 +142,14 @@ test('Full tariff opt-in: dark default hides it; strict Full fails closed; downg
     // less thing to drift when the headroom constant is retuned.
     const ceilingInput = card.getByTestId('full-tariff-ceiling');
     const seeded = await ceilingInput.inputValue();
-    await ceilingInput.fill(String(Number(seeded) / 2));
+    // Halve in BigInt, not floating point. `String(Number(x) / 2)` yields
+    // exponential notation for a small quote ("1.1e-17"), and the card's
+    // `isPlainDecimal` guard (/^\d+(\.\d+)?$/) REJECTS that — the ceiling
+    // would parse as undefined, `maxCStar` would be 0, and the arm would fail
+    // on the wrong condition (`maxCStarRequired`, not the overtake) for any
+    // sufficiently small C*. `formatUnits` never returns an exponent.
+    const halved = formatUnits(parseUnits(seeded, 18) / 2n, 18);
+    await ceilingInput.fill(halved);
     const raise = card.getByTestId('full-tariff-raise-ceiling');
     await expect(raise).toBeVisible({ timeout: 30_000 });
     // The refusal is at SUBMIT, not on the button: `useAcceptTerms`
@@ -183,8 +190,13 @@ test('Full tariff opt-in: dark default hides it; strict Full fails closed; downg
     expect(loansAfter[0].length).toBe(loansBefore[0].length);
 
     await raise.click();
+    // The notice clearing IS the assertion. Deliberately NOT
+    // `toHaveValue(seeded)`: the quote refetches on a ~30s cadence, so the
+    // raise can legitimately write a different figure than the one seeded at
+    // mount, and pinning equality would make this arm flaky for a reason that
+    // has nothing to do with the behaviour under test.
     await expect(raise).toHaveCount(0, { timeout: 30_000 });
-    await expect(ceilingInput).toHaveValue(seeded);
+    await expect(ceilingInput).not.toHaveValue(halved);
 
     await tickConsent(page);
     const accept = page.getByRole('button', { name: /borrow this now/i });
