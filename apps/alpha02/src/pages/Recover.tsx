@@ -29,7 +29,14 @@
  * with a specific message instead of letting the user sign against
  * stale or unverifiable state.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ownLocaleResource } from '../i18n/ownLocaleResource';
@@ -1388,13 +1395,29 @@ export function Recover() {
       ? oracleProbe.state
       : 'probing';
   // The submit path re-observes the oracle and refreshes this gate from that
-  // fresh read, so those writes must stamp the same key the probe does —
-  // otherwise they record a verdict the derivation immediately discards. Each
-  // call site keeps its existing `genRef` generation check: that guard says the
-  // identity has not moved since the submit began, which is what makes the key
-  // captured by this render still the live one at the moment of the write.
+  // fresh read, so those writes must stamp the same key the probe does.
+  //
+  // `genRef` is NOT sufficient to decide whether such a write is still live
+  // (Codex #1688 r1). It advances on an identity change — account or chain — but
+  // `publicClient` is also a key input, and swapping it advances no generation.
+  // So a submit awaiting its oracle read could resume after the new client's
+  // probe had already recorded key B and overwrite it with its captured key A.
+  // Nothing would then match the live key, and because the key-B effect had
+  // already completed and would not re-run, the gate stayed on 'checking'
+  // PERMANENTLY — a deadlock, strictly worse than the one stale frame this PR
+  // set out to fix, and introduced by the fix itself.
+  //
+  // The liveness check therefore compares against the key as of the latest
+  // COMMIT, not against the generation counter. A write whose captured key has
+  // been superseded is DISCARDED rather than applied: the newer verdict is the
+  // true one, and the stale observation has nothing to say about it.
+  const oracleKeyRef = useRef(oracleKey);
+  useLayoutEffect(() => {
+    oracleKeyRef.current = oracleKey;
+  }, [oracleKey]);
   const recordOracle = (state: 'ready' | 'unset' | 'unreachable') => {
-    if (oracleKey !== null) setOracleProbe({ key: oracleKey, state });
+    if (oracleKey === null || oracleKeyRef.current !== oracleKey) return;
+    setOracleProbe({ key: oracleKey, state });
   };
   useEffect(() => {
     if (!publicClient || !walletChain || oracleKey === null) return;
