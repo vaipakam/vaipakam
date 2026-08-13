@@ -702,7 +702,6 @@ for (const pass of session.passes) {
             : `redirected to ${redirectedTo} — the requested route never rendered`),
       });
     }
-    // eslint-disable-next-line no-console
     console.log(
       `[${pass.name}] ${route} — ${loadMs}ms, ${sink.network.responses} responses, ` +
         `${sink.network.errors.length} http-errors, ` +
@@ -750,26 +749,22 @@ report.backgroundNetwork = backgroundNetworkBySession;
 
 const reportName = PROBE_ONLY ? 'report-devtools.json' : 'report.json';
 fs.writeFileSync(path.join(OUT_DIR, reportName), JSON.stringify(report, null, 2));
-// eslint-disable-next-line no-console
 console.log(`\nSweep complete → ${path.relative(process.cwd(), OUT_DIR)}/${reportName}`);
 // Printed on EVERY run, not only the failing ones. A tally that appears
 // solely when something broke tells the reader nothing about how much a
 // green run actually covered, and "0 did not load" is the line that
 // makes a PASS mean something (#1626).
-// eslint-disable-next-line no-console
 console.log(
   `Routes: ${routesAttempted - allNavFailures.length}/${routesAttempted} loaded, ` +
     `${allNavFailures.length} did NOT load`,
 );
 for (const f of allNavFailures) {
-  // eslint-disable-next-line no-console
   console.error(
     `  NAV FAIL [${f.session}/${f.pass}] ${f.route} after ${f.loadMs}ms — ` +
       `${f.error.split('\n')[0]}`,
   );
 }
 if (allBlockedRequests.length > 0) {
-  // eslint-disable-next-line no-console
   console.error(
     `READ-ONLY VIOLATIONS: ${allBlockedRequests.length} page-initiated write(s) were blocked — see blockedWriteRequests in the report`,
   );
@@ -791,7 +786,6 @@ if (allBlockedRequests.length > 0) {
 // it is checked BEFORE the exit-2 branch below.
 if (allBlockedRequests.length > 0 || allNavFailures.length > 0) {
   if (allNavFailures.length > 0) {
-    // eslint-disable-next-line no-console
     console.error(
       `NAVIGATION FAILURES: ${allNavFailures.length} of ${routesAttempted} route visit(s)` +
         ` never loaded — see navigationFailures in the report. What evidence exists` +
