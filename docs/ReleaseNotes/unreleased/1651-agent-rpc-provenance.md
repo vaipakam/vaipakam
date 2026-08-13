@@ -38,6 +38,23 @@ consumer checks for one first. They are provisioned ahead of need, which is a
 legitimate operator choice; whether to keep them is a deployment question, not
 a cleanup one.
 
+One explanation **is** replaced rather than removed, and it is worth saying why
+that is not the same mistake. The active staging plan told the operator to
+create the Workers' secrets with a command that creates a different kind of
+secret than the one the Workers actually bind. That command completes
+successfully and leaves the binding empty, so the failure surfaces at runtime
+as a missing secret rather than at provisioning time — the least legible place
+to find it. Removing the step was not an option, since the operator still has
+to provision the secrets somehow.
+
+So this one was verified end to end instead of deferred: the store identifier
+comes from the Worker configs, which all three share; the required flags come
+from the tool's own help text, including one that defaults to writing
+somewhere the deploy never reads. The plan now separates the two mechanisms
+and says which secrets use which, because the two lists are genuinely
+different and the overlap is what made the original wrong. The related
+follow-up issue was closed as fixed here rather than left open.
+
 A configuration comment that is confidently wrong is worse than one that tells
 you where to look.
 

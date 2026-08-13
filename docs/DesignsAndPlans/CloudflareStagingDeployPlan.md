@@ -160,6 +160,48 @@ NO secrets — the frontend bundle is static.
                           validation window in §6.
   ```
 
+### 4.5 How to actually provision the secrets above — two mechanisms
+
+The secrets in §4.1–§4.4 are **not** all created the same way, and the
+wrong command completes successfully while leaving the binding empty at
+runtime. Check which list a secret is in before running anything.
+
+**(a) Secrets Store entries — everything declared under
+`secrets_store_secrets`.** All `RPC_*`, `TG_BOT_TOKEN`,
+`PUSH_CHANNEL_PK`, `ZEROEX_API_KEY`, `ONEINCH_API_KEY`,
+`OPENSEA_API_KEY`, `DIAG_WALLET_HMAC_KEY`, `KEEPER_PRIVATE_KEY` and the
+`ALCHEMY_WEBHOOK_SIGNING_KEY_*` set. These are **account-level** entries
+in a Cloudflare Secrets Store, bound into a Worker by store ID + secret
+name. `wrangler secret put` does **not** create or populate them — it
+creates a separate per-Worker secret that nothing here reads. Use:
+
+```bash
+wrangler secrets-store secret create 1e66429d0fa24aa38a27bc05b7bcf63e \
+  --name <SECRET_NAME> --scopes workers --remote
+```
+
+- `1e66429d0fa24aa38a27bc05b7bcf63e` is the store ID; all three Workers
+  (`agent`, `keeper`, `indexer`) bind the **same** store, so a secret is
+  created once and every Worker declaring it picks it up.
+- `--scopes workers` is required (the flag has no default).
+- `--remote` is required — it defaults to `false`, which writes to a
+  *local* persistence directory and silently does nothing for a deploy.
+- Omit `--value`; wrangler prompts for it. Passing it inline leaves the
+  secret in shell history.
+- The store is shared, so a secret two Workers declare (e.g. `RPC_BASE`,
+  `TG_BOT_TOKEN`) must **not** be created twice.
+
+**(b) Plain per-Worker secrets.** `TG_OPS_BOT_TOKEN` and
+`TG_OPS_CHAT_ID` on `vaipakam-agent` are ordinary Worker secrets, not
+store entries, and these *do* use:
+
+```bash
+cd apps/agent && wrangler secret put TG_OPS_BOT_TOKEN
+```
+
+While unset, support-ticket ops-notify skips and tickets still land in
+D1 — so this pair is non-blocking for the rollout, unlike (a).
+
 ## 5. Wrangler config layout
 
 Single source-tree per Worker; no environment-flag gymnastics:
@@ -186,7 +228,7 @@ Stage 3 PR5.
 | 1 | Operator | Provision Cloudflare resources per §3 (DONE 2026-05-07) |
 | 2 | Author | Patch wrangler.jsonc with `vaipakam-archive` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) |
 | 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote` (one-time schema apply) |
-| 4 | Operator | ⚠️ **Command unverified — see #1714 before running.** This step says `wrangler secret put`, which creates a PER-WORKER secret; both Workers bind `secrets_store_secrets`, i.e. account-level Secrets Store entries, which `wrangler secret put` does not populate. Following this step as written may leave the configured store entries absent at deploy. Secrets per §4.3 + §4.4 (ZEROEX, ONEINCH on keeper, etc. — NOT BLOCKAID; that proxy does not exist, #1651) |
+| 4 | Operator | Provision secrets per §4.3 + §4.4 — **two different mechanisms, see §4.5** (NOT BLOCKAID; that proxy does not exist, #1651) |
 | 5 | Operator | `wrangler deploy` for each of `apps/{keeper,indexer,agent}`. This activates crons + binds `indexer.vaipakam.com`. |
 | 6 | Operator | Update `apps/defi/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; `pnpm build && wrangler deploy` `vaipakam-defi`. |
 | 7 | Both | Smoke-test `defi.vaipakam.com` end-to-end against `agent.vaipakam.com` + `indexer.vaipakam.com`, with `KEEPER_ENABLED=false` (no autonomous liquidation). NOT fully alert-only: `runDailyOracleSnapshot` signs on `KEEPER_PRIVATE_KEY` alone and will broadcast on staging regardless — if the window must be write-free, remove the keeper's trigger in the Cloudflare dashboard (*Settings → Trigger Events*) — editing `wrangler.jsonc` after step 5 has already deployed the active schedule changes nothing live. Allow for propagation before treating it as stopped; see `apps/keeper/README.md` (#1466). **If you take that path, restore the trigger at the end of this step** — step 8 only flips `KEEPER_ENABLED`, so a Worker left with no schedule would make step 9's observation window look quiet while every pass is in fact disabled. |
