@@ -118,11 +118,17 @@ NO secrets — the frontend bundle is static.
 ### 4.3 `vaipakam-agent`
 
 - **Custom domain:** `agent.vaipakam.com` ✓
-- **D1:** `vaipakam-archive`. Eight tables, derived from the Worker's
-  own SQL call sites (#1713): `diag_errors`, `diag_legal_holds`,
-  `diag_legal_hold_audit`, `loans`, `notify_state`, `support_tickets`,
-  `telegram_links`, `user_thresholds`. **Not read-mostly** — the agent
-  writes every table it touches, including the indexer-owned `loans`.
+- **D1:** `vaipakam-archive`. **Seven** tables reachable from live code
+  (#1713): `diag_errors`, `diag_legal_holds`, `diag_legal_hold_audit`,
+  `loans`, `support_tickets`, `telegram_links`, `user_thresholds`.
+  **Not read-mostly** — the agent writes every table it touches,
+  including the indexer-owned `loans`.
+
+  `notify_state` is deliberately absent. `db.ts` contains both a SELECT
+  and an INSERT against it, but their only callers (`getNotifyState`,
+  `putNotifyState`) are unreferenced exports — the live agent never
+  reaches that table. The keeper owns `notify_state`.
+
   (This entry previously read "read-mostly: link_codes, thresholds …";
   neither of those table names exists — they are `telegram_links` and
   `user_thresholds`.)
@@ -142,7 +148,10 @@ NO secrets — the frontend bundle is static.
   PUSH_CHANNEL_PK — STAGING channel signer (NOT prod)
   ZEROEX_API_KEY  — for /quote/0x proxy
   ONEINCH_API_KEY — for /quote/1inch proxy
-  OPENSEA_API_KEY — listing/offer reads
+  OPENSEA_API_KEY — offer reads AND listing SUBMISSION. `openseaProxy.ts`
+                    POSTs borrower-signed orders to OpenSea's
+                    seaport/listings endpoint with this key, so it is a
+                    write credential upstream, not a read-only one.
   DIAG_WALLET_HMAC_KEY — diagnostics wallet pseudonymisation
   # (#1651: BLOCKAID_API_KEY was listed here for a /scan/blockaid proxy.
   #  ET-001 dropped that proxy — index.ts states there is no transaction-scan
@@ -160,16 +169,32 @@ NO secrets — the frontend bundle is static.
 ### 4.4 `vaipakam-keeper`
 
 - No public domain (cron-only, no fetch handler).
-- **D1:** `vaipakam-archive`. Writes thirteen tables of its own
+- **D1:** `vaipakam-archive`. Writes **twelve** tables of its own
   (`hf_band_state`, `notify_state`, `pre_grace_notify_state`,
-  `notifications`, `telegram_links`, `user_thresholds`,
-  `liquidity_confidence`, `oracle_snapshot_state`, and the
-  `keeper_commitment_*` / `keeper_remit_ack*` families), plus genuine
-  cross-Worker **read-only** access to the indexer's `loans`, `offers`
-  and `indexer_cursor` (#1713). Unlike the agent, this Worker does have
-  a read-only surface. (Previously written as "reads notify_state +
-  thresholds"; `thresholds` is not a table — it is `user_thresholds` —
-  and `notify_state` is written here, not merely read.)
+  `notifications`, `telegram_links`, `liquidity_confidence`,
+  `oracle_snapshot_state`, and the `keeper_commitment_*` /
+  `keeper_remit_ack*` families). Reads, without writing:
+  `user_thresholds`, plus cross-Worker access to the indexer's `loans`,
+  `offers` and `indexer_cursor` (#1713). Unlike the agent, this Worker
+  does have a read-only surface.
+
+  Two of those classifications turn on **reachability, not on the
+  presence of SQL**, so they are easy to get wrong from a grep:
+
+  - `user_thresholds` is read-only here even though `db.ts` contains an
+    `INSERT INTO user_thresholds`. That writer (`upsertThresholds`) is
+    an unreferenced export — live modules import only
+    `listThresholdsForChain`. Three other db.ts exports are likewise
+    dead (`issueTelegramLinkCode`, `consumeTelegramLinkCode`,
+    `linkTelegram`).
+  - `telegram_links` nonetheless **is** written, despite both its
+    insert paths being among those dead exports: `sweepExpiredLinks`
+    (live, called from `watcher.ts:60`) issues a `DELETE FROM
+    telegram_links` to prune expired codes.
+
+  (Previously written as "reads notify_state + thresholds";
+  `thresholds` is not a table — it is `user_thresholds` — and
+  `notify_state` is written here, not merely read.)
 - **Cron:** `* * * * *` — HF watcher loop. The daily oracle
   snapshot pass internally pre-checks the 00:00–00:09 UTC
   window + a D1 last-day guard, so most ticks exit
@@ -184,8 +209,17 @@ NO secrets — the frontend bundle is static.
   ZEROEX_API_KEY      — for serverQuotes liquidation orchestration (currently missing — DEX-only fallback)
   ONEINCH_API_KEY     — same (currently missing)
   ```
-- **Vars (non-secret):** none beyond `TG_BOT_USERNAME` and the optional
-  `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning knobs.
+- **Vars (non-secret):** `TG_BOT_USERNAME`, `FRONTEND_ORIGIN`, and the
+  optional `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` / `REWARD_*_LOOKBACK_DAYS`
+  / `REWARD_REMIT_LANE_CAP` tuning knobs. Treat `apps/keeper/src/env.ts`
+  as the exhaustive list rather than this one.
+
+  **`FRONTEND_ORIGIN` is not optional in practice.** It is declared
+  optional (`env.ts:69`) and falls back to the empty string, but
+  `watcher.ts:156` and `preGraceWatcher.ts:433` interpolate it into the
+  "view this loan" links in outgoing notifications. Unset, users receive
+  a relative `/loans/123` that resolves nowhere from a Telegram or Push
+  client.
 
   `KEEPER_ENABLED` used to be listed here as a var. It is **not** one —
   it is a per-Worker `secret_text`, provisioned `false` at step 4 and
