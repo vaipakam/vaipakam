@@ -2653,7 +2653,20 @@ export function OfferFlow({ side }: { side: Side }) {
                   // Full — would otherwise clear the card's own notice while
                   // the banner kept saying the quote exceeds a ceiling that is
                   // no longer exceeded. The two surfaces must not disagree.
-                  setSubmitError(null);
+                  //
+                  // ONLY the tariff messages (Codex #1700 r8): this onChange
+                  // ALSO fires from FullTariffOptIn's layout effect when a
+                  // BACKGROUND refresh flips the blocked mark, with no user
+                  // edit at all — so an unconditional clear would erase a
+                  // wallet rejection, a balance failure or a changed-terms
+                  // error the instant the quote crossed or recovered, leaving
+                  // the user no trace of why their attempt failed.
+                  setSubmitError((prev) =>
+                    prev === copy.tariff.ceilingOvertakenSubmit ||
+                    prev === copy.tariff.fullUnavailableNow
+                      ? null
+                      : prev,
+                  );
                   // Codex #1412 r1 — a tariff edit changes the terms
                   // the accept signature will carry, so an already-
                   // given consent no longer covers them: clear it,

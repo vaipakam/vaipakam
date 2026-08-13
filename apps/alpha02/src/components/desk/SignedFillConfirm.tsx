@@ -408,7 +408,15 @@ export function SignedFillConfirm({
             // prescribed recovery (raise the ceiling, or untick Full)
             // would clear the card's notice while the banner still
             // said the quote exceeds a ceiling that no longer applies.
-            setError(null);
+            // ONLY the tariff messages (Codex #1700 r8) — this also fires
+            // from the card's layout effect on a background refresh, and an
+            // unconditional clear would erase an unrelated failure.
+            setError((prev) =>
+              prev === copy.tariff.ceilingOvertakenSubmit ||
+              prev === copy.tariff.fullUnavailableNow
+                ? null
+                : prev,
+            );
             // Codex #1412 r1 — a tariff edit changes the signed
             // terms, so a prior consent no longer covers them.
             setConsent(false);

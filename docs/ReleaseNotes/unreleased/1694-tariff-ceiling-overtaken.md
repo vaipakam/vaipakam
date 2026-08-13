@@ -38,3 +38,13 @@ The check is also repeated at the moment of signing, against a freshly read
 quote, rather than trusting what the screen knew when you clicked. A quote that
 moves during the few seconds of pre-flight checks would otherwise slip through
 to your wallet, which is the whole thing this change exists to stop.
+
+## What this cannot promise
+
+The check is repeated before each transaction is sent, but your wallet's
+confirmation is your own step and can sit open for as long as you like. A
+quote that moves while it is open will still reach the network and be
+refused there, costing the gas of a failed attempt. Nothing in the app can
+prevent that — only the protocol has the final word on the price at the
+moment your transaction lands. What these checks do is make that outcome
+much rarer, and explain it when it is still coming.
