@@ -31,6 +31,7 @@ import {
   useFeeEntitlementConfig,
 } from '../data/tariff';
 import { VPFI_DECIMALS } from '../data/vpfi';
+import { isCeilingOvertaken, shouldBlockOnCeiling } from './fullTariffCeiling';
 import { exactAmountString, formatTokenAmount } from '../lib/format';
 import { isPlainDecimal } from '../lib/errors';
 
@@ -176,14 +177,13 @@ export function FullTariffOptIn({
   // kill switch goes off, and then the ceiling notice would mask the real
   // blocker — promising that raising the ceiling lets the user continue when
   // `engagedBlocked` stays true regardless. Unavailability wins.
-  const ceilingOvertaken =
-    value.full &&
-    config.enabled &&
-    !fullBlocked &&
-    quoted !== undefined &&
-    ceiling !== undefined &&
-    ceiling > 0n &&
-    quoted > ceiling;
+  const ceilingOvertaken = isCeilingOvertaken({
+    full: value.full,
+    featureEnabled: config.enabled,
+    fullBlocked,
+    quoted,
+    ceiling,
+  });
 
   // Codex #1412 r1/r3/r5 — an ENGAGED Full whose conditions break
   // (kill-switch off / refetch error / unpriceable / illiquid) is
@@ -199,7 +199,10 @@ export function FullTariffOptIn({
   // the user relied on, and would refuse an accept the CONTRACT is happy to
   // complete via `_downgrade`. So: tell them either way, hold signing only
   // when they did NOT permit the downgrade.
-  const ceilingBlocks = ceilingOvertaken && !value.allowDowngrade;
+  const ceilingBlocks = shouldBlockOnCeiling({
+    ceilingOvertaken,
+    allowDowngrade: value.allowDowngrade,
+  });
   const engagedBlocked = !config.enabled || fullBlocked || ceilingBlocks;
   // LAYOUT effect, not passive (Codex #1700 r1): both callers derive the submit
   // button and the signed payload from the PARENT's copy of this mark, so a
