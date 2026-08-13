@@ -72,6 +72,18 @@ const BLOCKING_HOOKS = {
   // helper that was a fresh function each pass. Both are now stable, so the
   // dependency each effect really has is written down.
   'react-hooks/exhaustive-deps': 'error',
+  // Promoted on reaching zero (#1520), and the last of the four. Unlike the
+  // others, NONE of its nine sites was a defect: three close a page-owned
+  // confirm slot when a refetch invalidated the open review, two reload
+  // local state on an identity change a `key` cannot express, one seeds a
+  // field the user owns immediately after, one persists a read-cursor to
+  // localStorage, and one resolves a deep link. Each carries a disable
+  // naming which of those it is. The ninth is `Rent`'s consent clear, whose
+  // suppression is meant to be temporary — #1696 decides whether it becomes
+  // a render-phase clear, and it is the ONLY one that should ever come back.
+  // Erroring is what makes that distinction hold: a new violation is now a
+  // deliberate, argued exception rather than one more warning in a list.
+  'react-hooks/set-state-in-effect': 'error',
   // Promoted on reaching zero (#1520). All nine sites were `Date.now()`
   // read during render, which froze every value derived from it until an
   // unrelated re-render; they now read a ticking clock through state

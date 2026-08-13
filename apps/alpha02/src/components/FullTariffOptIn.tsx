@@ -132,7 +132,13 @@ export function FullTariffOptIn({
   // quote inputs change (another offer selected into the same mounted
   // instance), drop the text so the seed re-runs for the new quote —
   // otherwise offer B could sign offer A's stale/edited ceiling.
+  // A reset keyed on identity, which React would normally have the PARENT
+  // express as a `key`. It cannot here: the quote inputs change while this
+  // card stays mounted (the user edits the offer form in place), so
+  // remounting on every keystroke would also discard the ceiling edit this
+  // reset exists to protect.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCeilingText(null);
   }, [lendingAsset, principal, durationDays]);
 
@@ -142,8 +148,14 @@ export function FullTariffOptIn({
       ? quoted + (quoted * CEILING_HEADROOM_BPS) / 10000n
       : undefined;
 
+  // Seeding an EDITABLE field, which is why it cannot be derived instead:
+  // the value is the user's the moment they touch it, so a derived
+  // `ceiling` would overwrite their edit on the next quote refetch. The
+  // `=== null` guard is what makes this run once per identity rather than
+  // per quote — it is the seed rule, not an optimisation.
   useEffect(() => {
     if (ceilingText === null && suggestedCeiling !== undefined) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCeilingText(exactAmountString(suggestedCeiling, VPFI_DECIMALS));
     }
   }, [ceilingText, suggestedCeiling]);
