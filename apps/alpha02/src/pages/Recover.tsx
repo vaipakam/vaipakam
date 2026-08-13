@@ -1265,9 +1265,15 @@ export function Recover() {
     //   reservation write, which has no generation check on its success path) is
     //   the separate live gap, also #1691 — and it cannot be built from `genRef`
     //   or any effect-maintained ref, since during the pre-commit window both
-    //   still describe the OLD identity. It needs the wallet/provider's LIVE
-    //   account+chain, synchronous invalidation from the wallet event, or blanket
-    //   suppression across the transition (Codex #1689 r5).
+    //   still describe the OLD identity (Codex #1689 r5). `useActiveChain` reads
+    //   identity from wagmi's `useAccount()`, so there is NO React-side
+    //   "transition in progress" signal that turns on before the commit either —
+    //   which leaves exactly TWO viable fences (Codex #1689 r6): read the
+    //   wallet/provider's LIVE account+chain at call time, or invalidate
+    //   synchronously from the wallet event. A "suppress across the transition"
+    //   flag is NOT a third option: driven from render or any effect it has the
+    //   same pre-commit hole, and set synchronously from the wallet event it just
+    //   IS the second option.
     // - Mirroring the committed step into `stepRef` from a layout effect can roll
     //   a newer synchronous `setStep(B)` back to `A`, which is precisely the
     //   render-behind bug the synchronous mirror exists to prevent.
