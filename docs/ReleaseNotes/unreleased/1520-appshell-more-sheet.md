@@ -1,8 +1,13 @@
-# The phone "More" sheet closes as you navigate, not a frame later
+# The phone "More" sheet closes as you navigate away from it
 
-Tapping a link inside the phone More sheet previously left the sheet on screen for
-the first frame of the page it had navigated to, with the More tab still shown as
-the active one. The sheet now closes in the same update as the navigation, so the
-new page's first frame is the new page.
+If the phone More sheet was open and you navigated without tapping one of its
+links — using the browser's back or forward gesture, or following a link elsewhere
+in the app that moves you programmatically — the sheet stayed on screen over the
+first frame of the page you arrived at. It now closes in the same update as the
+navigation.
 
-Nothing about when the sheet opens or what it contains has changed.
+Tapping a link inside the sheet was already unaffected: those links close the
+sheet as they are tapped.
+
+Nothing about when the sheet opens, what it contains, or which tab is highlighted
+has changed.
