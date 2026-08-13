@@ -184,16 +184,16 @@ contract RewardRemittanceFacet is
         bool forced
     );
 
-    /// @notice #1222 M3 B2-d2 — an ADMIN released a reservation the operator
-    ///         verified can never execute: its days re-opened for funding and
-    ///         the outstanding commitments were restored. The VALUE counters
-    ///         stay reserved (r4): the sent VPFI — fresh and recycled alike —
-    ///         sits locked in the CCIP token pool outside Diamond custody, so
-    ///         neither the 69M headroom nor the bucket is re-credited (a
-    ///         re-remit consumes NEW headroom/backing; physical recovery
-    ///         restores both through the B2-d5 governance ceremony).
-    ///         `recycledStranded` is the stranded recycled share.
-    /// @custom:event-category informational/reward-transport
+    // #1662 r12 — the `RemitReservationReleased` NatSpec that used to sit
+    //   here was ORPHANED when r4 relocated that event to
+    //   {RewardCompensationDispatchFacet} for EIP-170. NatSpec binds to the
+    //   next declaration, so it had silently become the documentation for
+    //   `RemitAckAfterRelease` below — describing an ADMIN release and a
+    //   `recycledStranded` field that event does not have. Deleted rather
+    //   than moved: the relocated event carries its own, and this copy also
+    //   still claimed physical recovery "restores both", which the §5.3
+    //   unification superseded (recovery restores NEITHER; it credits the
+    //   recovery position and relocated bucket custody instead).
     /// @notice #1222 M3 B2-d2 — an ack arrived for a RELEASED reservation:
     ///         the operator released in error and the mirror WAS funded
     ///         (double-funding if its days were re-remitted). Surfaced for
