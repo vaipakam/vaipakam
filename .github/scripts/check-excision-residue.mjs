@@ -637,6 +637,8 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
   // resolves to the dead identifier in any renderer. Passing `''` as the path
   // to suppress the first had been silently suppressing the second.
   const skipTags = MARKUP_EXTENSIONS.test(sourcePath || '');
+  const isMdSource = /\.mdx?$/i.test(sourcePath || '');
+  const isJsonSource = /\.jsonc?$/i.test(sourcePath || '');
   const decodeRefs = skipTags || sourcePath === TAG_INTERIOR;
   const TAG = /^<\/?[a-zA-Z][^<>]*>/;
   const tagSpans = [];
@@ -646,6 +648,62 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
     // `<mirror VPFI_BUY_ADAPTER>` in live runbook commands, and stripping them
     // deleted two REAL mentions from that file's pin (27 -> 25) plus one more
     // elsewhere — a false negative introduced by the fix for a false negative.
+    // MARKDOWN LINK DESTINATIONS are not rendered text. A reader of
+    // `deploy the [buy](https://example.com/config) adapter` sees the two words
+    // side by side; the normalizer kept the URL's letters between them, so the
+    // phrase never fused and the gate passed live prose naming a dead surface.
+    // Skipping from `]` through the closing delimiter emits nothing, leaving the
+    // label and the following text adjacent — which is what renders.
+    if (
+      isMdSource &&
+      text[i] === ']' &&
+      (text[i + 1] === '(' || text[i + 1] === '[') &&
+      !(fencedOffsets && fencedOffsets(i))
+    ) {
+      const open = text[i + 1];
+      const close = open === '(' ? ')' : ']';
+      let depth = 0;
+      let j = i + 1;
+      for (; j < text.length; j++) {
+        if (text[j] === open) depth++;
+        else if (text[j] === close) {
+          depth--;
+          if (depth === 0) break;
+        } else if (text[j] === '\n' && text[j + 1] === '\n') break; // unterminated
+      }
+      if (j < text.length && text[j] === close) {
+        // Record the destination so the SECOND stream still scans it, exactly
+        // as tag interiors are handled. Plain skipping cost three real pinned
+        // mentions (`docs/ToDo.md` 31 -> 29, ContractFollowups 10 -> 9): dead
+        // names DO appear inside link targets, and a URL naming a removed
+        // artifact is residue even though no reader sees the characters.
+        // Removed from the rendered stream, kept under its own scan.
+        tagSpans.push([i + 1, j + 1]);
+        i = j;
+        continue;
+      }
+    }
+    // JSON STRING ESCAPES. `{"operatorMessage":"Deploy the buy\u0020adapter"}`
+    // renders as one phrase naming the dead surface, but the raw source spells
+    // the space as the letters `u0020`, which the normalizer kept — wedging
+    // text between the words instead of separating them. Decode to what the
+    // consumer sees; a non-\u escape emits nothing, which separates rather than
+    // joins, the conservative direction.
+    if (isJsonSource && text[i] === '\\' && i + 1 < text.length) {
+      const u = /^\\u([0-9a-fA-F]{4})/.exec(text.slice(i, i + 6));
+      if (u) {
+        for (const c of String.fromCharCode(parseInt(u[1], 16)).toLowerCase()) {
+          if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            out.push(c);
+            if (withMap) map.push(i);
+          }
+        }
+        i += 5;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
     if (skipTags && text[i] === '<' && !(fencedOffsets && fencedOffsets(i))) {
       // HTML comments FIRST — they are invisible markup too, and the tag shape
       // below does not recognize them (`!` is not a letter). A reader of
@@ -1219,7 +1277,28 @@ function scanFile(path) {
     // correctly found, so the markup fix and the boundary rule disagreed about
     // the same text. Fenced spans keep their tags, because there the brackets
     // are literal.
-    let span = text.slice(from, to + 1);
+    // Build the span from the SAME removals the normalizer made, rather than
+    // re-deriving them from raw source. `tagSpans` already holds every range the
+    // rendered stream dropped — quote-aware tags AND markdown link destinations —
+    // so this pass and the stream agree by construction. Re-parsing here is what
+    // let `<span title="1 > 0: yes">` leave `: yes"` behind and reject a real
+    // match, and what left a link's URL punctuation sitting between two words
+    // the reader sees side by side.
+    let span = '';
+    {
+      let at = from;
+      for (const [s0, e0] of tagSpans) {
+        if (e0 <= from) continue;
+        if (s0 > to) break;
+        if (s0 > at) span += text.slice(at, Math.min(s0, to + 1));
+        // A BLOCK-level element still separates what the reader sees, so it is a
+        // boundary rather than a removable span.
+        if (/^<\s*\/?\s*(?:hr|p|div|section|article|aside|nav|main|header|footer|figure|figcaption|blockquote|pre|table|thead|tbody|tr|td|th|ul|ol|li|dl|dt|dd|h[1-6]|form|fieldset|details|summary|address)\b/i.test(text.slice(s0, e0)))
+          return true;
+        at = Math.max(at, Math.min(e0, to + 1));
+      }
+      if (at <= to) span += text.slice(at, to + 1);
+    }
     // In JSON, separate string values are separate pieces of text and never
     // render as one phrase. The normalizer drops the punctuation between them,
     // so `["Decide what to buy", "Adapter selection follows"]` fused into
