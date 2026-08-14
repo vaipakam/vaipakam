@@ -1047,6 +1047,32 @@ function scanFile(path) {
    * Used by `identifierOnly` tokens: the two generic English bigrams, which are
    * the only names here ordinary prose can spell by accident.
    */
+  /**
+   * Remove markup until removing more changes nothing.
+   *
+   * A SINGLE pass is not enough when tags nest or overlap: stripping the inner
+   * one first can splice the outer one's halves into a fresh `<...>` that the
+   * same pass has already moved past. CodeQL flags the one-pass form as
+   * incomplete multi-character sanitization, and while nothing here renders
+   * HTML — the result is only tested against an identifier pattern, so there is
+   * no injection sink — the underlying mechanic still matters for THIS file's
+   * recurring bug: leftover `<` or `>` makes the identifier test fail, the
+   * match is discarded, and a rendered dead identifier passes the gate. Going
+   * to a fixed point strips at least as much as one pass, so it can only move
+   * that direction. Bounded, so a pathological input cannot spin.
+   */
+  const stripTagsToFixedPoint = (s) => {
+    let out = s;
+    for (let i = 0; i < 20; i++) {
+      const next = out
+        .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+        .replace(/<\/?[a-zA-Z][^<>]*>/g, '');
+      if (next === out) break;
+      out = next;
+    }
+    return out;
+  };
+
   const isIdentifierSpan = (map, a, b) => {
     // `renderRefs` first: the normalizer decodes character references, but the
     // offsets it records all point at the reference's `&`, so this slice sees
@@ -1065,9 +1091,7 @@ function scanFile(path) {
     // rejected the match before this runs.
     const seen =
       MARKUP_EXTENSIONS.test(path) && !literalAt(map[a])
-        ? rendered
-            .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
-            .replace(/<\/?[a-zA-Z][^<>]*>/g, '')
+        ? stripTagsToFixedPoint(rendered)
         : rendered;
     return /^[A-Za-z0-9_-]+$/.test(seen);
   };
