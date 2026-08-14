@@ -1,9 +1,10 @@
-# apps/defi: cleared the unused lint-suppression backlog, and found a live error hiding in it
+# apps/defi: cleared the unused lint-suppression backlog, and found two live errors hiding in it
 
 The lending app carried sixteen lint suppressions that no longer suppressed
 anything. Clearing them was meant to be routine tidying — the smallest slice of
-the wider effort to get the app's full lint run to zero — but one of them turned
-out to be covering a genuine error.
+the wider effort to get the app's full lint run to zero — but two of them turned
+out to be covering genuine errors that the app's lint run had been carrying
+unnoticed.
 
 Fourteen were simply inert: they suppressed a console-output rule the app has
 never actually switched on, so they could not have been suppressing anything.
