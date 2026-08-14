@@ -915,7 +915,16 @@ function scanFile(path) {
       // with one in later prose, making the visible sentence between them
       // literal to the tag stripper — so its `<strong>` tags survived, the
       // words never fused, and the gate passed a rendered dead phrase.
-      if (inFence[lineOf(starts, m.index)]) continue;
+      // BOTH delimiters must be outside a fence, and no fence may sit between
+      // them. Checking only the opener still let prose pair with a backtick
+      // inside a LATER fence — the same false span, approached from the other
+      // side, which is what the opener-only version of this check missed.
+      const endLine = lineOf(starts, m.index + m[0].length - 1);
+      let crossesFence = false;
+      for (let ln = lineOf(starts, m.index); ln <= endLine; ln++) {
+        if (inFence[ln]) { crossesFence = true; break; }
+      }
+      if (crossesFence) continue;
       spans.push([m.index, m.index + m[0].length]);
     }
     return spans;
@@ -1038,7 +1047,7 @@ function scanFile(path) {
    * Used by `identifierOnly` tokens: the two generic English bigrams, which are
    * the only names here ordinary prose can spell by accident.
    */
-  const isIdentifierSpan = (map, a, b) =>
+  const isIdentifierSpan = (map, a, b) => {
     // `renderRefs` first: the normalizer decodes character references, but the
     // offsets it records all point at the reference's `&`, so this slice sees
     // the SOURCE spelling. `buyOpti&#111;ns` renders as the exact retired
@@ -1046,7 +1055,23 @@ function scanFile(path) {
     // `;` and was rejected as non-identifier — the encoding silently bought an
     // exemption. Both this check and the boundary check below have to reason
     // about what the reader sees, which is what `renderRefs` produces.
-    /^[A-Za-z0-9_-]+$/.test(renderRefs(text.slice(map[a], identifierSpanEnd(map[b]))));
+    const rendered = renderRefs(text.slice(map[a], identifierSpanEnd(map[b])));
+    // Strip tags for the SAME reason the references are decoded, one construct
+    // over. The normalizer removes inline markup, so `buyOpti<strong>o</strong>ns`
+    // normalizes to the exact retired identifier — but this slice saw the raw
+    // source, found `<` and `>`, and rejected it as non-identifier. Formatting
+    // bought the same exemption the encoding used to. A block-level tag inside
+    // the span is not silently fused here: `crossesBlockBoundary` has already
+    // rejected the match before this runs.
+    const seen =
+      MARKUP_EXTENSIONS.test(path) && !literalAt(map[a])
+        ? rendered
+            .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+            .replace(/<\/?[a-zA-Z][^<>]*>/g, '')
+        : rendered;
+    return /^[A-Za-z0-9_-]+$/.test(seen);
+  };
+
 
   /**
    * End offset (exclusive) for an identifier span whose LAST character may have
@@ -1119,6 +1144,12 @@ function scanFile(path) {
     // the same text. Fenced spans keep their tags, because there the brackets
     // are literal.
     let span = text.slice(from, to + 1);
+    // In JSON, separate string values are separate pieces of text and never
+    // render as one phrase. The normalizer drops the punctuation between them,
+    // so `["Decide what to buy", "Adapter selection follows"]` fused into
+    // `buyadapter` and failed a clean file. A span lying inside ONE string
+    // literal cannot contain a quote; one that does has crossed out of it.
+    if (/\.jsonc?$/i.test(path) && span.includes('"')) return true;
     if (MARKUP_EXTENSIONS.test(path) && !literalAt(from)) {
       // Comments FIRST and by the same rule as the normalizer, which now skips
       // them. Leaving them in re-broke the case they were skipped for: the `!`
