@@ -255,7 +255,8 @@ the staging plan §2, which is the live text:
   Say *binds*, not *reads*: the two entries agent has and keeper
   lacks are `RPC_POLYGON` and `RPC_POLYGON_AMOY`, and there is no
   Polygon record in `deployments.json`, so `getChainConfigs` drops
-  them at the `getDeployment` gate (`env.ts:504`). Both Workers
+  them at the `getDeployment` gate (`apps/agent/src/env.ts:515-516`;
+  the keeper's equivalent is `apps/keeper/src/env.ts:341-342`). Both Workers
   therefore reach the same set — and it is far smaller than either count:
   `deployments.json` holds only 97 / 84532 / 421614, and both
   `getChainConfigs` implementations discard any RPC binding without a

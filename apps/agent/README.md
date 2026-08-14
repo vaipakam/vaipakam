@@ -32,6 +32,7 @@ Two things it used to say alongside that are **withdrawn**:
 | `POST /link/telegram` | **EIP-191 ownership proof**, parsed and verified before a code is issued |
 | `POST /unlink/telegram` | **EIP-191 ownership proof** (scoped to unlink). Note what this route *is*: clearing the wallet ↔ `tg_chat_id` link is an **alert-suppression** surface — a successful unlink silently stops every Telegram HF/interest alert for that wallet |
 | `POST /telegram/test` | **EIP-191 ownership proof** (scoped to test-send). Sends a real message to the linked chat |
+| `POST /tg/webhook` | **a one-time six-digit code**, not a signature and not a Telegram secret. Dispatched at `index.ts:166-167` **before** the Origin gate and with no webhook-secret header, so any caller may POST JSON; what bounds it is that the code was issued only after an EIP-191 proof on `/link/telegram` and is consumed on first use. It is the **completion half** of that handshake, and it writes the caller-supplied chat ID — so guessing a live code redirects a wallet's alerts. Do not count it among the unsigned routes below: those are open, this one holds a bearer secret |
 | Diagnostics administration (legal-hold / erasure) | signature- or role-gated |
 | `POST /support/ticket` | **none** — deliberately accepts no wallet identity |
 | `POST /diag/record` | **none** — CORS + rate limiting only |
