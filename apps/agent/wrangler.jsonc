@@ -43,8 +43,14 @@
   //   - `diag_legal_holds`,
   //     `diag_legal_hold_audit` (T-075 hold place/lift + audit trail)
   //   - `support_tickets`   (POST /support/ticket + retention prune)
-  //   - `loans`             (cross-Worker read of the indexer's loan
-  //                          rows for periodic-pre-notify scans)
+  //   - `loans`             (cross-Worker READ AND WRITE of the indexer's
+  //                          loan rows: the periodic-pre-notify scan reads
+  //                          them, then stamps `period_pre_notified_at` back
+  //                          via UPDATE at `periodicPreNotify.ts:181-182`.
+  //                          Listed as a read-only borrow before — the
+  //                          understatement that matters, since it is another
+  //                          Worker's table being mutated, which is exactly
+  //                          the cross-Worker coupling #1722 is about)
   //
   // Names verified against apps/indexer/migrations/. An earlier list named
   // `link_codes`, `thresholds`, `loan_index_*` and `oracle_snapshot_*` —

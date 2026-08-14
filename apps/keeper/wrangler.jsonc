@@ -47,7 +47,12 @@
   // per-Worker table lists below are a source convention, not an
   // enforced boundary (#1722). Tables this Worker touches:
   //   - `user_thresholds`   (per-user-loan HF bands; written by frontend)
-  //   - `telegram_links`    (Telegram handshake links; agent writes)
+  //   - `telegram_links`    (Telegram handshake links; agent writes — but
+  //                          THIS Worker deletes from them too:
+  //                          `watcher.ts:60` calls `sweepExpiredLinks`,
+  //                          which DELETEs expired rows (`db.ts:303`).
+  //                          "agent writes" alone read as though the keeper
+  //                          only consumed this table)
   //   - `notify_state`,
   //     `hf_band_state`     (per-user notify + HF-band dedupe)
   //   - `pre_grace_notify_state` (pre-grace warning dedupe; read and

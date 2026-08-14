@@ -102,7 +102,7 @@ each of the same kind — a summary that had aged past the thing it summarised:
   signature; the first correction claimed none were. In fact the link, unlink
   and test-send endpoints each verify an ownership proof over their own
   message, and the administration endpoints are gated, while
-  five others deliberately take no wallet identity — the support-ticket,
+  five others take no wallet identity on their ordinary path — the support-ticket,
   diagnostics-record and threshold-update endpoints, plus the two publication
   routes that write to a resolver network and a public marketplace under the
   project's own credentials. Nor are those five alike: four are rate-limited
@@ -122,6 +122,15 @@ each of the same kind — a summary that had aged past the thing it summarised:
   Counting it as unsigned would have understated its control; leaving it out
   altogether, which is what happened, hid the one route whose protection is
   unlike every other route's.
+
+  One of the five also has an exception the note had flattened away. The
+  threshold-update endpoint is signature-free for an ordinary settings change,
+  but not when the change switches off the maturity-approaching alert: that
+  one path requires and verifies an ownership proof scoped to muting it,
+  because silencing a due-date warning is the kind of change an attacker
+  benefits from and the owner does not. Classifying the endpoint as
+  identity-free full stop erased a control that exists precisely where it
+  matters most.
 
 - **The per-route table left out two of the routes it exists to disambiguate.**
   Unlinking a chat and sending a test alert are both user-facing writes, and
