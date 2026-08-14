@@ -93,6 +93,12 @@ Vaipakam uses or is designed to use the following screening and security control
 - Sequencer uptime checks: L2 sequencer health checks before price-dependent liquidation/default paths.
 - Slippage and liquidity simulation: liquidation and asset-liquidity checks use oracle-anchored slippage controls.
 
+- Monitoring alerts: operational alerting for invalid state transitions and runtime anomalies.
+- Cloudflare Worker protections: API keys are kept server-side; quote and worker routes can apply upstream rate limits.
+- Wallet and action gating: sanctions banners, blocked-state UI, Terms acceptance gate, and transaction review modals.
+- Permit2 scoped signatures: exact asset/amount/spender scope, 30-minute expiry, fallback to approve-plus-action.
+- Public analytics and exportable event data: supports auditability without collecting PII.
+
 > **§3.4 CORRECTION (#1717) — the Blockaid answer above is inaccurate and
 > the original wording is struck through rather than rewritten, because
 > this file may be a record of what was actually submitted.**
@@ -116,11 +122,6 @@ Vaipakam uses or is designed to use the following screening and security control
 > process, and a proactive correction is likely owed. If it is an
 > unsent draft, this note is sufficient. Do not assume the second
 > reading because it is the more comfortable one.
-- Monitoring alerts: operational alerting for invalid state transitions and runtime anomalies.
-- Cloudflare Worker protections: API keys are kept server-side; quote and worker routes can apply upstream rate limits.
-- Wallet and action gating: sanctions banners, blocked-state UI, Terms acceptance gate, and transaction review modals.
-- Permit2 scoped signatures: exact asset/amount/spender scope, 30-minute expiry, fallback to approve-plus-action.
-- Public analytics and exportable event data: supports auditability without collecting PII.
 
   3.5 Procedures for Sanctioned Wallets, High-Risk Protocols, and Tainted Funds
 
