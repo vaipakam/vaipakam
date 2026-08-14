@@ -54,9 +54,13 @@ rather than leaving as an imprecision.
 
 Two sibling descriptions of the same Worker are now corrected as well, rather
 than excused. An earlier draft left them alone on the grounds that they pair
-the shorthand with "no signing keys", which is true — but this very change
-establishes that holding no signing key does **not** make a component
-fund-safe, because it can still alter state the signing component acts on.
+the shorthand with "no signing keys". That defence fails twice over. It is
+not even true of this component — three of its stored secrets are shared
+secrets used to authenticate incoming webhooks, and a shared secret lets the
+holder produce a valid signature as readily as check one. And were it true, it
+still would not help: this very change establishes that holding no signing key
+does **not** make a component fund-safe, because it can still alter state the
+signing component acts on.
 Using that phrase to justify a "read-only" label the same document proves
 false would have been the argument refuting itself. The labels said "Reads
 only" on a component with three endpoints that write to the shared database
