@@ -911,6 +911,96 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev #1434 P1-b (Codex #1699 r5 P2) — the expiry gate must measure the
+    ///      GROUPED D1-capped obligation, not the raw one.
+    ///
+    ///      The round-4 fix moved this gate off `st.rawSplit` onto the
+    ///      loan-side-capped split, which is the right idea at the wrong
+    ///      STAGE: `_loanSideCapCompute` returns the UNTRIMMED split for
+    ///      UNSTAMPED loans, and mirror loans are never stamped — so on the
+    ///      one chain the delivered bound exists for, the "capped" figure was
+    ///      still the raw one and the wedge survived its own fix.
+    ///
+    ///      Base remits against the CAPPED liability its commitment report
+    ///      states. Demanding the raw figure therefore waits on funding nobody
+    ///      owes: not a slow wait, a permanent one. The liveness control below
+    ///      is what makes this test non-vacuous — it asserts the D1 ceiling
+    ///      genuinely BIT (`needCapped < needRaw`) before funding exactly the
+    ///      capped amount, so a gate that still read raw would defer here and
+    ///      the sweep would credit zero.
+    function testP1bExpiryGateMeasuresTheD1CappedObligation() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(floor5, 0, "entry carries a fresh share");
+        // MIRROR. Arm + finalize FIRST (finalization is Base-only), and move
+        // the chain id too — per-day funding is keyed by `block.chainid`, so
+        // flipping only the canonical flag leaves the day unstamped here.
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        // Finalization stamped day 5 for BASE. Without the mirror's own stamp
+        // `_dayPoolHalves` halts, the cumulative cursor cannot advance past the
+        // armed day, and `sweepExpiredEntry` returns before reaching any gate —
+        // a zero credit that looks identical to the wedge under test.
+        _mut().setChainDayFundingRaw(
+            5, uint32(CHAIN_ARB), floor5 / 2, recycled5 / 2
+        );
+
+        uint256 id = _seedEntry(alice, 46, 5, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        // Fund BEFORE accruing. The expiry clock only advances while the entry
+        // is EXECUTABLE, and on a mirror executability itself consults the
+        // delivered bound — so accruing against an empty ledger blocks the
+        // clock and the sweep returns on `elapsed < required`, long before any
+        // gate. Clear the 69M pool draw for the same reason: a
+        // `freshShare > freshHeadroom` defer is indistinguishable from the
+        // wedge under test, since both simply credit zero.
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        // CONTROL — with the ceiling off and funding abundant, this entry
+        // genuinely reaps. Without this the test could "pass" on a fixture
+        // that never expires anything, which is exactly how an earlier expiry
+        // test in this programme turned out to be vacuous.
+        uint256 snap = vm.snapshotState();
+        uint256 fullCredit = _facet().sweepExpiredInteractionRewards(ids);
+        uint256 fullCharge = _mut().getArmedFreshPaidRaw();
+        vm.revertToState(snap);
+        assertGt(fullCredit, 0, "LIVE: the entry reaps when unconstrained");
+        assertGt(fullCharge, 0, "LIVE: and charges the bound when it does");
+
+        // `_armAndFinalize` disables the D1 ceiling; read the need with it off,
+        // then bind it well below that and read again.
+        uint256 needRaw = _lens().getUserArmedFreshNeed(alice);
+        assertGt(needRaw, 0, "LIVE: the entry carries an armed demand at all");
+        _mut().setDayUserSideCapRaw(5, needRaw / 4);
+        uint256 needCapped = _lens().getUserArmedFreshNeed(alice);
+        assertLt(needCapped, needRaw, "LIVE: the D1 ceiling actually bit");
+        assertGt(needCapped, 0, "LIVE: and did not trim to nothing");
+
+        // Fund EXACTLY the capped liability — what Base would really remit.
+        _mut().setArmedFreshLedgerRaw(needCapped, 0);
+
+        uint256 credited = _facet().sweepExpiredInteractionRewards(ids);
+        assertGt(
+            credited,
+            0,
+            "a capped-but-fully-funded entry terminalises instead of wedging"
+        );
+        // STORED state: the bound is charged what actually moved, which is the
+        // capped figure. Charging the raw one would spend delivered funding
+        // that was never delivered.
+        assertEq(
+            _mut().getArmedFreshPaidRaw(),
+            needCapped,
+            "the delivered bound is charged the CAPPED amount, not the raw"
+        );
+    }
+
     // ─── 4c. RL-3 Codex r2 — zero-credit expiry defers, never burns ──────────
 
     function testExpirySweepDefersAtFullFreshExhaustion() public {

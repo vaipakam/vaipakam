@@ -308,16 +308,21 @@ contract InteractionRewardsFacet is
         for (uint256 i = 0; i < entryIds.length; ) {
             (
                 LibInteractionRewards.EntrySplit memory ex,
-                uint256 freshCredited
+                uint256 freshCredited,
+                uint256 armedDelivered
             ) = LibInteractionRewards.sweepExpiredEntry(
                 entryIds[i], headroom, allowance
             );
             headroom -= freshCredited;
             // All-or-nothing per entry, so a credited entry consumed exactly
             // its armed share of the allowance.
-            if (freshCredited != 0 && ex.armedFresh != 0) {
-                allowance = allowance > ex.armedFresh
-                    ? allowance - ex.armedFresh
+            // Codex #1699 r5 P2 — deplete by what was DELIVERED-funded, not
+            // by the raw commitment. On a mirror the two differ whenever the
+            // D1 group cap bit, and charging the raw figure here would retire
+            // allowance for value the entry never received.
+            if (freshCredited != 0 && armedDelivered != 0) {
+                allowance = allowance > armedDelivered
+                    ? allowance - armedDelivered
                     : 0;
             }
             freshTotal += freshCredited;
@@ -341,7 +346,7 @@ contract InteractionRewardsFacet is
             // cap-truncated remainder that moved no tokens. Charging it would
             // shrink the bound for value never paid out of a delivery — the
             // same defect `interactionPoolPaidOut` was rejected for.
-            if (freshCredited != 0) armedFreshPaid += ex.armedFresh;
+            if (freshCredited != 0) armedFreshPaid += armedDelivered;
             unchecked { ++i; }
         }
         if (freshTotal + recycledTotal == 0) return 0;

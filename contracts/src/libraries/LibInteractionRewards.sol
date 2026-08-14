@@ -2560,16 +2560,20 @@ library LibInteractionRewards {
         uint256 deliveredAllowance
     )
         internal
-        returns (EntrySplit memory expired, uint256 freshCredited)
+        returns (
+            EntrySplit memory expired,
+            uint256 freshCredited,
+            uint256 armedDelivered
+        )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint32 horizonDays = s.rewardClaimHorizonDays;
-        if (horizonDays == 0) return (expired, 0);
+        if (horizonDays == 0) return (expired, 0, 0);
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-        if (e.processed || e.user == address(0)) return (expired, 0);
-        if (e.forfeited || _entryTerminalForfeit(s, e)) return (expired, 0);
-        if (!_entryClaimable(s, e)) return (expired, 0);
-        if (e.startDay >= e.endDay) return (expired, 0);
+        if (e.processed || e.user == address(0)) return (expired, 0, 0);
+        if (e.forfeited || _entryTerminalForfeit(s, e)) return (expired, 0, 0);
+        if (!_entryClaimable(s, e)) return (expired, 0, 0);
+        if (e.startDay >= e.endDay) return (expired, 0, 0);
 
         // The cursor must actually cover the window — a claim blocked on
         // finalization keeps the clock frozen (never stamps, never accrues).
@@ -2581,7 +2585,7 @@ library LibInteractionRewards {
             cursor = e.side == LibVaipakam.RewardSide.Lender
                 ? advanceCumLenderThrough(need)
                 : advanceCumBorrowerThrough(need);
-            if (cursor < need) return (expired, 0);
+            if (cursor < need) return (expired, 0, 0);
         }
 
         (
@@ -2592,7 +2596,7 @@ library LibInteractionRewards {
         ) = _entryPriceCore(s, id, e);
         // A zero-value window prices nothing, pays nothing, and — once the
         // cursor covers it — can never grow: there is no clock to run for it.
-        if (!st.priced) return (expired, 0);
+        if (!st.priced) return (expired, 0, 0);
         // The EXPIRY credit below uses the RAW (uncapped) split: an expired
         // reward recycles to the bucket rather than being paid to the side, so
         // like a forfeit it is exempt from the loan-side cap (Codex #1371 r2).
@@ -2680,7 +2684,7 @@ library LibInteractionRewards {
                 s.rewardEntryObsBlocked[id] = true;
                 s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
             }
-            return (expired, 0);
+            return (expired, 0, 0);
         }
 
         uint256 hSec = uint256(horizonDays) * 1 days;
@@ -2692,7 +2696,7 @@ library LibInteractionRewards {
             s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
             s.rewardEntryHorizonEpoch[id] = s.rewardHorizonActivatedAt;
             emit RewardEntryHorizonStamped(id, e.user, uint64(block.timestamp));
-            return (expired, 0);
+            return (expired, 0, 0);
         }
 
         uint256 elapsed = s.rewardEntryExecElapsed[id];
@@ -2713,7 +2717,7 @@ library LibInteractionRewards {
             s.rewardEntryHorizonEpoch[id] = s.rewardHorizonActivatedAt;
             s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
             s.rewardEntryObsBlocked[id] = false;
-            return (expired, 0);
+            return (expired, 0, 0);
         }
 
         // Credit this interval only if the entry was executable at BOTH ends
@@ -2761,7 +2765,7 @@ library LibInteractionRewards {
         uint256 required =
             hSec + uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
         if (elapsed < required) {
-            return (expired, 0);
+            return (expired, 0, 0);
         }
 
         // ALL-OR-NOTHING expiry (Codex #1317): terminalise ONLY if the
@@ -2803,19 +2807,52 @@ library LibInteractionRewards {
         // the discarded 0.6. Same class as the other round-4 findings:
         // comparing the bound against a quantity larger than anything a
         // remittance will fund turns a satisfiable wait into a wedge.
-        uint256 cappedArmed = toUser.armedFresh + toTreasury.armedFresh;
+        // Codex #1699 r5 P2 — derive this from the GROUPED D1 calculation, not
+        // from `_entryPriceCore`. The round-4 fix moved off `st.rawSplit` to
+        // the loan-side-capped split, which is the right idea at the wrong
+        // stage: `_loanSideCapCompute` returns the UNTRIMMED split for
+        // UNSTAMPED loans, and mirror loans are never stamped (it says so
+        // itself — they "are bounded by the D1 (user, side, day) share cap on
+        // their local claim, not here"). So on the very chain this bound
+        // exists for, `cappedArmed` was still the raw figure and the wedge
+        // survived the fix.
+        //
+        // `_userArmedFreshNeed` is the claim's own grouped, D1-capped figure —
+        // the same quantity the clock gate uses, reached through the
+        // fail-closed lens staticcall so the dry-run engine is not inlined
+        // here a second time (that inlining is what breached EIP-170 in r4).
+        // Clamping rather than substituting keeps a single entry from ever
+        // demanding more than its own raw share when the user holds others.
+        uint256 rawArmed = split_.armedFresh;
+        uint256 groupNeed = _userArmedFreshNeed(s, e.user);
+        uint256 cappedArmed = rawArmed < groupNeed ? rawArmed : groupNeed;
         bool deliveredShort =
             cappedArmed != 0 && cappedArmed > deliveredAllowance;
         if (freshShare > freshHeadroom || deliveredShort) {
             s.rewardEntryObsBlocked[id] = true;
-            return (expired, 0);
+            return (expired, 0, 0);
         }
         // #1353 (M2 PR-5c) — NO loan-side cap here: an expired reward recycles
         // to the bucket (it is not emitted to the side), so like a forfeit it is
         // uncapped — the cap bounds reward PAID TO A USER only (Codex #1371 r2).
         // Recycling the full amount back into the pool is not over-reward.
+        // Codex #1699 r5 P2 — the CREDIT is capped with the gate, per the
+        // owner's funding decision: a mirror entry is credited only the armed
+        // fresh a remittance actually funds. Gate and credit MUST move
+        // together — gating on the capped figure while crediting the raw one
+        // would spend delivered funding that was never delivered, which is the
+        // double-spend this whole slice exists to stop.
+        //
+        // `expired.armedFresh` deliberately stays RAW. It is the COMMITMENT
+        // the facet retires via `consumeArmedFresh`, and that must retire the
+        // cap-truncated remainder too — under-retiring leaks the difference
+        // and permanently depresses every later day's availability for reward
+        // that can never be drawn. So the two quantities part ways here:
+        // `armedDelivered` is what moved and what charges the delivered bound;
+        // `expired.armedFresh` is what was owed and what retires.
         expired = split_;
-        freshCredited = freshShare;
+        freshCredited = freshShare - (rawArmed - cappedArmed);
+        armedDelivered = cappedArmed;
         e.processed = true;
         emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
     }
