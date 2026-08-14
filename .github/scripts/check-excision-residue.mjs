@@ -582,6 +582,9 @@ function normalize(text) {
  * normalized character `i` — what lets a match found in the collapsed string
  * be reported against the lines it actually came from.
  */
+/** Sentinel path: text already inside a tag — decode refs, do not strip tags. */
+const TAG_INTERIOR = '\0tag-interior';
+
 function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null) {
   const out = [];
   const map = [];
@@ -601,7 +604,15 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
   // them from fusing. Scoped to markup extensions and to a strict tag shape,
   // because a bare `<` is a comparison in most source files and skipping to the
   // next `>` there would swallow real text.
+  // Two separate questions, and conflating them cost a bypass. `skipTags` asks
+  // "should elements be lifted out of the stream" — false when we are already
+  // INSIDE one, so a nested tag is not stripped twice. `decodeRefs` asks
+  // "does this text render character references" — which is true of a tag's
+  // interior as much as the document's body, since `data-x="buyOpti&#111;ns"`
+  // resolves to the dead identifier in any renderer. Passing `''` as the path
+  // to suppress the first had been silently suppressing the second.
   const skipTags = MARKUP_EXTENSIONS.test(sourcePath || '');
+  const decodeRefs = skipTags || sourcePath === TAG_INTERIOR;
   const TAG = /^<\/?[a-zA-Z][^<>]*>/;
   const tagSpans = [];
   for (let i = 0; i < text.length; i++) {
@@ -640,8 +651,30 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
       // the main pass walks each one), precisely so a mention hidden inside an
       // attribute still counts. Removing the cap can only widen what is read
       // as markup, never narrow what is examined.
-      const close = text.indexOf('>', i);
-      if (close !== -1 && /^<\/?[a-zA-Z]/.test(text.slice(i, i + 3)) && !text.slice(i + 1, close).includes('<')) {
+      // Quote-AWARE scan for the closing `>`. A bare `indexOf('>')` stops at
+      // the first one, and `<span title="1 > 0">` puts one inside an
+      // attribute value — so the tag was split early, the leftover `0">`
+      // stayed in the stream, and the words either side of the element did not
+      // fuse. Attribute quoting is part of the syntax; a scanner that ignores
+      // it is not reading the markup, it is reading past it.
+      let close = -1;
+      if (/^<\/?[a-zA-Z]/.test(text.slice(i, i + 3))) {
+        let quote = '';
+        for (let j = i + 1; j < text.length; j++) {
+          const ch = text[j];
+          if (quote) {
+            if (ch === quote) quote = '';
+          } else if (ch === '"' || ch === "'") {
+            quote = ch;
+          } else if (ch === '<') {
+            break; // A new tag starts: this one never closed.
+          } else if (ch === '>') {
+            close = j;
+            break;
+          }
+        }
+      }
+      if (close !== -1) {
         tagSpans.push([i, close + 1]);
         i = close;
         continue;
@@ -660,7 +693,7 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
     // full HTML entity table is a large dependency for no additional coverage.
     // Every emitted character maps to the reference's START offset, so the
     // digest window and the boundary tests still point at the source text.
-    if (skipTags && text[i] === '&' && !(fencedOffsets && fencedOffsets(i))) {
+    if (decodeRefs && text[i] === '&' && !(fencedOffsets && fencedOffsets(i))) {
       const ref = /^&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|[a-zA-Z][a-zA-Z0-9]{1,31});/.exec(
         text.slice(i, i + 40),
       );
@@ -923,7 +956,19 @@ function scanFile(path) {
     // only err toward doing MORE work: a false positive costs one file's scan,
     // a false negative is a silent miss.
     const { norm, tagSpans } = normalizeWithMap(text, path, false, literalAt);
-    return norm + tagSpans.map(([s, e]) => normalize(text.slice(s, e))).join('');
+    // Tag interiors go through the ENTITY-AWARE normalizer, not the plain
+    // `normalize`. This is the cheap gate that decides whether a file gets the
+    // detailed pass at all, so a blind spot here is not a slower scan — it is
+    // a file never scanned. `data-operation="buyOpti&#111;ns"` normalized to
+    // `buyopti111ns` here, matched no token, and the file was skipped before
+    // the detailed pass could decode anything: the fix one layer down was
+    // correct and unreachable.
+    return (
+      norm +
+      tagSpans
+        .map(([s, e]) => normalizeWithMap(text.slice(s, e), TAG_INTERIOR, false, null).norm)
+        .join('')
+    );
   })();
   if (!DEAD_TOKEN_RECORDS.some(({ token }) => cheap.includes(token))) {
     return { hits: 0, digest: '' };
@@ -958,7 +1003,25 @@ function scanFile(path) {
     // `;` and was rejected as non-identifier — the encoding silently bought an
     // exemption. Both this check and the boundary check below have to reason
     // about what the reader sees, which is what `renderRefs` produces.
-    /^[A-Za-z0-9_-]+$/.test(renderRefs(text.slice(map[a], map[b] + 1)));
+    /^[A-Za-z0-9_-]+$/.test(renderRefs(text.slice(map[a], identifierSpanEnd(map[b]))));
+
+  /**
+   * End offset (exclusive) for an identifier span whose LAST character may have
+   * come from a character reference.
+   *
+   * Every decoded character maps to the reference's `&`, so `map[b] + 1` cuts
+   * the slice one character into `&#115;` and leaves `renderRefs` nothing it
+   * can decode — `buyOption&#115;` was rejected as a non-identifier and passed
+   * clean, which is the same bypass as the previous round with the encoded
+   * character moved to the end. Extend through the reference's `;` when one
+   * starts exactly at that offset.
+   */
+  function identifierSpanEnd(lastOffset) {
+    const ref = /^&(?:#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});/.exec(
+      text.slice(lastOffset, lastOffset + 40),
+    );
+    return lastOffset + (ref ? ref[0].length : 1);
+  }
 
   /**
    * Lines that sit inside a fenced code block.
@@ -1124,7 +1187,7 @@ function scanFile(path) {
   // phrase a reader sees — so its contents are scanned separately instead,
   // one tag at a time so nothing fuses ACROSS a tag boundary either.
   for (const [s, e] of tagSpans) {
-    const { norm: tagNorm, map: tagMap } = normalizeWithMap(text.slice(s, e), '', true, null);
+    const { norm: tagNorm, map: tagMap } = normalizeWithMap(text.slice(s, e), TAG_INTERIOR, true, null);
     for (const m of collectMatches(
       tagNorm,
       tagMap.map((o) => o + s),
@@ -1189,9 +1252,25 @@ function scanFile(path) {
       if (inFence[i]) continue;
       const atx = /^\s{0,3}(#{1,6})\s/.exec(lines[i]);
       const bold = /^\s{0,3}\*\*[^*]+\*\*/.test(lines[i]);
-      if (!atx && !bold) continue;
+      // Setext headings — a line of text UNDERLINED by `===` or `---` — are
+      // headings too, and were invisible here. That let the governing status
+      // be rewritten without moving the digest: retitle `Historical guidance`
+      // to `Current guidance` above an untouched `---`, and the mention below
+      // silently changes from a record to an instruction. Exactly the
+      // substitution this ancestry hash exists to catch, in the one heading
+      // syntax it did not recognize. `===` is level 1, `---` level 2, per
+      // Markdown. The underline must not itself be a list marker or a thematic
+      // break with spaces, so require a run of three or more.
+      const setext =
+        i + 1 < lines.length && !inFence[i + 1] && lines[i].trim() !== ''
+          ? /^\s{0,3}(=|-)\1{2,}\s*$/.exec(lines[i + 1])
+          : null;
+      if (!atx && !bold && !setext) continue;
       // A `**Bold lead-in**` sits below any ATX heading; level 7 orders it so.
-      const level = atx ? atx[1].length : 7;
+      // A Setext heading takes the ATX level its underline corresponds to, so
+      // the two syntaxes interleave in one ancestry rather than forming
+      // separate ladders.
+      const level = atx ? atx[1].length : setext ? (setext[1] === '=' ? 1 : 2) : 7;
       if (level >= deepest) continue;
       deepest = level;
       chain.push(lines[i]);
