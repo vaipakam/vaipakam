@@ -226,4 +226,16 @@ guarantee the fingerprint exists to provide, defeated without needing to break
 any cryptography — just by the punctuation of ordinary prose. The pieces are
 now assembled unambiguously.
 
+One exemption turned out to be too broad in a way worth naming. Assembled
+release notes are excluded from the check, correctly — a dated note recording
+that something once existed is doing its job. But the exemption covered the
+pending fragments too, and a pending fragment is not a historical record: it is
+a description of the product as it is about to ship, written by the same change
+that ships it. A fragment promising operators a surface that no longer exists
+was exactly the defect the check looks for, arriving in the one file every such
+change is required to add. Pending fragments are now checked; the assembled
+notes stay exempt. Two existing fragments were picked up immediately, both
+legitimately naming the retired surface in order to describe its removal, and
+both recorded as such.
+
 No behaviour changes in the product.

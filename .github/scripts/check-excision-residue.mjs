@@ -283,11 +283,52 @@ const DEAD_TOKEN_RECORDS = DEAD_TOKENS.map((t) =>
  * Excluded because a mention there is CORRECT — these directories record that
  * the surface once existed, which is their job:
  */
+/**
+ * Character references, resolved to the characters a reader actually sees.
+ *
+ * Three passes need this and they must agree, because a disagreement is
+ * exactly how a mention hides: the normalizer (so `buy&nbsp;adapter` fuses),
+ * the boundary check (so `buy&#46; Adapter` does NOT fuse — `&#46;` is a full
+ * stop and ends the sentence), and the identifier check (so `buyOpti&#111;ns`
+ * is still recognized as the identifier it renders as).
+ *
+ * Numeric references are decoded properly. Named references resolve through a
+ * small table of the ones that carry a boundary or are common in prose;
+ * anything else is dropped, since an unknown named entity resolves to
+ * punctuation or a letter outside a-z either way and normalization would strip
+ * it. A full HTML entity table would be a large dependency for no coverage.
+ */
+const NAMED_REFS = {
+  nbsp: ' ', ensp: ' ', emsp: ' ', thinsp: ' ', shy: '', zwj: '', zwnj: '',
+  period: '.', full: '.', excl: '!', quest: '?', semi: ';', colon: ':',
+  comma: ',', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
+  lpar: '(', rpar: ')', lsqb: '[', rsqb: ']', sol: '/', bsol: '\\',
+  ndash: '-', mdash: '-', hyphen: '-', bull: '*', middot: '*',
+};
+const renderRefs = (s) =>
+  s.replace(
+    /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,31}));/g,
+    (_m, dec, hex, name) => {
+      if (dec !== undefined || hex !== undefined) {
+        const code = dec !== undefined ? Number(dec) : parseInt(hex, 16);
+        return Number.isFinite(code) && code > 0 && code <= 0x10ffff
+          ? String.fromCodePoint(code)
+          : '';
+      }
+      return Object.prototype.hasOwnProperty.call(NAMED_REFS, name.toLowerCase())
+        ? NAMED_REFS[name.toLowerCase()]
+        : '';
+    },
+  );
+
 const EXCLUDED_PREFIXES = [
   // ARCHIVAL TREES — every document in them is a dated record of what was
   // true when it was written. Naming the removed surface is their job.
   'docs/ReleaseNotes/',
   'docs/OlderDocs/',
+  // …but NOT `docs/ReleaseNotes/unreleased/` — see EXCLUSION_CARVEOUTS below.
+  // An assembled note is a dated record; a PENDING fragment is a claim about
+  // the product as it ships next, which is precisely what this gate reads.
   'docs/FindingsAndFixes/',
   'docs/adr/',
   // NAMED FILES ONLY, inside trees that are otherwise ACTIVE.
@@ -386,6 +427,8 @@ const PINNED = new Map([
   ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "242c30f2f5e3"]],
   ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "6cc03561eae9"]],
   ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "857792c509dd"]],
+  ["docs/ReleaseNotes/unreleased/1651-excision-residue-ratchet.md", [1, "RETRACTION — this gate's own fragment, quoting the dead phrase as the example of what now fails", "fba24ce27446"]],
+  ["docs/ReleaseNotes/unreleased/1672-layerzero-residue-removal.md", [3, "RETRACTION — describes text that WRONGLY implied the surface was live, and its removal", "a49a87d89dbb"]],
   ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "83bed4aa55e1"]],
   ["docs/ToDo.md", [31, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "065b1272f94c"]],
   ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c1d15d0eef44"]],
@@ -398,7 +441,7 @@ const PINNED = new Map([
   ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "023e9b4fd22a"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "0284187b3cbb"]],
   ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "c86fd4428005"]],
-  ["docs/ops/BaseSepoliaDeploy.md", [26, "LIVE-TEXT — known debt", "6ac1fdb9a577"]],
+  ["docs/ops/BaseSepoliaDeploy.md", [26, "LIVE-TEXT — known debt", "64debf6185f2"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "ab9aa52ffbe1"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "874f9b73f212"]],
   ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "07fef3834731"]],
@@ -461,7 +504,23 @@ const PINNED = new Map([
  * ratchet entirely, contradicting the comment two lines above its own
  * exclusion. A file exemption should exempt that file and nothing else.
  */
+/**
+ * Paths that sit INSIDE an excluded tree but are still scanned.
+ *
+ * `docs/ReleaseNotes/` is excluded because an assembled note is a dated record
+ * of what was true when it was written — naming a removed surface there is its
+ * job. `unreleased/` is not that. A pending fragment is a forward-looking
+ * description of the product as it is about to ship, written by the same PR
+ * that changes behaviour, and the release-notes README requires one from every
+ * behaviour-changing PR. A fragment claiming operators can use a removed
+ * surface is the exact live-guidance defect this gate exists to catch, and the
+ * blanket prefix exempted every one of them — including the fragment each of
+ * these PRs adds to describe its own work.
+ */
+const EXCLUSION_CARVEOUTS = ['docs/ReleaseNotes/unreleased/'];
+
 function isExcluded(file) {
+  if (EXCLUSION_CARVEOUTS.some((p) => file.startsWith(p))) return false;
   return EXCLUDED_PREFIXES.some((p) =>
     p.endsWith('/') ? file.startsWith(p) : file === p,
   );
@@ -567,10 +626,16 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
         i = stop - 1;
         continue;
       }
-      const m = TAG.exec(text.slice(i, i + 400));
-      if (m) {
-        tagSpans.push([i, i + m[0].length]);
-        i += m[0].length - 1;
+      // Scan to the ACTUAL closing `>`, with no length cap. The cap was 400
+      // source characters, which meant an element whose attributes ran longer
+      // than that was not recognized as a tag and stayed in the stream —
+      // reopening the very bypass the tag handling exists to close, for anyone
+      // who writes a long `data-` attribute. An arbitrary limit on how much
+      // markup counts as markup is a limit on how much of the file is checked.
+      const close = text.indexOf('>', i);
+      if (close !== -1 && /^<\/?[a-zA-Z]/.test(text.slice(i, i + 3)) && !text.slice(i + 1, close).includes('<')) {
+        tagSpans.push([i, close + 1]);
+        i = close;
         continue;
       }
     }
@@ -592,13 +657,12 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
         text.slice(i, i + 40),
       );
       if (ref) {
-        const code = ref[1] ? Number(ref[1]) : ref[2] ? parseInt(ref[2], 16) : NaN;
-        if (Number.isFinite(code) && code > 0 && code <= 0x10ffff) {
-          for (const c of String.fromCodePoint(code).toLowerCase()) {
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-              out.push(c);
-              if (withMap) map.push(i);
-            }
+        // Same `renderRefs` the boundary and identifier checks use — one table,
+        // so the three passes cannot drift apart about what a reference means.
+        for (const c of renderRefs(ref[0]).toLowerCase()) {
+          if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            out.push(c);
+            if (withMap) map.push(i);
           }
         }
         i += ref[0].length - 1;
@@ -879,7 +943,14 @@ function scanFile(path) {
    * the only names here ordinary prose can spell by accident.
    */
   const isIdentifierSpan = (map, a, b) =>
-    /^[A-Za-z0-9_-]+$/.test(text.slice(map[a], map[b] + 1));
+    // `renderRefs` first: the normalizer decodes character references, but the
+    // offsets it records all point at the reference's `&`, so this slice sees
+    // the SOURCE spelling. `buyOpti&#111;ns` renders as the exact retired
+    // identifier and must be caught, yet the raw slice contains `&`, `#` and
+    // `;` and was rejected as non-identifier — the encoding silently bought an
+    // exemption. Both this check and the boundary check below have to reason
+    // about what the reader sees, which is what `renderRefs` produces.
+    /^[A-Za-z0-9_-]+$/.test(renderRefs(text.slice(map[a], map[b] + 1)));
 
   /**
    * Lines that sit inside a fenced code block.
@@ -949,7 +1020,13 @@ function scanFile(path) {
       // normalizer had correctly fused would be rejected here by punctuation
       // belonging to markup the reader never sees. Whenever the normalizer
       // learns to skip something, this must learn it in the same commit.
-      span = span.replace(/&(?:#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});/g, ' ');
+      //
+      // DECODED, not blanked. Replacing every reference with a space was the
+      // first attempt and it overshot: `&#46;` RENDERS as a full stop, so
+      // blanking it deleted a real sentence boundary and fused two sentences
+      // into a mention that no reader would see. The entity syntax is
+      // invisible; the character it stands for is not.
+      span = renderRefs(span);
     }
     if (/[.!?;:|]/.test(span)) return true;
     if (/\n[ \t]*\n/.test(span)) return true;
@@ -975,6 +1052,13 @@ function scanFile(path) {
         if (inFence[i]) continue;
         if (/^\s{0,3}#{1,6}\s/.test(lines[i])) return true;
         if (/^\s{0,3}(?:[-*+]\s|\d+[.)]\s)/.test(lines[i])) return true;
+        // Blockquote marker. Markdown renders `> …` as its own quote block, so
+        // the line before it and the line after it are not one sentence — but
+        // only headings and list markers were recognized, so a sentence ending
+        // at a quote fused with the quote's first words and failed a clean
+        // file. Same class as the heading and list rules: an explicit block
+        // delimiter, not a guess about English.
+        if (/^\s{0,3}>/.test(lines[i])) return true;
       }
     }
     return false;
