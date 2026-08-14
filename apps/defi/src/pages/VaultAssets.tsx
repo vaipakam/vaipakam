@@ -458,13 +458,16 @@ export default function VaultAssets() {
       cancelled = true;
     };
     // `address` and `diamondAddress` are read inside and are now declared.
-    // Both very nearly co-vary with what was already listed — the vault address
-    // is looked up from `address`, and `diamondAddress` and `publicClient` are
-    // both pinned to the read chain — so this is not expected to change what
-    // the page fetches. The one window it does close is a wallet switch whose
-    // vault lookup has not resolved yet: `vault` still holds the previous
-    // value, so without `address` the per-user tracked/encumbered reads would
-    // stay on the old account until that lookup landed.
+    //
+    // Declaring `address` is only safe because `useUserVaultAddress` tags its
+    // answer with the wallet it resolved for. This effect mixes the two keys —
+    // `balanceOf` is keyed by `vault`, `getProtocolTrackedVaultBalance` and
+    // `getEncumbered` by `userAddr` — so re-running on a wallet change while
+    // the vault lookup was still in flight would have produced
+    // `min(balanceOf(oldVault), tracked(newUser))`: a figure combined from two
+    // accounts, indistinguishable on screen from a real one. With the tag in
+    // place, `vault` reads `null` for that moment and the guard above holds
+    // the effect until both keys name the same wallet.
   }, [vault, publicClient, tokens, reloadCounter, address, diamondAddress]);
 
   // Pre-warm the symbol/decimals cache for every discovered token so
