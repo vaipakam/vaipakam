@@ -44,12 +44,11 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNowSeconds } from '../../hooks/useNowSeconds';
 import { Info, Wifi, WifiOff, Cpu, RefreshCw, AlertTriangle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
-import { watermarkPolicy, watermarkStaleAfterSec } from '../../hooks/watermarkPolicy';
+import { watermarkPolicy } from '../../hooks/watermarkPolicy';
 import { useDataFreshness } from '../../context/DataFreshnessContext';
 import { useRealtimePush } from '../../context/RealtimePushContext';
 import './IndexerStatusBadge.css';
@@ -62,11 +61,6 @@ const SEVERE_GAP_BLOCKS = 5000;
 /** A watermark snapshot older than this (seconds) is treated as stale —
  *  the RPC probe isn't returning fresh data, so "direct RPC" isn't a
  *  healthy fallback. */
-// Derived from the subscribed tier's cadence — see `watermarkStaleAfterSec`.
-// A flat 90 s could not hold here: this badge subscribes at `cool`
-// (180 s active / 600 s idle), so the snapshot ages past 90 s between every
-// pair of scheduled probes.
-const WATERMARK_STALE_SEC = watermarkStaleAfterSec('cool');
 
 /** Cadence for the popover's live safe-block poll. Only runs while the
  *  popover is open, so the RPC cost is bounded by how long the user
@@ -120,7 +114,6 @@ export function IndexerStatusBadge({ compact }: Props) {
   // Independent of data freshness (which is about block-space lag).
   const { transport } = useRealtimePush();
   const [popoverOpen, setPopoverOpen] = useState(false);
-  const nowSec = useNowSeconds();
   // Live chain safe-head — polled directly only while the popover is
   // open. `null` until the first poll resolves (the popover seeds the
   // row with the watermark snapshot's safeBlock in the meantime, so
@@ -186,20 +179,16 @@ export function IndexerStatusBadge({ compact }: Props) {
     watermarkSnapshot && watermarkSnapshot.safeBlock > 0n
       ? Number(watermarkSnapshot.safeBlock)
       : null;
-  const watermarkAgeSec = watermarkSnapshot
-    ? nowSec - watermarkSnapshot.fetchedAt
-    : null;
   // An EXPLICIT failure outranks the age. `WatermarkContext` publishes
   // `unreachable` the moment a probe fails, and widening the age threshold to
   // match the cool tier's cadence (630 s) meant the badge would otherwise keep
   // showing green for minutes after the app already knew RPC was down. Age
   // answers "is this snapshot too old to trust"; status answers "did the last
   // probe actually work", and only the second can be known promptly.
-  const watermarkHealthy =
-    safeHead !== null &&
-    watermarkStatus !== 'unreachable' &&
-    watermarkAgeSec !== null &&
-    watermarkAgeSec < WATERMARK_STALE_SEC;
+  // Same reasoning as ChainDiagnosticsPanel: `live` means the last probe
+  // succeeded, while an age derived from the carried-over `fetchedAt` measures
+  // how long the chain has been quiet. Only the first is a health signal.
+  const watermarkHealthy = safeHead !== null && watermarkStatus === 'live';
 
   // `maxFrontier` is the freshest block any of this page's data sources
   // (central indexer OR client-side RPC tail-scans) has reached — what

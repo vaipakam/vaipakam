@@ -100,27 +100,3 @@ export function pushBackedInterval(
     ? Math.max(tierInterval, PUSH_BACKED_MIN_INTERVAL_MS)
     : tierInterval;
 }
-
-/**
- * How old a watermark snapshot may get before "stale" is a fair verdict,
- * for a given tier.
- *
- * Derived from the tier's own cadence rather than fixed, because a fixed
- * threshold is only meaningful if the probe runs at least that often. The
- * badge used a flat 90 s while subscribing at the `cool` tier — 180 s active,
- * 600 s idle — so between two scheduled probes the snapshot necessarily aged
- * past 90 s and a perfectly healthy fallback reported amber. That was latent
- * while the age was computed from a clock read once per render; giving the
- * badge a ticking clock (#1738) made it recompute every minute and surfaced it.
- *
- * The idle interval is the basis, not the active one: it is the longest gap
- * the tier can legitimately leave, and reporting a false "stale" is worse than
- * reporting "healthy" slightly too long — the former sends someone chasing an
- * outage that isn't happening. The grace covers request latency and timer jitter.
- */
-export function watermarkStaleAfterSec(tier: WatermarkTier): number {
-  // `idlePollIntervalMs` is optional on the options type; every tier above sets
-  // it, and the fallback keeps the previous flat 90 s if one ever does not.
-  const idleMs = POLICIES[tier].idlePollIntervalMs;
-  return idleMs == null ? 90 : Math.ceil(idleMs / 1000) + 30;
-}

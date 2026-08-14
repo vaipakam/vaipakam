@@ -17,13 +17,12 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNowSeconds } from '../../hooks/useNowSeconds';
 import { Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useOfferStats } from '../../hooks/useOfferStats';
 import { indexerOrigin } from '../../lib/indexerClient';
 import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
-import { watermarkPolicy, watermarkStaleAfterSec } from '../../hooks/watermarkPolicy';
+import { watermarkPolicy } from '../../hooks/watermarkPolicy';
 import { useMode } from '../../context/ModeContext';
 import { useDataFreshness } from '../../context/DataFreshnessContext';
 import { useRealtimePush } from '../../context/RealtimePushContext';
@@ -113,7 +112,6 @@ function formatDurationMs(ms: number | null): string {
 
 export function ChainDiagnosticsPanel() {
   const { t } = useTranslation();
-  const nowSec = useNowSeconds();
   const { mode } = useMode();
   const chain = useReadChain();
   const publicClient = useDiamondPublicClient();
@@ -321,23 +319,19 @@ export function ChainDiagnosticsPanel() {
     // head means the page IS reading live from chain successfully
     // (green); stale or missing probe means RPC itself is degraded
     // (amber).
-    const watermarkAgeSec = watermarkSnapshot
-      ? nowSec - watermarkSnapshot.fetchedAt
-      : null;
+
     const liveRpcHealthy =
       watermarkSnapshot &&
       watermarkSnapshot.safeBlock > 0n &&
-      // Status first, for two reasons. It reports a failed probe immediately,
-      // and `fetchedAt` is CARRIED OVER when consecutive probes return identical
-      // counters — so the age below measures "time since the values last moved",
-      // not "time since a probe last succeeded". On a quiet or slow-finality
-      // chain every probe can succeed while this age grows without bound.
-      watermarkStatus !== 'unreachable' &&
-      watermarkAgeSec !== null &&
-      // Same cadence-derived threshold the badge uses. Numerically 90 s at the
-      // `warm` tier today, but written as a derivation so re-tiering this panel
-      // cannot silently reintroduce the false-amber gap.
-      watermarkAgeSec < watermarkStaleAfterSec('warm');
+      // PROBE SUCCESS, not snapshot age. `WatermarkContext` sets `live` on every
+      // successful probe but CARRIES OVER `fetchedAt` when the counters are
+      // unchanged — so any age computed from it measures "time since the values
+      // last moved", which on a slow-finality chain grows without bound while
+      // every probe succeeds. Adding a status check while keeping the age gate
+      // (the previous revision here) left that false amber exactly as it was.
+      // `live` is set on success and cleared to `idle` when polling pauses, so
+      // it already carries what the age was standing in for.
+      watermarkStatus === 'live';
     if (liveRpcHealthy) {
       heading = t('indexerBadge.liveRpcInSyncHeading');
       body = t('indexerBadge.liveRpcInSyncBody');
