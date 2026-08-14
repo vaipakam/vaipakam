@@ -188,6 +188,15 @@ const DEAD_TOKENS = [
   'buyoptionsset',
   'buyresolvedsuccess',
   'buyrefunded',
+  // Retired errors still present in the captured historical ABI
+  // (docs/ops/tenderly-paste/Diamond-full.json), none declared in current
+  // source.
+  'bridgedbuyfailed',
+  'bridgedbuyrescued',
+  'buyalreadyresolved',
+  'buyexceedsdailycap',
+  'buyexceedsperrequestcap',
+  'pendingbuynotfound',
   // The removed INTERFACE, TEST and MESSAGE names (spec :111-112, :148).
   // Prose can name the deleted flow through these without ever mentioning a
   // contract or a selector — and one is not merely prose: `foundry.toml:271`
@@ -357,7 +366,7 @@ const PINNED = new Map([
   ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9b4e8ec98ce6"]],
   ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "92c3dfed32ec"]],
   ["docs/ToDo.md", [30, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0267d07e75d7"]],
-  ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1693b2322bfa"]],
+  ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [9, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ce4a6f148737"]],
   ["docs/internal/DeployOnTestnet.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d0314d1c88c5"]],
   ["docs/internal/Issue687A-FrontendExcisionScout.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f6482f66b3e4"]],
   ["docs/internal/PendingTasks-2026-05-14.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "cf229a942c16"]],
@@ -367,13 +376,13 @@ const PINNED = new Map([
   ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "56475d6e7aa7"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "c79a0f5d509b"]],
   ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "0e318eb4c650"]],
-  ["docs/ops/BaseSepoliaDeploy.md", [27, "LIVE-TEXT — known debt", "262ece969294"]],
+  ["docs/ops/BaseSepoliaDeploy.md", [25, "LIVE-TEXT — known debt", "fd16351068d9"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "71f856c2c04b"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "4f51827bdd85"]],
   ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "3a95991f2e38"]],
   ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "98772e8c78b6"]],
   ["docs/ops/VPFITokenRotationRunbook.md", [2, "HISTORICAL — rotation-scope note", "0c737b9a0652"]],
-  ["docs/ops/tenderly-paste/Diamond-full.json", [33, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "c731d95fb3ed"]],
+  ["docs/ops/tenderly-paste/Diamond-full.json", [39, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "ae415efcc8e4"]],
   ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "cbe6e6147c62"]],
   ["ops/subgraph/abis/Diamond.json", [24, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "bbc6f1112b97"]],
   ["packages/contracts/src/abis/AddCollateralFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
@@ -477,6 +486,9 @@ function inScopeFiles() {
   return files;
 }
 
+/** Files where inline markup can split a phrase a reader sees as one. */
+const MARKUP_EXTENSIONS = /\.(tsx|jsx|html|htm|md|mdx|svg)$/i;
+
 /** Lower-case, strip every non-alphanumeric. See DEAD_TOKENS. */
 function normalize(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -489,7 +501,7 @@ function normalize(text) {
  * normalized character `i` — what lets a match found in the collapsed string
  * be reported against the lines it actually came from.
  */
-function normalizeWithMap(text) {
+function normalizeWithMap(text, sourcePath, withMap = true) {
   const out = [];
   const map = [];
   // Iterate the ORIGINAL text and lowercase ONE CHARACTER AT A TIME, so every
@@ -502,12 +514,27 @@ function normalizeWithMap(text) {
   // which corrupts `identifierOnly`, the `notFollowedBy` guard, the block
   // boundary test and the digest line window all at once — and fails toward
   // GREEN, because a shifted span stops looking like an identifier.
+  // In MARKUP files, skip over tags so a mention split by inline styling is
+  // still seen. `Operators must deploy the <strong>buy</strong> adapter` reads
+  // to a user as one phrase, but the tag text sat between the words and kept
+  // them from fusing. Scoped to markup extensions and to a strict tag shape,
+  // because a bare `<` is a comparison in most source files and skipping to the
+  // next `>` there would swallow real text.
+  const skipTags = MARKUP_EXTENSIONS.test(sourcePath || '');
+  const TAG = /^<\/?[a-zA-Z][^<>]*>/;
   for (let i = 0; i < text.length; i++) {
+    if (skipTags && text[i] === '<') {
+      const m = TAG.exec(text.slice(i, i + 400));
+      if (m) {
+        i += m[0].length - 1;
+        continue;
+      }
+    }
     const lowered = text[i].toLowerCase();
     for (const c of lowered) {
       if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
         out.push(c);
-        map.push(i);
+        if (withMap) map.push(i);
       }
     }
   }
@@ -605,12 +632,27 @@ function scanFile(path) {
   // The pre-filter deliberately ignores `notFollowedBy`: a guarded token still
   // needs the full pass to decide, and this only short-circuits files where NO
   // token appears at all. Conservative in the safe direction.
-  const cheap = normalize(text);
+  // Must use the SAME normalization as the real scan. It previously called the
+  // plain `normalize`, which is not tag-aware, so in markup files it
+  // short-circuited before the tag-aware pass could run — silently defeating
+  // that fix. A second implementation of the same transform is a second thing
+  // to drift, which is why pin-writing was folded into this file earlier; the
+  // pre-filter had reintroduced exactly that.
+  // `withMap: false` — same transform, no per-character offset array. ONE
+  // implementation with the map made optional, rather than a second
+  // normalizer that can drift from it (which is precisely what the previous
+  // cheap path did, silently defeating the markup fix in every .tsx file).
+  // For NON-markup files tag-skipping is a no-op by definition, so the native
+  // regex gives a provably identical string far faster than the per-character
+  // loop; markup files take the loop. Same transform either way.
+  const cheap = MARKUP_EXTENSIONS.test(path)
+    ? normalizeWithMap(text, path, false).norm
+    : normalize(text);
   if (!DEAD_TOKEN_RECORDS.some(({ token }) => cheap.includes(token))) {
     return { hits: 0, digest: '' };
   }
 
-  const { norm, map } = normalizeWithMap(text);
+  const { norm, map } = normalizeWithMap(text, path);
   const starts = lineStarts(text);
   const lines = text.split('\n');
 
@@ -657,15 +699,35 @@ function scanFile(path) {
    * boundary rules did badly.
    */
   const inFence = (() => {
+    // CommonMark: a fence closes only on a run of the SAME marker at least as
+    // long as the opener. A four-backtick block quoting a three-backtick block
+    // is normal in documentation, and toggling on any fence line closed the
+    // outer block early — after which the quoted snippet's `#` comments were
+    // read as headings and a real mention went silent. Track marker and length.
     const flags = new Array(lines.length).fill(false);
-    let open = false;
+    let openMarker = '';
+    let openLen = 0;
     for (let i = 0; i < lines.length; i++) {
-      if (/^\s{0,3}(```|~~~)/.test(lines[i])) {
-        open = !open;
-        flags[i] = true; // the fence line itself
-        continue;
+      const m = /^\s{0,3}(`{3,}|~{3,})/.exec(lines[i]);
+      if (m) {
+        const marker = m[1][0];
+        const len = m[1].length;
+        if (!openMarker) {
+          openMarker = marker;
+          openLen = len;
+          flags[i] = true;
+          continue;
+        }
+        // Closing needs the same marker, at least the opening length, and no
+        // info string after it.
+        if (marker === openMarker && len >= openLen && !lines[i].slice(m[0].length).trim()) {
+          openMarker = '';
+          openLen = 0;
+          flags[i] = true;
+          continue;
+        }
       }
-      flags[i] = open;
+      flags[i] = Boolean(openMarker);
     }
     return flags;
   })();
