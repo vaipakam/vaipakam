@@ -46,11 +46,21 @@
   // it. A D1 binding is database-scoped, not table-scoped, so the
   // per-Worker table lists below are a source convention, not an
   // enforced boundary (#1722). Tables this Worker touches:
-  //   - `thresholds`        (per-user-loan HF bands; written by frontend)
-  //   - `link_codes`        (Telegram handshake codes; agent writes)
-  //   - `notify_state`      (per-user notify dedupe; this Worker writes)
-  //   - `loan_index_*`      (active-loan rows; written by indexer; this
+  //   - `user_thresholds`   (per-user-loan HF bands; written by frontend)
+  //   - `telegram_links`    (Telegram handshake links; agent writes)
+  //   - `notify_state`,
+  //     `hf_band_state`     (per-user notify + HF-band dedupe)
+  //   - `loans`             (active-loan rows; written by indexer; this
   //                          Worker reads to enumerate live loans)
+  //   - `offers`            (read by dailyOracleSnapshot; NOT by the
+  //                          matcher, whose discovery is on-chain)
+  //   - `oracle_snapshot_state` (daily snapshot dedupe)
+  //   - `keeper_commitment_*`, `keeper_remit_ack*`, `liquidity_confidence`
+  //                         (commitment scan, remit ack, liquidity probe)
+  //
+  // Names verified against apps/indexer/migrations/. `thresholds`,
+  // `link_codes` and `loan_index_*` were named here and exist under no
+  // migration.
   // Cross-Worker D1 sharing is the deliberate coupling that lets the
   // three Workers stay independent without a message-bus layer
   // (Stage 3 plan §5).

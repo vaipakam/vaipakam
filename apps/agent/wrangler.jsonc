@@ -35,14 +35,25 @@
   // it. A D1 binding is database-scoped, not table-scoped, so the
   // per-Worker table lists below are a source convention, not an
   // enforced boundary (#1722). Tables this Worker touches:
-  //   - `link_codes`        (issue + consume during the Telegram
-  //                          handshake — POST /link/telegram +
-  //                          POST /tg/webhook)
-  //   - `thresholds`        (PUT /thresholds upserts)
+  //   - `telegram_links`    (issue + consume during the Telegram
+  //                          handshake — POST /link/telegram,
+  //                          POST /unlink/telegram, POST /tg/webhook)
+  //   - `user_thresholds`   (PUT /thresholds upserts)
+  //   - `notify_state`      (per-user notify dedupe)
   //   - `diag_errors`       (POST /diag/record + cron retention)
-  //   - `loan_index_*`      (cross-Worker read of indexer's loan
-  //                          tables for periodic-pre-notify scans)
-  //   - `oracle_snapshot_*` (daily snapshot dedupe)
+  //   - `diag_legal_holds`,
+  //     `diag_legal_hold_audit` (T-075 hold place/lift + audit trail)
+  //   - `support_tickets`   (POST /support/ticket + retention prune)
+  //   - `loans`             (cross-Worker read of the indexer's loan
+  //                          rows for periodic-pre-notify scans)
+  //
+  // Names verified against apps/indexer/migrations/. An earlier list named
+  // `link_codes`, `thresholds`, `loan_index_*` and `oracle_snapshot_*` —
+  // the first three do not exist under any migration (the real tables are
+  // `telegram_links`, `user_thresholds`, `loans`), and it omitted the
+  // diagnostics, support and notify tables this Worker actually writes.
+  // These comments guide migration and incident work, so a wrong name here
+  // costs someone time at the worst moment.
   //
   // #1651: a `vpfi_buy_*` entry stood in that list, described as
   // buy-watchdog reconciliation reads. No such tables exist — no

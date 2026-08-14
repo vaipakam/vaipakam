@@ -29,9 +29,14 @@ The split unblocks four follow-on changes that are awkward today:
    was supposed to trigger a liquidation. Co-located concerns share
    failure modes; splitting them gives each a clean isolation
    boundary.
-4. **The matcher** (see §7) — needs its own deploy cadence and
-   economics independent of HF / indexing. Listed here as future scope
-   when this plan was written; it has since SHIPPED on `apps/keeper`.
+4. **The matcher** (see §7) — was to have its own deploy cadence and
+   economics independent of HF / indexing. It has since SHIPPED on
+   `apps/keeper`, but **this requirement was abandoned in the process, not
+   met**: `runMatcher` is invoked from the same `scheduled()` handler and
+   the same `* * * * *` trigger as the HF passes, so it has neither an
+   independent deployment nor an independent schedule. The coupling is
+   real — a matcher fault shares a tick with liquidation — and is recorded
+   here rather than presented as satisfied.
 
 ## 2. Current state — `ops/hf-watcher/src/`
 
@@ -198,12 +203,16 @@ After PR2 / PR3 / PR4 have all been validated in production:
 
 > **Status correction (#1720 round 15).** This section was written as
 > future scope and stayed that way after the matcher shipped.
-> `apps/keeper/src/index.ts:141-146` schedules `runMatcher` on every
-> tick of the `* * * * *` cron, and `matcher.ts` already performs the
-> cross-Worker read of the indexer's `offers` table this section below
-> describes as not-yet-implemented. The design rationale is retained
-> as written; every "tomorrow / later / eventual" framing in it is
-> **withdrawn**. Do not schedule, re-implement, or re-plan this pass.
+> `apps/keeper/src/index.ts:141-146` schedules `runMatcher` on every tick of
+> the `* * * * *` cron. The matcher PASS is live; do not re-implement or
+> re-schedule it.
+>
+> Two things this banner previously overstated, both corrected:
+> the cross-Worker `offers` read is **NOT** shipped (`matcher.ts:41-43`
+> keeps discovery on-chain and names the D1 read a future optimisation),
+> and the matcher does **NOT** have the independent deploy cadence §1
+> asked for — it runs in the same `scheduled()` handler, on the same cron,
+> as the HF passes.
 
 Per the user's locked Phase 1 plan ([`RangeOffersDesign.md`](./RangeOffersDesign.md)),
 the matcher for **range orders + lender partial fills** is an
@@ -243,7 +252,10 @@ the staging plan §2, which is the live text:
   lacks are `RPC_POLYGON` and `RPC_POLYGON_AMOY`, and there is no
   Polygon record in `deployments.json`, so `getChainConfigs` drops
   them at the `getDeployment` gate (`env.ts:504`). Both Workers
-  therefore reach the same ten non-Polygon entries. The extra
+  therefore reach the same set — and it is far smaller than either count:
+  `deployments.json` holds only 97 / 84532 / 421614, and both
+  `getChainConfigs` implementations discard any RPC binding without a
+  deployment record, so at most THREE chains are reachable today. The extra
   bindings are provisioned-ahead-of-need secrets — they widen the
   **secret** surface a leak would expose without widening the
   **runtime chain** surface.
@@ -260,9 +272,9 @@ does not exist as stated.
 
 Implication for this Stage 3 plan, **as it was written**: `apps/keeper`
 was sized for "HF watch + liquidate + daily snapshot" and architected
-for "+ offer match" later. All three consequences below have since been
-DISCHARGED — they are kept as the record of what the sizing anticipated,
-not as work outstanding:
+for "+ offer match" later. Two of the three consequences below are DISCHARGED; the third is NOT.
+They are kept as the record of what the sizing anticipated, with current
+status marked per item — read the items, not this sentence:
 
 - Cron triggers loose enough for a matcher pass — **done**, and tighter
   than planned: `apps/keeper/wrangler.jsonc` runs `* * * * *`, not the

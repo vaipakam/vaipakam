@@ -86,9 +86,10 @@ each of the same kind — a summary that had aged past the thing it summarised:
 
 - **"Holds no signing key" was wrong about the notifications component.** It
   holds a real Ethereum key, used to sign the notifications it sends. It has no
-  authority to move funds — which is the claim worth making — but describing it
-  as keyless would lead a reviewer auditing secrets to skip genuine key
-  material.
+  authority over protocol funds — which is the claim worth making — though it is
+  not fund-safe either: the channel-owner wallet holds a staking deposit and a
+  small amount of gas, so possession of the key reaches those. Describing it as
+  keyless would lead a reviewer auditing secrets to skip genuine key material.
 
 - **The inventory of what the signing component can do was roughly a quarter of
   the real list**, and one entry was described as future work while it had been
@@ -101,8 +102,11 @@ each of the same kind — a summary that had aged past the thing it summarised:
   signature; the first correction claimed none were. In fact the link, unlink
   and test-send endpoints each verify an ownership proof over their own
   message, and the administration endpoints are gated, while
-  three others deliberately take no wallet identity. Nor are those three alike:
-  two are rate-limited and one — the threshold-update endpoint — is protected
+  five others deliberately take no wallet identity — the support-ticket,
+  diagnostics-record and threshold-update endpoints, plus the two publication
+  routes that write to a resolver network and a public marketplace under the
+  project's own credentials. Nor are those five alike: four are rate-limited
+  and one — the threshold-update endpoint — is protected
   only by an origin check, so an earlier draft claiming the unsigned routes
   rely on "origin checks and rate limits" credited it with a control it does
   not have. The document now lists every route individually, because a single
