@@ -618,6 +618,17 @@ contract CcipMessengerTest is Test {
         messengerB.backfillChannelPeerIndex(ids, _chains(CHAIN_A));
     }
 
+    function test_BackfillChannelPeerIndex_RevertWhen_ListEmpty() public {
+        // An empty list would consume the one-shot `reinitializer(2)`
+        // without migrating anything, leaving the proxy permanently
+        // un-indexed with no way to re-run (#1680 r5 P1).
+        vm.prank(owner);
+        vm.expectRevert(CcipMessenger.EmptyMigration.selector);
+        messengerB.backfillChannelPeerIndex(
+            new bytes32[](0), new uint256[](0)
+        );
+    }
+
     function test_BackfillChannelPeerIndex_OnlyOwner() public {
         vm.prank(stranger);
         vm.expectRevert(

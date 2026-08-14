@@ -115,12 +115,23 @@ contract CcipMessenger is
     ///      Version 1 was `abi.encode(channelId, payload)` and carried NO
     ///      tag, which is exactly the problem: a v1 message cannot be
     ///      recognised as v1, only observed to fail decoding. That makes
-    ///      the v1→v2 upgrade a one-time migration hazard with no in-band
+    ///      the v1→v2 upgrade a one-time migration hazard with no IN-BAND
     ///      remedy — every lane must be drained before both ends are
-    ///      upgraded, because an in-flight v1 message can never be
-    ///      executed afterwards and any tokens riding it are stranded.
-    ///      From v2 onward that is no longer true: the tag makes the next
-    ///      change a branch rather than a break.
+    ///      upgraded, because an in-flight v1 message cannot be executed
+    ///      against this implementation: the v2 decode reads a four-word
+    ///      head off two-word data and reverts before the version is ever
+    ///      examined.
+    ///
+    ///      "No in-band remedy" is not "stranded" (Codex #1680 r5 P2). The
+    ///      message is refused rather than consumed, and the OUT-of-band
+    ///      remedy exists: roll this proxy back to the v1 implementation,
+    ///      manually re-execute the failed message, then upgrade forward
+    ///      again. That is a real recovery for real funds and must not be
+    ///      described as loss — an operator who reads "stranded" may write
+    ///      off tokens that are retrievable. It is also a bad thing to be
+    ///      doing under pressure, which is the actual argument for the
+    ///      drain. From v2 onward none of this applies: the tag makes the
+    ///      next change a branch rather than a break.
     uint16 internal constant ENVELOPE_VERSION = 2;
 
     // ─── Storage ────────────────────────────────────────────────────────────
@@ -328,6 +339,10 @@ contract CcipMessenger is
     /// @notice {backfillChannelPeerIndex} received positionally-paired
     ///         arrays of different lengths.
     error ArrayLengthMismatch(uint256 channelIds, uint256 remoteChainIds);
+    /// @notice {backfillChannelPeerIndex} was called with an empty list,
+    ///         which would burn the one-shot migration without migrating
+    ///         anything.
+    error EmptyMigration();
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -391,6 +406,16 @@ contract CcipMessenger is
         if (n != remoteChainIds.length) {
             revert ArrayLengthMismatch(n, remoteChainIds.length);
         }
+        // An EMPTY list must not silently succeed (Codex #1680 r5 P1).
+        // `reinitializer(2)` is consumed whether or not the loop writes
+        // anything, so an `upgradeToAndCall` that passed two empty arrays by
+        // mistake would leave the proxy live on this implementation with
+        // every legacy reverse entry still missing — duplicate peers still
+        // admissible — and NO way to re-run the migration. There is no
+        // legitimate empty call: a fresh deployment does not need this, and
+        // every deployed proxy this exists for is already carrying peer
+        // configuration.
+        if (n == 0) revert EmptyMigration();
         for (uint256 i; i < n; ++i) {
             bytes32 channelId = channelIds[i];
             uint256 remoteChainId = remoteChainIds[i];

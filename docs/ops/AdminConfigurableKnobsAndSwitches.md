@@ -1122,6 +1122,23 @@ compatible recipient delivers its messages and tokens successfully. A
 remote address also cannot be declared as the peer of two channels on
 the same chain, mirroring the existing one-handler-one-channel rule.
 
+**All four need a drain, not just the two with their own sections
+below** (Codex #1680 r5 P1). The chain selector and the remote messenger
+are described here with the same clear-then-assign sequence, and they
+have the same in-flight exposure: a message already dispatched stays
+keyed to the OLD selector and the OLD sending messenger, so once the
+replacement is installed it is refused — `UnconfiguredSelector` when the
+inbound selector no longer maps to a chain id, `UnauthorizedSourceMessenger`
+when the sender is no longer the allowlisted one. Quiesce the lane before
+changing either.
+
+If a message was already stranded that way, it is recoverable by the same
+rollback shape as the peer: restore the previous selector or messenger
+value, manually re-execute the failed message through CCIP, then redo the
+change with the drain. Neither setting carries an epoch or a revocation
+that would block restoring an old value. Say so rather than let an
+operator conclude a delivery is lost.
+
 **Rotating a channel peer requires draining the lane first.** Because a
 message carries the originator that sent it, any message the old peer
 had already dispatched is refused once the new peer is installed. The
