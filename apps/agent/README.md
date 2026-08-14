@@ -1,6 +1,6 @@
 # @vaipakam/agent
 
-**Proactive notifications + operator-side service Worker. Holds aggregator + push + bot credentials. NO signing key — by design.**
+**Proactive notifications + operator-side service Worker. Holds aggregator + push + bot credentials. No ON-CHAIN transaction key — by design; it does hold `PUSH_CHANNEL_PK`, a real Ethereum key used to sign Push notifications.**
 
 [![Workspaces typecheck](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml)
 
@@ -18,10 +18,14 @@ The **proactive-notifications + public-Frame + operator-services Worker**. Stage
 
 Two things it used to say alongside that are **withdrawn**:
 
-- **"holds no ON-CHAIN transaction key (it does hold `PUSH_CHANNEL_PK`, a real Ethereum key used to sign Push notifications)"** — `PUSH_CHANNEL_PK` is an Ethereum private key, instantiated as an ethers `Wallet` in `src/push.ts` to sign Push notifications as the channel. No on-chain authority, but real signing material a secret reviewer must not skip.
-- **"a compromised agent produces stale data"** — it deletes diagnostics and support records on a schedule (`pruneOldSupportTickets` enforces the 12-month deletion promise), writes `loans`, sends Push/Telegram to real users, and publishes listings via `/opensea/listing`. A defect or compromise here means data loss, mis-sent notifications, and irreversible upstream publication — and, via the shared database-scoped D1 binding, corruption of state the signing Worker acts on (#1722). Not stale data.
+- **"holds NO signing key"** — `PUSH_CHANNEL_PK` is an Ethereum private key, instantiated as an ethers `Wallet` in `src/push.ts` to sign Push notifications as the channel. No on-chain authority, but real signing material a secret reviewer must not skip.
+- **"a compromised agent produces stale data"** — it deletes diagnostics and support records on a schedule (`pruneOldSupportTickets` enforces the 12-month deletion promise), writes `loans`, sends Push/Telegram to real users, and publishes listings via `/opensea/listing`. A defect or compromise here means data loss, mis-sent notifications, and publication to a live marketplace — bounded, and the bounds matter: `openseaPublish.ts` posts an **empty `0x` signature**, which OpenSea accepts only because the vault's ERC-1271 check recognises an order hash the borrower already bound **on-chain**. So a compromised Worker can re-expose an already-authorised listing and impose removal latency, but **cannot manufacture one** (no on-chain binding, no listing) and **cannot preserve one** (the borrower's `cancelPrepayListing` revokes the binding and OpenSea drops it on the next revalidation pass). An earlier version of this called it "irreversible upstream publication", which overstated the blast radius in both directions.
 
-**Non-goals:** no autonomous on-chain submissions (those belong to `apps/keeper`); no chain-event indexing into D1 (that belongs to `apps/indexer`); no ON-CHAIN submissions (it does expose user-facing writes: `PUT /thresholds`, `POST /link/telegram`, `POST /support/ticket`, and the diagnostics endpoints all mutate D1 or external state, so they carry real auth + rate-limit requirements) (writes happen via the connected app + a wallet signature).
+  Separately, and unbounded by any of that: via the shared database-scoped D1 binding it can corrupt state the signing Worker acts on (#1722). None of this is "stale data".
+
+**Non-goals:** no autonomous on-chain submissions (those belong to `apps/keeper`); no chain-event indexing into D1 (that belongs to `apps/indexer`).
+
+**This Worker DOES expose user-facing writes** — `PUT /thresholds`, `POST /link/telegram`, `POST /support/ticket` and the diagnostics endpoints all mutate D1 or external state. This section used to claim "no user-facing write endpoints (writes happen via the connected app + a wallet signature)". Both halves were wrong, and the second is the dangerous one: **these routes are not wallet-signature-gated.** `POST /support/ticket` deliberately accepts no wallet identity, `/diag/record` relies on CORS + rate limiting, and ordinary `/thresholds` updates are signature-free. Their real controls are origin checks and rate limits — review those, and do not assume a signature stands behind them.
 
 ## How to run
 
@@ -40,7 +44,7 @@ pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
 ## Architecture
 
 - Stage 3 Worker split: [`docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md).
-- Staging plan §2 least-privilege contract — the load-bearing reason this Worker holds no signing key.
+- Staging plan §2 signing-key placement — the load-bearing reason this Worker holds no ON-CHAIN transaction key. (It is not keyless: see `PUSH_CHANNEL_PK` above.)
 - ADR-0004 (CCIP migration) — cross-chain context. (#1651: previously cited for the buy-watchdog responsibility, removed with #687-A.)
 
 ## Configuration
@@ -57,7 +61,7 @@ Worker secrets (via `wrangler secret put`):
 | `TG_BOT_TOKEN` | Telegram bot credential (user-facing bot). |
 | `TG_OPS_BOT_TOKEN` | Ops-internal bot credential — instant new-support-ticket alert (#1040 phase 1). While unset the alert skips (warn-logged) and tickets still land in D1; the nightly ops report's open-ticket count is the backstop. |
 | `TG_OPS_CHAT_ID` | Operator chat the ops bot posts to. Same skip-while-unset behaviour. |
-| `PUSH_CHANNEL_PK` | Push channel signing key (not a chain key — a push protocol identity). |
+| `PUSH_CHANNEL_PK` | Push channel signing key — **an Ethereum private key**, loaded as an ethers `Wallet` in `src/push.ts`. This row used to say "not a chain key — a push protocol identity"; it is a real key with no on-chain authority, which is not the same thing. |
 | `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Aggregator quote proxy credentials. |
 
 No `KEEPER_PRIVATE_KEY` here — that's `apps/keeper` exclusively.

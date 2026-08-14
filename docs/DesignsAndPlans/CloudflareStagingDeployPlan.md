@@ -136,8 +136,7 @@ stop at stale data: its scheduled passes *delete* diagnostics and
 support records, `runPeriodicPreNotify` writes `loans` and sends
 Push/Telegram messages to real users, and `/opensea/listing` publishes
 signed orders to a live marketplace. A bug on those paths means data
-loss, mis-sent or leaked notifications, and irreversible upstream
-publication — none of which is "stale data". The only part of the
+loss, mis-sent or leaked notifications, and publication to a live marketplace — bounded, and the bounds matter: `openseaPublish.ts` posts an **empty `0x` signature**, which OpenSea accepts only because the vault's ERC-1271 check recognises an order hash the borrower already bound **on-chain**. So a compromised Worker can re-expose an already-authorised listing and impose removal latency, but **cannot manufacture one** (no on-chain binding, no listing) and **cannot preserve one** (the borrower's `cancelPrepayListing` revokes the binding and OpenSea drops it on the next revalidation pass). An earlier version of this called it "irreversible upstream publication", which overstated the blast radius in both directions. None of it is "stale data" either. The only part of the
 original sentence that survives unqualified is the narrow one: **the
 agent and indexer do not sign on-chain transactions.**
 

@@ -10,8 +10,9 @@
   // snapshot signer (moved from agent in the Stage 3 architectural-
   // rebalance commit; co-located with the existing
   // KEEPER_PRIVATE_KEY consumer so the signing key lives on
-  // exactly one Worker, per staging plan §2). Future scope (per
-  // §7 of the Stage 3 plan): off-chain offer matcher.
+  // exactly one Worker, per staging plan §2). LIVE (per §7 of the Stage 3
+  // plan; this said "Future scope"): the off-chain offer matcher runs
+  // every cron tick and signs matchOffers/matchIntent.
   //
   // Distinct from the public reference keeper-bot at the sibling
   // `vaipakam-keeper-bot` repo (different deploy target, different
