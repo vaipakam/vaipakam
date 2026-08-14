@@ -93,6 +93,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 const SELF = fileURLToPath(import.meta.url);
 
@@ -312,9 +313,26 @@ function isExcluded(file) {
   );
 }
 
+/**
+ * Repository root, resolved once.
+ *
+ * Everything is anchored to it, because `git ls-files` reports paths relative
+ * to the CURRENT DIRECTORY while the ledger keys are repo-root-relative. Run
+ * from anywhere but the root, every path mismatched — and it failed in both
+ * directions at once: a wall of bogus "NEW FILE" lines for the subtree it ran
+ * in, plus a "no mentions left" line for every one of the 77 real entries.
+ * Worse, `--write-pins` from a subdirectory would have written that mangled
+ * view back as the ledger — dropping most of the tree while reporting a
+ * successful re-pin. Anchoring removes the class.
+ */
+const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+  encoding: 'utf8',
+}).trim();
+
 /** Tracked files, from git — the whole tree, minus EXCLUDED_PREFIXES. */
 function inScopeFiles() {
   const out = execFileSync('git', ['ls-files', '-z'], {
+    cwd: REPO_ROOT,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -402,7 +420,9 @@ const DIGEST_CONTEXT_LINES = 2;
 function scanFile(path) {
   let text;
   try {
-    text = readFileSync(path, 'utf8');
+    // Resolved against REPO_ROOT, not the process CWD — `path` is a
+    // repo-root-relative ledger key.
+    text = readFileSync(join(REPO_ROOT, path), 'utf8');
   } catch {
     return { hits: 0, digest: '' };
   }
