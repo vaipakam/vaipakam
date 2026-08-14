@@ -143,5 +143,11 @@ jobs:
       - name: Excision residue gate (#687-A VPFI buy surface)
         run: |
           set -euo pipefail
+          # Regression fixtures FIRST. Scanning the committed suite as ordinary
+          # pinned text does not execute it, so without this line a later change
+          # could re-break a markup / JSON / PDF case and still pass here,
+          # provided the current tree happened not to contain that construct.
+          # A suite that never runs is decoration.
+          node .github/scripts/check-excision-residue.selftest.mjs
           node .github/scripts/check-excision-residue.mjs
-          echo "Excision residue gate OK." >> "$GITHUB_STEP_SUMMARY"
+          echo "Excision residue gate + selftest OK." >> "$GITHUB_STEP_SUMMARY"

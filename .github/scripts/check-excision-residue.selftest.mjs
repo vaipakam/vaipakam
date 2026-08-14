@@ -62,6 +62,12 @@ const FIXTURES = [
     body: 'Configure buyOpti&#111;ns before deployment.\n',
   },
   {
+    name: 'attr-colon.html',
+    caught: true,
+    why: 'attribute values are configuration, not sentences — `:` is not a prose boundary there',
+    body: '<div data-operation="buy:adapter"></div>\n',
+  },
+  {
     name: 'tag-interior.md',
     caught: true,
     why: 'attributes and component names are scanned as their own stream',

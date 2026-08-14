@@ -943,6 +943,11 @@ const MAX_INFLATED_BYTES = 32 * 1024 * 1024;
 
 function extractPdfText(buf) {
   const out = [];
+  // Cumulative across the FILE. `maxOutputLength` resets on every call, so a
+  // PDF carrying many individually-under-limit streams could still drive total
+  // allocation into the hundreds of megabytes and kill this blocking job — the
+  // per-stream bound alone did not close the case it was added for.
+  let inflatedTotal = 0;
   const marker = Buffer.from('stream');
   const endMarker = Buffer.from('endstream');
   let at = 0;
@@ -966,7 +971,10 @@ function extractPdfText(buf) {
         // down rather than taking the best-effort skip this path intends. Node
         // rejects the stream once it exceeds the budget, which lands in the
         // catch below like any other undecodable stream.
-        body = inflateSync(body, { maxOutputLength: MAX_INFLATED_BYTES });
+        const remaining = MAX_INFLATED_BYTES - inflatedTotal;
+        if (remaining <= 0) break; // budget spent; stop reading this file
+        body = inflateSync(body, { maxOutputLength: remaining });
+        inflatedTotal += body.length;
       } catch {
         at = e0 + endMarker.length;
         continue;
@@ -1413,6 +1421,16 @@ function scanFile(path) {
       }
       if (at <= to) span += text.slice(at, to + 1);
     }
+    // ATTRIBUTE VALUES ARE NOT SENTENCES. The tag-interior stream scans element
+    // names and attribute values, which are configuration/source text — so the
+    // prose punctuation rules below must not run on them. `data-operation=
+    // "buy:adapter"` names the dead identifier exactly as `buy-adapter` does,
+    // but the `:` read as a sentence boundary discarded the match while the
+    // hyphenated spelling was caught. Exempting the stream from `tagSpans`
+    // removal (the previous fix here) restored the candidate; this stops the
+    // boundary rules from throwing it away one step later.
+    if (inTagInterior) return false;
+
     // In JSON, separate string values are separate pieces of text and never
     // render as one phrase. The normalizer drops the punctuation between them,
     // so `["Decide what to buy", "Adapter selection follows"]` fused into
