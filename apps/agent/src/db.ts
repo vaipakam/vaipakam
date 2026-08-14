@@ -267,19 +267,26 @@ export async function consumeTelegramLinkCode(
   code: string,
 ): Promise<{ wallet: string; chainId: number; locale: string } | null> {
   const now = Math.floor(Date.now() / 1000);
+  // DELETE … RETURNING, in ONE statement. This was a SELECT followed by a
+  // separate DELETE, which is not the one-time consumption the handshake
+  // documents: two webhook deliveries presenting the same live code could both
+  // pass the SELECT before either DELETE ran, both link, and the later chat ID
+  // win. The code is the only thing standing between a caller and redirecting
+  // a wallet's alerts, so "consumed on first use" has to be enforced, not
+  // described. The row is claimed by whichever statement deletes it; the loser
+  // gets no row back and is rejected.
   const row = await db
     .prepare(
-      `SELECT wallet, chain_id, expires_at
-       FROM telegram_links
-       WHERE code = ?`,
+      `DELETE FROM telegram_links
+       WHERE code = ?
+       RETURNING wallet, chain_id, expires_at`,
     )
     .bind(code)
     .first<{ wallet: string; chain_id: number; expires_at: number }>();
+  // Expiry is checked AFTER the claim: an expired code is consumed and
+  // rejected, which is the correct outcome either way and keeps the table
+  // bounded without a second round trip.
   if (!row || row.expires_at < now) return null;
-  await db
-    .prepare(`DELETE FROM telegram_links WHERE code = ?`)
-    .bind(code)
-    .run();
   // Look up the user's stored locale on user_thresholds. Falls back
   // to 'en' if the row doesn't exist yet (the link flow can run before
   // the first upsertThresholds call in some race orderings).

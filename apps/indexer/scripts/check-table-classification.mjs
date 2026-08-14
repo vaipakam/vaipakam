@@ -379,7 +379,10 @@ const EXTERNAL_WRITERS = {
     why:
       'operator-run pass, deferred: it needs chain reads and hand sequencing ' +
       'against finality, the nightly backup and a role demotion, and the ' +
-      'indexer Worker is deliberately read-only and operator-key-free.',
+      'indexer Worker holds no on-chain transaction key. (#1715: this ' +
+      'said "deliberately read-only and operator-key-free" — the Worker ' +
+      'writes D1 and binds OPENSEA_API_KEY plus webhook keys; only the ' +
+      'absence of an on-chain key was ever true.)',
   },
 };
 

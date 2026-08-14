@@ -24,28 +24,165 @@ unaffected.
 |---|---|---|---|
 | **vaipakam-labs** | `labs.vaipakam.com` (today); `vaipakam.com` + `www.vaipakam.com` after cutover | Marketing site, docs, "Launch Vaipakam" button → `defi.vaipakam.com/`. Static, wallet-free. | No |
 | **vaipakam-defi** | `defi.vaipakam.com` | The connected app — wallet connect, Dashboard at root, Offer Book, loan flows, Buy-VPFI, Claim Center, plus three wallet-free public-read tools (`/analytics`, `/nft-verifier`, `/protocol-console`). | No |
-| **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*`. Open-CORS reads. | No |
-| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). | **NO** (intentional — staging plan §2 contract) |
-| **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher loop + autonomous liquidation, daily oracle snapshot signer, future offer matcher. | **YES** — single signing-key holder |
+| **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*` (open-CORS reads). **Also writes**: three POST endpoints that write D1, HMAC-authenticated inbound Alchemy webhooks, and authenticated outbound publication of **borrower-authorised, on-chain-bound** Seaport listings to OpenSea (posted with an empty `0x` signature; the vault's ERC-1271 check validates against a hash bound on-chain). | No on-chain key |
+| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). Also **deletes** diagnostics + support records on a schedule and **publishes** listings via `/opensea/listing`. | **No on-chain transaction key** — but holds `PUSH_CHANNEL_PK`, a real Ethereum key used to sign notifications, whose EOA owns the channel's 50 PUSH stake and gas |
+| **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, **live** offer/intent matcher, auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — single signing-key holder |
 
-The split follows the **read/index vs write/act** axis. Strict
-least-privilege:
+The split was **designed** around a read/index vs write/act axis. What it
+actually achieves is narrower than that, and narrower than the "strict
+least-privilege" this section used to claim: it places the **on-chain
+signing key** on exactly one Worker. It does **not** isolate the other
+two — both bind the same database scope the keeper reads, and both have
+externally visible write effects of their own (see the indexer and agent
+bullets, and #1722). Read the list below as *signing-key placement*, not
+as a privilege boundary:
 
 - `vaipakam-keeper` carries `KEEPER_PRIVATE_KEY` and is the
-  ONLY Worker that signs on-chain transactions. Three
-  signing tasks co-located there: HF liquidation, daily
-  oracle snapshot, future offer matching.
-- `vaipakam-agent` holds no signing key. Notification tokens
-  (`TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`) and aggregator API
-  keys (`ZEROEX_API_KEY`, `ONEINCH_API_KEY`,
-  the retired `BLOCKAID_API_KEY`, see §4.3) are operational secrets but not
-  fund-moving capability.
-- `vaipakam-indexer` is read-only — RPC reads, D1 writes, no
-  HTTP-level secrets.
+  ONLY Worker that signs on-chain transactions. **Eight** modules
+  sign (`keeper`, `liquidityConfidence`, `matcher`, `autoLifecycle`,
+  `dailyOracleSnapshot`, `commitmentReport`, `remitAck`,
+  `rewardBudgetRemit`), covering at least thirteen state-changing
+  calls: `triggerLiquidation` / `triggerLiquidationSplit` /
+  `triggerPartialLiquidation`, `captureDailyPriceSnapshot`,
+  `matchOffers` / `matchIntent`, `extendLoanInPlace` /
+  `rollIntentLoan`, `setKeeperTier`, `submitCommitmentBatch`,
+  `sendCommitmentReport`, `sendRemitAck`, `remitRewardBudget` — plus
+  `liquidateViaAaveV3` / `liquidateViaBalancerV2` on the
+  **FlashLoanLiquidator**, a contract that is not the Diamond
+  (`keeper.ts:1150-1155`, when the discount path is enabled and a
+  `liquidator` is configured).
 
-A buggy agent produces stale data; a buggy keeper loses funds.
-Different blast radius justifies different deploy cadence +
-reviewer sign-off.
+  **Treat this list as a floor, not an inventory.** It said "three
+  signing tasks: HF liquidation, daily oracle snapshot, **future**
+  offer matching" while the matcher was already live and nine other
+  signed calls existed. The correction that replaced it then missed the
+  two flash-loan calls, because they are dispatched through a
+  *variable* (`functionName: fnName`) and a grep for literal function
+  names cannot see them. Re-derive from `writeContract` call sites and
+  read each one's `functionName` expression — including the ones that
+  resolve at runtime, and note that the `address` is not always the
+  Diamond.
+- `vaipakam-agent` holds no **on-chain transaction** key — which is not
+  the same as "no signing key", as this bullet used to say.
+  **`PUSH_CHANNEL_PK` is an Ethereum private key**, instantiated as an
+  ethers `Wallet` (`apps/agent/src/push.ts:66`) to sign Push
+  notifications as the channel. **That key** holds no PROTOCOL authority — but it is not fund-safe:
+  `docs/ops/AdminKeysAndPause.md:227` records the channel-owner EOA as holding
+  the 50 PUSH staking deposit and ~$50 of native gas, so possession of the
+  private key exposes those wallet assets. It cannot move protocol funds — the
+  subject is the key, not the Worker, which is a distinction this whole
+  section exists to keep — and that is the claim worth making; "holds no signing key" overstates it and would
+  lead a secret reviewer to skip key material that is real. The
+  remaining tokens (`TG_BOT_TOKEN`) and aggregator API keys
+  (`ZEROEX_API_KEY`, `ONEINCH_API_KEY`, the retired `BLOCKAID_API_KEY`,
+  see §4.3) are operational secrets, not signing material.
+- `vaipakam-indexer` is the **chain-read + API** Worker: RPC reads, D1
+  writes, inbound Alchemy webhook verification, and **authenticated
+  outbound publication of Seaport listings to OpenSea**
+  (`openseaPublish.ts`). It binds **fifteen** Secrets Store entries: four
+  non-RPC HTTP authentication secrets (`OPENSEA_API_KEY` plus three
+  `ALCHEMY_WEBHOOK_SIGNING_KEY_*`) and eleven `RPC_*` URLs which
+  themselves carry provider API keys and are used over HTTP. Both numbers
+  matter — the four are what an auditor thinks of as credentials, the
+  eleven are equally leakable and equally billable.
+
+  **Count these from `wrangler.jsonc`'s `secrets_store_secrets` block, not
+  from the `Env` interface.** `Env` is the RESOLVED downstream type and is a
+  strict superset: it declares `RPC_ZKEVM`, which all three Workers' configs
+  explicitly omit as out of scope. Counting the interface inflates every
+  Worker's inventory by exactly one, and a provisioning or threat review that
+  starts there will look for a secret that was never issued.
+
+  These are counts of secrets BOUND; the reachable chain set is smaller
+  still, because entries with no `deployments.json` record are dropped at the
+  `getDeployment` gate.
+
+  This bullet used to read "read-only — RPC reads, D1 writes, no
+  HTTP-level secrets". Both halves were false, and the second is the
+  kind of line an auditor reasonably relies on to skip a Worker's secret
+  surface entirely.
+
+  **The blast-radius ordering below does not survive contact with the
+  shared D1 binding, and "cannot move funds" is not the boundary it
+  looks like.** All three Workers bind the same `vaipakam-archive`
+  database, and **a D1 binding is database-scoped, not table-scoped** —
+  there is no per-table grant, so any Worker with the binding can write
+  any table regardless of what its own code does today. Which Worker
+  "owns" a table is a convention in our source, not an enforced
+  boundary.
+
+  That turns the keeper into a confused deputy. `liquidityConfidence.ts`
+  walks a streak counter persisted in D1 and, once the threshold is met,
+  signs `setKeeperTier` (`:768-771`) — a privileged risk-parameter
+  write. An attacker holding the indexer can poison that persisted
+  streak, and the signing Worker submits the transaction.
+
+  **The bound on that attack is narrower than it first looks, and the
+  precision matters.** Promotion is not fabricable from D1 alone:
+  `runRelayForChain` computes a *fresh* `aggregatorConfirmedTier` each
+  tick, skips the asset when every quote fails (`:722`), and
+  `nextKeeperTier` promotes only when that live tier exceeds the current
+  on-chain tier. So a D1 attacker still needs at least one qualifying
+  live quote and can only accelerate to the next tier, not choose one.
+
+  What they bypass is the **durability** requirement — the
+  `LIQ_CONFIDENCE_MIN_CHECKS` consecutive ticks over
+  `LIQ_CONFIDENCE_MIN_WINDOW_DAYS` that exist precisely so a single
+  transient quote cannot move a risk parameter. That is still a real
+  loss (the relay's whole purpose is defeated), but it is
+  "promote on one lucky quote", not "promote from nothing".
+
+  So the honest statement is: a compromised indexer cannot move funds
+  **directly**, but it can (a) re-expose already-authorised listings on
+  a live marketplace under the project's API key, (b) strip the
+  time-based safety margin from a keeper-signed risk-parameter change,
+  and (c) **suppress keeper work by asserting it is already done.**
+
+  (c) is a distinct shape from (a) and (b) and this list omitted it
+  through two rounds. Inserting a `(chain_id, day_id)` row into
+  `keeper_commitment_day` makes `getCommitmentScanState` report that day
+  resolved, and `runCommitmentReport` then takes its `continue` —
+  a **zero-RPC skip with no on-chain verification** — so the commitment
+  report never sends. Base waits on that report before reward
+  remittance, so the effect is a stalled reward pipeline rather than a
+  bad write. Corrupting shared state to make a signing Worker *do the
+  wrong thing* is the obvious risk; making it *skip work it believes is
+  finished* is the quieter one, and the `zero-RPC` fast paths are
+  exactly where it lands. Audit every keeper pass that trusts a D1 row
+  as a completion record, not just those that trust one as an input.
+
+  Whether the answer
+  is storage isolation, per-Worker databases, or the keeper validating
+  D1 inputs it did not produce is a real architectural decision, tracked
+  as **#1722** — not settled here, and deliberately not papered over
+  with a cadence tweak.
+
+"A buggy agent produces stale data; a buggy keeper loses funds.
+Different blast radius justifies different deploy cadence + reviewer
+sign-off." **That conclusion is suspended pending #1722, not restated
+here.**
+
+**Not even the bug case holds as stated.** An agent defect does not
+stop at stale data: its scheduled passes *delete* diagnostics and
+support records, `runPeriodicPreNotify` writes `loans` and sends
+Push/Telegram messages to real users, and `/opensea/listing` publishes
+borrower-authorised, on-chain-bound orders to a live marketplace. A bug on those paths means data
+loss, mis-sent or leaked notifications, and publication to a live marketplace — bounded, and the bounds matter: `openseaPublish.ts` posts an **empty `0x` signature**, which OpenSea accepts only because the vault's ERC-1271 check recognises an order hash the borrower already bound **on-chain**. So a compromised Worker can re-expose an already-authorised listing and impose removal latency, but **cannot manufacture one** (no on-chain binding, no listing) and **cannot preserve one** (the borrower's `cancelPrepayListing` revokes the binding and OpenSea drops it on the next revalidation pass). An earlier version of this called it "irreversible upstream publication", which overstated the blast radius in both directions. None of it is "stale data" either. The only part of the
+original sentence that survives unqualified is the narrow one: **the
+agent and indexer do not sign on-chain transactions.**
+
+The conclusion fails for the *compromise* case too, because the agent
+and indexer share the keeper's
+database-scoped D1 binding and can therefore corrupt state the keeper
+acts on. Deploy cadence and reviewer sign-off are decided against the
+compromise case, so the premise no longer carries the conclusion for
+either non-signing Worker — not just the indexer this PR set out to
+correct.
+
+Until #1722 resolves the isolation question, treat the current
+cadences as **inherited, not derived**: keep them, and do not cite
+this paragraph as the reason a change to a non-signing Worker needs
+less scrutiny.
 
 ## 3. Cloudflare provisioning state (as-deployed)
 
@@ -141,7 +278,7 @@ NO secrets — the frontend bundle is static.
   with the VPFI buy surface.)
 - **Secrets:**
   ```
-  RPC_*           — twelve chains. NOT the same set as the indexer:
+  RPC_*           — TWELVE bound. NOT the same set as the indexer:
                     the agent additionally binds RPC_POLYGON, which the
                     indexer does not. (Both bind RPC_POLYGON_AMOY.)
   TG_BOT_TOKEN    — STAGING bot token (NOT prod)
@@ -149,7 +286,9 @@ NO secrets — the frontend bundle is static.
   ZEROEX_API_KEY  — for /quote/0x proxy
   ONEINCH_API_KEY — for /quote/1inch proxy
   OPENSEA_API_KEY — offer reads AND listing SUBMISSION. `openseaProxy.ts`
-                    POSTs borrower-signed orders to OpenSea's
+                    POSTs borrower-AUTHORISED orders (empty `0x` signature; the vault's
+                    ERC-1271 validates a hash the borrower bound
+                    on-chain — not a borrower signature) to OpenSea's
                     seaport/listings endpoint with this key, so it is a
                     write credential upstream, not a read-only one.
   DIAG_WALLET_HMAC_KEY — diagnostics wallet pseudonymisation
@@ -164,7 +303,18 @@ NO secrets — the frontend bundle is static.
   DIAG_SAMPLE_RATE=1.0
   DIAG_RETENTION_DAYS=90
   ```
-- **Holds NO signing key.** This is the staging plan §2 contract.
+- **Holds no ON-CHAIN transaction key.** That is the part of the §2
+  statement that holds. It is NOT keyless: `PUSH_CHANNEL_PK` is an
+  Ethereum private key instantiated as an ethers `Wallet`
+  (`apps/agent/src/push.ts:66`) to sign Push notifications as the
+  channel. No PROTOCOL-fund-moving authority — but not fund-safe: the
+  channel-owner EOA holds the 50 PUSH staking deposit and ~$50 of native
+  gas (`docs/ops/AdminKeysAndPause.md:227`), so possession of the key
+  exposes those wallet assets. Real signing material a secret reviewer
+  must not skip. This line read "Holds NO signing key", and then "No
+  fund-moving authority" — the second wording survived the correction at
+  §2 above (lines 69-72) and still told an operator reaching for this
+  provisioning summary during an incident that no funds are at risk.
 
 ### 4.4 `vaipakam-keeper`
 
@@ -203,7 +353,23 @@ NO secrets — the frontend bundle is static.
   ```
   KEEPER_PRIVATE_KEY  — single signing key, gas-funded on every
                         chain with an RPC_* set
-  RPC_*               — same chains as indexer + agent
+  RPC_*               — TEN bound, and NOT the same set as either
+                        sibling. The keeper binds neither Polygon
+                        secret; the indexer binds RPC_POLYGON_AMOY but
+                        not RPC_POLYGON (eleven); the agent binds both
+                        (twelve). The three sets differ ONLY by those
+                        Polygon entries, which have no deployment record
+                        and are dropped at the getDeployment gate — so
+                        all three REACH the same set — and it is far
+                        smaller than either count. deployments.json holds
+                        only 97 / 84532 / 421614, and getChainConfigs
+                        requires BOTH an RPC value and a getDeployment hit,
+                        so at most THREE chains are reachable today. The
+                        other seven non-Polygon bindings are provisioned
+                        ahead of their deployments. Provision from
+                        each Worker's own wrangler.jsonc, not from this
+                        row. (It previously read "same chains as indexer
+                        + agent", which was wrong for both.)
   TG_BOT_TOKEN        — for HF-band-downgrade alerts (currently missing — sendMessage fail-soft)
   PUSH_CHANNEL_PK     — same (currently missing — sendPush fail-soft)
   ZEROEX_API_KEY      — for serverQuotes liquidation orchestration (currently missing — DEX-only fallback)

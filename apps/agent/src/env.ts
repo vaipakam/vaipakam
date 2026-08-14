@@ -81,13 +81,25 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *                            endpoint has no secret of its own — it
  *                            authenticates the caller by an on-chain
  *                            `ADMIN_ROLE` check (see `diagAdminAuth.ts`).
- *   - (no signing-key consumer here any more — `KEEPER_PRIVATE_KEY`
- *      moved to apps/keeper alongside `runDailyOracleSnapshot`
- *      in the Stage 3 architectural-rebalance commit. The
- *      least-privilege contract from staging plan §2: agent
- *      holds NEITHER `KEEPER_PRIVATE_KEY` NOR per-chain on-chain
- *      write access. A compromised agent produces stale
- *      notifications but can't move funds.)
+ *   - (no ON-CHAIN TRANSACTION signer here any more —
+ *      `KEEPER_PRIVATE_KEY` moved to apps/keeper alongside
+ *      `runDailyOracleSnapshot` in the Stage 3
+ *      architectural-rebalance commit. Read that narrowly: this
+ *      Worker is NOT key-free. `PUSH_CHANNEL_PK`, inventoried ~20
+ *      lines above, is a real Ethereum private key (`push.ts:66`
+ *      builds an ethers `Wallet` from it). The staging plan §2
+ *      contract is about WHERE the on-chain transaction key sits,
+ *      not about a privilege boundary.
+ *
+ *      A compromised agent can't move funds DIRECTLY, and that is
+ *      the whole of the guarantee. It CAN delete diagnostics and
+ *      support records, write `loans`, notify real users, publish
+ *      listings via `/opensea/listing`, and — via the
+ *      DATABASE-scoped shared D1 binding — corrupt state the
+ *      signing keeper acts on (#1722). The older "produces stale
+ *      notifications" summary of that blast radius is WITHDRAWN;
+ *      a threat review starting from this file should not inherit
+ *      it.)
  *   - `QUOTE_0X_RATELIMIT`,
  *     `QUOTE_1INCH_RATELIMIT`,
  *     `DIAG_RECORD_RATELIMIT` — Cloudflare built-in rate-limit

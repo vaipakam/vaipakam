@@ -7,7 +7,12 @@
   //
   // Owns: chainIndexer event scan + cancelled-offer retention prune
   // (cron) + the open-CORS public read API for /offers/* /loans/*
-  // /activity /claimables/* (HTTP). Read-only. No signing keys.
+  // /activity /claimables/* (HTTP). No ON-CHAIN transaction key — but NOT
+  // keyless (the three ALCHEMY_WEBHOOK_SIGNING_KEY_* bindings are symmetric
+  // HMAC secrets: holding one permits FORGING a delivery, not just verifying
+  // one) and not read-only:
+  // writes D1 and publishes borrower-authorised, on-chain-bound Seaport
+  // listings to OpenSea (empty `0x` sig + vault ERC-1271 validation).
   //
   // Custom domain (suggested): indexer.vaipakam.com — operator
   // provisions the binding at first deploy. Worker name
@@ -37,16 +42,22 @@
     "crons": ["* * * * *"],
   },
 
-  // D1 binding — the same `vaipakam-alerts-db` database that
-  // apps/keeper + apps/agent also bind. This Worker is the WRITER
-  // of the offers / loans / activity / claimables tables; the
-  // others are readers. Cross-Worker D1 sharing is the deliberate
-  // coupling that lets the three Workers stay independent without
-  // a message-bus layer (Stage 3 plan §5).
   // D1 binding — `vaipakam-archive` is the STAGING database for
   // the new 3-Worker split. Distinct from `vaipakam-alerts-db`
-  // (primary, untouched). See
+  // (primary/production, untouched). See
   // docs/DesignsAndPlans/CloudflareStagingDeployPlan.md §3.
+  //
+  // A stale duplicate block used to sit directly above this one,
+  // naming `vaipakam-alerts-db` as the bound database and calling
+  // apps/keeper + apps/agent mere READERS. Both halves were wrong and
+  // the first is dangerous: it points migration or incident work at
+  // the PRODUCTION database while the binding below is staging.
+  // apps/keeper and apps/agent bind this SAME database id and both
+  // WRITE it — a D1 binding is database-scoped, not table-scoped, so
+  // "this Worker owns these tables" is a source convention, not an
+  // enforced boundary (see #1722). Cross-Worker D1 sharing is still
+  // the deliberate coupling that avoids a message-bus layer
+  // (Stage 3 plan §5); it is just not a privilege boundary.
   //
   // Stage 3 PR5 moved the D1 schema migrations from
   // `ops/hf-watcher/migrations/` into this Worker's tree
@@ -104,12 +115,19 @@
     // binding, set `CHAIN_INGEST_VIA_DO: "true"`, and redeploy.
     { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_84532",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_84532" },
     { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_421614", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_421614" },
-    // BNB Testnet (97): webhook + key are configured ahead of BNB going into the
-    // active-chains bundle. The route will HMAC-verify BNB deliveries, but the
-    // DO only SCANS chain 97 once `getDeployment(97)` resolves (i.e. 97 is added
-    // to `.active-chains` + the deployments bundle) — deferred until BNB's
-    // contract deploy is finalized. Harmless until then: verified deliveries
-    // forward to the DO, which no-ops without a chain config.
+    // BNB Testnet (97): LIVE staging-ingest credential — treat it as active
+    // for monitoring and rotation, not as provisioned-ahead-of-need.
+    //
+    // This comment used to say the key was configured ahead of BNB entering
+    // the active-chains bundle, and that the DO would no-op until then. Both
+    // preconditions have since been met and the note was not updated: chain 97
+    // is in `contracts/deployments/.active-chains` (diamond + crosschain
+    // deployed 2026-07-02) and carries a Diamond record in the deployments
+    // bundle, so `getDeployment(97)` resolves. With `CHAIN_INGEST_VIA_DO` set
+    // to "true" below, `/hooks/chain-event?chain=97` selects THIS key to
+    // HMAC-verify the delivery and forwards accepted ones to the BNB ingest
+    // DO, which scans. A stale "inert" label on a live write path is exactly
+    // what an operator triaging ingest would rely on and be misled by.
     { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_97",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_97" },
   ],
 
