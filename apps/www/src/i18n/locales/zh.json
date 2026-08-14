@@ -1395,8 +1395,6 @@
     "errorSuffix": "。链上交易不受影响 — 请谨慎进行。",
     "expectedStateChanges": "预期状态变化",
     "plusMore": "… 还有{{count}}项",
-    "titleMalicious": "Blockaid将此交易标记为恶意。请勿继续。",
-    "titleWarning": "Blockaid显示了警告 — 签名前请审查状态变化。",
     "titlePreview": "交易预览"
   },
   "consent": {

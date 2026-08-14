@@ -34,7 +34,15 @@ The split unblocks four follow-on changes that are awkward today:
 
 ## 2. Current state — `ops/hf-watcher/src/`
 
-22 source files / 6 800 LOC, five concerns:
+22 source files / 6 800 LOC, five concerns.
+
+**This inventory is a snapshot of the monolith as it stood at split
+time and is left unedited on purpose** — it is the sizing evidence the
+split decision rested on. Two of the files it names have since been
+deleted: `buyWatchdog.ts` (#687-A) and `scanProxy.ts` (PR #41). Do not
+read this table as a description of any current Worker — and note that
+the destination mapping in §4 is not one either; it records where each
+file was routed at split time, annotated with what changed since.
 
 | # | Concern | Files | LOC |
 | ---: | --- | --- | ---: |
@@ -91,15 +99,51 @@ Each Worker gets its own:
 | `loanRoutes.ts` | `apps/indexer` | `GET /loans/*` HTTP |
 | `offerRoutes.ts` | `apps/indexer` | `GET /offers/*` HTTP |
 | `periodicPreNotify.ts` | `apps/agent` | Push before interest payment |
-| `buyWatchdog.ts` | `apps/agent` | Cross-chain VPFI reconciliation |
-| `push.ts` | `apps/agent` | Push channel client |
-| `telegram.ts` | `apps/agent` | Telegram bot client |
-| `i18n.ts` | `apps/agent` | Notification copy bundle |
+| `buyWatchdog.ts` | `apps/agent` | Cross-chain VPFI reconciliation — **deleted since (#687-A)** |
+| `push.ts` | `apps/agent` | Push channel client — **also copied to `apps/keeper`** |
+| `telegram.ts` | `apps/agent` | Telegram bot client — **also copied to `apps/keeper`** |
+| `i18n.ts` | `apps/agent` | Notification copy bundle — **also copied to `apps/keeper`** |
 | `quoteProxy.ts` | `apps/agent` | `/quote/0x` + `/quote/1inch` |
-| `scanProxy.ts` | `apps/agent` | Blockaid scan |
-| `serverQuotes.ts` | `apps/agent` | Server-side quote bundling |
+| `scanProxy.ts` | `apps/agent` | Blockaid scan — **deleted since (PR #41)** |
+| `serverQuotes.ts` | `apps/agent` | Server-side quote bundling — **now at `apps/keeper/src/serverQuotes.ts`** |
 | `frames.ts` | `apps/agent` | Public Farcaster Frame |
 | `index.ts` | (split into 3 entry files, one per Worker) | Each Worker rebuilds its own `scheduled()` + `fetch()` from the subset that lives there |
+
+**This table is the Stage-3 migration classification — where each
+monolith file was routed at split time. It is NOT a current map of any
+Worker's surface, and must not be read as one.** Every original row is
+kept; what changed afterwards is annotated in place:
+
+- **`buyWatchdog.ts`** — deleted with the #687-A VPFI purchase excision.
+  What went with it is the watchdog for the **retired fixed-rate
+  cross-chain BUY flow**, and nothing else. Cross-chain VPFI
+  reconciliation very much still exists on `apps/keeper`:
+  `remitAck.ts` walks Base-side remittance reservations, checks each
+  Pending one against the destination mirror's delivery state, and sends
+  the finalizing ack from the mirror; `rewardBudgetRemit.ts` and
+  `commitmentReport.ts` are scheduled alongside it. An earlier version
+  of this bullet said "no cross-chain VPFI reconciliation pass exists on
+  any Worker", which would have led a reader to believe an active
+  reconciliation path had been removed.
+- **`scanProxy.ts`** — deleted in PR #41. The pre-sign transaction
+  preview began as Blockaid, briefly became a GoPlus proxy, and is now a
+  frontend-only viem `eth_call`
+  (`apps/defi/src/hooks/useTxSimulation.ts`). `apps/agent` has no scan
+  proxy and no `/scan/blockaid` route.
+- **`push.ts` / `telegram.ts` / `i18n.ts`** — landed on `apps/agent` as
+  planned, but copies also exist under `apps/keeper/src/`, and
+  `apps/keeper/src/watcher.ts` imports the keeper-local ones for its
+  HF-band alerts. **The signing Worker therefore has notification
+  capability this table's single destination column cannot express** —
+  which is precisely why the table must not be used to bound what a
+  Worker can do.
+- **`serverQuotes.ts`** — now lives at `apps/keeper/src/serverQuotes.ts`,
+  serving liquidation orchestration. Whether it was routed there during
+  the split or moved later is not recorded; the row states where it is
+  now rather than asserting the original classification was wrong.
+
+To audit what a Worker actually does, read its `src/index.ts` and
+`wrangler.jsonc` — not this table.
 
 ## 5. Shared infrastructure approach
 
