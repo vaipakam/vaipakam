@@ -225,13 +225,16 @@ export function useLiquidityPreflight(
     return () => {
       cancelled = true;
     };
-    // Re-run on input change OR explicit refresh tick.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Re-run on input change OR explicit refresh tick. `collateralAmount` is
+    // depended on directly rather than via `.toString()`: a bigint is a
+    // primitive, so React's `Object.is` comparison already treats equal amounts
+    // as equal, and the string conversion only made the entry a call expression
+    // the dependency checker could not verify statically.
   }, [
     enabled,
     input.collateralAsset,
     input.principalAsset,
-    input.collateralAmount.toString(),
+    input.collateralAmount,
     input.diamond,
     input.chainId,
     input.workerOrigin,

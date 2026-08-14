@@ -457,7 +457,15 @@ export default function VaultAssets() {
     return () => {
       cancelled = true;
     };
-  }, [vault, publicClient, tokens, reloadCounter]);
+    // `address` and `diamondAddress` are read inside and are now declared.
+    // Both very nearly co-vary with what was already listed — the vault address
+    // is looked up from `address`, and `diamondAddress` and `publicClient` are
+    // both pinned to the read chain — so this is not expected to change what
+    // the page fetches. The one window it does close is a wallet switch whose
+    // vault lookup has not resolved yet: `vault` still holds the previous
+    // value, so without `address` the per-user tracked/encumbered reads would
+    // stay on the old account until that lookup landed.
+  }, [vault, publicClient, tokens, reloadCounter, address, diamondAddress]);
 
   // Pre-warm the symbol/decimals cache for every discovered token so
   // the symbol-sort comparator (`peekTokenMeta`) hits warm entries

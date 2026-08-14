@@ -438,7 +438,18 @@ export function useMyOffers(
     }
 
     return result;
-  }, [events, openOfferIds, address]);
+    // The chain fields are read via the snapshot lookups above and are now
+    // declared. The log index is chain-scoped, so `events` already moves on a
+    // chain switch in every case we can observe; declaring these removes the
+    // dependence on that coincidence. This memo is pure in-memory
+    // classification — no reads — so an extra recomputation costs nothing.
+  }, [
+    events,
+    openOfferIds,
+    address,
+    activeReadChain.chainId,
+    activeReadChain.diamondAddress,
+  ]);
 
   // Decide which ids to fetch live this tick based on the requested
   // status filter. Cancelled rows never need a live read.
@@ -528,6 +539,13 @@ export function useMyOffers(
     diamondRead,
     publicClient,
     activeReadChain.diamondAddress,
+    // Read alongside `diamondAddress` when snapshotting each fetched offer, so
+    // it belongs here too. The two are expected to move together — the diamond
+    // address is looked up per chain — but keying the snapshot cache on a
+    // chain id captured from an earlier render is exactly the kind of mismatch
+    // that writes one chain's offers under another chain's key, so it is
+    // declared rather than assumed.
+    activeReadChain.chainId,
   ]);
 
   // Assemble the result, status-tagged. Newest first by id.
