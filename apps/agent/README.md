@@ -30,6 +30,8 @@ Two things it used to say alongside that are **withdrawn**:
 | Route | Proof required |
 |---|---|
 | `POST /link/telegram` | **EIP-191 ownership proof**, parsed and verified before a code is issued |
+| `POST /unlink/telegram` | **EIP-191 ownership proof** (scoped to unlink). Note what this route *is*: clearing the wallet ↔ `tg_chat_id` link is an **alert-suppression** surface — a successful unlink silently stops every Telegram HF/interest alert for that wallet |
+| `POST /telegram/test` | **EIP-191 ownership proof** (scoped to test-send). Sends a real message to the linked chat |
 | Diagnostics administration (legal-hold / erasure) | signature- or role-gated |
 | `POST /support/ticket` | **none** — deliberately accepts no wallet identity |
 | `POST /diag/record` | **none** — CORS + rate limiting only |

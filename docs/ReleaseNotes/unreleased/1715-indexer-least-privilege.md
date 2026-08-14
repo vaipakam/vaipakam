@@ -107,4 +107,24 @@ each of the same kind — a summary that had aged past the thing it summarised:
   not have. The document now lists every route individually, because a single
   answer is wrong whichever way it points.
 
+- **The per-route table left out two of the routes it exists to disambiguate.**
+  Unlinking a chat and sending a test alert are both user-facing writes, and
+  both do verify an ownership proof — but a table whose whole purpose is
+  "do not assume one answer covers them" cannot be silently partial. The
+  unlink route is worth naming for a second reason: it is an alert-suppression
+  surface, so a gap there costs a user the warnings rather than costing them a
+  write.
+
+- **The conclusion drawn from the withdrawn claim outlived it in two more
+  places.** Correcting "holds no signing key" does not by itself correct
+  "therefore a compromise only produces stale notifications" — that sentence
+  survives on its own wherever it was written out. It was still standing in the
+  notifications component's entry point and in the Worker-split plan, where it
+  appeared as a quotation of the older version of the very paragraph this
+  change rewrote. Both now carry the same qualification as everywhere else: no
+  transaction key rules out moving funds *directly*, and nothing further. The
+  quoted paragraph also asserted that the notifications component holds no
+  network endpoints, which is not true — it reads more chains than the signing
+  one does.
+
 No behaviour changes.

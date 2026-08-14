@@ -206,12 +206,30 @@ matcher fee from the LIF flow.
 The matcher is the **third** `KEEPER_PRIVATE_KEY` consumer (after
 HF liquidation and the daily oracle snapshot). All three are
 co-located on `apps/keeper` per the staging plan §2 contract:
+`KEEPER_PRIVATE_KEY` lives on exactly **one** Worker — the keeper.
+Putting all three signing tasks under one signing-key holder keeps
+the on-chain transaction key in one place.
+
+This paragraph used to quote an older version of that §2 contract —
 "keeper carries `KEEPER_PRIVATE_KEY` + per-chain RPC URLs; agent
 holds NEITHER. A buggy agent produces stale data; a buggy keeper
-loses funds — different blast radius justifies different deploy
-cadence + reviewer sign-off." Putting all three signing tasks
-under one signing-key holder shrinks the attack surface to one
-Worker.
+loses funds" — and **both halves of the quote are withdrawn**; see
+the staging plan §2, which is the live text:
+
+- *"agent holds NEITHER"* — agent holds per-chain RPC URLs on more
+  chains than the keeper does, and it holds `PUSH_CHANNEL_PK`, a
+  real Ethereum key. Only the on-chain **transaction** key is
+  keeper-exclusive.
+- *"a buggy agent produces stale data"* — the agent deletes
+  diagnostics and support records, notifies real users, publishes
+  listings, and shares a **database**-scoped D1 binding with the
+  keeper, so it can corrupt state the signing Worker acts on
+  (#1722). Not signing on-chain rules out moving funds *directly*
+  and nothing more.
+
+Co-locating the signing tasks is still right — the reason is
+single-custody of the transaction key, not a blast-radius gap that
+does not exist as stated.
 
 Implication for this Stage 3 plan: **`apps/keeper` is sized for
 "HF watch + liquidate + daily snapshot" today, architected for
