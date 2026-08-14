@@ -220,11 +220,18 @@ After PR2 / PR3 / PR4 have all been validated in production:
 
 Per the user's locked Phase 1 plan ([`RangeOffersDesign.md`](./RangeOffersDesign.md)),
 the matcher for **range orders + lender partial fills** is an
-**off-chain bot** running in `apps/keeper`. The bot watches the
-indexer's offer table for compatible (lender, borrower) pairs that
-satisfy the matching matrix in Range design §4 and submits
-`matchOffers(lenderId, borrowerId)` on-chain, earning the 1%
+**off-chain bot** running in `apps/keeper`. It finds compatible
+(lender, borrower) pairs satisfying the matching matrix in Range design §4
+and submits `matchOffers(lenderId, borrowerId)` on-chain, earning the 1%
 matcher fee from the LIF flow.
+
+**Discovery is on-chain**, not from D1: `matcher.ts:41-43` counts, paginates
+and calls `getOffer` per candidate, and the module imports no DB helper. The
+original plan here said the bot "watches the indexer's offer table", and that
+sentence survived the shipped implementation — leaving this section
+specifying two mutually exclusive designs, one in the banner above and one in
+its own prose. The cross-Worker `offers` read remains the future optimisation
+tracked in §9 below; it is not what runs.
 
 The matcher is the **third** `KEEPER_PRIVATE_KEY` consumer (after
 HF liquidation and the daily oracle snapshot). All three are

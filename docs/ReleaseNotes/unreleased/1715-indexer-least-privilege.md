@@ -112,6 +112,17 @@ each of the same kind — a summary that had aged past the thing it summarised:
   not have. The document now lists every route individually, because a single
   answer is wrong whichever way it points.
 
+  That accounting was still one route short, and the missing one belongs to
+  none of the groups above. The Telegram webhook is reached before the origin
+  check and carries no wallet signature, yet it is not open either: it is
+  admitted by a one-time six-digit code, issued only after an ownership proof
+  on the link endpoint and consumed on first use. It is the completion half of
+  a signed handshake, and it writes the chat identifier supplied by whoever
+  presents the code — so a guessed live code redirects that wallet's alerts.
+  Counting it as unsigned would have understated its control; leaving it out
+  altogether, which is what happened, hid the one route whose protection is
+  unlike every other route's.
+
 - **The per-route table left out two of the routes it exists to disambiguate.**
   Unlinking a chat and sending a test alert are both user-facing writes, and
   both do verify an ownership proof — but a table whose whole purpose is
