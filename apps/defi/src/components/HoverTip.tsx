@@ -133,6 +133,15 @@ export function HoverTip({ text, children, placement = 'above' }: HoverTipProps)
       onFocus?: (e: React.FocusEvent) => void;
       onBlur?: (e: React.FocusEvent) => void;
     }>,
+    // Rule false positive: "passing a ref to a function may read its value
+    // during render". `cloneElement` does not read the ref — the props object
+    // carries a ref CALLBACK, which React stores on the cloned element and
+    // invokes at attach and detach time, after the commit. Nothing here reads
+    // `triggerRef.current`; the only readers are the layout effect and the
+    // pointer handlers, all of which run post-commit. The rule cannot
+    // distinguish "hands a ref to a function that will dereference it now"
+    // from this, the standard shape for forwarding a ref onto a child element.
+    // eslint-disable-next-line react-hooks/refs
     {
       ref: (el: HTMLElement | null) => {
         triggerRef.current = el;

@@ -179,6 +179,14 @@ export function useAcceptMidTierPair(
   // Synchronous staleness: don't expose a previous offer's (or previous chain's)
   // pair on the render immediately after offerId/chain changes, before the effect
   // re-resolves.
+  //
+  // The rule's objection — refs must not be read during render — is the exact
+  // behaviour this line needs. The guard's whole job is to answer "was this
+  // value resolved for the identity being rendered RIGHT NOW", on the render
+  // that happens before the re-resolving effect runs. Any state-based
+  // equivalent would settle one render too late, which is the stale-verdict
+  // window this was added to close.
+  // eslint-disable-next-line react-hooks/refs
   return resolvedForRef.current === resolveIdentity ? pair : null;
 }
 
@@ -237,6 +245,9 @@ export function useCreatorBlock(
     };
   }, [offerId, address, onDeployedChain, diamondRo, resolveIdentity]);
 
+  // Same synchronous staleness guard as above, and suppressed for the same
+  // reason: reading the ref during render is what makes it synchronous.
+  // eslint-disable-next-line react-hooks/refs
   return resolvedForRef.current === resolveIdentity ? code : null;
 }
 
@@ -458,6 +469,14 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   }, [identity]);
 
   const identityRef = useRef<string>(identity);
+  // Deliberately written during render rather than from an effect. This ref is
+  // read only by the `stillSameContext()` cancellation guards below, which ask
+  // "is the pair/wallet/chain still what it was when this async write started".
+  // Syncing it from an effect would leave a window between commit and effect
+  // flush in which the ref still holds the PREVIOUS identity — so a callback
+  // that started under the new one would compare unequal and abort a valid
+  // operation. The guard is only sound if the ref moves with the render.
+  // eslint-disable-next-line react-hooks/refs
   identityRef.current = identity;
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
@@ -544,9 +563,17 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   // identity no longer matches the current one (a pair/wallet/chain change this
   // render, before the effect re-runs), expose it as UNKNOWN rather than letting a
   // stale "clear" verdict enable a doomed action for one render.
+  //
+  // Suppressed for the same reason as the two guards above: the rule objects to
+  // reading refs during render, and reading during render is precisely what
+  // makes these guards synchronous. Deferring them by a render would re-open
+  // the one-render window in which a stale "clear" verdict enables an action
+  // that is already doomed.
+  /* eslint-disable react-hooks/refs */
   const blockFresh = blockResolvedForRef.current === identity;
   const tierFresh = tierResolvedForRef.current === identity;
   const pendingFresh = pendingResolvedForRef.current === identity;
+  /* eslint-enable react-hooks/refs */
   return {
     blocked: blockFresh ? blocked : false,
     known: blockFresh ? known : false,
