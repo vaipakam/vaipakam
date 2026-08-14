@@ -18,10 +18,8 @@ future refactor could quietly break.
 They are now declared. Concretely:
 
 - The vault assets page re-reads balances when the wallet or the diamond address
-  changes, not only when the derived vault address does. This one closes a
-  genuine, if narrow, window: immediately after a wallet switch the vault
-  lookup has not resolved yet, so the previous vault address is still in hand
-  and the per-account reads would have stayed on the old account until it did.
+  changes, not only when the derived vault address does. This one needed a
+  second change to be safe, described below.
 - The offers list re-classifies and re-caches against the chain it is actually
   reading, rather than relying on the event feed happening to change at the same
   moment. The snapshot cache is keyed by chain, so a chain identifier captured
@@ -45,4 +43,28 @@ every in-flight read compares itself against. Bumping a stale copy would leave
 the live one untouched and let a previous wallet's result apply. The changed
 value is the entire point.
 
-No behaviour change is expected on any of the six.
+## A real fix that came out of it: no more mixed-wallet vault figures
+
+The vault-assets change above was not safe on its own, and review caught it.
+
+That page shows, per token, how much sits in your vault and how much of it the
+protocol has recorded — two figures read from two different places. One is keyed
+by your vault's address, the other by your wallet's. The vault address is itself
+looked up from the wallet, and that lookup takes a moment.
+
+Telling the page to refresh the instant the wallet changes meant it refreshed
+*during* that moment: it read one figure against the new wallet and the other
+against the previous wallet's vault, and showed the smaller of the two as your
+balance. A number combined from two different accounts is not a slightly stale
+number — it is a meaningless one, and nothing on screen would have suggested
+anything was wrong. Before this change the page simply didn't refresh yet, which
+was stale but at least internally consistent.
+
+The vault lookup now records which wallet each answer belongs to, and an answer
+belonging to a different wallet is withheld rather than handed out. During the
+moment after a switch the vault reads as not-yet-known — a state every caller
+already handles — instead of confidently returning the previous wallet's. That
+protects the other place this lookup is used, too, where a stale vault address
+would have been matched against the wrong borrower.
+
+Aside from that, no behaviour change is expected on any of the six.
