@@ -99,8 +99,24 @@ omitted its fingerprint was silently treated as opting out of that check —
 now rejected outright, since a safeguard that can be switched off by leaving
 something out is not a safeguard.
 
-Widening the net kept roughly doubling what it sees: eighty-two files, against
-the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
+A further round found the same two failure directions again. Two generic
+message names could be synthesised out of ordinary English — "whether to buy.
+Request independent advice" reads, once punctuation is stripped, as the name of
+a deleted message — so unrelated prose could block a change. And a status
+heading more than two lines from a mention was invisible: flipping a section
+from "Planned" to "Current" turned an entry below it into live guidance without
+moving anything the check looked at. Mentions now cannot span a sentence
+boundary, and the heading governing a mention is part of what gets
+fingerprinted.
+
+The removed error conditions were also added to the list, which is where the
+count grew sharply: one of them is declared in a shared interface file, so it
+propagates into more than forty generated interface artifacts. That reinforces
+the ordering noted below — the declaration has to go before regenerating is
+worth doing.
+
+Widening the net kept roughly multiplying what it sees: a hundred and
+twenty-one files, against the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
 including operator-facing deployment steps, a security document, a partner
 questionnaire and a test matrix. Those are recorded as pending triage rather
 than fixed here — the ratchet stops the problem growing, and the cleanup is
