@@ -320,14 +320,22 @@ function tryDecodeCalldata(
 /**
  * Is this queued change executable *now*?
  *
- * Chain truth only. An earlier version OR'd in `nowSec >= executesAt` so a
- * dashboard left open would stop saying "still waiting" — but the local clock
- * is not the chain's, and an administrator running fast was then told an
- * operation was executable while `getOperationState` still reported Waiting,
- * where submitting reverts. The hook now re-reads at the boundary instead, so
- * this stays a single source both the knob card and the page summary read —
- * they disagreed once, one saying "ready to execute" while the other said
- * "All still in delay window".
+ * Chain truth only, and nothing else. An earlier version OR'd in
+ * `nowSec >= executesAt` so a dashboard left open would stop saying "still
+ * waiting" — but the local clock is not the chain's, and an administrator
+ * running fast was then told an operation was executable while
+ * `getOperationState` still reported Waiting, where submitting reverts.
+ *
+ * A boundary re-read was then tried as the way to keep the display current
+ * without trusting the local clock; it was WITHDRAWN (see the note above the
+ * fetch effect). So a dashboard left open across `executesAt` does still sit
+ * at "executes in 0m" until it is reloaded or the chain switched. That is a
+ * known, accepted gap, not an oversight — the accurate refresh is tracked
+ * separately.
+ *
+ * Being one helper is the other half of the point: the knob card and the page
+ * summary disagreed once, one saying "ready to execute" while the other said
+ * "All still in delay window". Both read this.
  */
 export function isTimelockReady(
   change: Pick<PendingChange, 'ready'>,

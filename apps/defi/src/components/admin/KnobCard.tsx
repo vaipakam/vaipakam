@@ -255,11 +255,17 @@ function PendingChangeBanner({ pending }: { pending: PendingChange[] }) {
   const lead = sorted[0];
   const count = pending.length;
   const now = nowSec;
-  // `lead.ready` is an on-chain snapshot taken when `useTimelockPendingChanges`
-  // last ran, and that hook has no periodic refresh. Reading it alone meant the
-  // ticking countdown below could reach "executes in 0m" and sit there amber
-  // forever, because nothing re-read the flag at the boundary. OR it with the
-  // live comparison so the badge flips exactly when the countdown hits zero.
+  // Readiness is the chain's verdict, never the local clock's — `executesAt`
+  // is an on-chain timestamp, and an administrator whose machine runs fast
+  // would otherwise be shown an "execute" affordance that reverts on submit.
+  //
+  // The cost is that `lead.ready` is a snapshot from when
+  // `useTimelockPendingChanges` last ran, and that hook has no periodic
+  // refresh, so a dashboard left open can reach "executes in 0m" and stay
+  // amber until it is reloaded. Deliberate: an attempt to refresh at the
+  // boundary was withdrawn because it could delete a live proposal. Do not
+  // reintroduce a `nowSec >= lead.executesAt` comparison here — see the
+  // helper's own comment for the full reasoning.
   const ready = isTimelockReady(lead);
   const seconds = Math.max(0, lead.executesAt - now);
   const timeText = ready

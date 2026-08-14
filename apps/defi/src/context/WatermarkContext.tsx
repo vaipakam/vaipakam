@@ -256,6 +256,12 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // probe's latency to (the earliest pending frame; worst-case-honest). `null`
     // when the pending force has no frame time (e.g. a non-push force).
     let pendingForceAt: number | null = null;
+    // True while polling is stopped for want of demand (no subscribers, or all
+    // of them past `pausedAfterMs`). Read by `schedule()` to tell "resuming
+    // after a stop" from "arming the next routine tick", because the former
+    // owes an immediate probe: the status is `idle` and no timer will restore
+    // it. Starts false so the mount probe isn't doubled.
+    let idleForLackOfDemand = false;
 
     // Pick the next cadence by taking the min over all subscribers'
     // currently-effective active interval. Activity gating is per-
@@ -381,6 +387,10 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         return;
       }
       probeInFlight = true;
+      // Any probe — from here, the visibility handler, an activity resume or a
+      // push nudge — discharges the "resume owes a probe" debt below, so the
+      // trailing `schedule()` doesn't fire a second one.
+      idleForLackOfDemand = false;
       // #843 delta 2 / #845 Codex P3 — measure event→refetch latency for a
       // push-nudge-driven probe. Anchor it to the invalidation-frame time when
       // the push provider supplied one (so the debounce + any wait behind a
@@ -430,11 +440,29 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         // succeeded", and leaving it set kept a health badge green indefinitely
         // on a page nobody was probing for.
         setStatus('idle');
+        idleForLackOfDemand = true;
         return;
       }
       if (timer) {
         clearTimeout(timer); // never stack timers
         timer = null;
+      }
+      if (idleForLackOfDemand) {
+        // Demand just came back — a subscriber registered where there were
+        // none. Probe NOW rather than arming a timer: the status is `idle`
+        // from the branch above, and consumers treat that as "RPC not
+        // confirmed reachable", so waiting out a cool-tier interval would
+        // report a degraded chain for up to 180 s on a page whose retained
+        // snapshot is perfectly healthy. Navigating from a route with no
+        // watermark subscribers to a quiet one hits this every time.
+        //
+        // `runProbe` clears the flag on entry, so its trailing `schedule()`
+        // takes the normal timer path — one probe, then the usual cadence.
+        // The visibility and activity resumes already probe directly; this
+        // covers the subscriber-count resume they don't.
+        idleForLackOfDemand = false;
+        void runProbe(false);
+        return;
       }
       timer = setTimeout(() => {
         void runProbe(false);
