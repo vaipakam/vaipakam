@@ -1,7 +1,24 @@
 # Docs path gate
 
-One blocking gate: **no operator runbook may cite a directory that no longer
-exists.** Two files, both small:
+**Two** blocking gates live here. Both exist for the same reason — prose has
+no compiler, so a rename or a removal leaves behind text that nothing checks.
+
+1. **No operator runbook may cite a directory that no longer exists** —
+   `docs-citations.mjs` + `check-docs-paths.mjs` (below).
+2. **The #687-A VPFI buy surface must not be described as live again** —
+   `check-excision-residue.mjs`, a count-and-digest RATCHET rather than a ban.
+   Scope is the whole tracked tree minus the historical-narrative directories;
+   matching is on normalized text, so the prose spelling "VPFI buy adapter" is
+   caught alongside the identifier `VpfiBuyAdapter`. Each file's mention count
+   AND a digest of the mentions are pinned in the script, so growth, cleanup,
+   and equal-count substitutions all fail — each with its own message telling
+   you which. When it fires: read the mention; fix the text if it presents the
+   removed surface as live, or update that file's pin and reason if it is a
+   deliberate retraction note. Run it with
+   `node .github/scripts/check-excision-residue.mjs`. Both gates run in
+   `release-notes-drift.yml`.
+
+The path checker is two files, both small:
 
 | File | Role |
 | --- | --- |

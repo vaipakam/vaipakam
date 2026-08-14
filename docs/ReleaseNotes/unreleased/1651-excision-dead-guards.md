@@ -1,6 +1,6 @@
 ## Protocol console — two guards for a contract that no longer exists (PR #TBD)
 
-When the cross-chain VPFI purchase surface was removed for legal reasons, two
+When the cross-chain VPFI purchase surface was removed to reduce legal exposure, two
 guards in the admin console were left behind, each written to handle settings
 that pointed at the removed contract.
 
