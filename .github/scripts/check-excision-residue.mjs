@@ -632,6 +632,14 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
       // reopening the very bypass the tag handling exists to close, for anyone
       // who writes a long `data-` attribute. An arbitrary limit on how much
       // markup counts as markup is a limit on how much of the file is checked.
+      //
+      // Unbounded is SAFE here, which is not obvious and was worth checking:
+      // a stray `<x` with its next `>` far away swallows a large span, but
+      // nothing is thereby exempted — every tag span is re-normalized and
+      // scanned on its own further down (the pre-filter concatenates them, and
+      // the main pass walks each one), precisely so a mention hidden inside an
+      // attribute still counts. Removing the cap can only widen what is read
+      // as markup, never narrow what is examined.
       const close = text.indexOf('>', i);
       if (close !== -1 && /^<\/?[a-zA-Z]/.test(text.slice(i, i + 3)) && !text.slice(i + 1, close).includes('<')) {
         tagSpans.push([i, close + 1]);
