@@ -59,11 +59,33 @@ that is precisely what this is for. And each file now carries a fingerprint of
 its mentions alongside the count, so a substitution that keeps the total the
 same still fails.
 
-Widening the net roughly doubled what it sees: fifty-three files rather than
-thirty-one. Most of the newly visible text is legitimate, but some of it is not,
-including operator-facing deployment steps and a security document. Those are
-recorded as pending triage rather than fixed here — the ratchet stops the
-problem growing, and the cleanup is reviewed on its own.
+A second review round found four more gaps, and two of them mattered. The
+check knew the removed contracts by name but not the removed *operations*, so
+an instruction telling an operator to call one of the deleted functions passed
+cleanly — the names of things and the names of actions both had to be listed.
+And the fingerprint covered only a short span of text around each mention,
+which was enough to notice a mention being swapped for a different one but not
+enough to notice one being *reversed in meaning*: flipping "were removed" to
+"remain deployed" a line away left the fingerprint untouched. It now covers the
+surrounding lines, because whether a mention is a retraction or an instruction
+is carried by its sentence, not by the few words either side of the name.
+
+The other two were about trusting the wrong thing. Whole directories had been
+excluded as "historical" when only parts of them were: one of them held a
+security questionnaire that gives an outside scanner present-tense
+configuration instructions for the removed component, and another a test matrix
+listing it as current coverage. Exclusions are now per-file wherever the
+surrounding tree is still active. And an entry in the ledger that simply
+omitted its fingerprint was silently treated as opting out of that check —
+now rejected outright, since a safeguard that can be switched off by leaving
+something out is not a safeguard.
+
+Widening the net roughly doubled what it sees, then doubled it again: seventy-six
+files rather than the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
+including operator-facing deployment steps, a security document, a partner
+questionnaire and a test matrix. Those are recorded as pending triage rather
+than fixed here — the ratchet stops the problem growing, and the cleanup is
+reviewed on its own.
 
 Two further things came out of building it, both worth stating because they
 change what the numbers mean. Counting *occurrences* rather than *matching lines*

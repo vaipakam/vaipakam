@@ -12,10 +12,13 @@ no compiler, so a rename or a removal leaves behind text that nothing checks.
    caught alongside the identifier `VpfiBuyAdapter`. Each file's mention count
    AND a digest of the mentions are pinned in the script, so growth, cleanup,
    and equal-count substitutions all fail — each with its own message telling
-   you which. When it fires: read the mention; fix the text if it presents the
-   removed surface as live, or update that file's pin and reason if it is a
-   deliberate retraction note. Run it with
-   `node .github/scripts/check-excision-residue.mjs`. Both gates run in
+   you which. Exclusions are directory-level only for genuinely archival trees;
+   anywhere the surrounding tree is still active they are per-file. When it
+   fires: read the mention; fix the text if it presents the removed surface as
+   live, or re-pin if it is a deliberate retraction note. Run it with
+   `node .github/scripts/check-excision-residue.mjs`, and regenerate the ledger
+   with `--write-pins` (which keeps existing reasons — review the diff, and
+   treat any reason still reading `UNTRIAGED` as unread). Both gates run in
    `release-notes-drift.yml`.
 
 The path checker is two files, both small:
