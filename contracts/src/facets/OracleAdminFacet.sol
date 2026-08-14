@@ -115,11 +115,13 @@ contract OracleAdminFacet {
      *        `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`. **MUST set
      *        the bridged-WETH9**, never WPOL.
      *
-     *      The VPFIBuyAdapter's payment-token policy already enforces
-     *      this for the cross-chain buy lane (CLAUDE.md "VPFIBuyAdapter
-     *      — payment-token mode by chain"); this setter is the
-     *      equivalent operator-responsibility surface for the
-     *      OracleFacet liquidity / tier classification path. There's no
+     *      #687-A: this paragraph used to say the VPFIBuyAdapter's
+     *      payment-token policy "already enforces this for the
+     *      cross-chain buy lane", citing a CLAUDE.md section that has
+     *      since been replaced by "VpfiBuyAdapter — REMOVED". That
+     *      adapter no longer exists, so **nothing else enforces the
+     *      WETH-shape choice** — this setter is the only surface, not
+     *      the equivalent of one. There's no
      *      runtime contract check that the address is WETH-shaped —
      *      operator must verify against the chain's official bridge
      *      registry. CLAUDE.md tracks the canonical addresses.
