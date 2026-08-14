@@ -145,7 +145,7 @@ it — striking through the word "not" leaves every letter in place. It now
 covers the text as written.
 
 Widening the net kept roughly multiplying what it sees: a hundred and
-twenty-one files, against the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
+twenty-three files, against the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
 including operator-facing deployment steps, a security document, a partner
 questionnaire and a test matrix. Those are recorded as pending triage rather
 than fixed here — the ratchet stops the problem growing, and the cleanup is
@@ -179,5 +179,33 @@ underneath a heading marking it historical. A label above a checklist does not
 stop someone skimming for their chain's steps from following it. That is
 recorded as known debt in the ledger rather than fixed here, so the cleanup
 can be reviewed on its own terms.
+
+The last several rounds were all one question the check kept getting wrong:
+what does a reader actually see? A page is not the file. Formatting markup is
+invisible to the reader but sits between words on disk, and quoted code is the
+reverse — visible characters that mean themselves rather than what the
+surrounding format would make of them. Confusing the two failed in both
+directions, and the direction alternated. Text styled mid-phrase read as two
+unrelated fragments and passed; a placeholder inside a quoted command was
+mistaken for formatting, deleted, and a real instruction went with it; a
+comment invisible to every reader kept two words apart; prose sitting either
+side of an unrelated code sample was fused into a mention nobody had written.
+
+What settled it was giving the check a single model of where quoting applies
+and applying it consistently — and confining that model to the document format
+that actually has quoting rules, rather than to every file that might contain
+markup. The three ways a document can quote code are all treated alike now, a
+comment counts as invisible because the reader cannot see it, and the names
+inside a formatting tag are read on their own, since a tag can carry the name
+of a removed component as easily as a sentence can.
+
+Two of those rounds also relaxed the check. Two more of the removed operation
+names turn out to be ordinary trading vocabulary once punctuation is ignored —
+sentences about pending buy-side liquidity, or about quoting buy orders — and
+each of them independently blocked clean documents. They now have to appear as
+a single identifier, the same constraint two other ordinary-English names
+already carried. This keeps being the harder half to get right: the check
+blocks every change, so a false alarm obstructs unrelated work, and that cost
+is paid by whoever is unlucky enough to write the sentence.
 
 No behaviour changes in the product.
