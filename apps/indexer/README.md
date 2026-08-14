@@ -1,6 +1,6 @@
 # @vaipakam/indexer
 
-**Vaipakam chain → D1 indexer + public read-API. Cloudflare Worker. Read-only — no signing keys.**
+**Vaipakam chain → D1 indexer + public read-API. Cloudflare Worker. No signing keys — but NOT read-only** (writes D1; publishes signed Seaport listings to OpenSea).
 
 [![Workspaces typecheck](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml)
 
@@ -20,7 +20,9 @@ The connected app (`apps/defi`) reads from this Worker via `VITE_INDEXER_ORIGIN`
 
 The marketing site (`apps/www`) reads exactly one route: `/config/:chainId`, for the fee and tier figures quoted in its documentation (#1612). `apps/www` remains **on-chain-read-free** — it carries no wallet, no viem and no ABI, and this snapshot is precisely how it states current figures without any of that. Treat that route as having a marketing-site consumer when changing its shape, its CORS policy, or its availability: `apps/www` bounds the request at 4 s and falls back to bundled defaults, so an outage degrades rather than breaks it, but a silent change to the bundle's field ORDER would publish wrong numbers under a "live" badge.
 
-**Non-goals:** no signing keys, no user-facing writes. Reads only. If a request needs to write state on-chain, route it through the connected app + a wallet signature, not through this Worker. The indexer's role is to be the queryable view layer, not an action surface.
+**Non-goals:** no signing keys, and no *on-chain* writes. If a request needs to write state on-chain, route it through the connected app + a wallet signature, not through this Worker.
+
+This is narrower than "reads only", which this file used to claim and which is false: the Worker writes the shared D1 database (including via three POST endpoints) and publishes borrower-signed Seaport orders to OpenSea with the project's API key. Note also that holding no signing key is **not** an isolation boundary — the D1 binding is database-scoped, so this Worker can write tables the signing Worker reads (see #1722).
 
 **Indexer event-coverage guardrail.** `EVENT_ABI` is derived from the compiled `DIAMOND_ABI_VIEM` (never hand-typed). The `apps/indexer/scripts/check-event-coverage.mjs` script (wired into `pnpm typecheck` and exposed as `check-event-coverage`) fails CI if any contract event tagged `@custom:event-category state-change/{loan,offer}-mutation` lacks a handler in `chainIndexer.ts` AND isn't in the deliberately-not-handled allowlist. The May-2026 "every loan stuck active" bug (indexer missing preclose / offset / refinance terminal events) can't recur silently.
 

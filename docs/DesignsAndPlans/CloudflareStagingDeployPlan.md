@@ -26,7 +26,7 @@ unaffected.
 | **vaipakam-defi** | `defi.vaipakam.com` | The connected app — wallet connect, Dashboard at root, Offer Book, loan flows, Buy-VPFI, Claim Center, plus three wallet-free public-read tools (`/analytics`, `/nft-verifier`, `/protocol-console`). | No |
 | **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*`. Open-CORS reads. | No |
 | **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). | **NO** (intentional — staging plan §2 contract) |
-| **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher loop + autonomous liquidation, daily oracle snapshot signer, future offer matcher. | **YES** — single signing-key holder |
+| **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, **live** offer/intent matcher, auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — single signing-key holder |
 
 The split follows the **read/index vs write/act** axis. Strict
 least-privilege:
@@ -40,12 +40,22 @@ least-privilege:
   `triggerPartialLiquidation`, `captureDailyPriceSnapshot`,
   `matchOffers` / `matchIntent`, `extendLoanInPlace` /
   `rollIntentLoan`, `setKeeperTier`, `submitCommitmentBatch`,
-  `sendCommitmentReport`, `sendRemitAck`, `remitRewardBudget`.
-  Derive this list from `writeContract` call sites rather than
-  trusting this sentence — it said "three signing tasks: HF
-  liquidation, daily oracle snapshot, **future** offer matching"
-  while the matcher was already live and nine other signed calls
-  existed.
+  `sendCommitmentReport`, `sendRemitAck`, `remitRewardBudget` — plus
+  `liquidateViaAaveV3` / `liquidateViaBalancerV2` on the
+  **FlashLoanLiquidator**, a contract that is not the Diamond
+  (`keeper.ts:1150-1155`, when the discount path is enabled and a
+  `liquidator` is configured).
+
+  **Treat this list as a floor, not an inventory.** It said "three
+  signing tasks: HF liquidation, daily oracle snapshot, **future**
+  offer matching" while the matcher was already live and nine other
+  signed calls existed. The correction that replaced it then missed the
+  two flash-loan calls, because they are dispatched through a
+  *variable* (`functionName: fnName`) and a grep for literal function
+  names cannot see them. Re-derive from `writeContract` call sites and
+  read each one's `functionName` expression — including the ones that
+  resolve at runtime, and note that the `address` is not always the
+  Diamond.
 - `vaipakam-agent` holds no signing key. Notification tokens
   (`TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`) and aggregator API
   keys (`ZEROEX_API_KEY`, `ONEINCH_API_KEY`,
@@ -110,9 +120,18 @@ Different blast radius justifies different deploy cadence + reviewer
 sign-off." **That conclusion is suspended pending #1722, not restated
 here.**
 
-It holds for the *bug* case it was written for — an agent defect
-really does stop at stale data. It does not hold for the *compromise*
-case, because the agent and indexer share the keeper's
+**Not even the bug case holds as stated.** An agent defect does not
+stop at stale data: its scheduled passes *delete* diagnostics and
+support records, `runPeriodicPreNotify` writes `loans` and sends
+Push/Telegram messages to real users, and `/opensea/listing` publishes
+signed orders to a live marketplace. A bug on those paths means data
+loss, mis-sent or leaked notifications, and irreversible upstream
+publication — none of which is "stale data". The only part of the
+original sentence that survives unqualified is the narrow one: **the
+agent and indexer do not sign on-chain transactions.**
+
+The conclusion fails for the *compromise* case too, because the agent
+and indexer share the keeper's
 database-scoped D1 binding and can therefore corrupt state the keeper
 acts on. Deploy cadence and reviewer sign-off are decided against the
 compromise case, so the premise no longer carries the conclusion for

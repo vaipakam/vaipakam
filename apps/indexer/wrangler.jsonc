@@ -7,7 +7,8 @@
   //
   // Owns: chainIndexer event scan + cancelled-offer retention prune
   // (cron) + the open-CORS public read API for /offers/* /loans/*
-  // /activity /claimables/* (HTTP). Read-only. No signing keys.
+  // /activity /claimables/* (HTTP). No signing keys — but not read-only:
+  // writes D1 and publishes signed Seaport listings to OpenSea.
   //
   // Custom domain (suggested): indexer.vaipakam.com — operator
   // provisions the binding at first deploy. Worker name

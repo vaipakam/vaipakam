@@ -6,7 +6,13 @@ does that by describing what each one can reach. The entry for the indexer said
 it was read-only, handled no HTTP-level credentials, and therefore sat at the
 bottom of the risk ordering.
 
-Both of those statements were wrong. That Worker holds four credentials used
+Both of those statements were wrong. That Worker holds fifteen stored
+credentials, not the three the document listed: four are the kind an auditor
+pictures — one marketplace key and three webhook-verification keys — and the
+other eleven are the network endpoints it reads chains through, each of which
+carries a provider key inside the address itself and is therefore just as
+leakable and just as billable. Counting only the first four reproduces the
+undercount this change exists to correct. Those four credentials are used
 over HTTP — one marketplace API key and three webhook-verification keys — and
 it makes authenticated calls out to a third-party marketplace to publish
 listings on users' behalf. It is not read-only and it is not credential-free.
@@ -46,9 +52,15 @@ The specific phrase that was removed is the kind an auditor relies on to decide
 a component does not need looking at. That is what makes it worth correcting
 rather than leaving as an imprecision.
 
-Two sibling descriptions of the same Worker were left alone, but for a
-narrower reason than first stated: they pair the shorthand with "no signing
-keys", which remains true and is the claim that matters for fund safety.
+Two sibling descriptions of the same Worker are now corrected as well, rather
+than excused. An earlier draft left them alone on the grounds that they pair
+the shorthand with "no signing keys", which is true — but this very change
+establishes that holding no signing key does **not** make a component
+fund-safe, because it can still alter state the signing component acts on.
+Using that phrase to justify a "read-only" label the same document proves
+false would have been the argument refuting itself. The labels said "Reads
+only" on a component with three endpoints that write to the shared database
+and one that publishes signed orders to an outside marketplace.
 An earlier draft of this note also cited the Worker's entry point as
 documenting its single write path — that was itself wrong. There are three
 write-accepting endpoints, not one, and using a false claim to justify leaving
