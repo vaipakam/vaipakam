@@ -66,4 +66,38 @@ documenting its single write path — that was itself wrong. There are three
 write-accepting endpoints, not one, and using a false claim to justify leaving
 other descriptions alone would have propagated the same error sideways.
 
+Review turned up four further corrections that the same section was carrying,
+each of the same kind — a summary that had aged past the thing it summarised:
+
+- **A third way a compromised component can cause harm, which the write-up had
+  missed.** The two already described were publishing to the marketplace and
+  removing a waiting period from a risk change. The third is the opposite
+  shape: writing a row that claims a piece of scheduled work is *already
+  finished*, so the component that would have done it skips the day without
+  checking anything on-chain. The report it skips is the one another chain
+  waits for before releasing rewards, so the result is a stalled pipeline
+  rather than a bad value — quieter, and correspondingly easier to miss. The
+  section now says to audit every scheduled pass that treats a stored row as a
+  completion record, not only the ones that treat it as an input.
+
+- **"Holds no signing key" was wrong about the notifications component.** It
+  holds a real Ethereum key, used to sign the notifications it sends. It has no
+  authority to move funds — which is the claim worth making — but describing it
+  as keyless would lead a reviewer auditing secrets to skip genuine key
+  material.
+
+- **The inventory of what the signing component can do was roughly a quarter of
+  the real list**, and one entry was described as future work while it had been
+  running on every scheduled tick. It is now presented as a floor, with a note
+  on the two ways the previous attempts to enumerate it went wrong, so the next
+  person re-derives it instead of trusting the list.
+
+- **Authentication differs per endpoint and the note first said otherwise in
+  both directions.** The original claimed every write was backed by a wallet
+  signature; the first correction claimed none were. In fact one endpoint
+  verifies an ownership proof and the administration endpoints are gated, while
+  three others deliberately take no wallet identity and rely on origin checks
+  and rate limits. The document now lists them individually, because a single
+  answer is wrong whichever way it points.
+
 No behaviour changes.
