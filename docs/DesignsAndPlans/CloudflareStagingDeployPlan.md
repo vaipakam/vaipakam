@@ -271,7 +271,12 @@ NO secrets — the frontend bundle is static.
   DIAG_SAMPLE_RATE=1.0
   DIAG_RETENTION_DAYS=90
   ```
-- **Holds NO signing key.** This is the staging plan §2 contract.
+- **Holds no ON-CHAIN transaction key.** That is the part of the §2
+  statement that holds. It is NOT keyless: `PUSH_CHANNEL_PK` is an
+  Ethereum private key instantiated as an ethers `Wallet`
+  (`apps/agent/src/push.ts:66`) to sign Push notifications as the
+  channel. No fund-moving authority; real signing material a secret
+  reviewer must not skip. This line read "Holds NO signing key".
 
 ### 4.4 `vaipakam-keeper`
 

@@ -36,8 +36,15 @@
     "crons": ["* * * * *"],
   },
 
-  // D1 binding — the same `vaipakam-alerts-db` database the
-  // indexer + agent Workers also bind. Tables this Worker reads:
+  // D1 binding — `vaipakam-archive`, the STAGING database for the
+  // 3-Worker split. NOT `vaipakam-alerts-db` (primary/production),
+  // which this comment used to name — that misdirects migration and
+  // incident work at production. The binding below is authoritative.
+  //
+  // All three Workers bind this same database id and all three WRITE
+  // it. A D1 binding is database-scoped, not table-scoped, so the
+  // per-Worker table lists below are a source convention, not an
+  // enforced boundary (#1722). Tables this Worker touches:
   //   - `thresholds`        (per-user-loan HF bands; written by frontend)
   //   - `link_codes`        (Telegram handshake codes; agent writes)
   //   - `notify_state`      (per-user notify dedupe; this Worker writes)

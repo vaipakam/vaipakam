@@ -18,10 +18,10 @@ The **proactive-notifications + public-Frame + operator-services Worker**. Stage
 
 Two things it used to say alongside that are **withdrawn**:
 
-- **"holds NO signing key"** — `PUSH_CHANNEL_PK` is an Ethereum private key, instantiated as an ethers `Wallet` in `src/push.ts` to sign Push notifications as the channel. No on-chain authority, but real signing material a secret reviewer must not skip.
+- **"holds no ON-CHAIN transaction key (it does hold `PUSH_CHANNEL_PK`, a real Ethereum key used to sign Push notifications)"** — `PUSH_CHANNEL_PK` is an Ethereum private key, instantiated as an ethers `Wallet` in `src/push.ts` to sign Push notifications as the channel. No on-chain authority, but real signing material a secret reviewer must not skip.
 - **"a compromised agent produces stale data"** — it deletes diagnostics and support records on a schedule (`pruneOldSupportTickets` enforces the 12-month deletion promise), writes `loans`, sends Push/Telegram to real users, and publishes listings via `/opensea/listing`. A defect or compromise here means data loss, mis-sent notifications, and irreversible upstream publication — and, via the shared database-scoped D1 binding, corruption of state the signing Worker acts on (#1722). Not stale data.
 
-**Non-goals:** no autonomous on-chain submissions (those belong to `apps/keeper`); no chain-event indexing into D1 (that belongs to `apps/indexer`); no user-facing write endpoints (writes happen via the connected app + a wallet signature).
+**Non-goals:** no autonomous on-chain submissions (those belong to `apps/keeper`); no chain-event indexing into D1 (that belongs to `apps/indexer`); no ON-CHAIN submissions (it does expose user-facing writes: `PUT /thresholds`, `POST /link/telegram`, `POST /support/ticket`, and the diagnostics endpoints all mutate D1 or external state, so they carry real auth + rate-limit requirements) (writes happen via the connected app + a wallet signature).
 
 ## How to run
 

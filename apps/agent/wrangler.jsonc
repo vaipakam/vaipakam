@@ -26,9 +26,15 @@
     "crons": ["* * * * *"],
   },
 
-  // D1 binding — the same `vaipakam-alerts-db` database that
-  // apps/keeper + apps/indexer also bind. Tables this Worker
-  // touches:
+  // D1 binding — `vaipakam-archive`, the STAGING database for the
+  // 3-Worker split. NOT `vaipakam-alerts-db` (primary/production),
+  // which this comment used to name — that misdirects migration and
+  // incident work at production. The binding below is authoritative.
+  //
+  // All three Workers bind this same database id and all three WRITE
+  // it. A D1 binding is database-scoped, not table-scoped, so the
+  // per-Worker table lists below are a source convention, not an
+  // enforced boundary (#1722). Tables this Worker touches:
   //   - `link_codes`        (issue + consume during the Telegram
   //                          handshake — POST /link/telegram +
   //                          POST /tg/webhook)
@@ -269,9 +275,10 @@
   //                            connected-wallet capture skips writes
   //                            and the erasure endpoints 503.
   //
-  // NOT migrated (no signing-key secret here — Stage 3 architectural-
+  // NOT migrated (no ON-CHAIN signing-key secret here; PUSH_CHANNEL_PK
+  // IS an Ethereum key, see apps/agent/src/push.ts — Stage 3 architectural-
   // rebalance moved KEEPER_PRIVATE_KEY + runDailyOracleSnapshot to
-  // apps/keeper so the only Worker that holds a signing key is the
+  // apps/keeper so the only Worker that holds an ON-CHAIN signing key is the
   // keeper; staging plan §2 least-privilege contract). The
   // `/diag/legal-hold` endpoint also has no secret — it checks the
   // caller's on-chain ADMIN_ROLE instead.
