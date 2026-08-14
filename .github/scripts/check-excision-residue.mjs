@@ -200,8 +200,15 @@ const DEAD_TOKENS = [
   // Retired ABI operations/events; migration 0024_purge-retired-vpfi-events
   // names VPFIPurchasedWithETH as removed in #687-A.
   'vpfipurchasedwitheth',
-  'pendingbuys',
-  'quotebuy',
+  // `identifierOnly` for the same reason as `buyrequest`/`buysuccess` below:
+  // once spacing and punctuation are gone these are ordinary trading prose.
+  // "pending buy-side liquidity" and "quote buy orders" are clean sentences
+  // about an order book, and each independently failed this BLOCKING gate as
+  // removed-flow residue. The real ABI spellings (`pendingBuys`, `quoteBuy`)
+  // are single identifiers, so the constraint costs nothing and admits the
+  // order-book and RFQ documentation back.
+  { token: 'pendingbuys', identifierOnly: true },
+  { token: 'quotebuy', identifierOnly: true },
   'setbuyoptions',
   // The removed INTERFACE, TEST and MESSAGE names (spec :111-112, :148).
   // Prose can name the deleted flow through these without ever mentioning a
@@ -530,15 +537,32 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
   // next `>` there would swallow real text.
   const skipTags = MARKUP_EXTENSIONS.test(sourcePath || '');
   const TAG = /^<\/?[a-zA-Z][^<>]*>/;
+  const tagSpans = [];
   for (let i = 0; i < text.length; i++) {
-    // NOT inside a fenced block: there, angle brackets are literal command
+    // NOT inside a literal region: there, angle brackets are literal command
     // placeholders, not markup. `docs/ops/BaseSepoliaDeploy.md:385,392` carry
     // `<mirror VPFI_BUY_ADAPTER>` in live runbook commands, and stripping them
     // deleted two REAL mentions from that file's pin (27 -> 25) plus one more
     // elsewhere — a false negative introduced by the fix for a false negative.
     if (skipTags && text[i] === '<' && !(fencedOffsets && fencedOffsets(i))) {
+      // HTML comments FIRST — they are invisible markup too, and the tag shape
+      // below does not recognize them (`!` is not a letter). A reader of
+      // `deploy the buy <!-- note --> adapter` sees one phrase; leaving the
+      // comment in the stream kept the two words from fusing and the gate
+      // green. Invisible-to-the-reader is the property that matters here, not
+      // element-shaped.
+      if (text.startsWith('<!--', i)) {
+        const close = text.indexOf('-->', i + 4);
+        // An unterminated comment swallows the rest of the file in a real
+        // renderer; do the same rather than resuming mid-comment.
+        const stop = close === -1 ? text.length : close + 3;
+        tagSpans.push([i, stop]);
+        i = stop - 1;
+        continue;
+      }
       const m = TAG.exec(text.slice(i, i + 400));
       if (m) {
+        tagSpans.push([i, i + m[0].length]);
         i += m[0].length - 1;
         continue;
       }
@@ -551,7 +575,7 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
       }
     }
   }
-  return { norm: out.join(''), map };
+  return { norm: out.join(''), map, tagSpans };
 }
 
 /**
@@ -565,6 +589,14 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
  */
 function computeFences(lines) {
   const flags = new Array(lines.length).fill(false);
+  // Which lines are the fence DELIMITERS themselves, as distinct from the
+  // content between them. `flags` conflates the two (a delimiter is marked
+  // in-fence so its own text is treated as code), but the boundary rule below
+  // needs to know a span JUMPED one: "Decide what to buy", an empty fenced
+  // block, then "Adapter selection follows" is two separate thoughts with a
+  // block between them, and reading only `flags` there sees an uninterrupted
+  // run of non-code lines.
+  const delimiter = new Array(lines.length).fill(false);
   let openMarker = '';
   let openLen = 0;
   for (let i = 0; i < lines.length; i++) {
@@ -576,18 +608,20 @@ function computeFences(lines) {
         openMarker = marker;
         openLen = len;
         flags[i] = true;
+        delimiter[i] = true;
         continue;
       }
       if (marker === openMarker && len >= openLen && !lines[i].slice(m[0].length).trim()) {
         openMarker = '';
         openLen = 0;
         flags[i] = true;
+        delimiter[i] = true;
         continue;
       }
     }
     flags[i] = Boolean(openMarker);
   }
-  return flags;
+  return { inFence: flags, delimiter };
 }
 
 /** Byte offset → 0-based line index, via a prefix table built once per file. */
@@ -696,7 +730,15 @@ function scanFile(path) {
   // loop; markup files take the loop. Same transform either way.
   const lines = text.split('\n');
   const starts = lineStarts(text);
-  const inFence = computeFences(lines);
+  const { inFence, delimiter: fenceDelimiter } = computeFences(lines);
+  // Fences, inline code spans and indented code blocks are MARKDOWN
+  // constructs. `.tsx`, `.jsx`, `.html` and `.svg` are in MARKUP_EXTENSIONS
+  // because inline tags can split a phrase there, not because they parse
+  // Markdown — a backtick in TSX is a template literal or plain text. Applying
+  // the code-span exemption to them meant a staged TSX file rendering
+  // `` `<p>`buy <strong>adapter</strong>`</p>` `` kept its inner tags out of the
+  // stripper, so the phrase a user sees never fused and the gate stayed green.
+  const isMarkdown = /\.mdx?$/i.test(path);
   /**
    * Offset -> "are angle brackets here LITERAL rather than markup?"
    *
@@ -712,45 +754,80 @@ function scanFile(path) {
   // ContractFollowupsFromRehearsal-2026-05-06.md:41 —
   // `cast call <buyAdapter>` wraps — and a per-line scan could not see it.
   const inlineCodeSpans = (() => {
+    if (!isMarkdown) return [];
     const spans = [];
     const re = /(`+)([\s\S]*?)\1/g;
     let m;
     while ((m = re.exec(text))) spans.push([m.index, m.index + m[0].length]);
     return spans;
   })();
+  /**
+   * Markdown's THIRD code construct: a block indented four spaces (or a tab).
+   *
+   * The literal-region model covered fences and inline spans but not this one,
+   * so a live runbook command written as an indented `cast call <buyAdapter>
+   * "owner()"` had its placeholder removed as an HTML tag — the same real
+   * mention deleted twice before, now via the one code form still unmodelled.
+   *
+   * CommonMark: indented code cannot interrupt a paragraph, so a line only
+   * opens one when the last non-blank line above it is blank or is itself
+   * indented code. That precondition is what keeps ordinary wrapped list
+   * continuations — indented, but prose — out of the exemption.
+   */
+  const indentedCode = (() => {
+    const flags = new Array(lines.length).fill(false);
+    if (!isMarkdown) return flags;
+    let prevBlank = true;
+    for (let i = 0; i < lines.length; i++) {
+      const blank = !lines[i].trim();
+      if (inFence[i]) {
+        prevBlank = false;
+        continue;
+      }
+      if (!blank && /^(?: {4}|\t)/.test(lines[i]) && (prevBlank || flags[i - 1])) {
+        flags[i] = true;
+      } else if (blank && i > 0 && flags[i - 1]) {
+        // A blank line inside an indented block does not close it; the next
+        // indented line continues the same block.
+        flags[i] = true;
+      }
+      prevBlank = blank;
+    }
+    return flags;
+  })();
   const literalAt = (offset) => {
-    if (inFence[lineOf(starts, offset)]) return true;
+    if (!isMarkdown) return false;
+    const line = lineOf(starts, offset);
+    if (inFence[line] || indentedCode[line]) return true;
     return inlineCodeSpans.some(([a, b]) => offset >= a && offset < b);
   };
 
-  const cheap = MARKUP_EXTENSIONS.test(path)
-    ? normalizeWithMap(text, path, false, literalAt).norm
-    : normalize(text);
+  const cheap = (() => {
+    if (!MARKUP_EXTENSIONS.test(path)) return normalize(text);
+    // The pre-filter must see everything the full scan can match, or it
+    // short-circuits a file the scan would have flagged. Tag interiors are now
+    // a second stream (see below), and a document that carries a dead
+    // identifier ONLY inside tags — `<vpfi-buy-adapter>` in an HTML file —
+    // normalizes to the empty string here. Appending the tag texts can fuse
+    // tokens across tags that the real scan would not, but a pre-filter may
+    // only err toward doing MORE work: a false positive costs one file's scan,
+    // a false negative is a silent miss.
+    const { norm, tagSpans } = normalizeWithMap(text, path, false, literalAt);
+    return norm + tagSpans.map(([s, e]) => normalize(text.slice(s, e))).join('');
+  })();
   if (!DEAD_TOKEN_RECORDS.some(({ token }) => cheap.includes(token))) {
     return { hits: 0, digest: '' };
   }
 
-  const { norm, map } = normalizeWithMap(text, path, true, literalAt);
-  /**
-   * Were normalized positions a..b contiguous in the SOURCE text?
-   *
-   * Normalization deletes punctuation and whitespace, so adjacency in `norm`
-   * says nothing about adjacency on the page. The `notFollowedBy` guard has to
-   * know the difference: "fixed-rate buyback" is one word and must be skipped,
-   * while "the fixed-rate buy. Back up configuration first." is a real mention
-   * followed by a new sentence and must NOT be. Both normalize to a tail of
-   * `back`, and the first version of the guard skipped both — turning a
-   * false-positive fix into a false negative.
-   */
-  const contiguous = (a, b) => map[b] - map[a] === b - a;
-
+  const { norm, map, tagSpans } = normalizeWithMap(text, path, true, literalAt);
   /**
    * Is the suffix at normalized `end` part of the SAME WORD as what precedes it?
    *
    * True when the only characters between the token's last letter and the
    * suffix's last letter are `-` or `_`. See the `notFollowedBy` call site.
    */
-  const joinedToSuffix = (end, suffixLength) => {
+  const joinedToSuffix = (map, end, suffixLength) => {
+    if (map[end] === undefined || map[end + suffixLength - 1] === undefined) return false;
     const gap = text.slice(map[end - 1] + 1, map[end]);
     if (!/^[-_]*$/.test(gap)) return false;
     return /^[A-Za-z0-9_-]+$/.test(text.slice(map[end], map[end + suffixLength - 1] + 1));
@@ -763,7 +840,8 @@ function scanFile(path) {
    * Used by `identifierOnly` tokens: the two generic English bigrams, which are
    * the only names here ordinary prose can spell by accident.
    */
-  const isIdentifierSpan = (a, b) => /^[A-Za-z0-9_-]+$/.test(text.slice(map[a], map[b] + 1));
+  const isIdentifierSpan = (map, a, b) =>
+    /^[A-Za-z0-9_-]+$/.test(text.slice(map[a], map[b] + 1));
 
   /**
    * Lines that sit inside a fenced code block.
@@ -793,16 +871,22 @@ function scanFile(path) {
    *   - a blank line
    *   - an ATX heading opening a line — the case that had been MISSING, which
    *     let a heading mid-paragraph fuse two sections
-   *   - a markdown list marker opening a line, in `.md` files and NOT inside a
-   *     fenced block — the fence exemption is the fix for the rule that had
-   *     been HARMFUL, silencing a real `the buy\n * adapter` mention pasted
-   *     into a doc as a code sample
+   *   - a markdown list marker opening a line, in Markdown files and NOT
+   *     inside a fenced block — the fence exemption is the fix for the rule
+   *     that had been HARMFUL, silencing a real `the buy\n * adapter` mention
+   *     pasted into a doc as a code sample
+   *   - a fenced-block DELIMITER line — see below
    *
    * Newlines alone are never boundaries: `GuardianPausable.sol:16` wraps
    * "the buy\n *         adapter/receiver" and is a real mention.
+   *
+   * The structural rules apply to `.mdx` as well as `.md`. MDX is in
+   * MARKUP_EXTENSIONS and is Markdown, but the flag here tested `.md` only, so
+   * an `.mdx` document with "Decide what to buy" followed by a
+   * `# Adapter selection follows` heading had no boundary between them and the
+   * gate BLOCKED a clean file.
    */
-  const isMarkdown = path.endsWith('.md');
-  const crossesBlockBoundary = (a, b) => {
+  const crossesBlockBoundary = (map, a, b) => {
     const from = map[a];
     const to = map[b];
     // Test the span with recognized tags REMOVED, matching what the normalizer
@@ -813,6 +897,14 @@ function scanFile(path) {
     // are literal.
     let span = text.slice(from, to + 1);
     if (MARKUP_EXTENSIONS.test(path) && !literalAt(from)) {
+      // Comments FIRST and by the same rule as the normalizer, which now skips
+      // them. Leaving them in re-broke the case they were skipped for: the `!`
+      // in `<!--` is a sentence ender, so `buy <!-- note --> adapter` fused in
+      // the stream and was then rejected here by punctuation that exists only
+      // inside markup the reader never sees. The two passes have to agree
+      // about what is on the page — the same disagreement, one construct over,
+      // that the element-tag strip below was added to end.
+      span = span.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ');
       span = span.replace(/<\/?[a-zA-Z][^<>]*>/g, ' ');
     }
     if (/[.!?;:|]/.test(span)) return true;
@@ -830,6 +922,12 @@ function scanFile(path) {
     // code.
     if (isMarkdown) {
       for (let i = firstLine + 1; i <= lastLine; i++) {
+        // A fence delimiter is itself the boundary: the span jumped over a
+        // code block. `inFence` marks delimiters, so this test has to come
+        // BEFORE the skip below or an empty fenced block — whose two
+        // delimiters are its only lines — would be invisible here and fuse
+        // the prose either side of it into a mention that no reader sees.
+        if (fenceDelimiter[i]) return true;
         if (inFence[i]) continue;
         if (/^\s{0,3}#{1,6}\s/.test(lines[i])) return true;
         if (/^\s{0,3}(?:[-*+]\s|\d+[.)]\s)/.test(lines[i])) return true;
@@ -838,32 +936,64 @@ function scanFile(path) {
     return false;
   };
 
-  // Matches as half-open normalized intervals, so overlaps can be resolved.
-  const matches = [];
+  /**
+   * Find every dead token in one normalized stream, as SOURCE intervals.
+   *
+   * Source rather than normalized offsets, because there are now TWO streams —
+   * the document with its markup removed, and the markup itself — and their
+   * normalized coordinates are unrelated. The source text is the one frame
+   * both can be expressed in, so it is the one the dedupe below works in.
+   */
+  const collectMatches = (norm, map) => {
+    const found = [];
+    for (const { token, notFollowedBy, identifierOnly } of DEAD_TOKEN_RECORDS) {
+      let from = 0;
+      for (;;) {
+        const at = norm.indexOf(token, from);
+        if (at === -1) break;
+        const end = at + token.length;
+        from = end;
+        const skip = notFollowedBy.some(
+          (suffix) =>
+            norm.startsWith(suffix, end) &&
+            // The suffix must be JOINED to the token — same word, allowing only
+            // intra-word separators. `buyback`, `buy-back` and `buy_back` are all
+            // the surviving treasury feature and must be skipped; "buy. Back up
+            // config" is a real mention followed by a new sentence and must not
+            // be. Strict contiguity got the first right and the hyphenated
+            // spellings wrong, reporting live buy-back work as removed-surface
+            // residue.
+            joinedToSuffix(map, end, suffix.length),
+        );
+        if (skip) continue;
+        if (identifierOnly && !isIdentifierSpan(map, at, end - 1)) continue;
+        if (crossesBlockBoundary(map, at, end - 1)) continue;
+        found.push({ start: map[at], end: map[end - 1] + 1 });
+      }
+    }
+    return found;
+  };
 
-  for (const { token, notFollowedBy, identifierOnly } of DEAD_TOKEN_RECORDS) {
-    let from = 0;
-    for (;;) {
-      const at = norm.indexOf(token, from);
-      if (at === -1) break;
-      const end = at + token.length;
-      from = end;
-      const skip = notFollowedBy.some(
-        (suffix) =>
-          norm.startsWith(suffix, end) &&
-          // The suffix must be JOINED to the token — same word, allowing only
-          // intra-word separators. `buyback`, `buy-back` and `buy_back` are all
-          // the surviving treasury feature and must be skipped; "buy. Back up
-          // config" is a real mention followed by a new sentence and must not
-          // be. Strict contiguity got the first right and the hyphenated
-          // spellings wrong, reporting live buy-back work as removed-surface
-          // residue.
-          joinedToSuffix(end, suffix.length),
-      );
-      if (skip) continue;
-      if (identifierOnly && !isIdentifierSpan(at, end - 1)) continue;
-      if (crossesBlockBoundary(at, end - 1)) continue;
-      matches.push({ start: at, end });
+  const matches = collectMatches(norm, map);
+
+  // Second stream: the INSIDE of each recognized tag.
+  //
+  // Stripping a tag removes its element name and attributes along with its
+  // brackets, and those are executable source, not rendered decoration. An
+  // HTML file containing `<vpfi-buy-adapter></vpfi-buy-adapter>` passed
+  // cleanly because both occurrences were deleted before matching; the same
+  // holds for a JSX component name or an attribute configuring a removed
+  // endpoint. The tag has to keep being removed from the DOCUMENT stream —
+  // that removal is what lets `the <strong>buy</strong> adapter` fuse into the
+  // phrase a reader sees — so its contents are scanned separately instead,
+  // one tag at a time so nothing fuses ACROSS a tag boundary either.
+  for (const [s, e] of tagSpans) {
+    const { norm: tagNorm, map: tagMap } = normalizeWithMap(text.slice(s, e), '', true, null);
+    for (const m of collectMatches(
+      tagNorm,
+      tagMap.map((o) => o + s),
+    )) {
+      matches.push(m);
     }
   }
 
@@ -936,11 +1066,12 @@ function scanFile(path) {
 
   const units = kept
     .map(({ start, end }) => {
-      const startLine = lineOf(starts, map[start]);
+      // `start` / `end` are SOURCE offsets — see collectMatches.
+      const startLine = lineOf(starts, start);
       const first = Math.max(0, startLine - DIGEST_CONTEXT_LINES);
       const last = Math.min(
         lines.length - 1,
-        lineOf(starts, map[end - 1]) + DIGEST_CONTEXT_LINES,
+        lineOf(starts, end - 1) + DIGEST_CONTEXT_LINES,
       );
       // RAW, not normalized — only CRLF and trailing spaces are canonicalized.
       //
