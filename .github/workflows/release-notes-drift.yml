@@ -131,3 +131,17 @@ jobs:
           set -euo pipefail
           node .github/scripts/check-docs-paths.mjs
           echo "Docs path gate OK." >> "$GITHUB_STEP_SUMMARY"
+
+      # Excision ratchet (#1651). Same shape and the same reason as the gate
+      # above — a removed thing keeps being described as live, and prose has
+      # no compiler. This one pins a COUNT per file rather than banning a
+      # name, because the retraction notes doing the cleanup necessarily name
+      # what they retract; a ban would fight its own remediation.
+      #
+      # Blocking, deliberately. #687-A removed that surface for legal
+      # reasons, so new text presenting it as live is not a style nit.
+      - name: Excision residue gate (#687-A VPFI buy surface)
+        run: |
+          set -euo pipefail
+          node .github/scripts/check-excision-residue.mjs
+          echo "Excision residue gate OK." >> "$GITHUB_STEP_SUMMARY"
