@@ -161,4 +161,15 @@ each of the same kind — a summary that had aged past the thing it summarised:
   chains anything actually talks to. Every count in this note is of secrets
   bound, on the same basis.
 
-No behaviour changes.
+One behaviour change, and it came out of writing the inventory rather than
+being planned. Describing the Telegram webhook's protection required stating
+that its one-time code is spent the first time it is used — and checking that
+showed the code was looked up and deleted as two separate steps, so two
+requests arriving together could both be accepted, with the second one's
+destination winning. Since that code is the only thing standing between a
+caller and redirecting someone's alerts to their own chat, the claim was made
+true rather than softened: the code is now claimed in a single indivisible
+step, and whichever request loses the race is rejected. An expired code is now
+also spent when presented, instead of being left behind.
+
+Nothing else in this change alters behaviour.
