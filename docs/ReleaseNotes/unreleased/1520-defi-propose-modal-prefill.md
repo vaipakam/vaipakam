@@ -30,6 +30,23 @@ Unchanged: settings whose setter takes more than one value still start out
 empty, so each one is entered deliberately — proposing the same value as today
 is allowed, but it has to be typed.
 
-Six tests now cover this dialog, which had none. Run against the previous
-version, two of them fail — one with React's own "too many re-renders" guard,
-which is the freeze reproduced directly.
+**And a third fault, which only became reachable once clearing worked.** Eight
+of the settings in this console are on/off switches for live protocol mechanics
+— range orders, partial fills, periodic interest, the numeraire swap, and the
+three automation switches. The dialog's "you must fill every box" check
+deliberately skipped on/off settings, and the code that turns typed text into a
+value for the contract treated anything it did not recognise — including an
+empty box — as "off".
+
+While the box refused to stay empty, that combination could not be reached. With
+clearing fixed, it could: clear the box on an enabled switch, press the button,
+and the dialog would produce a perfectly valid, signable proposal that turns
+that mechanic **off** — looking no different from one an operator meant to
+write. The dialog now requires an on/off setting to say exactly "true" or
+"false" and says so if it doesn't, and the encoder refuses an unrecognised value
+outright rather than quietly choosing "off" for you. Turning a switch off is of
+course still allowed; it just has to be asked for.
+
+Nine tests now cover this dialog, which had none. Run against the previous
+version, four of them fail — one with React's own "too many re-renders" guard,
+which is the freeze reproduced directly, and two on the blank on/off switch.

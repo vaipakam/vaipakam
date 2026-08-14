@@ -60,6 +60,23 @@ const addressKnob: KnobMeta = {
   },
 };
 
+/** A kill-switch knob: single bool arg, no numeric range. Mirrors the eight
+ *  real ones (range amount/rate, partial fill, periodic interest, numeraire
+ *  swap, auto-lend/refinance/extend). */
+const boolKnob: KnobMeta = {
+  ...singleArgKnob,
+  id: 'testBool',
+  label: 'Kill switch knob',
+  unit: 'bool',
+  hasNumericRange: false,
+  getter: { facet: 'ConfigFacet', fn: 'getFlag', returns: 'bool' },
+  setter: {
+    facet: 'ConfigFacet',
+    fn: 'setFlag',
+    args: [{ name: 'enabled', type: 'bool' }],
+  },
+};
+
 function renderModal(knob: KnobMeta, currentValue: bigint | string | boolean | null) {
   return render(
     <ProposeChangeModal
@@ -127,5 +144,67 @@ describe('ProposeChangeModal — arg pre-fill', () => {
     renderModal(singleArgKnob, 250n);
     fireEvent.change(argInputs()[0], { target: { value: '' } });
     expect(argInputs()[0].value).toBe('');
+  });
+});
+
+/** The Safe address is validated before the args are, so a submit-path test
+ *  has to fill it or it never reaches the check under test. */
+function fillSafeAddress() {
+  const safeInput = screen
+    .getAllByRole('textbox')
+    .find((el) =>
+      (el as HTMLInputElement).placeholder.includes('multisig'),
+    ) as HTMLInputElement;
+  fireEvent.change(safeInput, {
+    target: { value: '0x2222222222222222222222222222222222222222' },
+  });
+}
+
+describe('ProposeChangeModal — boolean kill switches', () => {
+  /*
+   * Making a cleared field STAY cleared (above) exposed a latent hazard that
+   * had been unreachable: the required-field check exempted bool args, and
+   * `coerceArg` maps every unrecognised string — `''` included — to `false`.
+   * Every bool knob in the catalogue is a single-arg kill switch, so clearing
+   * one and pressing "Open in Safe" produced a valid Safe batch that DISABLED
+   * the mechanism, with nothing in the UI to distinguish it from a deliberate
+   * proposal.
+   */
+  it('refuses to encode a blank boolean instead of reading it as false', () => {
+    renderModal(boolKnob, true);
+    const input = argInputs()[0];
+    expect(input.value).toBe('true');
+    fireEvent.change(input, { target: { value: '' } });
+    fillSafeAddress();
+    fireEvent.click(screen.getByRole('button', { name: /open in safe/i }));
+    expect(
+      screen.getByText(/must be exactly "true" or "false"/i),
+    ).toBeInTheDocument();
+    // And nothing was handed off. Match the post-submit confirmation, not the
+    // word "download" — the always-present "Sign in Safe" disclosure contains
+    // "downloads" and would make this assertion pass vacuously.
+    expect(
+      screen.queryByText(/opened\s+Transaction Builder/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('rejects a boolean that is neither true nor false', () => {
+    renderModal(boolKnob, true);
+    fireEvent.change(argInputs()[0], { target: { value: 'yes' } });
+    fillSafeAddress();
+    fireEvent.click(screen.getByRole('button', { name: /open in safe/i }));
+    expect(
+      screen.getByText(/must be exactly "true" or "false"/i),
+    ).toBeInTheDocument();
+  });
+
+  it('accepts an explicit false — turning a switch off is legitimate, blankness is not', () => {
+    renderModal(boolKnob, true);
+    fireEvent.change(argInputs()[0], { target: { value: 'false' } });
+    fillSafeAddress();
+    fireEvent.click(screen.getByRole('button', { name: /open in safe/i }));
+    expect(
+      screen.queryByText(/must be exactly "true" or "false"/i),
+    ).not.toBeInTheDocument();
   });
 });

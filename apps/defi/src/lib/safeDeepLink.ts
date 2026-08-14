@@ -205,7 +205,19 @@ function coerceArg(raw: string | number | bigint | boolean, solType: string): un
   if (typeof raw === 'boolean') return raw;
   if (typeof raw === 'bigint') return raw;
   if (solType === 'bool') {
-    if (typeof raw === 'string') return raw === 'true' || raw === '1';
+    if (typeof raw === 'string') {
+      // Strict. This used to be `raw === 'true' || raw === '1'`, which maps
+      // EVERY other string — `''`, `'yes'`, a typo — to `false`. For a bool
+      // knob that is a kill switch, silently encoding "I could not read this"
+      // as "turn it off" is the worst available default: it produces a
+      // perfectly valid Safe batch that disables a live protocol mechanism.
+      // Refuse instead, and let the caller surface the error.
+      if (raw === 'true' || raw === '1') return true;
+      if (raw === 'false' || raw === '0') return false;
+      throw new Error(
+        `Expected "true" or "false" for bool argument, got ${JSON.stringify(raw)}`,
+      );
+    }
     return Boolean(raw);
   }
   if (solType === 'address') return raw as string;

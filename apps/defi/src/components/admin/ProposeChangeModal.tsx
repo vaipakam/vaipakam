@@ -109,9 +109,30 @@ export function ProposeChangeModal({
       setError('Enter a valid Safe address (0x… 42-char hex).');
       return;
     }
-    // Validate every arg is filled.
-    if (args.some((a, i) => knob.setter.args[i].type !== 'bool' && a === '')) {
-      setError('All fields are required.');
+    // Validate every arg is filled. Booleans are held to a STRICTER rule than
+    // "not empty": they must read exactly `true` or `false`.
+    //
+    // The old check exempted bools from the required-field test entirely, and
+    // `coerceArg` turns any unrecognised string — including `''` — into
+    // `false`. Every bool knob in the catalogue is a single-arg kill switch
+    // (range amount/rate, partial fill, periodic interest, numeraire swap,
+    // auto-lend/refinance/extend), so clearing one and pressing "Open in Safe"
+    // would have produced a Safe batch that DISABLES it, indistinguishable in
+    // the UI from a deliberate proposal. That was unreachable before this PR
+    // only because a cleared field refilled itself; making clearing work is
+    // what exposed it.
+    const invalidIdx = args.findIndex((a, i) =>
+      knob.setter.args[i].type === 'bool'
+        ? a !== 'true' && a !== 'false'
+        : a === '',
+    );
+    if (invalidIdx >= 0) {
+      const bad = knob.setter.args[invalidIdx];
+      setError(
+        bad.type === 'bool'
+          ? `${bad.name} must be exactly "true" or "false" — a blank field is not read as "false".`
+          : 'All fields are required.',
+      );
       return;
     }
     // For numeric knobs, validate the new value is within hard bounds.
