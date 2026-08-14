@@ -53,9 +53,21 @@ Worker secrets:
 
 | Secret | Purpose |
 |---|---|
-| `RPC_*` | Per-chain RPC URLs (carry API keys). |
+| `RPC_*` (eleven) | Per-chain RPC URLs — **carry provider API keys**, so they are leakable, billable credentials, not just endpoints. Eleven, not the full chain set: `RPC_POLYGON` is bound by the agent but not here. |
+| `OPENSEA_API_KEY` | Authenticated **outbound publication** of signed Seaport listings. A write credential upstream, not a read key. |
+| `ALCHEMY_WEBHOOK_SIGNING_KEY_84532` | HMAC verification of inbound Base-Sepolia chain-event webhooks. |
+| `ALCHEMY_WEBHOOK_SIGNING_KEY_421614` | Same, Arbitrum Sepolia. |
+| `ALCHEMY_WEBHOOK_SIGNING_KEY_97` | Same, BNB testnet (configured ahead of BNB going live). |
 
-No signing keys ever — read-only by design.
+**Fifteen bindings in total.** This table used to list only `RPC_*` and
+close with "No signing keys ever — read-only by design", which
+undercounted the credential surface by four and asserted a read-only
+property the Worker does not have.
+
+No **on-chain signing** key — that part is true, and it is the only part
+that was. It is not an isolation boundary: the D1 binding is
+database-scoped, so this Worker can write tables the signing Worker
+reads (#1722).
 
 ### D1 — owns the canonical schema for `vaipakam-archive` (staging)
 

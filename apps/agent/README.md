@@ -14,7 +14,12 @@ The **proactive-notifications + public-Frame + operator-services Worker**. Stage
 - **Operator services** — server-side aggregator quote proxies at `/quote/{0x,1inch}`. (#1651: a Blockaid scan proxy at `/scan/blockaid` was listed here; ET-001 dropped it — `index.ts` documents that no transaction-scan proxy exists and the pre-sign preview is a frontend `eth_call`.)
 - **Frontend-facing endpoints** — Telegram-bot webhook `/tg/webhook`; diagnostics record capture `/diag/record`; settings endpoints `/thresholds PUT` + `/link/telegram POST`; support-ticket capture `/support/ticket POST` (#1040 phase 1 — D1 row + ops-Telegram notify via `TG_OPS_BOT_TOKEN`/`TG_OPS_CHAT_ID`, plain `wrangler secret put` secrets; while unset the notify skips and tickets still land in D1).
 
-**Crucially: this Worker holds NO signing key.** The Stage 3 architectural-rebalance moved `KEEPER_PRIVATE_KEY` (and the daily oracle snapshot signer it powered) to `apps/keeper`. A compromised agent produces stale data but **can't move funds** — that's the staging plan §2 least-privilege contract.
+**This Worker holds no ON-CHAIN transaction key.** The Stage 3 architectural-rebalance moved `KEEPER_PRIVATE_KEY` (and the daily oracle snapshot signer it powered) to `apps/keeper`, so this Worker **can't move funds** — that part of the staging plan §2 contract holds.
+
+Two things it used to say alongside that are **withdrawn**:
+
+- **"holds NO signing key"** — `PUSH_CHANNEL_PK` is an Ethereum private key, instantiated as an ethers `Wallet` in `src/push.ts` to sign Push notifications as the channel. No on-chain authority, but real signing material a secret reviewer must not skip.
+- **"a compromised agent produces stale data"** — it deletes diagnostics and support records on a schedule (`pruneOldSupportTickets` enforces the 12-month deletion promise), writes `loans`, sends Push/Telegram to real users, and publishes listings via `/opensea/listing`. A defect or compromise here means data loss, mis-sent notifications, and irreversible upstream publication — and, via the shared database-scoped D1 binding, corruption of state the signing Worker acts on (#1722). Not stale data.
 
 **Non-goals:** no autonomous on-chain submissions (those belong to `apps/keeper`); no chain-event indexing into D1 (that belongs to `apps/indexer`); no user-facing write endpoints (writes happen via the connected app + a wallet signature).
 

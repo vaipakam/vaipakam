@@ -2,9 +2,16 @@
  * apps/keeper Worker entry — Vaipakam's first-party autonomous
  * keeper. The single Worker that holds `KEEPER_PRIVATE_KEY` (and
  * therefore the only Worker that signs on-chain transactions) per
- * the staging plan's least-privilege contract
- * (`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md` §2):
- * "A buggy agent produces stale data; a buggy keeper loses funds."
+ * the staging plan's signing-key placement
+ * (`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md` §2).
+ *
+ * That section used to be quoted here as "A buggy agent produces stale
+ * data; a buggy keeper loses funds." **That contract is withdrawn** —
+ * the agent deletes records, notifies real users and publishes
+ * listings, and both non-signing Workers share this Worker's
+ * database-scoped D1 binding, so they can corrupt state this Worker
+ * acts on (#1722). What remains true is narrower and is the reason
+ * this file is special: the on-chain key lives here and nowhere else.
  *
  * Cron-driven only (`scheduled()` handler — NO `fetch()`). Each
  * tick:

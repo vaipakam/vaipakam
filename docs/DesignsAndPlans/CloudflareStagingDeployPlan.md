@@ -24,12 +24,18 @@ unaffected.
 |---|---|---|---|
 | **vaipakam-labs** | `labs.vaipakam.com` (today); `vaipakam.com` + `www.vaipakam.com` after cutover | Marketing site, docs, "Launch Vaipakam" button → `defi.vaipakam.com/`. Static, wallet-free. | No |
 | **vaipakam-defi** | `defi.vaipakam.com` | The connected app — wallet connect, Dashboard at root, Offer Book, loan flows, Buy-VPFI, Claim Center, plus three wallet-free public-read tools (`/analytics`, `/nft-verifier`, `/protocol-console`). | No |
-| **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*`. Open-CORS reads. | No |
-| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). | **NO** (intentional — staging plan §2 contract) |
+| **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*` (open-CORS reads). **Also writes**: three POST endpoints that write D1, HMAC-authenticated inbound Alchemy webhooks, and authenticated outbound publication of signed Seaport listings to OpenSea. | No on-chain key |
+| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). Also **deletes** diagnostics + support records on a schedule and **publishes** listings via `/opensea/listing`. | **No on-chain key** — but holds `PUSH_CHANNEL_PK`, a real Ethereum key used to sign notifications |
 | **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, **live** offer/intent matcher, auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — single signing-key holder |
 
-The split follows the **read/index vs write/act** axis. Strict
-least-privilege:
+The split was **designed** around a read/index vs write/act axis. What it
+actually achieves is narrower than that, and narrower than the "strict
+least-privilege" this section used to claim: it places the **on-chain
+signing key** on exactly one Worker. It does **not** isolate the other
+two — both bind the same database scope the keeper reads, and both have
+externally visible write effects of their own (see the indexer and agent
+bullets, and #1722). Read the list below as *signing-key placement*, not
+as a privilege boundary:
 
 - `vaipakam-keeper` carries `KEEPER_PRIVATE_KEY` and is the
   ONLY Worker that signs on-chain transactions. **Eight** modules
@@ -56,11 +62,16 @@ least-privilege:
   read each one's `functionName` expression — including the ones that
   resolve at runtime, and note that the `address` is not always the
   Diamond.
-- `vaipakam-agent` holds no signing key. Notification tokens
-  (`TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`) and aggregator API
-  keys (`ZEROEX_API_KEY`, `ONEINCH_API_KEY`,
-  the retired `BLOCKAID_API_KEY`, see §4.3) are operational secrets but not
-  fund-moving capability.
+- `vaipakam-agent` holds no **on-chain transaction** key — which is not
+  the same as "no signing key", as this bullet used to say.
+  **`PUSH_CHANNEL_PK` is an Ethereum private key**, instantiated as an
+  ethers `Wallet` (`apps/agent/src/push.ts:66`) to sign Push
+  notifications as the channel. It cannot move funds, and that is the
+  claim worth making; "holds no signing key" overstates it and would
+  lead a secret reviewer to skip key material that is real. The
+  remaining tokens (`TG_BOT_TOKEN`) and aggregator API keys
+  (`ZEROEX_API_KEY`, `ONEINCH_API_KEY`, the retired `BLOCKAID_API_KEY`,
+  see §4.3) are operational secrets, not signing material.
 - `vaipakam-indexer` is the **chain-read + API** Worker: RPC reads, D1
   writes, inbound Alchemy webhook verification, and **authenticated
   outbound publication of Seaport listings to OpenSea**
@@ -299,7 +310,14 @@ NO secrets — the frontend bundle is static.
   ```
   KEEPER_PRIVATE_KEY  — single signing key, gas-funded on every
                         chain with an RPC_* set
-  RPC_*               — same chains as indexer + agent
+  RPC_*               — TEN chains, and NOT the same set as either
+                        sibling. The keeper binds neither Polygon
+                        secret; the indexer binds RPC_POLYGON_AMOY but
+                        not RPC_POLYGON (eleven); the agent binds both
+                        (twelve). Three different sets — provision from
+                        each Worker's own wrangler.jsonc, not from this
+                        row. (It previously read "same chains as indexer
+                        + agent", which was wrong for both.)
   TG_BOT_TOKEN        — for HF-band-downgrade alerts (currently missing — sendMessage fail-soft)
   PUSH_CHANNEL_PK     — same (currently missing — sendPush fail-soft)
   ZEROEX_API_KEY      — for serverQuotes liquidation orchestration (currently missing — DEX-only fallback)
