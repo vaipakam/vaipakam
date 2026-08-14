@@ -26,11 +26,24 @@ answer is withheld rather than shown for one frame. Three more do the same for a
 risk verdict, so a stale "you're clear to proceed" cannot enable an action that
 is already doomed. Deferring any of these by one frame would reopen exactly the
 window they were added to close — an earlier review round put them there for
-that reason. A sixth keeps the current wallet-and-chain identity where
-already-running background work can check whether it is still relevant before
-applying its result; moving that update later would leave a gap in which work
-started under the *new* identity compares against the old one and cancels itself
-for no reason.
+that reason.
+
+**A sixth looked deliberate and was not**, and review caught it. The same
+risk-acknowledgement gate keeps a note of the current wallet-and-chain so that a
+transaction already in flight can check whether it is still relevant before
+applying its result. That note was being updated mid-draw. The argument for
+doing it then was that updating it later leaves a gap in which work started
+under the *new* wallet compares against the old one and cancels itself for no
+reason — which is true of the later of the two available moments, but not of the
+earlier one. Updating it at the point the screen is committed, before anything
+can be clicked, closes that gap too, and avoids a worse problem: the browser may
+begin preparing a screen for a different wallet and then throw that work away,
+and a mid-draw update would already have overwritten the note. A transaction
+running against the wallet still on screen would then look stale to itself and
+bail — and because the "am I still relevant" check also guards the code that
+clears the busy state, the button would have stayed spinning even though the
+transaction succeeded. It now updates at commit time, matching what the
+terms-of-service check in this app already does for the same reason.
 
 **The last is a plain false alarm.** A tooltip passes a callback down to whatever
 element it wraps so it can find that element on screen. Nothing reads the value

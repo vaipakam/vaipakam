@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useWallet } from "../context/WalletContext";
 import { useDiamondRead, useDiamondContract, useReadChain } from "../contracts/useDiamond";
 import { beginStep } from "../lib/journeyLog";
@@ -469,15 +475,31 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   }, [identity]);
 
   const identityRef = useRef<string>(identity);
-  // Deliberately written during render rather than from an effect. This ref is
-  // read only by the `stillSameContext()` cancellation guards below, which ask
-  // "is the pair/wallet/chain still what it was when this async write started".
-  // Syncing it from an effect would leave a window between commit and effect
-  // flush in which the ref still holds the PREVIOUS identity — so a callback
-  // that started under the new one would compare unequal and abort a valid
-  // operation. The guard is only sound if the ref moves with the render.
-  // eslint-disable-next-line react-hooks/refs
-  identityRef.current = identity;
+  // COMMIT-phase sync, not a render-phase write.
+  //
+  // This ref is read only by the `stillSameContext()` cancellation guards
+  // below, which ask "is the pair/wallet/chain still what it was when this
+  // async write started". An earlier revision wrote it during render, reasoning
+  // that a passive effect leaves a commit-to-flush window in which the ref
+  // still holds the PREVIOUS identity, so a callback started under the new one
+  // would compare unequal and abort valid work.
+  //
+  // `useLayoutEffect` beats both. It runs synchronously during commit, before
+  // paint and before the new UI can receive events, so the window that argued
+  // against a passive effect does not exist. And it runs ONLY for renders that
+  // actually commit — which is what the render-phase write got wrong: React can
+  // begin rendering identity B and abandon it while A is still committed, and
+  // the render body has already run, so the ref would read B. A's pending
+  // transaction then fails `stillSameContext()` and returns early — and note
+  // the `finally` blocks below only clear `recording` / `consentRecording` when
+  // the context matches, so the committed UI would be stuck busy forever even
+  // though the transaction succeeded.
+  //
+  // Same reasoning, and the same choice, as `useTosAcceptance`'s request
+  // counter.
+  useLayoutEffect(() => {
+    identityRef.current = identity;
+  }, [identity]);
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 
