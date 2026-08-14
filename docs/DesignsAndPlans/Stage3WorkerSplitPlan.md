@@ -29,8 +29,14 @@ The split unblocks four follow-on changes that are awkward today:
    was supposed to trigger a liquidation. Co-located concerns share
    failure modes; splitting them gives each a clean isolation
    boundary.
-4. **Future scope** — the matcher (see §7) — needs its own deploy
-   cadence and economics independent of HF / indexing.
+4. **The matcher** (see §7) — was to have its own deploy cadence and
+   economics independent of HF / indexing. It has since SHIPPED on
+   `apps/keeper`, but **this requirement was abandoned in the process, not
+   met**: `runMatcher` is invoked from the same `scheduled()` handler and
+   the same `* * * * *` trigger as the HF passes, so it has neither an
+   independent deployment nor an independent schedule. The coupling is
+   real — a matcher fault shares a tick with liquidation — and is recorded
+   here rather than presented as satisfied.
 
 ## 2. Current state — `ops/hf-watcher/src/`
 
@@ -168,8 +174,12 @@ remaining three files (`db.ts`, `diagRecord.ts`, `env.ts`) total
 ≈785 LOC and:
 
 - `db.ts` — most helpers are read/write against tables only ONE
-  Worker uses (e.g. `thresholds` is keeper-only, `link_codes` is
-  agent-only, `loan_index_*` is indexer-only). The shared subset is
+  Worker uses (e.g. per-user HF bands are keeper-only, the Telegram link
+  rows are agent-only, the loan rows are indexer-only). This example named
+  `thresholds` / `link_codes` / `loan_index_*`, none of which exists under
+  any migration — the real tables are `user_thresholds`, `telegram_links`
+  and `loans`. The point the example makes still stands; the names were
+  wrong, here and in both Workers' `wrangler.jsonc` (fixed alongside). The shared subset is
   small (one or two helpers); duplicating preserves the natural
   per-Worker scope without a fragile shared-table contract.
 - `diagRecord.ts` — diagnostic record schema is shared in CONCEPT but
@@ -237,40 +247,105 @@ After PR2 / PR3 / PR4 have all been validated in production:
 - One-time DNS / route swap on Cloudflare so existing webhook
   consumers (Telegram, push channel) hit the new agent Worker.
 
-## 7. Future scope — `apps/keeper` becomes the offer matcher too
+## 7. `apps/keeper` is the offer matcher too — SHIPPED
+
+> **Status correction (#1720 round 15).** This section was written as
+> future scope and stayed that way after the matcher shipped.
+> `apps/keeper/src/index.ts:141-146` schedules `runMatcher` on every tick of
+> the `* * * * *` cron. The matcher PASS is live; do not re-implement or
+> re-schedule it.
+>
+> Two things this banner previously overstated, both corrected:
+> the cross-Worker `offers` read is **NOT** shipped (`matcher.ts:41-43`
+> keeps discovery on-chain and names the D1 read a future optimisation),
+> and the matcher does **NOT** have the independent deploy cadence §1
+> asked for — it runs in the same `scheduled()` handler, on the same cron,
+> as the HF passes.
 
 Per the user's locked Phase 1 plan ([`RangeOffersDesign.md`](./RangeOffersDesign.md)),
 the matcher for **range orders + lender partial fills** is an
-**off-chain bot** running in `apps/keeper`. The bot watches the
-indexer's offer table for compatible (lender, borrower) pairs that
-satisfy the matching matrix in Range design §4 and submits
-`matchOffers(lenderId, borrowerId)` on-chain, earning the 1%
+**off-chain bot** running in `apps/keeper`. It finds compatible
+(lender, borrower) pairs satisfying the matching matrix in Range design §4
+and submits `matchOffers(lenderId, borrowerId)` on-chain, earning the 1%
 matcher fee from the LIF flow.
+
+**Discovery is on-chain**, not from D1: `matcher.ts:41-43` counts, paginates
+and calls `getOffer` per candidate, and the module imports no DB helper. The
+original plan here said the bot "watches the indexer's offer table", and that
+sentence survived the shipped implementation — leaving this section
+specifying two mutually exclusive designs, one in the banner above and one in
+its own prose. The cross-Worker `offers` read remains the future optimisation
+tracked in §9 below; it is not what runs.
 
 The matcher is the **third** `KEEPER_PRIVATE_KEY` consumer (after
 HF liquidation and the daily oracle snapshot). All three are
 co-located on `apps/keeper` per the staging plan §2 contract:
+`KEEPER_PRIVATE_KEY` lives on exactly **one** Worker — the keeper.
+Adding the matcher changes nothing about that: it is one more signed
+workload under the existing key-holder.
+
+**Do not read the liquidation / snapshot / matcher trio as the keeper's
+signing inventory** — they are the three this document happened to
+discuss. The live keeper signs from **eight** modules across at least
+thirteen Diamond calls plus two on the FlashLoanLiquidator; the
+current list, and the two ways earlier attempts to enumerate it went
+wrong, are in staging plan §2. Calling these three "all" the signing
+tasks is the exact undercount that §2 withdraws.
+
+This paragraph used to quote an older version of that §2 contract —
 "keeper carries `KEEPER_PRIVATE_KEY` + per-chain RPC URLs; agent
 holds NEITHER. A buggy agent produces stale data; a buggy keeper
-loses funds — different blast radius justifies different deploy
-cadence + reviewer sign-off." Putting all three signing tasks
-under one signing-key holder shrinks the attack surface to one
-Worker.
+loses funds" — and **both halves of the quote are withdrawn**; see
+the staging plan §2, which is the live text:
 
-Implication for this Stage 3 plan: **`apps/keeper` is sized for
-"HF watch + liquidate + daily snapshot" today, architected for
-"+ offer match" tomorrow.** Practical consequences:
+- *"agent holds NEITHER"* — agent **binds more `RPC_*` secrets** than
+  the keeper (12 to 10), and it holds `PUSH_CHANNEL_PK`, a real
+  Ethereum key. Only the on-chain **transaction** key is
+  keeper-exclusive.
 
-- Wrangler cron triggers should be loose enough to add a matcher
-  pass alongside the HF check (`*/5 * * * *` already covers it;
-  a faster matcher-only schedule is a future tweak).
-- The duplicated `db.ts` subset for keeper should anticipate
-  reading the indexer's `offers` table (cross-Worker D1 read —
-  same database, different Worker bindings). Not implemented in
-  PR2; the matcher PR adds it later.
-- `apps/keeper` package description should mention "HF watch +
-  liquidate + offer match" as the eventual scope so the next
-  reader knows the surface is sized to grow.
+  Say *binds*, not *reads*: the two entries agent has and keeper
+  lacks are `RPC_POLYGON` and `RPC_POLYGON_AMOY`, and there is no
+  Polygon record in `deployments.json`, so `getChainConfigs` drops
+  them at the `getDeployment` gate (`apps/agent/src/env.ts:515-516`;
+  the keeper's equivalent is `apps/keeper/src/env.ts:341-342`). Both Workers
+  therefore reach the same set — and it is far smaller than either count:
+  `deployments.json` holds only 97 / 84532 / 421614, and both
+  `getChainConfigs` implementations discard any RPC binding without a
+  deployment record, so at most THREE chains are reachable today. The extra
+  bindings are provisioned-ahead-of-need secrets — they widen the
+  **secret** surface a leak would expose without widening the
+  **runtime chain** surface.
+- *"a buggy agent produces stale data"* — the agent deletes
+  diagnostics and support records, notifies real users, publishes
+  listings, and shares a **database**-scoped D1 binding with the
+  keeper, so it can corrupt state the signing Worker acts on
+  (#1722). Not signing on-chain rules out moving funds *directly*
+  and nothing more.
+
+Co-locating the signing tasks is still right — the reason is
+single-custody of the transaction key, not a blast-radius gap that
+does not exist as stated.
+
+Implication for this Stage 3 plan, **as it was written**: `apps/keeper`
+was sized for "HF watch + liquidate + daily snapshot" and architected
+for "+ offer match" later. Two of the three consequences below are DISCHARGED; the third is NOT.
+They are kept as the record of what the sizing anticipated, with current
+status marked per item — read the items, not this sentence:
+
+- Cron triggers loose enough for a matcher pass — **done**, and tighter
+  than planned: `apps/keeper/wrangler.jsonc` runs `* * * * *`, not the
+  `*/5 * * * *` this section assumed.
+- The keeper-side `db.ts` subset reading the indexer's `offers` table
+  (cross-Worker D1 read, same database, different bindings) — **STILL
+  OUTSTANDING.** `matcher.ts:41-43` states discovery is on-chain (count +
+  paginate + `getOffer`) and names the D1 candidate read as a future
+  optimisation; the module imports no DB helper. An earlier revision of this
+  bullet marked it discharged and told maintainers not to re-plan it, which
+  would have retired a real optimisation that was never built. The `offers`
+  query in `dailyOracleSnapshot.ts` is unrelated and does not implement
+  matcher discovery.
+- `apps/keeper` scope described as "HF watch + liquidate + offer match"
+  — **done**; that is its current surface, not its eventual one.
 
 ## 8. Two keepers — first-party Worker vs. public reference bot
 
@@ -279,7 +354,7 @@ and Stage 3 is about the FIRST-party one.
 
 | Surface | Repo | Purpose |
 | --- | --- | --- |
-| **`apps/keeper`** (this Stage 3 work) | This monorepo | Vaipakam's own first-party keeper Worker on Cloudflare. Runs as a single privileged operator with project-funded gas. Will eventually host the offer matcher (§7). Currently runs the HF watcher + liquidation triggers. |
+| **`apps/keeper`** (this Stage 3 work) | This monorepo | Vaipakam's own first-party keeper Worker on Cloudflare. Runs as a single privileged operator with project-funded gas. Hosts the offer matcher (§7) — shipped, running on the keeper cron — alongside the HF watcher + liquidation triggers and the daily oracle snapshot. |
 | **`vaipakam-keeper-bot`** | Sibling repo at `~/Codes/Vaipakam/vaipakam-keeper-bot` (per [`CLAUDE.md`](../../CLAUDE.md)) | Public reference implementation of a keeper bot for third-party operators to run themselves. Read-only ABI surface, OSS-licensed, designed for community liquidators. |
 
 They share the contract surface (same `RiskFacet.calculateHealthFactor`
@@ -306,7 +381,8 @@ sync (Phase 9.A)") applies to the public reference, not to
   agent is the right home alongside Telegram + push.
 - **Quote proxies go to `apps/agent`.** They're operator services,
   not data-read APIs. Indexer hosts data; agent hosts services.
-- **`apps/keeper` will host the offer matcher in a future PR**, see §7.
+- **`apps/keeper` hosts the offer matcher**, see §7. Recorded here as a
+  future PR; it has since shipped and runs on the keeper's cron.
 - **Migration is parallel-deploy then cutover** — every PR2-4 ships
   a new Worker that runs alongside `ops/hf-watcher`; PR5 cuts the
   frontend over and deletes the old Worker. No flag flip required.

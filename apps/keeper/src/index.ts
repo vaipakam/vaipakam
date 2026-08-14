@@ -2,9 +2,16 @@
  * apps/keeper Worker entry — Vaipakam's first-party autonomous
  * keeper. The single Worker that holds `KEEPER_PRIVATE_KEY` (and
  * therefore the only Worker that signs on-chain transactions) per
- * the staging plan's least-privilege contract
- * (`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md` §2):
- * "A buggy agent produces stale data; a buggy keeper loses funds."
+ * the staging plan's signing-key placement
+ * (`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md` §2).
+ *
+ * That section used to be quoted here as "A buggy agent produces stale
+ * data; a buggy keeper loses funds." **That contract is withdrawn** —
+ * the agent deletes records, notifies real users and publishes
+ * listings, and both non-signing Workers share this Worker's
+ * database-scoped D1 binding, so they can corrupt state this Worker
+ * acts on (#1722). What remains true is narrower and is the reason
+ * this file is special: the on-chain key lives here and nowhere else.
  *
  * Cron-driven only (`scheduled()` handler — NO `fetch()`). Each
  * tick:
@@ -91,7 +98,7 @@
  * (RPC_*, the Telegram bot token, the Push signer, the aggregator
  * API keys and `KEEPER_PRIVATE_KEY`) are Cloudflare Secrets Store
  * bindings read asynchronously; `resolveEnv` fetches them once, at
- * this boundary, and hands all five passes the plain resolved `Env`.
+ * this boundary, and hands every scheduled pass the plain resolved `Env`. (This said "all five passes"; ten are scheduled below.)
  */
 
 import { resolveEnv, type WorkerEnv } from './env';
@@ -113,7 +120,7 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     // T-078 — resolve the Secrets Store bindings once, here at the
-    // entry point; all five passes get the plain resolved env.
+    // entry point; every scheduled pass gets the plain resolved env.
     const resolved = await resolveEnv(env);
     // Each pass wrapped so a transient RPC / D1 hiccup on one
     // can't wedge the next. Each pass also has its own per-chain
