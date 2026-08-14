@@ -170,7 +170,9 @@ a successful-looking command and a keeper that keeps signing
 removing the store entry is rotation-grade, and the repository documents
 rotation but **no removal procedure** — so it is not a step to improvise
 during an incident. (`apps/keeper` is its only binder — `apps/agent`
-deliberately does not hold a signing key — so an earlier "affects every
+deliberately does not bind `KEEPER_PRIVATE_KEY` (it does hold
+`PUSH_CHANNEL_PK`, an Ethereum key for signing Push notifications, but that
+is not this secret) — so an earlier "affects every
 binder" here overstated the blast radius. The reason to avoid it stands; the
 scare does not.) Stopping the schedule
 achieves the same outcome and is reversible in one command.

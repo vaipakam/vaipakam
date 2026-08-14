@@ -87,7 +87,8 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *      least-privilege contract from staging plan §2: agent
  *      holds NEITHER `KEEPER_PRIVATE_KEY` NOR per-chain on-chain
  *      write access. A compromised agent produces stale
- *      notifications but can't move funds.)
+ *      notifications but can't move funds DIRECTLY — it can still corrupt
+ *      shared-D1 state the signing Worker acts on, see #1722.)
  *   - `QUOTE_0X_RATELIMIT`,
  *     `QUOTE_1INCH_RATELIMIT`,
  *     `DIAG_RECORD_RATELIMIT` — Cloudflare built-in rate-limit

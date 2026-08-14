@@ -66,8 +66,9 @@ as a privilege boundary:
   the same as "no signing key", as this bullet used to say.
   **`PUSH_CHANNEL_PK` is an Ethereum private key**, instantiated as an
   ethers `Wallet` (`apps/agent/src/push.ts:66`) to sign Push
-  notifications as the channel. It cannot move funds, and that is the
-  claim worth making; "holds no signing key" overstates it and would
+  notifications as the channel. **That key** cannot move funds — the
+  subject is the key, not the Worker, which is a distinction this whole
+  section exists to keep — and that is the claim worth making; "holds no signing key" overstates it and would
   lead a secret reviewer to skip key material that is real. The
   remaining tokens (`TG_BOT_TOKEN`) and aggregator API keys
   (`ZEROEX_API_KEY`, `ONEINCH_API_KEY`, the retired `BLOCKAID_API_KEY`,
