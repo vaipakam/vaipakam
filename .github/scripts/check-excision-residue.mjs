@@ -29,37 +29,54 @@
  * to say it is gone are exactly what #1651 has been ADDING. A gate that
  * banned the names outright would fight its own remediation.
  *
- * What it does instead: PIN the count per file. Every in-scope file's current
- * hit count is recorded below with a reason. A count that goes UP means new
- * text describing the removed surface — the thing this exists to stop. A
- * count that goes DOWN means cleanup happened and the ledger is now stale;
- * that also fails, with a different message, because a ledger nobody updates
- * stops being evidence of anything.
+ * What it does instead: PIN two things per file — a COUNT of mentions and a
+ * DIGEST identifying which ones. Both are recorded below with a reason. Three
+ * ways they can move, three different failures:
+ *
+ *   - count UP     — new text describing the removed surface. The case this
+ *                    exists to stop.
+ *   - count DOWN   — cleanup happened and the ledger is now stale. Also fails,
+ *                    because a ledger nobody updates stops being evidence.
+ *   - count SAME,
+ *     digest moved — one mention replaced by another. This one is not
+ *                    hypothetical: replacing stale prose with a retraction
+ *                    note is exactly how #1651 proceeds, so without the digest
+ *                    a live instruction could ride in under cover of a
+ *                    legitimate cleanup in the same diff.
  *
  * This is the CLOSED-WORLD POSITIVE rule shape described in the admission
  * criterion at the top of `check-docs-paths.mjs`: a fixed list of known-dead
- * identifiers. A hit means the text really does name the removed surface,
- * whatever surrounds it. There is no extractor to over-fire.
+ * names. A hit means the text really does name the removed surface, whatever
+ * surrounds it. There is no extractor to over-fire. See DEAD_TOKENS for why
+ * the list is matched against NORMALIZED text rather than as literal
+ * identifiers — prose spellings are the majority of this residue, not an edge
+ * case.
  *
- * ── SCOPE, AND WHY IT IS NARROW ───────────────────────────────────────────
+ * ── SCOPE IS AN EXCLUDE LIST ──────────────────────────────────────────────
  *
- * Only surfaces where a mention is ACTIONABLE are in scope: live source,
- * deploy scripts, operator config, operator runbooks, user-facing copy, and
- * the functional specs.
+ * Everything tracked is in scope except the historical-narrative directories
+ * named in EXCLUDED_PREFIXES. A release note for the excision SHOULD name what
+ * was excised; the design record for it certainly should.
  *
- * Historical narrative is deliberately OUT of scope — `docs/ReleaseNotes`,
- * `docs/OlderDocs`, `docs/FindingsAndFixes`, `docs/internal`, `docs/adr`,
- * `docs/DesignsAndPlans`. A release note for the excision SHOULD name what
- * was excised; the design record for it certainly should. Those directories
- * hold roughly fifty more files, and pinning them would generate constant
- * churn from documents whose whole job is to record that this surface once
- * existed. Scope is what makes the ratchet cheap enough to keep.
+ * It is worth knowing what this replaced, because the earlier reasoning is
+ * seductive and wrong. The first version listed the directories to CHECK —
+ * live source, deploy scripts, operator config, runbooks, user-facing copy,
+ * specs — on the theory that a narrow scope is what makes a ratchet cheap
+ * enough to keep. What a narrow scope actually did was omit `SECURITY.md`,
+ * which described the removed contracts as live components of the cross-chain
+ * system, plus `contracts/RUNBOOK.md` and `contracts/.env.example`. An include
+ * list can only cover the files someone thought of, and residue nobody thought
+ * of is the entire category this gate exists for. Do not narrow it back.
  *
  * ── WHEN THIS FAILS ───────────────────────────────────────────────────────
  *
  * Read the mention. If it describes the removed surface as live, fix the
- * text. If it is a deliberate retraction note, raise the pin and say so in
- * the reason. Do not silence the gate by widening the exclusions.
+ * text. If it is a deliberate retraction note, update that file's count and
+ * digest and say so in the reason. Do not silence the gate by widening the
+ * exclusions.
+ *
+ * To re-pin after a deliberate change, run the gate: the failure message
+ * prints the old and new values for every file that moved.
  *
  * Run:  node .github/scripts/check-excision-residue.mjs
  */
@@ -133,7 +150,11 @@ const EXCLUDED_PREFIXES = [
 ];
 
 /**
- * The pinned ledger: path → [count, reason].
+ * The pinned ledger: path → [count, reason, digest].
+ *
+ * `digest` is the first 12 hex of a sha256 over this file's sorted normalized
+ * match contexts — see `scanFile`. It is what catches an equal-count
+ * substitution.
  *
  * Reasons are grouped by what the mentions ARE, because that determines what
  * a future reader should do when the count moves:
@@ -272,12 +293,13 @@ for (const file of inScopeFiles()) {
   seen.add(file);
   const pin = PINNED.get(file);
   if (!pin) {
-    appeared.push({ file, hits });
+    appeared.push({ file, hits, digest });
     continue;
   }
   const [pinnedHits, reason, pinnedDigest] = pin;
-  if (hits > pinnedHits) grew.push({ file, hits, pinned: pinnedHits, reason });
-  else if (hits < pinnedHits) shrank.push({ file, hits, pinned: pinnedHits, reason });
+  if (hits > pinnedHits) grew.push({ file, hits, pinned: pinnedHits, reason, digest });
+  else if (hits < pinnedHits)
+    shrank.push({ file, hits, pinned: pinnedHits, reason, digest });
   else if (pinnedDigest && pinnedDigest !== digest)
     changed.push({ file, hits, reason, was: pinnedDigest, now: digest });
 }
@@ -300,7 +322,8 @@ console.error('check-excision-residue: FAILED\n');
 
 if (appeared.length) {
   console.error('NEW FILE describes the removed #687-A VPFI buy surface:');
-  for (const { file, hits } of appeared) console.error(`  ${file}  (${hits} mention(s))`);
+  for (const a of appeared)
+    console.error(`  ${a.file}  (${a.hits} mention(s))   digest ${a.digest}`);
   console.error(
     '\n  Read each mention. If it describes the surface as live, remove it —\n' +
       '  there is no protocol VPFI purchase surface. If it is a deliberate\n' +
@@ -311,7 +334,7 @@ if (appeared.length) {
 if (grew.length) {
   console.error('MORE mentions than pinned:');
   for (const g of grew) {
-    console.error(`  ${g.file}  ${g.pinned} → ${g.hits}`);
+    console.error(`  ${g.file}  ${g.pinned} → ${g.hits}   digest now ${g.digest}`);
     console.error(`      pinned as: ${g.reason}`);
   }
   console.error(
@@ -323,7 +346,8 @@ if (grew.length) {
 
 if (shrank.length) {
   console.error('FEWER mentions than pinned (cleanup happened — lower the pin):');
-  for (const s of shrank) console.error(`  ${s.file}  ${s.pinned} → ${s.hits}`);
+  for (const s of shrank)
+    console.error(`  ${s.file}  ${s.pinned} → ${s.hits}   digest now ${s.digest}`);
   console.error('');
 }
 
