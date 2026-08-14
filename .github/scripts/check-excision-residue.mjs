@@ -899,7 +899,15 @@ function scanFile(path) {
   const inlineCodeSpans = (() => {
     if (!isMarkdown) return [];
     const spans = [];
-    const re = /(`+)([\s\S]*?)\1/g;
+    // Delimiter runs must match EXACTLY, per Markdown. A bare backreference
+    // lets a two-backtick opener close against the first two of a THREE-
+    // backtick run, so ``…``` was read as one code span, the whole sentence
+    // was treated as a literal region, and the `<strong>` tags inside it were
+    // preserved instead of stripped — the words never fused and the gate
+    // stayed green on text that renders the phrase plainly. The lookarounds
+    // require the closing run to be a complete run of the same length: not
+    // preceded by a backtick, not followed by one.
+    const re = /(?<!`)(`+)(?!`)([\s\S]*?)(?<!`)\1(?!`)/g;
     let m;
     while ((m = re.exec(text))) spans.push([m.index, m.index + m[0].length]);
     return spans;
@@ -1100,6 +1108,15 @@ function scanFile(path) {
       // inside markup the reader never sees. The two passes have to agree
       // about what is on the page — the same disagreement, one construct over,
       // that the element-tag strip below was added to end.
+      // BLOCK-LEVEL tags separate what a reader sees into different blocks, so
+      // they are boundaries, not removable formatting. Stripping `<hr>` out of
+      // `buy<hr>Adapter` fused two visibly separate thoughts into a mention
+      // and failed a clean file — the same false-BLOCK direction as the YAML
+      // regression, and the reason inline tags (`<strong>`, `<em>`, `<code>`)
+      // must keep being stripped: those two cases pull opposite ways and the
+      // tag handling had treated every element as the inline case.
+      if (/<\s*\/?\s*(?:hr|br|p|div|section|article|aside|nav|main|header|footer|figure|figcaption|blockquote|pre|table|thead|tbody|tr|td|th|ul|ol|li|dl|dt|dd|h[1-6]|form|fieldset|details|summary|address)\b[^<>]*>/i.test(span))
+        return true;
       span = span.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ');
       span = span.replace(/<\/?[a-zA-Z][^<>]*>/g, ' ');
       // And character references, for the third time in the same shape: the
