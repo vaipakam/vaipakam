@@ -394,6 +394,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e9a7f28bcb80"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -921,6 +922,10 @@ const DIGEST_CONTEXT_LINES = 2;
  * coverage without claiming to be a PDF parser. See #1734 for the standing
  * question of whether this gate should target prose only.
  */
+/** Per-stream inflation budget. Generous for real page text, far below what a
+ *  decompression bomb needs to exhaust a runner. */
+const MAX_INFLATED_BYTES = 32 * 1024 * 1024;
+
 function extractPdfText(buf) {
   const out = [];
   const marker = Buffer.from('stream');
@@ -940,7 +945,13 @@ function extractPdfText(buf) {
     body = body.subarray(b);
     if (/\/FlateDecode/.test(dict)) {
       try {
-        body = inflateSync(body);
+        // BOUNDED. `inflateSync` with no limit lets a small, highly compressible
+        // stream expand without end — a few KB of tracked PDF could allocate
+        // hundreds of megabytes and kill the runner, taking a BLOCKING workflow
+        // down rather than taking the best-effort skip this path intends. Node
+        // rejects the stream once it exceeds the budget, which lands in the
+        // catch below like any other undecodable stream.
+        body = inflateSync(body, { maxOutputLength: MAX_INFLATED_BYTES });
       } catch {
         at = e0 + endMarker.length;
         continue;
@@ -967,6 +978,12 @@ function isRecognizedBinary(path) {
     // Unreadable is handled by scanFile's fail-closed path; never claim binary.
     return false;
   }
+  // Signature AND extension. A prefix alone is claimable by any file: a tracked
+  // `.md` beginning with `GIF8` took the exemption and skipped the scan
+  // entirely, which turns this performance shortcut into a bypass anyone can
+  // opt into. Requiring the extension to agree means a document cannot dress
+  // itself as an image.
+  if (!/\.(png|jpe?g|gif|woff2?)$/i.test(path)) return false;
   return BINARY_SIGNATURES.some((sig) => sig.every((byte, i) => head[i] === byte));
 }
 

@@ -28,7 +28,11 @@ import { deflateSync } from 'node:zlib';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
-const DIR = '__excision_selftest__';
+// Unique per run. A FIXED path is reused if a developer already has a
+// directory of that name, and the cleanup below then deletes their files —
+// reported against the first version of this script, reproduced with a
+// `developer-notes.txt` that the run silently removed.
+const DIR = `__excision_selftest__${process.pid}_${Date.now().toString(36)}`;
 
 /** `caught: true` — the gate MUST report this file. `false` — must stay silent. */
 const FIXTURES = [
@@ -145,7 +149,9 @@ const git = (...args) =>
 
 function run() {
   const all = [...FIXTURES.map((f) => ({ ...f, buf: Buffer.from(f.body) })), ...pdfFixtures()];
-  mkdirSync(join(REPO, DIR), { recursive: true });
+  // `recursive: false` — refuse to adopt an existing directory rather than
+  // writing into, and later deleting, something this run did not create.
+  mkdirSync(join(REPO, DIR));
   for (const f of all) writeFileSync(join(REPO, DIR, f.name), f.buf);
   git('add', '--intent-to-add', '--', DIR);
   // `--intent-to-add` is enough for `git ls-files` to report them, and leaves
