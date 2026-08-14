@@ -7,7 +7,6 @@ vi.mock('../../src/hooks/useLiveWatermark', () => ({
 
 import { renderHook, waitFor } from '@testing-library/react';
 
-const DIAMOND = '0x77A16D1807F43A12C1DBde0b06064058cb6FC4BD';
 const ASSET = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const COLLATERAL = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const CREATOR = '0x1111111111111111111111111111111111111111';

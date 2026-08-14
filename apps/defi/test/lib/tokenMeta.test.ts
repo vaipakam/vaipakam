@@ -19,7 +19,6 @@ import { fetchTokenMeta } from '../../src/lib/tokenMeta';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 const USDC = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const WETH = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const BROKEN = '0xcccccccccccccccccccccccccccccccccccccccc';
 
 // #1076: fake viem PublicClient. `getContract(...).read.symbol()` calls

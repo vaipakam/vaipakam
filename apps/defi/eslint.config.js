@@ -20,6 +20,27 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
+      // Honour the leading-underscore convention this codebase already
+      // writes. Six declarations were named `_hasActiveListing`, `_knob`,
+      // `_drop`, `_anchor` and `_id` — the conventional way to say "bound
+      // deliberately, not used" for a destructured field, a placeholder
+      // parameter, or a discarded tuple slot. `no-unused-vars` has no such
+      // convention by default, so it flagged all six and the intent written
+      // into the names counted for nothing.
+      //
+      // `caughtErrors: 'all'` keeps a silently swallowed `catch (e)` reported
+      // unless it is spelled `_e`; the ignore pattern is a way to state
+      // intent, not a way to opt out of the rule.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrors: 'all',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+        },
+      ],
       // Ban direct `usePublicClient` from wagmi. Bare wagmi returns the
       // WALLET-current chain's client, which diverges from the app-
       // selected chain (ChainContext) whenever the user changes the
