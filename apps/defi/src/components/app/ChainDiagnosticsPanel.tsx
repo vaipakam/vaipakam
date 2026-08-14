@@ -17,6 +17,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNowSeconds } from '../../hooks/useNowSeconds';
 import { Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useOfferStats } from '../../hooks/useOfferStats';
 import { indexerOrigin } from '../../lib/indexerClient';
@@ -112,6 +113,7 @@ function formatDurationMs(ms: number | null): string {
 
 export function ChainDiagnosticsPanel() {
   const { t } = useTranslation();
+  const nowSec = useNowSeconds();
   const { mode } = useMode();
   const chain = useReadChain();
   const publicClient = useDiamondPublicClient();
@@ -320,7 +322,7 @@ export function ChainDiagnosticsPanel() {
     // (green); stale or missing probe means RPC itself is degraded
     // (amber).
     const watermarkAgeSec = watermarkSnapshot
-      ? Math.floor(Date.now() / 1000) - watermarkSnapshot.fetchedAt
+      ? nowSec - watermarkSnapshot.fetchedAt
       : null;
     const liveRpcHealthy =
       watermarkSnapshot &&

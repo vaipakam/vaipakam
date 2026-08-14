@@ -23,6 +23,7 @@
  */
 
 import { useState } from 'react';
+import { useNowSeconds } from '../../hooks/useNowSeconds';
 import { Clock, Info, Settings2 } from 'lucide-react';
 import {
   classifyValue,
@@ -244,6 +245,7 @@ export type { KnobZone };
  * detail.
  */
 function PendingChangeBanner({ pending }: { pending: PendingChange[] }) {
+  const nowSec = useNowSeconds();
   // Pick the soonest-executing pending change to drive the time
   // hint. Already-ready proposals sort first.
   const sorted = [...pending].sort((a, b) => {
@@ -253,7 +255,7 @@ function PendingChangeBanner({ pending }: { pending: PendingChange[] }) {
   const lead = sorted[0];
   const count = pending.length;
   const ready = lead.ready;
-  const now = Math.floor(Date.now() / 1000);
+  const now = nowSec;
   const seconds = Math.max(0, lead.executesAt - now);
   const timeText = ready
     ? 'ready to execute'

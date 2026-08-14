@@ -44,6 +44,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNowSeconds } from '../../hooks/useNowSeconds';
 import { Info, Wifi, WifiOff, Cpu, RefreshCw, AlertTriangle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond';
@@ -114,6 +115,7 @@ export function IndexerStatusBadge({ compact }: Props) {
   // Independent of data freshness (which is about block-space lag).
   const { transport } = useRealtimePush();
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const nowSec = useNowSeconds();
   // Live chain safe-head — polled directly only while the popover is
   // open. `null` until the first poll resolves (the popover seeds the
   // row with the watermark snapshot's safeBlock in the meantime, so
@@ -180,7 +182,7 @@ export function IndexerStatusBadge({ compact }: Props) {
       ? Number(watermarkSnapshot.safeBlock)
       : null;
   const watermarkAgeSec = watermarkSnapshot
-    ? Math.floor(Date.now() / 1000) - watermarkSnapshot.fetchedAt
+    ? nowSec - watermarkSnapshot.fetchedAt
     : null;
   const watermarkHealthy =
     safeHead !== null && watermarkAgeSec !== null && watermarkAgeSec < WATERMARK_STALE_SEC;
