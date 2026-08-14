@@ -1,9 +1,12 @@
 ## Removed references to a security vendor the product no longer uses (#1717)
 
-The pre-sign transaction preview — the panel that shows what a transaction will
-do before you approve it — was originally built on a third-party scanning
-service, briefly moved to a second one, and now uses neither. It reads the
-outcome directly from the chain in the browser. That change shipped some time
+The pre-sign transaction preview — the panel that checks, before you approve,
+whether a transaction would succeed or fail — was originally built on a
+third-party scanning service, briefly moved to a second one, and now uses
+neither. It runs the check directly against the chain from the browser and
+reports the outcome. It does not itemise what the transaction would change;
+that richer view was the departed vendor's, and describing the current panel
+as showing "what a transaction will do" overstates it. That change shipped some time
 ago, but references to the original vendor were left behind in several places.
 
 Most of them were harmless bookkeeping. One was not.
@@ -27,14 +30,23 @@ either way.**
 The rest:
 
 - The design document defining how the background services were split apart
-  assigned two modules to a service that does not contain them, because both
-  modules were deleted after the document was written. A third module was
-  listed against the wrong service entirely — it lives with the transaction-
-  signing service, not the notifications one. That table is how someone audits
-  what a given service can do, so a wrong row there misleads in the direction
-  that matters. The sizing inventory earlier in the same document also names
-  the two deleted modules, but is deliberately left alone: it is the evidence
-  the split decision rested on, and is now marked as a historical snapshot.
+  contains a table recording where each module of the old combined service was
+  routed. It named two modules that have since been deleted, and placed a third
+  against a service other than the one it now lives in. Rather than rewrite the
+  rows, the table is now explicitly labelled for what it is — a record of the
+  split as it happened, not a description of any service as it stands today —
+  with every original row kept and each later change noted beside it. It also
+  now says plainly that it cannot be used to work out what a service is capable
+  of, and points at where to look instead.
+
+  That last point turned out to matter more than the deletions: three
+  notification modules the table assigns to one service also exist in the
+  transaction-signing one, which a single-destination column cannot express.
+  Anyone using the table to bound what the signing service can do would have
+  concluded it cannot send notifications, which is the opposite of true. The
+  sizing inventory earlier in the same document names the two deleted modules
+  as well, and is deliberately left unedited: it is the evidence the split
+  decision rested on, and is marked as a snapshot of that moment.
 - Twenty translated user-facing strings across ten languages named the vendor
   in warnings that are never displayed. Removed — they were dead weight that
   translators would keep maintaining, naming a company the project has no

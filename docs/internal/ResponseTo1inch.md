@@ -222,11 +222,33 @@ Credential controls include:
 
 - Separate secrets for local development, testnet, and production.
 - API keys stored in deployment/runtime secret systems such as Cloudflare Worker secrets, hosting-provider environment variables, or local-only operator environment files.
-- Browser clients do not receive sensitive API keys. External quote/scanning providers such as 1inch, 0x, ~~Blockaid,~~ or RPC providers are accessed through server-side proxy routes where needed. **[#1717: `Blockaid` struck — no Blockaid proxy or key exists; see the §3.4 correction note. NOTE the remainder of this bullet is ALSO only partly true: `1inch` and `0x` are genuinely proxied server-side (`/quote/1inch`, `/quote/0x` on `apps/agent`), but **RPC providers are NOT**. The connected app builds a viem client directly against `chain.rpcUrl` (`apps/defi/src/contracts/useDiamond.ts`), whose value comes from a `VITE_*` env var baked into the browser bundle (`apps/defi/src/contracts/config.ts`). Those URLs — and any provider key embedded in them — are visible to anyone who opens devtools. There is no RPC proxy route in the repo. Whether that is acceptable is a separate question from whether it was accurately described here; it was not.
+- Browser clients do not receive sensitive API keys. External quote/scanning providers such as 1inch, 0x, ~~Blockaid,~~ or RPC providers are accessed through server-side proxy routes where needed. **[INACCURATE on two counts — see the credential-controls correction note below.]**
 
-**The lead sentence of this same bullet — "Browser clients do not receive sensitive API keys" — does not hold either, in the deployed configuration.** `CLAUDE.md` documents the frontend's per-chain RPC URLs as carrying an API key, and Vite inlines every `VITE_*` value into the shipped bundle. The committed fallbacks are keyless public endpoints, so this is false only once an operator sets the documented keyed override — which is the intended production setup. Tracked as **#1724**; that is a posture question to decide, not a wording fix.]**
 - Smart-contract admin and operational keys are separated by role.
 - Keeper/liquidation bots use hot keys with no administrative smart-contract authority.
+
+> **CREDENTIAL-CONTROLS CORRECTION (#1717).** Two claims in the bullet above
+> do not hold. As in §3.4, the original wording is struck or flagged rather
+> than rewritten, because this file may be a record of what was submitted.
+>
+> **1. RPC providers are not proxied.** `Blockaid` is struck because no such
+> proxy or key exists (§3.4). But `1inch` and `0x` are the only genuinely
+> proxied entries — `/quote/1inch` and `/quote/0x` on `apps/agent`. The
+> connected app builds a viem client **directly** against `chain.rpcUrl`
+> (`apps/defi/src/contracts/useDiamond.ts`); there is no RPC proxy route
+> anywhere in the repo.
+>
+> **2. "Browser clients do not receive sensitive API keys" does not hold in
+> the deployed configuration.** `chain.rpcUrl` resolves from a `VITE_*` env
+> var (`apps/defi/src/contracts/config.ts`), and Vite inlines every `VITE_*`
+> value into the shipped bundle. `CLAUDE.md` documents the frontend's
+> per-chain RPC URLs as carrying an API key, so that key is readable by
+> anyone who opens devtools.
+>
+> The committed fallbacks are keyless public endpoints, so this is false
+> only once an operator sets the documented keyed override — which is the
+> intended production setup. Tracked as **#1724**: a posture decision to
+> make, not a wording fix.
 - Emergency/admin signer access is limited to authorized operators.
 - Secrets are rotated after suspected exposure, staff/access changes, provider migration, or incident response.
 - Deployment scripts include preflight checks for required secrets and fail if active-chain RPC/API secrets are missing.
