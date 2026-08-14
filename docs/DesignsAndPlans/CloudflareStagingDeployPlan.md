@@ -25,7 +25,7 @@ unaffected.
 | **vaipakam-labs** | `labs.vaipakam.com` (today); `vaipakam.com` + `www.vaipakam.com` after cutover | Marketing site, docs, "Launch Vaipakam" button → `defi.vaipakam.com/`. Static, wallet-free. | No |
 | **vaipakam-defi** | `defi.vaipakam.com` | The connected app — wallet connect, Dashboard at root, Offer Book, loan flows, Buy-VPFI, Claim Center, plus three wallet-free public-read tools (`/analytics`, `/nft-verifier`, `/protocol-console`). | No |
 | **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*` (open-CORS reads). **Also writes**: three POST endpoints that write D1, HMAC-authenticated inbound Alchemy webhooks, and authenticated outbound publication of **borrower-authorised, on-chain-bound** Seaport listings to OpenSea (posted with an empty `0x` signature; the vault's ERC-1271 check validates against a hash bound on-chain). | No on-chain key |
-| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). Also **deletes** diagnostics + support records on a schedule and **publishes** listings via `/opensea/listing`. | **No on-chain key** — but holds `PUSH_CHANNEL_PK`, a real Ethereum key used to sign notifications |
+| **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). Also **deletes** diagnostics + support records on a schedule and **publishes** listings via `/opensea/listing`. | **No on-chain transaction key** — but holds `PUSH_CHANNEL_PK`, a real Ethereum key used to sign notifications, whose EOA owns the channel's 50 PUSH stake and gas |
 | **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, **live** offer/intent matcher, auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — single signing-key holder |
 
 The split was **designed** around a read/index vs write/act axis. What it
@@ -307,8 +307,14 @@ NO secrets — the frontend bundle is static.
   statement that holds. It is NOT keyless: `PUSH_CHANNEL_PK` is an
   Ethereum private key instantiated as an ethers `Wallet`
   (`apps/agent/src/push.ts:66`) to sign Push notifications as the
-  channel. No fund-moving authority; real signing material a secret
-  reviewer must not skip. This line read "Holds NO signing key".
+  channel. No PROTOCOL-fund-moving authority — but not fund-safe: the
+  channel-owner EOA holds the 50 PUSH staking deposit and ~$50 of native
+  gas (`docs/ops/AdminKeysAndPause.md:227`), so possession of the key
+  exposes those wallet assets. Real signing material a secret reviewer
+  must not skip. This line read "Holds NO signing key", and then "No
+  fund-moving authority" — the second wording survived the correction at
+  §2 above (lines 69-72) and still told an operator reaching for this
+  provisioning summary during an incident that no funds are at risk.
 
 ### 4.4 `vaipakam-keeper`
 
