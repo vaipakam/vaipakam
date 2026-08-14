@@ -535,7 +535,6 @@ export function OpenSeaOffersSection({
         // shouldn't have been clickable; defensively fail closed
         // in case the section's filter missed it.
         if (offer.priceIsDecaying) {
-          // eslint-disable-next-line no-console
           console.warn('[onMatchOffer] declining decaying bidder offer (atomic shape gate)');
           return false;
         }
