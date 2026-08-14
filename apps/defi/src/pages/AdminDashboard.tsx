@@ -46,7 +46,6 @@ import {
   useTimelockPendingChanges,
   isTimelockReady,
 } from '../hooks/useTimelockPendingChanges';
-import { useNowSeconds } from '../hooks/useNowSeconds';
 import { KnobCard } from '../components/admin/KnobCard';
 import { GraceBucketsCard } from '../components/admin/GraceBucketsCard';
 import { AdminThemeToggle } from '../components/admin/AdminThemeToggle';
@@ -109,10 +108,7 @@ function AdminDashboardInner({ inApp }: { inApp: boolean }) {
   // Same live comparison the knob cards use, via the shared helper — the two
   // surfaces read the same `ready` snapshot and previously drew opposite
   // conclusions once a card started ticking past `executesAt`.
-  const nowSec = useNowSeconds();
-  const readyNowCount = pendingChanges.all.filter((p) =>
-    isTimelockReady(p, nowSec),
-  ).length;
+  const readyNowCount = pendingChanges.all.filter(isTimelockReady).length;
 
   // Theme resolution: URL > localStorage > admin-wallet-auto > default.
   const [themeMode, setThemeMode] = useState<ProtocolConsoleThemeMode>(() => {

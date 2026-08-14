@@ -147,6 +147,25 @@ export function useTimelockPendingChanges(): Hook {
     loading: true,
   });
 
+  // Re-read when a pending operation's `executesAt` passes according to the
+  // local clock. The local clock is a TRIGGER TO GO AND LOOK, never the answer:
+  // an administrator whose machine runs fast would otherwise be told an
+  // operation is executable while `getOperationState` still reports Waiting, and
+  // submitting it reverts. Readiness stays whatever the chain last said.
+  const [boundaryNonce, setBoundaryNonce] = useState(0);
+  const nextBoundary = useMemo(() => {
+    const pending = state.all.filter((p) => !p.ready).map((p) => p.executesAt);
+    return pending.length ? Math.min(...pending) : null;
+  }, [state.all]);
+  useEffect(() => {
+    if (nextBoundary === null) return;
+    const msUntil = nextBoundary * 1000 - Date.now();
+    // Already past locally: check once now rather than every render.
+    const delay = Math.max(0, msUntil) + 2_000; // small grace for block drift
+    const id = setTimeout(() => setBoundaryNonce((n) => n + 1), delay);
+    return () => clearTimeout(id);
+  }, [nextBoundary]);
+
   useEffect(() => {
     if (!timelockAddr || !chain.diamondAddress) {
       setState({ byKnob: {}, all: [], loading: false });
@@ -244,7 +263,7 @@ export function useTimelockPendingChanges(): Hook {
     return () => {
       cancelled = true;
     };
-  }, [client, chain.diamondAddress, chain.chainId, timelockAddr, selectorMap]);
+  }, [client, chain.diamondAddress, chain.chainId, timelockAddr, selectorMap, boundaryNonce]);
 
   return state;
 }
@@ -309,16 +328,17 @@ function tryDecodeCalldata(
 /**
  * Is this queued change executable *now*?
  *
- * `ready` is an on-chain snapshot taken when this hook last ran, and the hook
- * has no periodic refresh — so on a dashboard left open across `executesAt` it
- * stays false indefinitely. Every surface that reports readiness must compare
- * against a live clock as well, and must do it the SAME way: the knob card and
- * the page-level summary previously disagreed, one saying "ready to execute"
- * while the other still said "All still in delay window".
+ * Chain truth only. An earlier version OR'd in `nowSec >= executesAt` so a
+ * dashboard left open would stop saying "still waiting" — but the local clock
+ * is not the chain's, and an administrator running fast was then told an
+ * operation was executable while `getOperationState` still reported Waiting,
+ * where submitting reverts. The hook now re-reads at the boundary instead, so
+ * this stays a single source both the knob card and the page summary read —
+ * they disagreed once, one saying "ready to execute" while the other said
+ * "All still in delay window".
  */
 export function isTimelockReady(
-  change: Pick<PendingChange, 'ready' | 'executesAt'>,
-  nowSec: number,
+  change: Pick<PendingChange, 'ready'>,
 ): boolean {
-  return change.ready || nowSec >= change.executesAt;
+  return change.ready;
 }

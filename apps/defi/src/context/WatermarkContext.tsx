@@ -419,11 +419,19 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       if (document.hidden) {
         diagnosticsRef.current.effectivePollIntervalMs = null; // timer paused
+        setStatus('idle'); // same reason as the paused branch below
         return;
       }
       const interval = chooseInterval();
       diagnosticsRef.current.effectivePollIntervalMs = interval; // #843 delta 2
-      if (interval === null) return; // no subscribers / all paused
+      if (interval === null) {
+        // No subscribers, or every subscriber walked away past `pausedAfterMs`.
+        // Status must stop saying `live`: consumers read it as "the last probe
+        // succeeded", and leaving it set kept a health badge green indefinitely
+        // on a page nobody was probing for.
+        setStatus('idle');
+        return;
+      }
       if (timer) {
         clearTimeout(timer); // never stack timers
         timer = null;

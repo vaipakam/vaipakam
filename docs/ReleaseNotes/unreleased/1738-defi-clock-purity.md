@@ -18,15 +18,22 @@ but it was applied to one deadline, and the same page's *other* deadline, a few
 lines above, went on reading the clock directly. So one half of the page updated
 and the other half did not.
 
-Nine places read the clock this way. Six of them decided something — whether a
-deadline had passed, whether a health signal was stale, whether a cooldown was
-still running — and those are the ones that could show the wrong state. The rest
-were counting down for display.
+Nine places read the clock this way, and they did not all need the same answer.
 
-All nine now share one small piece of machinery that keeps time and refreshes
-about once a minute, replacing two separate hand-rolled copies that had grown up
-in different files. A component that needs to know what time it is now gets a
-clock that keeps ticking, rather than needing someone to remember to build one.
+Six now share one small piece of machinery that keeps time and refreshes about
+once a minute, replacing two separate hand-rolled copies that had grown up in
+different files. Those are the genuine deadline surfaces: grace periods, overdue
+loans, a cooldown, and two countdowns.
+
+The other three turned out not to want a clock at all. Two were asking whether
+the app was still successfully reaching the chain, and the honest answer to that
+comes from whether the last check succeeded, not from how long ago a number last
+moved — a distinction that cost two review rounds to get right, because a
+plausible-looking staleness threshold hid it. The third was asking whether a
+queued governance change had matured, which is a fact about the chain's clock,
+not the administrator's; a machine running fast would otherwise be told an
+operation was ready while the network still refused it. That one now uses the
+local clock only to decide when to go and ask again.
 
 Two details worth recording, because both were places this could have gone
 wrong. Some of these readings sat below a point where the component can bail out
