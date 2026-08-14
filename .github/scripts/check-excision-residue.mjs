@@ -909,7 +909,15 @@ function scanFile(path) {
     // preceded by a backtick, not followed by one.
     const re = /(?<![\\`])(`+)(?!`)([\s\S]*?)(?<![\\`])\1(?!`)/g;
     let m;
-    while ((m = re.exec(text))) spans.push([m.index, m.index + m[0].length]);
+    while ((m = re.exec(text))) {
+      // A backtick INSIDE a fence cannot open an inline span. Pairing across
+      // the fence boundary let a stray backtick in a tilde-fenced block pair
+      // with one in later prose, making the visible sentence between them
+      // literal to the tag stripper — so its `<strong>` tags survived, the
+      // words never fused, and the gate passed a rendered dead phrase.
+      if (inFence[lineOf(starts, m.index)]) continue;
+      spans.push([m.index, m.index + m[0].length]);
+    }
     return spans;
   })();
   /**
@@ -1127,7 +1135,13 @@ function scanFile(path) {
       // must keep being stripped: those two cases pull opposite ways and the
       // tag handling had treated every element as the inline case.
       span = span.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ');
-      if (/<\s*\/?\s*(?:hr|br|p|div|section|article|aside|nav|main|header|footer|figure|figcaption|blockquote|pre|table|thead|tbody|tr|td|th|ul|ol|li|dl|dt|dd|h[1-6]|form|fieldset|details|summary|address)\b[^<>]*>/i.test(span))
+      // Blank QUOTED ATTRIBUTE VALUES before looking for block tags. The test
+      // searches raw text, so `buy<span title="<hr>">adapter</span>` had the
+      // `<hr>` inside the title attribute read as a real horizontal rule — an
+      // inline span that renders the phrase continuously was treated as two
+      // blocks and the mention was dropped. Attribute text is not markup.
+      const forBlockTest = span.replace(/=\s*("[^"]*"|'[^']*')/g, '=""');
+      if (/<\s*\/?\s*(?:hr|p|div|section|article|aside|nav|main|header|footer|figure|figcaption|blockquote|pre|table|thead|tbody|tr|td|th|ul|ol|li|dl|dt|dd|h[1-6]|form|fieldset|details|summary|address)\b[^<>]*>/i.test(forBlockTest))
         return true;
       span = span.replace(/<\/?[a-zA-Z][^<>]*>/g, ' ');
       // And character references, for the third time in the same shape: the
