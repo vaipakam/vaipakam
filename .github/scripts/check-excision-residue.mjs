@@ -1048,28 +1048,28 @@ function scanFile(path) {
    * the only names here ordinary prose can spell by accident.
    */
   /**
-   * Remove markup until removing more changes nothing.
+   * Source text for [from,to) with the markup the NORMALIZER recognized removed.
    *
-   * A SINGLE pass is not enough when tags nest or overlap: stripping the inner
-   * one first can splice the outer one's halves into a fresh `<...>` that the
-   * same pass has already moved past. CodeQL flags the one-pass form as
-   * incomplete multi-character sanitization, and while nothing here renders
-   * HTML — the result is only tested against an identifier pattern, so there is
-   * no injection sink — the underlying mechanic still matters for THIS file's
-   * recurring bug: leftover `<` or `>` makes the identifier test fail, the
-   * match is discarded, and a rendered dead identifier passes the gate. Going
-   * to a fixed point strips at least as much as one pass, so it can only move
-   * that direction. Bounded, so a pathological input cannot spin.
+   * Never re-parses. Two rounds proved re-parsing is the wrong tool here, from
+   * opposite directions: a `[^<>]*` regex stops at the `>` inside
+   * `<span title="1 > 0">` and leaves markup behind (false negative), while
+   * iterating that regex to a fixed point splices leftover fragments into tags
+   * that were never in the document — `buyOpti<o<strong>></strong>ns` becomes
+   * identifier-shaped and a clean file fails (false positive). Reusing
+   * `tagSpans`, which the normalizer already computed with a quote-aware
+   * scanner, makes this pass agree with the rendered stream by construction
+   * rather than by a second implementation that has to be kept in step.
    */
-  const stripTagsToFixedPoint = (s) => {
-    let out = s;
-    for (let i = 0; i < 20; i++) {
-      const next = out
-        .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
-        .replace(/<\/?[a-zA-Z][^<>]*>/g, '');
-      if (next === out) break;
-      out = next;
+  const stripRecognizedTags = (from, to) => {
+    let out = '';
+    let at = from;
+    for (const [s0, e0] of tagSpans) {
+      if (e0 <= from) continue;
+      if (s0 >= to) break;
+      if (s0 > at) out += text.slice(at, Math.min(s0, to));
+      at = Math.max(at, Math.min(e0, to));
     }
+    if (at < to) out += text.slice(at, to);
     return out;
   };
 
@@ -1081,18 +1081,20 @@ function scanFile(path) {
     // `;` and was rejected as non-identifier — the encoding silently bought an
     // exemption. Both this check and the boundary check below have to reason
     // about what the reader sees, which is what `renderRefs` produces.
-    const rendered = renderRefs(text.slice(map[a], identifierSpanEnd(map[b])));
-    // Strip tags for the SAME reason the references are decoded, one construct
-    // over. The normalizer removes inline markup, so `buyOpti<strong>o</strong>ns`
-    // normalizes to the exact retired identifier — but this slice saw the raw
-    // source, found `<` and `>`, and rejected it as non-identifier. Formatting
-    // bought the same exemption the encoding used to. A block-level tag inside
-    // the span is not silently fused here: `crossesBlockBoundary` has already
+    // Strip tags BEFORE decoding references, because `tagSpans` are offsets into
+    // the source. Same reason the references are decoded at all: the normalizer
+    // removes inline markup, so `buyOpti<strong>o</strong>ns` normalizes to the
+    // exact retired identifier, and a pass that saw the raw `<`/`>` rejected it
+    // — formatting buying the exemption the encoding used to. A block-level tag
+    // inside the span is not silently fused: `crossesBlockBoundary` has already
     // rejected the match before this runs.
-    const seen =
-      MARKUP_EXTENSIONS.test(path) && !literalAt(map[a])
-        ? stripTagsToFixedPoint(rendered)
-        : rendered;
+    const from = map[a];
+    const to = identifierSpanEnd(map[b]);
+    const seen = renderRefs(
+      MARKUP_EXTENSIONS.test(path) && !literalAt(from)
+        ? stripRecognizedTags(from, to)
+        : text.slice(from, to),
+    );
     return /^[A-Za-z0-9_-]+$/.test(seen);
   };
 
@@ -1172,8 +1174,13 @@ function scanFile(path) {
     // render as one phrase. The normalizer drops the punctuation between them,
     // so `["Decide what to buy", "Adapter selection follows"]` fused into
     // `buyadapter` and failed a clean file. A span lying inside ONE string
-    // literal cannot contain a quote; one that does has crossed out of it.
-    if (/\.jsonc?$/i.test(path) && span.includes('"')) return true;
+    // literal cannot contain an UNESCAPED quote; one that does has crossed out
+    // of it. The escape matters: `"…buy \"adapter\" before cutover."` is a
+    // single valid value that renders as one phrase naming the dead surface,
+    // and counting its escaped quotes as boundaries discarded a real mention.
+    // Drop backslash escapes before looking, so only structural quotes remain.
+    if (/\.jsonc?$/i.test(path) && span.replace(/\\[\s\S]/g, '').includes('"'))
+      return true;
     if (MARKUP_EXTENSIONS.test(path) && !literalAt(from)) {
       // Comments FIRST and by the same rule as the normalizer, which now skips
       // them. Leaving them in re-broke the case they were skipped for: the `!`
