@@ -28,12 +28,20 @@ removed thing — the case worth blocking. A count going **down** means someone
 cleaned up and the record is now out of date, which fails too, on the grounds
 that a ledger nobody maintains stops being evidence.
 
-Scope is deliberately narrow: live code, deployment scripts, operator
-configuration, operator runbooks, user-facing copy and the specifications —
-places where a mention is an instruction someone might follow. The historical
-record is left alone. A release note about a removal is *supposed* to name
-what was removed, and pinning those would produce constant noise from
-documents doing their job.
+Scope is everything the project tracks, minus a short list of exclusions. The
+historical record is what gets excluded — release notes, superseded documents,
+findings, decision records — because a release note about a removal is
+*supposed* to name what was removed, and pinning those would produce constant
+noise from documents doing their job. Everything else is in, including
+top-level policy documents and configuration.
+
+It began the other way round, as a list of places to check, and that is worth
+saying because the reasoning was appealing and wrong. A short list is cheaper
+to maintain, so the first version enumerated the surfaces where a stale mention
+would mislead an operator. What it actually did was omit the security policy
+document, which described the removed components as live parts of the
+cross-chain system. A list of places to look can only cover the places someone
+thought of, and text nobody thought of is the entire problem here.
 
 The check runs on every pull request and blocks. That is a deliberate choice
 about severity: text presenting a deliberately removed surface as available is
@@ -50,7 +58,18 @@ compared only a total, removing one mention while adding another in the same
 file left the number unchanged — the exact shape of this project's own cleanup,
 so a live instruction could have ridden in under cover of a legitimate edit.
 
-All three are closed. Matching now happens on normalized text, which folds
+Later rounds added three more gaps of the same kind, and one of the opposite
+kind. The name-matching still had holes — the off-chain watchdog, the
+notification channel and the deleted storage keys could all be named in
+instructions without tripping it. But the opposite failure had also been
+introduced: the pattern for the removed sale was a prefix of the name of a
+*surviving* feature, treasury buyback, so an ordinary sentence about buyback
+work failed the check as though it were residue. On a check that blocks every
+change, that would have obstructed legitimate work — the more damaging of the
+two failure directions, and the one I had reasoned away as improbable when
+choosing broad patterns.
+
+All of these are closed. Matching now happens on normalized text, which folds
 casing, spacing and punctuation together and joins the file into one string, so
 a phrase broken across two lines is caught too — one such mention was found
 immediately. The scope became an exclusion list rather than an inclusion list,
@@ -80,8 +99,8 @@ omitted its fingerprint was silently treated as opting out of that check —
 now rejected outright, since a safeguard that can be switched off by leaving
 something out is not a safeguard.
 
-Widening the net roughly doubled what it sees, then doubled it again:
-seventy-seven files rather than the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
+Widening the net kept roughly doubling what it sees: eighty-two files, against
+the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
 including operator-facing deployment steps, a security document, a partner
 questionnaire and a test matrix. Those are recorded as pending triage rather
 than fixed here — the ratchet stops the problem growing, and the cleanup is
