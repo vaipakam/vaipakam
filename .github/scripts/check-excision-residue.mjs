@@ -1095,7 +1095,19 @@ function scanFile(path) {
   };
 
   const cheap = (() => {
-    if (!MARKUP_EXTENSIONS.test(path)) return normalize(text);
+    // JSON takes the per-character loop too, not the fast regex. The regex is
+    // only "provably identical" for formats where the loop does nothing extra,
+    // and that stopped being true once the loop learned to decode JSON string
+    // escapes: `"buy\u0020adapter"` renders as one phrase, but the regex path
+    // keeps the literal letters `u0020` between the words, finds no token, and
+    // returns before the decode can run. The file is then never scanned at all.
+    //
+    // This is the drift this pre-filter's own comments warn about — a second
+    // implementation of the transform that silently stops matching the first.
+    // Whenever the loop learns to render something, this condition has to let
+    // the affected format reach it.
+    if (!MARKUP_EXTENSIONS.test(path) && !/\.jsonc?$/i.test(path))
+      return normalize(text);
     // The pre-filter must see everything the full scan can match, or it
     // short-circuits a file the scan would have flagged. Tag interiors are now
     // a second stream (see below), and a document that carries a dead
