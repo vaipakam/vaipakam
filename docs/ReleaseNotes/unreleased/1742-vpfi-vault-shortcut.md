@@ -24,3 +24,16 @@ it isn't misled the way this shortcut was.
 
 Installed shortcuts refresh when the app's manifest is next fetched, so existing
 installs pick up the corrected label without reinstalling.
+
+While correcting the label it turned out every entry in that file pointed at an
+address the app no longer serves. The connected pages were moved to the top
+level some time ago — `/offers` rather than `/app/offers` — and the installed
+shortcuts, along with the address the app opens at when launched, were never
+updated. They appeared to work only because the first part of the address is
+read as a language code, and an unrecognized one quietly falls back to English.
+A visitor whose browser asks for a language the app does support would have been
+sent somewhere that does not exist.
+
+All four shortcuts and the launch address now point at the pages as they are
+served today. Each target was checked against the app's route list rather than
+assumed.
