@@ -76,14 +76,23 @@ as a privilege boundary:
 - `vaipakam-indexer` is the **chain-read + API** Worker: RPC reads, D1
   writes, inbound Alchemy webhook verification, and **authenticated
   outbound publication of Seaport listings to OpenSea**
-  (`openseaPublish.ts`). It binds **sixteen** Secrets Store entries: four
+  (`openseaPublish.ts`). It binds **fifteen** Secrets Store entries: four
   non-RPC HTTP authentication secrets (`OPENSEA_API_KEY` plus three
-  `ALCHEMY_WEBHOOK_SIGNING_KEY_*`) and twelve `RPC_*` URLs which
+  `ALCHEMY_WEBHOOK_SIGNING_KEY_*`) and eleven `RPC_*` URLs which
   themselves carry provider API keys and are used over HTTP. Both numbers
   matter — the four are what an auditor thinks of as credentials, the
-  twelve are equally leakable and equally billable. These are counts of
-  secrets BOUND; the reachable chain set is smaller, because entries with
-  no `deployments.json` record are dropped at the `getDeployment` gate.
+  eleven are equally leakable and equally billable.
+
+  **Count these from `wrangler.jsonc`'s `secrets_store_secrets` block, not
+  from the `Env` interface.** `Env` is the RESOLVED downstream type and is a
+  strict superset: it declares `RPC_ZKEVM`, which all three Workers' configs
+  explicitly omit as out of scope. Counting the interface inflates every
+  Worker's inventory by exactly one, and a provisioning or threat review that
+  starts there will look for a secret that was never issued.
+
+  These are counts of secrets BOUND; the reachable chain set is smaller
+  still, because entries with no `deployments.json` record are dropped at the
+  `getDeployment` gate.
 
   This bullet used to read "read-only — RPC reads, D1 writes, no
   HTTP-level secrets". Both halves were false, and the second is the
@@ -266,7 +275,7 @@ NO secrets — the frontend bundle is static.
   with the VPFI buy surface.)
 - **Secrets:**
   ```
-  RPC_*           — THIRTEEN bound. NOT the same set as the indexer:
+  RPC_*           — TWELVE bound. NOT the same set as the indexer:
                     the agent additionally binds RPC_POLYGON, which the
                     indexer does not. (Both bind RPC_POLYGON_AMOY.)
   TG_BOT_TOKEN    — STAGING bot token (NOT prod)
@@ -335,14 +344,14 @@ NO secrets — the frontend bundle is static.
   ```
   KEEPER_PRIVATE_KEY  — single signing key, gas-funded on every
                         chain with an RPC_* set
-  RPC_*               — ELEVEN bound, and NOT the same set as either
+  RPC_*               — TEN bound, and NOT the same set as either
                         sibling. The keeper binds neither Polygon
                         secret; the indexer binds RPC_POLYGON_AMOY but
-                        not RPC_POLYGON (twelve); the agent binds both
-                        (thirteen). The three sets differ ONLY by those
+                        not RPC_POLYGON (eleven); the agent binds both
+                        (twelve). The three sets differ ONLY by those
                         Polygon entries, which have no deployment record
                         and are dropped at the getDeployment gate — so
-                        all three REACH the same eleven. Provision from
+                        all three REACH the same ten. Provision from
                         each Worker's own wrangler.jsonc, not from this
                         row. (It previously read "same chains as indexer
                         + agent", which was wrong for both.)

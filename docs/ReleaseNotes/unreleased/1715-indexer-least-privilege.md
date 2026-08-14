@@ -6,10 +6,10 @@ does that by describing what each one can reach. The entry for the indexer said
 it was read-only, handled no HTTP-level credentials, and therefore sat at the
 bottom of the risk ordering.
 
-Both of those statements were wrong. That Worker holds sixteen stored
+Both of those statements were wrong. That Worker holds fifteen stored
 credentials, not the three the document listed: four are the kind an auditor
 pictures — one marketplace key and three shared secrets used to authenticate incoming webhooks — shared, so holding one lets you *forge* a delivery as well as check one — and the
-other twelve are network endpoints it binds for chain reads, each of which
+other eleven are network endpoints it binds for chain reads, each of which
 carries a provider key inside the address itself and is therefore just as
 leakable and just as billable. Counting only the first four reproduces the
 undercount this change exists to correct. Those four credentials are used

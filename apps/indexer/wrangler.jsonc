@@ -115,12 +115,19 @@
     // binding, set `CHAIN_INGEST_VIA_DO: "true"`, and redeploy.
     { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_84532",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_84532" },
     { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_421614", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_421614" },
-    // BNB Testnet (97): webhook + key are configured ahead of BNB going into the
-    // active-chains bundle. The route will HMAC-verify BNB deliveries, but the
-    // DO only SCANS chain 97 once `getDeployment(97)` resolves (i.e. 97 is added
-    // to `.active-chains` + the deployments bundle) — deferred until BNB's
-    // contract deploy is finalized. Harmless until then: verified deliveries
-    // forward to the DO, which no-ops without a chain config.
+    // BNB Testnet (97): LIVE staging-ingest credential — treat it as active
+    // for monitoring and rotation, not as provisioned-ahead-of-need.
+    //
+    // This comment used to say the key was configured ahead of BNB entering
+    // the active-chains bundle, and that the DO would no-op until then. Both
+    // preconditions have since been met and the note was not updated: chain 97
+    // is in `contracts/deployments/.active-chains` (diamond + crosschain
+    // deployed 2026-07-02) and carries a Diamond record in the deployments
+    // bundle, so `getDeployment(97)` resolves. With `CHAIN_INGEST_VIA_DO` set
+    // to "true" below, `/hooks/chain-event?chain=97` selects THIS key to
+    // HMAC-verify the delivery and forwards accepted ones to the BNB ingest
+    // DO, which scans. A stale "inert" label on a live write path is exactly
+    // what an operator triaging ingest would rely on and be misled by.
     { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_97",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_97" },
   ],
 

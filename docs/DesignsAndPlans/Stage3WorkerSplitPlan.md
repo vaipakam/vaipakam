@@ -29,8 +29,9 @@ The split unblocks four follow-on changes that are awkward today:
    was supposed to trigger a liquidation. Co-located concerns share
    failure modes; splitting them gives each a clean isolation
    boundary.
-4. **Future scope** — the matcher (see §7) — needs its own deploy
-   cadence and economics independent of HF / indexing.
+4. **The matcher** (see §7) — needs its own deploy cadence and
+   economics independent of HF / indexing. Listed here as future scope
+   when this plan was written; it has since SHIPPED on `apps/keeper`.
 
 ## 2. Current state — `ops/hf-watcher/src/`
 
@@ -193,7 +194,16 @@ After PR2 / PR3 / PR4 have all been validated in production:
 - One-time DNS / route swap on Cloudflare so existing webhook
   consumers (Telegram, push channel) hit the new agent Worker.
 
-## 7. Future scope — `apps/keeper` becomes the offer matcher too
+## 7. `apps/keeper` is the offer matcher too — SHIPPED
+
+> **Status correction (#1720 round 15).** This section was written as
+> future scope and stayed that way after the matcher shipped.
+> `apps/keeper/src/index.ts:141-146` schedules `runMatcher` on every
+> tick of the `* * * * *` cron, and `matcher.ts` already performs the
+> cross-Worker read of the indexer's `offers` table this section below
+> describes as not-yet-implemented. The design rationale is retained
+> as written; every "tomorrow / later / eventual" framing in it is
+> **withdrawn**. Do not schedule, re-implement, or re-plan this pass.
 
 Per the user's locked Phase 1 plan ([`RangeOffersDesign.md`](./RangeOffersDesign.md)),
 the matcher for **range orders + lender partial fills** is an
@@ -225,7 +235,7 @@ loses funds" — and **both halves of the quote are withdrawn**; see
 the staging plan §2, which is the live text:
 
 - *"agent holds NEITHER"* — agent **binds more `RPC_*` secrets** than
-  the keeper (13 to 11), and it holds `PUSH_CHANNEL_PK`, a real
+  the keeper (12 to 10), and it holds `PUSH_CHANNEL_PK`, a real
   Ethereum key. Only the on-chain **transaction** key is
   keeper-exclusive.
 
@@ -233,7 +243,7 @@ the staging plan §2, which is the live text:
   lacks are `RPC_POLYGON` and `RPC_POLYGON_AMOY`, and there is no
   Polygon record in `deployments.json`, so `getChainConfigs` drops
   them at the `getDeployment` gate (`env.ts:504`). Both Workers
-  therefore reach the same eleven non-Polygon entries. The extra
+  therefore reach the same ten non-Polygon entries. The extra
   bindings are provisioned-ahead-of-need secrets — they widen the
   **secret** surface a leak would expose without widening the
   **runtime chain** surface.
@@ -248,20 +258,20 @@ Co-locating the signing tasks is still right — the reason is
 single-custody of the transaction key, not a blast-radius gap that
 does not exist as stated.
 
-Implication for this Stage 3 plan: **`apps/keeper` is sized for
-"HF watch + liquidate + daily snapshot" today, architected for
-"+ offer match" tomorrow.** Practical consequences:
+Implication for this Stage 3 plan, **as it was written**: `apps/keeper`
+was sized for "HF watch + liquidate + daily snapshot" and architected
+for "+ offer match" later. All three consequences below have since been
+DISCHARGED — they are kept as the record of what the sizing anticipated,
+not as work outstanding:
 
-- Wrangler cron triggers should be loose enough to add a matcher
-  pass alongside the HF check (`*/5 * * * *` already covers it;
-  a faster matcher-only schedule is a future tweak).
-- The duplicated `db.ts` subset for keeper should anticipate
-  reading the indexer's `offers` table (cross-Worker D1 read —
-  same database, different Worker bindings). Not implemented in
-  PR2; the matcher PR adds it later.
-- `apps/keeper` package description should mention "HF watch +
-  liquidate + offer match" as the eventual scope so the next
-  reader knows the surface is sized to grow.
+- Cron triggers loose enough for a matcher pass — **done**, and tighter
+  than planned: `apps/keeper/wrangler.jsonc` runs `* * * * *`, not the
+  `*/5 * * * *` this section assumed.
+- The keeper-side `db.ts` subset reading the indexer's `offers` table
+  (cross-Worker D1 read, same database, different bindings) — **done**;
+  `matcher.ts` performs it.
+- `apps/keeper` scope described as "HF watch + liquidate + offer match"
+  — **done**; that is its current surface, not its eventual one.
 
 ## 8. Two keepers — first-party Worker vs. public reference bot
 
@@ -270,7 +280,7 @@ and Stage 3 is about the FIRST-party one.
 
 | Surface | Repo | Purpose |
 | --- | --- | --- |
-| **`apps/keeper`** (this Stage 3 work) | This monorepo | Vaipakam's own first-party keeper Worker on Cloudflare. Runs as a single privileged operator with project-funded gas. Will eventually host the offer matcher (§7). Currently runs the HF watcher + liquidation triggers. |
+| **`apps/keeper`** (this Stage 3 work) | This monorepo | Vaipakam's own first-party keeper Worker on Cloudflare. Runs as a single privileged operator with project-funded gas. Hosts the offer matcher (§7) — shipped, running on the keeper cron — alongside the HF watcher + liquidation triggers and the daily oracle snapshot. |
 | **`vaipakam-keeper-bot`** | Sibling repo at `~/Codes/Vaipakam/vaipakam-keeper-bot` (per [`CLAUDE.md`](../../CLAUDE.md)) | Public reference implementation of a keeper bot for third-party operators to run themselves. Read-only ABI surface, OSS-licensed, designed for community liquidators. |
 
 They share the contract surface (same `RiskFacet.calculateHealthFactor`
@@ -297,7 +307,8 @@ sync (Phase 9.A)") applies to the public reference, not to
   agent is the right home alongside Telegram + push.
 - **Quote proxies go to `apps/agent`.** They're operator services,
   not data-read APIs. Indexer hosts data; agent hosts services.
-- **`apps/keeper` will host the offer matcher in a future PR**, see §7.
+- **`apps/keeper` hosts the offer matcher**, see §7. Recorded here as a
+  future PR; it has since shipped and runs on the keeper's cron.
 - **Migration is parallel-deploy then cutover** — every PR2-4 ships
   a new Worker that runs alongside `ops/hf-watcher`; PR5 cuts the
   frontend over and deletes the old Worker. No flag flip required.
