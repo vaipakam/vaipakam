@@ -95,6 +95,16 @@ import { readFileSync, writeFileSync } from 'node:fs';
 /**
  * Signature test for formats whose bytes are not prose in any sense.
  *
+ * RASTER IMAGES AND FONTS ONLY. `%PDF` and the ZIP container behind
+ * docx/xlsx were briefly here and are NOT: those are DOCUMENTS, carrying the
+ * operator- and user-facing guidance this gate exists to police, and this repo
+ * tracks PDFs today (the OpenZeppelin audit reports). Exempting them opened a
+ * hole a PDF runbook could walk through — a live "deploy the buy adapter"
+ * instruction in one was caught before that change and passed after it. A
+ * format earns a place here only if NOTHING a reader sees can be recovered
+ * from its bytes; where text is merely encoded rather than absent, the answer
+ * is to extract it, not to skip the file.
+ *
  * Reads the first bytes rather than trusting the extension, and is NOT the
  * retired "any NUL means binary" rule — that one let a document exempt itself
  * from this gate with a single stray byte.
@@ -103,10 +113,8 @@ const BINARY_SIGNATURES = [
   [0x89, 0x50, 0x4e, 0x47], // PNG
   [0xff, 0xd8, 0xff], // JPEG
   [0x47, 0x49, 0x46, 0x38], // GIF8
-  [0x25, 0x50, 0x44, 0x46], // %PDF
   [0x77, 0x4f, 0x46, 0x46], // wOFF
   [0x77, 0x4f, 0x46, 0x32], // wOF2
-  [0x50, 0x4b, 0x03, 0x04], // ZIP family (xlsx/docx/jar)
 ];
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
