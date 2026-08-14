@@ -305,3 +305,20 @@ function tryDecodeCalldata(
     return null;
   }
 }
+
+/**
+ * Is this queued change executable *now*?
+ *
+ * `ready` is an on-chain snapshot taken when this hook last ran, and the hook
+ * has no periodic refresh — so on a dashboard left open across `executesAt` it
+ * stays false indefinitely. Every surface that reports readiness must compare
+ * against a live clock as well, and must do it the SAME way: the knob card and
+ * the page-level summary previously disagreed, one saying "ready to execute"
+ * while the other still said "All still in delay window".
+ */
+export function isTimelockReady(
+  change: Pick<PendingChange, 'ready' | 'executesAt'>,
+  nowSec: number,
+): boolean {
+  return change.ready || nowSec >= change.executesAt;
+}

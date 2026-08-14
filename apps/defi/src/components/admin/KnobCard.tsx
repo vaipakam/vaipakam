@@ -35,7 +35,7 @@ import {
   type RawValue,
 } from '../../lib/protocolConsoleKnobFormat';
 import type { KnobReadResult } from '../../hooks/useAdminKnobValues';
-import type { PendingChange } from '../../hooks/useTimelockPendingChanges';
+import { isTimelockReady, type PendingChange } from '../../hooks/useTimelockPendingChanges';
 import { KnobZoneBar } from './KnobZoneBar';
 import { ProposeChangeModal } from './ProposeChangeModal';
 
@@ -260,7 +260,7 @@ function PendingChangeBanner({ pending }: { pending: PendingChange[] }) {
   // ticking countdown below could reach "executes in 0m" and sit there amber
   // forever, because nothing re-read the flag at the boundary. OR it with the
   // live comparison so the badge flips exactly when the countdown hits zero.
-  const ready = lead.ready || now >= lead.executesAt;
+  const ready = isTimelockReady(lead, now);
   const seconds = Math.max(0, lead.executesAt - now);
   const timeText = ready
     ? 'ready to execute'

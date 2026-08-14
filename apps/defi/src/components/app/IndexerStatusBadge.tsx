@@ -112,7 +112,8 @@ export function IndexerStatusBadge({ compact }: Props) {
   // alerts, allowances, buy-vpfi, data-rights, claims-without-wallet)
   // where the badge is the only subscriber, the probe runs at 180 s
   // instead of 30 s — 6× less background RPC for no UX cost.
-  const { snapshot: watermarkSnapshot } = useLiveWatermark(watermarkPolicy('cool'));
+  const { snapshot: watermarkSnapshot, status: watermarkStatus } =
+    useLiveWatermark(watermarkPolicy('cool'));
   const { maxFrontier, anyLoading } = useDataFreshness();
   // #757 Phase B — orthogonal "transport" dimension: is the page being PUSHED
   // updates (Live) or relying on the always-on background poll (Polling)?
@@ -188,8 +189,17 @@ export function IndexerStatusBadge({ compact }: Props) {
   const watermarkAgeSec = watermarkSnapshot
     ? nowSec - watermarkSnapshot.fetchedAt
     : null;
+  // An EXPLICIT failure outranks the age. `WatermarkContext` publishes
+  // `unreachable` the moment a probe fails, and widening the age threshold to
+  // match the cool tier's cadence (630 s) meant the badge would otherwise keep
+  // showing green for minutes after the app already knew RPC was down. Age
+  // answers "is this snapshot too old to trust"; status answers "did the last
+  // probe actually work", and only the second can be known promptly.
   const watermarkHealthy =
-    safeHead !== null && watermarkAgeSec !== null && watermarkAgeSec < WATERMARK_STALE_SEC;
+    safeHead !== null &&
+    watermarkStatus !== 'unreachable' &&
+    watermarkAgeSec !== null &&
+    watermarkAgeSec < WATERMARK_STALE_SEC;
 
   // `maxFrontier` is the freshest block any of this page's data sources
   // (central indexer OR client-side RPC tail-scans) has reached — what

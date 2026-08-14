@@ -120,7 +120,7 @@ export function ChainDiagnosticsPanel() {
   const { stats } = useOfferStats();
   const { maxFrontier, anyLoading, bySource } = useDataFreshness();
   // Watermark subscriber — the singleton serves it; no extra probe.
-  const { snapshot: watermarkSnapshot } = useLiveWatermark(
+  const { snapshot: watermarkSnapshot, status: watermarkStatus } = useLiveWatermark(
     watermarkPolicy('warm'),
   );
   // #843 delta 2 — realtime "Live updates" section inputs. Transport metrics
@@ -327,6 +327,12 @@ export function ChainDiagnosticsPanel() {
     const liveRpcHealthy =
       watermarkSnapshot &&
       watermarkSnapshot.safeBlock > 0n &&
+      // Status first, for two reasons. It reports a failed probe immediately,
+      // and `fetchedAt` is CARRIED OVER when consecutive probes return identical
+      // counters — so the age below measures "time since the values last moved",
+      // not "time since a probe last succeeded". On a quiet or slow-finality
+      // chain every probe can succeed while this age grows without bound.
+      watermarkStatus !== 'unreachable' &&
       watermarkAgeSec !== null &&
       // Same cadence-derived threshold the badge uses. Numerically 90 s at the
       // `warm` tier today, but written as a derivation so re-tiering this panel
