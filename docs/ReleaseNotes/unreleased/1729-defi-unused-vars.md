@@ -20,9 +20,9 @@ WETH twice more — but both of those are the plain text "WETH" being checked as
 token symbol, not the address. It was confirmed unused before removal, not
 assumed.
 
-The app's lint total drops from 270 problems to 258, all twelve from this group,
-with no change to behaviour: the six that stay are named exactly as they were,
-and the six that go were referenced by nothing.
+Nothing about behaviour changes here: the six that stay are named exactly as
+they were, and the six that go were referenced by nothing. The combined effect
+of both groups on the app's lint total is given at the end.
 
 One deliberate scope note. The sibling app carries the same rule and the same
 underscore convention, but has no declarations of this kind today, so the option
@@ -46,3 +46,9 @@ real work and then silently continues into the next one — is still reported.
 That was confirmed against a throwaway example rather than assumed, since
 relaxing a correctness rule on the strength of a plausible-sounding option would
 be the wrong way round.
+
+Together the two groups take the app's lint total from 270 problems to 256 —
+fourteen reports resolved, twelve from the unused-declaration group and two from
+the grouped-case one — and its error count from 263 to 249. Six declarations
+were deleted; everything else was a matter of telling the rules what the code
+already said.
