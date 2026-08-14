@@ -177,6 +177,17 @@ const DEAD_TOKENS = [
   'vpfiinvalidoriginchainid',
   'vpfibuyamounttoosmall',
   'vpfibuydisabled',
+  // The retired CONFIG knob and EVENTS. RUNBOOK.md:116-119 records
+  // VPFI_BUY_REFUND_TIMEOUT as dead; EventSourcingAudit.md:276,389-390 names
+  // the retired events. None is declared in current source, so guidance to set
+  // the knob or subscribe to the events would restore the removed flow without
+  // naming a contract, selector or error.
+  'vpfibuyrefundtimeout',
+  'bridgedbuyprocessed',
+  'buytimedoutrefunded',
+  'buyoptionsset',
+  'buyresolvedsuccess',
+  'buyrefunded',
   // The removed INTERFACE, TEST and MESSAGE names (spec :111-112, :148).
   // Prose can name the deleted flow through these without ever mentioning a
   // contract or a selector — and one is not merely prose: `foundry.toml:271`
@@ -288,7 +299,7 @@ const EXCLUDED_PREFIXES = [
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "232b194b311b"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b2f6b2e30107"]],
-  ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "def2086c70ea"]],
+  ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d0da136506e3"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "46d05ee57880"]],
   ["apps/agent/README.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "fa4fea12281e"]],
   ["apps/agent/src/env.ts", [5, "RETRACTION — the RPC-breadth note explaining #687-A removed the watchdog that justified it", "1049f8e7e767"]],
@@ -304,7 +315,7 @@ const PINNED = new Map([
   ["apps/www/src/pages/BuyVPFIMarketing.tsx", [1, "LIVE-TEXT — user-facing marketing surface; the most legally sensitive entry here", "e4bab2aafa5c"]],
   ["contracts/.env.example", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "830e6452fde1"]],
   ["contracts/.gas-snapshot", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9d45055c9084"]],
-  ["contracts/RUNBOOK.md", [17, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b93076c63516"]],
+  ["contracts/RUNBOOK.md", [18, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "968b066e3406"]],
   ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "d05158e7ef0e"]],
   ["contracts/foundry.toml", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "6f81ed69763b"]],
   ["contracts/script/AnvilNewPositiveFlows.s.sol", [1, "RETRACTION — removed-step note", "e626f5dc0b3e"]],
@@ -332,7 +343,7 @@ const PINNED = new Map([
   ["docs/DesignsAndPlans/CloudflareStagingDeployPlan.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "da070633f84f"]],
   ["docs/DesignsAndPlans/CrossChainRewardSystem.md", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c83f9372ca91"]],
   ["docs/DesignsAndPlans/DecentralizedPlatformArchitecture.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "169c4ce146a2"]],
-  ["docs/DesignsAndPlans/EventSourcingAudit.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8320b6f91aa9"]],
+  ["docs/DesignsAndPlans/EventSourcingAudit.md", [12, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f051b4c0dfd1"]],
   ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [26, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d6b5920b132a"]],
   ["docs/DesignsAndPlans/OfferFillModesDesign.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "eeab8694d981"]],
   ["docs/DesignsAndPlans/OssificationRoadmap.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b40ea1fd52b7"]],
@@ -345,7 +356,7 @@ const PINNED = new Map([
   ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "3751e7aa744a"]],
   ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9b4e8ec98ce6"]],
   ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "92c3dfed32ec"]],
-  ["docs/ToDo.md", [28, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "92e2ac9e44c1"]],
+  ["docs/ToDo.md", [30, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0267d07e75d7"]],
   ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1693b2322bfa"]],
   ["docs/internal/DeployOnTestnet.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d0314d1c88c5"]],
   ["docs/internal/Issue687A-FrontendExcisionScout.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f6482f66b3e4"]],
@@ -355,14 +366,14 @@ const PINNED = new Map([
   ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1c8fb1ea66dc"]],
   ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "56475d6e7aa7"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "c79a0f5d509b"]],
-  ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "7e03e7a7ef8b"]],
-  ["docs/ops/BaseSepoliaDeploy.md", [27, "LIVE-TEXT — known debt", "3d53b7dda509"]],
+  ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "0e318eb4c650"]],
+  ["docs/ops/BaseSepoliaDeploy.md", [27, "LIVE-TEXT — known debt", "262ece969294"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "71f856c2c04b"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "4f51827bdd85"]],
-  ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "094026b50a27"]],
-  ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "7c3b6669807b"]],
+  ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "3a95991f2e38"]],
+  ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "98772e8c78b6"]],
   ["docs/ops/VPFITokenRotationRunbook.md", [2, "HISTORICAL — rotation-scope note", "0c737b9a0652"]],
-  ["docs/ops/tenderly-paste/Diamond-full.json", [27, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "3fbf9b3e98db"]],
+  ["docs/ops/tenderly-paste/Diamond-full.json", [33, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "c731d95fb3ed"]],
   ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "cbe6e6147c62"]],
   ["ops/subgraph/abis/Diamond.json", [24, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "bbc6f1112b97"]],
   ["packages/contracts/src/abis/AddCollateralFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
@@ -481,12 +492,23 @@ function normalize(text) {
 function normalizeWithMap(text) {
   const out = [];
   const map = [];
-  const lower = text.toLowerCase();
-  for (let i = 0; i < lower.length; i++) {
-    const c = lower[i];
-    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-      out.push(c);
-      map.push(i);
+  // Iterate the ORIGINAL text and lowercase ONE CHARACTER AT A TIME, so every
+  // emitted character maps back to the position it actually came from.
+  //
+  // The previous version lowercased the whole string first and indexed THAT,
+  // which silently assumed lowercasing preserves length. It does not: Turkish
+  // `İ`.toLowerCase() is two code units (`i` + combining dot). One such
+  // character anywhere in a file shifted every subsequent mapped offset by one,
+  // which corrupts `identifierOnly`, the `notFollowedBy` guard, the block
+  // boundary test and the digest line window all at once — and fails toward
+  // GREEN, because a shifted span stops looking like an identifier.
+  for (let i = 0; i < text.length; i++) {
+    const lowered = text[i].toLowerCase();
+    for (const c of lowered) {
+      if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+        out.push(c);
+        map.push(i);
+      }
     }
   }
   return { norm: out.join(''), map };
@@ -606,6 +628,18 @@ function scanFile(path) {
   const contiguous = (a, b) => map[b] - map[a] === b - a;
 
   /**
+   * Is the suffix at normalized `end` part of the SAME WORD as what precedes it?
+   *
+   * True when the only characters between the token's last letter and the
+   * suffix's last letter are `-` or `_`. See the `notFollowedBy` call site.
+   */
+  const joinedToSuffix = (end, suffixLength) => {
+    const gap = text.slice(map[end - 1] + 1, map[end]);
+    if (!/^[-_]*$/.test(gap)) return false;
+    return /^[A-Za-z0-9_-]+$/.test(text.slice(map[end], map[end + suffixLength - 1] + 1));
+  };
+
+  /**
    * Is the SOURCE span behind normalized positions a..b a single identifier —
    * one word, separated at most by `_` or `-`?
    *
@@ -703,12 +737,14 @@ function scanFile(path) {
       const skip = notFollowedBy.some(
         (suffix) =>
           norm.startsWith(suffix, end) &&
-          // Contiguity is checked across the JOIN only — from the token's last
-          // character through the suffix's last — never across the whole token.
-          // The token itself is usually punctuated ("fixed-rate VPFI buy"), so
-          // requiring contiguity from its start made the guard never fire and
-          // the false positive survived its own fix.
-          contiguous(end - 1, end + suffix.length - 1),
+          // The suffix must be JOINED to the token — same word, allowing only
+          // intra-word separators. `buyback`, `buy-back` and `buy_back` are all
+          // the surviving treasury feature and must be skipped; "buy. Back up
+          // config" is a real mention followed by a new sentence and must not
+          // be. Strict contiguity got the first right and the hyphenated
+          // spellings wrong, reporting live buy-back work as removed-surface
+          // residue.
+          joinedToSuffix(end, suffix.length),
       );
       if (skip) continue;
       if (identifierOnly && !isIdentifierSpan(at, end - 1)) continue;
@@ -752,6 +788,13 @@ function scanFile(path) {
     const chain = [];
     let deepest = Infinity;
     for (let i = lineIdx; i >= 0; i--) {
+      // Fenced lines are CODE. `# Treasury` inside a fenced shell snippet is a
+      // comment, but was read as a level-1 heading and TERMINATED the walk —
+      // in contracts/RUNBOOK.md the fenced `# Treasury` at :72 hid the real
+      // `### Required env vars` at :44 from the mention at :77, so retitling
+      // that real heading stayed invisible. Same Markdown-vs-code confusion as
+      // the boundary rules, one function along.
+      if (inFence[i]) continue;
       const atx = /^\s{0,3}(#{1,6})\s/.exec(lines[i]);
       const bold = /^\s{0,3}\*\*[^*]+\*\*/.test(lines[i]);
       if (!atx && !bold) continue;
@@ -795,27 +838,6 @@ function scanFile(path) {
     ? createHash('sha256').update(units.join('|')).digest('hex').slice(0, 12)
     : '';
   return { hits: units.length, digest };
-}
-
-/**
- * Every ledger entry must carry a digest.
- *
- * Comparison used to be guarded by `pinnedDigest && ...`, which silently read a
- * missing third element as "this file opts out of digest checking" — so an
- * entry copied from the pre-digest two-element format would disable the
- * protection for that file with nothing to show for it. A ledger invariant that
- * can be switched off by omission is not an invariant.
- */
-const malformed = [...PINNED.entries()].filter(
-  ([, v]) => !Array.isArray(v) || v.length !== 3 || typeof v[2] !== 'string' || !v[2],
-);
-if (malformed.length) {
-  console.error('check-excision-residue: FAILED — malformed PINNED entries\n');
-  for (const [file] of malformed) {
-    console.error(`  ${file}  — needs [count, reason, digest]; digest missing or empty`);
-  }
-  console.error('\nFix, then re-run with --write-pins to regenerate the ledger.');
-  process.exit(1);
 }
 
 /**
@@ -874,6 +896,28 @@ if (process.argv.includes('--write-pins')) {
   );
   process.exit(0);
 }
+
+/**
+ * Every ledger entry must carry a digest.
+ *
+ * Comparison used to be guarded by `pinnedDigest && ...`, which silently read a
+ * missing third element as "this file opts out of digest checking" — so an
+ * entry copied from the pre-digest two-element format would disable the
+ * protection for that file with nothing to show for it. A ledger invariant that
+ * can be switched off by omission is not an invariant.
+ */
+const malformed = [...PINNED.entries()].filter(
+  ([, v]) => !Array.isArray(v) || v.length !== 3 || typeof v[2] !== 'string' || !v[2],
+);
+if (malformed.length) {
+  console.error('check-excision-residue: FAILED — malformed PINNED entries\n');
+  for (const [file] of malformed) {
+    console.error(`  ${file}  — needs [count, reason, digest]; digest missing or empty`);
+  }
+  console.error('\nFix, then re-run with --write-pins to regenerate the ledger.');
+  process.exit(1);
+}
+
 
 const grew = [];
 const shrank = [];
@@ -953,13 +997,18 @@ if (vanished.length) {
 }
 
 if (changed.length) {
-  console.error('SAME count, DIFFERENT mentions (an offsetting edit):');
+  console.error('SAME count, CONTEXT CHANGED (mentions may be identical):');
   for (const c of changed) console.error(`  ${c.file}  digest ${c.was} → ${c.now}`);
   console.error(
-    '\n  One mention was removed and another added in the same file, so the\n' +
-      '  total did not move. Read the new one. If it is a retraction note,\n' +
-      '  update this file\u2019s digest in PINNED; if it describes the removed\n' +
-      '  surface as live, fix the text.\n',
+    '\n  The count is unchanged but the surrounding text is not. EITHER a\n' +
+      '  mention was swapped for a different one, OR the same mentions are\n' +
+      '  still there and their context moved — a reflow, a formatting change,\n' +
+      '  nearby wording, or the governing heading. The digest covers raw\n' +
+      '  context precisely so a retraction cannot be reworded or struck\n' +
+      '  through invisibly, which means benign context edits land here too.\n' +
+      '  Read the diff for this file. If the mentions still say what they\n' +
+      '  said, re-pin with --write-pins; if any now reads as live guidance,\n' +
+      '  fix the text.\n',
   );
 }
 

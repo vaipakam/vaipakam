@@ -117,12 +117,21 @@ silenced a real mention inside a quoted code sample, another blocked a document
 merely because a heading interrupted a paragraph. The rules were guesses about
 prose, and prose does not cooperate.
 
-They were replaced by a single narrower requirement: those two names, and only
-those two, must appear as one word to count. Everything about where sentences
-and paragraphs end was deleted. The check now covers slightly less — it will no
-longer notice those two names written as separated prose — and is far less
-likely to be wrong in either direction, which on something that blocks every
-change is the better trade.
+The first response was to require those two names, and only those two, to
+appear as one word — and to delete everything about where sentences and
+paragraphs end. That went too far. The block rules had been quietly doing the
+same job for two other names that are also ordinary words in sequence, so
+removing them made sentences like "Decide what to buy. Adapter selection
+follows." fail as though they described the removed component.
+
+What ships is both: the two ordinary word pairs must appear as one word, and a
+mention still cannot span a sentence end, a paragraph break, a table cell, or —
+in documents only, and never inside a quoted code sample — a heading or list
+item. The document-only qualification is not incidental. The characters that
+open a heading or a bullet in a document are comment and continuation markers
+in code, and applying either rule everywhere silenced real findings twice: once
+in a code sample pasted into a document, once in two deployment scripts whose
+comments wrap across lines.
 
 The removed error conditions were also added to the list, which is where the
 count grew sharply: one of them is declared in a shared interface file, so it
