@@ -25,7 +25,17 @@ Two things it used to say alongside that are **withdrawn**:
 
 **Non-goals:** no autonomous on-chain submissions (those belong to `apps/keeper`); no chain-event indexing into D1 (that belongs to `apps/indexer`).
 
-**This Worker DOES expose user-facing writes** — `PUT /thresholds`, `POST /link/telegram`, `POST /support/ticket` and the diagnostics endpoints all mutate D1 or external state. This section used to claim "no user-facing write endpoints (writes happen via the connected app + a wallet signature)". Both halves were wrong, and the second is the dangerous one: **these routes are not wallet-signature-gated.** `POST /support/ticket` deliberately accepts no wallet identity, `/diag/record` relies on CORS + rate limiting, and ordinary `/thresholds` updates are signature-free. Their real controls are origin checks and rate limits — review those, and do not assume a signature stands behind them.
+**This Worker DOES expose user-facing writes** — `PUT /thresholds`, `POST /link/telegram`, `POST /support/ticket` and the diagnostics endpoints all mutate D1 or external state. This section used to claim "no user-facing write endpoints (writes happen via the connected app + a wallet signature)". Both halves were wrong. **Their authentication differs per route — do not assume one answer covers them:**
+
+| Route | Proof required |
+|---|---|
+| `POST /link/telegram` | **EIP-191 ownership proof**, parsed and verified before a code is issued |
+| Diagnostics administration (legal-hold / erasure) | signature- or role-gated |
+| `POST /support/ticket` | **none** — deliberately accepts no wallet identity |
+| `POST /diag/record` | **none** — CORS + rate limiting only |
+| `PUT /thresholds` (ordinary path) | **none** — signature-free |
+
+An earlier version of this paragraph swung the other way and called the whole set "not wallet-signature-gated", which erased the real controls on the first two. Check the route you care about; for the unsigned ones the actual protection is origin checks and rate limits.
 
 ## How to run
 

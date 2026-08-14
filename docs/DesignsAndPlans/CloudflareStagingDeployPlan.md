@@ -118,9 +118,25 @@ as a privilege boundary:
   "promote on one lucky quote", not "promote from nothing".
 
   So the honest statement is: a compromised indexer cannot move funds
-  **directly**, but it can (a) publish listings to a live marketplace
-  under the project's API key, and (b) strip the time-based safety
-  margin from a keeper-signed risk-parameter change. Whether the answer
+  **directly**, but it can (a) re-expose already-authorised listings on
+  a live marketplace under the project's API key, (b) strip the
+  time-based safety margin from a keeper-signed risk-parameter change,
+  and (c) **suppress keeper work by asserting it is already done.**
+
+  (c) is a distinct shape from (a) and (b) and this list omitted it
+  through two rounds. Inserting a `(chain_id, day_id)` row into
+  `keeper_commitment_day` makes `getCommitmentScanState` report that day
+  resolved, and `runCommitmentReport` then takes its `continue` —
+  a **zero-RPC skip with no on-chain verification** — so the commitment
+  report never sends. Base waits on that report before reward
+  remittance, so the effect is a stalled reward pipeline rather than a
+  bad write. Corrupting shared state to make a signing Worker *do the
+  wrong thing* is the obvious risk; making it *skip work it believes is
+  finished* is the quieter one, and the `zero-RPC` fast paths are
+  exactly where it lands. Audit every keeper pass that trusts a D1 row
+  as a completion record, not just those that trust one as an input.
+
+  Whether the answer
   is storage isolation, per-Worker databases, or the keeper validating
   D1 inputs it did not produce is a real architectural decision, tracked
   as **#1722** — not settled here, and deliberately not papered over

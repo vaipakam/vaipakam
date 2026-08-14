@@ -38,7 +38,7 @@
  *
  * NO Telegram webhook, NO Frames, NO quote / scan proxies — those
  * live on apps/agent. NO HF watcher / liquidation — that's apps/keeper.
- * The indexer is operator-key-free.
+ * The indexer is free of on-chain transaction keys (NOT credential-free — it binds OPENSEA_API_KEY, which authorises upstream publication, plus three Alchemy webhook verification keys).
  *
  * **Not read-only.** This block used to say the Worker accepts ONE
  * write surface. There are THREE POST routes below —

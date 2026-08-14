@@ -260,7 +260,7 @@ Keeper reads-only: `loans`, `offers`, `indexer_cursor` (the head-block stamp for
 
 ## Related
 
-- `apps/agent` — the proactive-notifications / Frame / Telegram-bot Worker (no signing key).
+- `apps/agent` — the proactive-notifications / Frame / Telegram-bot Worker (no **on-chain transaction** key; it does hold `PUSH_CHANNEL_PK`, an Ethereum key loaded as an ethers `Wallet` to sign Push notifications).
 - `apps/indexer` — chain→D1 indexer + read-API; NOT read-only (writes D1 via POST routes, publishes borrower-authorised, on-chain-bound listings to OpenSea)).
 - `vaipakam/vaipakam-keeper-bot` (sibling repo) — public reference keeper bot for third-party operators.
 - `packages/contracts` — ABI / deployment source.
