@@ -208,4 +208,22 @@ already carried. This keeps being the harder half to get right: the check
 blocks every change, so a false alarm obstructs unrelated work, and that cost
 is paid by whoever is unlucky enough to write the sentence.
 
+Character references belong to that same "what does a reader see" question and
+were the next instance of it: a document writing a non-breaking space between
+two words shows the reader one phrase, while the source spells four extra
+letters between them, and the check read the source. They are now resolved to
+what is rendered.
+
+One further gap was of a different kind, and subtler than anything above,
+because it concerned how the fingerprint is *assembled* rather than what it
+covers. Each mention's surrounding text was joined into one string with a
+separator, and that separator is an ordinary character which the text itself
+routinely contains — every row of every table is full of them. So two
+different sets of contexts could produce the same string to fingerprint, and
+an edit that moved text across one of those boundaries would leave the
+fingerprint unmoved while changing what the document says. That is the exact
+guarantee the fingerprint exists to provide, defeated without needing to break
+any cryptography — just by the punctuation of ordinary prose. The pieces are
+now assembled unambiguously.
+
 No behaviour changes in the product.
