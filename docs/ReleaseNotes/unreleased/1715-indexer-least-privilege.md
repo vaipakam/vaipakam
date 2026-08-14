@@ -6,10 +6,10 @@ does that by describing what each one can reach. The entry for the indexer said
 it was read-only, handled no HTTP-level credentials, and therefore sat at the
 bottom of the risk ordering.
 
-Both of those statements were wrong. That Worker holds fifteen stored
+Both of those statements were wrong. That Worker holds sixteen stored
 credentials, not the three the document listed: four are the kind an auditor
 pictures — one marketplace key and three shared secrets used to authenticate incoming webhooks — shared, so holding one lets you *forge* a delivery as well as check one — and the
-other eleven are the network endpoints it reads chains through, each of which
+other twelve are network endpoints it binds for chain reads, each of which
 carries a provider key inside the address itself and is therefore just as
 leakable and just as billable. Counting only the first four reproduces the
 undercount this change exists to correct. Those four credentials are used
@@ -98,8 +98,9 @@ each of the same kind — a summary that had aged past the thing it summarised:
 
 - **Authentication differs per endpoint and the note first said otherwise in
   both directions.** The original claimed every write was backed by a wallet
-  signature; the first correction claimed none were. In fact one endpoint
-  verifies an ownership proof and the administration endpoints are gated, while
+  signature; the first correction claimed none were. In fact the link, unlink
+  and test-send endpoints each verify an ownership proof over their own
+  message, and the administration endpoints are gated, while
   three others deliberately take no wallet identity. Nor are those three alike:
   two are rate-limited and one — the threshold-update endpoint — is protected
   only by an origin check, so an earlier draft claiming the unsigned routes
@@ -124,7 +125,16 @@ each of the same kind — a summary that had aged past the thing it summarised:
   change rewrote. Both now carry the same qualification as everywhere else: no
   transaction key rules out moving funds *directly*, and nothing further. The
   quoted paragraph also asserted that the notifications component holds no
-  network endpoints, which is not true — it reads more chains than the signing
-  one does.
+  network endpoints, which is not true — it binds more of them than the signing
+  component does.
+
+  The distinction between *binding* a network endpoint and *reading* the chain
+  behind it matters, and an earlier draft of this very bullet got it wrong in
+  the more alarming direction. The extra endpoints the notifications component
+  binds are all for one network that has no deployment record, so the startup
+  path discards them and both components reach the same set. What the extra
+  bindings widen is the surface a credential leak would expose, not the set of
+  chains anything actually talks to. Every count in this note is of secrets
+  bound, on the same basis.
 
 No behaviour changes.

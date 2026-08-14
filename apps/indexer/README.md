@@ -53,7 +53,7 @@ Worker secrets:
 
 | Secret | Purpose |
 |---|---|
-| `RPC_*` (eleven) | Per-chain RPC URLs — **carry provider API keys**, so they are leakable, billable credentials, not just endpoints. Eleven, not the full chain set: `RPC_POLYGON` is bound by the agent but not here. |
+| `RPC_*` (twelve) | Per-chain RPC URLs — **carry provider API keys**, so they are leakable, billable credentials, not just endpoints. Twelve BOUND, which is not the same as twelve reached: `RPC_POLYGON_AMOY` has no `deployments.json` record and is dropped at the `getDeployment` gate. Nor is it the full bound set — the agent additionally binds `RPC_POLYGON` (thirteen); the keeper binds neither Polygon entry (eleven). Provision from each Worker's own `wrangler.jsonc`. |
 | `OPENSEA_API_KEY` | Authenticated **outbound publication** of borrower-authorised, on-chain-bound Seaport listings. A write credential upstream, not a read key. |
 | `ALCHEMY_WEBHOOK_SIGNING_KEY_84532` | HMAC secret for inbound Base-Sepolia chain-event webhooks. **Symmetric — holding it permits forging a delivery, not just verifying one.** |
 | `ALCHEMY_WEBHOOK_SIGNING_KEY_421614` | Same, Arbitrum Sepolia. |

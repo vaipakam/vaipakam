@@ -37,7 +37,7 @@ Two things it used to say alongside that are **withdrawn**:
 | `POST /diag/record` | **none** — CORS + rate limiting only |
 | `PUT /thresholds` (ordinary path) | **none** — signature-free |
 
-An earlier version of this paragraph swung the other way and called the whole set "not wallet-signature-gated", which erased the real controls on the first two.
+An earlier version of this paragraph swung the other way and called the whole set "not wallet-signature-gated", which erased the real controls on the gated routes — `POST /link/telegram`, `POST /unlink/telegram`, `POST /telegram/test` and diagnostics administration. Name them rather than counting them: an earlier draft said "the first two", which silently went stale the moment the table grew.
 
 **The unsigned three are not uniformly protected either.** `POST /support/ticket` and `POST /diag/record` each have a rate-limit binding; **`PUT /thresholds` has none** — it is reached after the origin check and neither its dispatch nor `handlePutThresholds` calls a limiter, so unbounded threshold upserts are NOT mitigated. An earlier draft said the unsigned routes were protected by "origin checks and rate limits", which asserted a control that does not exist on that route. Check the specific route.
 

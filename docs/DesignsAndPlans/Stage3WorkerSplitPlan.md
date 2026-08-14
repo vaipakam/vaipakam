@@ -207,8 +207,16 @@ The matcher is the **third** `KEEPER_PRIVATE_KEY` consumer (after
 HF liquidation and the daily oracle snapshot). All three are
 co-located on `apps/keeper` per the staging plan §2 contract:
 `KEEPER_PRIVATE_KEY` lives on exactly **one** Worker — the keeper.
-Putting all three signing tasks under one signing-key holder keeps
-the on-chain transaction key in one place.
+Adding the matcher changes nothing about that: it is one more signed
+workload under the existing key-holder.
+
+**Do not read the liquidation / snapshot / matcher trio as the keeper's
+signing inventory** — they are the three this document happened to
+discuss. The live keeper signs from **eight** modules across at least
+thirteen Diamond calls plus two on the FlashLoanLiquidator; the
+current list, and the two ways earlier attempts to enumerate it went
+wrong, are in staging plan §2. Calling these three "all" the signing
+tasks is the exact undercount that §2 withdraws.
 
 This paragraph used to quote an older version of that §2 contract —
 "keeper carries `KEEPER_PRIVATE_KEY` + per-chain RPC URLs; agent
@@ -216,10 +224,19 @@ holds NEITHER. A buggy agent produces stale data; a buggy keeper
 loses funds" — and **both halves of the quote are withdrawn**; see
 the staging plan §2, which is the live text:
 
-- *"agent holds NEITHER"* — agent holds per-chain RPC URLs on more
-  chains than the keeper does, and it holds `PUSH_CHANNEL_PK`, a
-  real Ethereum key. Only the on-chain **transaction** key is
+- *"agent holds NEITHER"* — agent **binds more `RPC_*` secrets** than
+  the keeper (13 to 11), and it holds `PUSH_CHANNEL_PK`, a real
+  Ethereum key. Only the on-chain **transaction** key is
   keeper-exclusive.
+
+  Say *binds*, not *reads*: the two entries agent has and keeper
+  lacks are `RPC_POLYGON` and `RPC_POLYGON_AMOY`, and there is no
+  Polygon record in `deployments.json`, so `getChainConfigs` drops
+  them at the `getDeployment` gate (`env.ts:504`). Both Workers
+  therefore reach the same eleven non-Polygon entries. The extra
+  bindings are provisioned-ahead-of-need secrets — they widen the
+  **secret** surface a leak would expose without widening the
+  **runtime chain** surface.
 - *"a buggy agent produces stale data"* — the agent deletes
   diagnostics and support records, notifies real users, publishes
   listings, and shares a **database**-scoped D1 binding with the
