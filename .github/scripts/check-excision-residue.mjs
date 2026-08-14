@@ -91,6 +91,23 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+
+/**
+ * Signature test for formats whose bytes are not prose in any sense.
+ *
+ * Reads the first bytes rather than trusting the extension, and is NOT the
+ * retired "any NUL means binary" rule — that one let a document exempt itself
+ * from this gate with a single stray byte.
+ */
+const BINARY_SIGNATURES = [
+  [0x89, 0x50, 0x4e, 0x47], // PNG
+  [0xff, 0xd8, 0xff], // JPEG
+  [0x47, 0x49, 0x46, 0x38], // GIF8
+  [0x25, 0x50, 0x44, 0x46], // %PDF
+  [0x77, 0x4f, 0x46, 0x46], // wOFF
+  [0x77, 0x4f, 0x46, 0x32], // wOF2
+  [0x50, 0x4b, 0x03, 0x04], // ZIP family (xlsx/docx/jar)
+];
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -816,6 +833,17 @@ const DIGEST_CONTEXT_LINES = 2;
  * side, normalized; units are sorted then hashed, so moving a mention within a
  * file without changing its wording is invisible while rewording is not.
  */
+function isRecognizedBinary(path) {
+  let head;
+  try {
+    head = readFileSync(join(REPO_ROOT, path)).subarray(0, 8);
+  } catch {
+    // Unreadable is handled by scanFile's fail-closed path; never claim binary.
+    return false;
+  }
+  return BINARY_SIGNATURES.some((sig) => sig.every((byte, i) => head[i] === byte));
+}
+
 function scanFile(path) {
   let text;
   try {
@@ -835,7 +863,21 @@ function scanFile(path) {
     );
   }
 
-  // NO binary early-return. An earlier version bailed out on the first NUL
+  // Recognized BINARY FORMATS, by signature. An image's bytes are not prose:
+  // a PNG whose `tEXt` chunk happens to hold `buy` as a keyword and `adapter`
+  // as its value had the NUL field separator discarded like any other
+  // non-alphanumeric byte, fused into the dead token, and failed an asset-only
+  // change on a field no reader ever sees.
+  //
+  // Keyed on the FORMAT SIGNATURE, deliberately NOT on "contains a NUL" — that
+  // rule is the total bypass described below, and reintroducing it is exactly
+  // what this must not do. A file that really is a PNG cannot also be the
+  // documentation this gate reads, so the exemption cannot be claimed by text.
+  // The signature is read from the RAW BYTES: `text` has already been decoded
+  // as UTF-8, which mangles the very bytes being tested.
+  if (isRecognizedBinary(path)) return { hits: 0, digest: '' };
+
+  // NO binary early-return ON NUL BYTES. An earlier version bailed out on the first NUL
   // byte, which made a single NUL a COMPLETE bypass: a document with a live
   // deploy instruction plus one NUL was exempt from the gate entirely, and any
   // UTF-16 text file took that path naturally. Normalization discards NUL along
@@ -1073,7 +1115,7 @@ function scanFile(path) {
     return out;
   };
 
-  const isIdentifierSpan = (map, a, b) => {
+  const isIdentifierSpan = (map, a, b, inTagInterior = false) => {
     // `renderRefs` first: the normalizer decodes character references, but the
     // offsets it records all point at the reference's `&`, so this slice sees
     // the SOURCE spelling. `buyOpti&#111;ns` renders as the exact retired
@@ -1091,7 +1133,7 @@ function scanFile(path) {
     const from = map[a];
     const to = identifierSpanEnd(map[b]);
     const seen = renderRefs(
-      MARKUP_EXTENSIONS.test(path) && !literalAt(from)
+      !inTagInterior && MARKUP_EXTENSIONS.test(path) && !literalAt(from)
         ? stripRecognizedTags(from, to)
         : text.slice(from, to),
     );
@@ -1279,7 +1321,11 @@ function scanFile(path) {
    * normalized coordinates are unrelated. The source text is the one frame
    * both can be expressed in, so it is the one the dedupe below works in.
    */
-  const collectMatches = (norm, map) => {
+  // `inTagInterior` — the second stream scans the INSIDE of a recognized tag,
+  // where the match legitimately sits within a `tagSpans` entry. Stripping
+  // recognized tags there deletes the candidate itself, which silently undid
+  // the attribute/component-name scanning this stream exists for.
+  const collectMatches = (norm, map, inTagInterior = false) => {
     const found = [];
     for (const { token, notFollowedBy, identifierOnly } of DEAD_TOKEN_RECORDS) {
       let from = 0;
@@ -1301,7 +1347,8 @@ function scanFile(path) {
             joinedToSuffix(map, end, suffix.length),
         );
         if (skip) continue;
-        if (identifierOnly && !isIdentifierSpan(map, at, end - 1)) continue;
+        if (identifierOnly && !isIdentifierSpan(map, at, end - 1, inTagInterior))
+          continue;
         if (crossesBlockBoundary(map, at, end - 1)) continue;
         found.push({ start: map[at], end: map[end - 1] + 1 });
       }
@@ -1327,6 +1374,7 @@ function scanFile(path) {
     for (const m of collectMatches(
       tagNorm,
       tagMap.map((o) => o + s),
+      true,
     )) {
       matches.push(m);
     }
