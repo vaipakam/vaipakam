@@ -276,14 +276,14 @@ export function SwapToRepayIntentPanel({
       cancelled = true;
       clearInterval(id);
     };
-    // `address` IS a dependency: the indexer-down fallback below stamps
-    // `committedBy` with the connected wallet, and the 15 s interval closes
-    // over whatever it was when the effect last ran. Without it, switching
-    // wallets leaves the projection attributed to the previous one until an
-    // unrelated dependency changes. Nothing reads that field today, so there is
-    // no visible symptom yet — which is exactly why it would have been a
-    // surprise later. Wallet changes are rare, so re-running here costs
-    // nothing.
+    // `address` is listed for DIRECTNESS, not to fix a live staleness bug. The
+    // indexer-down fallback below stamps `committedBy` with the connected
+    // wallet, and an account switch already restarts this effect indirectly:
+    // `diamond` is memoized over wagmi's wallet client, which wagmi
+    // invalidates on that switch. Naming the value the body actually reads
+    // means the guarantee no longer depends on that chain of derivations
+    // holding — and nothing reads `committedBy` today anyway, so there is no
+    // symptom either way.
   }, [loanId, chainId, refreshTick, optimisticPending, diamond, address]);
 
   // Codex round-1 PR #423 P2 — read live auction-max bound from

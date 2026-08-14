@@ -5,18 +5,17 @@ seconds so a fill or a cancellation shows up without a reload. When the indexer
 is unavailable it falls back to reading the chain directly and fills in the
 missing pieces itself, including stamping the record with whoever is connected.
 
-That stamp was captured once, when the refresh loop started, and reused on every
-tick afterwards. Switch wallets with the panel open and it carried on labelling
-the intent with the previous account — indefinitely, because nothing else about
-the loan had changed to prompt a fresh read.
+The refresh did not name the connected wallet among the things it watches. It
+kept working anyway, because switching accounts replaces the handle the panel
+uses to talk to the contract, and that handle *was* named — so the refresh
+restarted, and the stamp was rewritten with the new account.
 
-Worth being precise about the consequence, because it is smaller than it sounds:
-nothing currently displays that field or decides anything from it. The cancel
-button is enabled by the intent's deadline, not by who committed it. So there
-was no wrong thing on screen today. What there was is a value quietly disagreeing
-with reality, in a fallback path that only runs when something else is already
-broken, waiting for the first person to read it.
+So this is not a fix for something users were seeing. It is the refresh now
+naming the thing it actually reads, instead of relying on a second value that
+happens to change at the same moment. Two separate reviews were needed to
+establish that, and the first two accounts of it — including one in this very
+note — described a staleness that the indirect route had already prevented.
 
-The refresh now takes the connected wallet into account, so switching accounts
-re-reads rather than reusing the old stamp. Wallet switches are rare, so this
-costs nothing in practice.
+Nothing displays that stamp or decides anything from it today either. Recorded
+plainly because the alternative is a changelog claiming a fix for a problem
+nobody had.
