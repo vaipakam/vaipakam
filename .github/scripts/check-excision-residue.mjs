@@ -272,11 +272,11 @@ const EXCLUDED_PREFIXES = [
  *                count is a known debt, not an endorsement.
  */
 const PINNED = new Map([
-  [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "e99aefdb4db0"]],
-  ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "87523a9fa89c"]],
-  ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0527324edb41"]],
-  ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7871a1b0db86"]],
-  ["apps/agent/README.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f21208094d3c"]],
+  [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "a5fb82e7e79a"]],
+  ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9062087c85a0"]],
+  ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "68a43d5e5a4f"]],
+  ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0186b56dd4cb"]],
+  ["apps/agent/README.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "4d925cc4505e"]],
   ["apps/agent/src/env.ts", [5, "RETRACTION — the RPC-breadth note explaining #687-A removed the watchdog that justified it", "506ac2098d49"]],
   ["apps/agent/src/index.ts", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "4345c697dee6"]],
   ["apps/agent/wrangler.jsonc", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "fba267868a99"]],
@@ -286,12 +286,12 @@ const PINNED = new Map([
   ["apps/defi/src/hooks/useTimelockPendingChanges.ts", [1, "RETRACTION — replaces a receiver-specific skip that no longer applies", "12ff6d8b623f"]],
   ["apps/defi/src/i18n/glossary.ts", [2, "HISTORICAL — do-not-translate entry retained for historical copy", "7f8daa30207b"]],
   ["apps/defi/src/pages/AdminDashboard.tsx", [1, "RETRACTION — notes why the mirror-chain receiver knobs are gone", "512e6c5717b9"]],
-  ["apps/www/src/content/whitepaper/Whitepaper.en.md", [4, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "dca8713ae6c2"]],
+  ["apps/www/src/content/whitepaper/Whitepaper.en.md", [4, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "85a8b72aa4da"]],
   ["apps/www/src/pages/BuyVPFIMarketing.tsx", [1, "LIVE-TEXT — user-facing marketing surface; the most legally sensitive entry here", "2e3d73493eac"]],
   ["contracts/.env.example", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9deaa36ccff5"]],
   ["contracts/.gas-snapshot", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "cf70ddc30844"]],
-  ["contracts/RUNBOOK.md", [17, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1c16fd533549"]],
-  ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "ebdcd995d31a"]],
+  ["contracts/RUNBOOK.md", [17, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "781f5a40dd12"]],
+  ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "fca6fa6272bf"]],
   ["contracts/foundry.toml", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d4e43e43fb61"]],
   ["contracts/script/AnvilNewPositiveFlows.s.sol", [1, "RETRACTION — removed-step note", "1a5646554f18"]],
   ["contracts/script/ConfigureCcip.s.sol", [3, "RETRACTION — removed-step note", "1dc3b180263a"]],
@@ -314,40 +314,40 @@ const PINNED = new Map([
   ["contracts/src/libraries/LibVaipakam.sol", [2, "RETRACTION — replaces the dangling storage-struct header that labelled sequencer slots", "cb044c197b6e"]],
   ["contracts/test/CcipDeploymentRehearsalTest.t.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "674ac44df17a"]],
   ["contracts/test/mocks/MockCrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "a9dcd28ffcfd"]],
-  ["docs/DesignsAndPlans/BorrowerPlatformFeeResearch.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "04bf58adfd21"]],
-  ["docs/DesignsAndPlans/CloudflareStagingDeployPlan.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f0263324027c"]],
-  ["docs/DesignsAndPlans/CrossChainRewardSystem.md", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "666feac198b7"]],
-  ["docs/DesignsAndPlans/DecentralizedPlatformArchitecture.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "03944cd5ad72"]],
-  ["docs/DesignsAndPlans/EventSourcingAudit.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7756313ad26b"]],
-  ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [26, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c54d770f9588"]],
-  ["docs/DesignsAndPlans/OfferFillModesDesign.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "aa83b291deb2"]],
-  ["docs/DesignsAndPlans/OssificationRoadmap.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "33061953fc9d"]],
-  ["docs/DesignsAndPlans/Research-404-OssificationRoadmap.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9b25e0b935cb"]],
-  ["docs/DesignsAndPlans/Stage3WorkerSplitPlan.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "259249b000ef"]],
-  ["docs/DesignsAndPlans/TreasuryBuyback.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "64c862b06f80"]],
-  ["docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ff839ff80bdd"]],
-  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7d91f002bbac"]],
-  ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "86bbaebfaba3"]],
-  ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "fb2ace3e0382"]],
-  ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e29604d4a172"]],
-  ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f8008d357efe"]],
-  ["docs/ToDo.md", [28, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "fcc6a52f4752"]],
-  ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "2961cef18f8d"]],
+  ["docs/DesignsAndPlans/BorrowerPlatformFeeResearch.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "531a1a8ef999"]],
+  ["docs/DesignsAndPlans/CloudflareStagingDeployPlan.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "451ff5eea6dc"]],
+  ["docs/DesignsAndPlans/CrossChainRewardSystem.md", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c87309dbcd59"]],
+  ["docs/DesignsAndPlans/DecentralizedPlatformArchitecture.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f2ce0c07414b"]],
+  ["docs/DesignsAndPlans/EventSourcingAudit.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "19bd8900407a"]],
+  ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [26, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f277975a2375"]],
+  ["docs/DesignsAndPlans/OfferFillModesDesign.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "645bc73d0c9e"]],
+  ["docs/DesignsAndPlans/OssificationRoadmap.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "896e90fff275"]],
+  ["docs/DesignsAndPlans/Research-404-OssificationRoadmap.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c237b9b41e66"]],
+  ["docs/DesignsAndPlans/Stage3WorkerSplitPlan.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "fb1d9ad5f9fa"]],
+  ["docs/DesignsAndPlans/TreasuryBuyback.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "60a20ce99a0a"]],
+  ["docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9bb4bea639b8"]],
+  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ef7e8a1f67c0"]],
+  ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d85eb0834091"]],
+  ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "a17b95afc3a5"]],
+  ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e306e9d2c92a"]],
+  ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e42955acc3cf"]],
+  ["docs/ToDo.md", [28, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3ad9ec328c25"]],
+  ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0e8b7d89d669"]],
   ["docs/internal/DeployOnTestnet.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9f9c63c92e75"]],
-  ["docs/internal/Issue687A-FrontendExcisionScout.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "49ed18bfd44e"]],
-  ["docs/internal/PendingTasks-2026-05-14.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "57826d137f10"]],
-  ["docs/internal/RiskCommitteeSignOffQuestionnaire.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "797e978f2af5"]],
-  ["docs/internal/SecurityScanQuestionnaire.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "069332c73799"]],
-  ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0a6e161ba401"]],
+  ["docs/internal/Issue687A-FrontendExcisionScout.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7bfd0c59b9b5"]],
+  ["docs/internal/PendingTasks-2026-05-14.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "82ece9e8c84f"]],
+  ["docs/internal/RiskCommitteeSignOffQuestionnaire.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e177bdfc4eb6"]],
+  ["docs/internal/SecurityScanQuestionnaire.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7ffadbbbb9e9"]],
+  ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "2d8a4700e6f3"]],
   ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "043ce2c94f2c"]],
-  ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "8f4c90e13b43"]],
-  ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "99173b774f76"]],
-  ["docs/ops/BaseSepoliaDeploy.md", [27, "LIVE-TEXT — known debt", "eb200e775e4b"]],
-  ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "1f2859ee3a1d"]],
-  ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "338d74bac135"]],
-  ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "36c36a833387"]],
-  ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "db3c6f374b56"]],
-  ["docs/ops/VPFITokenRotationRunbook.md", [2, "HISTORICAL — rotation-scope note", "1e4445d4cde8"]],
+  ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "ffb555c5fb8c"]],
+  ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "30a5205977ed"]],
+  ["docs/ops/BaseSepoliaDeploy.md", [27, "LIVE-TEXT — known debt", "5a093dada1bb"]],
+  ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "ecbf1ab690a2"]],
+  ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "1d93743effb3"]],
+  ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "0a850ec0bc2e"]],
+  ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "a9dc5f16dcfa"]],
+  ["docs/ops/VPFITokenRotationRunbook.md", [2, "HISTORICAL — rotation-scope note", "04e3a64006bd"]],
   ["docs/ops/tenderly-paste/Diamond-full.json", [27, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "44ccce3ccedc"]],
   ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "3a079192595e"]],
   ["ops/subgraph/abis/Diamond.json", [24, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b83b2b7f14fb"]],
@@ -592,21 +592,42 @@ function scanFile(path) {
   const contiguous = (a, b) => map[b] - map[a] === b - a;
 
   /**
-   * Does the SOURCE span behind normalized positions a..b cross a sentence end?
+   * Does the SOURCE span behind normalized positions a..b cross a BLOCK
+   * boundary — that is, are its two ends parts of separate thoughts?
    *
-   * Normalization erases punctuation, so two unrelated sentences can fuse into
-   * a token: "…whether to buy. Request independent advice…" collapses to
-   * `…buyrequest…` and matched the removed CCIP message name. On a gate that
-   * blocks every PR, ordinary English blocking unrelated work is the worst
-   * failure mode available — the same class as the buyback prefix, reached by a
-   * different route.
+   * Normalization erases punctuation and whitespace, so unrelated neighbours
+   * can fuse into a token: "…whether to buy. Request independent advice…"
+   * collapses to `…buyrequest…` and matched the removed CCIP message name. On a
+   * gate that blocks every PR, ordinary English blocking unrelated work is the
+   * worst failure mode available.
    *
-   * Newlines are deliberately NOT terminators: a phrase wrapped across a line
-   * ("the buy\n * adapter/receiver" in GuardianPausable.sol) is a real mention
-   * and one of the things whole-file normalization exists to catch. Only
-   * `.`, `!`, `?` and `;` end a thought.
+   * Sentence punctuation alone was not enough — a PARAGRAPH break carries no
+   * punctuation at all, and "whether to buy\n\nRequest advice" fused just the
+   * same. So the boundaries are:
+   *
+   *   - sentence enders `. ! ? ;`
+   *   - `|`, a table-cell edge
+   *   - a blank line, which ends a block in prose and in comment blocks alike
+   *   - in MARKDOWN ONLY, a list-item marker at the start of a line
+   *
+   * That last rule is markdown-scoped deliberately, and the reason is worth
+   * keeping: `GuardianPausable.sol:16` reads "…the buy\n *         adapter/…",
+   * where the continuation line starts with ` * `. Treating `*` as a list
+   * marker everywhere would silence that mention — one of the real catches
+   * whole-file normalization exists for — so a fix for a false positive would
+   * have manufactured a false negative, which is the trap this gate has fallen
+   * into twice already.
+   *
+   * Single wrapped lines remain matchable; only genuine block breaks separate.
    */
-  const crossesSentenceEnd = (a, b) => /[.!?;]/.test(text.slice(map[a], map[b] + 1));
+  const isMarkdown = path.endsWith('.md');
+  const crossesBlockBoundary = (a, b) => {
+    const span = text.slice(map[a], map[b] + 1);
+    if (/[.!?;|]/.test(span)) return true;
+    if (/\n[ \t]*\n/.test(span)) return true;
+    if (isMarkdown && /\n[ \t]*(?:[-*+]\s|\d+[.)]\s)/.test(span)) return true;
+    return false;
+  };
 
   // Matches as half-open normalized intervals, so overlaps can be resolved.
   const matches = [];
@@ -629,8 +650,8 @@ function scanFile(path) {
           contiguous(end - 1, end + suffix.length - 1),
       );
       if (skip) continue;
-      // A single mention cannot span a sentence boundary.
-      if (crossesSentenceEnd(at, end - 1)) continue;
+      // A single mention cannot span a block boundary.
+      if (crossesBlockBoundary(at, end - 1)) continue;
       matches.push({ start: at, end });
     }
   }
@@ -660,12 +681,27 @@ function scanFile(path) {
    * docs use for sub-sections, which is what line 121 actually is.
    */
   const headingFor = (lineIdx) => {
+    // Walk back collecting the APPLICABLE ANCESTRY, not just the nearest
+    // heading. Hashing only the nearest one left a status carried by a PARENT
+    // reversible without moving the digest: insert a legitimate
+    // `### Planned domain list` above a mention, and flipping the grandparent
+    // from "Planned" to "Current" became invisible again. Each heading kept
+    // must be strictly shallower than the last, which is exactly the chain of
+    // headings that governs this line.
+    const chain = [];
+    let deepest = Infinity;
     for (let i = lineIdx; i >= 0; i--) {
-      if (/^\s{0,3}#{1,6}\s/.test(lines[i]) || /^\s{0,3}\*\*[^*]+\*\*/.test(lines[i])) {
-        return lines[i];
-      }
+      const atx = /^\s{0,3}(#{1,6})\s/.exec(lines[i]);
+      const bold = /^\s{0,3}\*\*[^*]+\*\*/.test(lines[i]);
+      if (!atx && !bold) continue;
+      // A `**Bold lead-in**` sits below any ATX heading; level 7 orders it so.
+      const level = atx ? atx[1].length : 7;
+      if (level >= deepest) continue;
+      deepest = level;
+      chain.push(lines[i]);
+      if (level === 1) break;
     }
-    return '';
+    return chain.reverse().join(' ');
   };
 
   const units = kept
