@@ -158,13 +158,21 @@ export function useTimelockPendingChanges(): Hook {
     return pending.length ? Math.min(...pending) : null;
   }, [state.all]);
   useEffect(() => {
+    // `nextBoundary` is null once every pending operation reports ready, which
+    // is what terminates this loop.
     if (nextBoundary === null) return;
     const msUntil = nextBoundary * 1000 - Date.now();
-    // Already past locally: check once now rather than every render.
-    const delay = Math.max(0, msUntil) + 2_000; // small grace for block drift
+    // RE-ARMS. The first version fired once, and a single re-read is only
+    // enough if the chain has already advanced past `executesAt` when it
+    // lands — which it need not have, if the administrator's clock runs ahead
+    // or the next block is slow. `nextBoundary` is unchanged in that case, so
+    // nothing rescheduled and the dashboard sat at "executes in 0s" until an
+    // unrelated remount. Depending on `boundaryNonce` re-arms after each
+    // attempt; the null check above is the exit.
+    const delay = msUntil > 0 ? msUntil + 2_000 : 20_000;
     const id = setTimeout(() => setBoundaryNonce((n) => n + 1), delay);
     return () => clearTimeout(id);
-  }, [nextBoundary]);
+  }, [nextBoundary, boundaryNonce]);
 
   useEffect(() => {
     if (!timelockAddr || !chain.diamondAddress) {

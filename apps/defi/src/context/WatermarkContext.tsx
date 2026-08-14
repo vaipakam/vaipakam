@@ -462,6 +462,12 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
           clearTimeout(timer);
           timer = null;
         }
+        // Directly, not via `schedule()` — this path RETURNS without calling
+        // it, so the hidden-branch clear added there never ran here. Status
+        // would stay `live` for the whole hidden period and still read green
+        // when the tab came back, until the restore probe completed, or
+        // forever if that probe hung.
+        setStatus('idle');
         return;
       }
       // Re-focused — count as fresh activity and fire an immediate probe.
