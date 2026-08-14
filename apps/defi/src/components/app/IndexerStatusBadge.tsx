@@ -49,7 +49,7 @@ import { Info, Wifi, WifiOff, Cpu, RefreshCw, AlertTriangle } from 'lucide-react
 import type { LucideIcon } from 'lucide-react';
 import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
-import { watermarkPolicy } from '../../hooks/watermarkPolicy';
+import { watermarkPolicy, watermarkStaleAfterSec } from '../../hooks/watermarkPolicy';
 import { useDataFreshness } from '../../context/DataFreshnessContext';
 import { useRealtimePush } from '../../context/RealtimePushContext';
 import './IndexerStatusBadge.css';
@@ -62,7 +62,11 @@ const SEVERE_GAP_BLOCKS = 5000;
 /** A watermark snapshot older than this (seconds) is treated as stale —
  *  the RPC probe isn't returning fresh data, so "direct RPC" isn't a
  *  healthy fallback. */
-const WATERMARK_STALE_SEC = 90;
+// Derived from the subscribed tier's cadence — see `watermarkStaleAfterSec`.
+// A flat 90 s could not hold here: this badge subscribes at `cool`
+// (180 s active / 600 s idle), so the snapshot ages past 90 s between every
+// pair of scheduled probes.
+const WATERMARK_STALE_SEC = watermarkStaleAfterSec('cool');
 
 /** Cadence for the popover's live safe-block poll. Only runs while the
  *  popover is open, so the RPC cost is bounded by how long the user

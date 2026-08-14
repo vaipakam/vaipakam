@@ -23,7 +23,7 @@ import { useOfferStats } from '../../hooks/useOfferStats';
 import { indexerOrigin } from '../../lib/indexerClient';
 import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
-import { watermarkPolicy } from '../../hooks/watermarkPolicy';
+import { watermarkPolicy, watermarkStaleAfterSec } from '../../hooks/watermarkPolicy';
 import { useMode } from '../../context/ModeContext';
 import { useDataFreshness } from '../../context/DataFreshnessContext';
 import { useRealtimePush } from '../../context/RealtimePushContext';
@@ -328,7 +328,10 @@ export function ChainDiagnosticsPanel() {
       watermarkSnapshot &&
       watermarkSnapshot.safeBlock > 0n &&
       watermarkAgeSec !== null &&
-      watermarkAgeSec < 90;
+      // Same cadence-derived threshold the badge uses. Numerically 90 s at the
+      // `warm` tier today, but written as a derivation so re-tiering this panel
+      // cannot silently reintroduce the false-amber gap.
+      watermarkAgeSec < watermarkStaleAfterSec('warm');
     if (liveRpcHealthy) {
       heading = t('indexerBadge.liveRpcInSyncHeading');
       body = t('indexerBadge.liveRpcInSyncBody');
