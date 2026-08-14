@@ -3137,10 +3137,11 @@ library LibVaipakam {
         ///      with zero global interest" from "day `D` not yet
         ///      broadcast here".
         mapping(uint256 => bool) knownGlobalSet;
-        // ─── Bridged Fixed-Rate VPFI Buy (spec §: Early Fixed-Rate ──────
-        // Purchase Program, cross-chain extension) ─────────────────────────
-        // Base is the SOLE seller of the fixed-rate VPFI. Non-Base chains
-        // get a "bridged buy" UX via VPFIBuyAdapter: user pays native ETH
+        // #687-A: a "Bridged Fixed-Rate VPFI Buy" section header stood
+        // here, describing non-Base chains getting a bridged-buy UX via
+        // VPFIBuyAdapter. Its FIELDS were removed with the excision; only
+        // the header survived, so it labelled the sequencer-uptime slots
+        // below it. Removed — there is no protocol VPFI purchase surface.
         // ─── l2 Sequencer Uptime Circuit Breaker ────────────────────────
         // On L2s (Base/Arb/OP/etc.) we must not consume Chainlink prices
         // while the sequencer has been down — users can't submit txs, so
