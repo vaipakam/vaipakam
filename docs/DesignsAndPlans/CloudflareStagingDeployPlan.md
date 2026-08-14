@@ -24,7 +24,7 @@ unaffected.
 |---|---|---|---|
 | **vaipakam-labs** | `labs.vaipakam.com` (today); `vaipakam.com` + `www.vaipakam.com` after cutover | Marketing site, docs, "Launch Vaipakam" button → `defi.vaipakam.com/`. Static, wallet-free. | No |
 | **vaipakam-defi** | `defi.vaipakam.com` | The connected app — wallet connect, Dashboard at root, Offer Book, loan flows, Buy-VPFI, Claim Center, plus three wallet-free public-read tools (`/analytics`, `/nft-verifier`, `/protocol-console`). | No |
-| **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*` (open-CORS reads). **Also writes**: three POST endpoints that write D1, HMAC-authenticated inbound Alchemy webhooks, and authenticated outbound publication of signed Seaport listings to OpenSea. | No on-chain key |
+| **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*` (open-CORS reads). **Also writes**: three POST endpoints that write D1, HMAC-authenticated inbound Alchemy webhooks, and authenticated outbound publication of **borrower-authorised, on-chain-bound** Seaport listings to OpenSea (posted with an empty `0x` signature; the vault's ERC-1271 check validates against a hash bound on-chain). | No on-chain key |
 | **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). Also **deletes** diagnostics + support records on a schedule and **publishes** listings via `/opensea/listing`. | **No on-chain key** — but holds `PUSH_CHANNEL_PK`, a real Ethereum key used to sign notifications |
 | **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, **live** offer/intent matcher, auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — single signing-key holder |
 
@@ -135,7 +135,7 @@ here.**
 stop at stale data: its scheduled passes *delete* diagnostics and
 support records, `runPeriodicPreNotify` writes `loans` and sends
 Push/Telegram messages to real users, and `/opensea/listing` publishes
-signed orders to a live marketplace. A bug on those paths means data
+borrower-authorised, on-chain-bound orders to a live marketplace. A bug on those paths means data
 loss, mis-sent or leaked notifications, and publication to a live marketplace — bounded, and the bounds matter: `openseaPublish.ts` posts an **empty `0x` signature**, which OpenSea accepts only because the vault's ERC-1271 check recognises an order hash the borrower already bound **on-chain**. So a compromised Worker can re-expose an already-authorised listing and impose removal latency, but **cannot manufacture one** (no on-chain binding, no listing) and **cannot preserve one** (the borrower's `cancelPrepayListing` revokes the binding and OpenSea drops it on the next revalidation pass). An earlier version of this called it "irreversible upstream publication", which overstated the blast radius in both directions. None of it is "stale data" either. The only part of the
 original sentence that survives unqualified is the narrow one: **the
 agent and indexer do not sign on-chain transactions.**
@@ -255,7 +255,9 @@ NO secrets — the frontend bundle is static.
   ZEROEX_API_KEY  — for /quote/0x proxy
   ONEINCH_API_KEY — for /quote/1inch proxy
   OPENSEA_API_KEY — offer reads AND listing SUBMISSION. `openseaProxy.ts`
-                    POSTs borrower-signed orders to OpenSea's
+                    POSTs borrower-AUTHORISED orders (empty `0x` signature; the vault's
+                    ERC-1271 validates a hash the borrower bound
+                    on-chain — not a borrower signature) to OpenSea's
                     seaport/listings endpoint with this key, so it is a
                     write credential upstream, not a read-only one.
   DIAG_WALLET_HMAC_KEY — diagnostics wallet pseudonymisation

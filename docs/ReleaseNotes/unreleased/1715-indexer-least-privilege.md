@@ -60,7 +60,7 @@ fund-safe, because it can still alter state the signing component acts on.
 Using that phrase to justify a "read-only" label the same document proves
 false would have been the argument refuting itself. The labels said "Reads
 only" on a component with three endpoints that write to the shared database
-and one that publishes signed orders to an outside marketplace.
+and one that publishes orders to an outside marketplace on a borrower's behalf — orders the borrower authorised on-chain, which the Worker can re-expose but cannot invent.
 An earlier draft of this note also cited the Worker's entry point as
 documenting its single write path — that was itself wrong. There are three
 write-accepting endpoints, not one, and using a false claim to justify leaving

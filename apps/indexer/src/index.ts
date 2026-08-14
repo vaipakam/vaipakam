@@ -45,7 +45,9 @@
  * `/hooks/chain-event` (HMAC-verified Alchemy webhook ingest),
  * the signed-offer POST, and
  * `/loans/:loanId/prepay-listing/match-source` — plus authenticated
- * outbound publication of signed Seaport listings to OpenSea.
+ * outbound publication of borrower-authorised, on-chain-bound Seaport
+ * listings to OpenSea — posted with an EMPTY `0x` signature; the vault's
+ * ERC-1271 check validates an order hash the borrower bound on-chain.
  *
  * The match-source endpoint is rate-limited per-IP via the
  * `OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT` binding (matching the

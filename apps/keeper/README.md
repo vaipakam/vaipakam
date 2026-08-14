@@ -261,6 +261,6 @@ Keeper reads-only: `loans`, `offers`, `indexer_cursor` (the head-block stamp for
 ## Related
 
 - `apps/agent` — the proactive-notifications / Frame / Telegram-bot Worker (no signing key).
-- `apps/indexer` — chain→D1 indexer + read-API; NOT read-only (writes D1 via POST routes, publishes signed listings to OpenSea)).
+- `apps/indexer` — chain→D1 indexer + read-API; NOT read-only (writes D1 via POST routes, publishes borrower-authorised, on-chain-bound listings to OpenSea)).
 - `vaipakam/vaipakam-keeper-bot` (sibling repo) — public reference keeper bot for third-party operators.
 - `packages/contracts` — ABI / deployment source.

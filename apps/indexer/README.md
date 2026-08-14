@@ -1,6 +1,6 @@
 # @vaipakam/indexer
 
-**Vaipakam chain → D1 indexer + public read-API. Cloudflare Worker. No signing keys — but NOT read-only** (writes D1; publishes signed Seaport listings to OpenSea).
+**Vaipakam chain → D1 indexer + public read-API. Cloudflare Worker. No signing keys — but NOT read-only** (writes D1; publishes borrower-authorised, on-chain-bound Seaport listings to OpenSea).
 
 [![Workspaces typecheck](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml)
 
@@ -22,7 +22,7 @@ The marketing site (`apps/www`) reads exactly one route: `/config/:chainId`, for
 
 **Non-goals:** no signing keys, and no *on-chain* writes. If a request needs to write state on-chain, route it through the connected app + a wallet signature, not through this Worker.
 
-This is narrower than "reads only", which this file used to claim and which is false: the Worker writes the shared D1 database (including via three POST endpoints) and publishes borrower-signed Seaport orders to OpenSea with the project's API key. Note also that holding no signing key is **not** an isolation boundary — the D1 binding is database-scoped, so this Worker can write tables the signing Worker reads (see #1722).
+This is narrower than "reads only", which this file used to claim and which is false: the Worker writes the shared D1 database (including via three POST endpoints) and publishes borrower-authorised Seaport orders to OpenSea with the project's API key (empty `0x` signature — the vault's ERC-1271 check validates an order hash the borrower bound on-chain, so the Worker cannot manufacture a listing). Note also that holding no signing key is **not** an isolation boundary — the D1 binding is database-scoped, so this Worker can write tables the signing Worker reads (see #1722).
 
 **Indexer event-coverage guardrail.** `EVENT_ABI` is derived from the compiled `DIAMOND_ABI_VIEM` (never hand-typed). The `apps/indexer/scripts/check-event-coverage.mjs` script (wired into `pnpm typecheck` and exposed as `check-event-coverage`) fails CI if any contract event tagged `@custom:event-category state-change/{loan,offer}-mutation` lacks a handler in `chainIndexer.ts` AND isn't in the deliberately-not-handled allowlist. The May-2026 "every loan stuck active" bug (indexer missing preclose / offset / refinance terminal events) can't recur silently.
 
@@ -54,7 +54,7 @@ Worker secrets:
 | Secret | Purpose |
 |---|---|
 | `RPC_*` (eleven) | Per-chain RPC URLs — **carry provider API keys**, so they are leakable, billable credentials, not just endpoints. Eleven, not the full chain set: `RPC_POLYGON` is bound by the agent but not here. |
-| `OPENSEA_API_KEY` | Authenticated **outbound publication** of signed Seaport listings. A write credential upstream, not a read key. |
+| `OPENSEA_API_KEY` | Authenticated **outbound publication** of borrower-authorised, on-chain-bound Seaport listings. A write credential upstream, not a read key. |
 | `ALCHEMY_WEBHOOK_SIGNING_KEY_84532` | HMAC verification of inbound Base-Sepolia chain-event webhooks. |
 | `ALCHEMY_WEBHOOK_SIGNING_KEY_421614` | Same, Arbitrum Sepolia. |
 | `ALCHEMY_WEBHOOK_SIGNING_KEY_97` | Same, BNB testnet (configured ahead of BNB going live). |
