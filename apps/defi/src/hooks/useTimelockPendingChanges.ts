@@ -147,33 +147,17 @@ export function useTimelockPendingChanges(): Hook {
     loading: true,
   });
 
-  // Re-read when a pending operation's `executesAt` passes according to the
-  // local clock. The local clock is a TRIGGER TO GO AND LOOK, never the answer:
-  // an administrator whose machine runs fast would otherwise be told an
-  // operation is executable while `getOperationState` still reports Waiting, and
-  // submitting it reverts. Readiness stays whatever the chain last said.
-  const [boundaryNonce, setBoundaryNonce] = useState(0);
-  const nextBoundary = useMemo(() => {
-    const pending = state.all.filter((p) => !p.ready).map((p) => p.executesAt);
-    return pending.length ? Math.min(...pending) : null;
-  }, [state.all]);
-  useEffect(() => {
-    // `nextBoundary` is null once every pending operation reports ready, which
-    // is what terminates this loop.
-    if (nextBoundary === null) return;
-    const msUntil = nextBoundary * 1000 - Date.now();
-    // RE-ARMS. The first version fired once, and a single re-read is only
-    // enough if the chain has already advanced past `executesAt` when it
-    // lands — which it need not have, if the administrator's clock runs ahead
-    // or the next block is slow. `nextBoundary` is unchanged in that case, so
-    // nothing rescheduled and the dashboard sat at "executes in 0s" until an
-    // unrelated remount. Depending on `boundaryNonce` re-arms after each
-    // attempt; the null check above is the exit.
-    const delay = msUntil > 0 ? msUntil + 2_000 : 20_000;
-    const id = setTimeout(() => setBoundaryNonce((n) => n + 1), delay);
-    return () => clearTimeout(id);
-  }, [nextBoundary, boundaryNonce]);
-
+  // NO local-clock-driven re-read. A boundary-retry timer stood here across
+  // rounds 4-5 and was WITHDRAWN, not patched: rediscovering operations through
+  // the `LOOKBACK_BLOCKS` event window means a scheduling event older than that
+  // window resolves to an empty list, so the re-read would DELETE a live
+  // proposal at precisely the moment it turned executable (a 48h delay on a
+  // 2s-block chain sits ~86,400 blocks back — outside the window). A transient
+  // RPC failure had the same effect, and the retry then terminated for good.
+  // Withdrawn in favour of leaving the panel cosmetically stale until the next
+  // remount or chain switch: staleness is recoverable, a vanished proposal is
+  // not. A real fix reads the active operation IDs directly rather than
+  // rediscovering them — tracked as a follow-up.
   useEffect(() => {
     if (!timelockAddr || !chain.diamondAddress) {
       setState({ byKnob: {}, all: [], loading: false });
@@ -271,7 +255,7 @@ export function useTimelockPendingChanges(): Hook {
     return () => {
       cancelled = true;
     };
-  }, [client, chain.diamondAddress, chain.chainId, timelockAddr, selectorMap, boundaryNonce]);
+  }, [client, chain.diamondAddress, chain.chainId, timelockAddr, selectorMap]);
 
   return state;
 }

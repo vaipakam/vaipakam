@@ -32,8 +32,21 @@ moved — a distinction that cost two review rounds to get right, because a
 plausible-looking staleness threshold hid it. The third was asking whether a
 queued governance change had matured, which is a fact about the chain's clock,
 not the administrator's; a machine running fast would otherwise be told an
-operation was ready while the network still refused it. That one now uses the
-local clock only to decide when to go and ask again.
+operation was ready while the network still refused it. That one now takes its
+answer from the chain alone.
+
+An attempt to also make that governance panel refresh itself the moment a queued
+change matures was written and then withdrawn during review, and the reasoning is
+worth recording. The panel finds queued changes by scanning a bounded window of
+recent chain history. A change queued with a long delay falls out of that window
+before it matures, so a refresh triggered at the maturity moment would come back
+empty and make the pending change *disappear* from the dashboard — at exactly the
+moment an administrator needs to act on it. A momentary network failure had the
+same effect. The panel is therefore left as it was: it can show a stale countdown
+until the page is reloaded or the chain switched, which is recoverable, rather
+than risk removing a live proposal from view, which is not. Refreshing it properly
+means asking the timelock for its active operations directly instead of
+rediscovering them from history, and is tracked separately.
 
 Two details worth recording, because both were places this could have gone
 wrong. Some of these readings sat below a point where the component can bail out
