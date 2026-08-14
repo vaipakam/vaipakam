@@ -227,6 +227,11 @@ Credential controls include:
 - Smart-contract admin and operational keys are separated by role.
 - Keeper/liquidation bots use hot keys with no administrative smart-contract authority.
 
+- Emergency/admin signer access is limited to authorized operators.
+- Secrets are rotated after suspected exposure, staff/access changes, provider migration, or incident response.
+- Deployment scripts include preflight checks for required secrets and fail if active-chain RPC/API secrets are missing.
+- Logs and support reports should redact secrets, tokens, private keys, seed phrases, full payloads, and sensitive headers before storage.
+
 > **CREDENTIAL-CONTROLS CORRECTION (#1717).** Two claims in the bullet above
 > do not hold. As in §3.4, the original wording is struck or flagged rather
 > than rewritten, because this file may be a record of what was submitted.
@@ -249,10 +254,6 @@ Credential controls include:
 > only once an operator sets the documented keyed override — which is the
 > intended production setup. Tracked as **#1724**: a posture decision to
 > make, not a wording fix.
-- Emergency/admin signer access is limited to authorized operators.
-- Secrets are rotated after suspected exposure, staff/access changes, provider migration, or incident response.
-- Deployment scripts include preflight checks for required secrets and fail if active-chain RPC/API secrets are missing.
-- Logs and support reports should redact secrets, tokens, private keys, seed phrases, full payloads, and sensitive headers before storage.
 
   4.3 Have you experienced any cybersecurity breach, wallet compromise, or data loss event in the past 3 years?
 

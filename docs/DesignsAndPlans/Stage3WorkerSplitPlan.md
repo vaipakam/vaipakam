@@ -115,7 +115,16 @@ Worker's surface, and must not be read as one.** Every original row is
 kept; what changed afterwards is annotated in place:
 
 - **`buyWatchdog.ts`** — deleted with the #687-A VPFI purchase excision.
-  No cross-chain VPFI reconciliation pass exists on any Worker.
+  What went with it is the watchdog for the **retired fixed-rate
+  cross-chain BUY flow**, and nothing else. Cross-chain VPFI
+  reconciliation very much still exists on `apps/keeper`:
+  `remitAck.ts` walks Base-side remittance reservations, checks each
+  Pending one against the destination mirror's delivery state, and sends
+  the finalizing ack from the mirror; `rewardBudgetRemit.ts` and
+  `commitmentReport.ts` are scheduled alongside it. An earlier version
+  of this bullet said "no cross-chain VPFI reconciliation pass exists on
+  any Worker", which would have led a reader to believe an active
+  reconciliation path had been removed.
 - **`scanProxy.ts`** — deleted in PR #41. The pre-sign transaction
   preview began as Blockaid, briefly became a GoPlus proxy, and is now a
   frontend-only viem `eth_call`
