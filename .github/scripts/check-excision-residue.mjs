@@ -907,7 +907,7 @@ function scanFile(path) {
     // stayed green on text that renders the phrase plainly. The lookarounds
     // require the closing run to be a complete run of the same length: not
     // preceded by a backtick, not followed by one.
-    const re = /(?<!`)(`+)(?!`)([\s\S]*?)(?<!`)\1(?!`)/g;
+    const re = /(?<![\\`])(`+)(?!`)([\s\S]*?)(?<![\\`])\1(?!`)/g;
     let m;
     while ((m = re.exec(text))) spans.push([m.index, m.index + m[0].length]);
     return spans;
@@ -1007,9 +1007,20 @@ function scanFile(path) {
    */
   const joinedToSuffix = (map, end, suffixLength) => {
     if (map[end] === undefined || map[end + suffixLength - 1] === undefined) return false;
-    const gap = text.slice(map[end - 1] + 1, map[end]);
+    // `renderRefs` + `identifierSpanEnd` for the SAME reason `isIdentifierSpan`
+    // below uses them, and this is the one place that reasoning had not reached:
+    // the normalizer decodes character references but records offsets pointing
+    // at the reference's `&`, so a raw slice sees the SOURCE spelling. In
+    // `fixed-rate-buy&#98;ack` the normalized stream reads `buyback`, so the
+    // suffix matches — but the raw slice held `&`, `#` and `;`, failed the
+    // identifier test, and the guard did not apply. The gate then reported a
+    // live treasury-buyback sentence as removed-surface residue. Every check
+    // that decides what a word IS has to read the rendered stream.
+    const gap = renderRefs(text.slice(map[end - 1] + 1, map[end]));
     if (!/^[-_]*$/.test(gap)) return false;
-    return /^[A-Za-z0-9_-]+$/.test(text.slice(map[end], map[end + suffixLength - 1] + 1));
+    return /^[A-Za-z0-9_-]+$/.test(
+      renderRefs(text.slice(map[end], identifierSpanEnd(map[end + suffixLength - 1]))),
+    );
   };
 
   /**
@@ -1115,9 +1126,9 @@ function scanFile(path) {
       // regression, and the reason inline tags (`<strong>`, `<em>`, `<code>`)
       // must keep being stripped: those two cases pull opposite ways and the
       // tag handling had treated every element as the inline case.
+      span = span.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ');
       if (/<\s*\/?\s*(?:hr|br|p|div|section|article|aside|nav|main|header|footer|figure|figcaption|blockquote|pre|table|thead|tbody|tr|td|th|ul|ol|li|dl|dt|dd|h[1-6]|form|fieldset|details|summary|address)\b[^<>]*>/i.test(span))
         return true;
-      span = span.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ');
       span = span.replace(/<\/?[a-zA-Z][^<>]*>/g, ' ');
       // And character references, for the third time in the same shape: the
       // `;` that terminates `&nbsp;` is a sentence ender, so a span the
@@ -1132,7 +1143,15 @@ function scanFile(path) {
       // invisible; the character it stands for is not.
       span = renderRefs(span);
     }
+    // CJK terminators alongside their ASCII equivalents. `apps/alpha02/src/
+    // i18n/locales/{ja,ko}.json` are tracked and scanned, and a full-width `。`
+    // ends a sentence exactly as `.` does — normalization drops it, so a
+    // rendered "…buy。Adapter…" would fuse into a mention and block a clean
+    // localized file. No such adjacency exists in those bundles today (they
+    // carry none of the tokens), so this is future-proofing rather than a live
+    // fix — but it can only ever PREVENT a false block, never hide a mention.
     if (/[.!?;:|]/.test(span)) return true;
+    if (/[。！？；：]/.test(span)) return true;
     if (/\n[ \t]*\n/.test(span)) return true;
     const firstLine = lineOf(starts, from);
     const lastLine = lineOf(starts, to);
