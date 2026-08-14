@@ -226,6 +226,10 @@ export async function publishPrepayListingToOpenSea(
       address: seaport,
       abi: SEAPORT_VERIFY_ABI,
       functionName: 'getOrderHash',
+      // Directive must sit on the line directly above the cast. It used to be
+      // above the `const`, where it covered only the first line of this
+      // multiline statement and never reached the violation down here.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       args: [components as unknown as any],
     })) as Hex;
 
