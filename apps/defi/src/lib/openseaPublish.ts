@@ -222,7 +222,6 @@ export async function publishPrepayListingToOpenSea(
     // boundary — the JS components hash to the same value as a
     // strictly-typed-then-recasted version because the on-chain
     // canonicalisation only cares about the hex content.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const recomputedHash = (await publicClient.readContract({
       address: seaport,
       abi: SEAPORT_VERIFY_ABI,

@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react';
-// eslint-disable-next-line no-restricted-imports -- caller-parameterised
-// chainId, not bound to the app-selected ChainContext. The lint rule
-// guards against bare app-chain reads sneaking off to the wallet
-// chain; this hook's contract is "quote against THIS chainId", so the
-// scoped wagmi form is exactly right.
+// Caller-parameterised chainId, not bound to the app-selected ChainContext.
+// The lint rule guards against bare app-chain reads sneaking off to the wallet
+// chain; this hook's contract is "quote against THIS chainId" and it calls
+// `usePublicClient({ chainId })` with the caller's value, so the scoped wagmi
+// form is exactly right.
+//
+// Keep the directive on the line directly above the import. It used to sit
+// above this explanation, and `eslint-disable-next-line` suppresses only the
+// line that follows it — so as soon as the note grew past one line the
+// suppression landed on a comment and stopped covering the import. The rule
+// then fired unsuppressed and defi's lint carried it as a real error, hidden
+// among the unused-directive warnings it also produced.
+// eslint-disable-next-line no-restricted-imports
 import { usePublicClient } from 'wagmi';
 import type { Address } from 'viem';
 import {

@@ -820,7 +820,6 @@ export async function postPrepayMatchSource(
       // boolean return with `void`, so without this log the
       // failure is invisible even though the contract with
       // the UI is "failures are logged".
-      // eslint-disable-next-line no-console
       console.warn(
         "[postPrepayMatchSource] non-2xx response — breadcrumb dropped",
         { status: res.status, statusText: res.statusText },
@@ -828,7 +827,6 @@ export async function postPrepayMatchSource(
     }
     return res.ok;
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn("[postPrepayMatchSource] best-effort POST failed", err);
     return false;
   } finally {
