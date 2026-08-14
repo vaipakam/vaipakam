@@ -1344,7 +1344,7 @@ function scanFile(path) {
    * `# Adapter selection follows` heading had no boundary between them and the
    * gate BLOCKED a clean file.
    */
-  const crossesBlockBoundary = (map, a, b) => {
+  const crossesBlockBoundary = (map, a, b, inTagInterior = false) => {
     const from = map[a];
     const to = map[b];
     // Test the span with recognized tags REMOVED, matching what the normalizer
@@ -1360,8 +1360,14 @@ function scanFile(path) {
     // let `<span title="1 > 0: yes">` leave `: yes"` behind and reject a real
     // match, and what left a link's URL punctuation sitting between two words
     // the reader sees side by side.
-    let span = '';
-    {
+    // The tag-interior stream is, by definition, text INSIDE one recognized
+    // tag. Removing `tagSpans` there deletes the candidate itself, and treating
+    // the enclosing element as a block boundary rejects every match found in an
+    // attribute — which silently switched off the attribute/component-name
+    // scanning this stream exists for. `<div data-operation="buyOptions">` went
+    // clean again exactly the way it did before that stream was restored.
+    let span = inTagInterior ? text.slice(from, to + 1) : '';
+    if (!inTagInterior) {
       let at = from;
       for (const [s0, e0] of tagSpans) {
         if (e0 <= from) continue;
@@ -1512,7 +1518,7 @@ function scanFile(path) {
         if (skip) continue;
         if (identifierOnly && !isIdentifierSpan(map, at, end - 1, inTagInterior))
           continue;
-        if (crossesBlockBoundary(map, at, end - 1)) continue;
+        if (crossesBlockBoundary(map, at, end - 1, inTagInterior)) continue;
         found.push({ start: map[at], end: map[end - 1] + 1 });
       }
     }
