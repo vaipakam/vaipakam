@@ -871,15 +871,34 @@ contract RewardAggregatorFacet is
      *         real chain id — the guard would have passed the very call it
      *         exists to reject. `RewardReporterFacet` states the rule this
      *         now follows: *"a chain's own identity is `block.chainid`, read
-     *         directly."* This surface only runs on the canonical Diamond
-     *         (the ledger it reads is Base's), so "is this me?" is exactly
-     *         the question.
+     *         directly."* "Is this me?" is exactly the question that guard
+     *         needs to ask, and only `block.chainid` answers it
+     *         unconditionally.
+     *
+     *         **`onlyCanonical` is a SECOND, different guard** (#1706). The
+     *         `block.chainid` check above only refuses to report on the
+     *         chain this Diamond is running on; it says nothing about
+     *         whether this Diamond is the canonical one. The selector is cut
+     *         into every deployment, so before #1706 a mirror could call
+     *         this and read its own unpopulated copy of a ledger only Base
+     *         writes — returning a well-formed position indistinguishable
+     *         from a genuine zero, with no signal that it was meaningless. A
+     *         silent wrong number is worse than a revert for anything
+     *         reading this to make a decision, so a mirror now reverts
+     *         {NotCanonicalRewardChain}.
+     *
+     *         The two guards are not redundant and neither subsumes the
+     *         other: `onlyCanonical` answers "should this deployment be
+     *         answering at all?", the `block.chainid` check answers "is the
+     *         chain being asked about a mirror?". A caller needs both to be
+     *         wrong in different ways before it gets a wrong answer.
      * @param  chainId    The MIRROR chain to inspect.
      * @param  throughDay Inclusive last day of the trailing window.
      */
     function getChainSurplusPosition(uint32 chainId, uint256 throughDay)
         external
         view
+        onlyCanonical
         returns (
             uint256 availRecycled,
             uint256 avgDailyBudget,
