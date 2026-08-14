@@ -276,7 +276,15 @@ export function SwapToRepayIntentPanel({
       cancelled = true;
       clearInterval(id);
     };
-  }, [loanId, chainId, refreshTick, optimisticPending, diamond]);
+    // `address` IS a dependency: the indexer-down fallback below stamps
+    // `committedBy` with the connected wallet, and the 15 s interval closes
+    // over whatever it was when the effect last ran. Without it, switching
+    // wallets leaves the projection attributed to the previous one until an
+    // unrelated dependency changes. Nothing reads that field today, so there is
+    // no visible symptom yet — which is exactly why it would have been a
+    // surprise later. Wallet changes are rare, so re-running here costs
+    // nothing.
+  }, [loanId, chainId, refreshTick, optimisticPending, diamond, address]);
 
   // Codex round-1 PR #423 P2 — read live auction-max bound from
   // the diamond's `IntentConfigFacet`. Best-effort; falls back to
