@@ -23,7 +23,10 @@ import { L as Link } from '../L';
  *     button on mirrors.
  *
  *   - On the CANONICAL chain (Base): "Stake VPFI" CTA linking to the
- *     buy-VPFI page where the user can buy + deposit in one flow.
+ *     VPFI Vault & Discounts page, where the user deposits VPFI they
+ *     already hold. There is no protocol purchase step — the page this
+ *     comment used to name was removed by the #687-A excision and the
+ *     old path only redirects here.
  *
  *   - When the user has a TRACKED stake but their EFFECTIVE_TIER is
  *     still 0 (min-history pending), surfaces a "Push my tier to

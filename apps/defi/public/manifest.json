@@ -47,9 +47,9 @@
       "description": "View your active loans and rentals"
     },
     {
-      "name": "Buy VPFI",
-      "url": "/app/buy-vpfi",
-      "description": "Acquire VPFI for fee discounts"
+      "name": "VPFI Vault",
+      "url": "/app/vpfi-vault",
+      "description": "Hold VPFI in your vault for tiered fee discounts"
     },
     {
       "name": "Alerts",
