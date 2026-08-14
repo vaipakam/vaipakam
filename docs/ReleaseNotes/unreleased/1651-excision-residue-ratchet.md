@@ -105,15 +105,35 @@ Request independent advice" reads, once punctuation is stripped, as the name of
 a deleted message — so unrelated prose could block a change. And a status
 heading more than two lines from a mention was invisible: flipping a section
 from "Planned" to "Current" turned an entry below it into live guidance without
-moving anything the check looked at. Mentions now cannot span a sentence
-boundary, and the heading governing a mention is part of what gets
-fingerprinted.
+moving anything the check looked at. The heading governing a mention became part of what gets fingerprinted.
+
+The other half of that was fixed twice and then withdrawn, which is worth
+recording. Two of the removed names are ordinary English word pairs, unlike
+every other name on the list, so ordinary sentences could accidentally spell
+them once punctuation was ignored. The first response was to teach the check
+where an English thought ends — full stops, then blank lines, then table cells,
+then list markers. Each addition turned out to mishandle a different case: one
+silenced a real mention inside a quoted code sample, another blocked a document
+merely because a heading interrupted a paragraph. The rules were guesses about
+prose, and prose does not cooperate.
+
+They were replaced by a single narrower requirement: those two names, and only
+those two, must appear as one word to count. Everything about where sentences
+and paragraphs end was deleted. The check now covers slightly less — it will no
+longer notice those two names written as separated prose — and is far less
+likely to be wrong in either direction, which on something that blocks every
+change is the better trade.
 
 The removed error conditions were also added to the list, which is where the
 count grew sharply: one of them is declared in a shared interface file, so it
 propagates into more than forty generated interface artifacts. That reinforces
 the ordering noted below — the declaration has to go before regenerating is
 worth doing.
+
+A related fix: the fingerprint had been taken from text with formatting
+stripped, which meant a retraction could be visually inverted without moving
+it — striking through the word "not" leaves every letter in place. It now
+covers the text as written.
 
 Widening the net kept roughly multiplying what it sees: a hundred and
 twenty-one files, against the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,

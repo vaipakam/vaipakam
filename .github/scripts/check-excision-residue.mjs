@@ -184,8 +184,20 @@ const DEAD_TOKENS = [
   // the build config references something that is not there.
   'ivpfibuyccipmessages',
   'vpfibuyflowtest',
-  'buyrequest',
-  'buysuccess',
+  // These two are GENERIC ENGLISH BIGRAMS, unlike every other token here, so
+  // they are the only ones ordinary prose can synthesize. `identifierOnly`
+  // requires the match to be one word — separated at most by `_` or `-` — so
+  // `BUY_REQUEST`, `buy-request` and `buyRequest` match while "whether to
+  // buy. Request advice", a paragraph break, a heading, or a table cell do not.
+  //
+  // This REPLACED a growing set of block-boundary rules (sentence enders, blank
+  // lines, table pipes, markdown list markers). Each round found another
+  // boundary those rules mishandled — a fenced code block where a real mention
+  // was silenced, an ATX heading mid-paragraph where prose was blocked — because
+  // they were heuristics about where an English thought ends. Constraining the
+  // two tokens that need it removes the whole class instead of extending it.
+  { token: 'buyrequest', identifierOnly: true },
+  { token: 'buysuccess', identifierOnly: true },
   // The removed OFF-CHAIN WATCHDOG and NOTIFICATION CHANNEL (spec :99-100,
   // :138-139). Operator guidance can say "schedule runBuyWatchdog" or "wire
   // VPFI_BUY_CHANNEL" without naming any contract or selector.
@@ -213,7 +225,9 @@ const DEAD_TOKENS = [
 
 /** Normalize the token table into {token, notFollowedBy} records. */
 const DEAD_TOKEN_RECORDS = DEAD_TOKENS.map((t) =>
-  typeof t === 'string' ? { token: t, notFollowedBy: [] } : t,
+  typeof t === 'string'
+    ? { token: t, notFollowedBy: [], identifierOnly: false }
+    : { notFollowedBy: [], identifierOnly: false, ...t },
 );
 
 /**
@@ -272,127 +286,127 @@ const EXCLUDED_PREFIXES = [
  *                count is a known debt, not an endorsement.
  */
 const PINNED = new Map([
-  [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "a5fb82e7e79a"]],
-  ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9062087c85a0"]],
-  ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "68a43d5e5a4f"]],
-  ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0186b56dd4cb"]],
-  ["apps/agent/README.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "4d925cc4505e"]],
-  ["apps/agent/src/env.ts", [5, "RETRACTION — the RPC-breadth note explaining #687-A removed the watchdog that justified it", "506ac2098d49"]],
-  ["apps/agent/src/index.ts", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "4345c697dee6"]],
-  ["apps/agent/wrangler.jsonc", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "fba267868a99"]],
-  ["apps/defi/src/App.tsx", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c4ebe234788b"]],
-  ["apps/defi/src/contracts/config.ts", [3, "RETRACTION — removed-key notes on the deployment config shape", "1802851dc6bc"]],
-  ["apps/defi/src/hooks/useAdminKnobValues.ts", [1, "RETRACTION — notes the standalone receiver is gone and knobs moved", "426f05fa3ca9"]],
-  ["apps/defi/src/hooks/useTimelockPendingChanges.ts", [1, "RETRACTION — replaces a receiver-specific skip that no longer applies", "12ff6d8b623f"]],
-  ["apps/defi/src/i18n/glossary.ts", [2, "HISTORICAL — do-not-translate entry retained for historical copy", "7f8daa30207b"]],
-  ["apps/defi/src/pages/AdminDashboard.tsx", [1, "RETRACTION — notes why the mirror-chain receiver knobs are gone", "512e6c5717b9"]],
-  ["apps/www/src/content/whitepaper/Whitepaper.en.md", [4, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "85a8b72aa4da"]],
-  ["apps/www/src/pages/BuyVPFIMarketing.tsx", [1, "LIVE-TEXT — user-facing marketing surface; the most legally sensitive entry here", "2e3d73493eac"]],
-  ["contracts/.env.example", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9deaa36ccff5"]],
-  ["contracts/.gas-snapshot", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "cf70ddc30844"]],
-  ["contracts/RUNBOOK.md", [17, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "781f5a40dd12"]],
-  ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "fca6fa6272bf"]],
-  ["contracts/foundry.toml", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d4e43e43fb61"]],
-  ["contracts/script/AnvilNewPositiveFlows.s.sol", [1, "RETRACTION — removed-step note", "1a5646554f18"]],
-  ["contracts/script/ConfigureCcip.s.sol", [3, "RETRACTION — removed-step note", "1dc3b180263a"]],
-  ["contracts/script/DeployCrosschain.s.sol", [6, "RETRACTION — removed-deploy-target notes", "f632cffe066e"]],
-  ["contracts/script/DeployDiamond.s.sol", [9, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "26cce521e03e"]],
-  ["contracts/script/Handover.s.sol", [2, "RETRACTION — removed-ownership-target note", "aec5893311c1"]],
-  ["contracts/script/SetInteractionLaunch.s.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "51c50e93ff2f"]],
-  ["contracts/script/deploy-chain.sh", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "72e5f658f6ba"]],
-  ["contracts/script/deploy-mainnet.sh", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f6866e74e301"]],
-  ["contracts/script/deploy-testnet.sh", [7, "RETRACTION — removed-step note", "da89e0b389ab"]],
-  ["contracts/script/lint-event-categories.js", [2, "RETRACTION — removed-event note", "04d5d5aaacec"]],
-  ["contracts/script/predeploy-check.sh", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ef35c146c629"]],
-  ["contracts/src/crosschain/CcipMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "4b121e87b66b"]],
-  ["contracts/src/crosschain/GuardianPausable.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "33422e3ec4aa"]],
-  ["contracts/src/crosschain/ICrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f977552c1059"]],
-  ["contracts/src/facets/OracleAdminFacet.sol", [2, "RETRACTION — #1726 corrected the natspec that cited the adapter as a safety enforcer", "c3582b84b0dd"]],
-  ["contracts/src/facets/VPFIDiscountFacet.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09cdff31a14b"]],
-  ["contracts/src/interfaces/IVaipakamErrors.sol", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "627f5efb186e"]],
-  ["contracts/src/libraries/LibKeeperReward.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "dcd02714ec8d"]],
-  ["contracts/src/libraries/LibVaipakam.sol", [2, "RETRACTION — replaces the dangling storage-struct header that labelled sequencer slots", "cb044c197b6e"]],
-  ["contracts/test/CcipDeploymentRehearsalTest.t.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "674ac44df17a"]],
-  ["contracts/test/mocks/MockCrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "a9dcd28ffcfd"]],
-  ["docs/DesignsAndPlans/BorrowerPlatformFeeResearch.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "531a1a8ef999"]],
-  ["docs/DesignsAndPlans/CloudflareStagingDeployPlan.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "451ff5eea6dc"]],
-  ["docs/DesignsAndPlans/CrossChainRewardSystem.md", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c87309dbcd59"]],
-  ["docs/DesignsAndPlans/DecentralizedPlatformArchitecture.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f2ce0c07414b"]],
-  ["docs/DesignsAndPlans/EventSourcingAudit.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "19bd8900407a"]],
-  ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [26, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f277975a2375"]],
-  ["docs/DesignsAndPlans/OfferFillModesDesign.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "645bc73d0c9e"]],
-  ["docs/DesignsAndPlans/OssificationRoadmap.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "896e90fff275"]],
-  ["docs/DesignsAndPlans/Research-404-OssificationRoadmap.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c237b9b41e66"]],
-  ["docs/DesignsAndPlans/Stage3WorkerSplitPlan.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "fb1d9ad5f9fa"]],
-  ["docs/DesignsAndPlans/TreasuryBuyback.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "60a20ce99a0a"]],
-  ["docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9bb4bea639b8"]],
-  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ef7e8a1f67c0"]],
-  ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d85eb0834091"]],
-  ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "a17b95afc3a5"]],
-  ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e306e9d2c92a"]],
-  ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e42955acc3cf"]],
-  ["docs/ToDo.md", [28, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3ad9ec328c25"]],
-  ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0e8b7d89d669"]],
-  ["docs/internal/DeployOnTestnet.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9f9c63c92e75"]],
-  ["docs/internal/Issue687A-FrontendExcisionScout.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7bfd0c59b9b5"]],
-  ["docs/internal/PendingTasks-2026-05-14.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "82ece9e8c84f"]],
-  ["docs/internal/RiskCommitteeSignOffQuestionnaire.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e177bdfc4eb6"]],
-  ["docs/internal/SecurityScanQuestionnaire.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7ffadbbbb9e9"]],
-  ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "2d8a4700e6f3"]],
-  ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "043ce2c94f2c"]],
-  ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "ffb555c5fb8c"]],
-  ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "30a5205977ed"]],
-  ["docs/ops/BaseSepoliaDeploy.md", [27, "LIVE-TEXT — known debt", "5a093dada1bb"]],
-  ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "ecbf1ab690a2"]],
-  ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "1d93743effb3"]],
-  ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "0a850ec0bc2e"]],
-  ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "a9dc5f16dcfa"]],
-  ["docs/ops/VPFITokenRotationRunbook.md", [2, "HISTORICAL — rotation-scope note", "04e3a64006bd"]],
-  ["docs/ops/tenderly-paste/Diamond-full.json", [27, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "44ccce3ccedc"]],
-  ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "3a079192595e"]],
-  ["ops/subgraph/abis/Diamond.json", [24, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b83b2b7f14fb"]],
-  ["packages/contracts/src/abis/AddCollateralFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/AdminFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/ClaimFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/ConsolidationFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/DefaultedFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/EarlyWithdrawalFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/FeeEntitlementFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/InteractionRewardsFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/LoanFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/NFTPrepayDutchListingFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/NFTPrepayListingFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/OfferAcceptFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/OfferCancelFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/OfferCreateFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/OfferMutateFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/OfferParallelSaleFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/OracleFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/PartialWithdrawalFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/PayrollFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/PrecloseFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/PrepayListingFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/ProfileFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RefinanceFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RepayFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RepayPeriodicFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RewardAggregatorFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RewardClaimFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RewardCommitmentFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RewardCompensationDispatchFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RewardRemittanceFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RewardReporterFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RiskFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/RiskSplitLiquidationFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/SwapToRepayFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/SwapToRepayIntentFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/TreasuryFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/VPFIDiscountFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/VPFITokenFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/VaultFactoryFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "621dff8137dc"]],
-  ["packages/contracts/src/abis/index.ts", [2, "RETRACTION — removed-ABI notes in the barrel", "7d43c4b59dec"]],
-  ["packages/contracts/src/chain-config.ts", [2, "RETRACTION — removed-key note", "c50a1fe36831"]],
-  ["packages/contracts/src/deployments.ts", [1, "RETRACTION — removed-key note on the typed loader", "6d6a473b0675"]],
+  [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "232b194b311b"]],
+  ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b2f6b2e30107"]],
+  ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "def2086c70ea"]],
+  ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "46d05ee57880"]],
+  ["apps/agent/README.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "fa4fea12281e"]],
+  ["apps/agent/src/env.ts", [5, "RETRACTION — the RPC-breadth note explaining #687-A removed the watchdog that justified it", "1049f8e7e767"]],
+  ["apps/agent/src/index.ts", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "6a223939d69a"]],
+  ["apps/agent/wrangler.jsonc", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "812857e2173f"]],
+  ["apps/defi/src/App.tsx", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3f5467bb4249"]],
+  ["apps/defi/src/contracts/config.ts", [3, "RETRACTION — removed-key notes on the deployment config shape", "1dcad9f37ae5"]],
+  ["apps/defi/src/hooks/useAdminKnobValues.ts", [1, "RETRACTION — notes the standalone receiver is gone and knobs moved", "2cd2b170df15"]],
+  ["apps/defi/src/hooks/useTimelockPendingChanges.ts", [1, "RETRACTION — replaces a receiver-specific skip that no longer applies", "30bfbff0319c"]],
+  ["apps/defi/src/i18n/glossary.ts", [2, "HISTORICAL — do-not-translate entry retained for historical copy", "76419633dbab"]],
+  ["apps/defi/src/pages/AdminDashboard.tsx", [1, "RETRACTION — notes why the mirror-chain receiver knobs are gone", "570e1d63fc33"]],
+  ["apps/www/src/content/whitepaper/Whitepaper.en.md", [3, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "3af0fcd63739"]],
+  ["apps/www/src/pages/BuyVPFIMarketing.tsx", [1, "LIVE-TEXT — user-facing marketing surface; the most legally sensitive entry here", "e4bab2aafa5c"]],
+  ["contracts/.env.example", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "830e6452fde1"]],
+  ["contracts/.gas-snapshot", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9d45055c9084"]],
+  ["contracts/RUNBOOK.md", [17, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b93076c63516"]],
+  ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "d05158e7ef0e"]],
+  ["contracts/foundry.toml", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "6f81ed69763b"]],
+  ["contracts/script/AnvilNewPositiveFlows.s.sol", [1, "RETRACTION — removed-step note", "e626f5dc0b3e"]],
+  ["contracts/script/ConfigureCcip.s.sol", [3, "RETRACTION — removed-step note", "23b71775ea85"]],
+  ["contracts/script/DeployCrosschain.s.sol", [6, "RETRACTION — removed-deploy-target notes", "8de460c38985"]],
+  ["contracts/script/DeployDiamond.s.sol", [9, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "a094dc7c559b"]],
+  ["contracts/script/Handover.s.sol", [2, "RETRACTION — removed-ownership-target note", "56871089b115"]],
+  ["contracts/script/SetInteractionLaunch.s.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5aafc0bbce55"]],
+  ["contracts/script/deploy-chain.sh", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "72402d99e561"]],
+  ["contracts/script/deploy-mainnet.sh", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ff7807bd97bc"]],
+  ["contracts/script/deploy-testnet.sh", [7, "RETRACTION — removed-step note", "29fe12e1e075"]],
+  ["contracts/script/lint-event-categories.js", [2, "RETRACTION — removed-event note", "e9e1395bfd07"]],
+  ["contracts/script/predeploy-check.sh", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "fc99314f3d67"]],
+  ["contracts/src/crosschain/CcipMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b6f09624d717"]],
+  ["contracts/src/crosschain/GuardianPausable.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f66cbe5ac7cb"]],
+  ["contracts/src/crosschain/ICrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "a46326867b90"]],
+  ["contracts/src/facets/OracleAdminFacet.sol", [2, "RETRACTION — #1726 corrected the natspec that cited the adapter as a safety enforcer", "3b4d67cb1753"]],
+  ["contracts/src/facets/VPFIDiscountFacet.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "94bb823f9655"]],
+  ["contracts/src/interfaces/IVaipakamErrors.sol", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "40ae2bef4313"]],
+  ["contracts/src/libraries/LibKeeperReward.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "433c1b3e61d7"]],
+  ["contracts/src/libraries/LibVaipakam.sol", [2, "RETRACTION — replaces the dangling storage-struct header that labelled sequencer slots", "e210f535dde7"]],
+  ["contracts/test/CcipDeploymentRehearsalTest.t.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "747e7c5e7c86"]],
+  ["contracts/test/mocks/MockCrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b5fb38f4374d"]],
+  ["docs/DesignsAndPlans/BorrowerPlatformFeeResearch.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "43cd48ebc718"]],
+  ["docs/DesignsAndPlans/CloudflareStagingDeployPlan.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "da070633f84f"]],
+  ["docs/DesignsAndPlans/CrossChainRewardSystem.md", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c83f9372ca91"]],
+  ["docs/DesignsAndPlans/DecentralizedPlatformArchitecture.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "169c4ce146a2"]],
+  ["docs/DesignsAndPlans/EventSourcingAudit.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8320b6f91aa9"]],
+  ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [26, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d6b5920b132a"]],
+  ["docs/DesignsAndPlans/OfferFillModesDesign.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "eeab8694d981"]],
+  ["docs/DesignsAndPlans/OssificationRoadmap.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b40ea1fd52b7"]],
+  ["docs/DesignsAndPlans/Research-404-OssificationRoadmap.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5ff5000c02d8"]],
+  ["docs/DesignsAndPlans/Stage3WorkerSplitPlan.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "189cac2e4f9d"]],
+  ["docs/DesignsAndPlans/TreasuryBuyback.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f63d3e54daac"]],
+  ["docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7ac36e3f5b3e"]],
+  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8ca05b32318f"]],
+  ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "6150782dd9b8"]],
+  ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "3751e7aa744a"]],
+  ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9b4e8ec98ce6"]],
+  ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "92c3dfed32ec"]],
+  ["docs/ToDo.md", [28, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "92e2ac9e44c1"]],
+  ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1693b2322bfa"]],
+  ["docs/internal/DeployOnTestnet.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d0314d1c88c5"]],
+  ["docs/internal/Issue687A-FrontendExcisionScout.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f6482f66b3e4"]],
+  ["docs/internal/PendingTasks-2026-05-14.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "cf229a942c16"]],
+  ["docs/internal/RiskCommitteeSignOffQuestionnaire.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d703643224dc"]],
+  ["docs/internal/SecurityScanQuestionnaire.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5fad22ca5f4b"]],
+  ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1c8fb1ea66dc"]],
+  ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "56475d6e7aa7"]],
+  ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "c79a0f5d509b"]],
+  ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "7e03e7a7ef8b"]],
+  ["docs/ops/BaseSepoliaDeploy.md", [27, "LIVE-TEXT — known debt", "3d53b7dda509"]],
+  ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "71f856c2c04b"]],
+  ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "4f51827bdd85"]],
+  ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "094026b50a27"]],
+  ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "7c3b6669807b"]],
+  ["docs/ops/VPFITokenRotationRunbook.md", [2, "HISTORICAL — rotation-scope note", "0c737b9a0652"]],
+  ["docs/ops/tenderly-paste/Diamond-full.json", [27, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "3fbf9b3e98db"]],
+  ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "cbe6e6147c62"]],
+  ["ops/subgraph/abis/Diamond.json", [24, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "bbc6f1112b97"]],
+  ["packages/contracts/src/abis/AddCollateralFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/AdminFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/ClaimFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/ConsolidationFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/DefaultedFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/EarlyWithdrawalFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/FeeEntitlementFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/InteractionRewardsFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/LoanFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/NFTPrepayDutchListingFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/NFTPrepayListingFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/OfferAcceptFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/OfferCancelFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/OfferCreateFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/OfferMutateFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/OfferParallelSaleFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/OracleFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/PartialWithdrawalFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/PayrollFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/PrecloseFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/PrepayListingFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/ProfileFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RefinanceFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RepayFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RepayPeriodicFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RewardAggregatorFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RewardClaimFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RewardCommitmentFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RewardCompensationDispatchFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RewardRemittanceFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RewardReporterFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RiskFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/RiskSplitLiquidationFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/SwapToRepayFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/SwapToRepayIntentFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/TreasuryFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/VPFIDiscountFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/VPFITokenFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/VaultFactoryFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
+  ["packages/contracts/src/abis/index.ts", [2, "RETRACTION — removed-ABI notes in the barrel", "07ec71077e99"]],
+  ["packages/contracts/src/chain-config.ts", [2, "RETRACTION — removed-key note", "f8d13b949591"]],
+  ["packages/contracts/src/deployments.ts", [1, "RETRACTION — removed-key note on the typed loader", "d8bad2d667a8"]],
 ]);
 
 /**
@@ -592,47 +606,19 @@ function scanFile(path) {
   const contiguous = (a, b) => map[b] - map[a] === b - a;
 
   /**
-   * Does the SOURCE span behind normalized positions a..b cross a BLOCK
-   * boundary — that is, are its two ends parts of separate thoughts?
+   * Is the SOURCE span behind normalized positions a..b a single identifier —
+   * one word, separated at most by `_` or `-`?
    *
-   * Normalization erases punctuation and whitespace, so unrelated neighbours
-   * can fuse into a token: "…whether to buy. Request independent advice…"
-   * collapses to `…buyrequest…` and matched the removed CCIP message name. On a
-   * gate that blocks every PR, ordinary English blocking unrelated work is the
-   * worst failure mode available.
-   *
-   * Sentence punctuation alone was not enough — a PARAGRAPH break carries no
-   * punctuation at all, and "whether to buy\n\nRequest advice" fused just the
-   * same. So the boundaries are:
-   *
-   *   - sentence enders `. ! ? ;`
-   *   - `|`, a table-cell edge
-   *   - a blank line, which ends a block in prose and in comment blocks alike
-   *   - in MARKDOWN ONLY, a list-item marker at the start of a line
-   *
-   * That last rule is markdown-scoped deliberately, and the reason is worth
-   * keeping: `GuardianPausable.sol:16` reads "…the buy\n *         adapter/…",
-   * where the continuation line starts with ` * `. Treating `*` as a list
-   * marker everywhere would silence that mention — one of the real catches
-   * whole-file normalization exists for — so a fix for a false positive would
-   * have manufactured a false negative, which is the trap this gate has fallen
-   * into twice already.
-   *
-   * Single wrapped lines remain matchable; only genuine block breaks separate.
+   * Used only by `identifierOnly` tokens. See DEAD_TOKENS for why the
+   * alternative (rules about where an English sentence, paragraph, list item or
+   * heading ends) was abandoned.
    */
-  const isMarkdown = path.endsWith('.md');
-  const crossesBlockBoundary = (a, b) => {
-    const span = text.slice(map[a], map[b] + 1);
-    if (/[.!?;|]/.test(span)) return true;
-    if (/\n[ \t]*\n/.test(span)) return true;
-    if (isMarkdown && /\n[ \t]*(?:[-*+]\s|\d+[.)]\s)/.test(span)) return true;
-    return false;
-  };
+  const isIdentifierSpan = (a, b) => /^[A-Za-z0-9_-]+$/.test(text.slice(map[a], map[b] + 1));
 
   // Matches as half-open normalized intervals, so overlaps can be resolved.
   const matches = [];
 
-  for (const { token, notFollowedBy } of DEAD_TOKEN_RECORDS) {
+  for (const { token, notFollowedBy, identifierOnly } of DEAD_TOKEN_RECORDS) {
     let from = 0;
     for (;;) {
       const at = norm.indexOf(token, from);
@@ -650,8 +636,7 @@ function scanFile(path) {
           contiguous(end - 1, end + suffix.length - 1),
       );
       if (skip) continue;
-      // A single mention cannot span a block boundary.
-      if (crossesBlockBoundary(at, end - 1)) continue;
+      if (identifierOnly && !isIdentifierSpan(at, end - 1)) continue;
       matches.push({ start: at, end });
     }
   }
@@ -712,9 +697,21 @@ function scanFile(path) {
         lines.length - 1,
         lineOf(starts, map[end - 1]) + DIGEST_CONTEXT_LINES,
       );
-      return normalize(
-        [headingFor(first), ...lines.slice(first, last + 1)].join(' '),
-      );
+      // RAW, not normalized — only CRLF and trailing spaces are canonicalized.
+      //
+      // Normalizing the digest unit erased formatting that carries meaning. In
+      // CLAUDE.md's `Do not reason about a "fixed-rate buy"`, changing `not` to
+      // `~~not~~` strikes the negation out for every reader while normalizing
+      // to the identical string — a retraction visually inverted into an
+      // instruction, with the count and digest both unmoved.
+      //
+      // The cost is that reflowing a paragraph now moves the digest. That is
+      // the right trade: re-pinning after a reflow is a one-command chore,
+      // whereas an invisible semantic inversion is the failure this gate
+      // exists to prevent.
+      return [headingFor(first), ...lines.slice(first, last + 1)]
+        .map((l) => l.replace(/\r$/, '').replace(/[ \t]+$/, ''))
+        .join('\n');
     })
     .sort();
 
