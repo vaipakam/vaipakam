@@ -722,6 +722,29 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
       continue;
     }
     if (skipTags && text[i] === '<' && !(fencedOffsets && fencedOffsets(i))) {
+      // MARKDOWN AUTOLINKS are VISIBLE text, not invisible markup. `<https://…>`
+      // and `<name@example.com>` render as the URL itself, so they separate the
+      // words either side exactly as any other visible run does. Stripping them
+      // as tags fused `buy<https://example.com>Adapter` into a mention and
+      // failed a clean document — a false positive on a blocking gate, which is
+      // the more expensive direction. Recognized by the CommonMark shape: a
+      // scheme, or an address, with no spaces and no `<` before the `>`.
+      if (isMdSource) {
+        const auto = /^<(?:[a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>@]+)>/.exec(
+          text.slice(i, i + 2048),
+        );
+        if (auto) {
+          // Left in the stream deliberately — the reader sees these characters.
+          for (const c of auto[0].toLowerCase()) {
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+              out.push(c);
+              if (withMap) map.push(i);
+            }
+          }
+          i += auto[0].length - 1;
+          continue;
+        }
+      }
       // HTML comments FIRST — they are invisible markup too, and the tag shape
       // below does not recognize them (`!` is not a letter). A reader of
       // `deploy the buy <!-- note --> adapter` sees one phrase; leaving the

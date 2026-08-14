@@ -82,6 +82,12 @@ const FIXTURES = [
 
   // --- but genuinely separate text must NOT be fused ---
   {
+    name: 'autolink.md',
+    caught: false,
+    why: 'a Markdown autolink renders as visible text and separates the words either side',
+    body: 'Decide what to buy<https://example.com>Adapter selection follows.\n',
+  },
+  {
     name: 'block-tag.md',
     caught: false,
     why: 'a block-level element separates two visibly distinct thoughts',
