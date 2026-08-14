@@ -91,6 +91,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 
 /**
  * Signature test for formats whose bytes are not prose in any sense.
@@ -899,6 +900,65 @@ const DIGEST_CONTEXT_LINES = 2;
  * side, normalized; units are sorted then hashed, so moving a mention within a
  * file without changing its wording is invisible while rewording is not.
  */
+/**
+ * Reader-visible text from a PDF.
+ *
+ * Removing the `%PDF` exemption made PDFs *look* covered while only
+ * uncompressed content was ever readable: real PDFs Flate-compress their
+ * content streams, so a runbook whose page says "deploy the buy adapter"
+ * decoded, as UTF-8, to compressed bytes with no such phrase in them. The gate
+ * reported success on a document that plainly names a removed surface.
+ *
+ * Inflates each `/FlateDecode` stream and keeps the string literals a page
+ * actually draws — `(...)` for literal strings, `<...>` for hex ones. The
+ * drawing OPERATORS around them are dropped: `BT`, `Tj`, `ET` and friends are
+ * not words a reader sees, and letting them into the stream would fuse them
+ * with real text and manufacture matches.
+ *
+ * Best-effort by design. A stream that will not inflate is skipped rather than
+ * failing the run — a damaged or unusually-encoded PDF must not take CI down —
+ * and object streams / non-Flate filters are not decoded, so this raises
+ * coverage without claiming to be a PDF parser. See #1734 for the standing
+ * question of whether this gate should target prose only.
+ */
+function extractPdfText(buf) {
+  const out = [];
+  const marker = Buffer.from('stream');
+  const endMarker = Buffer.from('endstream');
+  let at = 0;
+  while (at < buf.length) {
+    const s0 = buf.indexOf(marker, at);
+    if (s0 === -1) break;
+    const e0 = buf.indexOf(endMarker, s0);
+    if (e0 === -1) break;
+    // Dictionary immediately before the stream keyword declares the filter.
+    const dict = buf.subarray(Math.max(0, s0 - 400), s0).toString('latin1');
+    let body = buf.subarray(s0 + marker.length, e0);
+    // Skip the EOL that must follow the `stream` keyword.
+    let b = 0;
+    while (b < body.length && (body[b] === 0x0d || body[b] === 0x0a)) b++;
+    body = body.subarray(b);
+    if (/\/FlateDecode/.test(dict)) {
+      try {
+        body = inflateSync(body);
+      } catch {
+        at = e0 + endMarker.length;
+        continue;
+      }
+    }
+    const content = body.toString('latin1');
+    for (const m of content.matchAll(/\(((?:\\.|[^\\)])*)\)/g)) out.push(m[1]);
+    for (const m of content.matchAll(/<([0-9A-Fa-f\s]+)>/g)) {
+      const hex = m[1].replace(/\s+/g, '');
+      if (hex.length % 2 === 0 && hex.length >= 2) {
+        out.push(Buffer.from(hex, 'hex').toString('latin1'));
+      }
+    }
+    at = e0 + endMarker.length;
+  }
+  return out.join(' ');
+}
+
 function isRecognizedBinary(path) {
   let head;
   try {
@@ -915,7 +975,11 @@ function scanFile(path) {
   try {
     // Resolved against REPO_ROOT, not the process CWD — `path` is a
     // repo-root-relative ledger key.
-    text = readFileSync(join(REPO_ROOT, path), 'utf8');
+    const raw = readFileSync(join(REPO_ROOT, path));
+    // A PDF's bytes are a container, not prose — decode what it draws.
+    text = raw.subarray(0, 4).toString('latin1') === '%PDF'
+      ? extractPdfText(raw)
+      : raw.toString('utf8');
   } catch (err) {
     // FAIL CLOSED. Returning "no hits" here treated an unreadable file exactly
     // like a clean one, which is a complete exemption for any path that cannot
