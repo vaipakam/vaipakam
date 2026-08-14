@@ -942,7 +942,23 @@ function scanFile(path) {
     if (!isMarkdown) return false;
     const line = lineOf(starts, offset);
     if (inFence[line] || indentedCode[line]) return true;
-    return inlineCodeSpans.some(([a, b]) => offset >= a && offset < b);
+    // BINARY SEARCH, not `.some()`. This is called for every `<` and every `&`
+    // in the file, and a linear scan of the span list made normalization
+    // quadratic: on a document with 50k code spans and 50k ampersands the gate
+    // went from ~11s to ~17.5s, and it grows from there. It blocks CI, so its
+    // worst case is not a slow check — it is a timeout that reads to everyone
+    // downstream as a broken gate. Spans are collected in ascending order and
+    // never overlap, so the search is sound.
+    let lo = 0;
+    let hi = inlineCodeSpans.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const [a, b] = inlineCodeSpans[mid];
+      if (offset < a) hi = mid - 1;
+      else if (offset >= b) lo = mid + 1;
+      else return true;
+    }
+    return false;
   };
 
   const cheap = (() => {
@@ -1130,6 +1146,14 @@ function scanFile(path) {
         // file. Same class as the heading and list rules: an explicit block
         // delimiter, not a guess about English.
         if (/^\s{0,3}>/.test(lines[i])) return true;
+        // Thematic breaks — `***`, `---`, `___`, optionally spaced. A reader
+        // sees a horizontal rule dividing two blocks; the walk saw nothing and
+        // fused the sentence before it with the one after. Note the overlap
+        // with the Setext rule above: a `---` line is a heading underline when
+        // text sits directly above it and a thematic break otherwise, so the
+        // Setext check runs FIRST and this only sees the leftovers.
+        if (/^\s{0,3}(?:\*[ \t]*){3,}$|^\s{0,3}(?:-[ \t]*){3,}$|^\s{0,3}(?:_[ \t]*){3,}$/.test(lines[i]))
+          return true;
       }
     }
     return false;
@@ -1261,8 +1285,15 @@ function scanFile(path) {
       // syntax it did not recognize. `===` is level 1, `---` level 2, per
       // Markdown. The underline must not itself be a list marker or a thematic
       // break with spaces, so require a run of three or more.
+      // MARKDOWN ONLY. Without this guard the rule fired on every extension,
+      // and `---` is a document separator in YAML — so `status: historical`
+      // above one was read as a level-2 heading governing a mention further
+      // down the file, and editing an unrelated earlier document moved the
+      // digest. That direction is worse than the miss it fixes: a false BLOCK
+      // on an ordinary edit trains people to re-pin without reading, which is
+      // the one habit that would make this whole gate worthless.
       const setext =
-        i + 1 < lines.length && !inFence[i + 1] && lines[i].trim() !== ''
+        isMarkdown && i + 1 < lines.length && !inFence[i + 1] && lines[i].trim() !== ''
           ? /^\s{0,3}(=|-)\1{2,}\s*$/.exec(lines[i + 1])
           : null;
       if (!atx && !bold && !setext) continue;

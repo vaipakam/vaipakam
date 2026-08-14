@@ -145,7 +145,7 @@ it — striking through the word "not" leaves every letter in place. It now
 covers the text as written.
 
 Widening the net kept roughly multiplying what it sees: a hundred and
-twenty-three files, against the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
+twenty-five files, against the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
 including operator-facing deployment steps, a security document, a partner
 questionnaire and a test matrix. Those are recorded as pending triage rather
 than fixed here — the ratchet stops the problem growing, and the cleanup is
