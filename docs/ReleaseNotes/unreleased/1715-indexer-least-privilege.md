@@ -8,12 +8,12 @@ bottom of the risk ordering.
 
 Both of those statements were wrong. That Worker holds fifteen stored
 credentials, not the three the document listed: four are the kind an auditor
-pictures — one marketplace key and three webhook-verification keys — and the
+pictures — one marketplace key and three shared secrets used to authenticate incoming webhooks — shared, so holding one lets you *forge* a delivery as well as check one — and the
 other eleven are the network endpoints it reads chains through, each of which
 carries a provider key inside the address itself and is therefore just as
 leakable and just as billable. Counting only the first four reproduces the
 undercount this change exists to correct. Those four credentials are used
-over HTTP — one marketplace API key and three webhook-verification keys — and
+over HTTP — one marketplace API key and those three shared webhook secrets — and
 it makes authenticated calls out to a third-party marketplace to publish
 listings on users' behalf. It is not read-only and it is not credential-free.
 
@@ -96,8 +96,11 @@ each of the same kind — a summary that had aged past the thing it summarised:
   both directions.** The original claimed every write was backed by a wallet
   signature; the first correction claimed none were. In fact one endpoint
   verifies an ownership proof and the administration endpoints are gated, while
-  three others deliberately take no wallet identity and rely on origin checks
-  and rate limits. The document now lists them individually, because a single
+  three others deliberately take no wallet identity. Nor are those three alike:
+  two are rate-limited and one — the threshold-update endpoint — is protected
+  only by an origin check, so an earlier draft claiming the unsigned routes
+  rely on "origin checks and rate limits" credited it with a control it does
+  not have. The document now lists every route individually, because a single
   answer is wrong whichever way it points.
 
 No behaviour changes.

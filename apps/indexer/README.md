@@ -1,6 +1,6 @@
 # @vaipakam/indexer
 
-**Vaipakam chain → D1 indexer + public read-API. Cloudflare Worker. No signing keys — but NOT read-only** (writes D1; publishes borrower-authorised, on-chain-bound Seaport listings to OpenSea).
+**Vaipakam chain → D1 indexer + public read-API. Cloudflare Worker. No ON-CHAIN transaction key — but NOT keyless and NOT read-only** (writes D1; publishes borrower-authorised, on-chain-bound Seaport listings to OpenSea).
 
 [![Workspaces typecheck](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml)
 
@@ -20,7 +20,7 @@ The connected app (`apps/defi`) reads from this Worker via `VITE_INDEXER_ORIGIN`
 
 The marketing site (`apps/www`) reads exactly one route: `/config/:chainId`, for the fee and tier figures quoted in its documentation (#1612). `apps/www` remains **on-chain-read-free** — it carries no wallet, no viem and no ABI, and this snapshot is precisely how it states current figures without any of that. Treat that route as having a marketing-site consumer when changing its shape, its CORS policy, or its availability: `apps/www` bounds the request at 4 s and falls back to bundled defaults, so an outage degrades rather than breaks it, but a silent change to the bundle's field ORDER would publish wrong numbers under a "live" badge.
 
-**Non-goals:** no signing keys, and no *on-chain* writes. If a request needs to write state on-chain, route it through the connected app + a wallet signature, not through this Worker.
+**Non-goals:** no on-chain transaction key, and no *on-chain* writes. (Not "no signing keys": the three `ALCHEMY_WEBHOOK_SIGNING_KEY_*` entries are **HMAC** secrets. HMAC is symmetric, so holding one permits **forging** a valid webhook signature, not merely verifying — they are signing material.) If a request needs to write state on-chain, route it through the connected app + a wallet signature, not through this Worker.
 
 This is narrower than "reads only", which this file used to claim and which is false: the Worker writes the shared D1 database (including via three POST endpoints) and publishes borrower-authorised Seaport orders to OpenSea with the project's API key (empty `0x` signature — the vault's ERC-1271 check validates an order hash the borrower bound on-chain, so the Worker cannot manufacture a listing). Note also that holding no signing key is **not** an isolation boundary — the D1 binding is database-scoped, so this Worker can write tables the signing Worker reads (see #1722).
 
@@ -55,7 +55,7 @@ Worker secrets:
 |---|---|
 | `RPC_*` (eleven) | Per-chain RPC URLs — **carry provider API keys**, so they are leakable, billable credentials, not just endpoints. Eleven, not the full chain set: `RPC_POLYGON` is bound by the agent but not here. |
 | `OPENSEA_API_KEY` | Authenticated **outbound publication** of borrower-authorised, on-chain-bound Seaport listings. A write credential upstream, not a read key. |
-| `ALCHEMY_WEBHOOK_SIGNING_KEY_84532` | HMAC verification of inbound Base-Sepolia chain-event webhooks. |
+| `ALCHEMY_WEBHOOK_SIGNING_KEY_84532` | HMAC secret for inbound Base-Sepolia chain-event webhooks. **Symmetric — holding it permits forging a delivery, not just verifying one.** |
 | `ALCHEMY_WEBHOOK_SIGNING_KEY_421614` | Same, Arbitrum Sepolia. |
 | `ALCHEMY_WEBHOOK_SIGNING_KEY_97` | Same, BNB testnet (configured ahead of BNB going live). |
 
