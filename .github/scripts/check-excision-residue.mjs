@@ -609,11 +609,86 @@ function scanFile(path) {
    * Is the SOURCE span behind normalized positions a..b a single identifier —
    * one word, separated at most by `_` or `-`?
    *
-   * Used only by `identifierOnly` tokens. See DEAD_TOKENS for why the
-   * alternative (rules about where an English sentence, paragraph, list item or
-   * heading ends) was abandoned.
+   * Used by `identifierOnly` tokens: the two generic English bigrams, which are
+   * the only names here ordinary prose can spell by accident.
    */
   const isIdentifierSpan = (a, b) => /^[A-Za-z0-9_-]+$/.test(text.slice(map[a], map[b] + 1));
+
+  /**
+   * Lines that sit inside a fenced code block.
+   *
+   * Needed so the markdown list rule below can be applied to PROSE only. This
+   * is bookkeeping over an explicit delimiter, not a guess about English —
+   * which is the distinction that matters, because guessing is what the earlier
+   * boundary rules did badly.
+   */
+  const inFence = (() => {
+    const flags = new Array(lines.length).fill(false);
+    let open = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (/^\s{0,3}(```|~~~)/.test(lines[i])) {
+        open = !open;
+        flags[i] = true; // the fence line itself
+        continue;
+      }
+      flags[i] = open;
+    }
+    return flags;
+  })();
+
+  /**
+   * Does the source span cross a boundary between two separate thoughts?
+   *
+   * A genuine multi-word mention is a PHRASE — "VPFI buy adapter", or the same
+   * words wrapped across a comment continuation. A false positive is two
+   * unrelated fragments fused by normalization stripping what separated them.
+   *
+   * This was deleted in round 8 on the reasoning that only the two generic
+   * tokens needed it. That reasoning was wrong and unverified: with it gone,
+   * "Decide what to buy. Adapter selection follows.", "buy: adapters", and a
+   * paragraph break between "buy." and "Receiver" all produced false positives
+   * on `buyadapter` / `buyreceiver`. Restored, minus the rule that was actually
+   * harmful and plus the one that was missing:
+   *
+   *   - sentence enders `. ! ? ; :` and `|` (table-cell edge)
+   *   - a blank line
+   *   - an ATX heading opening a line — the case that had been MISSING, which
+   *     let a heading mid-paragraph fuse two sections
+   *   - a markdown list marker opening a line, in `.md` files and NOT inside a
+   *     fenced block — the fence exemption is the fix for the rule that had
+   *     been HARMFUL, silencing a real `the buy\n * adapter` mention pasted
+   *     into a doc as a code sample
+   *
+   * Newlines alone are never boundaries: `GuardianPausable.sol:16` wraps
+   * "the buy\n *         adapter/receiver" and is a real mention.
+   */
+  const isMarkdown = path.endsWith('.md');
+  const crossesBlockBoundary = (a, b) => {
+    const from = map[a];
+    const to = map[b];
+    const span = text.slice(from, to + 1);
+    if (/[.!?;:|]/.test(span)) return true;
+    if (/\n[ \t]*\n/.test(span)) return true;
+    const firstLine = lineOf(starts, from);
+    const lastLine = lineOf(starts, to);
+    // BOTH structural rules are markdown-only and fence-excluded. `#` is a
+    // heading in Markdown and a COMMENT everywhere else: applying the heading
+    // rule globally silenced `deploy-mainnet.sh:831`, which wraps "the buy\n
+    // # receiver (canonical) or mirror VPFI + buy adapter" across shell comment
+    // lines — live text presenting the removed components as current deploy
+    // steps, and the very residue this gate was built to catch. Same trap as
+    // the `*` list marker inside a fenced Solidity comment, one round earlier:
+    // a character that means "new block" in Markdown means "continuation" in
+    // code.
+    if (isMarkdown) {
+      for (let i = firstLine + 1; i <= lastLine; i++) {
+        if (inFence[i]) continue;
+        if (/^\s{0,3}#{1,6}\s/.test(lines[i])) return true;
+        if (/^\s{0,3}(?:[-*+]\s|\d+[.)]\s)/.test(lines[i])) return true;
+      }
+    }
+    return false;
+  };
 
   // Matches as half-open normalized intervals, so overlaps can be resolved.
   const matches = [];
@@ -637,6 +712,7 @@ function scanFile(path) {
       );
       if (skip) continue;
       if (identifierOnly && !isIdentifierSpan(at, end - 1)) continue;
+      if (crossesBlockBoundary(at, end - 1)) continue;
       matches.push({ start: at, end });
     }
   }
