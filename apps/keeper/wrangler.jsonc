@@ -50,6 +50,16 @@
   //   - `telegram_links`    (Telegram handshake links; agent writes)
   //   - `notify_state`,
   //     `hf_band_state`     (per-user notify + HF-band dedupe)
+  //   - `pre_grace_notify_state` (pre-grace warning dedupe; read and
+  //                          written by the scheduled `runPreGraceWatcher`)
+  //   - `indexer_cursor`    (READ ONLY — `recordHfBandNotifications`
+  //                          reads the indexer's `notified` watermark and
+  //                          `diamond` tip before materializing rows, so a
+  //                          cron sentinel can't out-sort still-pending
+  //                          event rows. The indexer owns the writes)
+  //   - `notifications`     (HF-band downgrade rows, INSERT OR IGNORE on
+  //                          the dedup key; same call path, reached from
+  //                          the scheduled `runLiquidator`)
   //   - `loans`             (active-loan rows; written by indexer; this
   //                          Worker reads to enumerate live loans)
   //   - `offers`            (read by dailyOracleSnapshot; NOT by the
@@ -60,7 +70,12 @@
   //
   // Names verified against apps/indexer/migrations/. `thresholds`,
   // `link_codes` and `loan_index_*` were named here and exist under no
-  // migration.
+  // migration. The three entries above them were verified the other way
+  // round — from the live call graph rather than from this list — because
+  // a table this Worker touches but does not name is the failure mode a
+  // name check cannot catch: an auditor reading only the binding comment
+  // would conclude the keeper never writes the user-facing `notifications`
+  // inbox, and a migration author would not know to check it.
   // Cross-Worker D1 sharing is the deliberate coupling that lets the
   // three Workers stay independent without a message-bus layer
   // (Stage 3 plan §5).

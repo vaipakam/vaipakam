@@ -39,7 +39,6 @@
   //                          handshake — POST /link/telegram,
   //                          POST /unlink/telegram, POST /tg/webhook)
   //   - `user_thresholds`   (PUT /thresholds upserts)
-  //   - `notify_state`      (per-user notify dedupe)
   //   - `diag_errors`       (POST /diag/record + cron retention)
   //   - `diag_legal_holds`,
   //     `diag_legal_hold_audit` (T-075 hold place/lift + audit trail)
@@ -51,9 +50,21 @@
   // `link_codes`, `thresholds`, `loan_index_*` and `oracle_snapshot_*` —
   // the first three do not exist under any migration (the real tables are
   // `telegram_links`, `user_thresholds`, `loans`), and it omitted the
-  // diagnostics, support and notify tables this Worker actually writes.
+  // diagnostics and support tables this Worker actually writes.
   // These comments guide migration and incident work, so a wrong name here
   // costs someone time at the worst moment.
+  //
+  // `notify_state` is deliberately ABSENT, and a revision of this list
+  // wrongly added it. `src/db.ts` does contain a SELECT and an INSERT
+  // against that table, but their wrappers (`getNotifyState`,
+  // `putNotifyState`) are unreferenced exports — no live agent path
+  // imports either one, so the table is unreachable from this Worker.
+  // The KEEPER owns `notify_state` (`apps/keeper/src/watcher.ts` calls
+  // its own copies of both wrappers). The staging plan's call-graph
+  // inventory excludes it for the same reason
+  // (CloudflareStagingDeployPlan.md §4.3). Replacing a set of names that
+  // do not exist with a name that exists but is unreachable is the same
+  // defect in a new coat: it still overstates this Worker's data access.
   //
   // #1651: a `vpfi_buy_*` entry stood in that list, described as
   // buy-watchdog reconciliation reads. No such tables exist — no
