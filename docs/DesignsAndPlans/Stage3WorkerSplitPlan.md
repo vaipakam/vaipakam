@@ -130,8 +130,12 @@ remaining three files (`db.ts`, `diagRecord.ts`, `env.ts`) total
 ≈785 LOC and:
 
 - `db.ts` — most helpers are read/write against tables only ONE
-  Worker uses (e.g. `thresholds` is keeper-only, `link_codes` is
-  agent-only, `loan_index_*` is indexer-only). The shared subset is
+  Worker uses (e.g. per-user HF bands are keeper-only, the Telegram link
+  rows are agent-only, the loan rows are indexer-only). This example named
+  `thresholds` / `link_codes` / `loan_index_*`, none of which exists under
+  any migration — the real tables are `user_thresholds`, `telegram_links`
+  and `loans`. The point the example makes still stands; the names were
+  wrong, here and in both Workers' `wrangler.jsonc` (fixed alongside). The shared subset is
   small (one or two helpers); duplicating preserves the natural
   per-Worker scope without a fragile shared-table contract.
 - `diagRecord.ts` — diagnostic record schema is shared in CONCEPT but
