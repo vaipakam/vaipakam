@@ -30,3 +30,19 @@ is not added there — it would be configuring for a situation that does not
 exist. If that changes, the same one-line answer applies. This also is not a
 change to any shared lint configuration: the two apps keep separate configs, and
 the only shared one is a narrow guard covering a single unrelated rule.
+
+A second rule in the same app was reporting the same kind of thing, and is
+included here for the same reason. A timeline component maps a dozen activity
+kinds onto a single icon by listing their labels together — a normal, permitted
+way to write it. What the rule objected to was that two of those labels carry a
+short note explaining why they joined the group: a comment sitting between two
+labels stops the group counting as empty, and the check then reads it as a
+missing `break`. The two reports were precisely those two notes.
+
+The choice was to delete useful explanations to satisfy a rule that is not about
+explanations, or to tell the rule that bodyless label groups are fine. The
+latter, with one caveat worth stating: the dangerous case — a branch that does
+real work and then silently continues into the next one — is still reported.
+That was confirmed against a throwaway example rather than assumed, since
+relaxing a correctness rule on the strength of a plausible-sounding option would
+be the wrong way round.
