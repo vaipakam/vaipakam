@@ -85,7 +85,18 @@ files rather than the thirty-one the first version tracked. Most of the newly vi
 including operator-facing deployment steps, a security document, a partner
 questionnaire and a test matrix. Those are recorded as pending triage rather
 than fixed here — the ratchet stops the problem growing, and the cleanup is
-reviewed on its own.
+reviewed on its own, tracked as a separate piece of work so the marker cannot
+quietly become permanent.
+
+Compiling that list turned up one thing of a different kind. A generated
+interface file used by the data-indexing service still lists five error
+conditions belonging to the removed feature; it has not been regenerated since
+the removal. The contracts themselves are clean — the removal was complete —
+so this is a stale build artifact rather than leftover code, and its practical
+effect is nil, since those entries are never consulted. It is worth fixing
+anyway, because a committed interface file drifting from what is actually
+deployed is a failure this project has been bitten by before, and the fix is
+regeneration rather than judgment.
 
 Two further things came out of building it, both worth stating because they
 change what the numbers mean. Counting *occurrences* rather than *matching lines*
