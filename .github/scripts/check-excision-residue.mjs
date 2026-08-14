@@ -544,7 +544,14 @@ const PINNED = new Map([
  * blanket prefix exempted every one of them — including the fragment each of
  * these PRs adds to describe its own work.
  */
-const EXCLUSION_CARVEOUTS = ['docs/ReleaseNotes/unreleased/'];
+const EXCLUSION_CARVEOUTS = [
+  'docs/ReleaseNotes/unreleased/',
+  // ACTIVE TOOLING, not a dated record. The directory exclusion exists because
+  // an assembled note is history; `assemble.sh` is a script an operator runs
+  // today, and a live instruction added to it would have been exempt purely
+  // because of where it sits.
+  'docs/ReleaseNotes/assemble.sh',
+];
 
 function isExcluded(file) {
   if (EXCLUSION_CARVEOUTS.some((p) => file.startsWith(p))) return false;
@@ -587,7 +594,15 @@ function inScopeFiles() {
     if (!entry) continue;
     const tab = entry.indexOf('\t');
     if (tab === -1) continue;
-    if (entry.slice(0, entry.indexOf(' ')) === '160000') continue; // gitlink
+    const mode = entry.slice(0, entry.indexOf(' '));
+    if (mode === '160000') continue; // gitlink
+    // SYMLINKS (120000) are skipped: `readFileSync` follows them, so the bytes
+    // scanned would come from wherever the link points rather than from
+    // repository-controlled content — and a tiny tracked link to a
+    // non-terminating device such as `/dev/zero` would make this blocking job
+    // allocate until it is killed. The link's own target text is data in the
+    // tree and is not prose this gate can attribute to a file.
+    if (mode === '120000') continue;
     const file = entry.slice(tab + 1);
     if (!isExcluded(file)) files.push(file);
   }
@@ -1743,6 +1758,20 @@ if (process.argv.includes('--write-pins')) {
     .join('\n');
   const self = readFileSync(SELF, 'utf8');
   const replacement = `const PINNED = new Map([\n${body}\n]);`;
+  // The ledger pattern must match EXACTLY ONCE. `String.replace` returns the
+  // source unchanged when it does not match, so a routine reformat of the
+  // `PINNED` declaration would turn the documented regeneration command into a
+  // no-op that still printed a count and exited 0 — leaving the operator
+  // believing they had re-pinned.
+  const LEDGER_RE = /const PINNED = new Map\(\[[\s\S]*?\n\]\);/g;
+  const hits = self.match(LEDGER_RE);
+  if (!hits || hits.length !== 1) {
+    console.error(
+      `check-excision-residue: --write-pins found ${hits ? hits.length : 0} ledger ` +
+        `declarations, expected exactly 1. Refusing to report success without writing.`,
+    );
+    process.exit(1);
+  }
   writeFileSync(
     SELF,
     // Function replacer, so `$&` / `$'` / `$1` inside a reason are inserted
