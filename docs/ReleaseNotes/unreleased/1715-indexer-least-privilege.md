@@ -70,7 +70,7 @@ documenting its single write path — that was itself wrong. There are three
 write-accepting endpoints, not one, and using a false claim to justify leaving
 other descriptions alone would have propagated the same error sideways.
 
-Review turned up four further corrections that the same section was carrying,
+Review turned up six further corrections that the same section was carrying,
 each of the same kind — a summary that had aged past the thing it summarised:
 
 - **A third way a compromised component can cause harm, which the write-up had

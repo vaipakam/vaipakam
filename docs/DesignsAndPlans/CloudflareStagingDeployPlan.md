@@ -66,7 +66,10 @@ as a privilege boundary:
   the same as "no signing key", as this bullet used to say.
   **`PUSH_CHANNEL_PK` is an Ethereum private key**, instantiated as an
   ethers `Wallet` (`apps/agent/src/push.ts:66`) to sign Push
-  notifications as the channel. **That key** cannot move funds — the
+  notifications as the channel. **That key** holds no PROTOCOL authority — but it is not fund-safe:
+  `docs/ops/AdminKeysAndPause.md:227` records the channel-owner EOA as holding
+  the 50 PUSH staking deposit and ~$50 of native gas, so possession of the
+  private key exposes those wallet assets. It cannot move protocol funds — the
   subject is the key, not the Worker, which is a distinction this whole
   section exists to keep — and that is the claim worth making; "holds no signing key" overstates it and would
   lead a secret reviewer to skip key material that is real. The
@@ -351,7 +354,13 @@ NO secrets — the frontend bundle is static.
                         (twelve). The three sets differ ONLY by those
                         Polygon entries, which have no deployment record
                         and are dropped at the getDeployment gate — so
-                        all three REACH the same ten. Provision from
+                        all three REACH the same set — and it is far
+                        smaller than either count. deployments.json holds
+                        only 97 / 84532 / 421614, and getChainConfigs
+                        requires BOTH an RPC value and a getDeployment hit,
+                        so at most THREE chains are reachable today. The
+                        other seven non-Polygon bindings are provisioned
+                        ahead of their deployments. Provision from
                         each Worker's own wrangler.jsonc, not from this
                         row. (It previously read "same chains as indexer
                         + agent", which was wrong for both.)

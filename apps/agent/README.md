@@ -36,10 +36,18 @@ Two things it used to say alongside that are **withdrawn**:
 | `POST /support/ticket` | **none** — deliberately accepts no wallet identity |
 | `POST /diag/record` | **none** — CORS + rate limiting only |
 | `PUT /thresholds` (ordinary path) | **none** — signature-free |
+| `POST /intent/fusion/post` | **none at request level** — origin + rate-limit, plus an on-chain commitment check. Mutates external resolver state |
+| `POST /opensea/listing` | **none at request level** — origin + rate-limit. Publishes to a live marketplace under the project's `OPENSEA_API_KEY`; the vault's ERC-1271 check over a borrower-bound order hash is what actually authorises it |
 
 An earlier version of this paragraph swung the other way and called the whole set "not wallet-signature-gated", which erased the real controls on the gated routes — `POST /link/telegram`, `POST /unlink/telegram`, `POST /telegram/test` and diagnostics administration. Name them rather than counting them: an earlier draft said "the first two", which silently went stale the moment the table grew.
 
-**The unsigned three are not uniformly protected either.** `POST /support/ticket` and `POST /diag/record` each have a rate-limit binding; **`PUT /thresholds` has none** — it is reached after the origin check and neither its dispatch nor `handlePutThresholds` calls a limiter, so unbounded threshold upserts are NOT mitigated. An earlier draft said the unsigned routes were protected by "origin checks and rate limits", which asserted a control that does not exist on that route. Check the specific route.
+Those last two are **credential-backed publication paths**: they change state
+outside this project — a resolver network and a public marketplace — using the
+project's own API keys rather than any user's signature. An earlier version of
+this table omitted both, which preserved a false "unsigned three" count and hid
+the two routes whose controls differ most from the rest.
+
+**The unsigned routes are not uniformly protected either.** `POST /support/ticket`, `POST /diag/record`, `POST /intent/fusion/post` and `POST /opensea/listing` each have a rate-limit binding; **`PUT /thresholds` has none** — it is reached after the origin check and neither its dispatch nor `handlePutThresholds` calls a limiter, so unbounded threshold upserts are NOT mitigated. An earlier draft said the unsigned routes were protected by "origin checks and rate limits", which asserted a control that does not exist on that route. Check the specific route.
 
 ## How to run
 

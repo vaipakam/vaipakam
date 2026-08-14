@@ -268,8 +268,14 @@ not as work outstanding:
   than planned: `apps/keeper/wrangler.jsonc` runs `* * * * *`, not the
   `*/5 * * * *` this section assumed.
 - The keeper-side `db.ts` subset reading the indexer's `offers` table
-  (cross-Worker D1 read, same database, different bindings) — **done**;
-  `matcher.ts` performs it.
+  (cross-Worker D1 read, same database, different bindings) — **STILL
+  OUTSTANDING.** `matcher.ts:41-43` states discovery is on-chain (count +
+  paginate + `getOffer`) and names the D1 candidate read as a future
+  optimisation; the module imports no DB helper. An earlier revision of this
+  bullet marked it discharged and told maintainers not to re-plan it, which
+  would have retired a real optimisation that was never built. The `offers`
+  query in `dailyOracleSnapshot.ts` is unrelated and does not implement
+  matcher discovery.
 - `apps/keeper` scope described as "HF watch + liquidate + offer match"
   — **done**; that is its current surface, not its eventual one.
 
