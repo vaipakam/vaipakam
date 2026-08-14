@@ -80,23 +80,29 @@ omitted its fingerprint was silently treated as opting out of that check —
 now rejected outright, since a safeguard that can be switched off by leaving
 something out is not a safeguard.
 
-Widening the net roughly doubled what it sees, then doubled it again: seventy-six
-files rather than the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
+Widening the net roughly doubled what it sees, then doubled it again:
+seventy-seven files rather than the thirty-one the first version tracked. Most of the newly visible text is legitimate, but some of it is not,
 including operator-facing deployment steps, a security document, a partner
 questionnaire and a test matrix. Those are recorded as pending triage rather
 than fixed here — the ratchet stops the problem growing, and the cleanup is
 reviewed on its own, tracked as a separate piece of work so the marker cannot
 quietly become permanent.
 
-Compiling that list turned up one thing of a different kind. A generated
-interface file used by the data-indexing service still lists five error
-conditions belonging to the removed feature; it has not been regenerated since
-the removal. The contracts themselves are clean — the removal was complete —
-so this is a stale build artifact rather than leftover code, and its practical
-effect is nil, since those entries are never consulted. It is worth fixing
-anyway, because a committed interface file drifting from what is actually
-deployed is a failure this project has been bitten by before, and the fix is
-regeneration rather than judgment.
+Compiling that list turned up something of a different kind, and a first
+attempt at describing it was wrong in a way worth recording. A generated
+interface file used by the data-indexing service still lists error conditions
+belonging to the removed feature. The obvious reading — stale build artifact,
+fix by regenerating — is not the whole story: one of those error definitions is
+still present in the contract source itself, carrying documentation that
+describes the removed purchase pipeline as though it still runs. So the
+sequence is source cleanup first, regeneration second; regenerating alone would
+faithfully reproduce the leftover.
+
+The first pass missed it by searching only for the names already found in the
+generated file, which is circular — it can only confirm what it started with,
+never find the one that was named differently. The build configuration has a
+matching problem: it still lists a test file for the removed feature that no
+longer exists on disk.
 
 Two further things came out of building it, both worth stating because they
 change what the numbers mean. Counting *occurrences* rather than *matching lines*

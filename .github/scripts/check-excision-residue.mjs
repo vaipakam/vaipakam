@@ -147,6 +147,15 @@ const DEAD_TOKENS = [
   'vpfibuyenabled',
   'vpfibuyconfig',
   'computebuyanddebitcaps',
+  // The removed INTERFACE, TEST and MESSAGE names (spec :111-112, :148).
+  // Prose can name the deleted flow through these without ever mentioning a
+  // contract or a selector — and one is not merely prose: `foundry.toml:271`
+  // still lists `test/VpfiBuyFlowTest.t.sol`, a file the excision deleted, so
+  // the build config references something that is not there.
+  'ivpfibuyccipmessages',
+  'vpfibuyflowtest',
+  'buyrequest',
+  'buysuccess',
   // NOT listed, being substrings of tokens above and so double-counted:
   // `quoteFixedRateBuy` (→ fixedratebuy), `set/getBridgedBuyReceiver`
   // (→ buyreceiver).
@@ -219,12 +228,13 @@ const PINNED = new Map([
   ["apps/defi/src/hooks/useTimelockPendingChanges.ts", [1, "RETRACTION — replaces a receiver-specific skip that no longer applies", "12ff6d8b623f"]],
   ["apps/defi/src/i18n/glossary.ts", [2, "HISTORICAL — do-not-translate entry retained for historical copy", "7f8daa30207b"]],
   ["apps/defi/src/pages/AdminDashboard.tsx", [1, "RETRACTION — notes why the mirror-chain receiver knobs are gone", "512e6c5717b9"]],
-  ["apps/www/src/content/whitepaper/Whitepaper.en.md", [3, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "fd12e900703b"]],
+  ["apps/www/src/content/whitepaper/Whitepaper.en.md", [4, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "710c0ab438f2"]],
   ["apps/www/src/pages/BuyVPFIMarketing.tsx", [1, "LIVE-TEXT — user-facing marketing surface; the most legally sensitive entry here", "2e3d73493eac"]],
   ["contracts/.env.example", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "53463f12de27"]],
-  ["contracts/.gas-snapshot", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "cea06a176e47"]],
-  ["contracts/RUNBOOK.md", [14, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8396f7e19ed8"]],
+  ["contracts/.gas-snapshot", [15, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1cfcfd5cbfd3"]],
+  ["contracts/RUNBOOK.md", [15, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ad137a273bd3"]],
   ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "e77aee67be9f"]],
+  ["contracts/foundry.toml", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "83250658d3a6"]],
   ["contracts/script/AnvilNewPositiveFlows.s.sol", [1, "RETRACTION — removed-step note", "1a5646554f18"]],
   ["contracts/script/ConfigureCcip.s.sol", [2, "RETRACTION — removed-step note", "0fddb6c81964"]],
   ["contracts/script/DeployCrosschain.s.sol", [6, "RETRACTION — removed-deploy-target notes", "f632cffe066e"]],
@@ -249,8 +259,8 @@ const PINNED = new Map([
   ["docs/DesignsAndPlans/BorrowerPlatformFeeResearch.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d9ce3777fa68"]],
   ["docs/DesignsAndPlans/CrossChainRewardSystem.md", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1631f7e888d8"]],
   ["docs/DesignsAndPlans/DecentralizedPlatformArchitecture.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f1d97d1f5b58"]],
-  ["docs/DesignsAndPlans/EventSourcingAudit.md", [4, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ec062299c912"]],
-  ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [24, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0dfdee2d9f2e"]],
+  ["docs/DesignsAndPlans/EventSourcingAudit.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d6a439fed207"]],
+  ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [26, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1ae4baa44e75"]],
   ["docs/DesignsAndPlans/OfferFillModesDesign.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "6d86b5281325"]],
   ["docs/DesignsAndPlans/OssificationRoadmap.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b56aa60682b2"]],
   ["docs/DesignsAndPlans/Research-404-OssificationRoadmap.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1498b52c6d00"]],
@@ -259,32 +269,48 @@ const PINNED = new Map([
   ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "65abf0b56228"]],
   ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ea9dea92aa6b"]],
   ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "513c1075317f"]],
-  ["docs/GLOSSARY.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e100c8adf2cb"]],
+  ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d205132203ae"]],
   ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "6631b16451de"]],
-  ["docs/ToDo.md", [15, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "06e4f85faeeb"]],
+  ["docs/ToDo.md", [25, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d7bf3381912d"]],
   ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8f2df1d93c18"]],
   ["docs/internal/DeployOnTestnet.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f9ad1ffff9b3"]],
   ["docs/internal/Issue687A-FrontendExcisionScout.md", [11, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9c23c71d64d5"]],
   ["docs/internal/PendingTasks-2026-05-14.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0a552e841982"]],
   ["docs/internal/RiskCommitteeSignOffQuestionnaire.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "27482fe157e0"]],
   ["docs/internal/SecurityScanQuestionnaire.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "221c8d80edab"]],
-  ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [14, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c055d9487953"]],
+  ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9b4561c4f2d7"]],
   ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "043ce2c94f2c"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "beefecb68bfb"]],
   ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "991df1fdd878"]],
-  ["docs/ops/BaseSepoliaDeploy.md", [23, "LIVE-TEXT — known debt", "55ab4f3fc75e"]],
+  ["docs/ops/BaseSepoliaDeploy.md", [25, "LIVE-TEXT — known debt", "384a26546da1"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "6c8c8cd8c0b0"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "0e5b914741dc"]],
-  ["docs/ops/DeploymentRunbook.md", [44, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "71a97920baf1"]],
+  ["docs/ops/DeploymentRunbook.md", [45, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "5306b8b0864d"]],
   ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "9c433fcdab4b"]],
   ["docs/ops/VPFITokenRotationRunbook.md", [2, "HISTORICAL — rotation-scope note", "725d18cfbbef"]],
-  ["docs/ops/tenderly-paste/Diamond-full.json", [23, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "265510e04e69"]],
+  ["docs/ops/tenderly-paste/Diamond-full.json", [24, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "a8dc7842cb9e"]],
   ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "3a079192595e"]],
   ["ops/subgraph/abis/Diamond.json", [12, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "25d9f51c0d9e"]],
   ["packages/contracts/src/abis/index.ts", [2, "RETRACTION — removed-ABI notes in the barrel", "7d43c4b59dec"]],
   ["packages/contracts/src/chain-config.ts", [2, "RETRACTION — removed-key note", "c50a1fe36831"]],
   ["packages/contracts/src/deployments.ts", [1, "RETRACTION — removed-key note on the typed loader", "6d6a473b0675"]],
 ]);
+
+/**
+ * Directory entries (trailing `/`) match by PREFIX; file entries match by
+ * EXACT EQUALITY.
+ *
+ * `startsWith` was applied to both, which quietly exempted any sibling whose
+ * name merely begins with an exempt filename — a tracked
+ * `VPFISecuritiesFeatureExcision.md-followup.md` would have been outside the
+ * ratchet entirely, contradicting the comment two lines above its own
+ * exclusion. A file exemption should exempt that file and nothing else.
+ */
+function isExcluded(file) {
+  return EXCLUDED_PREFIXES.some((p) =>
+    p.endsWith('/') ? file.startsWith(p) : file === p,
+  );
+}
 
 /** Tracked files, from git — the whole tree, minus EXCLUDED_PREFIXES. */
 function inScopeFiles() {
@@ -295,7 +321,7 @@ function inScopeFiles() {
   return out
     .split('\0')
     .filter(Boolean)
-    .filter((f) => !EXCLUDED_PREFIXES.some((p) => f === p || f.startsWith(p)));
+    .filter((f) => !isExcluded(f));
 }
 
 /** Lower-case, strip every non-alphanumeric. See DEAD_TOKENS. */
