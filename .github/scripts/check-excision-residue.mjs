@@ -197,6 +197,12 @@ const DEAD_TOKENS = [
   'buyexceedsdailycap',
   'buyexceedsperrequestcap',
   'pendingbuynotfound',
+  // Retired ABI operations/events; migration 0024_purge-retired-vpfi-events
+  // names VPFIPurchasedWithETH as removed in #687-A.
+  'vpfipurchasedwitheth',
+  'pendingbuys',
+  'quotebuy',
+  'setbuyoptions',
   // The removed INTERFACE, TEST and MESSAGE names (spec :111-112, :148).
   // Prose can name the deleted flow through these without ever mentioning a
   // contract or a selector — and one is not merely prose: `foundry.toml:271`
@@ -319,23 +325,25 @@ const PINNED = new Map([
   ["apps/defi/src/hooks/useAdminKnobValues.ts", [1, "RETRACTION — notes the standalone receiver is gone and knobs moved", "2cd2b170df15"]],
   ["apps/defi/src/hooks/useTimelockPendingChanges.ts", [1, "RETRACTION — replaces a receiver-specific skip that no longer applies", "30bfbff0319c"]],
   ["apps/defi/src/i18n/glossary.ts", [2, "HISTORICAL — do-not-translate entry retained for historical copy", "76419633dbab"]],
+  ["apps/defi/src/lib/logIndex.ts", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d87a64264bc0"]],
   ["apps/defi/src/pages/AdminDashboard.tsx", [1, "RETRACTION — notes why the mirror-chain receiver knobs are gone", "570e1d63fc33"]],
+  ["apps/indexer/migrations/0024_purge_retired_vpfi_events.sql", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5f866b8a9a60"]],
   ["apps/www/src/content/whitepaper/Whitepaper.en.md", [3, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "3af0fcd63739"]],
   ["apps/www/src/pages/BuyVPFIMarketing.tsx", [1, "LIVE-TEXT — user-facing marketing surface; the most legally sensitive entry here", "e4bab2aafa5c"]],
   ["contracts/.env.example", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "830e6452fde1"]],
-  ["contracts/.gas-snapshot", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9d45055c9084"]],
+  ["contracts/.gas-snapshot", [17, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8ed1ed41f91a"]],
   ["contracts/RUNBOOK.md", [18, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "968b066e3406"]],
   ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "d05158e7ef0e"]],
   ["contracts/foundry.toml", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "6f81ed69763b"]],
   ["contracts/script/AnvilNewPositiveFlows.s.sol", [1, "RETRACTION — removed-step note", "e626f5dc0b3e"]],
   ["contracts/script/ConfigureCcip.s.sol", [3, "RETRACTION — removed-step note", "23b71775ea85"]],
   ["contracts/script/DeployCrosschain.s.sol", [6, "RETRACTION — removed-deploy-target notes", "8de460c38985"]],
-  ["contracts/script/DeployDiamond.s.sol", [9, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "a094dc7c559b"]],
+  ["contracts/script/DeployDiamond.s.sol", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "cc0cb682879f"]],
   ["contracts/script/Handover.s.sol", [2, "RETRACTION — removed-ownership-target note", "56871089b115"]],
   ["contracts/script/SetInteractionLaunch.s.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5aafc0bbce55"]],
   ["contracts/script/deploy-chain.sh", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "72402d99e561"]],
   ["contracts/script/deploy-mainnet.sh", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ff7807bd97bc"]],
-  ["contracts/script/deploy-testnet.sh", [7, "RETRACTION — removed-step note", "29fe12e1e075"]],
+  ["contracts/script/deploy-testnet.sh", [6, "RETRACTION — removed-step note", "c7b61926c90d"]],
   ["contracts/script/lint-event-categories.js", [2, "RETRACTION — removed-event note", "e9e1395bfd07"]],
   ["contracts/script/predeploy-check.sh", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "fc99314f3d67"]],
   ["contracts/src/crosschain/CcipMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b6f09624d717"]],
@@ -352,21 +360,21 @@ const PINNED = new Map([
   ["docs/DesignsAndPlans/CloudflareStagingDeployPlan.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "da070633f84f"]],
   ["docs/DesignsAndPlans/CrossChainRewardSystem.md", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c83f9372ca91"]],
   ["docs/DesignsAndPlans/DecentralizedPlatformArchitecture.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "169c4ce146a2"]],
-  ["docs/DesignsAndPlans/EventSourcingAudit.md", [12, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f051b4c0dfd1"]],
-  ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [26, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d6b5920b132a"]],
+  ["docs/DesignsAndPlans/EventSourcingAudit.md", [14, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ab4e65c08472"]],
+  ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [31, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e86953d8d19f"]],
   ["docs/DesignsAndPlans/OfferFillModesDesign.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "eeab8694d981"]],
   ["docs/DesignsAndPlans/OssificationRoadmap.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b40ea1fd52b7"]],
   ["docs/DesignsAndPlans/Research-404-OssificationRoadmap.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5ff5000c02d8"]],
   ["docs/DesignsAndPlans/Stage3WorkerSplitPlan.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "189cac2e4f9d"]],
   ["docs/DesignsAndPlans/TreasuryBuyback.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f63d3e54daac"]],
   ["docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7ac36e3f5b3e"]],
-  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8ca05b32318f"]],
+  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "a91cedc236ef"]],
   ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "6150782dd9b8"]],
   ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "3751e7aa744a"]],
   ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9b4e8ec98ce6"]],
   ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "92c3dfed32ec"]],
-  ["docs/ToDo.md", [30, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0267d07e75d7"]],
-  ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [9, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ce4a6f148737"]],
+  ["docs/ToDo.md", [31, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b09855ced8db"]],
+  ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "1693b2322bfa"]],
   ["docs/internal/DeployOnTestnet.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d0314d1c88c5"]],
   ["docs/internal/Issue687A-FrontendExcisionScout.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f6482f66b3e4"]],
   ["docs/internal/PendingTasks-2026-05-14.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "cf229a942c16"]],
@@ -376,13 +384,13 @@ const PINNED = new Map([
   ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "56475d6e7aa7"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "c79a0f5d509b"]],
   ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "0e318eb4c650"]],
-  ["docs/ops/BaseSepoliaDeploy.md", [25, "LIVE-TEXT — known debt", "fd16351068d9"]],
+  ["docs/ops/BaseSepoliaDeploy.md", [26, "LIVE-TEXT — known debt", "c657f885e48f"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "71f856c2c04b"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "4f51827bdd85"]],
   ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "3a95991f2e38"]],
   ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "98772e8c78b6"]],
-  ["docs/ops/VPFITokenRotationRunbook.md", [2, "HISTORICAL — rotation-scope note", "0c737b9a0652"]],
-  ["docs/ops/tenderly-paste/Diamond-full.json", [39, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "ae415efcc8e4"]],
+  ["docs/ops/VPFITokenRotationRunbook.md", [1, "HISTORICAL — rotation-scope note", "b39fa2d253dc"]],
+  ["docs/ops/tenderly-paste/Diamond-full.json", [43, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "0f9f95f5f0f1"]],
   ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "cbe6e6147c62"]],
   ["ops/subgraph/abis/Diamond.json", [24, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "bbc6f1112b97"]],
   ["packages/contracts/src/abis/AddCollateralFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "acd3243d8ca6"]],
@@ -501,7 +509,7 @@ function normalize(text) {
  * normalized character `i` — what lets a match found in the collapsed string
  * be reported against the lines it actually came from.
  */
-function normalizeWithMap(text, sourcePath, withMap = true) {
+function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null) {
   const out = [];
   const map = [];
   // Iterate the ORIGINAL text and lowercase ONE CHARACTER AT A TIME, so every
@@ -523,7 +531,12 @@ function normalizeWithMap(text, sourcePath, withMap = true) {
   const skipTags = MARKUP_EXTENSIONS.test(sourcePath || '');
   const TAG = /^<\/?[a-zA-Z][^<>]*>/;
   for (let i = 0; i < text.length; i++) {
-    if (skipTags && text[i] === '<') {
+    // NOT inside a fenced block: there, angle brackets are literal command
+    // placeholders, not markup. `docs/ops/BaseSepoliaDeploy.md:385,392` carry
+    // `<mirror VPFI_BUY_ADAPTER>` in live runbook commands, and stripping them
+    // deleted two REAL mentions from that file's pin (27 -> 25) plus one more
+    // elsewhere — a false negative introduced by the fix for a false negative.
+    if (skipTags && text[i] === '<' && !(fencedOffsets && fencedOffsets(i))) {
       const m = TAG.exec(text.slice(i, i + 400));
       if (m) {
         i += m[0].length - 1;
@@ -539,6 +552,42 @@ function normalizeWithMap(text, sourcePath, withMap = true) {
     }
   }
   return { norm: out.join(''), map };
+}
+
+/**
+ * Which lines sit inside a fenced code block.
+ *
+ * CommonMark: a fence closes only on a run of the SAME marker at least as long
+ * as the opener, so a four-backtick block may quote a three-backtick one.
+ * Shared by the boundary rules, the heading walk AND the tag skipper — all
+ * three need the same answer, and giving them separate notions of "is this
+ * code?" is how the last two rounds' defects happened.
+ */
+function computeFences(lines) {
+  const flags = new Array(lines.length).fill(false);
+  let openMarker = '';
+  let openLen = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s{0,3}(`{3,}|~{3,})/.exec(lines[i]);
+    if (m) {
+      const marker = m[1][0];
+      const len = m[1].length;
+      if (!openMarker) {
+        openMarker = marker;
+        openLen = len;
+        flags[i] = true;
+        continue;
+      }
+      if (marker === openMarker && len >= openLen && !lines[i].slice(m[0].length).trim()) {
+        openMarker = '';
+        openLen = 0;
+        flags[i] = true;
+        continue;
+      }
+    }
+    flags[i] = Boolean(openMarker);
+  }
+  return flags;
 }
 
 /** Byte offset → 0-based line index, via a prefix table built once per file. */
@@ -645,17 +694,43 @@ function scanFile(path) {
   // For NON-markup files tag-skipping is a no-op by definition, so the native
   // regex gives a provably identical string far faster than the per-character
   // loop; markup files take the loop. Same transform either way.
+  const lines = text.split('\n');
+  const starts = lineStarts(text);
+  const inFence = computeFences(lines);
+  /**
+   * Offset -> "are angle brackets here LITERAL rather than markup?"
+   *
+   * True inside fenced blocks AND inside inline code spans. Both are places a
+   * document writes `<placeholder>` and means it. Covering only fences was not
+   * enough: `ContractFollowupsFromRehearsal-2026-05-06.md:41` carries
+   * `cast call <buyAdapter>` in an INLINE code span, and stripping it as a tag
+   * deleted a real mention — the same false negative as the fenced
+   * `<mirror VPFI_BUY_ADAPTER>` case, one markup construct over.
+   */
+  // Spans computed over the WHOLE text, not per line: a code span may open on
+  // one line and close on the next, which is exactly the shape at
+  // ContractFollowupsFromRehearsal-2026-05-06.md:41 —
+  // `cast call <buyAdapter>` wraps — and a per-line scan could not see it.
+  const inlineCodeSpans = (() => {
+    const spans = [];
+    const re = /(`+)([\s\S]*?)\1/g;
+    let m;
+    while ((m = re.exec(text))) spans.push([m.index, m.index + m[0].length]);
+    return spans;
+  })();
+  const literalAt = (offset) => {
+    if (inFence[lineOf(starts, offset)]) return true;
+    return inlineCodeSpans.some(([a, b]) => offset >= a && offset < b);
+  };
+
   const cheap = MARKUP_EXTENSIONS.test(path)
-    ? normalizeWithMap(text, path, false).norm
+    ? normalizeWithMap(text, path, false, literalAt).norm
     : normalize(text);
   if (!DEAD_TOKEN_RECORDS.some(({ token }) => cheap.includes(token))) {
     return { hits: 0, digest: '' };
   }
 
-  const { norm, map } = normalizeWithMap(text, path);
-  const starts = lineStarts(text);
-  const lines = text.split('\n');
-
+  const { norm, map } = normalizeWithMap(text, path, true, literalAt);
   /**
    * Were normalized positions a..b contiguous in the SOURCE text?
    *
@@ -698,39 +773,7 @@ function scanFile(path) {
    * which is the distinction that matters, because guessing is what the earlier
    * boundary rules did badly.
    */
-  const inFence = (() => {
-    // CommonMark: a fence closes only on a run of the SAME marker at least as
-    // long as the opener. A four-backtick block quoting a three-backtick block
-    // is normal in documentation, and toggling on any fence line closed the
-    // outer block early — after which the quoted snippet's `#` comments were
-    // read as headings and a real mention went silent. Track marker and length.
-    const flags = new Array(lines.length).fill(false);
-    let openMarker = '';
-    let openLen = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const m = /^\s{0,3}(`{3,}|~{3,})/.exec(lines[i]);
-      if (m) {
-        const marker = m[1][0];
-        const len = m[1].length;
-        if (!openMarker) {
-          openMarker = marker;
-          openLen = len;
-          flags[i] = true;
-          continue;
-        }
-        // Closing needs the same marker, at least the opening length, and no
-        // info string after it.
-        if (marker === openMarker && len >= openLen && !lines[i].slice(m[0].length).trim()) {
-          openMarker = '';
-          openLen = 0;
-          flags[i] = true;
-          continue;
-        }
-      }
-      flags[i] = Boolean(openMarker);
-    }
-    return flags;
-  })();
+
 
   /**
    * Does the source span cross a boundary between two separate thoughts?
@@ -762,7 +805,16 @@ function scanFile(path) {
   const crossesBlockBoundary = (a, b) => {
     const from = map[a];
     const to = map[b];
-    const span = text.slice(from, to + 1);
+    // Test the span with recognized tags REMOVED, matching what the normalizer
+    // saw. Otherwise punctuation that exists only inside stripped markup —
+    // the `:` in `<a href="https://…">` — rejects a token the tag-aware pass
+    // correctly found, so the markup fix and the boundary rule disagreed about
+    // the same text. Fenced spans keep their tags, because there the brackets
+    // are literal.
+    let span = text.slice(from, to + 1);
+    if (MARKUP_EXTENSIONS.test(path) && !literalAt(from)) {
+      span = span.replace(/<\/?[a-zA-Z][^<>]*>/g, ' ');
+    }
     if (/[.!?;:|]/.test(span)) return true;
     if (/\n[ \t]*\n/.test(span)) return true;
     const firstLine = lineOf(starts, from);
@@ -821,9 +873,21 @@ function scanFile(path) {
   // counted twice — and rewriting it as the prose "buy receiver" then read as a
   // count DECREASE, sending the maintainer the "cleanup happened" message for
   // what was actually a like-for-like edit.
-  const kept = matches.filter(
-    (m) => !matches.some((o) => o !== m && o.start <= m.start && o.end >= m.end && o.end - o.start > m.end - m.start),
-  );
+  // Merge every INTERSECTING span, not only contained ones. Containment-only
+  // still double-counted partial overlaps: in `FixedRateBuyAdapter`,
+  // `fixedratebuy` and `buyadapter` intersect while neither contains the other,
+  // so one identifier counted twice — and rewriting it as the prose "buy
+  // adapter" then read as a count DECREASE, the same bogus cleanup diagnosis
+  // the containment fix was meant to end.
+  const kept = [];
+  for (const m of [...matches].sort((a, b) => a.start - b.start || b.end - a.end)) {
+    const last = kept[kept.length - 1];
+    if (last && m.start < last.end) {
+      last.end = Math.max(last.end, m.end);
+      continue;
+    }
+    kept.push({ ...m });
+  }
 
   /**
    * Nearest preceding heading, or '' if none.
