@@ -88,12 +88,11 @@ interface ICrossChainMessenger {
 /**
  * @title ICrossChainMessageRecipient — the inbound half of the port
  *
- * A Vaipakam domain contract (e.g. the reward messenger, the reward /
- * buyback remittance receivers) implements this and registers with the
- * adapter for a channel. The adapter calls {onCrossChainMessage} when a
- * message for that channel arrives — after the adapter has authenticated
- * the source (provider verification plus the adapter's per-chain REMOTE
- * MESSENGER allowlist) and forwarded any tokens.
+ * A Vaipakam domain contract (e.g. the VPFI buy receiver, the reward
+ * messenger) implements this and registers with the adapter for a channel.
+ * The adapter calls {onCrossChainMessage} when a message for that channel
+ * arrives — after the adapter has authenticated the source (provider
+ * verification + the source-sender allowlist) and forwarded any tokens.
  */
 interface ICrossChainMessageRecipient {
     /**
@@ -105,32 +104,9 @@ interface ICrossChainMessageRecipient {
      *      decide outcomes from its own authoritative local state, never
      *      solely from the payload (see the migration design §5).
      * @param sourceChainId EVM chain id the message originated on.
-     * @param sourceSender  The channel peer the adapter has CONFIGURED
-     *                      for `sourceChainId` — an ADVISORY label, not a
-     *                      verified sender, and not routing (it steers
-     *                      nothing; the adapter routes by its own handler
-     *                      and messenger maps). Its only enforced role is
-     *                      an enablement gate: a zero entry rejects the
-     *                      message. The adapter never compares it to the
-     *                      address that actually sent the message, so a
-     *                      misconfigured peer arrives here looking
-     *                      authoritative (#1631).
-     *
-     *                      **Do NOT try to close that gap by comparing
-     *                      this value yourself** (Codex #1653 r4 P2). It
-     *                      is read from THIS chain's own
-     *                      `channelPeerOf[channelId][sourceChainId]`, so
-     *                      checking it against the peer you expect
-     *                      compares one local configuration value with
-     *                      another and authenticates nothing — while
-     *                      looking, in review, like a real guard. Genuine
-     *                      peer-level authentication requires the remote
-     *                      sender's identity to be carried through the
-     *                      authenticated envelope, which is adapter-level
-     *                      work tracked as #1650. Until that lands, the
-     *                      boundary that holds is the adapter's
-     *                      per-chain messenger allowlist plus the CCIP
-     *                      router's own sender authentication.
+     * @param sourceSender  The source-chain contract that sent it (the
+     *                      adapter has already checked it against the
+     *                      per-channel allowlist).
      * @param payload       The exact bytes the sender passed to
      *                      {ICrossChainMessenger.sendMessage}.
      * @param tokens        Tokens delivered with the message, now held by

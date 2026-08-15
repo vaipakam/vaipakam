@@ -4236,20 +4236,29 @@ library LibVaipakam {
         // accept.
         //
         // NOT WIRED UP as of #1641: no code reads or writes this slot.
-        // The comment here used to say it was "validated via the
-        // messenger's existing `channelPeer` mapping"; neither half
-        // holds. `CcipMessenger.channelPeerOf` steers no routing and
-        // enforces only an enablement gate: the receive path asserts the
-        // entry is non-zero and then passes it on as an advisory label —
-        // it never compares it to the sender (#1631) — and no handler
-        // compares it either. What actually authenticates a `TierUpdated`
-        // on a mirror today is {MirrorTierReceiverFacet}:
-        // `msg.sender == s.rewardMessenger` (the local, owner-registered
-        // messenger) plus `sourceChainId == s.baseChainId`. That is a
-        // real boundary; the business-peer leg the design doc describes
-        // (CrossChainRewardSystem.md "Sender authentication") is simply
-        // absent. Whether to build it or retire it is #1650; the slot is
-        // kept for storage-layout stability either way.
+        // The comment here used to claim it was "validated via the
+        // messenger's existing `channelPeer` mapping", which was false in
+        // both halves — the slot is read by nothing, and at the time
+        // `channelPeerOf` was asserted non-zero rather than compared to
+        // the sender (#1631).
+        //
+        // The second half stopped being false when #1650 shipped:
+        // `CcipMessenger._ccipReceive` now carries the originator on the
+        // wire and rejects a mismatch against `channelPeerOf`
+        // (`UnauthorizedChannelPeer`). So business-peer authentication
+        // EXISTS — it just lives at the adapter, once for every channel,
+        // rather than in this per-deployment slot.
+        //
+        // That is the argument for RETIRING this slot rather than
+        // building it: the leg `CrossChainRewardSystem.md` ("Sender
+        // authentication") specified is now covered a layer down, and a
+        // second copy of the same check in Diamond storage would be a
+        // duplicate that can drift out of agreement with the adapter's.
+        // What authenticates a `TierUpdated` on a mirror is
+        // {MirrorTierReceiverFacet} — `msg.sender == s.rewardMessenger`
+        // plus `sourceChainId == s.baseChainId` — on top of the adapter's
+        // peer check. The retire-or-build decision is still open; the
+        // slot is kept for storage-layout stability either way.
         address baseAuthorizedMessenger;
         // ── Cross-chain buyback custody (Base) ──────────────────────────
         //

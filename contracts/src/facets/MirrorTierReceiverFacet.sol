@@ -15,14 +15,9 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
  *
  * Trust:
  *   - Sender check: `msg.sender == s.rewardMessenger`. The messenger
- *     contract has already authenticated the CCIP source chain, the
- *     remote MESSENGER (its per-chain allowlist, on top of the router's
- *     own sender authentication) and the payload-size shape; this facet
- *     trusts what the messenger hands over. It has NOT authenticated the
- *     channel peer — {CcipMessenger.channelPeerOf} is only asserted
- *     non-zero, never compared to the sender (#1631, Codex #1653 r4 P2).
- *     The source-chain check below is what narrows this further, and it
- *     is doing more work than the old wording implied.
+ *     contract has already authenticated the CCIP source + channel
+ *     peer + payload-size shape; this facet trusts what the messenger
+ *     hands over.
  *   - Source-chain check: `srcChainId == s.baseChainId`. Catches the
  *     "wrong-source-chain" misconfig the design's round-4 P1 #4 + Sub
  *     2.C card both surface (mirror must only accept pushes from

@@ -48,12 +48,19 @@ import {ICrossChainMessenger, ICrossChainMessageRecipient} from "./ICrossChainMe
  *
  * ── Routing envelope ───────────────────────────────────────────────────
  * Outbound, the adapter wraps the domain payload as
- * `abi.encode(channelId, payload)` and addresses the CCIP message to the
- * REMOTE CcipMessenger (`remoteMessengerOf[destChainId]`), never directly
- * to a domain contract. Inbound, the adapter unwraps the envelope and
- * forwards exactly `payload` to the local handler — so a recipient gets
- * back the precise bytes the sender passed (per the {ICrossChainMessenger}
- * contract).
+ * `abi.encode(ENVELOPE_VERSION, channelId, originator, payload)` and
+ * addresses the CCIP message to the REMOTE CcipMessenger
+ * (`remoteMessengerOf[destChainId]`), never directly to a domain contract.
+ * Inbound, the adapter checks the version, VERIFIES `originator` against
+ * the configured channel peer, and forwards exactly `payload` to the local
+ * handler — so a recipient gets back the precise bytes the sender passed
+ * (per the {ICrossChainMessenger} contract).
+ *
+ * `originator` is stamped from `msg.sender` at send and is never
+ * caller-supplied. It exists because `channelPeerOf` alone is a
+ * DECLARATION the receiver cannot check: without a sender on the wire, a
+ * message the previous peer sent before a rotation is indistinguishable
+ * from one the new peer sent after it. See {_ccipReceive}.
  *
  * ── Forgery guards ─────────────────────────────────────────────────────
  *   1. `onlyRouter` — `ccipReceive` accepts calls only from the CCIP
@@ -96,6 +103,37 @@ contract CcipMessenger is
 {
     using SafeERC20 for IERC20;
 
+    // ─── Constants ──────────────────────────────────────────────────────────
+
+    /// @notice Version tag carried as the FIRST word of every outbound
+    ///         routing envelope.
+    /// @dev Exists so a future envelope change is DETECTABLE rather than
+    ///      silently undecodable. A receiver can read this word before
+    ///      trusting anything after it, and refuse a shape it does not
+    ///      speak instead of misreading authentication fields.
+    ///
+    ///      Version 1 was `abi.encode(channelId, payload)` and carried NO
+    ///      tag, which is exactly the problem: a v1 message cannot be
+    ///      recognised as v1, only observed to fail decoding. That makes
+    ///      the v1→v2 upgrade a one-time migration hazard with no IN-BAND
+    ///      remedy — every lane must be drained before both ends are
+    ///      upgraded, because an in-flight v1 message cannot be executed
+    ///      against this implementation: the v2 decode reads a four-word
+    ///      head off two-word data and reverts before the version is ever
+    ///      examined.
+    ///
+    ///      "No in-band remedy" is not "stranded" (Codex #1680 r5 P2). The
+    ///      message is refused rather than consumed, and the OUT-of-band
+    ///      remedy exists: roll this proxy back to the v1 implementation,
+    ///      manually re-execute the failed message, then upgrade forward
+    ///      again. That is a real recovery for real funds and must not be
+    ///      described as loss — an operator who reads "stranded" may write
+    ///      off tokens that are retrievable. It is also a bad thing to be
+    ///      doing under pressure, which is the actual argument for the
+    ///      drain. From v2 onward none of this applies: the tag makes the
+    ///      next change a branch rather than a break.
+    uint16 internal constant ENVELOPE_VERSION = 2;
+
     // ─── Storage ────────────────────────────────────────────────────────────
 
     /// @notice EVM chain id → CCIP chain selector (the provider's own
@@ -126,55 +164,25 @@ contract CcipMessenger is
     mapping(address => bytes32) public channelOf;
 
     /// @notice channelId → remote chain id → the channel's domain contract
-    ///         on that remote chain. Zero = unconfigured, and an inbound
-    ///         message on an unconfigured (channel, chain) pair reverts
-    ///         {NoChannelPeer}.
-    ///
-    ///         This entry does two things, and NEITHER is routing
-    ///         (#1631; Codex #1653 r3 P2). A non-zero value ENABLES the
-    ///         (channel, chain) pair — zero reverts {NoChannelPeer} — and
-    ///         the value itself is surfaced to the local handler as an
-    ///         ADVISORY `sourceSender`. It steers nothing: outbound
-    ///         messages route by {remoteMessengerOf}, inbound ones by
-    ///         `handlerOf[channelId]`, so re-pointing a wrong non-zero
-    ///         peer changes neither path. Calling it routing metadata sent
-    ///         operators to this setter to fix a routing fault it cannot
-    ///         cause.
-    ///
-    ///         It is also not an authentication check. All four concrete
-    ///         handlers comment the `sourceSender` parameter out, so none
-    ///         compares it — and the receive path only asserts the entry
-    ///         is non-zero, so a peer pointing at the WRONG non-zero
-    ///         address is caught by nothing here. Do not read this map as
-    ///         a forgery guard.
-    ///
-    ///         What the handlers do instead varies, and TWO of the four
-    ///         bind a payload-carried deployment identity (Codex #1653 r1
-    ///         and r2 P2 — the r1 reply undercounted this):
-    ///           - {RewardRemittanceReceiver} reads a `remitter`, the
-    ///             sending deployment's own address embedded at send.
-    ///           - {VpfiReturnReceiver} decodes an `issuingBase` on both
-    ///             the return and cancel-ack paths and forwards it to
-    ///             {RepatriationFacet}, whose ingresses revert
-    ///             `RepatriationWrongEra` unless it equals
-    ///             `address(this)`.
-    ///         {BuybackRemittanceReceiver} binds nothing: its payload is a
-    ///         declared token address cross-checked against the delivered
-    ///         one, which is a self-consistency check on the delivery and
-    ///         says nothing about WHO sent it.
-    ///
-    ///         The authentication that does hold is one layer up: the
-    ///         CCIP router authenticates the cross-chain sender, and
-    ///         {_ccipReceive} requires it to be the messenger this chain
-    ///         allowlisted for the source chain via {setRemoteMessenger}
-    ///         (else {UnauthorizedSourceMessenger}). Whether the peer map
-    ///         should ALSO be enforced there is an open design question —
-    ///         see #1650.
+    ///         on that remote chain. Surfaced to the local handler as the
+    ///         inbound `sourceSender`; the handler does its own equality
+    ///         check against the peer it expects. Zero = unconfigured.
     mapping(bytes32 => mapping(uint256 => address)) public channelPeerOf;
 
-    /// @dev Reserved storage for upgrade-safe appends. 6 slots used above.
+    /// @notice Remote chain id → peer address → the channelId that peer is
+    ///         declared for. The reverse of {channelPeerOf}, kept in lockstep
+    ///         by {setChannelPeer}; exists so a peer cannot be declared for
+    ///         two channels at once. Zero = that address is not a peer on
+    ///         that chain.
+    /// @dev The source side already enforces one channel per originator
+    ///      ({channelOf}), so two channels naming the same remote address is
+    ///      a configuration that cannot be right on both lanes — at most one
+    ///      of them matches what that contract actually sends.
+    mapping(uint256 => mapping(address => bytes32)) public channelOfPeer;
+
+    /// @dev Reserved storage for upgrade-safe appends. 7 slots used above.
     // forge-lint: disable-next-line(mixed-case-variable)
-    uint256[44] private __gap;
+    uint256[43] private __gap;
 
     // ─── Events ─────────────────────────────────────────────────────────────
 
@@ -208,6 +216,16 @@ contract CcipMessenger is
         uint256 indexed remoteChainId,
         address peer
     );
+    /// @notice A pre-existing peer binding was indexed into the reverse map
+    ///         during the upgrade migration. Distinct from
+    ///         {ChannelPeerSet} on purpose: nothing was configured here,
+    ///         an existing configuration was recorded in a second place.
+    /// @custom:event-category informational/config
+    event ChannelPeerIndexBackfilled(
+        bytes32 indexed channelId,
+        uint256 indexed remoteChainId,
+        address peer
+    );
 
     // ─── Errors ─────────────────────────────────────────────────────────────
 
@@ -234,6 +252,74 @@ contract CcipMessenger is
     error UnknownChannel(bytes32 channelId);
     /// @notice No business peer configured for a (channel, chain) pair.
     error NoChannelPeer(bytes32 channelId, uint256 chainId);
+
+    /// @notice An inbound envelope declared a version this adapter does not
+    ///         speak.
+    /// @dev Reverting (rather than guessing) is deliberate: a version this
+    ///      build does not know may place `channelId` or `originator`
+    ///      anywhere, so any attempt to read it is a guess about
+    ///      authentication data. CCIP records the revert as a failed
+    ///      message, re-executable after an upgrade that understands it.
+    error UnsupportedEnvelopeVersion(uint16 got, uint16 expected);
+
+    /// @notice An inbound message's ORIGINATOR did not match the peer
+    ///         configured for its (channel, source chain).
+    /// @dev The message is authentic — it came from the allowlisted remote
+    ///      messenger — but was sent by a different contract than this
+    ///      chain expects to own that channel. Two ways to reach it: a
+    ///      mis-configured peer, or a message the previous peer had already
+    ///      sent arriving after a rotation. Both used to be reported to the
+    ///      handler as if the CONFIGURED peer had sent them; reverting means
+    ///      CCIP records a failed message, re-executable once the
+    ///      configuration is right, rather than delivering a wrong claim.
+    error UnauthorizedChannelPeer(
+        bytes32 channelId,
+        uint256 chainId,
+        address originator,
+        address expected
+    );
+
+    /// @notice A live lane setting was re-pointed at a different value
+    ///         without first being cleared. One error per setter; one rule.
+    /// @dev Every one of the four lane settings below is a silent-failure
+    ///      surface: none of them is recovered from the message, all are read
+    ///      from config, so overwriting one changes what the lane means with
+    ///      no on-chain evidence that anything moved. The rule is uniform —
+    ///      an assignment that CONFLICTS with a live value is rejected;
+    ///      clearing first (pass the zero value) makes a re-point two
+    ///      deliberate transactions and two events, so it reads as a
+    ///      re-point in the log rather than as a first-time assignment.
+    ///      Re-stating the value a setting already holds is always allowed
+    ///      and idempotent, so a redeploy script that reasserts its own
+    ///      configuration need not know whether it has run before.
+    error ChainSelectorAlreadySet(uint256 chainId, uint64 current);
+    /// @notice As {ChainSelectorAlreadySet}, for the remote messenger.
+    error RemoteMessengerAlreadySet(uint256 chainId, address current);
+    /// @notice As {ChainSelectorAlreadySet}, for a channel's local handler.
+    error ChannelHandlerAlreadySet(bytes32 channelId, address current);
+    /// @notice As {ChainSelectorAlreadySet}, for a channel's remote peer.
+    ///         This is the one where the failure is completely silent: the
+    ///         peer is what a delivered message is authenticated AGAINST, so
+    ///         overwriting it re-points the lane's trust anchor while every
+    ///         other observable stays identical.
+    error ChannelPeerAlreadySet(
+        bytes32 channelId, uint256 remoteChainId, address current
+    );
+
+    /// @notice A remote address is already declared as the peer of a
+    ///         different channel on that chain — the (chain, peer)↔channel
+    ///         map must stay one-to-one.
+    /// @dev The mirror of {HandlerAlreadyBound} for the remote side. The
+    ///      source messenger stamps a channel onto an outbound message from
+    ///      its ORIGINATOR ({channelOf}), which permits one channel per
+    ///      address; so if two local channels name the same remote address,
+    ///      at most one of them can match what that address actually sends,
+    ///      and the other lane's messages are rejected by the originator
+    ///      check. Rejecting the duplicate at configuration time turns a
+    ///      lane that would be dead on arrival into a failed transaction.
+    error ChannelPeerAlreadyBound(
+        address peer, uint256 remoteChainId, bytes32 boundChannelId
+    );
     /// @notice An inbound message's decoded sender is not the registered
     ///         CcipMessenger for its source chain.
     error UnauthorizedSourceMessenger(uint64 selector, address sender);
@@ -250,6 +336,13 @@ contract CcipMessenger is
     /// @notice The outbound token list named the same token twice; each
     ///         token may appear at most once per message.
     error DuplicateToken(address token);
+    /// @notice {backfillChannelPeerIndex} received positionally-paired
+    ///         arrays of different lengths.
+    error ArrayLengthMismatch(uint256 channelIds, uint256 remoteChainIds);
+    /// @notice {backfillChannelPeerIndex} was called with an empty list,
+    ///         which would burn the one-shot migration without migrating
+    ///         anything.
+    error EmptyMigration();
 
     // ─── Construction ───────────────────────────────────────────────────────
 
@@ -272,6 +365,71 @@ contract CcipMessenger is
         __Ownable_init(owner_);
         __Ownable2Step_init();
         _guardianPausableInit();
+    }
+
+    /// @notice UPGRADE MIGRATION — populate {channelOfPeer} from the
+    ///         {channelPeerOf} entries an already-deployed proxy is
+    ///         carrying. Call it ATOMICALLY with the upgrade, via
+    ///         `upgradeToAndCall`, never as a follow-up transaction.
+    /// @dev The reverse index is a mapping appended by this change, so on
+    ///      an existing proxy it starts EMPTY while the forward map is
+    ///      fully populated. Until this runs, the one-to-one invariant
+    ///      {setChannelPeer} advertises does not hold: the duplicate check
+    ///      reads an empty reverse entry and admits an address that is
+    ///      already some other channel's live peer (Codex #1680 r4 P1).
+    ///      Three deployments are affected — the messenger is live on
+    ///      Base Sepolia, Sepolia and the other testnet chains — so this
+    ///      is a real migration, not a defensive stub.
+    ///
+    ///      **Completeness is the operator's responsibility and cannot be
+    ///      checked here.** Solidity mappings are not enumerable, so this
+    ///      contract cannot discover which `(channelId, remoteChainId)`
+    ///      pairs are configured; derive the list from the
+    ///      {ChannelPeerSet} event log for this proxy, not from memory. A
+    ///      pair omitted from the list stays un-indexed and keeps the hole
+    ///      open for that peer.
+    ///
+    ///      Reverts on a pair whose forward entry is unset, so a wrong or
+    ///      stale entry in the list fails loudly rather than being skipped
+    ///      — the whole point of the call is that the list is exact.
+    ///      Re-stating a pair already indexed is inert, so a migration
+    ///      that has to be re-run against a partially-migrated proxy is
+    ///      safe. Running it on a fresh deployment is a harmless no-op:
+    ///      the maps are maintained in lockstep from the first write.
+    /// @param channelIds     Configured channel ids, positionally paired.
+    /// @param remoteChainIds Their remote chain ids, positionally paired.
+    function backfillChannelPeerIndex(
+        bytes32[] calldata channelIds,
+        uint256[] calldata remoteChainIds
+    ) external onlyOwner reinitializer(2) {
+        uint256 n = channelIds.length;
+        if (n != remoteChainIds.length) {
+            revert ArrayLengthMismatch(n, remoteChainIds.length);
+        }
+        // An EMPTY list must not silently succeed (Codex #1680 r5 P1).
+        // `reinitializer(2)` is consumed whether or not the loop writes
+        // anything, so an `upgradeToAndCall` that passed two empty arrays by
+        // mistake would leave the proxy live on this implementation with
+        // every legacy reverse entry still missing — duplicate peers still
+        // admissible — and NO way to re-run the migration. There is no
+        // legitimate empty call: a fresh deployment does not need this, and
+        // every deployed proxy this exists for is already carrying peer
+        // configuration.
+        if (n == 0) revert EmptyMigration();
+        for (uint256 i; i < n; ++i) {
+            bytes32 channelId = channelIds[i];
+            uint256 remoteChainId = remoteChainIds[i];
+            address peer = channelPeerOf[channelId][remoteChainId];
+            if (peer == address(0)) {
+                revert NoChannelPeer(channelId, remoteChainId);
+            }
+            bytes32 bound = channelOfPeer[remoteChainId][peer];
+            if (bound != bytes32(0) && bound != channelId) {
+                revert ChannelPeerAlreadyBound(peer, remoteChainId, bound);
+            }
+            channelOfPeer[remoteChainId][peer] = channelId;
+            emit ChannelPeerIndexBackfilled(channelId, remoteChainId, peer);
+        }
     }
 
     // ─── Outbound — the {ICrossChainMessenger} port ─────────────────────────
@@ -306,7 +464,7 @@ contract CcipMessenger is
         Client.EVMTokenAmount[] memory ccipTokens = _pullTokens(tokens);
 
         Client.EVM2AnyMessage memory message = _buildMessage(
-            remoteMessenger, channelId, payload, ccipTokens, destGasLimit
+            remoteMessenger, channelId, msg.sender, payload, ccipTokens, destGasLimit
         );
 
         IRouterClient router = IRouterClient(getRouter());
@@ -356,7 +514,7 @@ contract CcipMessenger is
         }
 
         Client.EVM2AnyMessage memory message = _buildMessage(
-            remoteMessenger, channelId, payload, ccipTokens, destGasLimit
+            remoteMessenger, channelId, msg.sender, payload, ccipTokens, destGasLimit
         );
         nativeFee = IRouterClient(getRouter()).getFee(selector, message);
     }
@@ -389,15 +547,50 @@ contract CcipMessenger is
         }
 
         // 2. Unwrap the routing envelope written by the remote adapter.
-        (bytes32 channelId, bytes memory payload) =
-            abi.decode(message.data, (bytes32, bytes));
+        //    `originator` is the remote handler that actually called
+        //    `sendMessage` — stamped from `msg.sender` at send, never
+        //    caller-supplied.
+        (
+            uint16 version,
+            bytes32 channelId,
+            address originator,
+            bytes memory payload
+        ) = abi.decode(message.data, (uint16, bytes32, address, bytes));
+        if (version != ENVELOPE_VERSION) {
+            revert UnsupportedEnvelopeVersion(version, ENVELOPE_VERSION);
+        }
 
-        // 3. Resolve the local handler and the configured business peer.
+        // 3. Resolve the local handler, and VERIFY the sender.
+        //
+        //    `channelPeerOf` is the operator's declaration of which remote
+        //    contract owns this channel. Until #1650 it was only asserted:
+        //    the receive path checked it was non-zero and handed it to the
+        //    handler as `sourceSender` without ever comparing it to who
+        //    actually sent. That was ALMOST sound — `sendMessage` derives
+        //    the channel from its caller and `registerChannel` keeps that
+        //    map one-to-one, so a message on this channel could only come
+        //    from the remote handler registered to it — but "almost" broke
+        //    across a peer rotation: the envelope carried no sender, so a
+        //    message the OLD handler had already sent, delivered or
+        //    manually retried after the peer was re-pointed, was reported
+        //    to the handler as coming from the NEW one. Clearing the peer
+        //    first only reverts messages arriving during the gap; it
+        //    cannot invalidate one that lands afterwards.
+        //
+        //    So the originator now rides on the wire and is compared here.
+        //    A mismatch reverts rather than mis-attributing, which also
+        //    turns a mis-configured peer from a silent wrong answer into a
+        //    loud failure.
         address handler = handlerOf[channelId];
         if (handler == address(0)) revert UnknownChannel(channelId);
         address sourceSender = channelPeerOf[channelId][sourceChainId];
         if (sourceSender == address(0)) {
             revert NoChannelPeer(channelId, sourceChainId);
+        }
+        if (originator != sourceSender) {
+            revert UnauthorizedChannelPeer(
+                channelId, sourceChainId, originator, sourceSender
+            );
         }
 
         // 4. Forward any delivered tokens to the handler, translating the
@@ -476,16 +669,23 @@ contract CcipMessenger is
     /// @dev `GenericExtraArgsV2` is the CCIP v1.6 name for what v1.5 called
     ///      `EVMExtraArgsV2` — identical fields and tag, renamed because the
     ///      tag is now valid across multiple chain families.
+    /// @dev `originator` is the LOCAL handler that called {sendMessage}. It
+    ///      rides on the wire so the receiving side can VERIFY the sender
+    ///      rather than assert it from its own configuration (#1650).
+    ///      Without it, `channelPeerOf` is a declaration the receiver cannot
+    ///      check, and a peer rotation mis-attributes any message the old
+    ///      handler had already sent — see {_ccipReceive}.
     function _buildMessage(
         address receiver,
         bytes32 channelId,
+        address originator,
         bytes calldata payload,
         Client.EVMTokenAmount[] memory ccipTokens,
         uint256 destGasLimit
     ) internal pure returns (Client.EVM2AnyMessage memory) {
         return Client.EVM2AnyMessage({
             receiver: abi.encode(receiver),
-            data: abi.encode(channelId, payload),
+            data: abi.encode(ENVELOPE_VERSION, channelId, originator, payload),
             tokenAmounts: ccipTokens,
             feeToken: address(0),
             extraArgs: Client._argsToBytes(
@@ -519,7 +719,11 @@ contract CcipMessenger is
             }
         }
         uint64 previous = chainSelectorOf[chainId];
-        // Drop a stale reverse entry if this chain's selector changes.
+        // Clear-before-repoint, the rule shared by all four lane setters.
+        if (previous != 0 && selector != 0 && previous != selector) {
+            revert ChainSelectorAlreadySet(chainId, previous);
+        }
+        // Drop the reverse entry when this chain's selector is cleared.
         if (previous != 0 && previous != selector) delete chainIdOf[previous];
         chainSelectorOf[chainId] = selector;
         if (selector != 0) chainIdOf[selector] = chainId;
@@ -534,6 +738,16 @@ contract CcipMessenger is
         address messenger
     ) external onlyOwner {
         if (chainId == 0) revert ZeroChainId();
+        // Clear-before-repoint. This one is the inbound ALLOWLIST: overwrite
+        // it and every subsequent message from the old messenger is refused
+        // while the new address is trusted unconditionally.
+        address current = remoteMessengerOf[chainId];
+        if (
+            current != address(0) && messenger != address(0)
+                && current != messenger
+        ) {
+            revert RemoteMessengerAlreadySet(chainId, current);
+        }
         remoteMessengerOf[chainId] = messenger;
         emit RemoteMessengerSet(chainId, messenger);
     }
@@ -556,6 +770,35 @@ contract CcipMessenger is
             }
         }
         address previous = handlerOf[channelId];
+        // Clear-before-repoint. `HandlerAlreadyBound` above only stops ONE
+        // handler serving TWO channels; without this, the forward entry is
+        // freely overwritten, so a channel accidentally pointed at some other
+        // already-unbound-but-compatible recipient would deliver messages and
+        // tokens to it successfully — the loud-failure assumption does not
+        // hold here any more than it does for the peer.
+        //
+        // ROTATING A HANDLER ALSO REQUIRES A DRAIN, and this guard does not
+        // provide one (Codex #1680 r4 P1). `_ccipReceive` resolves
+        // `handlerOf[channelId]` at DELIVERY time and the envelope names no
+        // intended handler, so a message — and its tokens — sent while the
+        // old handler was live is forwarded to the replacement if it lands
+        // after the second transaction. Clear-before-repoint only rejects
+        // deliveries during the gap between the two.
+        //
+        // Unlike the peer, this one cannot be closed on the wire. The
+        // originator works because it is a SEND-side fact the sender knows
+        // about itself; the destination's handler is a RECEIVE-side fact
+        // the sender cannot know, and an epoch would have the same problem
+        // — the two chains' epochs are independent state. So the drain is
+        // the control, and it is documented in the admin runbook rather
+        // than enforced here. Quiesce the channel, let in-flight deliveries
+        // land on the old handler, then clear and re-register.
+        if (
+            previous != address(0) && handler != address(0)
+                && previous != handler
+        ) {
+            revert ChannelHandlerAlreadySet(channelId, previous);
+        }
         if (previous != address(0)) delete channelOf[previous];
         handlerOf[channelId] = handler;
         if (handler != address(0)) channelOf[handler] = channelId;
@@ -565,6 +808,35 @@ contract CcipMessenger is
     /// @notice Configure (or, with `address(0)`, clear) the domain contract
     ///         on a remote chain for a channel — the inbound `sourceSender`
     ///         the local handler is told a message came from.
+    /// @dev Two guards, both instances of rules this contract applies
+    ///      uniformly (see {ChainSelectorAlreadySet} for the first and
+    ///      {HandlerAlreadyBound} for the second):
+    ///
+    ///      1. Clear-before-repoint — a live peer cannot be overwritten with
+    ///         a different address; clear it, then set the new one.
+    ///      2. One channel per peer — an address already declared as some
+    ///         other channel's peer on that chain is rejected, keeping the
+    ///         (chain, peer)↔channel map one-to-one in both directions.
+    ///
+    ///      Rotating a peer is therefore: clear, wait for in-flight messages
+    ///      from the old peer to be delivered or abandoned, then set. The
+    ///      wait matters — a message the old peer already sent carries the
+    ///      OLD originator on the wire, so once the new peer is installed
+    ///      the originator check in `_ccipReceive` rejects it.
+    ///
+    ///      That rejection is RECOVERABLE, and an earlier revision of this
+    ///      comment wrongly said it was permanent (Codex #1680 r4 P2).
+    ///      There is no epoch and no revocation here: clearing releases the
+    ///      reverse index entry, so the old address can be re-installed.
+    ///      An operator who skipped the drain can clear the new peer,
+    ///      re-assign the old one, manually re-execute the stranded
+    ///      message, then repeat the rotation. Say so rather than imply
+    ///      loss, because an operator who believes a transfer is
+    ///      unrecoverable may abandon one that is not.
+    ///
+    ///      Drain anyway. The recovery re-points a live lane's trust anchor
+    ///      backwards to run it, which is a worse thing to be doing under
+    ///      incident pressure than waiting was.
     function setChannelPeer(
         bytes32 channelId,
         uint256 remoteChainId,
@@ -572,7 +844,37 @@ contract CcipMessenger is
     ) external onlyOwner {
         if (channelId == bytes32(0)) revert ZeroChannelId();
         if (remoteChainId == 0) revert ZeroChainId();
+        if (peer != address(0)) {
+            bytes32 boundChannel = channelOfPeer[remoteChainId][peer];
+            if (boundChannel != bytes32(0) && boundChannel != channelId) {
+                revert ChannelPeerAlreadyBound(
+                    peer, remoteChainId, boundChannel
+                );
+            }
+        }
+        address current = channelPeerOf[channelId][remoteChainId];
+        if (current != address(0) && peer != address(0) && current != peer) {
+            revert ChannelPeerAlreadySet(channelId, remoteChainId, current);
+        }
+        // Release the outgoing peer's reverse entry — but ONLY if it is
+        // actually ours. On a proxy upgraded from a build without
+        // `channelOfPeer`, the forward map is already populated while the
+        // reverse map starts empty, so until {backfillChannelPeerIndex} has
+        // run the duplicate check above can pass for an address that is
+        // some other channel's live peer. An unconditional delete would
+        // then clear THAT channel's binding on our clear (Codex #1680 r4
+        // P1). Checking ownership keeps this write correct even while the
+        // two maps disagree.
+        if (
+            current != address(0)
+                && channelOfPeer[remoteChainId][current] == channelId
+        ) {
+            delete channelOfPeer[remoteChainId][current];
+        }
         channelPeerOf[channelId][remoteChainId] = peer;
+        if (peer != address(0)) {
+            channelOfPeer[remoteChainId][peer] = channelId;
+        }
         emit ChannelPeerSet(channelId, remoteChainId, peer);
     }
 

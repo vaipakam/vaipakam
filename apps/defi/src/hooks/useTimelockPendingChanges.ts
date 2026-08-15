@@ -147,6 +147,17 @@ export function useTimelockPendingChanges(): Hook {
     loading: true,
   });
 
+  // NO local-clock-driven re-read. A boundary-retry timer stood here across
+  // rounds 4-5 and was WITHDRAWN, not patched: rediscovering operations through
+  // the `LOOKBACK_BLOCKS` event window means a scheduling event older than that
+  // window resolves to an empty list, so the re-read would DELETE a live
+  // proposal at precisely the moment it turned executable (a 48h delay on a
+  // 2s-block chain sits ~86,400 blocks back — outside the window). A transient
+  // RPC failure had the same effect, and the retry then terminated for good.
+  // Withdrawn in favour of leaving the panel cosmetically stale until the next
+  // remount or chain switch: staleness is recoverable, a vanished proposal is
+  // not. A real fix reads the active operation IDs directly rather than
+  // rediscovering them — tracked as a follow-up.
   useEffect(() => {
     if (!timelockAddr || !chain.diamondAddress) {
       setState({ byKnob: {}, all: [], loading: false });
@@ -304,4 +315,30 @@ function tryDecodeCalldata(
   } catch {
     return null;
   }
+}
+
+/**
+ * Is this queued change executable *now*?
+ *
+ * Chain truth only, and nothing else. An earlier version OR'd in
+ * `nowSec >= executesAt` so a dashboard left open would stop saying "still
+ * waiting" — but the local clock is not the chain's, and an administrator
+ * running fast was then told an operation was executable while
+ * `getOperationState` still reported Waiting, where submitting reverts.
+ *
+ * A boundary re-read was then tried as the way to keep the display current
+ * without trusting the local clock; it was WITHDRAWN (see the note above the
+ * fetch effect). So a dashboard left open across `executesAt` does still sit
+ * at "executes in 0m" until it is reloaded or the chain switched. That is a
+ * known, accepted gap, not an oversight — the accurate refresh is tracked
+ * separately.
+ *
+ * Being one helper is the other half of the point: the knob card and the page
+ * summary disagreed once, one saying "ready to execute" while the other said
+ * "All still in delay window". Both read this.
+ */
+export function isTimelockReady(
+  change: Pick<PendingChange, 'ready'>,
+): boolean {
+  return change.ready;
 }

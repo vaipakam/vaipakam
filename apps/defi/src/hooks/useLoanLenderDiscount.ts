@@ -1,6 +1,7 @@
 import { useReadContracts } from 'wagmi';
 import { useReadChain } from '../contracts/useDiamond';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
+import { useNowSeconds } from './useNowSeconds';
 
 /**
  * Live lender yield-fee discount for a specific loan.
@@ -43,6 +44,8 @@ export function useLoanLenderDiscount(
   error: Error | null;
 } {
   const chain = useReadChain();
+  // Above the early returns below: a hook after them runs conditionally.
+  const nowSec = useNowSeconds();
   const diamondAddress = chain.diamondAddress as `0x${string}` | null;
   const enabled = Boolean(diamondAddress && loanId != null && lender);
 
@@ -97,7 +100,7 @@ export function useLoanLenderDiscount(
   const effectiveBps = Number(tier[1]);
 
   const startTime = Number(loan.startTime);
-  const now = Math.floor(Date.now() / 1000);
+  const now = nowSec;
   const windowSeconds = Math.max(0, now - startTime);
 
   // The Phase-5 zero-duration guard in

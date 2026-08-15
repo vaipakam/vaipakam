@@ -50,11 +50,18 @@ library LibKeeperReward {
     ///          "discount disabled" rather than as any rate, and nothing in
     ///          the code puts 1e15 there — `ConfigureVPFIBuy` requires an
     ///          explicit `VPFI_BUY_WEI_PER_VPFI` and `DeployTestnetVPFI`
-    ///          defaults to `1e12`. It nonetheless HOLDS 1e15 on Base
-    ///          Sepolia, because `docs/ops/BaseSepoliaDeploy.md` §4 tells
-    ///          the operator to configure exactly that (Codex #1653 r4 P2).
-    ///          So it is a third place the same quantity is expressed, but
-    ///          the only one that can silently diverge on a live deploy.
+    ///          defaults to `1e12`. 1e15 is nonetheless the DOCUMENTED
+    ///          value for Base Sepolia: `docs/ops/BaseSepoliaDeploy.md` §4
+    ///          instructs the operator to configure exactly that (Codex
+    ///          #1653 r4 P2).
+    ///
+    ///          Read that as the runbook's value, NOT as the deployed
+    ///          state (Codex #1653 r6 P2). Nothing here verifies the
+    ///          transaction ran, and nothing prevents a later governance
+    ///          write, so what the slot actually holds on any chain is a
+    ///          question only an on-chain read answers. That is precisely
+    ///          why it is the one of the three that can silently diverge:
+    ///          the other two are compile-time constants and cannot.
     ///      Named here rather than left implicit so an audit or a repeg
     ///      that starts from this constant sees the other two (Codex
     ///      #1653 r1 P2).

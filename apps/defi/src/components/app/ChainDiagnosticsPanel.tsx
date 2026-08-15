@@ -118,7 +118,7 @@ export function ChainDiagnosticsPanel() {
   const { stats } = useOfferStats();
   const { maxFrontier, anyLoading, bySource } = useDataFreshness();
   // Watermark subscriber — the singleton serves it; no extra probe.
-  const { snapshot: watermarkSnapshot } = useLiveWatermark(
+  const { snapshot: watermarkSnapshot, status: watermarkStatus } = useLiveWatermark(
     watermarkPolicy('warm'),
   );
   // #843 delta 2 — realtime "Live updates" section inputs. Transport metrics
@@ -319,14 +319,19 @@ export function ChainDiagnosticsPanel() {
     // head means the page IS reading live from chain successfully
     // (green); stale or missing probe means RPC itself is degraded
     // (amber).
-    const watermarkAgeSec = watermarkSnapshot
-      ? Math.floor(Date.now() / 1000) - watermarkSnapshot.fetchedAt
-      : null;
+
     const liveRpcHealthy =
       watermarkSnapshot &&
       watermarkSnapshot.safeBlock > 0n &&
-      watermarkAgeSec !== null &&
-      watermarkAgeSec < 90;
+      // PROBE SUCCESS, not snapshot age. `WatermarkContext` sets `live` on every
+      // successful probe but CARRIES OVER `fetchedAt` when the counters are
+      // unchanged — so any age computed from it measures "time since the values
+      // last moved", which on a slow-finality chain grows without bound while
+      // every probe succeeds. Adding a status check while keeping the age gate
+      // (the previous revision here) left that false amber exactly as it was.
+      // `live` is set on success and cleared to `idle` when polling pauses, so
+      // it already carries what the age was standing in for.
+      watermarkStatus === 'live';
     if (liveRpcHealthy) {
       heading = t('indexerBadge.liveRpcInSyncHeading');
       body = t('indexerBadge.liveRpcInSyncBody');
