@@ -394,7 +394,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [18, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "ba8d4b4f0df6"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [19, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "7e9f9f14d73c"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -620,33 +620,44 @@ const MARKUP_EXTENSIONS = /\.(tsx|jsx|html|htm|md|mdx|svg)$/i;
  * what CommonMark requires before a destination can follow. Bounded to the
  * paragraph, because a label cannot span a blank line.
  */
-function hasLinkOpener(text, end) {
-  // Escape parity is carried through the SINGLE backward pass, not recomputed
-  // per character. The inner rescan made this quadratic: a run of N
-  // backslashes walked the run again for each of them, and 20,000 of them —
-  // well within reach of generated Markdown — added seconds to a gate that
-  // blocks every PR. Same lesson as the destination scan two rounds ago, where
-  // the fix was also to stop re-deriving what the walk already knew.
-  //
-  // Walking backwards, a character is escaped when the run of backslashes
-  // IMMEDIATELY BEFORE it has odd length. Since we move right-to-left, that
-  // run is the one we are about to enter, so parity is tracked as we go and
-  // read one step later.
-  let backslashRun = 0;
-  for (let k = end - 1; k >= 0; k--) {
-    const c = text[k];
+/**
+ * Offsets of every `]` that really CLOSES a link or image label and is followed
+ * by a destination opener.
+ *
+ * ONE FORWARD PASS over the file, not a backward walk per candidate. The
+ * backward version was wrong in a way worth recording: walking right-to-left,
+ * the run of backslashes you have just passed sits to the RIGHT of the
+ * character you are looking at, so applying it to that character tests the
+ * wrong side. `[\*buy](zzzz)` has its `[` preceded by nothing and its `*`
+ * escaped, but the walk charged the `\` to the `[`, rejected the real opener,
+ * and left the destination in the rendered stream. Escaping is a property of
+ * what comes AFTER a backslash run, which only a forward scan sees naturally.
+ *
+ * Being a single pass also removes the quadratic risk the backward version kept
+ * reintroducing — there is nothing left to rescan.
+ */
+function linkClosePositions(text) {
+  const closes = new Set();
+  const openers = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
     if (c === '\\') {
-      backslashRun++;
+      i++; // the escape consumes the next character, whatever it is
       continue;
     }
-    const escaped = backslashRun % 2 === 1;
-    backslashRun = 0;
-    if (c === '\n' && /^[ \t]*\n/.test(text.slice(k + 1))) return false;
-    if (escaped) continue;
-    if (c === '[') return true;
-    if (c === ']') return false;
+    // A label cannot span a blank line, so a paragraph break drops any
+    // still-open brackets rather than letting them match across it.
+    if (c === '\n' && /^[ \t]*\n/.test(text.slice(i + 1))) {
+      openers.length = 0;
+      continue;
+    }
+    if (c === '[') openers.push(i);
+    else if (c === ']' && openers.length > 0) {
+      openers.pop();
+      if (text[i + 1] === '(' || text[i + 1] === '[') closes.add(i);
+    }
   }
-  return false;
+  return closes;
 }
 
 /** Lower-case, strip every non-alphanumeric. See DEAD_TOKENS. */
@@ -701,6 +712,7 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
   // rejected in O(1). `at` is the offset from which that is known.
   const noRParenAfter = { at: -1 };
   const noRBracketAfter = { at: -1 };
+  const linkCloses = isMdSource ? linkClosePositions(text) : new Set();
   for (let i = 0; i < text.length; i++) {
     // NOT inside a literal region: there, angle brackets are literal command
     // placeholders, not markup. `docs/ops/BaseSepoliaDeploy.md:385,392` carry
@@ -725,7 +737,7 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
       // lost the middle and synthesized `buyadapter` on a clean file. Same
       // class as the angle-bracket case two rounds ago: treating something
       // shaped like markup as markup without checking that it is.
-      hasLinkOpener(text, i)
+      linkCloses.has(i)
     ) {
       const open = text[i + 1];
       const close = open === '(' ? ')' : ']';
@@ -772,6 +784,15 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
           depth--;
           if (depth === 0) break;
         } else if (text[j] === '\n' && text[j + 1] === '\n') break; // unterminated
+      }
+      if (j >= text.length || text[j] !== close) {
+        // No UNESCAPED closer after `i`. The cheap `indexOf` pre-check above
+        // cannot establish that — it finds escaped ones too, so a file whose
+        // only `)` is written `\)` defeated the memo and every earlier `[x](`
+        // walked to EOF again. Recording it here, where the walk has just
+        // proved it, restores the O(1) rejection: if no unescaped closer
+        // follows `i`, none follows any later position either.
+        noneAfter.at = i;
       }
       if (j < text.length && text[j] === close) {
         // Record the destination so the SECOND stream still scans it, exactly
@@ -1249,8 +1270,26 @@ function extractPdfText(buf) {
       }
     }
     const content = body.toString('latin1');
-    for (const m of content.matchAll(/\(((?:\\[\s\S]|[^\\)])*)\)/g))
-      out.push(decodePdfLiteral(m[1]));
+    // BALANCED nesting, not "up to the first `)`". A PDF literal string may
+    // contain unescaped parentheses so long as they balance, and
+    // `(Operators (must) deploy the VPFI buy adapter)` is one string — the
+    // regex stopped at the inner `)` and extracted `Operators (must`, which is
+    // NON-EMPTY, so the fallback that reads the container as text never fired
+    // and the drawn phrase went unread. A partial decode is worse than none:
+    // it looks like success.
+    for (let k = 0; k < content.length; k++) {
+      if (content[k] !== '(') continue;
+      let depth = 1;
+      let m = k + 1;
+      for (; m < content.length && depth > 0; m++) {
+        if (content[m] === '\\') m++;
+        else if (content[m] === '(') depth++;
+        else if (content[m] === ')') depth--;
+      }
+      if (depth !== 0) break; // unterminated string; nothing further is sound
+      out.push(decodePdfLiteral(content.slice(k + 1, m - 1)));
+      k = m - 1;
+    }
     for (const m of content.matchAll(/<([0-9A-Fa-f\s]+)>/g)) {
       const hex = m[1].replace(/\s+/g, '');
       if (hex.length % 2 === 0 && hex.length >= 2) {
@@ -1603,7 +1642,16 @@ function extractOfficeText(buf) {
         // walk below cannot re-read its contents as elements — otherwise a
         // paragraph written as CDATA was deleted whole.
         stripOfficeTags(
-          decodeXmlPart(xml).replace(CDATA, (_m, inner) => inner.replace(/[<>]/g, ' ')),
+          decodeXmlPart(xml).replace(CDATA, (_m, inner) =>
+            // Angle brackets neutralised so the tag walk cannot re-read the
+            // contents as elements, AND ampersands too — XML does not expand
+            // character references inside CDATA, so `&#32;` there is four
+            // visible characters and not a space. Letting the outer
+            // `renderRefs` decode it fused two words a reader sees held apart
+            // by the literal `&#32;`, and BLOCKED a clean document. The
+            // unwrapping has to carry the "this was literal" fact with it.
+            inner.replace(/[<>&]/g, ' '),
+          ),
         ),
       ),
     );
@@ -1766,9 +1814,17 @@ function scanFile(path) {
     // `` `buy <foo>\\` `` renders `<foo>\\` as literal code. Rejecting that
     // closer left the span unrecognized, the `<foo>` inside it was stripped as
     // HTML, and a clean file was BLOCKED.
-    const re = /(?<![\\`])(`+)(?!`)([\s\S]*?)(?<!`)\1(?!`)/g;
+    const re = /(?<!`)(`+)(?!`)([\s\S]*?)(?<!`)\1(?!`)/g;
     let m;
     while ((m = re.exec(text))) {
+      // The opener is escaped only when the backslash run before it is ODD.
+      // `\\` is an escaped BACKSLASH, so the backtick after it is a live
+      // opener — a lookbehind that rejects any backslash missed the span, and
+      // the `<foo>` inside it was stripped as HTML on a clean file. Lookbehind
+      // cannot count, so parity is checked here.
+      let bs = 0;
+      while (m.index - 1 - bs >= 0 && text[m.index - 1 - bs] === '\\') bs++;
+      if (bs % 2 === 1) continue;
       // A backtick INSIDE a fence cannot open an inline span. Pairing across
       // the fence boundary let a stray backtick in a tilde-fenced block pair
       // with one in later prose, making the visible sentence between them

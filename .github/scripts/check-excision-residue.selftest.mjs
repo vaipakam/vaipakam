@@ -377,6 +377,24 @@ const FIXTURES = [
     ],
   },
   {
+    // Round 13 P1. XML does not expand character references inside CDATA, so
+    // `&#32;` there is four visible characters, not a space. Decoding it after
+    // unwrapping fused two words the reader sees held apart and BLOCKED a clean
+    // document — the unwrapping has to carry the "this was literal" fact.
+    name: 'cdata-entity.docx',
+    caught: false,
+    why: 'a character reference inside CDATA is literal text',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>' +
+          '<![CDATA[Decide what to buy&#32;adapter selection follows.]]>' +
+          '</w:t></w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
     // Round 12 P1. An xmlns binding is SCOPED to the element that declares it.
     // Flattening every declaration in the part let `e:` keep a
     // WordprocessingML meaning after the element that bound it had closed, so
@@ -493,6 +511,27 @@ const FIXTURES = [
     caught: false,
     why: '`<!>` is visible text, not a declaration',
     body: 'Decide what to buy<!>Adapter selection follows.\n',
+  },
+  {
+    // Round 13 P1. Escaping is a property of what comes AFTER a backslash run,
+    // so a backward walk that charges the run to the character on its LEFT
+    // tests the wrong side: the `\` here escapes the `*`, but the walk read it
+    // as escaping the `[`, rejected the real opener, and left `zzzz` in the
+    // rendered stream between the two words.
+    name: 'escaped-label-start.md',
+    caught: true,
+    why: 'a backslash escapes what follows it, not what precedes it',
+    body: 'Operators must deploy the [\\*buy](zzzz) adapter before launch.\n',
+  },
+  {
+    // Round 13 P1. `\\` is an escaped BACKSLASH, so the backtick after it is a
+    // live code-span opener. Rejecting any preceded-by-backslash opener missed
+    // the span, and the `<foo>` inside it — visible code — was stripped as
+    // HTML on a clean file.
+    name: 'codespan-double-backslash.md',
+    caught: false,
+    why: 'two backslashes escape each other, leaving the backtick live',
+    body: 'Decide what to buy\\\\` <foo>`Adapter selection follows.\n',
   },
   {
     name: 'link-destination.md',
@@ -630,6 +669,23 @@ function pdfFixtures() {
           .toString('hex')
           .toUpperCase();
         const body = `\n\n% endstream\nBT <${hex}> Tj ET`;
+        return Buffer.from(
+          `%PDF-1.4\n1 0 obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
+        );
+      })(),
+    },
+    {
+      // Round 13 P1. A PDF literal string may contain unescaped parentheses so
+      // long as they balance. Stopping at the inner `)` extracted
+      // `Operators (must` — NON-EMPTY, so the read-as-text fallback never
+      // fired and the drawn phrase went unread. A partial decode is worse than
+      // none: it looks like success.
+      name: 'nested-parens.pdf',
+      caught: true,
+      why: 'a literal string ends at its BALANCED closing paren',
+      buf: (() => {
+        const body =
+          'BT (Operators (must) deploy the VPFI buy adapter before launch.) Tj ET';
         return Buffer.from(
           `%PDF-1.4\n1 0 obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
         );
