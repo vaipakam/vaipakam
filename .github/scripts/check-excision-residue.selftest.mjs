@@ -769,6 +769,17 @@ const FIXTURES = [
     body: 'intro\n2. ```\n   Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
   },
   {
+    // The same rule one container in. Paragraph tracking has to survive the
+    // quote prefix, and the fixture beside this one only pins the top-level
+    // spelling. Probed after the fix and kept because it fails against the
+    // previous commit — six other probes run with it behaved identically
+    // before and after and were dropped.
+    name: 'ordered-no-interrupt-quoted.md',
+    caught: true,
+    why: 'the paragraph a marker cannot interrupt may itself be inside a quote',
+    body: '> intro\n> 2. ```\n>    Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
     // The control for the case above: `1.` DOES interrupt, so the list and
     // its fence are real and the content stays code. Without this, narrowing
     // the rule too far would pass unnoticed.
