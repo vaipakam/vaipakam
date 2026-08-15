@@ -81,7 +81,12 @@ export function useMyOffers(
   address: string | null,
   status: MyOfferStatus,
 ) {
-  const { events, openOfferIds, loading: indexLoading } = useLogIndex();
+  const {
+    events,
+    openOfferIds,
+    indexChainId,
+    loading: indexLoading,
+  } = useLogIndex();
   const diamondRead = useDiamondRead();
   const publicClient = useDiamondPublicClient();
   const activeReadChain = useReadChain();
@@ -205,6 +210,16 @@ export function useMyOffers(
       soldStubs: [] as MyOfferRow[],
     };
     if (!address) return result;
+    // Withhold entirely while the log index describes a DIFFERENT chain than
+    // the one we are keying snapshots on. `useLogIndex` rescans from an effect,
+    // so a chain switch leaves its `events` / `openOfferIds` holding the
+    // previous chain's data for a render or more, while `activeReadChain` has
+    // already moved. Classifying across that seam is not merely stale: the
+    // fallback path would hydrate an old-chain cancellation or sale from a
+    // coincidentally-matching new-chain snapshot key, and then fetch those
+    // old-chain ids from the NEW Diamond. An empty result for one render is
+    // the honest answer — `indexLoading` already covers the UI.
+    if (indexChainId !== activeReadChain.chainId) return result;
     const lower = address.toLowerCase();
     const openSet = new Set(openOfferIds.map((id) => id.toString()));
 
@@ -438,7 +453,19 @@ export function useMyOffers(
     }
 
     return result;
-  }, [events, openOfferIds, address]);
+    // The chain fields are read via the snapshot lookups above and are now
+    // declared. The log index is chain-scoped, so `events` already moves on a
+    // chain switch in every case we can observe; declaring these removes the
+    // dependence on that coincidence. This memo is pure in-memory
+    // classification — no reads — so an extra recomputation costs nothing.
+  }, [
+    events,
+    openOfferIds,
+    indexChainId,
+    address,
+    activeReadChain.chainId,
+    activeReadChain.diamondAddress,
+  ]);
 
   // Decide which ids to fetch live this tick based on the requested
   // status filter. Cancelled rows never need a live read.
@@ -469,6 +496,15 @@ export function useMyOffers(
     }
     if (!address || idsToFetch.length === 0) {
       setLiveOffers([]);
+      // Clear the local flag too. The abort path below deliberately leaves
+      // `loading` alone (a superseded run must not announce "done" for the
+      // live one), which was fine while an empty id set only happened at rest
+      // — but the chain-mismatch guard added for the log index can now empty
+      // `buckets` MID-FLIGHT, aborting the in-flight run and landing here.
+      // With the creator indexer unavailable and no matching offers on the new
+      // chain, nothing else would ever clear it and the Dashboard would sit in
+      // its loading state for good.
+      setLoading(false);
       return;
     }
     let aborted = false;
@@ -528,6 +564,13 @@ export function useMyOffers(
     diamondRead,
     publicClient,
     activeReadChain.diamondAddress,
+    // Read alongside `diamondAddress` when snapshotting each fetched offer, so
+    // it belongs here too. The two are expected to move together — the diamond
+    // address is looked up per chain — but keying the snapshot cache on a
+    // chain id captured from an earlier render is exactly the kind of mismatch
+    // that writes one chain's offers under another chain's key, so it is
+    // declared rather than assumed.
+    activeReadChain.chainId,
   ]);
 
   // Assemble the result, status-tagged. Newest first by id.

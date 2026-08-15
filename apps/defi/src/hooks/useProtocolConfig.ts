@@ -463,7 +463,12 @@ export function useProtocolConfig() {
     } finally {
       setLoading(false);
     }
-  }, [diamond, cacheKey]);
+    // `publicClient` is read inside (the decimals probe) and is now declared.
+    // It does not churn: `useDiamondPublicClient` memoises on the wagmi client
+    // and the chain's RPC URL, both of which change only when the read chain
+    // changes — and that already moves `cacheKey`. So this closes the stale-
+    // capture hole without adding re-reads.
+  }, [diamond, cacheKey, publicClient]);
 
   useEffect(() => {
     load();

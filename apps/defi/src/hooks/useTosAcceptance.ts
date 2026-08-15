@@ -153,6 +153,16 @@ export function useTosAcceptance(): TosAcceptanceState {
   useLayoutEffect(() => {
     void reload();
     return () => {
+      // The rule warns that `reqSeq.current` may have changed by the time this
+      // cleanup runs, and advises copying it into a variable inside the effect.
+      // Doing that would break the mechanism. `reqSeq` is a mutable request
+      // counter, not a ref to a rendered node: the cleanup must increment
+      // whatever the LIVE value is at teardown, because that is what every
+      // in-flight read compares its captured `seq` against. Incrementing a
+      // copy captured at effect time would leave `reqSeq.current` untouched,
+      // so a read from the previous wallet would still match and apply its
+      // result. The changed value is the point, not a hazard.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       reqSeq.current++;
     };
   }, [reload]);
