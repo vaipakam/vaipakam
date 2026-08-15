@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import {
@@ -127,10 +127,22 @@ export function useLogIndex() {
   // hook until a new offer or loan is created. See
   // `DataFreshnessContext` for the trigger logic.
   const { report, fallbackVersion } = useDataFreshness();
+  // Monotonic scan generation. `load()` is re-created (and re-invoked by the
+  // effect below) on every chain change, but the effect neither cancels nor
+  // sequences the previous run — so a slow scan for the OLD chain can settle
+  // AFTER a fast scan for the new one and overwrite it. That was survivable
+  // while a stale array was merely stale; with `indexChainId` it is not,
+  // because the late writer also stamps the OLD chain and consumers that gate
+  // on the tag then withhold everything until the next watermark tick or
+  // manual rescan. A superseded scan must commit nothing at all.
+  const scanSeq = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++scanSeq.current;
+    const isCurrent = () => seq === scanSeq.current;
     report('logIndex', { loading: true });
     const peeked = peekLoanIndex(chainId, diamondAddress);
+    if (!isCurrent()) return;
     if (peeked === null) {
       // No cached index for this (chain, diamond). The arrays still hold
       // whatever the PREVIOUS chain left, so mark the tag unknown rather than
@@ -179,6 +191,11 @@ export function useLogIndex() {
           }
         },
       );
+      // Superseded mid-scan: a newer `load()` (new chain, or a newer tick) has
+      // started, so this result is not what anyone is asking for. Drop it
+      // whole — committing the arrays or the tag here is what would strand a
+      // gated consumer on the previous chain.
+      if (!isCurrent()) return;
       setLoans(result.loans);
       setOfferIds(result.offerIds);
       setOpenOfferIds(result.openOfferIds);
@@ -201,11 +218,16 @@ export function useLogIndex() {
       report('logIndex', { frontier: result.lastBlock });
       step.success({ note: `${result.loans.length} loans indexed` });
     } catch (e) {
-      setError(e as Error);
       step.failure(e);
+      if (!isCurrent()) return;
+      setError(e as Error);
     } finally {
-      setLoading(false);
-      report('logIndex', { loading: false });
+      // Only the live scan owns the shared loading flag; a superseded run
+      // clearing it would announce "done" while the current scan is still out.
+      if (isCurrent()) {
+        setLoading(false);
+        report('logIndex', { loading: false });
+      }
     }
   }, [rpcUrl, diamondAddress, chain.deployBlock, chainId, indexerLastBlock, report]);
 
