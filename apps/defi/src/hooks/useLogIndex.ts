@@ -186,6 +186,12 @@ export function useLogIndex() {
     const chainStillCurrent = () => forChain === activeChainRef.current;
     const isCurrent = () =>
       chainStillCurrent() && seq > committedSeq.current;
+    // Set when THIS invocation commits. `isCurrent()` goes false the instant
+    // `committedSeq` advances — including for the invocation that advanced it —
+    // so the `finally` below cannot use it alone to decide whether it owns the
+    // loading flag. Round 5 fixed exactly this shape in the peek branch and I
+    // left it standing in the success path, one branch over.
+    let committedHere = false;
     report('logIndex', { loading: true });
     const peeked = peekLoanIndex(chainId, diamondAddress);
     if (!chainStillCurrent()) return;
@@ -256,6 +262,7 @@ export function useLogIndex() {
       setGetLoanInitiatedForToken(() => result.getLoanInitiatedForToken);
       setIndexChainId(chainId);
       committedSeq.current = seq;
+      committedHere = true;
       // Report the scanned-through block as a freshness frontier. The
       // legacy log scan IS an RPC tail-scan ([indexerTail+1, safeHead]),
       // and useLogIndex is mounted on most data pages — so this is what
@@ -269,9 +276,10 @@ export function useLogIndex() {
       if (!isCurrent()) return;
       setError(e as Error);
     } finally {
-      // Only the live scan owns the shared loading flag; a superseded run
-      // clearing it would announce "done" while the current scan is still out.
-      if (isCurrent()) {
+      // The scan that COMMITTED owns the flag, and so does a still-live one
+      // that failed — a superseded run owns nothing, since clearing the shared
+      // flag would announce "done" while the live scan is still out.
+      if (committedHere || isCurrent()) {
         setLoading(false);
         report('logIndex', { loading: false });
       }
