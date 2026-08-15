@@ -743,6 +743,52 @@ const FIXTURES = [
     body:
       '- ```\n  Decide what to buy<strong>adapter</strong> selection follows.\n  ```\n',
   },
+  // ── Round 23. All six landed on the container-fence code from the commit
+  // before, and all six are consequences of ONE missing idea: container
+  // IDENTITY. Depth, indentation and quote count each approximate it and each
+  // breaks somewhere. They are grouped here because they stand or fall
+  // together — any future change that reintroduces a numeric approximation
+  // will fail several of them at once, which is the signal worth having.
+  {
+    name: 'fence-sibling-item.md',
+    caught: true,
+    why: 'a sibling list item ends the previous item, and the fence in it',
+    body: '- ```\n  code\n- Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    // NOT a proof of a fix — this case was already caught before the tab
+    // change, so it locks existing behaviour rather than demonstrating new.
+    // Kept because the indentation measure it exercises did change: a tab is
+    // four columns, so `\t```` is indented code and not a fence opener.
+    name: 'fence-tab-indent.md',
+    caught: true,
+    why: 'a tab-indented fence line does not shield the prose below it',
+    body: '\t```\nOperators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    name: 'fence-quote-blank.md',
+    caught: true,
+    why: 'a blank line ends a quote, so the `>` after it opens a new one',
+    body: '> ```\n> code\n\n> Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    name: 'fence-optional-indent.md',
+    caught: false,
+    why: "a fence's own 1-3 space indent is not a container column",
+    body: '   ```\nDecide what to buy<strong>adapter</strong> next.\n',
+  },
+  {
+    name: 'fence-reopen-same-line.md',
+    caught: false,
+    why: 'the line that leaves a container can itself open a new fence',
+    body: '- ```\n  code\n~~~\nDecide what to buy<strong>adapter</strong> next.\n~~~\n',
+  },
+  {
+    name: 'fence-inner-marker.md',
+    caught: false,
+    why: 'inside a top-level fence a `- ` line is code, not a container',
+    body: '```\n- ```\nDecide what to buy<strong>adapter</strong> next.\n```\n',
+  },
   {
     // Found by adversarial self-review, and the FIRST false NEGATIVE among
     // this PR's container defects — every other one blocked a clean document,

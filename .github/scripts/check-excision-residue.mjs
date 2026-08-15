@@ -838,6 +838,114 @@ function stripContainers(line) {
 }
 
 /**
+ * Leading indentation measured in COLUMNS, expanding tabs to four-column
+ * stops. A tab is one character but four columns, so counting characters made
+ * a tab-indented line look like a one-space one — and `\t```` reads as
+ * indented CODE in CommonMark, not as a fence opener.
+ */
+function indentColumns(str) {
+  let col = 0;
+  for (const ch of /^[ \t]*/.exec(str)[0]) col += ch === '\t' ? 4 - (col % 4) : 1;
+  return col;
+}
+
+/**
+ * Every line's CONTAINER CHAIN — the block quotes and list items it sits
+ * inside, each as a distinct INSTANCE.
+ *
+ * Depth alone cannot answer the question the fence walk actually has, which is
+ * "is this line inside the same container the fence opened in?". Two sibling
+ * list items have equal depth and equal indentation but are different blocks;
+ * a blank line ends a quote, so `>` after it opens a new one at the same
+ * depth. Identity is what distinguishes them, so each entry carries an id
+ * that changes when the container restarts.
+ *
+ * Returns one entry per line: `chain` (the instances, outermost first) and
+ * `prefixLens[k]` (characters consumed by the first k of them), so a caller
+ * can strip exactly the containers it cares about and treat anything deeper
+ * as literal content.
+ */
+function containerChains(lines) {
+  const out = [];
+  let chain = [];
+  let nextId = 1;
+  let blankBefore = false;
+  for (const line of lines) {
+    if (line.trim() === '') {
+      // A blank line does not itself close a container — the block may
+      // continue after it — but it DOES end a block quote, so a later `>` at
+      // the same depth is a new quote rather than a continuation.
+      out.push({ chain: chain.slice(), prefixLens: [0] });
+      blankBefore = true;
+      continue;
+    }
+    let rest = line;
+    let consumed = 0;
+    const next = [];
+    const prefixLens = [0];
+    for (;;) {
+      // A list item continued by INDENTATION comes first. `  > text` under
+      // `- > text` is two spaces of list-item content followed by a quote
+      // marker — reading the quote first made it a new top-level quote and
+      // lost the enclosing item.
+      const open = chain[next.length];
+      if (open && open.kind === 'li' && consumed + indentColumns(rest) >= open.col) {
+        const pad = /^[ \t]*/.exec(rest)[0];
+        const take = Math.min(pad.length, Math.max(0, open.col - consumed));
+        consumed += take;
+        next.push(open);
+        prefixLens.push(consumed);
+        rest = rest.slice(take);
+        continue;
+      }
+      const q = /^[ \t]{0,3}>[ \t]?/.exec(rest);
+      if (q) {
+        const reuse = !blankBefore && chain[next.length]?.kind === 'q';
+        consumed += q[0].length;
+        next.push({ kind: 'q', id: reuse ? chain[next.length].id : nextId++, col: consumed });
+        prefixLens.push(consumed);
+        rest = rest.slice(q[0].length);
+        continue;
+      }
+      // A list MARKER always starts a new item, which is exactly why sibling
+      // items must not be conflated: same depth, same indentation, different
+      // block.
+      const li = /^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(rest);
+      if (li) {
+        consumed += li[0].length;
+        next.push({ kind: 'li', id: nextId++, col: consumed });
+        prefixLens.push(consumed);
+        rest = rest.slice(li[0].length);
+        continue;
+      }
+      break;
+    }
+    // No marker, but enough indentation to sit inside the previous line's
+    // deeper list items — an ordinary continuation paragraph.
+    const ind = indentColumns(rest);
+    while (
+      next.length < chain.length &&
+      chain[next.length].kind === 'li' &&
+      consumed + ind >= chain[next.length].col
+    ) {
+      next.push(chain[next.length]);
+      prefixLens.push(chain[next.length - 1].col);
+    }
+    chain = next;
+    blankBefore = false;
+    out.push({ chain: chain.slice(), prefixLens });
+  }
+  return out;
+}
+
+/** Do two container chains share the same first `n` instances? */
+function sameContainer(a, b, n) {
+  if (a.length < n || b.length < n) return false;
+  for (let k = 0; k < n; k++) if (a[k].id !== b[k].id) return false;
+  return true;
+}
+
+/**
  * The column a line's content starts in, counting container prefixes.
  *
  * What the containers consumed plus whatever indentation survives them — NOT
@@ -1282,8 +1390,14 @@ function computeFences(lines) {
   // false NEGATIVE on a blocking gate, which is the one failure this whole
   // file exists to prevent; every other container defect here has been a
   // false positive.
-  let openQuoteDepth = 0;
-  let openColumn = 0;
+  //
+  // Identity, not depth or indentation. Four separate defects came from
+  // approximating "the same container" with a number: sibling list items have
+  // equal depth and equal indentation, a blank line ends a quote so an
+  // identical `>` after it is a NEW quote, and a top-level fence's own
+  // optional 1–3 space indent is not a container column at all.
+  let openChain = [];
+  const chains = containerChains(lines);
   for (let i = 0; i < lines.length; i++) {
     // Container prefixes come off first — a fence opened inside a list item or
     // a block quote starts after its marker, and a raw-line test saw only
@@ -1291,20 +1405,31 @@ function computeFences(lines) {
     // literal `<strong>` inside it was stripped as markup, and a clean document
     // was BLOCKED. Third pass in this file to learn the same lesson about
     // containers, after the indentation and heading walks.
-    const containerBare = stripContainers(lines[i]);
-    // Has the container the fence was opened in ended? A blank line does not
-    // end one — it is ordinary blank content inside the block — so only a
-    // non-blank line that has left the quote depth or dedented out of the
-    // list item counts.
-    if (openMarker && containerBare.trim() !== '') {
-      if (quoteDepth(lines[i]) < openQuoteDepth || contentColumn(lines[i]) < openColumn) {
-        openMarker = '';
-        openLen = 0;
-        flags[i] = false;
-        continue;
-      }
+    const { chain, prefixLens } = chains[i];
+    // While a fence is open, ONLY the containers it was opened in are
+    // structure; anything deeper is literal content. That single rule settles
+    // two cases that pull in opposite directions: a sibling list item at the
+    // opener's own depth ends the fence, while `- ```` inside a TOP-LEVEL
+    // fence is just code and must not.
+    if (openMarker && lines[i].trim() !== '' && !sameContainer(chain, openChain, openChain.length)) {
+      openMarker = '';
+      openLen = 0;
+      flags[i] = false;
+      // Deliberately NO `continue`: the line that leaves the old container
+      // can itself open a new fence, and skipping it left that opener
+      // unrecognized.
     }
-    const m = /^\s{0,3}(`{3,}|~{3,})/.exec(containerBare);
+    // Strip exactly the containers in scope — the opener's own while a fence
+    // is open, all of them otherwise.
+    const depth = openMarker ? openChain.length : chain.length;
+    const containerBare = lines[i].slice(prefixLens[Math.min(depth, prefixLens.length - 1)] ?? 0);
+    // Tab-aware: `\t```` is indented code, not a fence, because a tab is four
+    // columns. The character-counting `\s{0,3}` accepted it as a fence and
+    // then classified the live prose below it as code.
+    const m =
+      indentColumns(containerBare) <= 3
+        ? /^[ \t]*(`{3,}|~{3,})/.exec(containerBare)
+        : null;
     // Everything below reads `containerBare`, not `lines[i]`. Matching on the
     // stripped line and then validating the closer against the RAW one meant a
     // quoted fence could open but never close: the slice landed inside the `> `
@@ -1326,8 +1451,7 @@ function computeFences(lines) {
       if (!openMarker && !infoHasBacktick) {
         openMarker = marker;
         openLen = len;
-        openQuoteDepth = quoteDepth(lines[i]);
-        openColumn = contentColumn(lines[i]);
+        openChain = chain;
         flags[i] = true;
         delimiter[i] = true;
         continue;
