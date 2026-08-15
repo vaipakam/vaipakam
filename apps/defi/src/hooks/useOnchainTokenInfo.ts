@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { erc20Abi, type Address } from 'viem';
-import { useDiamondPublicClient } from '../contracts/useDiamond';
+import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 
 export interface OnchainTokenInfo {
   symbol: string | null;
@@ -30,13 +30,20 @@ export function useOnchainTokenInfo(
   address: string | null | undefined,
 ): OnchainTokenInfo {
   const publicClient = useDiamondPublicClient();
-  const [info, setInfo] = useState<OnchainTokenInfo>(EMPTY);
+  const chainId = useReadChain().chainId;
+  const valid = !!address && ADDRESS_RE.test(address);
+  // Chain + address — see `useAssetTier`. This hook feeds `TokenInfoTag`, which
+  // renders the symbol and name beside the address and its explorer link, so a
+  // result kept across an address change puts one token's name against another
+  // token's link. That is the valid-to-valid window this change exists to
+  // close, and tagging by nothing at all left it wide open.
+  const reqKey = valid ? `${chainId}|${(address as string).toLowerCase()}` : null;
+  const [result, setResult] = useState<{ key: string; info: OnchainTokenInfo } | null>(null);
 
   useEffect(() => {
-    if (!address || !ADDRESS_RE.test(address)) {
-      setInfo(EMPTY);
-      return;
-    }
+    // Disabled case DERIVED below — see `useAssetTier` for why an effect is
+    // the wrong place to reset it.
+    if (!valid) return;
     let cancelled = false;
     const t = setTimeout(() => {
       const addr = address as Address;
@@ -49,14 +56,17 @@ export function useOnchainTokenInfo(
         const symbol = results[0].status === 'fulfilled' ? String(results[0].value) : null;
         const name = results[1].status === 'fulfilled' ? String(results[1].value) : null;
         const decimals = results[2].status === 'fulfilled' ? Number(results[2].value) : null;
-        setInfo({ symbol, name, decimals });
+        setResult({ key: reqKey as string, info: { symbol, name, decimals } });
       });
     }, 400);
     return () => {
       cancelled = true;
       clearTimeout(t);
+      // See `useAssetTier` — dropped on the way out so re-enabling the same
+      // address cannot reuse metadata read before it was disabled.
+      setResult(null);
     };
-  }, [address, publicClient]);
+  }, [valid, reqKey, address, publicClient]);
 
-  return info;
+  return result?.key === reqKey ? result.info : EMPTY;
 }
