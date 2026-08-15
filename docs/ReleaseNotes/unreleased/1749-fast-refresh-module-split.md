@@ -1,4 +1,4 @@
-## Connected app — editing a page no longer reloads the whole app (PR #1751)
+## Connected app — editing a page no longer reloads the whole app (PR #1752)
 
 Seven files in the connected app exported a React component *and* something
 that is not a component — a hook, a set of protocol constants, a pure string
