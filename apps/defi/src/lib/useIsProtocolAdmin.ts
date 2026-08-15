@@ -61,31 +61,45 @@ export function useIsProtocolAdmin(): boolean {
   const { address, isCorrectChain } = useWallet();
   const client = useDiamondPublicClient();
   const chain = useReadChain();
-  const [isAdmin, setIsAdmin] = useState(false);
+  // Tagged with chain + wallet, and `false` is DERIVED. This hook gates admin
+  // UI, so the direction of the stale frame is the one that matters: after
+  // disconnecting or switching to a chain where the wallet holds no role, the
+  // effect's reset arrives a paint LATE and admin controls are briefly on
+  // screen for someone who no longer has the role. Deriving means the answer
+  // is never shown for a question other than the one asked. (The on-chain role
+  // check remains the real boundary — this is UI.)
+  const reqKey =
+    address && isCorrectChain && chain.diamondAddress
+      ? `${chain.chainId}|${chain.diamondAddress.toLowerCase()}|${address.toLowerCase()}`
+      : null;
+  const [result, setResult] = useState<{ key: string; isAdmin: boolean } | null>(null);
 
   useEffect(() => {
-    if (!address || !isCorrectChain || !chain.diamondAddress) {
-      setIsAdmin(false);
-      return;
-    }
+    if (!reqKey || !address || !chain.diamondAddress) return;
     let cancelled = false;
     (async () => {
+      let next = false;
       try {
-        const result = await client.readContract({
-          address: chain.diamondAddress as `0x${string}`,
-          abi: HAS_ROLE_ABI,
-          functionName: 'hasRole',
-          args: [ADMIN_ROLE, address],
-        });
-        if (!cancelled) setIsAdmin(Boolean(result));
+        next = Boolean(
+          await client.readContract({
+            address: chain.diamondAddress as `0x${string}`,
+            abi: HAS_ROLE_ABI,
+            functionName: 'hasRole',
+            args: [ADMIN_ROLE, address],
+          }),
+        );
       } catch {
-        if (!cancelled) setIsAdmin(false);
+        next = false;
       }
+      if (!cancelled) setResult({ key: reqKey, isAdmin: next });
     })();
     return () => {
       cancelled = true;
+      // Dropped on the way out — reconnecting the same wallet must re-check
+      // rather than reuse a verdict granted before the disconnect.
+      setResult(null);
     };
-  }, [address, isCorrectChain, chain.diamondAddress, client]);
+  }, [address, isCorrectChain, chain.chainId, chain.diamondAddress, client, reqKey]);
 
-  return isAdmin;
+  return result?.key === reqKey && result.isAdmin;
 }
