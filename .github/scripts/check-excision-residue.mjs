@@ -394,7 +394,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [22, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "c16b27679a6b"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [24, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "93fd9649e758"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -554,7 +554,13 @@ const EXCLUSION_CARVEOUTS = [
 ];
 
 function isExcluded(file) {
-  if (EXCLUSION_CARVEOUTS.some((p) => file.startsWith(p))) return false;
+  // Directory carveouts match by PREFIX, file carveouts by EQUALITY — the same
+  // split `isExcluded` already makes one line below. Treating every carveout as
+  // a prefix meant `assemble.sh` also re-included any sibling whose name merely
+  // STARTS with it, so `assemble.sh-history.md` — an archival record, exempt by
+  // design — was reported as new live-scope residue.
+  if (EXCLUSION_CARVEOUTS.some((p) => (p.endsWith('/') ? file.startsWith(p) : file === p)))
+    return false;
   return EXCLUDED_PREFIXES.some((p) =>
     p.endsWith('/') ? file.startsWith(p) : file === p,
   );
@@ -610,7 +616,11 @@ function inScopeFiles() {
 }
 
 /** Files where inline markup can split a phrase a reader sees as one. */
-const MARKUP_EXTENSIONS = /\.(tsx|jsx|html|htm|md|mdx|svg)$/i;
+// `.markdown` alongside `.md`: it is the standard long spelling, and leaving it
+// out meant a contributor could evade the whole-tree ratchet by extension alone
+// — the same content caught in a `.md` went through the plain-text path and its
+// inline formatting stayed between the words.
+const MARKUP_EXTENSIONS = /\.(tsx|jsx|html|htm|md|mdx|markdown|svg)$/i;
 
 
 /**
@@ -636,13 +646,27 @@ const MARKUP_EXTENSIONS = /\.(tsx|jsx|html|htm|md|mdx|svg)$/i;
  * Being a single pass also removes the quadratic risk the backward version kept
  * reintroducing — there is nothing left to rescan.
  */
-function linkClosePositions(text) {
+function linkClosePositions(text, literalAt) {
   const closes = new Set();
   const openers = [];
+  // Whether the character just consumed was an UNESCAPED `!`. `\\!` is an
+  // escaped exclamation mark, so the bracket after it opens a LINK, not an
+  // image — and since images survive an inner link while links do not, getting
+  // this backwards preserved an opener CommonMark had deactivated and stripped
+  // a destination the reader sees.
+  let bangBefore = false;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === '\\') {
       i++; // the escape consumes the next character, whatever it is
+      bangBefore = false;
+      continue;
+    }
+    // A bracket inside a code span or fence is LITERAL and cannot open a label;
+    // letting one pair with a later bare `](` in prose stripped visible text.
+    // Same literal-region information the destination skip already consults.
+    if (literalAt && literalAt(i)) {
+      bangBefore = false;
       continue;
     }
     // A label cannot span a blank line, so a paragraph break drops any
@@ -653,7 +677,7 @@ function linkClosePositions(text) {
     }
     // `![` opens an IMAGE, `[` a link. The distinction decides what an inner
     // link deactivates.
-    if (c === '[') openers.push({ at: i, image: text[i - 1] === '!' });
+    if (c === '[') openers.push({ at: i, image: bangBefore });
     else if (c === ']' && openers.length > 0) {
       openers.pop();
       if (text[i + 1] === '(' || text[i + 1] === '[') {
@@ -669,6 +693,7 @@ function linkClosePositions(text) {
         }
       }
     }
+    bangBefore = c === '!';
   }
   return closes;
 }
@@ -715,7 +740,7 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
   // resolves to the dead identifier in any renderer. Passing `''` as the path
   // to suppress the first had been silently suppressing the second.
   const skipTags = MARKUP_EXTENSIONS.test(sourcePath || '');
-  const isMdSource = /\.mdx?$/i.test(sourcePath || '');
+  const isMdSource = /\.(?:mdx?|markdown)$/i.test(sourcePath || '');
   const isJsonSource = /\.jsonc?$/i.test(sourcePath || '');
   const decodeRefs = skipTags || sourcePath === TAG_INTERIOR;
   const TAG = /^<\/?[a-zA-Z][^<>]*>/;
@@ -725,7 +750,7 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
   // rejected in O(1). `at` is the offset from which that is known.
   const noRParenAfter = { at: -1 };
   const noRBracketAfter = { at: -1 };
-  const linkCloses = isMdSource ? linkClosePositions(text) : new Set();
+  const linkCloses = isMdSource ? linkClosePositions(text, fencedOffsets) : new Set();
   for (let i = 0; i < text.length; i++) {
     // NOT inside a literal region: there, angle brackets are literal command
     // placeholders, not markup. `docs/ops/BaseSepoliaDeploy.md:385,392` carry
@@ -1823,7 +1848,7 @@ function scanFile(path) {
   // the code-span exemption to them meant a staged TSX file rendering
   // `` `<p>`buy <strong>adapter</strong>`</p>` `` kept its inner tags out of the
   // stripper, so the phrase a user sees never fused and the gate stayed green.
-  const isMarkdown = /\.mdx?$/i.test(path);
+  const isMarkdown = /\.(?:mdx?|markdown)$/i.test(path);
   /**
    * Offset -> "are angle brackets here LITERAL rather than markup?"
    *
@@ -2025,6 +2050,21 @@ function scanFile(path) {
           ? stripRecognizedTags(from, to)
           : text.slice(from, to),
       );
+    // A BLOCK tag in the gap is not inline formatting and must not be removed
+    // here. `<p>…fixed-rate buy</p><p>Back up config…</p>` is two paragraphs:
+    // the first names the removed surface as live and the second starts a new
+    // sentence, so treating `back` as the surviving-feature suffix suppressed a
+    // real hit before `crossesBlockBoundary` ever saw it. The tag strip that
+    // fixed the inline case had to keep this distinction, which is the same one
+    // `crossesBlockBoundary` itself draws.
+    if (
+      MARKUP_EXTENSIONS.test(path) &&
+      !literalAt(map[end - 1] + 1) &&
+      /<\s*\/?\s*(?:hr|p|div|section|article|aside|nav|main|header|footer|figure|figcaption|blockquote|pre|table|thead|tbody|tr|td|th|ul|ol|li|dl|dt|dd|h[1-6]|form|fieldset|details|summary|address)\b/i.test(
+        text.slice(map[end - 1] + 1, map[end]),
+      )
+    )
+      return false;
     const gap = readGap(map[end - 1] + 1, map[end]);
     if (!/^[-_]*$/.test(gap)) return false;
     return /^[A-Za-z0-9_-]+$/.test(
@@ -2082,11 +2122,24 @@ function scanFile(path) {
     // rejected the match before this runs.
     const from = map[a];
     const to = identifierSpanEnd(map[b]);
-    const seen = renderRefs(
+    let seen = renderRefs(
       !inTagInterior && MARKUP_EXTENSIONS.test(path) && !literalAt(from)
         ? stripRecognizedTags(from, to)
         : text.slice(from, to),
     );
+    // …and JSON escapes decoded, for the fourth time in the same shape. The
+    // normalizer already decodes `\u0073` to `s` — that is how the candidate is
+    // found — but this validation re-sliced the UNDECODED source, saw a
+    // backslash and four hex digits, and rejected the span as non-identifier.
+    // `{"operation":"buyOption\u0073"}` is read by every JSON consumer as the
+    // exact retired getter, and the encoding bought an exemption. Every check
+    // that decides what a word IS has to read the rendered stream: entities,
+    // tags, PDF escapes, and this.
+    if (/\.jsonc?$/i.test(path)) {
+      seen = seen.replace(/\\u([0-9a-fA-F]{4})/g, (_m, h) =>
+        String.fromCharCode(parseInt(h, 16)),
+      );
+    }
     return /^[A-Za-z0-9_-]+$/.test(seen);
   };
 
@@ -2106,7 +2159,12 @@ function scanFile(path) {
     const ref = /^&(?:#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});/.exec(
       text.slice(lastOffset, lastOffset + 40),
     );
-    return lastOffset + (ref ? ref[0].length : 1);
+    if (ref) return lastOffset + ref[0].length;
+    // …and the same for a JSON `\uXXXX`, whose decoded character also maps back
+    // to the escape's opening backslash. Without this the span was cut one
+    // character into the escape and the validation below saw a lone `\`.
+    if (/^\\u[0-9a-fA-F]{4}/.test(text.slice(lastOffset, lastOffset + 6))) return lastOffset + 6;
+    return lastOffset + 1;
   }
 
   /**

@@ -24,7 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { crc32, deflateRawSync, deflateSync } from 'node:zlib';
+import { deflateRawSync, deflateSync } from 'node:zlib';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
@@ -597,6 +597,53 @@ const FIXTURES = [
     body: 'The treasury uses a fixed-rate buy<strong>back</strong> auction.\n',
   },
   {
+    // Round 16 P1, a regression from round 15's suffix fix. Stripping EVERY tag
+    // in the gap removed block boundaries too, so `<p>…fixed-rate buy</p>` and
+    // `<p>Back up config…</p>` read as the surviving `buyback` feature and a
+    // real hit was suppressed before crossesBlockBoundary ever saw it.
+    name: 'buyback-block.html',
+    caught: true,
+    why: 'a paragraph break is not intra-word, whatever the suffix says',
+    body:
+      '<p>Operators must use the fixed-rate buy</p><p>Back up config before launch.</p>\n',
+  },
+  {
+    // Round 16 P2. `\!` is an escaped exclamation mark, so the bracket after it
+    // opens a LINK, not an image — and since images survive an inner link while
+    // links do not, getting it backwards preserved an opener CommonMark had
+    // deactivated and stripped a destination the reader sees.
+    name: 'escaped-bang.md',
+    caught: false,
+    why: 'an escaped `!` does not make an image opener',
+    body: 'Decide what to \\![buy [](/inner)](/middle) adapter selection follows.\n',
+  },
+  {
+    // Round 16 P2. A bracket inside a code span is literal and opens no label;
+    // letting it pair with a later bare `](` in prose stripped visible text.
+    name: 'bracket-in-code.md',
+    caught: false,
+    why: 'a bracket in a code span opens nothing',
+    body: 'Decide what to buy `[` ](/middle) Adapter selection follows.\n',
+  },
+  {
+    // Round 16 P1. The normalizer decodes `s` to `s` — that is how the
+    // candidate is found — but the identifier validation re-sliced the
+    // UNDECODED source and rejected the backslash. Every JSON consumer reads
+    // this as the exact retired getter.
+    name: 'json-escape-identifier.json',
+    caught: true,
+    why: 'a JSON unicode escape does not buy an exemption',
+    body: '{"operation":"buyOption\\u0073"}\n',
+  },
+  {
+    // Round 16 P2. `.markdown` is the standard long spelling; omitting it let a
+    // contributor evade the whole-tree ratchet by extension alone.
+    name: 'long-extension.markdown',
+    caught: true,
+    why: 'the renderer follows the format, not the shorter spelling',
+    body: 'Operators must deploy the VPFI buy<strong>adapter</strong> before launch.\n',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',
@@ -830,6 +877,25 @@ function pdfFixtures() {
  * (part name + XML) rather than committed as binary, so a reviewer can read
  * what the document says.
  */
+/**
+ * CRC-32 for the ZIP headers.
+ *
+ * NOT `node:zlib`'s `crc32`, which landed in Node 22.2. This repository's
+ * engine floor is `>=22.0.0`, and a STATIC import of a missing export fails
+ * before any fixture runs — so on a supported 22.0/22.1 the newly mandatory
+ * selftest did not merely fail, it could not start. A gate whose own test
+ * suite depends on a newer runtime than the project declares is not a gate
+ * everyone can run.
+ */
+function crc32(buf) {
+  let c = ~0;
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i];
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+  }
+  return (~c) >>> 0;
+}
+
 function zipFixtures() {
   return FIXTURES.filter((f) => f.zip).map((f) => {
     const locals = [];
