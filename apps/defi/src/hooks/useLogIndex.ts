@@ -11,7 +11,7 @@ import { useOfferStats } from './useOfferStats';
 import { fetchOfferById } from '../lib/indexerClient';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
-import { useDataFreshness } from '../context/DataFreshnessContext';
+import { useDataFreshness } from '../context/dataFreshnessStore';
 
 type LoanInitiatedForToken = {
   loanId: string;

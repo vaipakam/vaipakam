@@ -42,7 +42,10 @@ import { useIsProtocolAdmin } from '../lib/useIsProtocolAdmin';
 import { useTheme } from '../context/ThemeContext';
 import { useReadChain } from '../contracts/useDiamond';
 import { useAdminKnobValues } from '../hooks/useAdminKnobValues';
-import { useTimelockPendingChanges } from '../hooks/useTimelockPendingChanges';
+import {
+  useTimelockPendingChanges,
+  isTimelockReady,
+} from '../hooks/useTimelockPendingChanges';
 import { KnobCard } from '../components/admin/KnobCard';
 import { GraceBucketsCard } from '../components/admin/GraceBucketsCard';
 import { AdminThemeToggle } from '../components/admin/AdminThemeToggle';
@@ -102,6 +105,10 @@ function AdminDashboardInner({ inApp }: { inApp: boolean }) {
   const location = useLocation();
   const readChain = useReadChain();
   const pendingChanges = useTimelockPendingChanges();
+  // Same live comparison the knob cards use, via the shared helper — the two
+  // surfaces read the same `ready` snapshot and previously drew opposite
+  // conclusions once a card started ticking past `executesAt`.
+  const readyNowCount = pendingChanges.all.filter(isTimelockReady).length;
 
   // Theme resolution: URL > localStorage > admin-wallet-auto > default.
   const [themeMode, setThemeMode] = useState<ProtocolConsoleThemeMode>(() => {
@@ -252,8 +259,8 @@ function AdminDashboardInner({ inApp }: { inApp: boolean }) {
             }}
           >
             <strong>{pendingChanges.all.length} governance change{pendingChanges.all.length === 1 ? '' : 's'} queued in the timelock.</strong>{' '}
-            {pendingChanges.all.filter((p) => p.ready).length > 0
-              ? `${pendingChanges.all.filter((p) => p.ready).length} ready to execute now.`
+            {readyNowCount > 0
+              ? `${readyNowCount} ready to execute now.`
               : 'All still in delay window.'}
             {' '}Affected parameters carry a "PENDING" badge below.
           </div>

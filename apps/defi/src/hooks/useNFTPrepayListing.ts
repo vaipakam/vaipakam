@@ -385,7 +385,6 @@ export function useNFTPrepayListing(
           try {
             onReceiptAvailable(receipt);
           } catch (err) {
-            // eslint-disable-next-line no-console
             console.warn(
               `[useNFTPrepayListing] onReceiptAvailable threw after ${flow}; ` +
                 `swallowed because the rotation tx already confirmed.`,
@@ -449,7 +448,6 @@ export function useNFTPrepayListing(
         try {
           await onAfterSuccess();
         } catch (err) {
-          // eslint-disable-next-line no-console
           console.warn(
             `[useNFTPrepayListing] onAfterSuccess threw after a successful ${flow}; ` +
               `on-chain write already confirmed, parent refresh will retry on next render.`,
@@ -513,7 +511,6 @@ export function useNFTPrepayListing(
         dutch,
       });
       if (!result.published) {
-        // eslint-disable-next-line no-console
         console.warn(
           `[useNFTPrepayListing] frontend-direct OpenSea publish failed (${result.error}); ` +
             `indexer-side autonomous republish will retry on its next event scan`,
@@ -629,7 +626,6 @@ export function useNFTPrepayListing(
         agentOrigin = null;
       }
       if (!agentOrigin) {
-        // eslint-disable-next-line no-console
         console.warn('[matchOpenSeaOffer] VITE_AGENT_ORIGIN not configured');
         return false;
       }
@@ -644,7 +640,6 @@ export function useNFTPrepayListing(
       // vault, and this code path is unreachable for non-borrowers
       // (the Match button only renders for the position-NFT holder).
       if (!userVaultAddress) {
-        // eslint-disable-next-line no-console
         console.warn(
           '[matchOpenSeaOffer] borrower vault not yet resolved — Match aborted',
         );
@@ -674,7 +669,6 @@ export function useNFTPrepayListing(
           `&quantity=${offer.collateralQuantity.toString()}`;
         const res = await fetch(url);
         if (!res.ok) {
-          // eslint-disable-next-line no-console
           console.warn(
             '[matchOpenSeaOffer] signed-offer fetch non-2xx',
             res.status,
@@ -683,7 +677,6 @@ export function useNFTPrepayListing(
         }
         bundle = await res.json();
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.warn('[matchOpenSeaOffer] signed-offer fetch failed', err);
         return false;
       }

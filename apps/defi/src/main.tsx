@@ -24,7 +24,6 @@ import App from './App.tsx'
 // loudly in the browser console so a Cloudflare deploy with a missing
 // `VITE_WALLETCONNECT_PROJECT_ID` env var doesn't ship silently.
 if (!walletConnectConfigured) {
-  // eslint-disable-next-line no-console
   console.warn(
     '[vaipakam] VITE_WALLETCONNECT_PROJECT_ID is not set. Mobile wallet ' +
       'deep-links will not work — users will only see a QR code. ' +
@@ -42,7 +41,6 @@ if (!walletConnectConfigured) {
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch((err) => {
-      // eslint-disable-next-line no-console
       console.warn('[vaipakam] Service worker registration failed:', err)
     })
   })

@@ -3060,7 +3060,23 @@ library LibVaipakam {
         ///      stability; never read or written.
         uint32 localEidLegacyDoNotUse;
         /// @dev EVM chain id of the canonical (Base) reward chain.
-        ///      Mirrors send chain reports here; zero on Base itself.
+        ///      Mirrors send chain reports here, and
+        ///      {MirrorTierReceiverFacet} rejects any inbound push whose
+        ///      source chain is not this value.
+        ///
+        ///      Set to Base's chain id on EVERY chain, canonical
+        ///      included — `deploy-mainnet.sh` exports `BASE_CHAIN_ID`
+        ///      unconditionally and `ConfigureRewardReporter` writes it,
+        ///      so a configuration audit should expect 8453 (84532 on
+        ///      testnet) here even on Base. It used to say "zero on Base
+        ///      itself", which made a correct deployment read as drift
+        ///      (#1641). The canonical MARKER is `isCanonicalRewardChain`,
+        ///      set explicitly — but this field is not inert:
+        ///      {isMirrorRewardChain} is
+        ///      `!isCanonicalRewardChain && baseChainId != 0`, so a
+        ///      non-canonical deployment that leaves this at zero is not
+        ///      classified as a mirror and gets canonical / single-chain
+        ///      semantics instead (Codex #1653 r2 P2).
         uint32 baseChainId;
         /// @dev Authorized cross-chain messenger address on this chain
         ///      (`VaipakamRewardMessenger`, CCIP-backed post-T-068). Only
@@ -4215,12 +4231,34 @@ library LibVaipakam {
         // `srcChainId == s.baseChainId` (NOT the CCIP selector; the
         // messenger already translates per Codex round-9 P1 #4).
         //
-        // Mirror-side authenticated business peer — the Base
-        // diamond / messenger contract address whose `TierUpdated`
-        // payloads we accept. Validated via the messenger's
-        // existing `channelPeer` mapping (Codex round-4 P1 #4 +
-        // round-9 P1 #4 — `Any2EVMMessage.sender` is always the
-        // local CCIP adapter, never the business peer).
+        // Mirror-side authenticated business peer — the Base diamond /
+        // messenger contract address whose `TierUpdated` payloads we
+        // accept.
+        //
+        // NOT WIRED UP as of #1641: no code reads or writes this slot.
+        // The comment here used to claim it was "validated via the
+        // messenger's existing `channelPeer` mapping", which was false in
+        // both halves — the slot is read by nothing, and at the time
+        // `channelPeerOf` was asserted non-zero rather than compared to
+        // the sender (#1631).
+        //
+        // The second half stopped being false when #1650 shipped:
+        // `CcipMessenger._ccipReceive` now carries the originator on the
+        // wire and rejects a mismatch against `channelPeerOf`
+        // (`UnauthorizedChannelPeer`). So business-peer authentication
+        // EXISTS — it just lives at the adapter, once for every channel,
+        // rather than in this per-deployment slot.
+        //
+        // That is the argument for RETIRING this slot rather than
+        // building it: the leg `CrossChainRewardSystem.md` ("Sender
+        // authentication") specified is now covered a layer down, and a
+        // second copy of the same check in Diamond storage would be a
+        // duplicate that can drift out of agreement with the adapter's.
+        // What authenticates a `TierUpdated` on a mirror is
+        // {MirrorTierReceiverFacet} — `msg.sender == s.rewardMessenger`
+        // plus `sourceChainId == s.baseChainId` — on top of the adapter's
+        // peer check. The retire-or-build decision is still open; the
+        // slot is kept for storage-layout stability either way.
         address baseAuthorizedMessenger;
         // ── Cross-chain buyback custody (Base) ──────────────────────────
         //

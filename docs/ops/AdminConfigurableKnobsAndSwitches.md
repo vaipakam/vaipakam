@@ -530,9 +530,20 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
   deploy exports it unconditionally ("whether this chain is the
   canonical itself or a mirror") and `ConfigureRewardReporter` writes
   it, so an audit reading `8453` on Base is reading a correctly
-  configured Diamond, not drift. (The struct comment in `LibVaipakam`
-  still says "zero on Base itself", describing a field the canonical
-  chain does not consult rather than the value it is given.) Note this
+  configured Diamond, not drift. (Three contract comments said "zero on
+  Base" until #1641 corrected them — the struct field, its setter, and a
+  guard in `RewardAggregatorFacet` that cited the wording as its reason
+  for reading `block.chainid`. That guard is still right, for a stronger
+  reason: `baseChainId` is admin-settable, so a check reading it to
+  answer "am I the canonical chain?" could be turned off by a governance
+  write. The canonical MARKER is `isCanonicalRewardChain`, set
+  explicitly — but do not read that as this field being irrelevant:
+  `isMirrorRewardChain` is `!isCanonicalRewardChain && baseChainId != 0`,
+  so a non-canonical deployment that leaves `baseChainId` at zero is not
+  classified as a mirror and receives canonical / single-chain semantics,
+  which reaches mirror claim pricing and the commitment / remittance
+  paths. Zero here is a configuration state with consequences, not an
+  absence.) Note this
   is a chain id, NOT a CCIP chain
   selector: since T-068 the reward flow identifies chains by
   `block.chainid` and leaves selector translation to the messenger. The
@@ -1089,18 +1100,109 @@ inbound delivery rejects a missing handler as `UnknownChannel`.
   counterpart domain contract on the remote chain, passed to the local
   handler as the inbound `sourceSender`.
 
-  **Read what this does and does not authenticate.** The messenger
-  checks only that the peer is set (a zero entry rejects the message);
-  it does not compare the CCIP sender against it. And no handler
-  shipping today compares it either — `VaipakamRewardMessenger`,
-  `RewardRemittanceReceiver`, `BuybackRemittanceReceiver` and
-  `VpfiReturnReceiver` all ignore the argument, the remittance receivers
-  binding deployment identity from the payload instead. So a peer set to
-  the WRONG non-zero address is not caught here. The authentication that
-  does hold is one layer up: `CcipMessenger` allowlists the source
-  messenger per chain (`setRemoteMessenger`) and the router's own
-  sender check. Treat the peer map as routing metadata, not as a
-  forgery guard.
+  **This is now an authentication input, not routing metadata.** A
+  message carries the identity of the contract that sent it, and the
+  messenger compares that identity against this entry before dispatching
+  to the local handler; a mismatch is refused. It is no longer the case
+  that a peer set to the wrong non-zero address goes uncaught — but the
+  consequence has moved rather than disappeared, because a wrong peer
+  now silently *stops* a lane instead of silently mis-labelling it. The
+  older layer of protection still holds underneath: the source messenger
+  is allowlisted per chain (`setRemoteMessenger`) and the router applies
+  its own sender check.
+
+  Individual handlers still need not compare the argument themselves —
+  `VaipakamRewardMessenger`, `RewardRemittanceReceiver`,
+  `BuybackRemittanceReceiver` and `VpfiReturnReceiver` do not — and that
+  is now correct rather than a gap, because the check has been done for
+  them one layer up.
+
+  Do not generalise about what they bind INSTEAD; it differs per
+  receiver, and for one of them per wire generation. `RewardRemittanceReceiver`
+  binds a `remitter` (the sending deployment's own address) but only on
+  the newer payload shapes — the legacy two-field shape is still accepted
+  for delayed and replayed deliveries and carries none.
+  `VpfiReturnReceiver` binds an `issuingBase`, which answers a different
+  question: the receiving side accepts it only if it equals itself.
+  `BuybackRemittanceReceiver` binds nothing — its payload is a declared
+  token cross-checked against the delivered one, which proves the
+  delivery is self-consistent and says nothing about who sent it.
+
+**All four of these settings refuse to be re-pointed in place.** An
+assignment that conflicts with a live value reverts; re-stating a value
+a setting already holds is accepted and inert, so a redeploy script that
+reasserts its own configuration is safe to re-run. A genuine change is
+two transactions — clear the setting to its zero value, then assign the
+new one — which puts two entries in the event log and makes a re-point
+distinguishable from a first-time assignment.
+
+Do not read the uniformity as belt-and-braces. The intuition that a
+mis-set selector or channel registration announces itself by failing to
+deliver is not dependable: a channel pointed at a wrong but otherwise
+compatible recipient delivers its messages and tokens successfully. A
+remote address also cannot be declared as the peer of two channels on
+the same chain, mirroring the existing one-handler-one-channel rule.
+
+**All four need a drain, not just the two with their own sections
+below** (Codex #1680 r5 P1). The chain selector and the remote messenger
+are described here with the same clear-then-assign sequence, and they
+have the same in-flight exposure: a message already dispatched stays
+keyed to the OLD selector and the OLD sending messenger, so once the
+replacement is installed it is refused — `UnconfiguredSelector` when the
+inbound selector no longer maps to a chain id, `UnauthorizedSourceMessenger`
+when the sender is no longer the allowlisted one. Quiesce the lane before
+changing either.
+
+If a message was already stranded that way, it is recoverable by the same
+rollback shape as the peer: restore the previous selector or messenger
+value, manually re-execute the failed message through CCIP, then redo the
+change with the drain. Neither setting carries an epoch or a revocation
+that would block restoring an old value. Say so rather than let an
+operator conclude a delivery is lost.
+
+**Rotating a channel peer requires draining the lane first.** Because a
+message carries the originator that sent it, any message the old peer
+had already dispatched is refused once the new peer is installed. The
+order is: stop the old contract sending, let what is in flight arrive or
+be abandoned as a deliberate decision, then clear and assign.
+
+A message stranded by a rotation done without the drain **is
+recoverable** — an earlier revision of this section said it was not, and
+that was wrong. There is no epoch and no revocation on the peer setting,
+and clearing releases the reverse index entry, so the old address can be
+re-installed. The recovery is: clear the new peer, re-assign the old
+address, manually re-execute the stranded message through CCIP, then
+repeat the rotation with the drain. State this plainly to operators,
+because someone who believes a delivery is unrecoverable may write off
+one that isn't. Drain regardless: the recovery holds a live lane's trust
+anchor pointed backwards for its duration.
+
+**Rotating a channel's local handler needs the same drain, and has no
+equivalent recovery.** `_ccipReceive` resolves `handlerOf[channelId]` at
+delivery time and the envelope names no intended handler, so a message
+dispatched while the old handler was registered is forwarded — with its
+tokens — to the replacement if it lands after the re-registration.
+Nothing rejects it; on the wire it is a valid message for that channel.
+This gap cannot be closed the way the peer's was: the originator works
+because it is a fact the sender knows about ITSELF, whereas the
+destination's handler is remote state the sender cannot know, and a
+per-channel epoch would face the same problem across two chains. Quiesce
+the channel, let in-flight deliveries land on the old handler, then
+clear and re-register.
+
+**Upgrading an already-deployed messenger requires a migration call.**
+The one-channel-per-peer rule is enforced through a reverse index added
+by this change, which starts EMPTY on an existing proxy while the
+forward map is fully populated. Call `backfillChannelPeerIndex` with the
+configured `(channelId, remoteChainId)` pairs **atomically as part of
+the upgrade** (`upgradeToAndCall`), never as a follow-up transaction —
+until it runs the invariant is not in force. The pair list is the
+operator's responsibility and cannot be validated by the contract:
+mappings are not enumerable, so derive it from that proxy's
+`ChannelPeerSet` event log rather than from memory. A pair omitted from
+the list stays un-indexed and its peer keeps the hole open. The call
+reverts on a pair with no configured peer, so a stale entry fails loudly
+rather than being skipped.
 
 A misconfigured selector, remote messenger or channel registration
 surfaces as an undelivered or rejected message. Note that CCIP's transport security is operated by

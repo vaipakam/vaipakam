@@ -338,6 +338,24 @@ export default function CreateOffer() {
     if (form.riskAndTermsConsent) setField("riskAndTermsConsent", false);
   }, [disclosureSig, form.riskAndTermsConsent, setField]);
 
+  // Live "you don't have enough X" feedback rendered under the
+  // amount/collateral input so the user catches the shortfall before
+  // hitting submit. Declared here, immediately above the effect that
+  // computes it — it used to sit a hundred lines further down, which the
+  // linter flagged as using `setBalanceShortfall` before its declaration.
+  // That worked only because the use is inside an effect callback, which
+  // runs after the component body has finished and the binding is
+  // initialised; anything that moved the same call into render would have
+  // thrown on the temporal dead zone. (Its old comment pointed the reader
+  // "below" to a block that was in fact above it.)
+  const [balanceShortfall, setBalanceShortfall] = useState<{
+    have: bigint;
+    need: bigint;
+    decimals: number;
+    symbol: string;
+    side: "lender" | "collateral";
+  } | null>(null);
+
   // Live wallet-balance check. Compares the wallet's current balance
   // of the asset that will be pulled at offer-create time (lender →
   // lendingAsset, borrower-ERC20 → collateralAsset) against the
@@ -450,18 +468,6 @@ export default function CreateOffer() {
   const [step, setStep] = useState<SubmitStep>("form");
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
-  // Live "you don't have enough X" feedback rendered under the
-  // amount/collateral input so the user catches the shortfall before
-  // hitting submit. Computed in a useEffect that re-runs as the
-  // user types — see `balanceShortfall` block below.
-  const [balanceShortfall, setBalanceShortfall] = useState<{
-    have: bigint;
-    need: bigint;
-    decimals: number;
-    symbol: string;
-    side: "lender" | "collateral";
-  } | null>(null);
-
   // Bounds come from `offerSchema.ts` so the validator, this inline
   // out-of-range check, and the Offer Book duration filter never drift
   // apart. Empty string is treated as "not yet entered" rather than

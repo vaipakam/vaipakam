@@ -69,9 +69,12 @@ export function ProposeChangeModal({
   // index of the "primary" arg (the one the user typically wants to
   // change) is heuristic — for `setFeesConfig` the primary depends
   // on context. Render all and let the user edit any.
-  const [args, setArgs] = useState<string[]>(() =>
+  const [typedArgs, setTypedArgs] = useState<string[]>(() =>
     knob.setter.args.map(() => ''),
   );
+  // Whether the operator has edited any field. Until they have, a single-arg
+  // setter shows the current on-chain value (see `args` below).
+  const [argsEdited, setArgsEdited] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [handoff, setHandoff] = useState<SafeHandoff | null>(null);
 
@@ -79,16 +82,26 @@ export function ProposeChangeModal({
   // structurally maps). For single-arg setters the pre-fill is
   // direct. For multi-arg setters whose arg `name` matches the
   // knob's getter return semantics, we pre-fill that slot.
-  useMemo(() => {
-    if (args.some((a) => a !== '')) return; // user has typed
-    if (currentValue == null) return;
-    if (knob.setter.args.length === 1) {
-      setArgs([rawToInputString(currentValue)]);
-    }
-    // For multi-arg setters we leave them empty so the user actively
-    // confirms each arg — same-value-as-current is allowed but must
-    // be retyped to confirm intent.
-  }, [args, currentValue, knob]);
+  // DERIVED, not stored. This used to be a `useMemo` that called `setArgs` for
+  // its side effect, guarded by "have any args been typed into yet". Two
+  // problems with that: a memo callback must be pure — React is free to re-run
+  // or discard it, so a side effect there fires an unpredictable number of
+  // times — and the guard was self-referential. `args` was in the dependency
+  // list and the callback wrote `args`, so the only thing stopping an infinite
+  // render loop was the written value being non-empty. `rawToInputString`
+  // returns the string unchanged, so a knob whose current value IS the empty
+  // string would have written `['']`, failed the guard again, and re-run
+  // forever. Nothing in the type (`bigint | boolean | string | null`) rules
+  // that out.
+  //
+  // Deriving the displayed value removes both. For multi-arg setters the
+  // fields stay empty so the operator actively confirms each one —
+  // same-value-as-current is allowed but must be retyped to confirm intent.
+  const args = useMemo(() => {
+    if (argsEdited || currentValue == null) return typedArgs;
+    if (knob.setter.args.length !== 1) return typedArgs;
+    return [rawToInputString(currentValue)];
+  }, [argsEdited, typedArgs, currentValue, knob]);
 
   const handlePropose = () => {
     setError(null);
@@ -96,9 +109,30 @@ export function ProposeChangeModal({
       setError('Enter a valid Safe address (0x… 42-char hex).');
       return;
     }
-    // Validate every arg is filled.
-    if (args.some((a, i) => knob.setter.args[i].type !== 'bool' && a === '')) {
-      setError('All fields are required.');
+    // Validate every arg is filled. Booleans are held to a STRICTER rule than
+    // "not empty": they must read exactly `true` or `false`.
+    //
+    // The old check exempted bools from the required-field test entirely, and
+    // `coerceArg` turns any unrecognised string — including `''` — into
+    // `false`. Every bool knob in the catalogue is a single-arg kill switch
+    // (range amount/rate, partial fill, periodic interest, numeraire swap,
+    // auto-lend/refinance/extend), so clearing one and pressing "Open in Safe"
+    // would have produced a Safe batch that DISABLES it, indistinguishable in
+    // the UI from a deliberate proposal. That was unreachable before this PR
+    // only because a cleared field refilled itself; making clearing work is
+    // what exposed it.
+    const invalidIdx = args.findIndex((a, i) =>
+      knob.setter.args[i].type === 'bool'
+        ? a !== 'true' && a !== 'false'
+        : a === '',
+    );
+    if (invalidIdx >= 0) {
+      const bad = knob.setter.args[invalidIdx];
+      setError(
+        bad.type === 'bool'
+          ? `${bad.name} must be exactly "true" or "false" — a blank field is not read as "false".`
+          : 'All fields are required.',
+      );
       return;
     }
     // For numeric knobs, validate the new value is within hard bounds.
@@ -257,9 +291,12 @@ export function ProposeChangeModal({
               }
               value={args[i]}
               onChange={(e) => {
+                // Seed from the displayed values, so editing one field of a
+                // pre-filled single-arg setter keeps what was on screen.
                 const next = [...args];
                 next[i] = e.target.value.trim();
-                setArgs(next);
+                setTypedArgs(next);
+                setArgsEdited(true);
               }}
               spellCheck={false}
             />

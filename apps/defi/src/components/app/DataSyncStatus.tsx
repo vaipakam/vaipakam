@@ -19,8 +19,8 @@
  */
 import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useDataFreshness } from '../../context/DataFreshnessContext';
-import { useWatermarkContext } from '../../context/WatermarkContext';
+import { useDataFreshness } from '../../context/dataFreshnessStore';
+import { useWatermarkContext } from '../../context/watermarkStore';
 import { useReadChain } from '../../contracts/useDiamond';
 import './DataSyncStatus.css';
 

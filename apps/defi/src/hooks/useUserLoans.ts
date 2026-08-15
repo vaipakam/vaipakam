@@ -8,7 +8,7 @@ import { useLogIndex } from './useLogIndex';
 import { fetchLoansByCurrentHolder } from '../lib/indexerClient';
 import { type LoanStatus, type LoanSummary, type LoanDetails } from '../types/loan';
 import { beginStep } from '../lib/journeyLog';
-import { useDataFreshness } from '../context/DataFreshnessContext';
+import { useDataFreshness } from '../context/dataFreshnessStore';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 

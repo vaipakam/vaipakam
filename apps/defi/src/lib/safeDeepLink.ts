@@ -205,7 +205,27 @@ function coerceArg(raw: string | number | bigint | boolean, solType: string): un
   if (typeof raw === 'boolean') return raw;
   if (typeof raw === 'bigint') return raw;
   if (solType === 'bool') {
-    if (typeof raw === 'string') return raw === 'true' || raw === '1';
+    if (typeof raw === 'string') {
+      // Strict, and deliberately ONE spelling each. This used to be
+      // `raw === 'true' || raw === '1'`, which maps EVERY other string — `''`,
+      // `'yes'`, a typo — to `false`. For a bool knob that is a kill switch,
+      // silently encoding "I could not read this" as "turn it off" is the worst
+      // available default: it produces a perfectly valid Safe batch that
+      // disables a live protocol mechanism.
+      //
+      // An intermediate version kept `1`/`0` as aliases while the modal already
+      // required `true`/`false`, so the two layers disagreed about what a valid
+      // value is — the modal rejected input this function would have accepted.
+      // Resolved by tightening here rather than loosening there: `1`/`0` are
+      // never produced by the modal (a boolean renders as `true`/`false`, and
+      // the field placeholder says so), and extra spellings for an on/off
+      // switch are the same class of looseness that caused the original bug.
+      if (raw === 'true') return true;
+      if (raw === 'false') return false;
+      throw new Error(
+        `Expected "true" or "false" for bool argument, got ${JSON.stringify(raw)}`,
+      );
+    }
     return Boolean(raw);
   }
   if (solType === 'address') return raw as string;

@@ -134,7 +134,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       errorStack: stack || undefined,
     });
     // Also surface it to the console so it isn't swallowed in dev.
-    // eslint-disable-next-line no-console
     console.error('[vaipakam] uncaught render error:', error, info);
   }
 

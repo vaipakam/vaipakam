@@ -276,7 +276,15 @@ export function SwapToRepayIntentPanel({
       cancelled = true;
       clearInterval(id);
     };
-  }, [loanId, chainId, refreshTick, optimisticPending, diamond]);
+    // `address` is listed for DIRECTNESS, not to fix a live staleness bug. The
+    // indexer-down fallback below stamps `committedBy` with the connected
+    // wallet, and an account switch already restarts this effect indirectly:
+    // `diamond` is memoized over wagmi's wallet client, which wagmi
+    // invalidates on that switch. Naming the value the body actually reads
+    // means the guarantee no longer depends on that chain of derivations
+    // holding — and nothing reads `committedBy` today anyway, so there is no
+    // symptom either way.
+  }, [loanId, chainId, refreshTick, optimisticPending, diamond, address]);
 
   // Codex round-1 PR #423 P2 — read live auction-max bound from
   // the diamond's `IntentConfigFacet`. Best-effort; falls back to
