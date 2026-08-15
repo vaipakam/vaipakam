@@ -112,7 +112,9 @@ export function useRiskAccessPreflight(
   const { address, isCorrectChain, activeChain } = useWallet();
   const diamondRo = useDiamondRead();
   const readChain = useReadChain();
-  const [status, setStatus] = useState<RiskPreflightStatus>("idle");
+  const [result, setResult] = useState<{ key: string; status: RiskPreflightStatus } | null>(
+    null,
+  );
   const [nonce, setNonce] = useState(0);
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
   // Require an actual DEPLOYED Diamond on the wallet's chain, not just a
@@ -125,17 +127,28 @@ export function useRiskAccessPreflight(
     !!activeChain?.diamondAddress &&
     readChain.chainId === activeChain.chainId;
 
+  // The whole question: which chain, which offer, which wallet, and which
+  // `refresh()` generation. `nonce` belongs in the key because `refresh()` is
+  // called after recording an ack precisely to get a NEW verdict — reusing the
+  // pre-ack one would defeat the call.
+  const reqKey =
+    address && offerId != null && onDeployedChain
+      ? `${readChain.chainId}|${offerId}|${address.toLowerCase()}|${nonce}`
+      : null;
+
   useEffect(() => {
     let cancelled = false;
     // Idle unless there's a connected wallet on a chain with a deployed Diamond:
     // otherwise `useDiamondRead` resolves to the default / a zero-address
     // deployment and the modal could show a different chain's verdict for an
-    // accept that can't settle here.
-    if (!address || offerId == null || !onDeployedChain) {
-      setStatus("idle");
-      return;
-    }
-    setStatus("loading");
+    // accept that can't settle here. Both `idle` and `loading` are DERIVED
+    // below rather than written here — the effect's reset lands a paint late,
+    // which on this hook means the accept modal briefly shows the PREVIOUS
+    // offer's verdict against the offer now in front of the user.
+    if (!reqKey || !address || offerId == null || !onDeployedChain) return;
+    const commit = (s: RiskPreflightStatus) => {
+      if (!cancelled) setResult({ key: reqKey, status: s });
+    };
     const ro = diamondRo as unknown as {
       previewOfferAcceptBlock: (
         offerId: bigint,
@@ -144,8 +157,7 @@ export function useRiskAccessPreflight(
     };
     ro.previewOfferAcceptBlock(offerId, address)
       .then((code) => {
-        if (cancelled) return;
-        setStatus(CODE_TO_STATUS[Number(code)] ?? "ok");
+        commit(CODE_TO_STATUS[Number(code)] ?? "ok");
       })
       .catch((e) => {
         if (cancelled) return;
@@ -155,15 +167,23 @@ export function useRiskAccessPreflight(
         // surface "error" so the modal doesn't imply the accept is clear when it
         // wasn't actually checked (Codex #734 P2). Either way it doesn't BLOCK —
         // the on-chain gate stays the boundary.
-        setStatus(isMissingFacet(e) ? "ok" : "error");
+        commit(isMissingFacet(e) ? "ok" : "error");
       });
     return () => {
       cancelled = true;
+      // Dropped on the way out, so re-opening the modal for the same offer
+      // re-checks rather than reusing the verdict from the previous open.
+      setResult(null);
     };
-  }, [address, offerId, onDeployedChain, diamondRo, nonce]);
+  }, [address, offerId, onDeployedChain, diamondRo, nonce, reqKey]);
 
   // The HARD codes block the accept; the soft `illiquid-ack-covered` (code 4) does
   // NOT — the accept-signing flow's #662 ack clears it at sign-time (#735).
+  // `idle` when there is nothing to ask, `loading` until the answer for THIS
+  // question arrives, and only then the answer itself.
+  const status: RiskPreflightStatus =
+    reqKey === null ? "idle" : result?.key === reqKey ? result.status : "loading";
+
   const hardBlock =
     status === "tier-too-low" ||
     status === "needs-illiquid-consent" ||
