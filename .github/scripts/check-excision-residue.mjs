@@ -394,7 +394,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e9a7f28bcb80"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [6, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "22c8f45050b9"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -730,15 +730,47 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
       // the more expensive direction. Recognized by the CommonMark shape: a
       // scheme, or an address, with no spaces and no `<` before the `>`.
       if (isMdSource) {
-        const auto = /^<(?:[a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>@]+)>/.exec(
-          text.slice(i, i + 2048),
-        );
+        // NO LENGTH CAP. This used to test `text.slice(i, i + 2048)`, so a
+        // valid autolink longer than that lost its closing `>`, failed
+        // recognition, and fell through to the tag scanner — which stripped
+        // the whole visible URL and fused the words either side back together.
+        // A 2050-character query string was enough to make `buy<…>Adapter`
+        // report as a mention again, i.e. the cap silently reopened the bypass
+        // this branch exists to close.
+        //
+        // Bounded work without a bounded window: an autolink admits neither
+        // whitespace nor `<`, so for any VALID one the first `>` after `i` is
+        // necessarily its terminator. Test exactly that substring, anchored at
+        // both ends. `indexOf` is a single forward scan rather than a slice of
+        // the remaining file per `<`.
+        const close = text.indexOf('>', i + 1);
+        const auto =
+          close === -1
+            ? null
+            : /^<(?:[a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>@]+)>$/.exec(
+                text.slice(i, close + 1),
+              );
         if (auto) {
           // Left in the stream deliberately — the reader sees these characters.
-          for (const c of auto[0].toLowerCase()) {
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+          //
+          // Each character carries its OWN source offset. Pushing `i` for all
+          // of them collapsed the whole autolink onto the opening `<`, so a
+          // dead name inside the URL gave `isIdentifierSpan` a one-character
+          // span consisting of a bracket — which is not an identifier, so the
+          // match was discarded and `<https://example.com/buyOptions>` passed
+          // a gate whose entire job is to catch that name.
+          for (let k = 0; k < auto[0].length; k++) {
+            const c = auto[0][k].toLowerCase();
+            // Single-char lowercase only: the ASCII alphanumerics this admits
+            // are 1:1 under `toLowerCase`, and anything that expands to more
+            // than one unit is not alphanumeric here anyway. Keeping it 1:1 is
+            // what lets `k` stay a faithful source offset.
+            if (
+              c.length === 1 &&
+              ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+            ) {
               out.push(c);
-              if (withMap) map.push(i);
+              if (withMap) map.push(i + k);
             }
           }
           i += auto[0].length - 1;

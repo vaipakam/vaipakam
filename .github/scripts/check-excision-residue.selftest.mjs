@@ -50,6 +50,29 @@ const FIXTURES = [
     body: 'deploy the buy<span title="1 > 0: yes"> adapter</span> now.\n',
   },
   {
+    // Round 7 P1. Every emitted character of an autolink used to map to the
+    // opening `<`, so `isIdentifierSpan` was handed a one-character span
+    // containing a bracket, decided it was not an identifier, and dropped the
+    // match — a dead name written inside a URL passed the gate silently.
+    name: 'autolink-identifier.md',
+    caught: true,
+    why: 'a dead name inside an autolink URL is visible text and must be caught',
+    body: 'See <https://example.com/buyOptions> for the retired getter.\n',
+  },
+  {
+    // Round 7 P2. Recognition used to test only the first 2048 characters, so
+    // a longer autolink lost its closing `>`, fell through to the tag scanner,
+    // and had its visible URL stripped — fusing the words either side back
+    // into a false mention on a blocking gate.
+    name: 'autolink-long.md',
+    caught: false,
+    why: 'a long autolink still separates the words either side of it',
+    body:
+      'deploy the buy<https://example.com/?q=' +
+      'x'.repeat(2050) +
+      '>Adapter now.\n',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',
