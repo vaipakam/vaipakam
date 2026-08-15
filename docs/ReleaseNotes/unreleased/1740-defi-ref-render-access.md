@@ -1,13 +1,14 @@
-# apps/defi: nine "reading a ref while rendering" complaints, sorted into three real fixes and six deliberate designs
+# apps/defi: nine "reading a ref while rendering" complaints, sorted into three real fixes and six not-faults
 
 The lending app's linting flagged nine places that touch a short-term scratch
 value — the kind of holder a component uses to remember something across
 renders without redrawing when it changes — while the screen is being drawn.
-The tool treats every one of these as a fault. Six of them are not, and much of
-this change is about writing down which is which, so the next person to see the
-warnings does not "fix" a guard that exists on purpose. The other three are real,
-and one of those only became clear during review — it is described last, because
-it started out on the "deliberate" side of the ledger.
+The tool treats every one of these as a fault. Six of them are not — five are
+deliberate, and one is a plain false alarm — and much of this change is about
+writing down which is which, so the next person to see the warnings does not
+"fix" a guard that exists on purpose. The other three are real, and one of those
+only became clear during review; it is described last, because it started out on
+the "deliberate" side of the ledger.
 
 **Two were obviously genuine and are now fixed.** The active-offer list and the loan list
 each keep a note of the newest block the app is confident about, so that a
@@ -52,4 +53,10 @@ element it wraps so it can find that element on screen. Nothing reads the value
 at that moment — React calls the callback later, once the element exists. The
 tool cannot tell that apart from handing out a value to be used immediately.
 
-No behaviour changes.
+No intended change to what the app does — none of this alters a feature or a
+rule. One of the three fixes does change observable behaviour, though, and
+saying "no behaviour changes" would deny the very bug it repairs: under the old
+mid-draw update, a wallet switch that the browser started preparing and then
+abandoned could make a transaction already in flight look irrelevant to itself
+and bail, leaving its button spinning after the transaction had actually
+succeeded. That button now clears.
