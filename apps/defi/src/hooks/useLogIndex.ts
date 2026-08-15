@@ -85,6 +85,14 @@ export function useLogIndex() {
   // (which on a slow public RPC like Sepolia's default stalled the page
   // for tens of seconds even when the cache was fully populated).
   const initial = peekLoanIndex(chainId, diamondAddress);
+  // The chain the arrays below currently describe. Consumers that key derived
+  // state on the ACTIVE chain must compare against this and withhold while they
+  // disagree: `load()` runs from an effect, so between a chain switch and that
+  // effect the arrays still hold the PREVIOUS chain's events while every other
+  // chain-derived value has already moved. Tagging is synchronous by
+  // construction — this only changes where the arrays change — so no effect is
+  // needed to keep it honest.
+  const [indexChainId, setIndexChainId] = useState<number | null>(chainId);
   const [loans, setLoans] = useState<LoanIndexEntry[]>(initial?.loans ?? []);
   const [offerIds, setOfferIds] = useState<bigint[]>(initial?.offerIds ?? []);
   const [openOfferIds, setOpenOfferIds] = useState<bigint[]>(initial?.openOfferIds ?? []);
@@ -124,6 +132,10 @@ export function useLogIndex() {
     report('logIndex', { loading: true });
     const peeked = peekLoanIndex(chainId, diamondAddress);
     if (peeked === null) {
+      // No cached index for this (chain, diamond). The arrays still hold
+      // whatever the PREVIOUS chain left, so mark the tag unknown rather than
+      // letting a consumer read them as belonging to the new chain.
+      setIndexChainId(null);
       setLoading(true);
     } else {
       // Apply the peek even if it matches initial state — chainId /
@@ -138,6 +150,7 @@ export function useLogIndex() {
       setGetOwner(() => peeked.getOwner);
       setGetLastOwner(() => peeked.getLastOwner);
       setGetLoanInitiatedForToken(() => peeked.getLoanInitiatedForToken);
+      setIndexChainId(chainId);
       setLoading(false);
     }
     setError(null);
@@ -178,6 +191,7 @@ export function useLogIndex() {
       setGetOwner(() => result.getOwner);
       setGetLastOwner(() => result.getLastOwner);
       setGetLoanInitiatedForToken(() => result.getLoanInitiatedForToken);
+      setIndexChainId(chainId);
       // Report the scanned-through block as a freshness frontier. The
       // legacy log scan IS an RPC tail-scan ([indexerTail+1, safeHead]),
       // and useLogIndex is mounted on most data pages — so this is what
@@ -215,6 +229,9 @@ export function useLogIndex() {
   }, [load, statsResolved, watermarkVersion, fallbackVersion]);
 
   return {
+    /** Chain the arrays in this result describe; `null` while a scan for a new
+     *  chain is in flight and the arrays still hold the previous chain's. */
+    indexChainId,
     loans,
     offerIds,
     openOfferIds,

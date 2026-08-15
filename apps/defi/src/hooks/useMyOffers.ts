@@ -81,7 +81,12 @@ export function useMyOffers(
   address: string | null,
   status: MyOfferStatus,
 ) {
-  const { events, openOfferIds, loading: indexLoading } = useLogIndex();
+  const {
+    events,
+    openOfferIds,
+    indexChainId,
+    loading: indexLoading,
+  } = useLogIndex();
   const diamondRead = useDiamondRead();
   const publicClient = useDiamondPublicClient();
   const activeReadChain = useReadChain();
@@ -205,6 +210,16 @@ export function useMyOffers(
       soldStubs: [] as MyOfferRow[],
     };
     if (!address) return result;
+    // Withhold entirely while the log index describes a DIFFERENT chain than
+    // the one we are keying snapshots on. `useLogIndex` rescans from an effect,
+    // so a chain switch leaves its `events` / `openOfferIds` holding the
+    // previous chain's data for a render or more, while `activeReadChain` has
+    // already moved. Classifying across that seam is not merely stale: the
+    // fallback path would hydrate an old-chain cancellation or sale from a
+    // coincidentally-matching new-chain snapshot key, and then fetch those
+    // old-chain ids from the NEW Diamond. An empty result for one render is
+    // the honest answer — `indexLoading` already covers the UI.
+    if (indexChainId !== activeReadChain.chainId) return result;
     const lower = address.toLowerCase();
     const openSet = new Set(openOfferIds.map((id) => id.toString()));
 
@@ -446,6 +461,7 @@ export function useMyOffers(
   }, [
     events,
     openOfferIds,
+    indexChainId,
     address,
     activeReadChain.chainId,
     activeReadChain.diamondAddress,
