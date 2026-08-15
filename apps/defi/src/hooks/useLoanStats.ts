@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useLayoutEffect, useRef } from 'react';
 import { fetchLoanStats, type LoanStats } from '../lib/indexerClient';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
@@ -36,39 +36,61 @@ export function useLoanStats(): UseLoanStatsResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const { version } = useLiveWatermark(watermarkPolicy('cool'));
-  const [stats, setStats] = useState<LoanStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Tagged with the chain the aggregates describe. `loading` is DERIVED, so a
+  // chain switch cannot render one network's loan totals under another's name
+  // for a frame. `version` is NOT part of the key: a watermark tick asks the
+  // same question hoping for a fresher answer, and treating it as a new
+  // question would blank the charts on every tick.
+  const [result, setResult] = useState<{ chainId: number; stats: LoanStats | null } | null>(
+    null,
+  );
+  // Scoped to the chain being refreshed, not a bare boolean — a reload started
+  // on chain A must not pin chain B's page in its loading state.
+  const [refreshingChain, setRefreshingChain] = useState<number | null>(null);
+
+  // The chain currently being asked about, readable from an async
+  // continuation. `reload()` has no cancellation of its own, so without this
+  // its completion committed unconditionally: a reload on chain A settling
+  // after the switch to B overwrote B's answer with an A-tagged one, and the
+  // page then read as loading until the next watermark tick restored it.
+  // Layout effect rather than a render-phase ref write, which is unsafe under
+  // concurrent rendering.
+  const activeChain = useRef(chainId);
+  useLayoutEffect(() => {
+    activeChain.current = chainId;
+  }, [chainId]);
 
   const load = useCallback(async () => {
+    const forChain = chainId;
+    setRefreshingChain(forChain);
     try {
-      const next = await fetchLoanStats(chainId);
-      setStats(next);
-    } catch {
-      setStats(null);
+      const next = await fetchLoanStats(forChain).catch(() => null);
+      if (forChain === activeChain.current) setResult({ chainId: forChain, stats: next });
     } finally {
-      setLoading(false);
+      setRefreshingChain((c) => (c === forChain ? null : c));
     }
   }, [chainId]);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     (async () => {
-      try {
-        const next = await fetchLoanStats(chainId);
-        if (cancelled) return;
-        setStats(next);
-      } catch {
-        if (cancelled) return;
-        setStats(null);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      const next = await fetchLoanStats(chainId).catch(() => null);
+      if (cancelled) return;
+      setResult({ chainId, stats: next });
     })();
     return () => {
       cancelled = true;
     };
+    // `version` re-runs the fetch without invalidating the current answer —
+    // see the note on the key above.
   }, [chainId, version]);
 
-  return { stats, loading, reload: load };
+  const matched = result?.chainId === chainId;
+  return {
+    stats: matched ? result.stats : null,
+    // An explicit `reload()` reports loading even though the question is
+    // unchanged; it is called from handlers, never from an effect.
+    loading: refreshingChain === chainId || !matched,
+    reload: load,
+  };
 }
