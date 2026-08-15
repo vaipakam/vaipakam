@@ -1,4 +1,4 @@
-# A swap-to-repay panel kept using the wallet you had connected when it loaded
+# A swap-to-repay panel now names the connected wallet directly, instead of relying on a proxy for it
 
 The panel that tracks a swap-to-repay intent refreshes itself every fifteen
 seconds so a fill or a cancellation shows up without a reload. When the indexer
