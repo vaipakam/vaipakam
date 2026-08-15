@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { TRANSLATED_LOCALES } from '../i18n/glossary';
-import { stripLocalePrefix, withLocalePrefix } from './LocaleResolver';
+import { stripLocalePrefix, withLocalePrefix } from '../i18n/localePath';
 
 /**
  * Inject `<link rel="alternate" hreflang="X" href="..." />` tags into

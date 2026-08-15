@@ -17,7 +17,7 @@ import {
   indexedToRawOffer,
   type IndexedOffer,
 } from '../lib/indexerClient';
-import { toOfferData, type OfferData, type RawOffer } from '../pages/OfferBook';
+import { toOfferData, type OfferData, type RawOffer } from '../lib/offerData';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 

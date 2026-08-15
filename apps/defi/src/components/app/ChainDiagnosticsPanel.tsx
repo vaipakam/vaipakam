@@ -24,9 +24,9 @@ import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
 import { useMode } from '../../context/ModeContext';
-import { useDataFreshness } from '../../context/DataFreshnessContext';
-import { useRealtimePush } from '../../context/RealtimePushContext';
-import { useWatermarkContext } from '../../context/WatermarkContext';
+import { useDataFreshness } from '../../context/dataFreshnessStore';
+import { useRealtimePush } from '../../context/realtimePushStore';
+import { useWatermarkContext } from '../../context/watermarkStore';
 
 /** Mirror the badge's block-space thresholds — single source of truth
  *  in the badge file would be cleaner, but keeping the constants local

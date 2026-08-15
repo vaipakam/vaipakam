@@ -25,34 +25,16 @@
  *     A channel that's unavailable here (503/426, or ingest off) backs off to a
  *     long retry rather than hammering.
  */
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useReadChain } from '../contracts/useDiamond';
-import { useWatermarkContext } from './WatermarkContext';
+import { useWatermarkContext } from './watermarkStore';
 import { indexerWsOrigin } from '../lib/indexerClient';
+import {
+  RealtimePushContext,
+  type RealtimePushContextValue,
+  type RealtimeTransport,
+} from './realtimePushStore';
 
-/** Connection posture surfaced to the UI (orthogonal to data freshness). */
-export type RealtimeTransport = 'live' | 'polling' | 'reconnecting';
-
-interface RealtimePushContextValue {
-  /** `live` only when the socket is open AND the DO reports ingest active. */
-  transport: RealtimeTransport;
-  /** UNIX-ms of the last invalidation frame received, or `null`. */
-  lastEventAt: number | null;
-  /** #843 delta 2 — how many times a LIVE socket has dropped and reconnected
-   *  (diagnostics only). Initial connects + intentional ingest-off closes don't
-   *  count — only the loss of an established live channel. */
-  reconnectCount: number;
-}
-
-const RealtimePushContext = createContext<RealtimePushContextValue | null>(null);
 
 /** Server→client push frames (mirror of `chainIngestDO.ts:PushFrame`). */
 type ServerFrame =
@@ -288,11 +270,4 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
       {children}
     </RealtimePushContext.Provider>
   );
-}
-
-/** Read the realtime push transport state. Safe outside the provider — returns
- *  a static `polling` posture so callers never need a null guard. */
-export function useRealtimePush(): RealtimePushContextValue {
-  const ctx = useContext(RealtimePushContext);
-  return ctx ?? { transport: 'polling', lastEventAt: null, reconnectCount: 0 };
 }

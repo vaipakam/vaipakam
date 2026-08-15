@@ -6,7 +6,7 @@ import {
   isSupportedLocale,
   stripLocalePrefix,
   withLocalePrefix,
-} from "./LocaleResolver";
+} from "../i18n/localePath";
 import type { SupportedLocale } from "../i18n/glossary";
 import {
   LANGUAGE_PICKER_ENABLED,

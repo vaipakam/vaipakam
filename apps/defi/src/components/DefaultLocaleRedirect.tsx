@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { TRANSLATED_LOCALES } from '../i18n/glossary';
-import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
+import { isSupportedLocale, withLocalePrefix } from '../i18n/localePath';
 
 /**
  * First-visit default-locale redirect.

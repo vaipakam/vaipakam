@@ -5,7 +5,7 @@ import {
   withLocalePrefix,
   isSupportedLocale,
   stripLocalePrefix,
-} from './LocaleResolver';
+} from '../i18n/localePath';
 import type { SupportedLocale } from '../i18n/glossary';
 
 function rewrite(
