@@ -844,8 +844,13 @@ function stripContainers(line) {
  * indented CODE in CommonMark, not as a fence opener.
  */
 function indentColumns(str) {
+  return columnWidth(/^[ \t]*/.exec(str)[0]);
+}
+
+/** How many COLUMNS a string occupies, expanding tabs to four-column stops. */
+function columnWidth(str) {
   let col = 0;
-  for (const ch of /^[ \t]*/.exec(str)[0]) col += ch === '\t' ? 4 - (col % 4) : 1;
+  for (const ch of str) col += ch === '\t' ? 4 - (col % 4) : 1;
   return col;
 }
 
@@ -888,10 +893,21 @@ function containerChains(lines) {
       // `- > text` is two spaces of list-item content followed by a quote
       // marker — reading the quote first made it a new top-level quote and
       // lost the enclosing item.
+      //
+      // The width compared here is RELATIVE to the item's own parent. Measured
+      // absolutely, the columns an OUTER quote marker consumed counted toward
+      // an inner item's continuation, so `  > text` under `> - ```` kept the
+      // list item alive on a line that has no indentation after its quote
+      // prefix at all — and the fence inside it never closed.
       const open = chain[next.length];
-      if (open && open.kind === 'li' && consumed + indentColumns(rest) >= open.col) {
+      if (open && open.kind === 'li' && indentColumns(rest) >= open.relCol) {
         const pad = /^[ \t]*/.exec(rest)[0];
-        const take = Math.min(pad.length, Math.max(0, open.col - consumed));
+        let take = 0;
+        let cols = 0;
+        while (take < pad.length && cols < open.relCol) {
+          cols += pad[take] === '\t' ? 4 - (cols % 4) : 1;
+          take++;
+        }
         consumed += take;
         next.push(open);
         prefixLens.push(consumed);
@@ -902,34 +918,36 @@ function containerChains(lines) {
       if (q) {
         const reuse = !blankBefore && chain[next.length]?.kind === 'q';
         consumed += q[0].length;
-        next.push({ kind: 'q', id: reuse ? chain[next.length].id : nextId++, col: consumed });
+        next.push({
+          kind: 'q',
+          id: reuse ? chain[next.length].id : nextId++,
+          relCol: columnWidth(q[0]),
+        });
         prefixLens.push(consumed);
         rest = rest.slice(q[0].length);
         continue;
       }
       // A list MARKER always starts a new item, which is exactly why sibling
       // items must not be conflated: same depth, same indentation, different
-      // block.
-      const li = /^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/.exec(rest);
+      // block. `[ \t]+|$` because a marker alone on its line is a valid EMPTY
+      // item — requiring trailing space made no container at all, so a fence
+      // indented under it looked top-level and never closed at the sibling.
+      const li = /^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/.exec(rest);
       if (li) {
         consumed += li[0].length;
-        next.push({ kind: 'li', id: nextId++, col: consumed });
+        next.push({
+          kind: 'li',
+          id: nextId++,
+          // COLUMNS, not characters: `-\t` is a marker plus a tab, whose
+          // content column is four, not two. Counting characters let a
+          // two-space line look like enough continuation indentation.
+          relCol: columnWidth(li[0]),
+        });
         prefixLens.push(consumed);
         rest = rest.slice(li[0].length);
         continue;
       }
       break;
-    }
-    // No marker, but enough indentation to sit inside the previous line's
-    // deeper list items — an ordinary continuation paragraph.
-    const ind = indentColumns(rest);
-    while (
-      next.length < chain.length &&
-      chain[next.length].kind === 'li' &&
-      consumed + ind >= chain[next.length].col
-    ) {
-      next.push(chain[next.length]);
-      prefixLens.push(chain[next.length - 1].col);
     }
     chain = next;
     blankBefore = false;
@@ -2797,6 +2815,13 @@ function scanFile(path) {
         // does. Requiring whitespace missed it and fused the blocks either
         // side.
         if (/^\s{0,3}#{1,6}(\s|$)/.test(lines[i])) return true;
+        // The ordered branch is deliberately left as `\d+`, not narrowed to
+        // the CommonMark paragraph-interruption rule (`1.` only). Narrowing it
+        // is unobservable here: any span crossing an ordered marker carries
+        // the marker's DIGITS, and the normalizer keeps digits, so the span
+        // reads `buy2adapter` and can never equal a dead token whatever this
+        // rule decides. Verified, not assumed — the reported case is missed
+        // identically with and without the narrowing.
         if (/^\s{0,3}(?:[-*+]\s|\d+[.)]\s)/.test(lines[i])) return true;
         // Blockquote marker. Markdown renders `> …` as its own quote block, so
         // the line before it and the line after it are not one sentence — but

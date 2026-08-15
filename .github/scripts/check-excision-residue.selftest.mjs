@@ -755,6 +755,26 @@ const FIXTURES = [
     why: 'a sibling list item ends the previous item, and the fence in it',
     body: '- ```\n  code\n- Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
   },
+  // ── Round 24. Three more on the container chain, all false NEGATIVES, all
+  // from measuring a container's width the wrong way.
+  {
+    name: 'fence-tab-marker.md',
+    caught: true,
+    why: 'a tab after a list marker makes the content column four, not two',
+    body: '-\t```\n  Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    name: 'fence-marker-only.md',
+    caught: true,
+    why: 'a marker alone on its line is a valid empty list item',
+    body: '-\n  ```\n  code\n- Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    name: 'fence-quote-inner-list.md',
+    caught: true,
+    why: "an outer quote's width is not the inner item's continuation indent",
+    body: '> - ```\n  > Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
   // Three more from probing the container-chain model after it landed, kept
   // because each was WRONG on the commit before it — the sibling rule was
   // reported against `-` only, and these show it holds for the ordered and
