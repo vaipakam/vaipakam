@@ -394,7 +394,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [14, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "2c6f8b6af869"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [17, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "757d72386abd"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -612,6 +612,27 @@ function inScopeFiles() {
 /** Files where inline markup can split a phrase a reader sees as one. */
 const MARKUP_EXTENSIONS = /\.(tsx|jsx|html|htm|md|mdx|svg)$/i;
 
+
+/**
+ * Does the `]` at `end` close a Markdown link or image label?
+ *
+ * Walks back for an unescaped `[` with no intervening unescaped `]`, which is
+ * what CommonMark requires before a destination can follow. Bounded to the
+ * paragraph, because a label cannot span a blank line.
+ */
+function hasLinkOpener(text, end) {
+  for (let k = end - 1; k >= 0; k--) {
+    const c = text[k];
+    if (c === '\n' && /^[ \t]*\n/.test(text.slice(k + 1))) return false;
+    let escaped = false;
+    for (let b = k - 1; b >= 0 && text[b] === '\\'; b--) escaped = !escaped;
+    if (escaped) continue;
+    if (c === '[') return true;
+    if (c === ']') return false;
+  }
+  return false;
+}
+
 /** Lower-case, strip every non-alphanumeric. See DEAD_TOKENS. */
 function normalize(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -680,7 +701,15 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
       isMdSource &&
       text[i] === ']' &&
       (text[i + 1] === '(' || text[i + 1] === '[') &&
-      !(fencedOffsets && fencedOffsets(i))
+      !(fencedOffsets && fencedOffsets(i)) &&
+      // …and only when this `]` actually CLOSES a label. A bare `](` in
+      // running prose is literal visible text under CommonMark — there is no
+      // link without an opener — but this branch assumed one and deleted the
+      // destination, so `Decide what to buy](configuration)Adapter selection`
+      // lost the middle and synthesized `buyadapter` on a clean file. Same
+      // class as the angle-bracket case two rounds ago: treating something
+      // shaped like markup as markup without checking that it is.
+      hasLinkOpener(text, i)
     ) {
       const open = text[i + 1];
       const close = open === '(' ? ')' : ']';
@@ -835,11 +864,27 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
       // comment in the stream kept the two words from fusing and the gate
       // green. Invisible-to-the-reader is the property that matters here, not
       // element-shaped.
-      if (text.startsWith('<!--', i)) {
-        const close = text.indexOf('-->', i + 4);
-        // An unterminated comment swallows the rest of the file in a real
-        // renderer; do the same rather than resuming mid-comment.
-        const stop = close === -1 ? text.length : close + 3;
+      // …and the OTHER raw-HTML constructs CommonMark defines beside it, for
+      // exactly the same reason. A processing instruction, a declaration and a
+      // CDATA section are all passed through to the output as markup and none
+      // of them is presented to the reader as text — yet each begins `<` with
+      // a NON-LETTER after it, so the comment special case missed them and the
+      // letter-led tag shape below rejected them, and their payload stayed in
+      // the stream wedging two words apart. `<?target data?>` between `buy`
+      // and `adapter` normalized to `vpfibuytargetdataadapter` and a visible
+      // mention went unreported. Each carries its own terminator, so none of
+      // them can be scanned as an ordinary tag.
+      const rawHtml = [
+        ['<!--', '-->'],
+        ['<![CDATA[', ']]>'],
+        ['<?', '?>'],
+        ['<!', '>'], // declaration, e.g. `<!DOCTYPE html>`
+      ].find(([open]) => text.startsWith(open, i));
+      if (rawHtml) {
+        const close = text.indexOf(rawHtml[1], i + rawHtml[0].length);
+        // An unterminated construct swallows the rest of the file in a real
+        // renderer; do the same rather than resuming mid-construct.
+        const stop = close === -1 ? text.length : close + rawHtml[1].length;
         tagSpans.push([i, stop]);
         i = stop - 1;
         continue;
@@ -1076,15 +1121,29 @@ function extractPdfText(buf) {
   while (at < buf.length) {
     const s0 = buf.indexOf(marker, at);
     if (s0 === -1) break;
-    const e0 = buf.indexOf(endMarker, s0);
-    if (e0 === -1) break;
     // Dictionary immediately before the stream keyword declares the filter.
     const dict = buf.subarray(Math.max(0, s0 - 400), s0).toString('latin1');
-    let body = buf.subarray(s0 + marker.length, e0);
-    // Skip the EOL that must follow the `stream` keyword.
-    let b = 0;
-    while (b < body.length && (body[b] === 0x0d || body[b] === 0x0a)) b++;
-    body = body.subarray(b);
+    // Data start: the EOL that must follow the `stream` keyword.
+    let dataAt = s0 + marker.length;
+    while (dataAt < buf.length && (buf[dataAt] === 0x0d || buf[dataAt] === 0x0a)) dataAt++;
+    // The body is DELIMITED BY ITS DECLARED `/Length`, not by the first
+    // `endstream` byte-string inside it. Stream data is arbitrary bytes and may
+    // spell `endstream` itself — a content stream opening with the valid PDF
+    // comment `% endstream` truncated the body to nothing, and everything the
+    // page actually drew went unread. `indexOf` is kept only as the fallback
+    // for a stream whose dictionary carries no usable `/Length` (an indirect
+    // reference, or a malformed file), and the declared length is trusted only
+    // when the bytes it points at really are followed by the terminator.
+    const declared = /\/Length\s+(\d{1,10})(?!\s+\d+\s+R)\b/.exec(dict);
+    let e0 = -1;
+    if (declared) {
+      const end = dataAt + Number(declared[1]);
+      const after = buf.subarray(end, end + 20).toString('latin1');
+      if (end <= buf.length && /^[\r\n\s]*endstream/.test(after)) e0 = end;
+    }
+    if (e0 === -1) e0 = buf.indexOf(endMarker, dataAt);
+    if (e0 === -1) break;
+    let body = buf.subarray(dataAt, e0);
     if (/\/FlateDecode/.test(dict)) {
       try {
         // BOUNDED. `inflateSync` with no limit lets a small, highly compressible
@@ -1098,7 +1157,9 @@ function extractPdfText(buf) {
         body = inflateSync(body, { maxOutputLength: remaining });
         inflatedTotal += body.length;
       } catch {
-        at = e0 + endMarker.length;
+        at = buf.indexOf(endMarker, e0);
+        if (at === -1) break;
+        at += endMarker.length;
         continue;
       }
     }
@@ -1110,7 +1171,9 @@ function extractPdfText(buf) {
         out.push(Buffer.from(hex, 'hex').toString('latin1'));
       }
     }
-    at = e0 + endMarker.length;
+    at = buf.indexOf(endMarker, e0);
+    if (at === -1) break;
+    at += endMarker.length;
   }
   return out.join(' ');
 }
@@ -1149,6 +1212,14 @@ const OFFICE_TEXT_PARTS = /^(?:(?:word|xl|ppt)\/(?!.*_rels\/).*\.xml|docProps\/[
 const OFFICE_EXTENSIONS = /\.(?:doc|xls|ppt)[xm]$|\.(?:dot|xlt|pot)[xm]$/i;
 
 /**
+ * Same rule for PDFs, and it is the same oversight: the Office signature check
+ * was added this round without applying it to the path it was copied from. A
+ * `.md` beginning `%PDF` had its whole body replaced by `extractPdfText`'s
+ * output — empty, since there are no streams — and the gate scanned nothing.
+ */
+const PDF_EXTENSION = /\.pdf$/i;
+
+/**
  * Decode one XML part, honouring its encoding.
  *
  * A UTF-16 part decoded as UTF-8 keeps a NUL between every markup character,
@@ -1173,13 +1244,51 @@ function decodeXmlPart(buf) {
 }
 
 const CDATA = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
-/** Elements a reader sees as a break between blocks. NOT `w:tab`: a tab inside
- *  a paragraph is inline whitespace, the same call the space already gets. */
-const OFFICE_BLOCK_TAG =
-  /^<(?:\/(?:w:p|w:tc|w:tr|a:p|a:tc|si|c|row)|(?:w:br|w:cr|a:br))\b/;
+
+/**
+ * The OOXML namespaces whose paragraph / cell / break elements are block
+ * boundaries, and the local names that are.
+ *
+ * By NAMESPACE, not by prefix. `w:` and `a:` are conventional, not required —
+ * an XML prefix is an alias a document declares for itself, so a conforming
+ * part is free to bind WordprocessingML to `x:` and write `<x:p>`. A literal
+ * QName list stopped recognizing paragraphs there, fused two of them, and
+ * BLOCKED a clean document.
+ */
+const OFFICE_BLOCK_NS = [
+  'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+  'http://schemas.openxmlformats.org/drawingml/2006/main',
+  'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
+];
+/** Block-level local names. NOT `tab`: a tab inside a paragraph is inline
+ *  whitespace, the same call the space already gets. */
+const OFFICE_BLOCK_LOCAL = new Set(['p', 'tc', 'tr', 'si', 'c', 'row', 'br', 'cr']);
 /** Reader-visible attributes — a drawing's accessibility description is read
- *  aloud by assistive technology, so it is text even though it lives in a tag. */
-const OFFICE_ALT_TEXT = /\b(?:descr|title|alt)\s*=\s*"([^"]*)"/gi;
+ *  aloud by assistive technology, so it is text even though it lives in a tag.
+ *  BOTH quote characters: XML permits either, and matching only `"` silently
+ *  exempted the single-quoted spelling of the same accessibility text. */
+const OFFICE_ALT_TEXT = /\b(?:descr|title|alt)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+
+/**
+ * Prefixes this part binds to a block-bearing namespace, plus the default.
+ *
+ * Collected from every `xmlns` declaration in the part rather than the root
+ * element alone, because a declaration is scoped to its element and OOXML
+ * parts do sometimes redeclare deeper down. Over-collecting is safe here: a
+ * prefix bound to a block namespace ANYWHERE in the part is a prefix whose
+ * `p` means paragraph.
+ */
+function officeBlockPrefixes(text) {
+  const prefixes = new Set();
+  let defaultIsBlock = false;
+  for (const m of text.matchAll(/xmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    const uri = m[2] ?? m[3];
+    if (!OFFICE_BLOCK_NS.includes(uri)) continue;
+    if (m[1]) prefixes.add(m[1]);
+    else defaultIsBlock = true;
+  }
+  return { prefixes, defaultIsBlock };
+}
 
 /**
  * Remove Office XML markup, keeping what the reader sees.
@@ -1200,6 +1309,20 @@ const OFFICE_ALT_TEXT = /\b(?:descr|title|alt)\s*=\s*"([^"]*)"/gi;
  * fragments into tags the document never contained and fails clean files.
  */
 function stripOfficeTags(text) {
+  const { prefixes, defaultIsBlock } = officeBlockPrefixes(text);
+  // A part that declares no block namespace at all tells us nothing about its
+  // prefixes, so the local name is the only evidence there is — fall back to
+  // matching on it alone, which is what this did before namespaces were
+  // resolved. The fallback can only ADD boundaries, and a missing boundary is
+  // the failure that blocks a clean document.
+  const noneDeclared = prefixes.size === 0 && !defaultIsBlock;
+  const isBlockTag = (tag) => {
+    const m = /^<\/?(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)/.exec(tag);
+    if (!m) return false;
+    if (!OFFICE_BLOCK_LOCAL.has(m[2])) return false;
+    if (noneDeclared) return true;
+    return m[1] ? prefixes.has(m[1]) : defaultIsBlock;
+  };
   let out = '';
   let i = 0;
   for (;;) {
@@ -1209,6 +1332,25 @@ function stripOfficeTags(text) {
       break;
     }
     out += text.slice(i, lt);
+    // Constructs with their OWN terminator, handled before the quoted-tag walk.
+    // A comment is not a tag and does not end at its first `>`: the walk read
+    // `<!-- A > B -->` as ending after `A >` and emitted ` B -->` as visible
+    // text, whose `B` landed between two words and broke the phrase. Same
+    // shape as the quoted-`>` bug this walk was written to fix, one construct
+    // over.
+    const special = [
+      ['<!--', '-->'],
+      ['<![CDATA[', ']]>'],
+      ['<?', '?>'],
+    ].find(([open]) => text.startsWith(open, lt));
+    if (special) {
+      const close = text.indexOf(special[1], lt + special[0].length);
+      // Unterminated: the rest of the part is inside the construct and the
+      // reader sees none of it.
+      if (close === -1) break;
+      i = close + special[1].length;
+      continue;
+    }
     let j = lt + 1;
     let quote = '';
     for (; j < text.length; j++) {
@@ -1229,10 +1371,10 @@ function stripOfficeTags(text) {
       break;
     }
     const tag = text.slice(lt, j + 1);
-    if (OFFICE_BLOCK_TAG.test(tag)) {
+    if (isBlockTag(tag)) {
       out += '\n\n';
     } else {
-      for (const m of tag.matchAll(OFFICE_ALT_TEXT)) out += ` ${m[1]} `;
+      for (const m of tag.matchAll(OFFICE_ALT_TEXT)) out += ` ${m[1] ?? m[2]} `;
     }
     i = j + 1;
   }
@@ -1407,10 +1549,14 @@ function scanFile(path) {
       head4[3] === 0x04
         ? extractOfficeText(raw)
         : null;
-    text =
-      head4.toString('latin1') === '%PDF'
-        ? extractPdfText(raw)
-        : (officeText ?? raw.toString('utf8'));
+    // `null` when the container yields nothing usable, so the bytes are read as
+    // text rather than as the empty string — a decoder that finds no content is
+    // not evidence that the file has none.
+    const pdfText =
+      PDF_EXTENSION.test(path) && head4.toString('latin1') === '%PDF'
+        ? extractPdfText(raw) || null
+        : null;
+    text = pdfText ?? officeText ?? raw.toString('utf8');
   } catch (err) {
     // FAIL CLOSED. Returning "no hits" here treated an unreadable file exactly
     // like a clean one, which is a complete exemption for any path that cannot

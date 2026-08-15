@@ -341,6 +341,92 @@ const FIXTURES = [
     ],
   },
   {
+    // Round 11 P1. A comment is not a tag and does not end at its first `>`.
+    // The quoted-tag walk read `<!-- A > B -->` as ending after `A >` and
+    // emitted ` B -->` as text; the `B` landed between the two words and the
+    // phrase normalized to `buybadapter`. Same shape as the quoted-`>` bug the
+    // walk was written to fix, one construct over.
+    name: 'xml-comment.docx',
+    caught: true,
+    why: 'an XML comment ends at `-->`, not at its first `>`',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p><w:r>' +
+          '<w:t>Deploy the VPFI buy</w:t><!-- A > B --><w:t>adapter before launch</w:t>' +
+          '</w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
+    // Round 11 P1. XML permits either quote character; matching only `"`
+    // exempted the single-quoted spelling of the very accessibility text the
+    // double-quoted fixture covers.
+    name: 'alt-text-single-quote.docx',
+    caught: true,
+    why: "alt text is alt text in single quotes too",
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:drawing>' +
+          "<wp:docPr id='1' descr='Operators must deploy the VPFI buy adapter before launch.'/>" +
+          '</w:drawing></w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
+    // Round 11 P1, the false-BLOCK direction. An XML prefix is an alias a
+    // document declares for itself: `w:` is conventional, not required. A
+    // literal QName list stopped seeing paragraphs in a part that binds
+    // WordprocessingML to `x:`, fused two of them, and blocked a clean file.
+    name: 'ns-prefix.docx',
+    caught: false,
+    why: 'a paragraph is a paragraph under any prefix bound to its namespace',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><x:document ' +
+          'xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+          '<x:body>' +
+          '<x:p><x:r><x:t>Decide what to buy</x:t></x:r></x:p>' +
+          '<x:p><x:r><x:t>Adapter selection follows</x:t></x:r></x:p>' +
+          '</x:body></x:document>',
+      ],
+    ],
+  },
+  {
+    // Round 11 P1. A bare `](` in running prose is literal visible text under
+    // CommonMark — there is no link without an opener — but the destination
+    // skip assumed one and deleted the middle of a clean sentence.
+    name: 'bare-destination.md',
+    caught: false,
+    why: 'a `](` with no label before it is ordinary text',
+    body: 'Decide what to buy](configuration)Adapter selection follows.\n',
+  },
+  {
+    // Round 11 P1. A processing instruction is raw HTML: passed through to the
+    // output, never shown to the reader. It begins `<` with a non-letter after
+    // it, so the comment special case missed it and the letter-led tag shape
+    // rejected it, leaving its payload wedged between two words.
+    name: 'processing-instruction.md',
+    caught: true,
+    why: 'a processing instruction is invisible markup, like a comment',
+    body: 'Operators must deploy the VPFI buy<?target data?>adapter before launch.\n',
+  },
+  {
+    // Round 11 P1, and the same bypass as `pk-prefixed.md` one format over —
+    // the Office signature fix earlier this round was not applied to the path
+    // it was copied from. `extractPdfText` returns '' for a file with no
+    // streams, and that empty string REPLACED the visible Markdown.
+    name: 'pdf-prefixed.md',
+    caught: true,
+    why: 'a text file cannot buy an exemption by opening with %PDF',
+    body: '%PDF-1.4\nOperators must deploy the VPFI buy adapter before launch.\n',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',
@@ -435,6 +521,21 @@ function pdfFixtures() {
       caught: false,
       why: 'an ordinary document must not be failed by its drawing operators',
       buf: stream('Quarterly audit summary, nothing removed here'),
+    },
+    {
+      // Round 11 P1. Stream data is arbitrary bytes and may spell `endstream`
+      // itself — here inside a valid PDF comment. Truncating the body at the
+      // first occurrence meant everything the page actually drew went unread.
+      // The declared `/Length` is the real boundary.
+      name: 'endstream-in-body.pdf',
+      caught: true,
+      why: 'a stream ends at its declared length, not at the first `endstream` in its data',
+      buf: (() => {
+        const body = '% endstream\nBT (Operators must deploy the VPFI buy adapter) Tj ET';
+        return Buffer.from(
+          `%PDF-1.4\n1 0 obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
+        );
+      })(),
     },
     {
       name: 'uncompressed.pdf',
