@@ -468,7 +468,7 @@ const PINNED = new Map([
   ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "023e9b4fd22a"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "0284187b3cbb"]],
   ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "e9ba0096f4b1"]],
-  ["docs/ops/BaseSepoliaDeploy.md", [26, "LIVE-TEXT — known debt", "f7030caedd23"]],
+  ["docs/ops/BaseSepoliaDeploy.md", [26, "LIVE-TEXT — known debt", "ec8d5ca30cfc"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "ab9aa52ffbe1"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "874f9b73f212"]],
   ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "db44b1e5f885"]],
@@ -1114,6 +1114,10 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
     // Every emitted character maps to the reference's START offset, so the
     // digest window and the boundary tests still point at the source text.
     if (decodeRefs && text[i] === '&' && !(fencedOffsets && fencedOffsets(i))) {
+      // HTML consumes a legacy named reference WITHOUT its semicolon, so the
+      // pattern is widened for the HTML family only — CommonMark is stricter,
+      // and applying the loose form to Markdown would decode text a reader sees
+      // literally.
       const ref = /^&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|[a-zA-Z][a-zA-Z0-9]{1,31});/.exec(
         text.slice(i, i + 40),
       );
@@ -1163,7 +1167,16 @@ function computeFences(lines) {
   let openMarker = '';
   let openLen = 0;
   for (let i = 0; i < lines.length; i++) {
-    const m = /^\s{0,3}(`{3,}|~{3,})/.exec(lines[i]);
+    // Container prefixes come off first — a fence opened inside a list item or
+    // a block quote starts after its marker, and a raw-line test saw only
+    // whitespace before the backticks. The fence then went unrecognized, the
+    // literal `<strong>` inside it was stripped as markup, and a clean document
+    // was BLOCKED. Third pass in this file to learn the same lesson about
+    // containers, after the indentation and heading walks.
+    const containerBare = lines[i]
+      .replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '')
+      .replace(/^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/, '');
+    const m = /^\s{0,3}(`{3,}|~{3,})/.exec(containerBare);
     if (m) {
       const marker = m[1][0];
       const len = m[1].length;
@@ -1358,6 +1371,8 @@ function extractPdfText(buf) {
     if (e0 === -1) break;
     let body = buf.subarray(dataAt, e0);
     if (/\/FlateDecode/.test(dict)) {
+      const remaining = MAX_INFLATED_BYTES - inflatedTotal;
+      if (remaining <= 0) break; // budget spent; stop reading this file
       try {
         // BOUNDED. `inflateSync` with no limit lets a small, highly compressible
         // stream expand without end — a few KB of tracked PDF could allocate
@@ -1365,11 +1380,16 @@ function extractPdfText(buf) {
         // down rather than taking the best-effort skip this path intends. Node
         // rejects the stream once it exceeds the budget, which lands in the
         // catch below like any other undecodable stream.
-        const remaining = MAX_INFLATED_BYTES - inflatedTotal;
-        if (remaining <= 0) break; // budget spent; stop reading this file
         body = inflateSync(body, { maxOutputLength: remaining });
         inflatedTotal += body.length;
       } catch {
+        // A FAILED attempt consumed the remaining budget — it may have failed
+        // precisely because it hit the cap, and crediting nothing let a file of
+        // many oversized streams retry the whole remainder on each. Round 19
+        // fixed exactly this on the Office path and I did not carry it here;
+        // that is the third time in this PR one twin was fixed and the other
+        // left, after the extension check and the read-as-text fallback.
+        inflatedTotal += remaining;
         at = buf.indexOf(endMarker, e0);
         if (at === -1) break;
         at += endMarker.length;
@@ -1463,7 +1483,7 @@ const OFFICE_TEXT_PARTS = /^(?:(?:word|xl|ppt)\/(?!.*_rels\/).*\.xml|docProps\/[
 // PR, so the list is written to cover the format family rather than the
 // spellings that happened to come to mind.
 const OFFICE_EXTENSIONS =
-  /\.(?:doc|dot)[xm]$|\.(?:xls|xlt)[xm]$|\.(?:ppt|pps|pot|sld)[xm]$/i;
+  /\.(?:doc|dot)[xm]$|\.(?:xls|xlt)[xm]$|\.(?:ppt|pps|pot|sld)[xm]$|\.(?:xlam|ppam)$/i;
 
 /**
  * Same rule for PDFs, and it is the same oversight: the Office signature check
@@ -1744,7 +1764,17 @@ function extractOfficeText(buf) {
         inflatedTotal += remaining;
         continue; // undecodable part; treat like any other unreadable stream
       }
-    } else if (method !== 0) {
+    } else if (method === 0) {
+      // STORED parts cost memory too. They took this path without charging
+      // anything, and because a central directory may point several entries at
+      // the SAME local header, ~40 aliases of one stored part turned a 1 MiB
+      // archive into ~40 MiB of retained text — past the stated cap while the
+      // counter read zero. Uncompressed data has no expansion ratio, which is
+      // why it looked safe; the aliasing is what makes it not.
+      const remaining = MAX_INFLATED_BYTES - inflatedTotal;
+      if (remaining <= 0) break;
+      inflatedTotal += xml.length;
+    } else {
       continue; // stored or deflate only; anything else is not ours to decode
     }
     // BLOCK elements first, inline runs second — the same inline-vs-block
@@ -2386,6 +2416,19 @@ function scanFile(path) {
     // Drop backslash escapes before looking, so only structural quotes remain.
     if (/\.jsonc?$/i.test(path)) {
       if (span.replace(/\\[\s\S]/g, '').includes('"')) return true;
+      // …but the ABSENCE of a quote does not prove the span is inside one. In
+      // `.jsonc` it can be ordinary COMMENT prose, and round 19's unconditional
+      // return skipped the sentence rules there — reporting
+      // `// Decide what to buy: Adapter selection follows.` as a mention. The
+      // exemption is for string VALUES, so it has to establish that it is in
+      // one: the nearest structural quote before the span must be an opening
+      // one.
+      const before = text.slice(0, map[a]).replace(/\\[\s\S]/g, '');
+      const quotes = (before.match(/"/g) || []).length;
+      if (quotes % 2 === 0) {
+        // Even number of quotes before it ⇒ NOT inside a string literal.
+        // Fall through to the prose rules below.
+      } else {
       // A JSON STRING VALUE IS NOT A SENTENCE. Having established the span lies
       // within ONE literal, the prose punctuation rules below must not run on
       // it: `{"operation":"buy:adapter"}` names the dead identifier exactly as
@@ -2394,7 +2437,8 @@ function scanFile(path) {
       // tag-interior stream already makes one branch down, for the identical
       // `data-operation="buy:adapter"` — the two paths disagreed about the same
       // string.
-      return false;
+        return false;
+      }
     }
     if (MARKUP_EXTENSIONS.test(path) && !literalAt(from)) {
       // Comments FIRST and by the same rule as the normalizer, which now skips
@@ -2477,7 +2521,13 @@ function scanFile(path) {
         // at a quote fused with the quote's first words and failed a clean
         // file. Same class as the heading and list rules: an explicit block
         // delimiter, not a guess about English.
-        if (/^\s{0,3}>/.test(lines[i])) return true;
+        // …but only when it ENTERS or LEAVES the quote. A phrase wrapping
+        // across consecutive quoted lines is ONE rendered paragraph — every
+        // continuation begins with `>` and none of them starts a new block —
+        // so treating each marker as a boundary meant a live mention could
+        // hide simply by being wrapped inside a quote.
+        if (/^\s{0,3}>/.test(lines[i]) !== /^\s{0,3}>/.test(lines[i - 1] ?? ''))
+          return true;
         // Thematic breaks — `***`, `---`, `___`, optionally spaced. A reader
         // sees a horizontal rule dividing two blocks; the walk saw nothing and
         // fused the sentence before it with the one after. Note the overlap
@@ -2656,8 +2706,16 @@ function scanFile(path) {
       // the one habit that would make this whole gate worthless.
       const setext =
         isMarkdown && i + 1 < lines.length && !inFence[i + 1] && bare.trim() !== ''
-          ? /^\s{0,3}(=|-)\1{2,}\s*$/.exec(
-              lines[i + 1].replace(/^(?:[ \t]{0,3}>[ \t]?)+/, ''),
+          ? /^\s*(=|-)\1{2,}\s*$/.exec(
+              // The SAME container stripping the heading text gets. A Setext
+              // heading nested two list levels deep has an underline indented
+              // by four container spaces, and a three-space expression did not
+              // reach it — so the heading was classified and its underline was
+              // not, leaving the substitution path open in exactly the nesting
+              // this round set out to close.
+              lines[i + 1]
+                .replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '')
+                .replace(/^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/, ''),
             )
           : null;
       if (!atx && !bold && !setext) continue;

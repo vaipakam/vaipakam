@@ -714,6 +714,36 @@ const FIXTURES = [
     body: '{"operation":"buy:adapter"}\n',
   },
   {
+    // Round 20 P1. A phrase wrapping across consecutive QUOTED lines is one
+    // rendered paragraph — every continuation begins with `>` and none starts a
+    // new block — so treating each marker as a boundary let a live mention hide
+    // simply by being wrapped inside a quote.
+    name: 'quote-wrap.md',
+    caught: true,
+    why: 'a quoted continuation line does not start a new block',
+    body: '> Operators must deploy the VPFI buy\n> adapter before launch.\n',
+  },
+  {
+    // Round 20 P2, a REGRESSION from round 19. The absence of a quote does not
+    // prove the span sits inside one: in `.jsonc` it can be comment prose, and
+    // the unconditional exemption skipped the sentence rules there.
+    name: 'jsonc-comment.jsonc',
+    caught: false,
+    why: 'a colon in comment prose is still a sentence boundary',
+    body: '{\n  // Decide what to buy: Adapter selection follows.\n  "a": 1\n}\n',
+  },
+  {
+    // Round 20 P2. A fence opened inside a LIST ITEM starts after the marker,
+    // and a raw-line test saw only whitespace before the backticks — so the
+    // fence went unrecognized and the literal `<strong>` inside was stripped as
+    // markup, blocking a clean document.
+    name: 'fence-in-list.md',
+    caught: false,
+    why: 'a fence inside a container is still a fence',
+    body:
+      '- ```\n  Decide what to buy<strong>adapter</strong> selection follows.\n  ```\n',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',
