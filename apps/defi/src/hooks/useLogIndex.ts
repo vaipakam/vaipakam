@@ -170,11 +170,25 @@ export function useLogIndex() {
   const load = useCallback(async () => {
     const seq = ++scanSeq.current;
     const forChain = chainId;
+    // Two predicates, deliberately NOT one. `chainStillCurrent` is the whole
+    // test for the synchronous peek below: it hydrates from storage for the
+    // chain this invocation was created for, and there is no ordering question
+    // because peeks run in call order.
+    //
+    // `isCurrent` adds the ordering test and belongs ONLY to the async result.
+    // Round 4 used it for both and marked the peek as a commit, which made
+    // `seq > committedSeq.current` false for the SAME invocation from that
+    // point on — so its own result, its error path and its `finally` could
+    // never apply. Since the peek hits on every run after the first successful
+    // scan, that meant every later rescan wrote storage and left React serving
+    // the previous snapshot, with the freshness reporter stuck loading.
+    // `committedSeq` orders COMPLETED SCANS; hydration is not one.
+    const chainStillCurrent = () => forChain === activeChainRef.current;
     const isCurrent = () =>
-      forChain === activeChainRef.current && seq > committedSeq.current;
+      chainStillCurrent() && seq > committedSeq.current;
     report('logIndex', { loading: true });
     const peeked = peekLoanIndex(chainId, diamondAddress);
-    if (!isCurrent()) return;
+    if (!chainStillCurrent()) return;
     if (peeked === null) {
       // No cached index for this (chain, diamond). The arrays still hold
       // whatever the PREVIOUS chain left, so mark the tag unknown rather than
@@ -195,7 +209,6 @@ export function useLogIndex() {
       setGetLastOwner(() => peeked.getLastOwner);
       setGetLoanInitiatedForToken(() => peeked.getLoanInitiatedForToken);
       setIndexChainId(chainId);
-      committedSeq.current = seq;
       setLoading(false);
     }
     setError(null);
