@@ -755,6 +755,29 @@ const FIXTURES = [
     why: 'a sibling list item ends the previous item, and the fence in it',
     body: '- ```\n  code\n- Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
   },
+  // ── Round 27.
+  {
+    // A false NEGATIVE my own round-22 fix opened. Preserving UNRECOGNIZED
+    // references fixed a false positive (`buy&bogus;adapter` is clean prose),
+    // but `&Tab;` is a VALID reference that renders a tab and was simply
+    // missing from the table — so it was preserved too, and its letters
+    // wedged the phrase apart. The pair only works if the table is complete
+    // for whitespace and punctuation; `unknown-entity.html` pins the other
+    // half and must keep passing.
+    name: 'valid-entity-untabled.md',
+    caught: true,
+    why: 'a valid whitespace reference renders as space, not as its own name',
+    body: 'VPFI buy&Tab;adapter is live.\n',
+  },
+  {
+    // `.mdc` is a Markdown rule file and the tree tracks one. Outside the
+    // markup and Markdown classifications it was scanned as plain text, so
+    // its inline HTML was never stripped.
+    name: 'mdc-is-markdown.mdc',
+    caught: true,
+    why: 'a Markdown rule file gets the same treatment as its `.md` sibling',
+    body: 'VPFI buy<strong>adapter</strong> is live.\n',
+  },
   // ── Round 25.
   {
     // A false NEGATIVE, and a correct narrowing of something I refuted a

@@ -325,7 +325,22 @@ const DEAD_TOKEN_RECORDS = DEAD_TOKENS.map((t) =>
  * it. A full HTML entity table would be a large dependency for no coverage.
  */
 const NAMED_REFS = {
+  // Whitespace and punctuation references. The table is small on purpose, but
+  // it must cover every VALID reference that renders as space or punctuation —
+  // an untabled one is preserved literally (see `renderRefs`), and its letters
+  // then wedge two words apart. `&Tab;` was the case that proved it: valid,
+  // renders a tab, absent here, so `buy&Tab;adapter` read as `buyTabadapter`
+  // and the residue went unreported. Preserving unknown names fixed a false
+  // POSITIVE and opened this false negative in the same edit; both are only
+  // safe together with a table that is actually complete for this class.
   nbsp: ' ', ensp: ' ', emsp: ' ', thinsp: ' ', shy: '', zwj: '', zwnj: '',
+  // Keys are LOWER CASE because the lookup lower-cases the name. Written in
+  // their HTML spelling (`Tab`, `NewLine`, `ZeroWidthSpace`) they matched
+  // nothing at all and the entries were silently dead.
+  tab: '\t', newline: '\n', hairsp: ' ', puncsp: ' ', numsp: ' ',
+  emsp13: ' ', emsp14: ' ', mediumspace: ' ', nobreak: '',
+  verythinspace: ' ', zerowidthspace: '', lrm: '', rlm: '',
+  nldr: '.', hellip: '.',
   period: '.', full: '.', excl: '!', quest: '?', semi: ';', colon: ':',
   comma: ',', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
   lpar: '(', rpar: ')', lsqb: '[', rsqb: ']', sol: '/', bsol: '\\',
@@ -628,7 +643,11 @@ function inScopeFiles() {
 // out meant a contributor could evade the whole-tree ratchet by extension alone
 // — the same content caught in a `.md` went through the plain-text path and its
 // inline formatting stayed between the words.
-const MARKUP_EXTENSIONS = /\.(tsx|jsx|html|htm|md|mdx|markdown|svg)$/i;
+// `.mdc` is a Markdown RULE file — the tree tracks one under
+// `contracts/lib/chainlink-local/.cursor/rules/`. Absent from this list it
+// was scanned as plain text, so its inline HTML was never stripped and a
+// visible phrase could hide behind a `<strong>` the reader does not see.
+const MARKUP_EXTENSIONS = /\.(tsx|jsx|html|htm|md|mdc|mdx|markdown|svg)$/i;
 
 
 /**
@@ -2283,7 +2302,9 @@ function scanFile(path) {
   // the code-span exemption to them meant a staged TSX file rendering
   // `` `<p>`buy <strong>adapter</strong>`</p>` `` kept its inner tags out of the
   // stripper, so the phrase a user sees never fused and the gate stayed green.
-  const isMarkdown = /\.(?:mdx?|markdown)$/i.test(path);
+  // `.mdc` too — a Markdown rule file gets the fence, boundary and container
+  // treatment its `.md` sibling gets, not just tag stripping.
+  const isMarkdown = /\.(?:mdc?|mdx|markdown)$/i.test(path);
   /**
    * Offset -> "are angle brackets here LITERAL rather than markup?"
    *
