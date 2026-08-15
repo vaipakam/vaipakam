@@ -1874,6 +1874,25 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().rewardBudgetArmedFreshPaid;
     }
 
+    /// @notice #1434 test-only — the entry's settlement cursor, so a test can
+    ///         assert a spanning expiry stamped it exactly as a claim would.
+    function getRewardEntryClaimNextDayRaw(uint256 id)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().rewardEntryClaimNextDay[id];
+    }
+
+    /// @notice #1434 test-only — whether the entry is terminalised.
+    function getRewardEntryProcessedRaw(uint256 id)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().rewardEntries[id].processed;
+    }
+
     function setRecoveryAttributionRaw(bool armed, uint256 armedAt)
         external
     {

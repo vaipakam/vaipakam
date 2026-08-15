@@ -6619,6 +6619,26 @@ library LibVaipakam {
         ///      A fresh deploy needs no seed (both counters start at zero), so
         ///      this is armed only where there is history to carry.
         bool armedFreshPaidSeeded;
+        /// @dev #1434 (Codex #1699 r7 P2) — APPENDED AT THE TAIL (same
+        ///      in-place-upgrade rule as every counter above). Running totals
+        ///      of what an expiring reward entry has ALREADY had credited
+        ///      across its chunked settlement, so the terminal
+        ///      `RewardEntryExpired` can still report the WHOLE entry.
+        ///
+        ///      Unifying expiry onto the day engine made a reap CHUNKED: a
+        ///      long entry settles over several sweeps. Without these, the
+        ///      terminal event would carry only the FINAL chunk while its
+        ///      documented `total` / `recycled` decomposition still claims to
+        ///      describe the whole entry — every indexer and notification
+        ///      consumer reading that face value would under-report, silently.
+        ///      Accumulating preserves the event's meaning rather than
+        ///      redefining it under consumers that were never told.
+        ///
+        ///      Written only on the expiry path and read once at
+        ///      terminalization; an entry that never expires never touches
+        ///      them.
+        mapping(uint256 => uint256) rewardEntryExpiredAccum;
+        mapping(uint256 => uint256) rewardEntryExpiredRecycledAccum;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

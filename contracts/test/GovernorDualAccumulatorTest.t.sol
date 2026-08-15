@@ -669,6 +669,53 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      sweep fails it HIGH (alice's reap re-credits her settled day 4);
     ///      the interim #1408 part-claimed stopgap fails it at ZERO (no reap
     ///      at all). Either failure flags a regression on this boundary.
+    /// @dev #1434 (Codex #1699 r7 P1) — a SPANNING entry must be reapable.
+    ///
+    ///      An entry with `startDay < armedFrom < endDay` and no prior claim
+    ///      is the shape expiry exists for: abandoned, straddling the cutover.
+    ///      Unifying expiry onto the day engine broke it outright —
+    ///      `_shareOfPoolCursorDay` hands the primitive `armedFrom` while the
+    ///      primitive resolves an UNSET cursor to `startDay`, so the set
+    ///      validation reverted `RewardEntrySetMismatch`. And because the sweep
+    ///      is a permissionless BATCH, one such entry poisoned the whole keeper
+    ///      call rather than just stalling itself.
+    ///
+    ///      489 tests passed while that was true, because no fixture reaped an
+    ///      entry straddling the boundary. This is that fixture. Revert the
+    ///      legacy-leg branch in `sweepExpiredEntry` and this reverts.
+    function testP1bSpanningEntryReapsAcrossTheCutover() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+
+        // Straddles the cutover: day 4 is legacy, day 5 is armed.
+        uint256 id = _seedEntry(alice, 91, 4, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        // FIRST sweep settles the pre-cutover leg and stamps the cursor. It
+        // must credit something and must NOT revert — the revert is the bug.
+        uint256 legacyCredit = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertGt(legacyCredit, 0, "the legacy leg is credited, not rejected");
+        assertEq(
+            _mut().getRewardEntryClaimNextDayRaw(id),
+            5,
+            "and the cursor is stamped to the arming day, as a claim would"
+        );
+
+        // SECOND sweep reaps the armed tail through the day engine.
+        uint256 armedCredit = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertGt(armedCredit, 0, "the armed tail then reaps");
+        assertTrue(
+            _mut().getRewardEntryProcessedRaw(id),
+            "and the entry is finally terminalised"
+        );
+    }
+
     function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);

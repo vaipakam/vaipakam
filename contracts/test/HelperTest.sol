@@ -91,7 +91,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](172);
+        selectors = new bytes4[](174);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -429,6 +429,12 @@ contract HelperTest {
         // #1434 P1-b - stage / read back the mirror delivered-fresh ledger.
         selectors[n++] = TestMutatorFacet.setArmedFreshLedgerRaw.selector;
         selectors[n++] = TestMutatorFacet.getArmedFreshPaidRaw.selector;
+        // #1434 (Codex #1699 r7) — read back an entry's settlement cursor and
+        // processed flag, so a test can assert a SPANNING expiry stamps the
+        // cursor exactly as a claim would rather than merely not reverting.
+        selectors[n++] =
+            TestMutatorFacet.getRewardEntryClaimNextDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.getRewardEntryProcessedRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,

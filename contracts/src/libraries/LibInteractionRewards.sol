@@ -2786,6 +2786,46 @@ library LibInteractionRewards {
         // the reward recycles to the bucket rather than paying a side, so the
         // loan-side cap must not bind it (#1371 r2) — the identical rule, and
         // the identical mechanism, forfeits already use.
+        // #1434 (Codex r7 P1) — a SPANNING entry settles its PRE-CUTOVER leg
+        // first, exactly as `_processEntry` does for a claim.
+        //
+        // `_shareOfPoolCursorDay` jumps an untouched spanning entry straight to
+        // `armedFrom`, but `processUserSideDay` resolves an UNSET cursor to
+        // `startDay` when it validates the set — so handing it that armed day
+        // reverts `RewardEntrySetMismatch`. The consequence is worse than a
+        // stuck entry: this sweep is a permissionless BATCH, so one abandoned
+        // spanning entry would poison the whole keeper call, and the very
+        // entries expiry exists to reap could never be reaped at all.
+        //
+        // The earlier revision handled the WHOLLY pre-cutover case and stopped
+        // there. "Mirror the claim composition" means both legs: the claim
+        // settles the legacy slice, stamps the cursor to `armedFrom`, and
+        // leaves the armed tail owed. So does this now — the armed days reap on
+        // the following sweeps, which is exactly the per-chunk shape the rest
+        // of this path already has.
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        if (
+            armedFrom != 0
+                && e.startDay < armedFrom
+                && s.rewardEntryClaimNextDay[id] == 0
+        ) {
+            // ALL fresh by the regime identity — pre-`D*` days contribute no
+            // recycled — and exempt from the delivered bound for the same
+            // reason a pre-arming forfeit is: no remittance ever funded it.
+            uint256 legacyFresh = st.rawSplit.total
+                - st.rawSplit.recycled
+                - st.rawSplit.armedFresh;
+            if (legacyFresh > freshHeadroom) {
+                s.rewardEntryObsBlocked[id] = true;
+                return (expired, 0, 0);
+            }
+            s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
+            s.rewardEntryExpiredAccum[id] += legacyFresh;
+            expired.total = legacyFresh;
+            freshCredited = legacyFresh;
+            return (expired, freshCredited, 0);
+        }
+
         uint256 d = _shareOfPoolCursorDay(s, id, e);
         if (d >= e.endDay) return (expired, 0, 0);
 
@@ -2888,11 +2928,25 @@ library LibInteractionRewards {
             charge.toTreasury.armedFresh + charge.cappedOff.armedFresh;
         expired.total = charge.toTreasury.total + charge.cappedOff.armedFresh;
         freshCredited = charge.toTreasury.armedFresh;
+        // Codex #1699 r7 P2 — the TERMINAL event must still describe the WHOLE
+        // entry. Chunked settlement made `expired` the current day's slice, so
+        // emitting it at terminalization would silently redefine
+        // `RewardEntryExpired.total/recycled` from the entry's decomposition to
+        // an unexplained final chunk — and every indexer and notification
+        // consumer reading that face value would under-report. Accumulate here
+        // and emit the sum below; the event's documented meaning is unchanged.
+        s.rewardEntryExpiredAccum[id] += expired.total;
+        s.rewardEntryExpiredRecycledAccum[id] += expired.recycled;
         // Only an ARMED day draws on delivered funding — the same filter the
         // walk's paid-side write applies, for the same reason.
         armedDelivered = _isArmedDay(s, d) ? freshCredited : 0;
         if (e.processed) {
-            emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
+            emit RewardEntryExpired(
+                id,
+                e.user,
+                s.rewardEntryExpiredAccum[id],
+                s.rewardEntryExpiredRecycledAccum[id]
+            );
         }
     }
 
