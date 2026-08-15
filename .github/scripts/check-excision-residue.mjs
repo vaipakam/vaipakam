@@ -669,6 +669,27 @@ function linkClosePositions(text, literalAt) {
       bangBefore = false;
       continue;
     }
+    // …and a bracket inside a recognized HTML TAG is tag data, not a label
+    // opener — `<span title="[">` is one element, and letting its `[` pair with
+    // a later `](` in prose stripped a run the reader sees. Skipped with the
+    // same quote-aware walk the tag scanner uses, so an attribute value
+    // containing `>` cannot end the tag early here either.
+    if (c === '<' && /^<\/?[a-zA-Z][a-zA-Z0-9-]*(?=[\s/>])/.test(text.slice(i, i + 64))) {
+      let j = i + 1;
+      let q = '';
+      for (; j < text.length; j++) {
+        const d = text[j];
+        if (q) {
+          if (d === q) q = '';
+        } else if (d === '"' || d === "'") q = d;
+        else if (d === '>') break;
+      }
+      if (j < text.length) {
+        i = j;
+        bangBefore = false;
+        continue;
+      }
+    }
     // A label cannot span a blank line, so a paragraph break drops any
     // still-open brackets rather than letting them match across it.
     if (c === '\n' && /^[ \t]*\n/.test(text.slice(i + 1))) {
@@ -1938,12 +1959,23 @@ function scanFile(path) {
     if (!isMarkdown) return flags;
     let prevBlank = true;
     for (let i = 0; i < lines.length; i++) {
-      const blank = !lines[i].trim();
+      // Container prefixes come off BEFORE anything is measured — both the
+      // indentation and the blankness. A `>` line with nothing after it is a
+      // blank line INSIDE the quote, and testing the raw line called it
+      // non-blank, which broke the "preceded by a blank line" condition an
+      // indented block needs.
+      const content = lines[i].replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '');
+      const blank = !content.trim();
       if (inFence[i]) {
         prevBlank = false;
         continue;
       }
-      if (!blank && /^(?: {4}|\t)/.test(lines[i]) && (prevBlank || flags[i - 1])) {
+      // An indented code block nested in a quote starts its SOURCE line with
+      // `>`, so a raw four-space test never saw it, the scanner stripped the
+      // literal `<strong>` inside it as markup, and a clean file was BLOCKED.
+      // CommonMark removes the container prefix before parsing the block; so
+      // does the `content` above.
+      if (!blank && /^(?: {4}|\t)/.test(content) && (prevBlank || flags[i - 1])) {
         flags[i] = true;
       } else if (blank && i > 0 && flags[i - 1]) {
         // A blank line inside an indented block does not close it; the next

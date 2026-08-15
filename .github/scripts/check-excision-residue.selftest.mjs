@@ -644,6 +644,27 @@ const FIXTURES = [
     body: 'Operators must deploy the VPFI buy<strong>adapter</strong> before launch.\n',
   },
   {
+    // Round 17 P2, an edge of round 16's literal-region fix. Code spans were
+    // excluded from the opener pass but recognized HTML TAGS were not, so the
+    // `[` inside `title="["` paired with a later `](` and stripped a run the
+    // reader sees.
+    name: 'bracket-in-tag.md',
+    caught: false,
+    why: 'a bracket inside a tag is tag data, not a label opener',
+    body: 'Decide what to buy <span title="[">](/middle) Adapter selection follows.\n',
+  },
+  {
+    // Round 17 P2. An indented code block nested in a block quote starts its
+    // SOURCE line with `>`, so a raw four-space test never saw it and the
+    // literal `<strong>` inside was stripped as markup. CommonMark removes the
+    // quote prefix before parsing the block; so must the indentation test.
+    name: 'quoted-indented-code.md',
+    caught: false,
+    why: 'a quote marker is the container prefix, not the block content',
+    body:
+      'Some prose first.\n\n>\n>     Decide what to buy<strong>adapter</strong> selection follows.\n',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',
