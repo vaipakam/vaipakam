@@ -55,25 +55,29 @@ export function useOfferChildLoans(
   offerType: number | null,
 ): UseOfferChildLoansResult {
   const chain = useReadChain();
-  const [group, setGroup] = useState<OfferGroup | null>(null);
-  const [count, setCount] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [truncated, setTruncated] = useState(false);
+  // Tagged with the whole question — chain, offer, side. The clear-then-fetch
+  // this replaces was already reaching for the right outcome (its own comment
+  // says "so navigating between offers can't briefly show the previous offer's
+  // children under the new one") but doing it from an effect, which runs after
+  // the paint it was meant to prevent. Deriving removes the frame instead of
+  // shortening it.
+  const reqKey =
+    offerId === null || offerType === null
+      ? null
+      : `${chain.chainId}|${offerId}|${offerType}`;
+  const [result, setResult] = useState<{
+    key: string;
+    group: OfferGroup | null;
+    count: number;
+    truncated: boolean;
+  } | null>(null);
 
   useEffect(() => {
-    if (offerId === null || offerType === null) {
-      setGroup(null);
-      setCount(0);
-      setTruncated(false);
-      return;
-    }
+    if (!reqKey || offerId === null || offerType === null) return;
     let cancelled = false;
-    // Clear immediately on a keyed (re)load so navigating between offers can't
-    // briefly show the previous offer's children under the new one (Codex P3).
-    setGroup(null);
-    setCount(0);
-    setTruncated(false);
-    setLoading(true);
+    const commit = (group: OfferGroup | null, count: number, truncated: boolean) => {
+      if (!cancelled) setResult({ key: reqKey, group, count, truncated });
+    };
     void (async () => {
       try {
         // 1. Enumerate child loanIds from the offer's activity. DIRECT fills emit
@@ -156,23 +160,24 @@ export function useOfferChildLoans(
         // 3. Group through the shared logic → the single row for this offer.
         const groups = groupLoansByOffer(summaries, EMPTY_RISKS);
         const match = groups.find((g) => g.offerId === offerId) ?? null;
-        setGroup(match);
-        setCount(summaries.length);
-        setTruncated(hitCap);
+        commit(match, summaries.length, hitCap);
       } catch {
-        if (!cancelled) {
-          setGroup(null);
-          setCount(0);
-          setTruncated(false);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+        commit(null, 0, false);
       }
     })();
     return () => {
       cancelled = true;
+      // Dropped on the way out, so returning to the same offer after leaving it
+      // reads as loading rather than as the child list from the previous visit.
+      setResult(null);
     };
-  }, [chain.chainId, offerId, offerType]);
+  }, [chain.chainId, offerId, offerType, reqKey]);
 
-  return { group, count, loading, truncated };
+  const matched = result?.key === reqKey;
+  return {
+    group: matched ? result.group : null,
+    count: matched ? result.count : 0,
+    loading: reqKey !== null && !matched,
+    truncated: matched ? result.truncated : false,
+  };
 }
