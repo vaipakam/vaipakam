@@ -1,13 +1,15 @@
-# apps/defi: nine "reading a ref while rendering" complaints, sorted into two real fixes and seven deliberate designs
+# apps/defi: nine "reading a ref while rendering" complaints, sorted into three real fixes and six deliberate designs
 
 The lending app's linting flagged nine places that touch a short-term scratch
 value — the kind of holder a component uses to remember something across
 renders without redrawing when it changes — while the screen is being drawn.
-The tool treats every one of these as a fault. Seven of them are not, and this
-change is mostly about writing down which is which, so the next person to see
-the warnings does not "fix" a guard that exists on purpose.
+The tool treats every one of these as a fault. Six of them are not, and much of
+this change is about writing down which is which, so the next person to see the
+warnings does not "fix" a guard that exists on purpose. The other three are real,
+and one of those only became clear during review — it is described last, because
+it started out on the "deliberate" side of the ledger.
 
-**Two were genuine and are now fixed.** The active-offer list and the loan list
+**Two were obviously genuine and are now fixed.** The active-offer list and the loan list
 each keep a note of the newest block the app is confident about, so that a
 background refresh can catch up on anything it missed. The note was being
 updated while the screen was drawn, which is not safe in the drawing model React
