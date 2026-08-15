@@ -219,6 +219,29 @@ const FIXTURES = [
     ],
   },
   {
+    // A `>` inside a quoted attribute value ends the tag early for a
+    // `<[^>]*>` strip, spilling the rest of the attribute into the text — and
+    // the spilled `B` sat between `buy` and `adapter`, so the phrase normalized
+    // to `buybadapter` and the mention was MISSED. The quote-aware walk ends
+    // the tag where the tag ends. (This is also what CodeQL reports as an
+    // incomplete one-pass strip; nothing here reaches an HTML sink, but the
+    // observation behind the query is correct and this is the fix for it.)
+    name: 'attr-gt.docx',
+    caught: true,
+    why: 'a quoted `>` does not end a tag',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p><w:r>' +
+          '<w:t>Deploy the VPFI buy</w:t>' +
+          '<w:ins w:author="A > B"/>' +
+          '<w:t>adapter before launch</w:t>' +
+          '</w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
     // Round 10 P1, the other direction. A worksheet using inline strings gives
     // each cell its own element; with no boundary between them two unrelated
     // cells fused into a mention that no cell contains.

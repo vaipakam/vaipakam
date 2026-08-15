@@ -1172,6 +1172,73 @@ function decodeXmlPart(buf) {
   return buf.toString('utf8');
 }
 
+const CDATA = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
+/** Elements a reader sees as a break between blocks. NOT `w:tab`: a tab inside
+ *  a paragraph is inline whitespace, the same call the space already gets. */
+const OFFICE_BLOCK_TAG =
+  /^<(?:\/(?:w:p|w:tc|w:tr|a:p|a:tc|si|c|row)|(?:w:br|w:cr|a:br))\b/;
+/** Reader-visible attributes — a drawing's accessibility description is read
+ *  aloud by assistive technology, so it is text even though it lives in a tag. */
+const OFFICE_ALT_TEXT = /\b(?:descr|title|alt)\s*=\s*"([^"]*)"/gi;
+
+/**
+ * Remove Office XML markup, keeping what the reader sees.
+ *
+ * A forward walk, NOT `replace(/<[^>]*>/g, …)`, for two reasons that turn out
+ * to be the same reason. The regex ends a tag at the first `>`, so
+ * `title="1 > 0"` closes early and the rest of the attribute is emitted as
+ * text; this walk tracks quoting and ends the tag where the tag ends. And a
+ * one-pass regex strip of `<…>` is what CodeQL reports as incomplete
+ * multi-character sanitization — correctly, in the sense that the pass CAN
+ * leave bracket-shaped text behind. Nothing here reaches an HTML sink (the
+ * output feeds the token normalizer), so it is not the injection the query
+ * names, but the underlying observation is right and the walk has neither
+ * problem.
+ *
+ * Iterating the regex to a fixed point is NOT the alternative: this file
+ * already learned, in the markup path, that doing so splices leftover
+ * fragments into tags the document never contained and fails clean files.
+ */
+function stripOfficeTags(text) {
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const lt = text.indexOf('<', i);
+    if (lt === -1) {
+      out += text.slice(i);
+      break;
+    }
+    out += text.slice(i, lt);
+    let j = lt + 1;
+    let quote = '';
+    for (; j < text.length; j++) {
+      const c = text[j];
+      if (quote) {
+        if (c === quote) quote = '';
+      } else if (c === '"' || c === "'") {
+        quote = c;
+      } else if (c === '>') {
+        break;
+      }
+    }
+    if (j >= text.length) {
+      // Unterminated `<`. Emit the remainder as text minus the stray bracket
+      // rather than dropping it — a truncated part is exactly where a mention
+      // would hide, and discarding the tail would be a silent exemption.
+      out += text.slice(lt + 1);
+      break;
+    }
+    const tag = text.slice(lt, j + 1);
+    if (OFFICE_BLOCK_TAG.test(tag)) {
+      out += '\n\n';
+    } else {
+      for (const m of tag.matchAll(OFFICE_ALT_TEXT)) out += ` ${m[1]} `;
+    }
+    i = j + 1;
+  }
+  return out;
+}
+
 function extractOfficeText(buf) {
   // Locate the End Of Central Directory record by scanning back from the tail;
   // the comment field is variable-length, so the signature is not at a fixed
@@ -1284,28 +1351,15 @@ function extractOfficeText(buf) {
     // The spreadsheet side needs `</c>` and `</row>`: a worksheet using inline
     // strings puts each cell's text in its own element, and with no boundary
     // between them two unrelated cells fused into a mention no cell contains.
-    const CDATA = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
-    const BLOCK =
-      /<\/(?:w:p|w:tc|w:tr|a:p|a:tc|si|c|row)>|<(?:w:br|w:cr|a:br)\b[^>]*>/g;
-    const ALT_TEXT = /\b(?:descr|title|alt)\s*=\s*"([^"]*)"/gi;
     out.push(
       renderRefs(
-        decodeXmlPart(xml)
-          // CDATA is reader-visible text wearing markup's brackets. Unwrap it
-          // FIRST, neutralising the angle brackets it may contain so the tag
-          // strip below cannot re-read its contents as elements — otherwise a
-          // paragraph written as CDATA was deleted whole.
-          .replace(CDATA, (_m, inner) => inner.replace(/[<>]/g, ' '))
-          .replace(BLOCK, '\n\n')
-          // A drawing's accessibility description IS reader-visible — assistive
-          // technology reads it aloud — but it lives in an attribute, so the
-          // blanket tag removal deleted it with the markup. Keep the standard
-          // title/description attributes and drop the rest of the tag.
-          .replace(/<[^>]*>/g, (tag) => {
-            let kept = '';
-            for (const m of tag.matchAll(ALT_TEXT)) kept += ` ${m[1]} `;
-            return kept;
-          }),
+        // CDATA is reader-visible text wearing markup's brackets. Unwrap it
+        // FIRST, neutralising the angle brackets it may contain so the tag
+        // walk below cannot re-read its contents as elements — otherwise a
+        // paragraph written as CDATA was deleted whole.
+        stripOfficeTags(
+          decodeXmlPart(xml).replace(CDATA, (_m, inner) => inner.replace(/[<>]/g, ' ')),
+        ),
       ),
     );
   }
