@@ -741,9 +741,32 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
         // Bounded work without a bounded window: an autolink admits neither
         // whitespace nor `<`, so for any VALID one the first `>` after `i` is
         // necessarily its terminator. Test exactly that substring, anchored at
-        // both ends. `indexOf` is a single forward scan rather than a slice of
-        // the remaining file per `<`.
-        const close = text.indexOf('>', i + 1);
+        // both ends.
+        //
+        // Walk forward ONCE, abandoning the candidate at the first character an
+        // autolink cannot contain. `indexOf('>')` looked bounded and was not:
+        // on a document with many unmatched `<` before a distant `>`, every
+        // opening bracket rescanned the same suffix, making normalization
+        // quadratic — ~25 s on 1 MB against ~11 s normally, with 2 MB failing
+        // to finish. A blocking CI gate that a malformed document can stall is
+        // a denial of the gate itself, which is a worse failure than the false
+        // positive the autolink branch exists to prevent.
+        //
+        // Whitespace and `<` are both disallowed inside an autolink, so either
+        // proves this `<` opens none. Each character is examined by at most one
+        // candidate before that candidate is abandoned, so the total stays
+        // linear in the file.
+        let close = -1;
+        for (let j = i + 1; j < text.length; j++) {
+          const ch = text[j];
+          if (ch === '>') {
+            close = j;
+            break;
+          }
+          if (ch === '<' || ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            break;
+          }
+        }
         const auto =
           close === -1
             ? null
