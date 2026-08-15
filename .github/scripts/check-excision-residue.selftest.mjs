@@ -566,6 +566,37 @@ const FIXTURES = [
     body: 'Decide what to [buy [](/inner)](/middle) adapter selection follows.\n',
   },
   {
+    // Round 15 P1, a regression from round 14. Links cannot contain links, but
+    // IMAGES CAN — `![alt [x](/inner)](/image)` is a valid image whose
+    // description holds a link. Clearing the whole opener stack discarded the
+    // image opener and left `/image` in the rendered stream between the words.
+    name: 'image-with-link.md',
+    caught: true,
+    why: 'an image opener survives an inner link',
+    body: 'VPFI ![VPFI [buy](/inner)](/image) adapter selection follows.\n',
+  },
+  {
+    // Round 15 P1, a regression from round 14's memo guard. A line of spaces is
+    // BLANK under CommonMark; requiring two adjacent newlines missed it, so the
+    // walk crossed the paragraph, ran to EOF, and set the absence memo on
+    // evidence it had no right to — silencing every later destination.
+    name: 'memo-space-line.md',
+    caught: true,
+    why: 'a whitespace-only line is a paragraph break',
+    body:
+      '[x](unterminated\n   \nOperators must deploy the [buy](zzzz) adapter before launch.\n',
+  },
+  {
+    // Round 15 P2 — a FALSE POSITIVE on live prose, which is the class the
+    // notFollowedBy guard exists to prevent. Treasury buyback is a SURVIVING
+    // feature; split by inline formatting, the raw gap held the tags, the guard
+    // declined, and the gate reported live work as excision residue.
+    name: 'buyback-formatted.md',
+    caught: false,
+    why: 'the surviving-feature guard must read the rendered stream',
+    body: 'The treasury uses a fixed-rate buy<strong>back</strong> auction.\n',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',
@@ -704,6 +735,28 @@ function pdfFixtures() {
         return Buffer.from(
           `%PDF-1.4\n1 0 obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
         );
+      })(),
+    },
+    {
+      // Round 15 P1. PDF end-of-line is CR, LF or CRLF; looking only for LF let
+      // a CR-terminated comment swallow the rest of the stream — the same
+      // failure the comment skip was added to prevent, one line ending over.
+      name: 'comment-cr.pdf',
+      caught: true,
+      why: 'a PDF comment ends at CR as well as LF',
+      buf: (() => {
+        const raw = deflateSync(
+          Buffer.from(
+            '% unmatched ( in comment\rBT (Operators must deploy the VPFI buy adapter) Tj ET',
+          ),
+        );
+        return Buffer.concat([
+          Buffer.from(
+            `%PDF-1.4\n1 0 obj\n<< /Length ${raw.length} /Filter /FlateDecode >>\nstream\n`,
+          ),
+          raw,
+          Buffer.from('\nendstream\nendobj\n'),
+        ]);
       })(),
     },
     {

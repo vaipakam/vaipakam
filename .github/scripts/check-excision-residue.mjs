@@ -394,7 +394,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [20, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "66b6fb656f47"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [22, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "c16b27679a6b"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -651,18 +651,22 @@ function linkClosePositions(text) {
       openers.length = 0;
       continue;
     }
-    if (c === '[') openers.push(i);
+    // `![` opens an IMAGE, `[` a link. The distinction decides what an inner
+    // link deactivates.
+    if (c === '[') openers.push({ at: i, image: text[i - 1] === '!' });
     else if (c === ']' && openers.length > 0) {
       openers.pop();
       if (text[i + 1] === '(' || text[i + 1] === '[') {
         closes.add(i);
-        // LINKS CANNOT CONTAIN LINKS. Once an inner one is recognized,
-        // CommonMark marks every enclosing opener INACTIVE, so the outer
-        // bracket pair renders literally — including its `](/middle)`, which a
-        // reader sees between the words. Popping without deactivating treated
-        // both closers as destinations, removed the visible text between them,
-        // and synthesized a mention.
-        openers.length = 0;
+        // LINKS CANNOT CONTAIN LINKS, so completing one marks every enclosing
+        // LINK opener inactive and the outer pair renders literally. IMAGES
+        // CAN contain links, though — `![alt [x](/inner)](/image)` is a valid
+        // image whose description holds a link — so clearing the whole stack
+        // discarded a real image opener and left its `/image` destination in
+        // the rendered stream. Deactivate the link openers; keep the images.
+        for (let k = openers.length - 1; k >= 0; k--) {
+          if (!openers[k].image) openers.splice(k, 1);
+        }
       }
     }
   }
@@ -792,7 +796,14 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
         else if (text[j] === close) {
           depth--;
           if (depth === 0) break;
-        } else if (text[j] === '\n' && text[j + 1] === '\n') break; // unterminated
+        } else if (text[j] === '\n' && /^[ \t]*\n/.test(text.slice(j + 1))) {
+          // A line of spaces or tabs is BLANK under CommonMark, and requiring
+          // two adjacent newlines missed it — the walk then crossed the
+          // paragraph, ran to EOF, and set the absence memo on evidence it had
+          // no right to. Same rule as the label scan uses, which already
+          // allowed the whitespace.
+          break; // unterminated
+        }
       }
       // …but ONLY when the walk actually reached EOF. It also stops at a blank
       // line (an unterminated destination cannot span one), and recording
@@ -1300,8 +1311,12 @@ function extractPdfText(buf) {
       // is the same failure the balanced walk was added to fix, from the other
       // direction.
       if (content[k] === '%') {
-        const nl = content.indexOf('\n', k);
-        if (nl === -1) break;
+        // PDF end-of-line is CR, LF or CRLF — looking only for LF left a
+        // CR-terminated comment swallowing the rest of the stream, which is the
+        // same failure the comment skip was added to prevent.
+        let nl = k + 1;
+        while (nl < content.length && content[nl] !== '\n' && content[nl] !== '\r') nl++;
+        if (nl >= content.length) break;
         k = nl;
         continue;
       }
@@ -1996,10 +2011,24 @@ function scanFile(path) {
     // identifier test, and the guard did not apply. The gate then reported a
     // live treasury-buyback sentence as removed-surface residue. Every check
     // that decides what a word IS has to read the rendered stream.
-    const gap = renderRefs(text.slice(map[end - 1] + 1, map[end]));
+    // …and the recognized TAGS have to come out for the same reason, which is
+    // the one direction that reasoning still had not reached. `The treasury
+    // uses a fixed-rate buy<strong>back</strong> auction` normalizes to
+    // `fixedratebuyback`, so the surviving-feature guard should fire — but the
+    // raw gap held `</strong><strong>`, failed the intra-word test, and the
+    // gate reported LIVE treasury-buyback prose as excision residue. That is
+    // the exact false positive the `notFollowedBy` guard exists to prevent,
+    // reached through formatting instead of through an entity.
+    const readGap = (from, to) =>
+      renderRefs(
+        MARKUP_EXTENSIONS.test(path) && !literalAt(from)
+          ? stripRecognizedTags(from, to)
+          : text.slice(from, to),
+      );
+    const gap = readGap(map[end - 1] + 1, map[end]);
     if (!/^[-_]*$/.test(gap)) return false;
     return /^[A-Za-z0-9_-]+$/.test(
-      renderRefs(text.slice(map[end], identifierSpanEnd(map[end + suffixLength - 1]))),
+      readGap(map[end], identifierSpanEnd(map[end + suffixLength - 1])),
     );
   };
 
