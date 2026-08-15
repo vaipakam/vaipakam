@@ -76,7 +76,7 @@ Accept되는 순간:
 - Loan clock이 시작됩니다
 
 Loaned amount에서 작은 **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**가 차감되어 protocol
-treasury로 routed됩니다. 그래서 borrower는 1,000 USDC가 아니라 998 USDC를
+treasury로 routed됩니다. 그래서 borrower는 1,000 USDC가 아니라 `{liveValue:exampleBorrowerReceives}` USDC를
 받습니다. (이 fee를 **VPFI**로 pay할 수도 있고, 그 경우 borrower는
 1,000 USDC 전액을 받습니다 — VPFI는 아래에서 더 설명합니다.)
 
@@ -91,16 +91,16 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 borrower가 **Repay**를 click하고 transaction에 sign하면, 1,006.58
 USDC가 loan settlement로 이동합니다. 여기서:
 
-- 당신은 **1,006.44 USDC**를 받습니다 (principal + interest에서
+- 당신은 **`{liveValue:exampleLenderNet}` USDC**를 받습니다 (principal + interest에서
   interest 부분에만 적용되는 `{liveValue:treasuryFeeBps}`% Yield Fee를 뺀 금액)
-- Treasury는 **0.13 USDC**를 Yield Fee로 받습니다
+- Treasury는 **`{liveValue:exampleTreasuryYieldFee}` USDC**를 Yield Fee로 받습니다
 - Borrower의 WETH는 unlock됩니다
 
 이 숫자들은 cent 단위로 반올림한 값입니다. 정확한 interest는 6.575342 USDC,
-정확한 Yield Fee는 0.131506 USDC이므로, 반올림한 숫자끼리 빼면 1 cent가
+정확한 Yield Fee는 `{liveValue:exampleTreasuryYieldFeeExact}` USDC이므로, 반올림한 숫자끼리 빼면 1 cent가
 어긋납니다. protocol은 반올림하지 않은 금액으로 settle합니다.
 
-dashboard에 **Claim** button이 보입니다. click하면 1,006.44 USDC가
+dashboard에 **Claim** button이 보입니다. click하면 `{liveValue:exampleLenderNet}` USDC가
 settlement에서 당신의 wallet으로 이동합니다. borrower도 claim하면 WETH가
 borrower의 wallet으로 돌아갑니다. loan은 close됩니다.
 

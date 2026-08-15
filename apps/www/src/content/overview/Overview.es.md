@@ -78,7 +78,7 @@ En el momento que acepta:
 
 Una pequeña **Comisión de iniciación del préstamo (`{liveValue:loanInitiationFeeBps}`%)** se descuenta
 del importe prestado y se envía al tesoro del protocolo. Así que el
-prestatario recibe 998 USDC, no 1.000. (Puedes pagar la comisión en
+prestatario recibe `{liveValue:exampleBorrowerReceives}` USDC, no 1.000. (Puedes pagar la comisión en
 **VPFI** y entonces el prestatario recibe los 1.000 completos —
 más sobre VPFI más abajo.)
 
@@ -93,17 +93,17 @@ Intereses = 1.000 USDC × 8% × (30 / 365) = ~6,58 USDC
 Hace clic en **Devolver**, firma una transacción, y 1.006,58 USDC
 entran en la liquidación del préstamo. De ahí:
 
-- Tú recibes **1.006,44 USDC** (principal + intereses menos una
+- Tú recibes **`{liveValue:exampleLenderNet}` USDC** (principal + intereses menos una
   Comisión sobre Rendimiento del `{liveValue:treasuryFeeBps}`% aplicada únicamente a los intereses)
-- El tesoro recibe **0,13 USDC** como Comisión sobre Rendimiento
+- El tesoro recibe **`{liveValue:exampleTreasuryYieldFee}` USDC** como Comisión sobre Rendimiento
 - El WETH del prestatario se desbloquea
 
 Estas cifras están redondeadas al céntimo. Los intereses exactos son
-6,575342 USDC y la Comisión sobre Rendimiento exacta 0,131506 USDC, así
+6,575342 USDC y la Comisión sobre Rendimiento exacta `{liveValue:exampleTreasuryYieldFeeExact}` USDC, así
 que restar una cifra redondeada de otra te deja a un céntimo — el
 protocolo liquida con los importes sin redondear.
 
-En tu panel ves un botón **Reclamar**. Al hacer clic, los 1.006,44
+En tu panel ves un botón **Reclamar**. Al hacer clic, los `{liveValue:exampleLenderNet}`
 USDC se mueven de la liquidación a tu billetera. El prestatario hace
 clic en reclamar y su WETH vuelve a su billetera. El préstamo se
 cierra.

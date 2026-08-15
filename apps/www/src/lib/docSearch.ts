@@ -23,7 +23,14 @@
  */
 
 import type { TFunction } from 'i18next';
-import { KNOB_DEFAULTS, formatKnob, type KnobName } from './liveValueKnobs';
+import {
+  KNOB_DEFAULTS,
+  defaultKnobResolution,
+  formatKnob,
+  isDerived,
+  resolveDerived,
+  type KnobName,
+} from './liveValueKnobs';
 
 /**
  * The four doc kinds the search covers. The route + label mapping
@@ -175,6 +182,15 @@ function substituteLiveValueDefaults(text: string, fileLocale: string): string {
   // token in a code sample is better indexed by its value than by its
   // syntax.
   return text.replace(/`?\{liveValue:([a-zA-Z0-9]+)\}`?/g, (raw, knob: string) => {
+    if (isDerived(knob)) {
+      // Index the derived figure by its VALUE too (#1664 item 1) —
+      // otherwise searching for a number printed on a page misses the
+      // section that prints it, which is the exact failure this
+      // substitution exists to prevent.
+      const { values, live } = defaultKnobResolution();
+      const r = resolveDerived(knob, values, live);
+      return formatKnob(r.value, r.format, fileLocale);
+    }
     const spec = KNOB_DEFAULTS[knob as KnobName];
     return spec ? formatKnob(spec.defaultValue, spec.format, fileLocale) : raw;
   });

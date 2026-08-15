@@ -36,7 +36,15 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import { visit } from 'unist-util-visit';
 import type { InlineCode } from 'mdast';
-import { KNOB_DEFAULTS, formatKnob, LIVE_VALUE_TOKEN_RE, type KnobName } from '../src/lib/liveValueKnobs';
+import {
+  KNOB_DEFAULTS,
+  defaultKnobResolution,
+  formatKnob,
+  isDerived,
+  resolveDerived,
+  LIVE_VALUE_TOKEN_RE,
+  type KnobName,
+} from '../src/lib/liveValueKnobs';
 
 export function substituteLiveValuesInMarkdown(markdown: string, locale: string): string {
   const tree = unified().use(remarkParse).parse(markdown);
@@ -47,17 +55,27 @@ export function substituteLiveValuesInMarkdown(markdown: string, locale: string)
     const match = LIVE_VALUE_TOKEN_RE.exec(node.value);
     if (!match) return;
 
-    const spec = KNOB_DEFAULTS[match[1] as KnobName];
-    // An unregistered knob is left exactly as written — same rule the
+    const name = match[1];
+    const spec = KNOB_DEFAULTS[name as KnobName];
+    const derived = isDerived(name);
+    // An unregistered token is left exactly as written — same rule the
     // rendered pages follow, so an authoring typo stays visible on the
     // page instead of becoming a confidently wrong number.
-    if (!spec) return;
+    if (!spec && !derived) return;
 
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if (start === undefined || end === undefined) return;
 
-    edits.push({ start, end, text: formatKnob(spec.defaultValue, spec.format, locale) });
+    let text: string;
+    if (derived) {
+      const { values, live } = defaultKnobResolution();
+      const r = resolveDerived(name, values, live);
+      text = formatKnob(r.value, r.format, locale);
+    } else {
+      text = formatKnob(spec.defaultValue, spec.format, locale);
+    }
+    edits.push({ start, end, text });
   });
 
   // Descending, so each splice leaves earlier offsets valid.
