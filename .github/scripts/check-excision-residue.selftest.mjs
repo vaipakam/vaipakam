@@ -744,6 +744,67 @@ const FIXTURES = [
       '- ```\n  Decide what to buy<strong>adapter</strong> selection follows.\n  ```\n',
   },
   {
+    // Round 22 P1, accepted in HALF. CommonMark allows a Setext underline of
+    // ONE or more characters; requiring three missed the single-character
+    // form, fusing the paragraphs either side of a heading. Only the `=` form
+    // is relaxed — a lone `-` also spells an empty list item, and #1758
+    // carries that half.
+    name: 'setext-single-equals.md',
+    caught: false,
+    why: 'a single `=` is a valid level-one underline, and a heading is a boundary',
+    body: 'Decide what to buy\n=\nAdapter selection follows.\n',
+  },
+  {
+    // Round 22 P1. The comment stripper ended a `//` comment at LF only, so a
+    // CR-only file's first comment swallowed the rest of the prefix and every
+    // structural quote after it went uncounted. The parity then failed toward
+    // GREEN, which is the one direction a gate must never fail in.
+    name: 'jsonc-cr-comment.jsonc',
+    caught: true,
+    why: 'a `//` comment ends at CR as well as LF',
+    body: '{\r  // A 6" clearance is required.\r  "operation":"buy:adapter"\r}\r',
+  },
+  {
+    // Round 22 P1. CommonMark forbids a backtick in a BACKTICK fence's info
+    // string. Accepting one opened a fence that never existed, and every line
+    // to the end of the file was then classified as code — live prose below it
+    // read as literal and passed.
+    name: 'fence-info-backtick.md',
+    caught: true,
+    why: 'a backtick in the info string means the line is not a fence opener',
+    body:
+      '```bad`info\nOperators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    // Round 22 P2. Containers interleave in BOTH orders. Two fixed-order
+    // replacements handled `> - ` and missed `- > `, because stripping the
+    // list marker only exposes the quote after the quote pass has already run.
+    name: 'fence-list-quote.md',
+    caught: false,
+    why: 'a fence inside a quote inside a list is still a fence',
+    body:
+      '- > ```\n  > Decide what to buy<strong>adapter</strong> selection follows.\n  > ```\n',
+  },
+  {
+    // Round 22 P2. Collapsing every nonzero quote depth into "quoted" made
+    // `>` → `>>` read as a paragraph continuation, fusing two fragments that
+    // sit in different nested quote blocks.
+    name: 'quote-depth.md',
+    caught: false,
+    why: 'entering a nested quote starts a new block',
+    body: '> Decide what to buy\n>> Adapter selection follows.\n',
+  },
+  {
+    // Round 22 P2. Deleting every unrecognized named reference assumed they
+    // all render as ignorable punctuation. A browser renders an unknown
+    // reference as its own source text, so deleting it manufactured a dead
+    // name out of clean prose.
+    name: 'unknown-entity.html',
+    caught: false,
+    why: 'an unrecognized character reference stays visible and separates words',
+    body: '<p>Decide what to buy&bogus;adapter selection follows.</p>\n',
+  },
+  {
     // Round 21 P1. A `"` inside a `.jsonc` COMMENT cannot open a JSON string,
     // but the structural-quote parity counted it — so a single quote in a
     // comment above flipped the span out of the string-value branch, the `:`
