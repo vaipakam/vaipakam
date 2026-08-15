@@ -394,7 +394,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [19, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "7e9f9f14d73c"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [20, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "66b6fb656f47"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -654,7 +654,16 @@ function linkClosePositions(text) {
     if (c === '[') openers.push(i);
     else if (c === ']' && openers.length > 0) {
       openers.pop();
-      if (text[i + 1] === '(' || text[i + 1] === '[') closes.add(i);
+      if (text[i + 1] === '(' || text[i + 1] === '[') {
+        closes.add(i);
+        // LINKS CANNOT CONTAIN LINKS. Once an inner one is recognized,
+        // CommonMark marks every enclosing opener INACTIVE, so the outer
+        // bracket pair renders literally — including its `](/middle)`, which a
+        // reader sees between the words. Popping without deactivating treated
+        // both closers as destinations, removed the visible text between them,
+        // and synthesized a mention.
+        openers.length = 0;
+      }
     }
   }
   return closes;
@@ -785,7 +794,13 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
           if (depth === 0) break;
         } else if (text[j] === '\n' && text[j + 1] === '\n') break; // unterminated
       }
-      if (j >= text.length || text[j] !== close) {
+      // …but ONLY when the walk actually reached EOF. It also stops at a blank
+      // line (an unterminated destination cannot span one), and recording
+      // absence there claimed something about the whole rest of the file that
+      // one paragraph cannot establish — every later destination was then
+      // rejected unscanned and real mentions after it went unreported. A
+      // performance memo that is allowed to lie is worse than no memo.
+      if (j >= text.length) {
         // No UNESCAPED closer after `i`. The cheap `indexOf` pre-check above
         // cannot establish that — it finds escaped ones too, so a file whose
         // only `)` is written `\)` defeated the memo and every earlier `[x](`
@@ -1278,6 +1293,18 @@ function extractPdfText(buf) {
     // and the drawn phrase went unread. A partial decode is worse than none:
     // it looks like success.
     for (let k = 0; k < content.length; k++) {
+      // `%` starts a COMMENT that runs to end of line, and its text is not
+      // content — an unmatched `(` in one was read as opening a literal string,
+      // the balance walk then ran to EOF, and `break` abandoned every real
+      // string after it. Comment punctuation poisoning the rest of the stream
+      // is the same failure the balanced walk was added to fix, from the other
+      // direction.
+      if (content[k] === '%') {
+        const nl = content.indexOf('\n', k);
+        if (nl === -1) break;
+        k = nl;
+        continue;
+      }
       if (content[k] !== '(') continue;
       let depth = 1;
       let m = k + 1;
@@ -1824,7 +1851,16 @@ function scanFile(path) {
       // cannot count, so parity is checked here.
       let bs = 0;
       while (m.index - 1 - bs >= 0 && text[m.index - 1 - bs] === '\\') bs++;
-      if (bs % 2 === 1) continue;
+      if (bs % 2 === 1) {
+        // Rewind. The regex has already consumed everything through this
+        // candidate's closing run — and that closer may itself be a LIVE
+        // opener for the next span. Leaving `lastIndex` past it meant the real
+        // span was never seen, its contents were stripped as HTML, and a clean
+        // file was blocked. Resume one character after the ESCAPED opener so
+        // every later delimiter is reconsidered.
+        re.lastIndex = m.index + 1;
+        continue;
+      }
       // A backtick INSIDE a fence cannot open an inline span. Pairing across
       // the fence boundary let a stray backtick in a tilde-fenced block pair
       // with one in later prose, making the visible sentence between them

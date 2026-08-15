@@ -534,6 +534,38 @@ const FIXTURES = [
     body: 'Decide what to buy\\\\` <foo>`Adapter selection follows.\n',
   },
   {
+    // Round 14 P1, a regression from round 13's memo. The destination walk also
+    // stops at a BLANK LINE, and recording "no closer in the rest of the file"
+    // there claimed something one paragraph cannot establish — every later
+    // destination was rejected unscanned. A performance memo allowed to lie is
+    // worse than no memo.
+    name: 'memo-paragraph.md',
+    caught: true,
+    why: 'an unterminated destination in one paragraph says nothing about the next',
+    body:
+      '[x](unterminated\n\nOperators must deploy the [buy](zzzz) adapter before launch.\n',
+  },
+  {
+    // Round 14 P2, a regression from round 13's parity check. The regex had
+    // already consumed through the candidate's closing run, and that closer was
+    // itself the LIVE opener of the real span — so rejecting without rewinding
+    // meant the span was never seen and its `<foo>` was stripped as HTML.
+    name: 'codespan-rewind.md',
+    caught: false,
+    why: 'rejecting an escaped opener must not swallow the next live one',
+    body: 'Decide what to buy\\`-`<foo>`Adapter selection follows.\n',
+  },
+  {
+    // Round 14 P2. Links cannot contain links: once the inner one is
+    // recognized, CommonMark marks the enclosing opener INACTIVE and the outer
+    // pair renders literally, `](/middle)` and all — which the reader sees
+    // between the two words.
+    name: 'nested-link.md',
+    caught: false,
+    why: 'an inner link deactivates the bracket enclosing it',
+    body: 'Decide what to [buy [](/inner)](/middle) adapter selection follows.\n',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',
@@ -672,6 +704,30 @@ function pdfFixtures() {
         return Buffer.from(
           `%PDF-1.4\n1 0 obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
         );
+      })(),
+    },
+    {
+      // Round 14 P1, a regression from round 13's balanced walk. `%` starts a
+      // comment running to end of line; an unmatched `(` inside one was read as
+      // opening a literal string, the walk ran to EOF, and every real string
+      // after it was abandoned. Compressed, so the read-as-text fallback cannot
+      // paper over it.
+      name: 'comment-paren.pdf',
+      caught: true,
+      why: 'a `(` inside a content-stream comment opens nothing',
+      buf: (() => {
+        const raw = deflateSync(
+          Buffer.from(
+            '% unmatched ( in comment\nBT (Operators must deploy the VPFI buy adapter) Tj ET',
+          ),
+        );
+        return Buffer.concat([
+          Buffer.from(
+            `%PDF-1.4\n1 0 obj\n<< /Length ${raw.length} /Filter /FlateDecode >>\nstream\n`,
+          ),
+          raw,
+          Buffer.from('\nendstream\nendobj\n'),
+        ]);
       })(),
     },
     {
