@@ -393,8 +393,8 @@ const EXCLUDED_PREFIXES = [
  *                count is a known debt, not an endorsement.
  */
 const PINNED = new Map([
-  [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [24, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "93fd9649e758"]],
+  [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "e55d0810dc5d"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [25, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "3a38049375af"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -403,19 +403,19 @@ const PINNED = new Map([
   ["apps/agent/src/index.ts", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09f233130776"]],
   ["apps/agent/wrangler.jsonc", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "16989d142f84"]],
   ["apps/defi/src/App.tsx", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "92806307bc51"]],
-  ["apps/defi/src/contracts/config.ts", [3, "RETRACTION — removed-key notes on the deployment config shape", "604f8b92d10a"]],
+  ["apps/defi/src/contracts/config.ts", [3, "RETRACTION — removed-key notes on the deployment config shape", "2231e2c47b21"]],
   ["apps/defi/src/hooks/useAdminKnobValues.ts", [1, "RETRACTION — notes the standalone receiver is gone and knobs moved", "ab0d7d7351d4"]],
   ["apps/defi/src/hooks/useTimelockPendingChanges.ts", [1, "RETRACTION — replaces a receiver-specific skip that no longer applies", "9d0dfae177a2"]],
   ["apps/defi/src/i18n/glossary.ts", [2, "HISTORICAL — do-not-translate entry retained for historical copy", "d6f75676c2c4"]],
-  ["apps/defi/src/lib/logIndex.ts", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "84abd6ec14c8"]],
+  ["apps/defi/src/lib/logIndex.ts", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f9ec8ce28acc"]],
   ["apps/defi/src/pages/AdminDashboard.tsx", [1, "RETRACTION — notes why the mirror-chain receiver knobs are gone", "233ed60a2fbe"]],
   ["apps/indexer/migrations/0024_purge_retired_vpfi_events.sql", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d8782675d6b1"]],
   ["apps/www/src/content/whitepaper/Whitepaper.en.md", [3, "LIVE-TEXT — user-facing; verify against the §8 supersede banner before raising", "a5e91edf7614"]],
   ["apps/www/src/pages/BuyVPFIMarketing.tsx", [1, "LIVE-TEXT — user-facing marketing surface; the most legally sensitive entry here", "b59bd95c0660"]],
   ["contracts/.env.example", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "dfa880f61164"]],
   ["contracts/.gas-snapshot", [17, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "cd5853c00406"]],
-  ["contracts/RUNBOOK.md", [18, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "2c1b9d4c142c"]],
-  ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "673eeaa8357a"]],
+  ["contracts/RUNBOOK.md", [18, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e874f90656ff"]],
+  ["contracts/deployments/CCIP-INFRA-ADDRESSES.md", [4, "HISTORICAL — deployed-address record", "025166244bba"]],
   ["contracts/foundry.toml", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f4c66b17ce66"]],
   ["contracts/script/AnvilNewPositiveFlows.s.sol", [1, "RETRACTION — removed-step note", "05abc1c31c8e"]],
   ["contracts/script/ConfigureCcip.s.sol", [3, "RETRACTION — removed-step note", "3e71b78fbcf8"]],
@@ -435,45 +435,45 @@ const PINNED = new Map([
   ["contracts/src/facets/VPFIDiscountFacet.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5e55ca2e8246"]],
   ["contracts/src/interfaces/IVaipakamErrors.sol", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "115f722e4422"]],
   ["contracts/src/libraries/LibKeeperReward.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c2eb45565824"]],
-  ["contracts/src/libraries/LibVaipakam.sol", [2, "RETRACTION — replaces the dangling storage-struct header that labelled sequencer slots", "1819ae773c70"]],
+  ["contracts/src/libraries/LibVaipakam.sol", [2, "RETRACTION — replaces the dangling storage-struct header that labelled sequencer slots", "4d11b042c3ba"]],
   ["contracts/test/CcipDeploymentRehearsalTest.t.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8ec41b19f570"]],
   ["contracts/test/mocks/MockCrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "54536afa88ba"]],
   ["docs/DesignsAndPlans/BorrowerPlatformFeeResearch.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "0b2df05b7d0a"]],
-  ["docs/DesignsAndPlans/CloudflareStagingDeployPlan.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "076e023c2c47"]],
+  ["docs/DesignsAndPlans/CloudflareStagingDeployPlan.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "68d7c258ecf9"]],
   ["docs/DesignsAndPlans/CrossChainRewardSystem.md", [8, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "db8ac858db48"]],
   ["docs/DesignsAndPlans/DecentralizedPlatformArchitecture.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c9a9c8c91d2e"]],
   ["docs/DesignsAndPlans/EventSourcingAudit.md", [14, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "b2356be9cbf0"]],
-  ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [31, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "6e989a58d349"]],
+  ["docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md", [31, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "ce9ae3a19380"]],
   ["docs/DesignsAndPlans/OfferFillModesDesign.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "d1f7403606be"]],
-  ["docs/DesignsAndPlans/OssificationRoadmap.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "82079362333a"]],
-  ["docs/DesignsAndPlans/Research-404-OssificationRoadmap.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "19f52bf4b075"]],
+  ["docs/DesignsAndPlans/OssificationRoadmap.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8ffefa95f532"]],
+  ["docs/DesignsAndPlans/Research-404-OssificationRoadmap.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "319219216d8f"]],
   ["docs/DesignsAndPlans/Stage3WorkerSplitPlan.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "a5754fbe447c"]],
   ["docs/DesignsAndPlans/TreasuryBuyback.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "866f16a74d4e"]],
   ["docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7f0a68b88a8c"]],
-  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7c9b3628f90c"]],
+  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "97e86b8c48a1"]],
   ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "242c30f2f5e3"]],
   ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "4b76320c09c4"]],
   ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "857792c509dd"]],
   ["docs/ReleaseNotes/unreleased/1651-excision-residue-ratchet.md", [1, "RETRACTION — this gate's own fragment, quoting the dead phrase as the example of what now fails", "fba24ce27446"]],
   ["docs/ReleaseNotes/unreleased/1672-layerzero-residue-removal.md", [3, "RETRACTION — describes text that WRONGLY implied the surface was live, and its removal", "a49a87d89dbb"]],
   ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "83bed4aa55e1"]],
-  ["docs/ToDo.md", [31, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "065b1272f94c"]],
+  ["docs/ToDo.md", [31, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e68c77fade19"]],
   ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c1d15d0eef44"]],
   ["docs/internal/DeployOnTestnet.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "55563580671a"]],
   ["docs/internal/Issue687A-FrontendExcisionScout.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5e5014a10efb"]],
   ["docs/internal/PendingTasks-2026-05-14.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "60d70d431e51"]],
   ["docs/internal/RiskCommitteeSignOffQuestionnaire.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "48e800ec4569"]],
-  ["docs/internal/SecurityScanQuestionnaire.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "316ee7c95853"]],
-  ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "52844cf3a903"]],
+  ["docs/internal/SecurityScanQuestionnaire.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "9bd9487effb2"]],
+  ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09b634ef7230"]],
   ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "023e9b4fd22a"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "0284187b3cbb"]],
-  ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "9ece24feef35"]],
+  ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "e9ba0096f4b1"]],
   ["docs/ops/BaseSepoliaDeploy.md", [26, "LIVE-TEXT — known debt", "f7030caedd23"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "ab9aa52ffbe1"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "874f9b73f212"]],
-  ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "f9c2a40c719d"]],
+  ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "db44b1e5f885"]],
   ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "967c59306dff"]],
-  ["docs/ops/VPFITokenRotationRunbook.md", [1, "HISTORICAL — rotation-scope note", "7fe351cf758b"]],
+  ["docs/ops/VPFITokenRotationRunbook.md", [1, "HISTORICAL — rotation-scope note", "03bb064feed2"]],
   ["docs/ops/tenderly-paste/Diamond-full.json", [45, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "9256252cfcc1"]],
   ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "5f91cb0ab0b5"]],
   ["ops/subgraph/abis/Diamond.json", [24, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "af0f882df245"]],
@@ -1457,8 +1457,13 @@ const OFFICE_TEXT_PARTS = /^(?:(?:word|xl|ppt)\/(?!.*_rels\/).*\.xml|docProps\/[
  * empty, since there is no central directory — and the gate scanned nothing.
  * A performance shortcut that any file can opt into is a bypass.
  */
+// Every OOXML package shape, not the three headline ones. `.ppsx` was added
+// last round and `.sldx` missed in the same breath — each omission is a
+// whole-tree bypass by file extension, which is the fifth of that class in this
+// PR, so the list is written to cover the format family rather than the
+// spellings that happened to come to mind.
 const OFFICE_EXTENSIONS =
-  /\.(?:doc|xls|ppt|pps)[xm]$|\.(?:dot|xlt|pot)[xm]$/i;
+  /\.(?:doc|dot)[xm]$|\.(?:xls|xlt)[xm]$|\.(?:ppt|pps|pot|sld)[xm]$/i;
 
 /**
  * Same rule for PDFs, and it is the same oversight: the Office signature check
@@ -1719,17 +1724,24 @@ function extractOfficeText(buf) {
     if (method === 8) {
       const remaining = MAX_INFLATED_BYTES - inflatedTotal;
       if (remaining <= 0) break; // budget spent; stop reading this file
-      // Charge the DECLARED size BEFORE attempting. A part that throws — a
-      // corrupt stream, or one over the cap — consumed real work, and only
-      // crediting the budget on SUCCESS let an archive of many oversized parts
-      // retry the whole remaining budget on each one in turn. The cumulative
-      // cap has to bound attempts, not just completions, or the "cumulative"
-      // in its name is decoration.
-      inflatedTotal += Math.min(uncompSize || compSize, remaining);
+      // The budget is charged on what the inflation ACTUALLY produced, never
+      // on the header's `uncompSize`. That field is attacker-controlled: an
+      // archive can declare 1 byte and expand to megabytes, and charging the
+      // declaration let a file allocate far past the stated cap while the
+      // counter barely moved. `maxOutputLength` still bounds each individual
+      // part, so the two together bound both the step and the total.
+      //
+      // On FAILURE the remaining budget is consumed outright. A part that
+      // threw did real work — it may have thrown precisely because it exceeded
+      // the cap — and crediting nothing let an archive of many oversized parts
+      // retry the whole remaining budget on each in turn. Bounding attempts,
+      // not just completions, is what makes "cumulative" true.
       try {
         // Raw deflate — ZIP stores no zlib header.
         xml = inflateRawSync(xml, { maxOutputLength: remaining });
+        inflatedTotal += xml.length;
       } catch {
+        inflatedTotal += remaining;
         continue; // undecodable part; treat like any other unreadable stream
       }
     } else if (method !== 0) {
@@ -2177,11 +2189,32 @@ function scanFile(path) {
    * scanner, makes this pass agree with the rendered stream by construction
    * rather than by a second implementation that has to be kept in step.
    */
+  /**
+   * Index of the first tag span that could intersect `from`.
+   *
+   * Binary search, not a scan from zero. `tagSpans` is sorted, and restarting
+   * at its head for every candidate made the pass QUADRATIC in a file that
+   * alternates tags and dead names — 10,000 of each took a 15-second whole-tree
+   * run to about 21 seconds, and this gate blocks every PR. Same lesson as the
+   * destination memo and the link-opener walk: stop re-deriving what is already
+   * known.
+   */
+  const firstSpanFrom = (from) => {
+    let lo = 0;
+    let hi = tagSpans.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (tagSpans[mid][1] <= from) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+
   const stripRecognizedTags = (from, to) => {
     let out = '';
     let at = from;
-    for (const [s0, e0] of tagSpans) {
-      if (e0 <= from) continue;
+    for (let k = firstSpanFrom(from); k < tagSpans.length; k++) {
+      const [s0, e0] = tagSpans[k];
       if (s0 >= to) break;
       if (s0 > at) out += text.slice(at, Math.min(s0, to));
       at = Math.max(at, Math.min(e0, to));
@@ -2320,8 +2353,8 @@ function scanFile(path) {
     let span = inTagInterior ? text.slice(from, to + 1) : '';
     if (!inTagInterior) {
       let at = from;
-      for (const [s0, e0] of tagSpans) {
-        if (e0 <= from) continue;
+      for (let k = firstSpanFrom(from); k < tagSpans.length; k++) {
+        const [s0, e0] = tagSpans[k];
         if (s0 > to) break;
         if (s0 > at) span += text.slice(at, Math.min(s0, to + 1));
         // A BLOCK-level element still separates what the reader sees, so it is a
@@ -2351,8 +2384,18 @@ function scanFile(path) {
     // single valid value that renders as one phrase naming the dead surface,
     // and counting its escaped quotes as boundaries discarded a real mention.
     // Drop backslash escapes before looking, so only structural quotes remain.
-    if (/\.jsonc?$/i.test(path) && span.replace(/\\[\s\S]/g, '').includes('"'))
-      return true;
+    if (/\.jsonc?$/i.test(path)) {
+      if (span.replace(/\\[\s\S]/g, '').includes('"')) return true;
+      // A JSON STRING VALUE IS NOT A SENTENCE. Having established the span lies
+      // within ONE literal, the prose punctuation rules below must not run on
+      // it: `{"operation":"buy:adapter"}` names the dead identifier exactly as
+      // `buy-adapter` does, and the `:` read as a sentence ender discarded it
+      // while the hyphenated spelling was caught. This is the same call the
+      // tag-interior stream already makes one branch down, for the identical
+      // `data-operation="buy:adapter"` — the two paths disagreed about the same
+      // string.
+      return false;
+    }
     if (MARKUP_EXTENSIONS.test(path) && !literalAt(from)) {
       // Comments FIRST and by the same rule as the normalizer, which now skips
       // them. Leaving them in re-broke the case they were skipped for: the `!`
@@ -2443,6 +2486,12 @@ function scanFile(path) {
         // Setext check runs FIRST and this only sees the leftovers.
         if (/^\s{0,3}(?:\*[ \t]*){3,}$|^\s{0,3}(?:-[ \t]*){3,}$|^\s{0,3}(?:_[ \t]*){3,}$/.test(lines[i]))
           return true;
+        // A `===` Setext underline makes the line above it an `<h1>`, so it
+        // separates two blocks exactly as an ATX heading does. The `---` form
+        // was covered only by ACCIDENT, through the thematic-break rule above;
+        // the level-one form matches nothing there and fused the paragraphs
+        // either side of a heading, blocking a clean document.
+        if (/^\s{0,3}={2,}\s*$/.test(lines[i])) return true;
       }
     }
     return false;
@@ -2575,7 +2624,18 @@ function scanFile(path) {
       // silent-substitution bypass this ancestry hash exists to close: retitle
       // `> ## Historical procedure` to `> ## Current procedure` above an
       // untouched quoted mention and neither the count nor the digest moves.
-      const bare = lines[i].replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '');
+      // Quote markers AND list markers. `- ## Historical procedure` is a
+      // heading inside a list item, and leaving the `-` on kept it invisible to
+      // this walk — the same silent-substitution bypass the quote fix closed,
+      // one container over. Written as a loop because the two nest.
+      let bare = lines[i];
+      for (;;) {
+        const stripped = bare
+          .replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '')
+          .replace(/^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/, '');
+        if (stripped === bare) break;
+        bare = stripped;
+      }
       const atx = /^\s{0,3}(#{1,6})(?:\s|$)/.exec(bare);
       const bold = /^\s{0,3}\*\*[^*]+\*\*/.test(bare);
       // Setext headings — a line of text UNDERLINED by `===` or `---` — are

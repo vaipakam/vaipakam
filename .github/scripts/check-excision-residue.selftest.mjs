@@ -693,6 +693,27 @@ const FIXTURES = [
     body: 'Decide what to buy\r\rAdapter selection follows.\r',
   },
   {
+    // Round 19 P2. `===` makes the line above it an `<h1>`, so it separates two
+    // blocks. The `---` form was covered only by ACCIDENT via the
+    // thematic-break rule; the level-one form matched nothing and fused the
+    // paragraphs either side of a heading.
+    name: 'setext-h1.md',
+    caught: false,
+    why: 'a `===` underline is a heading, and a heading is a boundary',
+    body: 'Decide what to buy\n===\nAdapter selection follows.\n',
+  },
+  {
+    // Round 19 P1. A JSON string VALUE is not a sentence. `buy:adapter` names
+    // the dead identifier exactly as `buy-adapter` does, but the `:` read as a
+    // sentence ender discarded it — while the identical
+    // `data-operation="buy:adapter"` was caught by the tag-interior path. The
+    // two paths disagreed about the same string.
+    name: 'json-colon.json',
+    caught: true,
+    why: 'a colon inside one JSON value is a separator, not a sentence end',
+    body: '{"operation":"buy:adapter"}\n',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',
