@@ -844,14 +844,18 @@ function stripContainers(line) {
  * indented CODE in CommonMark, not as a fence opener.
  */
 function indentColumns(str) {
-  return columnWidth(/^[ \t]*/.exec(str)[0]);
+  return columnWidthFrom(0, /^[ \t]*/.exec(str)[0]);
 }
 
-/** How many COLUMNS a string occupies, expanding tabs to four-column stops. */
-function columnWidth(str) {
-  let col = 0;
+/**
+ * How many COLUMNS a string occupies, expanding tabs to four-column stops
+ * reckoned from `start` — the column the string actually begins at. Tab stops
+ * are absolute, so a width measured from zero is wrong for anything nested.
+ */
+function columnWidthFrom(start, str) {
+  let col = start;
   for (const ch of str) col += ch === '\t' ? 4 - (col % 4) : 1;
-  return col;
+  return col - start;
 }
 
 /**
@@ -875,6 +879,13 @@ function containerChains(lines) {
   let chain = [];
   let nextId = 1;
   let blankBefore = false;
+  // Whether the previous line was PARAGRAPH text. An ordered marker other
+  // than `1.` cannot interrupt a paragraph, so it opens no list — and without
+  // that, `intro` / `2. ``` ` manufactured a container whose backticks opened
+  // a fence, hiding every following line. Approximated as "non-blank and not
+  // itself a leaf block": a heading or thematic break IS interruptible-after,
+  // so a list may follow one directly.
+  let prevParagraph = false;
   for (const line of lines) {
     if (line.trim() === '') {
       // A blank line does not itself close a container — the block may
@@ -882,10 +893,12 @@ function containerChains(lines) {
       // the same depth is a new quote rather than a continuation.
       out.push({ chain: chain.slice(), prefixLens: [0] });
       blankBefore = true;
+      prevParagraph = false;
       continue;
     }
     let rest = line;
     let consumed = 0;
+    let absCol = 0;
     const next = [];
     const prefixLens = [0];
     for (;;) {
@@ -900,15 +913,16 @@ function containerChains(lines) {
       // list item alive on a line that has no indentation after its quote
       // prefix at all — and the fence inside it never closed.
       const open = chain[next.length];
-      if (open && open.kind === 'li' && indentColumns(rest) >= open.relCol) {
+      if (open && open.kind === 'li' && columnWidthFrom(absCol, /^[ \t]*/.exec(rest)[0]) >= open.relCol) {
         const pad = /^[ \t]*/.exec(rest)[0];
         let take = 0;
         let cols = 0;
         while (take < pad.length && cols < open.relCol) {
-          cols += pad[take] === '\t' ? 4 - (cols % 4) : 1;
+          cols += pad[take] === '\t' ? 4 - ((absCol + cols) % 4) : 1;
           take++;
         }
         consumed += take;
+        absCol += cols;
         next.push(open);
         prefixLens.push(consumed);
         rest = rest.slice(take);
@@ -918,10 +932,12 @@ function containerChains(lines) {
       if (q) {
         const reuse = !blankBefore && chain[next.length]?.kind === 'q';
         consumed += q[0].length;
+        const w = columnWidthFrom(absCol, q[0]);
+        absCol += w;
         next.push({
           kind: 'q',
           id: reuse ? chain[next.length].id : nextId++,
-          relCol: columnWidth(q[0]),
+          relCol: w,
         });
         prefixLens.push(consumed);
         rest = rest.slice(q[0].length);
@@ -932,16 +948,25 @@ function containerChains(lines) {
       // block. `[ \t]+|$` because a marker alone on its line is a valid EMPTY
       // item — requiring trailing space made no container at all, so a fence
       // indented under it looked top-level and never closed at the sibling.
-      const li = /^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$)/.exec(rest);
-      if (li) {
+      const li = /^[ \t]{0,3}(?:([-*+])|(\d{1,9})[.)])(?:[ \t]+|$)/.exec(rest);
+      // An ordered marker that is not `1.` cannot interrupt a paragraph, so
+      // after paragraph text it stays prose and opens no container. Without
+      // this, `intro` / `2. ``` ` manufactured a list whose backticks opened a
+      // fence and hid every line below it.
+      const interrupts = li && (li[1] !== undefined || li[2] === '1' || !prevParagraph);
+      if (li && interrupts) {
         consumed += li[0].length;
+        // COLUMNS, measured FROM THE PARENT's column — not restarted at zero.
+        // `-\t` after `> ` occupies two columns, not four, because the tab
+        // stop is reckoned from where the quote content began. Restarting let
+        // a correctly indented continuation look like a dedent and closed a
+        // fence that was still open.
+        const w = columnWidthFrom(absCol, li[0]);
+        absCol += w;
         next.push({
           kind: 'li',
           id: nextId++,
-          // COLUMNS, not characters: `-\t` is a marker plus a tab, whose
-          // content column is four, not two. Counting characters let a
-          // two-space line look like enough continuation indentation.
-          relCol: columnWidth(li[0]),
+          relCol: w,
         });
         prefixLens.push(consumed);
         rest = rest.slice(li[0].length);
@@ -951,6 +976,11 @@ function containerChains(lines) {
     }
     chain = next;
     blankBefore = false;
+    // Paragraph text for the NEXT line's interruption test: content remains
+    // after the containers, and it is not a leaf block of its own.
+    prevParagraph =
+      rest.trim() !== '' &&
+      !/^[ \t]{0,3}(?:#{1,6}(?:\s|$)|(?:`{3,}|~{3,})|(?:[-*+_][ \t]*){3,}$|=+[ \t]*$)/.test(rest);
     out.push({ chain: chain.slice(), prefixLens });
   }
   return out;
@@ -2060,6 +2090,17 @@ function extractOfficeText(buf) {
       // why it looked safe; the aliasing is what makes it not.
       const remaining = MAX_INFLATED_BYTES - inflatedTotal;
       if (remaining <= 0) break;
+      // A POSITIVE remainder is not permission to admit a part of any size.
+      // The deflate path is capped by `maxOutputLength`; the stored path had
+      // only this emptiness test, so two aliases of one 20 MiB stored part
+      // both passed it and retained ~40 MiB against a 32 MiB cap. Charge the
+      // budget out and stop rather than truncating: a half-read XML part
+      // decodes into misleading text, and a partial decode that looks like
+      // success is the failure this file has hit before.
+      if (xml.length > remaining) {
+        inflatedTotal += remaining;
+        break;
+      }
       inflatedTotal += xml.length;
     } else {
       continue; // stored or deflate only; anything else is not ours to decode

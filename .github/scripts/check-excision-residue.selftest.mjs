@@ -755,6 +755,34 @@ const FIXTURES = [
     why: 'a sibling list item ends the previous item, and the fence in it',
     body: '- ```\n  code\n- Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
   },
+  // ── Round 25.
+  {
+    // A false NEGATIVE, and a correct narrowing of something I refuted a
+    // round earlier. The refutation held for its own case — a span CROSSING
+    // an ordered marker carries the marker's digits and can never match. This
+    // is a different mechanism: the marker manufactures a list CONTAINER
+    // whose backticks open a fence, and the whole dead token then sits on a
+    // later line, so no digits ever enter it.
+    name: 'ordered-no-interrupt.md',
+    caught: true,
+    why: 'an ordered marker other than `1.` cannot interrupt a paragraph',
+    body: 'intro\n2. ```\n   Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    // The control for the case above: `1.` DOES interrupt, so the list and
+    // its fence are real and the content stays code. Without this, narrowing
+    // the rule too far would pass unnoticed.
+    name: 'ordered-one-interrupts.md',
+    caught: false,
+    why: '`1.` interrupts a paragraph, so its fence is a real fence',
+    body: 'intro\n1. ```\n   Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    name: 'quote-tab-marker.md',
+    caught: false,
+    why: 'tab stops are absolute, so a nested marker is measured from its parent',
+    body: '> -\t```\n>   Decide what to buy<strong>adapter</strong> next.\n',
+  },
   // ── Round 24. Three more on the container chain, all false NEGATIVES, all
   // from measuring a container's width the wrong way.
   {
