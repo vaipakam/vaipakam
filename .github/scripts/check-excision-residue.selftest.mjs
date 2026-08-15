@@ -770,6 +770,17 @@ const FIXTURES = [
     body: '-\n  ```\n  code\n- Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
   },
   {
+    // The ORDERED form of the empty-marker bypass. The finding named it and
+    // the fix covers it, but the fixture beside this one pins only `-`, so
+    // nothing held the ordered spelling. Probed after the fix and kept
+    // because it fails against the previous commit — four of the five probes
+    // run alongside it behaved identically before and after and were dropped.
+    name: 'fence-ordered-marker-only.md',
+    caught: true,
+    why: 'an ordered marker alone on its line is also a valid empty item',
+    body: '1.\n   ```\n   code\n2. Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
     name: 'fence-quote-inner-list.md',
     caught: true,
     why: "an outer quote's width is not the inner item's continuation indent",
