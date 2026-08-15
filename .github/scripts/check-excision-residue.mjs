@@ -394,7 +394,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [17, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "757d72386abd"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [18, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "ba8d4b4f0df6"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -621,11 +621,27 @@ const MARKUP_EXTENSIONS = /\.(tsx|jsx|html|htm|md|mdx|svg)$/i;
  * paragraph, because a label cannot span a blank line.
  */
 function hasLinkOpener(text, end) {
+  // Escape parity is carried through the SINGLE backward pass, not recomputed
+  // per character. The inner rescan made this quadratic: a run of N
+  // backslashes walked the run again for each of them, and 20,000 of them —
+  // well within reach of generated Markdown — added seconds to a gate that
+  // blocks every PR. Same lesson as the destination scan two rounds ago, where
+  // the fix was also to stop re-deriving what the walk already knew.
+  //
+  // Walking backwards, a character is escaped when the run of backslashes
+  // IMMEDIATELY BEFORE it has odd length. Since we move right-to-left, that
+  // run is the one we are about to enter, so parity is tracked as we go and
+  // read one step later.
+  let backslashRun = 0;
   for (let k = end - 1; k >= 0; k--) {
     const c = text[k];
+    if (c === '\\') {
+      backslashRun++;
+      continue;
+    }
+    const escaped = backslashRun % 2 === 1;
+    backslashRun = 0;
     if (c === '\n' && /^[ \t]*\n/.test(text.slice(k + 1))) return false;
-    let escaped = false;
-    for (let b = k - 1; b >= 0 && text[b] === '\\'; b--) escaped = !escaped;
     if (escaped) continue;
     if (c === '[') return true;
     if (c === ']') return false;
@@ -737,9 +753,20 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
         i += 1;
         continue;
       }
+      // BACKSLASH ESCAPES are not delimiters. `[buy](https://example/a\\)b)`
+      // has ONE destination whose text contains a literal `)`, and treating the
+      // escaped one as the terminator ended the destination early — the
+      // leftover `b)` stayed in the stream and wedged the label apart from the
+      // word after it, so a rendered mention went unreported. Same shape as the
+      // quoted-`>` case on the Office side: a delimiter inside a quoted or
+      // escaped context is data, not structure.
       let depth = 0;
       let j = i + 1;
       for (; j < text.length; j++) {
+        if (text[j] === '\\') {
+          j++; // skip the escaped character, whatever it is
+          continue;
+        }
         if (text[j] === open) depth++;
         else if (text[j] === close) {
           depth--;
@@ -878,10 +905,20 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
         ['<!--', '-->'],
         ['<![CDATA[', ']]>'],
         ['<?', '?>'],
-        ['<!', '>'], // declaration, e.g. `<!DOCTYPE html>`
-      ].find(([open]) => text.startsWith(open, i));
+        // Declaration: `<!` followed by an ASCII LETTER. Verified against the
+        // repository's own micromark rather than from memory, because the
+        // boundary is not obvious — `<!not-html>` and `<!A>` ARE declarations
+        // and are passed through as markup, while `<!>`, `<! >`, `<!9>`,
+        // `<!->` and `<![x]>` all render as literal visible text. A catch-all
+        // `<!` stripped that second group and could fuse the words either side
+        // of it.
+        [/^<![A-Za-z]/, '>'],
+      ].find(([open]) =>
+        typeof open === 'string' ? text.startsWith(open, i) : open.test(text.slice(i, i + 4)),
+      );
       if (rawHtml) {
-        const close = text.indexOf(rawHtml[1], i + rawHtml[0].length);
+        const openLen = typeof rawHtml[0] === 'string' ? rawHtml[0].length : 2;
+        const close = text.indexOf(rawHtml[1], i + openLen);
         // An unterminated construct swallows the rest of the file in a real
         // renderer; do the same rather than resuming mid-construct.
         const stop = close === -1 ? text.length : close + rawHtml[1].length;
@@ -1108,6 +1145,45 @@ const DIGEST_CONTEXT_LINES = 2;
  *  decompression bomb needs to exhaust a runner. */
 const MAX_INFLATED_BYTES = 32 * 1024 * 1024;
 
+/**
+ * Decode a PDF literal string's escapes.
+ *
+ * The SOURCE spelling is not what the page draws. `(the VPFI buy\\040adapter)`
+ * renders with a space between the two words, but the raw slice normalized to
+ * `buy040adapter` and the mention went unreported — the digits of an octal
+ * escape are alphanumeric, so the normalizer keeps them and they wedge the
+ * phrase apart. Same class as `renderRefs` on the markup side: every check that
+ * decides what a word IS has to read the rendered stream.
+ */
+function decodePdfLiteral(raw) {
+  const SIMPLE = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '(': '(', ')': ')', '\\': '\\' };
+  let out = '';
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] !== '\\') {
+      out += raw[i];
+      continue;
+    }
+    const c = raw[++i];
+    if (c === undefined) break;
+    // A backslash before a newline is a line CONTINUATION: both vanish, and
+    // the two halves of the word are drawn adjacent.
+    if (c === '\n') continue;
+    if (c === '\r') {
+      if (raw[i + 1] === '\n') i++;
+      continue;
+    }
+    if (c >= '0' && c <= '7') {
+      let oct = c;
+      while (oct.length < 3 && raw[i + 1] >= '0' && raw[i + 1] <= '7') oct += raw[++i];
+      out += String.fromCharCode(parseInt(oct, 8));
+      continue;
+    }
+    // An unrecognized escape drops the backslash and keeps the character.
+    out += SIMPLE[c] ?? c;
+  }
+  return out;
+}
+
 function extractPdfText(buf) {
   const out = [];
   // Cumulative across the FILE. `maxOutputLength` resets on every call, so a
@@ -1124,8 +1200,17 @@ function extractPdfText(buf) {
     // Dictionary immediately before the stream keyword declares the filter.
     const dict = buf.subarray(Math.max(0, s0 - 400), s0).toString('latin1');
     // Data start: the EOL that must follow the `stream` keyword.
+    // EXACTLY ONE EOL sequence — CRLF or LF — as the spec requires after the
+    // `stream` keyword. Consuming a RUN of them ate the stream's own first
+    // byte when the data itself began with a newline, which shifted the
+    // declared `/Length` endpoint off the terminator, failed the validation
+    // below, and dropped back to the `endstream`-scan this fix exists to
+    // replace. A rule that is right for the delimiter and wrong for the data
+    // is how the fallback got re-entered on exactly the files it was written
+    // for.
     let dataAt = s0 + marker.length;
-    while (dataAt < buf.length && (buf[dataAt] === 0x0d || buf[dataAt] === 0x0a)) dataAt++;
+    if (buf[dataAt] === 0x0d && buf[dataAt + 1] === 0x0a) dataAt += 2;
+    else if (buf[dataAt] === 0x0d || buf[dataAt] === 0x0a) dataAt += 1;
     // The body is DELIMITED BY ITS DECLARED `/Length`, not by the first
     // `endstream` byte-string inside it. Stream data is arbitrary bytes and may
     // spell `endstream` itself — a content stream opening with the valid PDF
@@ -1164,7 +1249,8 @@ function extractPdfText(buf) {
       }
     }
     const content = body.toString('latin1');
-    for (const m of content.matchAll(/\(((?:\\.|[^\\)])*)\)/g)) out.push(m[1]);
+    for (const m of content.matchAll(/\(((?:\\[\s\S]|[^\\)])*)\)/g))
+      out.push(decodePdfLiteral(m[1]));
     for (const m of content.matchAll(/<([0-9A-Fa-f\s]+)>/g)) {
       const hex = m[1].replace(/\s+/g, '');
       if (hex.length % 2 === 0 && hex.length >= 2) {
@@ -1278,16 +1364,12 @@ const OFFICE_ALT_TEXT = /\b(?:descr|title|alt)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
  * prefix bound to a block namespace ANYWHERE in the part is a prefix whose
  * `p` means paragraph.
  */
-function officeBlockPrefixes(text) {
-  const prefixes = new Set();
-  let defaultIsBlock = false;
-  for (const m of text.matchAll(/xmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
-    const uri = m[2] ?? m[3];
-    if (!OFFICE_BLOCK_NS.includes(uri)) continue;
-    if (m[1]) prefixes.add(m[1]);
-    else defaultIsBlock = true;
+function officeBlockBindings(tag) {
+  const added = new Map();
+  for (const m of tag.matchAll(/xmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    added.set(m[1] ?? '', OFFICE_BLOCK_NS.includes(m[2] ?? m[3]));
   }
-  return { prefixes, defaultIsBlock };
+  return added;
 }
 
 /**
@@ -1309,20 +1391,33 @@ function officeBlockPrefixes(text) {
  * fragments into tags the document never contained and fails clean files.
  */
 function stripOfficeTags(text) {
-  const { prefixes, defaultIsBlock } = officeBlockPrefixes(text);
-  // A part that declares no block namespace at all tells us nothing about its
-  // prefixes, so the local name is the only evidence there is — fall back to
-  // matching on it alone, which is what this did before namespaces were
-  // resolved. The fallback can only ADD boundaries, and a missing boundary is
-  // the failure that blocks a clean document.
-  const noneDeclared = prefixes.size === 0 && !defaultIsBlock;
-  const isBlockTag = (tag) => {
-    const m = /^<\/?(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)/.exec(tag);
-    if (!m) return false;
-    if (!OFFICE_BLOCK_LOCAL.has(m[2])) return false;
-    if (noneDeclared) return true;
-    return m[1] ? prefixes.has(m[1]) : defaultIsBlock;
+  // A binding is SCOPED to the element that declares it. Flattening every
+  // `xmlns` in the part into one set let a prefix bound to WordprocessingML
+  // inside one element keep that meaning after the element closed — so an
+  // `<e:p/>` belonging to an ignorable-extension namespace was read as a
+  // paragraph, inserted a boundary that no reader sees, and separated two
+  // visible runs of a real mention. Prefix bindings are a stack, so this walks
+  // one.
+  //
+  // The stack is seeded with the conventional prefixes ONLY when the part
+  // declares no block namespace at all: it then tells us nothing about its
+  // bindings, the local name is the only evidence there is, and guessing in
+  // that direction can only ADD boundaries — the missing boundary is the
+  // failure that blocks a clean document.
+  const declaresBlockNs = /xmlns(?::[A-Za-z_][\w.-]*)?\s*=\s*(?:"|')(?:[^"']*)(?:"|')/.test(text)
+    ? OFFICE_BLOCK_NS.some((uri) => text.includes(uri))
+    : false;
+  const scopes = [new Map()];
+  const lookup = (prefix) => {
+    for (let k = scopes.length - 1; k >= 0; k--) {
+      const v = scopes[k].get(prefix);
+      if (v !== undefined) return v;
+    }
+    return !declaresBlockNs; // no binding information anywhere in this part
   };
+  const isBlockTag = (tag, prefix, local) =>
+    OFFICE_BLOCK_LOCAL.has(local) && lookup(prefix ?? '');
+
   let out = '';
   let i = 0;
   for (;;) {
@@ -1371,11 +1466,19 @@ function stripOfficeTags(text) {
       break;
     }
     const tag = text.slice(lt, j + 1);
-    if (isBlockTag(tag)) {
+    const shape = /^<(\/?)(?:([A-Za-z_][\w.-]*):)?([A-Za-z_][\w.-]*)/.exec(tag);
+    const closing = shape ? shape[1] === '/' : false;
+    const selfClosing = /\/>$/.test(tag);
+    // Push BEFORE classifying, so an element's own declarations govern its own
+    // name — `<e:p xmlns:e="…wordprocessingml…"/>` binds `e` for itself.
+    if (shape && !closing) scopes.push(officeBlockBindings(tag));
+    if (shape && isBlockTag(tag, shape[2], shape[3])) {
       out += '\n\n';
     } else {
       for (const m of tag.matchAll(OFFICE_ALT_TEXT)) out += ` ${m[1] ?? m[2]} `;
     }
+    if (shape && !closing && selfClosing) scopes.pop();
+    if (shape && closing && scopes.length > 1) scopes.pop();
     i = j + 1;
   }
   return out;
@@ -1656,7 +1759,14 @@ function scanFile(path) {
     // stayed green on text that renders the phrase plainly. The lookarounds
     // require the closing run to be a complete run of the same length: not
     // preceded by a backtick, not followed by one.
-    const re = /(?<![\\`])(`+)(?!`)([\s\S]*?)(?<![\\`])\1(?!`)/g;
+    // The backslash exclusion belongs to the OPENER only. In prose `\\`` is an
+    // escaped backtick and cannot open a span; INSIDE a code span no escapes
+    // are processed, so a delimiter run preceded by `\\` still closes it —
+    // confirmed against the repository's micromark, where
+    // `` `buy <foo>\\` `` renders `<foo>\\` as literal code. Rejecting that
+    // closer left the span unrecognized, the `<foo>` inside it was stripped as
+    // HTML, and a clean file was BLOCKED.
+    const re = /(?<![\\`])(`+)(?!`)([\s\S]*?)(?<!`)\1(?!`)/g;
     let m;
     while ((m = re.exec(text))) {
       // A backtick INSIDE a fence cannot open an inline span. Pairing across
@@ -2047,7 +2157,11 @@ function scanFile(path) {
         // the prose either side of it into a mention that no reader sees.
         if (fenceDelimiter[i]) return true;
         if (inFence[i]) continue;
-        if (/^\s{0,3}#{1,6}\s/.test(lines[i])) return true;
+        // `#` alone on a line is a valid EMPTY heading — micromark renders it
+        // as `<h1></h1>` — so end-of-line closes the marker just as whitespace
+        // does. Requiring whitespace missed it and fused the blocks either
+        // side.
+        if (/^\s{0,3}#{1,6}(\s|$)/.test(lines[i])) return true;
         if (/^\s{0,3}(?:[-*+]\s|\d+[.)]\s)/.test(lines[i])) return true;
         // Blockquote marker. Markdown renders `> …` as its own quote block, so
         // the line before it and the line after it are not one sentence — but
@@ -2190,7 +2304,7 @@ function scanFile(path) {
       // that real heading stayed invisible. Same Markdown-vs-code confusion as
       // the boundary rules, one function along.
       if (inFence[i]) continue;
-      const atx = /^\s{0,3}(#{1,6})\s/.exec(lines[i]);
+      const atx = /^\s{0,3}(#{1,6})(?:\s|$)/.exec(lines[i]);
       const bold = /^\s{0,3}\*\*[^*]+\*\*/.test(lines[i]);
       // Setext headings — a line of text UNDERLINED by `===` or `---` — are
       // headings too, and were invisible here. That let the governing status

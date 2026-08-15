@@ -377,6 +377,30 @@ const FIXTURES = [
     ],
   },
   {
+    // Round 12 P1. An xmlns binding is SCOPED to the element that declares it.
+    // Flattening every declaration in the part let `e:` keep a
+    // WordprocessingML meaning after the element that bound it had closed, so
+    // a later `<e:p/>` from an ignorable-extension namespace inserted a
+    // boundary no reader sees and split a real mention in two.
+    name: 'ns-scoped.docx',
+    caught: true,
+    why: 'a prefix binding does not outlive the element that declares it',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document ' +
+          'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+          '<w:body><w:p><w:r>' +
+          '<w:t xmlns:e="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+          'Deploy the VPFI buy</w:t>' +
+          '<e:p xmlns:e="http://schemas.openxmlformats.org/markup-compatibility/2006"/>' +
+          '<w:t>adapter before launch</w:t>' +
+          '</w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
     // Round 11 P1, the false-BLOCK direction. An XML prefix is an alias a
     // document declares for itself: `w:` is conventional, not required. A
     // literal QName list stopped seeing paragraphs in a part that binds
@@ -425,6 +449,50 @@ const FIXTURES = [
     caught: true,
     why: 'a text file cannot buy an exemption by opening with %PDF',
     body: '%PDF-1.4\nOperators must deploy the VPFI buy adapter before launch.\n',
+  },
+  {
+    // Round 12 P1. A `\` before a delimiter makes it data, not structure:
+    // `(https://example/a\)b)` is ONE destination containing a literal `)`.
+    // Ending there left `b)` in the stream, wedging the label apart from the
+    // word after it. Same shape as the quoted-`>` case on the Office side.
+    name: 'escaped-paren.md',
+    caught: true,
+    why: 'an escaped `)` does not close a destination',
+    body: 'VPFI [buy](https://example.com/a\\)b) adapter selection.\n',
+  },
+  {
+    // Round 12 P1. `#` alone is a valid EMPTY heading — micromark renders it as
+    // `<h1></h1>` — so it separates the blocks either side. Requiring
+    // whitespace after the marker missed it and fused them.
+    name: 'empty-atx.md',
+    caught: false,
+    why: 'an empty ATX heading is still a block boundary',
+    // NO blank lines around the heading — with them the blank-line rule
+    // already separates the blocks and the heading rule is never consulted, so
+    // the fixture would pass either way and pin nothing. An ATX heading can
+    // interrupt a paragraph; confirmed against micromark, which renders this
+    // as `<p>…</p><h1></h1><p>…</p>`.
+    body: 'Decide what to buy\n#\nAdapter selection follows.\n',
+  },
+  {
+    // Round 12 P1. CommonMark processes no escapes inside a code span, so a
+    // delimiter run preceded by `\` still CLOSES it. Rejecting that closer left
+    // the span unrecognized, `<foo>` inside it was stripped as HTML, and a
+    // clean file was blocked. Verified against the repository's own micromark.
+    name: 'codespan-backslash.md',
+    caught: false,
+    why: 'a backslash does not stop a backtick closing a code span',
+    body: '`Decide what to buy <foo>\\`Adapter selection follows.\n',
+  },
+  {
+    // Round 12 P1, the NARROWED half of the declaration finding. `<!>` renders
+    // as literal visible text, so stripping it fused the words either side.
+    // (The reported example `<!not-html>` is NOT this case — micromark passes
+    // it through as a real declaration; see the PR thread.)
+    name: 'bare-bang.md',
+    caught: false,
+    why: '`<!>` is visible text, not a declaration',
+    body: 'Decide what to buy<!>Adapter selection follows.\n',
   },
   {
     name: 'link-destination.md',
@@ -536,6 +604,48 @@ function pdfFixtures() {
           `%PDF-1.4\n1 0 obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
         );
       })(),
+    },
+    {
+      // Round 12 P1. Only ONE EOL sequence follows the `stream` keyword; eating
+      // a RUN of them consumed the stream's own first byte when the data began
+      // with a newline, shifting the declared endpoint off the terminator and
+      // dropping back to the `endstream` scan the /Length fix exists to
+      // replace.
+      name: 'leading-newline.pdf',
+      caught: true,
+      why: 'the stream data may begin with a newline of its own',
+      buf: (() => {
+        // TWO leading newlines. With one, the off-by-one endpoint happens to
+        // land on the newline before the terminator and the validation still
+        // passes — the fixture would pin nothing.
+        //
+        // The drawn string is HEX-ENCODED, and that is load-bearing. Written as
+        // a literal, the phrase sits in the container's own bytes, so the
+        // read-as-text fallback recovers it and the fixture passes whether or
+        // not the bug is fixed. Compressing instead does not work either: a
+        // deflate stream begins with its own header, never a newline, so the
+        // off-by-one cannot arise. Both of my earlier attempts at this fixture
+        // asserted a catch that proved nothing.
+        const hex = Buffer.from('Operators must deploy the VPFI buy adapter')
+          .toString('hex')
+          .toUpperCase();
+        const body = `\n\n% endstream\nBT <${hex}> Tj ET`;
+        return Buffer.from(
+          `%PDF-1.4\n1 0 obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`,
+        );
+      })(),
+    },
+    {
+      // Round 12 P1. The SOURCE spelling is not what the page draws: `\040`
+      // renders as a space, but the raw slice normalized to `buy040adapter` —
+      // the octal digits are alphanumeric, so the normalizer kept them and they
+      // wedged the phrase apart.
+      name: 'octal-escape.pdf',
+      caught: true,
+      why: 'a PDF octal escape renders as the character, not as its digits',
+      buf: Buffer.from(
+        '%PDF-1.4\n1 0 obj\n<< /Length 64 >>\nstream\nBT (Operators must deploy the VPFI buy\\040adapter) Tj ET\nendstream\nendobj\n',
+      ),
     },
     {
       name: 'uncompressed.pdf',
