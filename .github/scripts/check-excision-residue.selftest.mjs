@@ -164,6 +164,160 @@ const FIXTURES = [
     ],
   },
   {
+    // Round 10 P1. Signature alone is claimable by ANY file, and the Office
+    // decoder's output REPLACES the source text — so a `.md` opening with the
+    // four ZIP bytes had its whole body swapped for the empty string and the
+    // gate scanned nothing. Same bypass shape as the `GIF8`-prefixed markdown
+    // the binary-signature rule already had to close, arriving one format over.
+    name: 'pk-prefixed.md',
+    caught: true,
+    why: 'a text file cannot buy an exemption by opening with a ZIP signature',
+    body: Buffer.concat([
+      Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+      Buffer.from('\nOperators must deploy the VPFI buy adapter before launch.\n'),
+    ]),
+  },
+  {
+    // Round 10 P1. The archive comment is arbitrary bytes; a decoy `PK\x05\x06`
+    // planted there is found FIRST by a backward scan. The decoy declares zero
+    // entries, so a real document read as zero parts and passed clean. A real
+    // EOCD's comment ends exactly at EOF and its central directory starts on a
+    // central-directory signature — this fixture's decoy satisfies neither.
+    name: 'eocd-in-comment.docx',
+    caught: true,
+    why: 'a decoy EOCD in the archive comment must not displace the real record',
+    zipComment: Buffer.concat([
+      Buffer.from([0x50, 0x4b, 0x05, 0x06]),
+      Buffer.alloc(18),
+    ]),
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>' +
+          'Operators must deploy the VPFI buy adapter before launch.' +
+          '</w:t></w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
+    // Round 10 P1. A tab inside a paragraph is inline whitespace — the reader
+    // sees two words on one line, exactly as with a space — and treating it as
+    // a block break discarded a visible mention. The space already gets this
+    // call; the tab is the same call one character over.
+    name: 'tab-inline.docx',
+    caught: true,
+    why: 'a tab within a paragraph is whitespace, not a block boundary',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p><w:r>' +
+          '<w:t>Deploy the VPFI buy</w:t><w:tab/><w:t>adapter before launch</w:t>' +
+          '</w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
+    // Round 10 P1, the other direction. A worksheet using inline strings gives
+    // each cell its own element; with no boundary between them two unrelated
+    // cells fused into a mention that no cell contains.
+    name: 'cells.xlsx',
+    caught: false,
+    why: 'separate spreadsheet cells are separate text',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'xl/worksheets/sheet1.xml',
+        '<?xml version="1.0"?><worksheet><sheetData><row>' +
+          '<c t="inlineStr"><is><t>Decide what to buy</t></is></c>' +
+          '<c t="inlineStr"><is><t>Adapter selection follows</t></is></c>' +
+          '</row></sheetData></worksheet>',
+      ],
+    ],
+  },
+  {
+    // Round 10 P1. CDATA is reader-visible text wearing markup's brackets, so
+    // the blanket tag strip deleted a whole paragraph written that way.
+    name: 'cdata.docx',
+    caught: true,
+    why: 'a paragraph written as CDATA is still on the page',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>' +
+          '<![CDATA[Operators must deploy the VPFI buy adapter before launch.]]>' +
+          '</w:t></w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
+    // Round 10 P1. A UTF-16 part decoded as UTF-8 keeps a NUL between every
+    // markup character, so `</w:p>` stopped matching the boundary regex and two
+    // paragraphs fused into a mention no reader sees.
+    name: 'utf16.docx',
+    caught: false,
+    why: 'a UTF-16 part still has paragraph boundaries',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        Buffer.concat([
+          Buffer.from([0xff, 0xfe]),
+          Buffer.from(
+            '<w:document><w:body>' +
+              '<w:p><w:r><w:t>Decide what to buy</w:t></w:r></w:p>' +
+              '<w:p><w:r><w:t>Adapter selection follows</w:t></w:r></w:p>' +
+              '</w:body></w:document>',
+            'utf16le',
+          ),
+        ]),
+      ],
+    ],
+  },
+  {
+    // Round 10 P1. OOXML names its main part through the package relationships,
+    // so a conforming document body need not be called `word/document.xml`. The
+    // fixed filename whitelist walked straight past this one.
+    name: 'nonstandard-part.docx',
+    caught: true,
+    why: 'the main part is named by relationship, not by convention',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        '_rels/.rels',
+        '<?xml version="1.0"?><Relationships><Relationship Id="rId1" ' +
+          'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" ' +
+          'Target="word/guidance.xml"/></Relationships>',
+      ],
+      [
+        'word/guidance.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>' +
+          'Operators must deploy the VPFI buy adapter before launch.' +
+          '</w:t></w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
+    // Round 10 P1. A drawing's accessibility description IS reader-visible —
+    // assistive technology reads it aloud — but it lives in an attribute, so
+    // the blanket tag removal deleted it along with the markup.
+    name: 'alt-text.docx',
+    caught: true,
+    why: 'alt text is read aloud, so it is text',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:drawing>' +
+          '<wp:docPr id="1" name="Picture 1" ' +
+          'descr="Operators must deploy the VPFI buy adapter before launch."/>' +
+          '</w:drawing></w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',
@@ -284,7 +438,9 @@ function zipFixtures() {
     let offset = 0;
     for (const [name, xml] of f.zip) {
       const nameBuf = Buffer.from(name, 'utf8');
-      const raw = Buffer.from(xml, 'utf8');
+      // A part may be given as a Buffer rather than a string, so a fixture can
+      // pin the encoding handling with real UTF-16 bytes.
+      const raw = Buffer.isBuffer(xml) ? xml : Buffer.from(xml, 'utf8');
       const comp = deflateRawSync(raw);
       const sum = crc32(raw);
       const lh = Buffer.alloc(30);
@@ -312,13 +468,17 @@ function zipFixtures() {
     }
     const localPart = Buffer.concat(locals);
     const centralPart = Buffer.concat(central);
+    // The archive COMMENT is arbitrary bytes and a fixture may plant a decoy
+    // EOCD signature in it — that is the whole point of `eocd-in-comment.docx`.
+    const comment = f.zipComment ?? Buffer.alloc(0);
     const eocd = Buffer.alloc(22);
     eocd.writeUInt32LE(0x06054b50, 0);
     eocd.writeUInt16LE(f.zip.length, 8);
     eocd.writeUInt16LE(f.zip.length, 10);
     eocd.writeUInt32LE(centralPart.length, 12);
     eocd.writeUInt32LE(localPart.length, 16);
-    return { ...f, buf: Buffer.concat([localPart, centralPart, eocd]) };
+    eocd.writeUInt16LE(comment.length, 20);
+    return { ...f, buf: Buffer.concat([localPart, centralPart, eocd, comment]) };
   });
 }
 

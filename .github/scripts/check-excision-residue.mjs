@@ -394,7 +394,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [9, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "45062ea605de"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [14, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "2c6f8b6af869"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -431,10 +431,10 @@ const PINNED = new Map([
   ["contracts/src/crosschain/CcipMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8b891b7af78f"]],
   ["contracts/src/crosschain/GuardianPausable.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c3fcb0bba813"]],
   ["contracts/src/crosschain/ICrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c013114dcc36"]],
-  ["contracts/src/facets/OracleAdminFacet.sol", [2, "RETRACTION — #1726 corrected the natspec that cited the adapter as a safety enforcer", "939a20d446da"]],
-  ["contracts/src/facets/VPFIDiscountFacet.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "cb58d1ed5076"]],
+  ["contracts/src/facets/OracleAdminFacet.sol", [1, "RETRACTION — #1726 corrected the natspec that cited the adapter as a safety enforcer", "7c945dfc822b"]],
+  ["contracts/src/facets/VPFIDiscountFacet.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "5e55ca2e8246"]],
   ["contracts/src/interfaces/IVaipakamErrors.sol", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "115f722e4422"]],
-  ["contracts/src/libraries/LibKeeperReward.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "486f15068cdb"]],
+  ["contracts/src/libraries/LibKeeperReward.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c2eb45565824"]],
   ["contracts/src/libraries/LibVaipakam.sol", [2, "RETRACTION — replaces the dangling storage-struct header that labelled sequencer slots", "1819ae773c70"]],
   ["contracts/test/CcipDeploymentRehearsalTest.t.sol", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "8ec41b19f570"]],
   ["contracts/test/mocks/MockCrossChainMessenger.sol", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "54536afa88ba"]],
@@ -450,7 +450,7 @@ const PINNED = new Map([
   ["docs/DesignsAndPlans/Stage3WorkerSplitPlan.md", [5, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "a5754fbe447c"]],
   ["docs/DesignsAndPlans/TreasuryBuyback.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "866f16a74d4e"]],
   ["docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7f0a68b88a8c"]],
-  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "f83fcfb6b2ad"]],
+  ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7c9b3628f90c"]],
   ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "242c30f2f5e3"]],
   ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "6cc03561eae9"]],
   ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "857792c509dd"]],
@@ -1127,29 +1127,93 @@ function extractPdfText(buf) {
  * not skipped — they were read as noise, which is worse, because the ledger
  * recorded a count that looked like coverage.
  *
- * Only the text-bearing parts are decoded. Everything else in the archive
- * (styles, themes, relationships, embedded media) is markup or binary whose
- * "text" would be attribute soup.
+ * Every XML part under the format's own content directory is decoded, plus the
+ * document properties. NOT a whitelist of conventional filenames: OOXML names
+ * its main part through the package relationships, so `word/guidance.xml` is a
+ * conforming document body and a fixed `word/document.xml` list walked straight
+ * past it. Reading one part too many costs a little markup noise, which the
+ * scan's own boundary rules already handle; reading one too few is a silent
+ * exemption for any document that declines to use the default name.
  */
-const OFFICE_TEXT_PARTS =
-  /^(word\/(document|header\d*|footer\d*|footnotes|endnotes|comments)\.xml|xl\/(sharedStrings\.xml|worksheets\/sheet\d+\.xml)|ppt\/(slides|notesSlides)\/[^/]+\.xml)$/;
+const OFFICE_TEXT_PARTS = /^(?:(?:word|xl|ppt)\/(?!.*_rels\/).*\.xml|docProps\/[^/]+\.xml)$/;
+
+/**
+ * Extensions that may claim the Office container path.
+ *
+ * The signature alone is not enough, for the same reason `isRecognizedBinary`
+ * requires one: a prefix is claimable by any file. A tracked `.md` beginning
+ * with `PK\x03\x04` had its whole body replaced by this decoder's output —
+ * empty, since there is no central directory — and the gate scanned nothing.
+ * A performance shortcut that any file can opt into is a bypass.
+ */
+const OFFICE_EXTENSIONS = /\.(?:doc|xls|ppt)[xm]$|\.(?:dot|xlt|pot)[xm]$/i;
+
+/**
+ * Decode one XML part, honouring its encoding.
+ *
+ * A UTF-16 part decoded as UTF-8 keeps a NUL between every markup character,
+ * so `</w:p>` no longer matches the boundary regex below and two paragraphs
+ * fuse into a mention the reader never sees. BOM first, then the BOM-less
+ * shape: an XML part must begin with `<`, so a NUL beside that first byte
+ * names the width and the endianness on its own.
+ */
+function decodeXmlPart(buf) {
+  const utf16le = (b) => b.toString('utf16le');
+  const swapped = (b) => {
+    if (b.length % 2) b = b.subarray(0, b.length - 1);
+    const c = Buffer.from(b);
+    c.swap16();
+    return c.toString('utf16le');
+  };
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return utf16le(buf.subarray(2));
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) return swapped(buf.subarray(2));
+  if (buf.length >= 2 && buf[0] === 0x3c && buf[1] === 0x00) return utf16le(buf);
+  if (buf.length >= 2 && buf[0] === 0x00 && buf[1] === 0x3c) return swapped(buf);
+  return buf.toString('utf8');
+}
 
 function extractOfficeText(buf) {
   // Locate the End Of Central Directory record by scanning back from the tail;
   // the comment field is variable-length, so the signature is not at a fixed
   // offset. Bounded to the maximum comment size plus the record itself.
+  //
+  // The signature is NOT sufficient on its own — the archive comment is
+  // arbitrary bytes and may contain `PK\x05\x06`. Accepting the first match
+  // found reads a comment's embedded bytes as the record, and a forged one
+  // declaring zero entries turned a real document into zero parts scanned. A
+  // genuine EOCD's comment ends exactly at EOF and its central directory
+  // starts on a central-directory signature; check both before believing it.
   const EOCD_SIG = 0x06054b50;
   let eocd = -1;
+  let entryCount = 0;
+  let cdOffset = 0;
   const from = Math.max(0, buf.length - (0xffff + 22));
   for (let i = buf.length - 22; i >= from; i--) {
-    if (buf.readUInt32LE(i) === EOCD_SIG) {
-      eocd = i;
-      break;
-    }
+    if (buf.readUInt32LE(i) !== EOCD_SIG) continue;
+    if (i + 22 + buf.readUInt16LE(i + 20) !== buf.length) continue;
+    const count = buf.readUInt16LE(i + 10);
+    const off = buf.readUInt32LE(i + 16);
+    const size = buf.readUInt32LE(i + 12);
+    // The central directory must lie wholly before this record and start on a
+    // central-directory signature. `count > 0` is part of the test, not an
+    // optimization: the decoy that motivated this declared ZERO entries, which
+    // skips every consistency check that reads the directory and so passes any
+    // validation that treats an empty directory as vacuously fine. An archive
+    // that really holds no entries holds no document either, so demanding one
+    // costs nothing.
+    if (count === 0 || off + size > i || off + 4 > buf.length) continue;
+    if (buf.readUInt32LE(off) !== 0x02014b50) continue;
+    eocd = i;
+    entryCount = count;
+    cdOffset = off;
+    break;
   }
-  if (eocd === -1) return '';
-  const entryCount = buf.readUInt16LE(eocd + 10);
-  let p = buf.readUInt32LE(eocd + 16); // central directory offset
+  // `null`, not `''` — the caller falls back to reading the bytes as text.
+  // Returning an empty string would make an unparseable container scan as an
+  // empty file, which is the same silent exemption the extension check above
+  // exists to close.
+  if (eocd === -1) return null;
+  let p = cdOffset;
   const out = [];
   // Cumulative across the FILE, exactly as the PDF path bounds itself: a
   // per-entry limit alone lets an archive of many individually-small parts
@@ -1160,6 +1224,7 @@ function extractOfficeText(buf) {
     if (p + 46 > buf.length || buf.readUInt32LE(p) !== 0x02014b50) break;
     const method = buf.readUInt16LE(p + 10);
     const compSize = buf.readUInt32LE(p + 20);
+    const uncompSize = buf.readUInt32LE(p + 24);
     const nameLen = buf.readUInt16LE(p + 28);
     const extraLen = buf.readUInt16LE(p + 30);
     const commentLen = buf.readUInt16LE(p + 32);
@@ -1177,12 +1242,18 @@ function extractOfficeText(buf) {
     if (dataAt + compSize > buf.length) continue;
     let xml = buf.subarray(dataAt, dataAt + compSize);
     if (method === 8) {
+      const remaining = MAX_INFLATED_BYTES - inflatedTotal;
+      if (remaining <= 0) break; // budget spent; stop reading this file
+      // Charge the DECLARED size BEFORE attempting. A part that throws — a
+      // corrupt stream, or one over the cap — consumed real work, and only
+      // crediting the budget on SUCCESS let an archive of many oversized parts
+      // retry the whole remaining budget on each one in turn. The cumulative
+      // cap has to bound attempts, not just completions, or the "cumulative"
+      // in its name is decoration.
+      inflatedTotal += Math.min(uncompSize || compSize, remaining);
       try {
-        const remaining = MAX_INFLATED_BYTES - inflatedTotal;
-        if (remaining <= 0) break; // budget spent; stop reading this file
         // Raw deflate — ZIP stores no zlib header.
         xml = inflateRawSync(xml, { maxOutputLength: remaining });
-        inflatedTotal += xml.length;
       } catch {
         continue; // undecodable part; treat like any other unreadable stream
       }
@@ -1203,15 +1274,38 @@ function extractOfficeText(buf) {
     // the boundary rule the scan already applies to every other format.
     // Blanket-replacing every tag with a space got the second right and the
     // first wrong; deleting every tag does the reverse.
+    //
+    // `w:tab` is NOT in that list, though it once was. A tab inside a paragraph
+    // is inline whitespace — the reader sees "buy<TAB>adapter" as two words on
+    // one line, exactly as they see "buy adapter" — and treating it as a block
+    // break discarded a visible mention. It is the same call the space already
+    // gets, one character over.
+    //
+    // The spreadsheet side needs `</c>` and `</row>`: a worksheet using inline
+    // strings puts each cell's text in its own element, and with no boundary
+    // between them two unrelated cells fused into a mention no cell contains.
+    const CDATA = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
+    const BLOCK =
+      /<\/(?:w:p|w:tc|w:tr|a:p|a:tc|si|c|row)>|<(?:w:br|w:cr|a:br)\b[^>]*>/g;
+    const ALT_TEXT = /\b(?:descr|title|alt)\s*=\s*"([^"]*)"/gi;
     out.push(
       renderRefs(
-        xml
-          .toString('utf8')
-          .replace(
-            /<\/(?:w:p|w:tc|w:tr|a:p|a:tc|si)>|<(?:w:br|w:cr|w:tab|a:br)\b[^>]*>/g,
-            '\n\n',
-          )
-          .replace(/<[^>]*>/g, ''),
+        decodeXmlPart(xml)
+          // CDATA is reader-visible text wearing markup's brackets. Unwrap it
+          // FIRST, neutralising the angle brackets it may contain so the tag
+          // strip below cannot re-read its contents as elements — otherwise a
+          // paragraph written as CDATA was deleted whole.
+          .replace(CDATA, (_m, inner) => inner.replace(/[<>]/g, ' '))
+          .replace(BLOCK, '\n\n')
+          // A drawing's accessibility description IS reader-visible — assistive
+          // technology reads it aloud — but it lives in an attribute, so the
+          // blanket tag removal deleted it with the markup. Keep the standard
+          // title/description attributes and drop the rest of the tag.
+          .replace(/<[^>]*>/g, (tag) => {
+            let kept = '';
+            for (const m of tag.matchAll(ALT_TEXT)) kept += ` ${m[1]} `;
+            return kept;
+          }),
       ),
     );
   }
@@ -1245,13 +1339,24 @@ function scanFile(path) {
     const raw = readFileSync(join(REPO_ROOT, path));
     // A PDF's bytes are a container, not prose — decode what it draws.
     const head4 = raw.subarray(0, 4);
+    // `PK\x03\x04` AND an Office extension — signature alone is claimable by
+    // any file, and the decoder's output REPLACES the source text, so a `.md`
+    // that opens with those four bytes would otherwise be scanned as the empty
+    // string. Same rule, same reason, as `isRecognizedBinary` below. A file
+    // that passes both and still holds no usable central directory returns
+    // `null` and falls through to being read as text.
+    const officeText =
+      OFFICE_EXTENSIONS.test(path) &&
+      head4[0] === 0x50 &&
+      head4[1] === 0x4b &&
+      head4[2] === 0x03 &&
+      head4[3] === 0x04
+        ? extractOfficeText(raw)
+        : null;
     text =
       head4.toString('latin1') === '%PDF'
         ? extractPdfText(raw)
-        : // `PK\x03\x04` — Office Open XML is a ZIP of deflated XML.
-          head4[0] === 0x50 && head4[1] === 0x4b && head4[2] === 0x03 && head4[3] === 0x04
-          ? extractOfficeText(raw)
-          : raw.toString('utf8');
+        : (officeText ?? raw.toString('utf8'));
   } catch (err) {
     // FAIL CLOSED. Returning "no hits" here treated an unreadable file exactly
     // like a clean one, which is a complete exemption for any path that cannot
