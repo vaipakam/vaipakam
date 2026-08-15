@@ -215,51 +215,66 @@ export function useNFTPrepayListing(
   const wallet = useWallet();
   const userVaultAddress = useUserVaultAddress(wallet.address);
 
-  const [listing, setListing] = useState<IndexedPrepayListing | null | undefined>(null);
-  const [loading, setLoading] = useState(true);
+  // Tagged with the loan it describes. The clearing effect below already
+  // identified this exactly — "so the banner + action mode for the new
+  // (loanId, chainId) tuple can't briefly inherit the previous loan's listing"
+  // — but it cleared from an EFFECT, which runs after the paint it was meant to
+  // prevent. The banner and the action mode are what the borrower acts on, so
+  // the inherited frame offers the previous loan's action against this one.
+  const reqKey = loanId ? `${chainId}|${String(loanId)}` : null;
+  const [result, setResult] = useState<{
+    key: string;
+    listing: IndexedPrepayListing | null | undefined;
+  } | null>(null);
+  const [refreshingKey, setRefreshingKey] = useState<string | null>(null);
+  const listing = result?.key === reqKey ? result.listing : null;
+  // Only the CURRENT question's answer may be written, so every post-action
+  // settle below goes through this rather than touching state directly.
+  const commitListing = useCallback(
+    (next: IndexedPrepayListing | null | undefined) => {
+      if (reqKey) setResult({ key: reqKey, listing: next });
+    },
+    [reqKey],
+  );
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    if (!loanId) return;
-    setLoading(true);
+    if (!loanId || !reqKey) return;
+    setRefreshingKey(reqKey);
     try {
       const row = await fetchLoanById(chainId, Number(loanId));
       // `row === null` → indexer transient unavailable; keep last-good
       // rather than blanking the banner mid-flight. Same staleness
-      // handling useRecentLoans uses.
-      if (row) setListing(row.prepayListing);
+      // handling useRecentLoans uses. Note this only keeps last-good WITHIN
+      // one loan: across loans the tag no longer matches, so the previous
+      // loan's listing is not shown regardless of what the indexer says.
+      if (row) commitListing(row.prepayListing);
     } finally {
-      setLoading(false);
+      setRefreshingKey((k) => (k === reqKey ? null : k));
     }
-  }, [chainId, loanId]);
+  }, [chainId, loanId, reqKey, commitListing]);
 
   useEffect(() => {
+    // The clear that stood here (Codex round-2 P2 on PR #308) is DERIVED now:
+    // `listing` reads null whenever the tag does not match the current loan, so
+    // there is no window to clear rather than a shorter one.
+    if (!reqKey || !loanId) return;
     let cancelled = false;
-    // Clear stale state from the previous loan / chain immediately —
-    // BEFORE the new fetch starts — so the banner + action mode for
-    // the new (loanId, chainId) tuple can't briefly inherit the
-    // previous loan's listing while the indexer request is in flight.
-    // Codex round-2 P2 fix on PR #308.
-    setListing(null);
     void (async () => {
-      if (!loanId) {
-        setLoading(false);
-        return;
-      }
-      setLoading(true);
-      try {
-        const row = await fetchLoanById(chainId, Number(loanId));
-        if (!cancelled && row) setListing(row.prepayListing);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      const row = await fetchLoanById(chainId, Number(loanId));
+      if (cancelled || !row) return;
+      setResult({ key: reqKey, listing: row.prepayListing });
     })();
     return () => {
       cancelled = true;
     };
-  }, [chainId, loanId]);
+  }, [chainId, loanId, reqKey]);
+
+  // `loading` is DERIVED: either an explicit reload is in flight for this
+  // question, or the current question has no answer yet.
+  const loading = reqKey !== null && (refreshingKey === reqKey || result?.key !== reqKey);
 
   // ── Action implementations ────────────────────────────────────────────
   // The diamond proxy returns `{ hash, wait }` where `wait` throws on
@@ -409,12 +424,12 @@ export function useNFTPrepayListing(
           // would settle the pre-match row back into `listing`,
           // keeping the banner visible and making a second action
           // attempt revert against an already-terminal loan.
-          setListing(undefined);
+          commitListing(undefined);
         } else if (sawTransition) {
           // Post / update: indexer caught up and confirmed the
           // expected transition (post → listing exists; update →
           // orderHash differs from prior).
-          setListing(latest);
+          commitListing(latest);
         } else if (latest !== undefined) {
           // Post / update: indexer responded but transition not
           // observed within the budget — settle to its latest view
@@ -422,7 +437,7 @@ export function useNFTPrepayListing(
           // reverting to prior; the borrower will see the previous
           // orderHash and pull the new one on the next user-driven
           // refresh.
-          setListing(latest);
+          commitListing(latest);
         }
         // Else (post / update + total indexer outage): leave
         // `listing` alone — the on-chain write succeeded; treating
@@ -457,7 +472,7 @@ export function useNFTPrepayListing(
       }
       return { success: true, receipt };
     },
-    [waitForIndexer, onAfterSuccess, listing],
+    [waitForIndexer, onAfterSuccess, listing, commitListing],
   );
 
   /** Best-effort fire-and-forget OpenSea publish after a successful
