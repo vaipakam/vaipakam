@@ -464,9 +464,39 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         void runProbe(false);
         return;
       }
+      // Never sleep past the moment demand STOPS. `chooseInterval` drops a
+      // subscriber once `pausedAfterMs` has elapsed, but that is only evaluated
+      // when something calls `schedule()` — so an interval armed just before
+      // the boundary (the idle tier is 600 s against a 900 s pause) carries the
+      // status as `live` well past the point where nothing is probing. Worse,
+      // `onActivity` requires `!timer` to fire its resume probe, so a user
+      // returning inside that window is skipped too and the next probe waits
+      // out the whole oversized timer — up to ten minutes of "healthy" with no
+      // probe behind it.
+      //
+      // Clamp to the earliest pause boundary and treat that wake as a
+      // RE-EVALUATION rather than a due probe: `schedule()` then takes the
+      // `interval === null` branch and sets the status honestly. Only the pause
+      // boundary is clamped, not `idleAfterMs` — crossing into the idle tier
+      // changes the cadence but not the truth of the status, and rescheduling
+      // there would stretch every tier's cadence for no gain.
+      const idleMs = Date.now() - lastActivityAt;
+      let msToPause = Infinity;
+      for (const s of subscribersRef.current.values()) {
+        if (s.pollIntervalMs == null || s.pausedAfterMs == null) continue;
+        if (s.pausedAfterMs > idleMs) {
+          msToPause = Math.min(msToPause, s.pausedAfterMs - idleMs);
+        }
+      }
+      const armed = Math.min(interval, msToPause);
+      const isBoundaryWake = armed < interval;
       timer = setTimeout(() => {
+        if (isBoundaryWake) {
+          schedule(); // re-evaluate demand; do not spend a probe on this wake
+          return;
+        }
         void runProbe(false);
-      }, interval);
+      }, armed);
     }
 
     // Imperative restart: rebuild the timer against the now-current subscriber
@@ -514,7 +544,14 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         (s) => s.pausedAfterMs != null && now - lastActivityAt >= s.pausedAfterMs,
       );
       lastActivityAt = now;
-      if (wasPaused && !cancelled && !document.hidden && !timer) {
+      // No `!timer` condition. It was there to avoid doubling up on an armed
+      // tick, but when `wasPaused` is true any armed timer is a STALE one that
+      // outlived the pause boundary — the exact case the clamp above now
+      // prevents from being created, and one a long-lived tab can still hold
+      // from before this fix. Skipping the resume probe because of it left the
+      // page reporting healthy on a probe that could be ten minutes old.
+      // `runProbe` clears the pending timer on entry, so this cannot stack.
+      if (wasPaused && !cancelled && !document.hidden) {
         void runProbe(false);
       }
     }
