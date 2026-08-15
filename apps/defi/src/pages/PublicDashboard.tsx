@@ -150,7 +150,8 @@ export default function PublicDashboard() {
   // / Recent Loans tables below (the indexer's offer/loan rows carry the
   // asset address but not its decimals — without this lookup an amount
   // in a 6-decimal token renders as `0` against the 18-decimal default).
-  const { rows: indexerAssetBreakdown } = useAssetBreakdown();
+  const { rows: indexerAssetBreakdown, loading: assetBreakdownLoading } =
+    useAssetBreakdown();
   const assetMetaByAddr = useMemo(() => {
     const m = new Map<string, { symbol: string; decimals: number }>();
     for (const r of indexerAssetBreakdown ?? []) {
@@ -740,7 +741,22 @@ export default function PublicDashboard() {
                   // below doesn't branch.
                   const breakdown =
                     indexerAssetBreakdown ?? stats?.assetBreakdown ?? [];
+                  // "No loan volume" is a SETTLED answer and must not be shown
+                  // while the breakdown is still being read. The rows now go
+                  // null between chains rather than showing the previous
+                  // chain's figures, and without this the honest "still
+                  // working" state was rendered as a confident "there is
+                  // nothing here" — trading a stale reading for a false one,
+                  // which is worse. Only the chain-derived fallback may answer
+                  // empty on its own.
                   if (breakdown.length === 0) {
+                    if (assetBreakdownLoading && !stats?.assetBreakdown) {
+                      return (
+                        <p className="empty-state-inline">
+                          {t('common.loading')}
+                        </p>
+                      );
+                    }
                     return (
                       <p className="empty-state-inline">
                         {t('publicDashboard.noLoanVolume')}
