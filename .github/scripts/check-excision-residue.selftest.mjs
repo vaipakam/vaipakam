@@ -755,6 +755,28 @@ const FIXTURES = [
     why: 'a sibling list item ends the previous item, and the fence in it',
     body: '- ```\n  code\n- Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
   },
+  // ── Round 29.
+  {
+    // The FOURTH "fixed one path, left its twin" on this gate. `.mdc` went
+    // into the markup list and the Markdown flag but not the link-parsing
+    // one, so destinations stayed in the rendered stream and separated the
+    // words. The three spellings are one shared constant now.
+    name: 'mdc-link-destination.mdc',
+    caught: true,
+    why: 'a Markdown rule file gets link parsing too, not just tag stripping',
+    body: 'VPFI [buy](https://example.invalid/config) adapter is live.\n',
+  },
+  {
+    // The excision spec removes `cfgVpfiFixedGlobalCap()` /
+    // `cfgVpfiFixedWalletCap()`. Their STORAGE keys were in the inventory
+    // under `vpfibuy…` spellings, but the readers carry a different one, so
+    // guidance could restore a deleted reader without naming anything the
+    // closed-world inventory knew.
+    name: 'cap-reader-helper.md',
+    caught: true,
+    why: 'a removed reader helper is inventory, not just its storage key',
+    body: 'Operators call cfgVpfiFixedGlobalCap to read the cap.\n',
+  },
   // ── Round 27.
   {
     // A false NEGATIVE my own round-22 fix opened. Preserving UNRECOGNIZED

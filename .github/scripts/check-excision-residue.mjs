@@ -279,6 +279,12 @@ const DEAD_TOKENS = [
   'vpfibuyperwalletcap',
   'vpfibuytotalsold',
   'bridgedbuyreceiver',
+  // The removed CAP READER helpers (spec :91-92). The storage keys were
+  // already here under their `vpfibuy…` spellings, but the helpers that read
+  // them carry a different one — `cfgVpfiFixedGlobalCap()` — so guidance could
+  // restore a deleted reader without naming anything the inventory knew.
+  'cfgvpfifixedglobalcap',
+  'cfgvpfifixedwalletcap',
   // NOT listed, being substrings of tokens above and so double-counted:
   // `quoteFixedRateBuy` (→ fixedratebuy), `set/getBridgedBuyReceiver`
   // (→ buyreceiver, which `bridgedbuyreceiver` also contains — see the
@@ -643,6 +649,16 @@ function inScopeFiles() {
 // out meant a contributor could evade the whole-tree ratchet by extension alone
 // — the same content caught in a `.md` went through the plain-text path and its
 // inline formatting stayed between the words.
+/**
+ * The Markdown family, in ONE place.
+ *
+ * This spelling had drifted into three copies and adding `.mdc` to two of
+ * them left the third — link and autolink parsing — still treating the file
+ * as plain text. That is the fourth "fixed one path, left its twin" defect on
+ * this gate, so the shape is now shared rather than repeated.
+ */
+const MARKDOWN_EXTENSIONS = /\.(?:mdc?|mdx|markdown)$/i;
+
 // `.mdc` is a Markdown RULE file — the tree tracks one under
 // `contracts/lib/chainlink-local/.cursor/rules/`. Absent from this list it
 // was scanned as plain text, so its inline HTML was never stripped and a
@@ -1066,7 +1082,7 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
   // resolves to the dead identifier in any renderer. Passing `''` as the path
   // to suppress the first had been silently suppressing the second.
   const skipTags = MARKUP_EXTENSIONS.test(sourcePath || '');
-  const isMdSource = /\.(?:mdx?|markdown)$/i.test(sourcePath || '');
+  const isMdSource = MARKDOWN_EXTENSIONS.test(sourcePath || '');
   const isJsonSource = /\.jsonc?$/i.test(sourcePath || '');
   const decodeRefs = skipTags || sourcePath === TAG_INTERIOR;
   const TAG = /^<\/?[a-zA-Z][^<>]*>/;
@@ -2304,7 +2320,7 @@ function scanFile(path) {
   // stripper, so the phrase a user sees never fused and the gate stayed green.
   // `.mdc` too — a Markdown rule file gets the fence, boundary and container
   // treatment its `.md` sibling gets, not just tag stripping.
-  const isMarkdown = /\.(?:mdc?|mdx|markdown)$/i.test(path);
+  const isMarkdown = MARKDOWN_EXTENSIONS.test(path);
   /**
    * Offset -> "are angle brackets here LITERAL rather than markup?"
    *
