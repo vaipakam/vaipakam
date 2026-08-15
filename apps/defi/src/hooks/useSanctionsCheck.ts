@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { type Address } from 'viem';
 import {
   useDiamondPublicClient,
@@ -39,26 +39,24 @@ export function useSanctionsCheck(
   const chain = useReadChain();
   const diamondAddress = chain.diamondAddress as Address | null;
 
-  const [state, setState] = useState<SanctionsState>({
-    isSanctioned: false,
-    loading: false,
-    error: null,
-    checkedAddress: null,
-  });
+  // Tagged with the exact question asked — chain and address. Both the
+  // disabled answer and the in-flight answer are DERIVED, not written from the
+  // effect, so there is no frame in which one address's verdict is displayed
+  // under another's. That matters more here than on a cosmetic read: the
+  // previous address's `isSanctioned: false` sitting against a newly connected
+  // wallet is a clean bill of health for an address nobody checked.
+  const reqKey = who && diamondAddress ? `${chain.chainId}|${who.toLowerCase()}` : null;
+  const [result, setResult] = useState<{
+    key: string;
+    isSanctioned: boolean;
+    error: string | null;
+  } | null>(null);
 
   useEffect(() => {
-    if (!who || !diamondAddress) {
-      setState({
-        isSanctioned: false,
-        loading: false,
-        error: null,
-        checkedAddress: null,
-      });
-      return;
-    }
+    if (!reqKey || !who || !diamondAddress) return;
     let cancelled = false;
-    setState((s) => ({ ...s, loading: true, error: null }));
     (async () => {
+      let next: { isSanctioned: boolean; error: string | null };
       try {
         const flagged = (await publicClient.readContract({
           address: diamondAddress,
@@ -66,27 +64,40 @@ export function useSanctionsCheck(
           functionName: 'isSanctionedAddress',
           args: [who],
         })) as boolean;
-        if (cancelled) return;
-        setState({
-          isSanctioned: Boolean(flagged),
-          loading: false,
-          error: null,
-          checkedAddress: who,
-        });
+        next = { isSanctioned: Boolean(flagged), error: null };
       } catch (e) {
-        if (cancelled) return;
-        setState({
+        next = {
           isSanctioned: false,
-          loading: false,
           error: (e as Error)?.message ?? 'Sanctions check failed',
-          checkedAddress: who,
-        });
+        };
       }
+      if (cancelled) return;
+      setResult({ key: reqKey, ...next });
     })();
     return () => {
       cancelled = true;
+      // Dropped on the way out — re-asking the same question after a gap must
+      // read as loading, not as the answer from before the gap.
+      setResult(null);
     };
-  }, [publicClient, diamondAddress, who]);
+  }, [publicClient, diamondAddress, who, reqKey]);
 
-  return state;
+  // Memoized so consumers that put this object in a dependency array don't
+  // re-run on every render of their parent.
+  return useMemo<SanctionsState>(() => {
+    if (!reqKey || !who) {
+      return { isSanctioned: false, loading: false, error: null, checkedAddress: null };
+    }
+    if (result?.key !== reqKey) {
+      // In flight. `isSanctioned: false` while loading is the pre-existing
+      // contract — callers gate on `loading` — and is unchanged here.
+      return { isSanctioned: false, loading: true, error: null, checkedAddress: who };
+    }
+    return {
+      isSanctioned: result.isSanctioned,
+      loading: false,
+      error: result.error,
+      checkedAddress: who,
+    };
+  }, [reqKey, who, result]);
 }
