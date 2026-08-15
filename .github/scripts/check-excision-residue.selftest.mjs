@@ -73,6 +73,33 @@ const FIXTURES = [
       '>Adapter now.\n',
   },
   {
+    // Round 9 P2. An angle-bracket run containing whitespace is neither an
+    // autolink nor an HTML tag — it is literal visible text. The loose
+    // "starts with a letter" test stripped it anyway, fusing the words either
+    // side into a mention and BLOCKING a clean file.
+    name: 'angle-run-not-a-tag.md',
+    caught: false,
+    why: 'a bracketed run with whitespace is visible text, not markup to strip',
+    body:
+      'Decide what to buy<https://example.com some-label>Adapter selection ' +
+      'follows.\n',
+  },
+  {
+    // Round 9 P2 (the other one). 100k unterminated `](` used to walk the rest
+    // of the file per candidate; this fixture is the shape, kept small enough
+    // to stay a fast unit test. Correctness assertion only — the timing claim
+    // is measured separately.
+    name: 'dest-openers-unterminated.md',
+    caught: false,
+    why: 'many unterminated link openers must terminate and not false-positive',
+    // Deliberately NOT `buy ...](... adapter`: the gate drops non-alphanumerics
+    // by design (that is how `buy <strong>adapter</strong>` is caught), so two
+    // dead-name words separated only by punctuation ARE a mention under its own
+    // rules. My first version of this fixture asserted otherwise and failed,
+    // correctly. What this pins is that the scan terminates and invents nothing.
+    body: 'Docs ' + ']('.repeat(2000) + ' notes.\n',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',

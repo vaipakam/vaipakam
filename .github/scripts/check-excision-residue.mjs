@@ -659,6 +659,11 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
   const decodeRefs = skipTags || sourcePath === TAG_INTERIOR;
   const TAG = /^<\/?[a-zA-Z][^<>]*>/;
   const tagSpans = [];
+  // Memo for the link-destination scan below: once a closing delimiter is
+  // known to be absent from the rest of the file, every later opener can be
+  // rejected in O(1). `at` is the offset from which that is known.
+  const noRParenAfter = { at: -1 };
+  const noRBracketAfter = { at: -1 };
   for (let i = 0; i < text.length; i++) {
     // NOT inside a literal region: there, angle brackets are literal command
     // placeholders, not markup. `docs/ops/BaseSepoliaDeploy.md:385,392` carry
@@ -679,6 +684,30 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
     ) {
       const open = text[i + 1];
       const close = open === '(' ? ')' : ']';
+      // O(1) reject once we know the delimiter never appears again.
+      //
+      // Without this, a document full of unterminated `](` walked the whole
+      // remaining file per candidate: 100,000 repetitions in 200 KB took ~30 s,
+      // and this is a blocking gate, so a malformed document could stall CI.
+      //
+      // Measured, because my first attempt at this did not work: bounding each
+      // candidate to its own LINE changed nothing (30511 ms -> 30061 ms), since
+      // the pathological document is a single long line. What actually bounds
+      // it is noticing that the closing delimiter is absent from the rest of
+      // the file — then every later opener is rejected without scanning.
+      // Sound because it is a statement about the delimiter's absence, not
+      // about nesting depth: if `close` does not occur after `i`, no scan
+      // starting at or after `i` can find it.
+      const noneAfter = open === '(' ? noRParenAfter : noRBracketAfter;
+      if (noneAfter.at >= 0 && i >= noneAfter.at) {
+        i += 1;
+        continue;
+      }
+      if (text.indexOf(close, i + 2) === -1) {
+        noneAfter.at = i;
+        i += 1;
+        continue;
+      }
       let depth = 0;
       let j = i + 1;
       for (; j < text.length; j++) {
@@ -836,7 +865,22 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
       // fuse. Attribute quoting is part of the syntax; a scanner that ignores
       // it is not reading the markup, it is reading past it.
       let close = -1;
-      if (/^<\/?[a-zA-Z]/.test(text.slice(i, i + 3))) {
+      // STRICT tag grammar, not just "starts with a letter". The loose test
+      // accepted anything bracketed beginning with a letter, so an angle-
+      // bracket run containing whitespace — rejected as an autolink just above
+      // — fell through here and was stripped as markup. `buy<https://example.com
+      // some-label>Adapter` is literal visible text in Markdown: not an
+      // autolink, not a tag. Stripping it synthesized `buyadapter` and BLOCKED
+      // a clean file, which is the expensive direction for a blocking gate.
+      //
+      // CommonMark: a tag name is a letter followed by letters, digits or
+      // hyphens, and must then be followed by whitespace, `/`, or `>`. That is
+      // exactly what rejects `<https://…>` — `https` is a valid name, but the
+      // `:` after it is none of the three.
+      const tagShape = /^<\/?[a-zA-Z][a-zA-Z0-9-]*(?=[\s/>])/.test(
+        text.slice(i, i + 64),
+      );
+      if (tagShape) {
         let quote = '';
         for (let j = i + 1; j < text.length; j++) {
           const ch = text[j];
