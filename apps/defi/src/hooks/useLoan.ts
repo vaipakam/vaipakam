@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useReadChain, useReadyDiamond } from '../contracts/useDiamond';
 import { type LoanDetails } from '../types/loan';
 import { beginStep } from '../lib/journeyLog';
@@ -35,7 +35,26 @@ export function useLoan(loanId: string | undefined) {
     borrowerHolder: string;
     error: string | null;
   } | null>(null);
-  const [pending, setPending] = useState(false);
+  // The key that an EXPLICIT reload is currently refreshing, or null. Scoped
+  // rather than a bare boolean: a reload started on chain A that is still in
+  // flight when the user moves to chain B was pinning every `useLoan` page in
+  // its full-page loading state until that unrelated RPC settled — a stalled
+  // one indefinitely.
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+
+  // The question currently being asked, readable from an async continuation.
+  // A key check at RENDER time is not enough on its own: both completion paths
+  // committed unconditionally, so a slow chain-A read landing after chain B's
+  // had already resolved replaced B's result with an A-keyed one — and since no
+  // B read remained, the page stayed loading forever. Guarding the render and
+  // not the COMMIT leaves the worse of the two failures in place.
+  //
+  // `useLayoutEffect`, not a render-phase write: mutating a ref during render
+  // is unsafe under concurrent rendering, which is the rule #1747 was about.
+  const activeKey = useRef(reqKey);
+  useLayoutEffect(() => {
+    activeKey.current = reqKey;
+  }, [reqKey]);
 
   const load = useCallback(async () => {
     if (!loanId) return;
@@ -55,26 +74,35 @@ export function useLoan(loanId: string | undefined) {
       let borrowerHolder = '';
       try { lenderHolder = await diamond.ownerOf(data.lenderTokenId); } catch { lenderHolder = ''; }
       try { borrowerHolder = await diamond.ownerOf(data.borrowerTokenId); } catch { borrowerHolder = ''; }
-      setResult({ key, loan: data, lenderHolder, borrowerHolder, error: null });
+      if (key === activeKey.current) {
+        setResult({ key, loan: data, lenderHolder, borrowerHolder, error: null });
+      }
+      // The read genuinely happened, so the journey log records it either way;
+      // only the COMMIT is conditional.
       step.success();
     } catch (err) {
-      setResult({
-        key,
-        loan: null,
-        lenderHolder: '',
-        borrowerHolder: '',
-        error: 'Loan not found or failed to load.',
-      });
+      if (key === activeKey.current) {
+        setResult({
+          key,
+          loan: null,
+          lenderHolder: '',
+          borrowerHolder: '',
+          error: 'Loan not found or failed to load.',
+        });
+      }
       step.failure(err);
     }
   }, [loanId, diamond, chainId]);
 
   const reload = useCallback(async () => {
-    setPending(true);
+    const key = activeKey.current;
+    setPendingKey(key);
     try {
       await load();
     } finally {
-      setPending(false);
+      // Clear only if this reload is still the one being awaited — a newer
+      // question must not have its pending state cleared by an older refresh.
+      setPendingKey((k) => (k === key ? null : k));
     }
   }, [load]);
 
@@ -96,7 +124,7 @@ export function useLoan(loanId: string | undefined) {
   // RPC returned, because the local action flag clears first. `reload` is only
   // ever called from an event handler, so setting state in it is not the
   // cascade the effect rule is about.
-  const loading = pending || (reqKey !== null && !matched);
+  const loading = (reqKey !== null && pendingKey === reqKey) || (reqKey !== null && !matched);
   return {
     loan: matched ? result.loan : null,
     lenderHolder: matched ? result.lenderHolder : '',
