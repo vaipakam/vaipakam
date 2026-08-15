@@ -129,6 +129,11 @@ interface Hook {
  *  bounds the `eth_getLogs` call so public RPCs accept it. */
 const LOOKBACK_BLOCKS = 50_000n;
 
+/** Stable identities for the two derived answers, so consumers holding the
+ *  result in a dependency array do not re-run on every render. */
+const EMPTY_PENDING: Hook = { byKnob: {}, all: [], loading: false };
+const LOADING_PENDING: Hook = { byKnob: {}, all: [], loading: true };
+
 export function useTimelockPendingChanges(): Hook {
   const client = useDiamondPublicClient();
   const chain = useReadChain();
@@ -138,14 +143,24 @@ export function useTimelockPendingChanges(): Hook {
     return (dep?.timelock as Address | undefined) ?? null;
   }, [chain.chainId]);
 
+  // Stable identities so a derived answer does not churn consumer memos.
+  // (declared at module scope below)
   // Pre-compute selector → knob.id map for fast calldata matching.
   const selectorMap = useMemo(() => buildSelectorMap(), []);
 
-  const [state, setState] = useState<Hook>({
-    byKnob: {},
-    all: [],
-    loading: true,
-  });
+  // Tagged with chain + Diamond + timelock. A pending governance change is
+  // scoped to one deployment, so a list read from one chain shown against
+  // another is a claim that operations are queued which are not — on an admin
+  // panel whose whole purpose is telling an operator what is about to execute.
+  //
+  // `loading` and the no-timelock empty answer are DERIVED. Note this hook
+  // deliberately does NOT re-read on a timer (see below), so the stale window
+  // was not a frame but lasted until the next remount or chain switch.
+  const reqKey =
+    timelockAddr && chain.diamondAddress
+      ? `${chain.chainId}|${chain.diamondAddress.toLowerCase()}|${timelockAddr.toLowerCase()}`
+      : null;
+  const [result, setResult] = useState<{ key: string; value: Hook } | null>(null);
 
   // NO local-clock-driven re-read. A boundary-retry timer stood here across
   // rounds 4-5 and was WITHDRAWN, not patched: rediscovering operations through
@@ -159,10 +174,7 @@ export function useTimelockPendingChanges(): Hook {
   // not. A real fix reads the active operation IDs directly rather than
   // rediscovering them — tracked as a follow-up.
   useEffect(() => {
-    if (!timelockAddr || !chain.diamondAddress) {
-      setState({ byKnob: {}, all: [], loading: false });
-      return;
-    }
+    if (!reqKey || !timelockAddr || !chain.diamondAddress) return;
     let cancelled = false;
     (async () => {
       try {
@@ -241,23 +253,33 @@ export function useTimelockPendingChanges(): Hook {
           if (!byKnob[c.knobId]) byKnob[c.knobId] = [];
           byKnob[c.knobId].push(c);
         }
-        setState({ byKnob, all, loading: false });
+        setResult({ key: reqKey, value: { byKnob, all, loading: false } });
       } catch (err) {
         if (cancelled) return;
-        setState({
-          byKnob: {},
-          all: [],
-          loading: false,
-          error: err instanceof Error ? err.message.slice(0, 160) : String(err),
+        setResult({
+          key: reqKey,
+          value: {
+            byKnob: {},
+            all: [],
+            loading: false,
+            error: err instanceof Error ? err.message.slice(0, 160) : String(err),
+          },
         });
       }
     })();
     return () => {
       cancelled = true;
+      // Dropped on the way out. This is the one hook in the series where that
+      // matters beyond a frame: with no timer re-read, a list kept across a
+      // chain switch would persist until the next remount.
+      setResult(null);
     };
-  }, [client, chain.diamondAddress, chain.chainId, timelockAddr, selectorMap]);
+  }, [client, chain.diamondAddress, chain.chainId, timelockAddr, selectorMap, reqKey]);
 
-  return state;
+  // No timelock on this chain is a SETTLED answer — there is nothing to queue
+  // changes against — not a pending one.
+  if (reqKey === null) return EMPTY_PENDING;
+  return result?.key === reqKey ? result.value : LOADING_PENDING;
 }
 
 /** Build a `{selector → knobId}` map by walking the knob catalogue
