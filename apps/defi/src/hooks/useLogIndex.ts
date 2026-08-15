@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import {
@@ -135,11 +141,37 @@ export function useLogIndex() {
   // because the late writer also stamps the OLD chain and consumers that gate
   // on the tag then withhold everything until the next watermark tick or
   // manual rescan. A superseded scan must commit nothing at all.
+  //
+  // Round 4 correction: a BARE sequence was too blunt. It discarded every
+  // superseded scan including same-chain ones, so a scan slower than the warm
+  // watermark interval on a busy chain was outrun by the next tick every time
+  // and NOTHING ever committed — scans completing forever while the hook
+  // served stale arrays. The thing that must invalidate a result is the chain
+  // changing under it, not merely another scan having started.
+  //
+  // So the commit predicate is two parts, and both are needed:
+  //   · the scan's chain is still the chain we are reading  (cross-chain)
+  //   · no LATER scan has already committed                 (ordering)
+  // A same-chain scan that finishes while another is in flight now commits
+  // normally; only a result for a chain we have left, or one overtaken by a
+  // fresher commit, is dropped.
   const scanSeq = useRef(0);
+  const committedSeq = useRef(0);
+  const activeChainRef = useRef(chainId);
+  // Commit-phase, not a render-phase write — writing a ref while rendering is
+  // unsafe under concurrent rendering, and it is the same rule #1747 is
+  // clearing elsewhere in this app. A layout effect runs only for renders that
+  // COMMIT and before anything can observe them; the reader here is an
+  // `await`-settled callback, long after either.
+  useLayoutEffect(() => {
+    activeChainRef.current = chainId;
+  }, [chainId]);
 
   const load = useCallback(async () => {
     const seq = ++scanSeq.current;
-    const isCurrent = () => seq === scanSeq.current;
+    const forChain = chainId;
+    const isCurrent = () =>
+      forChain === activeChainRef.current && seq > committedSeq.current;
     report('logIndex', { loading: true });
     const peeked = peekLoanIndex(chainId, diamondAddress);
     if (!isCurrent()) return;
@@ -163,6 +195,7 @@ export function useLogIndex() {
       setGetLastOwner(() => peeked.getLastOwner);
       setGetLoanInitiatedForToken(() => peeked.getLoanInitiatedForToken);
       setIndexChainId(chainId);
+      committedSeq.current = seq;
       setLoading(false);
     }
     setError(null);
@@ -209,6 +242,7 @@ export function useLogIndex() {
       setGetLastOwner(() => result.getLastOwner);
       setGetLoanInitiatedForToken(() => result.getLoanInitiatedForToken);
       setIndexChainId(chainId);
+      committedSeq.current = seq;
       // Report the scanned-through block as a freshness frontier. The
       // legacy log scan IS an RPC tail-scan ([indexerTail+1, safeHead]),
       // and useLogIndex is mounted on most data pages — so this is what

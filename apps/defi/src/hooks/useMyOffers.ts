@@ -496,6 +496,15 @@ export function useMyOffers(
     }
     if (!address || idsToFetch.length === 0) {
       setLiveOffers([]);
+      // Clear the local flag too. The abort path below deliberately leaves
+      // `loading` alone (a superseded run must not announce "done" for the
+      // live one), which was fine while an empty id set only happened at rest
+      // — but the chain-mismatch guard added for the log index can now empty
+      // `buckets` MID-FLIGHT, aborting the in-flight run and landing here.
+      // With the creator indexer unavailable and no matching offers on the new
+      // chain, nothing else would ever clear it and the Dashboard would sit in
+      // its loading state for good.
+      setLoading(false);
       return;
     }
     let aborted = false;
