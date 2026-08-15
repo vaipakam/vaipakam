@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useReadyDiamond } from '../contracts/useDiamond';
+import { useReadChain, useReadyDiamond } from '../contracts/useDiamond';
 import { type LoanDetails } from '../types/loan';
 import { beginStep } from '../lib/journeyLog';
 
@@ -14,13 +14,20 @@ import { beginStep } from '../lib/journeyLog';
  */
 export function useLoan(loanId: string | undefined) {
   const diamond = useReadyDiamond();
+  const chainId = useReadChain().chainId;
   // The request key is the whole question — which Diamond, which loan. The
   // answer is tagged with it and `loading` is DERIVED, so a detail page
   // navigated from loan 7 to loan 8 cannot render loan 7's parties, amounts and
   // status under loan 8's heading while the read is in flight. The previous
   // shape wrote `loading` from the effect, which lands a paint after the one
   // that showed the wrong loan.
-  const reqKey = loanId && diamond ? `${loanId}` : null;
+  // CHAIN is part of the identity. A loan id means a different loan on a
+  // different deployment, so keying on the id alone let the previous chain's
+  // parties, amounts and status match for a render — and, worse, let a slow
+  // read from the old chain overwrite the new chain's result later, since its
+  // key matched too. Loan ids are small integers, so the collision is the
+  // normal case rather than a corner one.
+  const reqKey = loanId && diamond ? `${chainId}|${loanId}` : null;
   const [result, setResult] = useState<{
     key: string;
     loan: LoanDetails | null;
@@ -28,6 +35,7 @@ export function useLoan(loanId: string | undefined) {
     borrowerHolder: string;
     error: string | null;
   } | null>(null);
+  const [pending, setPending] = useState(false);
 
   const load = useCallback(async () => {
     if (!loanId) return;
@@ -38,7 +46,7 @@ export function useLoan(loanId: string | undefined) {
       // mount until the user connects/switches.
       return;
     }
-    const key = loanId;
+    const key = `${chainId}|${loanId}`;
     const step = beginStep({ area: 'loan-view', flow: 'getLoanDetails', step: 'read', loanId });
     try {
       const data = (await diamond.getLoanDetails(BigInt(loanId))) as LoanDetails;
@@ -59,7 +67,16 @@ export function useLoan(loanId: string | undefined) {
       });
       step.failure(err);
     }
-  }, [loanId, diamond]);
+  }, [loanId, diamond, chainId]);
+
+  const reload = useCallback(async () => {
+    setPending(true);
+    try {
+      await load();
+    } finally {
+      setPending(false);
+    }
+  }, [load]);
 
   useEffect(() => {
     void load();
@@ -72,14 +89,22 @@ export function useLoan(loanId: string | undefined) {
   }, [load]);
 
   const matched = result?.key === reqKey;
+  // An EXPLICIT reload has no key change to derive `loading` from — the
+  // question is identical, only the answer is meant to be newer. Without this,
+  // the post-transaction refreshes in `LoanDetails` (repay, add-collateral)
+  // left the pre-transaction figures and their action controls live until the
+  // RPC returned, because the local action flag clears first. `reload` is only
+  // ever called from an event handler, so setting state in it is not the
+  // cascade the effect rule is about.
+  const loading = pending || (reqKey !== null && !matched);
   return {
     loan: matched ? result.loan : null,
     lenderHolder: matched ? result.lenderHolder : '',
     borrowerHolder: matched ? result.borrowerHolder : '',
     // No Diamond on this chain is not "loading" — it is a settled answer the
     // page renders its unsupported-chain banner for.
-    loading: reqKey !== null && !matched,
+    loading,
     error: matched ? result.error : null,
-    reload: load,
+    reload,
   };
 }
