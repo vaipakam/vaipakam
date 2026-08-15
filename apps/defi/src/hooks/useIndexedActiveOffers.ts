@@ -102,8 +102,19 @@ export function useIndexedActiveOffers(): UseIndexedActiveOffersResult {
   // window's upper bound (`snapshotRef.current?.safeBlock`) is
   // therefore "freshest known safe block at the moment the refetch
   // ran", which is exactly what we want.
+  //
+  // The sync happens in an effect rather than during render (writing a ref
+  // while rendering is not safe under concurrent rendering, where a render can
+  // be thrown away). `useRef(snapshot)` already seeds the mount value, and the
+  // only reader below sits after an `await` on a network fetch, so it observes
+  // a flushed value in every reachable case. Even the theoretical race — a tick
+  // that reads between a commit and its effect flush — would see the previous
+  // safe block, which only shortens that one catch-up window; the next tick
+  // re-reads and covers the gap.
   const snapshotRef = useRef(snapshot);
-  snapshotRef.current = snapshot;
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
 
   const tick = useCallback(
     async (signal?: { cancelled: boolean }) => {
