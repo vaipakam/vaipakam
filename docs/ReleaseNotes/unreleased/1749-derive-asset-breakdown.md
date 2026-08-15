@@ -12,6 +12,12 @@ network's total presents an arithmetic that does not hold. The rows are now
 labelled with the network and the exact set of assets they describe, and the page
 reports that it is still working rather than showing the earlier set.
 
+The analytics page itself needed a matching change. It had been treating "no
+rows yet" as "no loan volume", which was harmless while the rows were merely
+stale but became a confident and wrong "there is nothing here" once they
+correctly go blank between networks. It now says it is loading, and only reports
+no volume once something has actually answered.
+
 Two states are deliberately kept distinct. "The indexer is offline" is a settled
 answer, not a pending one, so the page keeps rendering its own placeholder for
 that instead of spinning forever. And a network with no assets to break down is
