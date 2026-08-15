@@ -27,12 +27,24 @@ import { useReadyDiamond, useReadChain } from '../contracts/useDiamond';
 export function useAutoLendFacetAvailable(): boolean | null {
   const diamondRo = useReadyDiamond();
   const chain = useReadChain();
-  const [available, setAvailable] = useState<boolean | null>(null);
+  // Tagged with the chain it describes; `null` (unknown) is DERIVED rather
+  // than written from the effect. The reset-then-fetch shape paints the
+  // PREVIOUS chain's verdict for a frame after a switch, and on this hook that
+  // frame is the difference between a page saying "create an intent below" and
+  // one saying the feature is unavailable here. `null` is also the value the
+  // caller is required NOT to act on, so it is exactly what an unresolved
+  // request should read as.
+  const [result, setResult] = useState<{ chainId: number; available: boolean | null } | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
-    setAvailable(null);
     if (!diamondRo) return;
+    const forChain = chain.chainId;
+    const commit = (available: boolean | null) => {
+      if (!cancelled) setResult({ chainId: forChain, available });
+    };
     void (async () => {
       try {
         await (
@@ -40,7 +52,7 @@ export function useAutoLendFacetAvailable(): boolean | null {
             isLenderIntentEnabled: () => Promise<boolean>;
           }
         ).isLenderIntentEnabled();
-        if (!cancelled) setAvailable(true);
+        commit(true);
       } catch (e) {
         const msg = String(
           (e as { data?: string; message?: string })?.data ??
@@ -50,13 +62,17 @@ export function useAutoLendFacetAvailable(): boolean | null {
         const missingFacet =
           msg.includes('0xa9ad62f8') ||
           /function does not exist|functionnotfound/i.test(msg);
-        if (!cancelled) setAvailable(missingFacet ? false : null);
+        commit(missingFacet ? false : null);
       }
     })();
     return () => {
       cancelled = true;
+      // Dropped on the way out, so a verdict cannot outlive the request that
+      // asked for it — including a diamond that goes unready and ready again
+      // on the same chain, which rebuilds an identical tag.
+      setResult(null);
     };
   }, [diamondRo, chain.chainId]);
 
-  return available;
+  return result?.chainId === chain.chainId ? result.available : null;
 }

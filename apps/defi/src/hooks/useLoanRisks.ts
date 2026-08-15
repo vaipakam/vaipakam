@@ -18,26 +18,32 @@ export interface LoanRisk {
  * changes (stringified bigint list), so paging and mode toggles don't
  * re-fetch already-visible rows.
  */
+/** Shared empty map so an unresolved read returns a stable identity rather
+ *  than a fresh `Map` every render. */
+const EMPTY_RISKS: ReadonlyMap<string, LoanRisk> = new Map();
+
 export function useLoanRisks(loanIds: bigint[]) {
   const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
-  const [risks, setRisks] = useState<Map<string, LoanRisk>>(new Map());
-  const [loading, setLoading] = useState(false);
-
   const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
 
   // Stable signature for the dependency array — comparing bigint arrays by
   // reference re-fires the effect on every render.
   const idsKey = loanIds.map((id) => id.toString()).join(',');
+  // …and the same signature identifies the ANSWER. LTV and health factor are
+  // per-chain, per-loan quantities: a map computed for one Diamond keyed only
+  // by loan id would read as valid against another, and health factor is what
+  // the row colours and the liquidation warning are drawn from.
+  const reqKey = loanIds.length === 0 ? null : `${chain.chainId}|${diamondAddress}|${idsKey}`;
+  const [result, setResult] = useState<{ key: string; risks: Map<string, LoanRisk> } | null>(
+    null,
+  );
 
   useEffect(() => {
-    if (loanIds.length === 0) {
-      setRisks(new Map());
-      return;
-    }
+    if (!reqKey) return;
     let cancelled = false;
-    setLoading(true);
     (async () => {
+      let next = new Map<string, LoanRisk>();
       try {
         const argsList = loanIds.map((id) => [id] as const);
         const ltvCalls = encodeBatchCalls(
@@ -56,24 +62,30 @@ export function useLoanRisks(loanIds: bigint[]) {
           batchCalls<bigint>(publicClient, DIAMOND_ABI, 'calculateLTV', ltvCalls),
           batchCalls<bigint>(publicClient, DIAMOND_ABI, 'calculateHealthFactor', hfCalls),
         ]);
-        if (cancelled) return;
-        const next = new Map<string, LoanRisk>();
         for (let i = 0; i < loanIds.length; i++) {
           next.set(loanIds[i].toString(), {
             ltv: ltvs[i] ?? null,
             hf: hfs[i] ?? null,
           });
         }
-        setRisks(next);
       } catch {
-        if (!cancelled) setRisks(new Map());
-      } finally {
-        if (!cancelled) setLoading(false);
+        next = new Map();
       }
+      if (cancelled) return;
+      setResult({ key: reqKey, risks: next });
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      // Dropped on the way out, so the same id set re-requested after a gap
+      // reads as loading rather than as the figures from before it.
+      setResult(null);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idsKey, diamondAddress, publicClient]);
+  }, [reqKey, idsKey, diamondAddress, publicClient]);
 
-  return { risks, loading };
+  const matched = result?.key === reqKey;
+  return {
+    risks: matched ? result.risks : EMPTY_RISKS,
+    loading: reqKey !== null && !matched,
+  };
 }
