@@ -755,6 +755,31 @@ const FIXTURES = [
     why: 'a sibling list item ends the previous item, and the fence in it',
     body: '- ```\n  code\n- Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
   },
+  // Three more from probing the container-chain model after it landed, kept
+  // because each was WRONG on the commit before it — the sibling rule was
+  // reported against `-` only, and these show it holds for the ordered and
+  // nested forms too, while the tab case is a false positive the model fixed
+  // on the way past. Probes that behaved identically before and after were
+  // discarded rather than committed: a fixture that cannot fail asserts
+  // nothing, which this suite has already learned four times.
+  {
+    name: 'fence-ordered-sibling.md',
+    caught: true,
+    why: 'an ordered sibling item ends the previous item, and the fence in it',
+    body: '1. ```\n   code\n2. Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    name: 'fence-nested-sibling.md',
+    caught: true,
+    why: 'a sibling at the INNER level ends the inner item, and the fence in it',
+    body: '- - ```\n    code\n  - Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    name: 'fence-tab-continuation.md',
+    caught: false,
+    why: 'a tab is four columns, so it continues a two-space list item',
+    body: '- ```\n\tbuy<strong>adapter</strong> sample\n  ```\n',
+  },
   {
     // NOT a proof of a fix — this case was already caught before the tab
     // change, so it locks existing behaviour rather than demonstrating new.
