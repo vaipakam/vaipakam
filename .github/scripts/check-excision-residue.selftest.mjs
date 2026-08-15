@@ -665,6 +665,34 @@ const FIXTURES = [
       'Some prose first.\n\n>\n>     Decide what to buy<strong>adapter</strong> selection follows.\n',
   },
   {
+    // Round 18 P1. Four spaces under a LIST ITEM are the list's indentation,
+    // not a code block's. Round 17 removed the quote prefix and stopped there,
+    // so an ordinary list paragraph was marked literal and its `<strong>`
+    // survived as text, letting a live mention pass.
+    name: 'list-paragraph.md',
+    caught: true,
+    why: 'a list continuation paragraph is prose, not indented code',
+    body: '- Intro\n\n    Operators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
+    // Round 18 P2. A `[` inside an HTML COMMENT is invisible and opens no
+    // label; round 17 skipped element tags only, so it paired with a later
+    // `](` and stripped a run the reader sees.
+    name: 'bracket-in-comment.md',
+    caught: false,
+    why: 'a bracket inside a comment opens nothing',
+    body: 'Decide what to buy <!-- [ --> ](/middle) Adapter selection follows.\n',
+  },
+  {
+    // Round 18 P2. CR alone ends a line in CommonMark. Splitting on LF made a
+    // CR-only document ONE logical line, so no blank-line boundary was ever
+    // seen and two paragraphs fused.
+    name: 'cr-line-endings.md',
+    caught: false,
+    why: 'a CR-only document still has paragraphs',
+    body: 'Decide what to buy\r\rAdapter selection follows.\r',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',

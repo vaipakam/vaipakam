@@ -452,7 +452,7 @@ const PINNED = new Map([
   ["docs/DesignsAndPlans/VPFITokenomicsRedesignResearch.md", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7f0a68b88a8c"]],
   ["docs/FunctionalSpecs/ProjectDetailsREADME.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "7c9b3628f90c"]],
   ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "242c30f2f5e3"]],
-  ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "6cc03561eae9"]],
+  ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "4b76320c09c4"]],
   ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "857792c509dd"]],
   ["docs/ReleaseNotes/unreleased/1651-excision-residue-ratchet.md", [1, "RETRACTION — this gate's own fragment, quoting the dead phrase as the example of what now fails", "fba24ce27446"]],
   ["docs/ReleaseNotes/unreleased/1672-layerzero-residue-removal.md", [3, "RETRACTION — describes text that WRONGLY implied the surface was live, and its removal", "a49a87d89dbb"]],
@@ -467,12 +467,12 @@ const PINNED = new Map([
   ["docs/internal/WethChainSafetyAudit-2026-05-14.md", [16, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "52844cf3a903"]],
   ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "023e9b4fd22a"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "0284187b3cbb"]],
-  ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "c86fd4428005"]],
-  ["docs/ops/BaseSepoliaDeploy.md", [26, "LIVE-TEXT — known debt", "64debf6185f2"]],
+  ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "9ece24feef35"]],
+  ["docs/ops/BaseSepoliaDeploy.md", [26, "LIVE-TEXT — known debt", "f7030caedd23"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "ab9aa52ffbe1"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "874f9b73f212"]],
-  ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "07fef3834731"]],
-  ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "f83457ef2f6e"]],
+  ["docs/ops/DeploymentRunbook.md", [47, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner", "f9c2a40c719d"]],
+  ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "967c59306dff"]],
   ["docs/ops/VPFITokenRotationRunbook.md", [1, "HISTORICAL — rotation-scope note", "7fe351cf758b"]],
   ["docs/ops/tenderly-paste/Diamond-full.json", [45, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "9256252cfcc1"]],
   ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "5f91cb0ab0b5"]],
@@ -674,6 +674,29 @@ function linkClosePositions(text, literalAt) {
     // a later `](` in prose stripped a run the reader sees. Skipped with the
     // same quote-aware walk the tag scanner uses, so an attribute value
     // containing `>` cannot end the tag early here either.
+    // Comments, CDATA, processing instructions and declarations are raw HTML
+    // too, and a `[` inside any of them is invisible — `<!-- [ -->` is not a
+    // label opener. Round 17 skipped element tags only, so the comment case
+    // still paired with a later `](` and stripped a run the reader sees.
+    const rawSpan = [
+      ['<!--', '-->'],
+      ['<![CDATA[', ']]>'],
+      ['<?', '?>'],
+    ].find(([open]) => text.startsWith(open, i));
+    if (rawSpan) {
+      const close = text.indexOf(rawSpan[1], i + rawSpan[0].length);
+      if (close === -1) break;
+      i = close + rawSpan[1].length - 1;
+      bangBefore = false;
+      continue;
+    }
+    if (c === '<' && /^<![A-Za-z]/.test(text.slice(i, i + 4))) {
+      const close = text.indexOf('>', i + 2);
+      if (close === -1) break;
+      i = close;
+      bangBefore = false;
+      continue;
+    }
     if (c === '<' && /^<\/?[a-zA-Z][a-zA-Z0-9-]*(?=[\s/>])/.test(text.slice(i, i + 64))) {
       let j = i + 1;
       let q = '';
@@ -692,7 +715,7 @@ function linkClosePositions(text, literalAt) {
     }
     // A label cannot span a blank line, so a paragraph break drops any
     // still-open brackets rather than letting them match across it.
-    if (c === '\n' && /^[ \t]*\n/.test(text.slice(i + 1))) {
+    if (/[\r\n]/.test(c) && /^[ \t\r]*\n|^[ \t]*\r/.test(text.slice(i + 1))) {
       openers.length = 0;
       continue;
     }
@@ -842,7 +865,7 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
         else if (text[j] === close) {
           depth--;
           if (depth === 0) break;
-        } else if (text[j] === '\n' && /^[ \t]*\n/.test(text.slice(j + 1))) {
+        } else if (/[\r\n]/.test(text[j]) && /^[ \t\r]*\n|^[ \t]*\r/.test(text.slice(j + 1))) {
           // A line of spaces or tabs is BLANK under CommonMark, and requiring
           // two adjacent newlines missed it — the walk then crossed the
           // paragraph, ran to EOF, and set the absence memo on evidence it had
@@ -1165,10 +1188,22 @@ function computeFences(lines) {
 }
 
 /** Byte offset → 0-based line index, via a prefix table built once per file. */
+/**
+ * Offsets at which each line begins.
+ *
+ * CR, LF and CRLF all end a line. Splitting on LF alone made a CR-only
+ * document ONE logical line, so every blank-line boundary check saw no
+ * paragraph breaks at all and two paragraphs fused into a mention no reader
+ * sees. `lines` below splits by the same three, so the two stay in step —
+ * which is the property every pass in this file has had to be taught.
+ */
 function lineStarts(text) {
   const starts = [0];
-  for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1);
-  return starts;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\n') starts.push(i + 1);
+    else if (text[i] === '\r') starts.push(text[i + 1] === '\n' ? i + 2 : i + 1);
+  }
+  return starts.filter((v, k) => k === 0 || v !== starts[k - 1]);
 }
 function lineOf(starts, offset) {
   let lo = 0;
@@ -1422,7 +1457,8 @@ const OFFICE_TEXT_PARTS = /^(?:(?:word|xl|ppt)\/(?!.*_rels\/).*\.xml|docProps\/[
  * empty, since there is no central directory — and the gate scanned nothing.
  * A performance shortcut that any file can opt into is a bypass.
  */
-const OFFICE_EXTENSIONS = /\.(?:doc|xls|ppt)[xm]$|\.(?:dot|xlt|pot)[xm]$/i;
+const OFFICE_EXTENSIONS =
+  /\.(?:doc|xls|ppt|pps)[xm]$|\.(?:dot|xlt|pot)[xm]$/i;
 
 /**
  * Same rule for PDFs, and it is the same oversight: the Office signature check
@@ -1859,7 +1895,7 @@ function scanFile(path) {
   // For NON-markup files tag-skipping is a no-op by definition, so the native
   // regex gives a provably identical string far faster than the per-character
   // loop; markup files take the loop. Same transform either way.
-  const lines = text.split('\n');
+  const lines = text.split(/\r\n|\r|\n/);
   const starts = lineStarts(text);
   const { inFence, delimiter: fenceDelimiter } = computeFences(lines);
   // Fences, inline code spans and indented code blocks are MARKDOWN
@@ -1958,13 +1994,28 @@ function scanFile(path) {
     const flags = new Array(lines.length).fill(false);
     if (!isMarkdown) return flags;
     let prevBlank = true;
+    // Width of the enclosing list item's content column, carried forward so a
+    // continuation paragraph is measured from it rather than from column zero.
+    let listIndent = 0;
     for (let i = 0; i < lines.length; i++) {
       // Container prefixes come off BEFORE anything is measured — both the
       // indentation and the blankness. A `>` line with nothing after it is a
       // blank line INSIDE the quote, and testing the raw line called it
       // non-blank, which broke the "preceded by a blank line" condition an
       // indented block needs.
-      const content = lines[i].replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '');
+      // Container prefixes come off BEFORE anything is measured — quote
+      // markers AND list markers. Four spaces under a list item are the LIST's
+      // indentation, not a code block's: `- Intro\n\n    Operators must…`
+      // renders as an ordinary list paragraph, and marking it literal let its
+      // `<strong>` survive as text and a live mention pass. Round 17 removed
+      // the quote prefix and stopped there.
+      //
+      // The list marker's own width is what the continuation is measured
+      // against, so it is consumed as part of the prefix rather than counted.
+      let content = lines[i].replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '');
+      const listMarker = /^([ \t]{0,3})(?:[-*+]|\d{1,9}[.)])([ \t]+)/.exec(content);
+      if (listMarker) content = content.slice(listMarker[0].length);
+      else if (listIndent > 0) content = content.replace(new RegExp(`^ {0,${listIndent}}`), '');
       const blank = !content.trim();
       if (inFence[i]) {
         prevBlank = false;
@@ -1975,6 +2026,8 @@ function scanFile(path) {
       // literal `<strong>` inside it as markup, and a clean file was BLOCKED.
       // CommonMark removes the container prefix before parsing the block; so
       // does the `content` above.
+      if (listMarker) listIndent = listMarker[0].length;
+      else if (blank === false && !/^[ \t]/.test(lines[i])) listIndent = 0;
       if (!blank && /^(?: {4}|\t)/.test(content) && (prevBlank || flags[i - 1])) {
         flags[i] = true;
       } else if (blank && i > 0 && flags[i - 1]) {
@@ -2347,7 +2400,8 @@ function scanFile(path) {
     // fix — but it can only ever PREVENT a false block, never hide a mention.
     if (/[.!?;:|]/.test(span)) return true;
     if (/[。！？；：]/.test(span)) return true;
-    if (/\n[ \t]*\n/.test(span)) return true;
+    // CR, LF and CRLF — a blank line is a blank line whatever ends it.
+    if (/[\r\n][ \t]*[\r\n]/.test(span)) return true;
     const firstLine = lineOf(starts, from);
     const lastLine = lineOf(starts, to);
     // BOTH structural rules are markdown-only and fence-excluded. `#` is a
@@ -2515,8 +2569,15 @@ function scanFile(path) {
       // that real heading stayed invisible. Same Markdown-vs-code confusion as
       // the boundary rules, one function along.
       if (inFence[i]) continue;
-      const atx = /^\s{0,3}(#{1,6})(?:\s|$)/.exec(lines[i]);
-      const bold = /^\s{0,3}\*\*[^*]+\*\*/.test(lines[i]);
+      // Container prefixes come off first, exactly as they do for the literal
+      // and boundary passes. A heading inside a BLOCK QUOTE begins its source
+      // line with `>`, so a raw-line test never saw it — and that is the same
+      // silent-substitution bypass this ancestry hash exists to close: retitle
+      // `> ## Historical procedure` to `> ## Current procedure` above an
+      // untouched quoted mention and neither the count nor the digest moves.
+      const bare = lines[i].replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '');
+      const atx = /^\s{0,3}(#{1,6})(?:\s|$)/.exec(bare);
+      const bold = /^\s{0,3}\*\*[^*]+\*\*/.test(bare);
       // Setext headings — a line of text UNDERLINED by `===` or `---` — are
       // headings too, and were invisible here. That let the governing status
       // be rewritten without moving the digest: retitle `Historical guidance`
@@ -2534,8 +2595,10 @@ function scanFile(path) {
       // on an ordinary edit trains people to re-pin without reading, which is
       // the one habit that would make this whole gate worthless.
       const setext =
-        isMarkdown && i + 1 < lines.length && !inFence[i + 1] && lines[i].trim() !== ''
-          ? /^\s{0,3}(=|-)\1{2,}\s*$/.exec(lines[i + 1])
+        isMarkdown && i + 1 < lines.length && !inFence[i + 1] && bare.trim() !== ''
+          ? /^\s{0,3}(=|-)\1{2,}\s*$/.exec(
+              lines[i + 1].replace(/^(?:[ \t]{0,3}>[ \t]?)+/, ''),
+            )
           : null;
       if (!atx && !bold && !setext) continue;
       // A `**Bold lead-in**` sits below any ATX heading; level 7 orders it so.
@@ -2545,7 +2608,10 @@ function scanFile(path) {
       const level = atx ? atx[1].length : setext ? (setext[1] === '=' ? 1 : 2) : 7;
       if (level >= deepest) continue;
       deepest = level;
-      chain.push(lines[i]);
+      // The PREFIX-STRIPPED text, so `> ## Current` and `## Current` hash the
+      // same. What governs the mention is the heading, not the container it
+      // happens to sit in.
+      chain.push(bare);
       if (level === 1) break;
     }
     return chain.reverse().join(' ');
