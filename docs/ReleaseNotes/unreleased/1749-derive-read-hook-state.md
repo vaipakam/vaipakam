@@ -20,4 +20,16 @@ The second case is the one that mattered and the one the previous approach never
 addressed: it reset itself only when the asset became invalid, so moving between
 two perfectly valid assets was exactly when the stale reading was shown.
 
+Three cases the first version of this change still got wrong, all the same
+mistake: the answer was labelled with the asset it was fetched for, but not with
+the chain it was fetched from, nor with whether the lookup had been switched off
+and on again in between. Switching networks with the same asset selected kept
+the previous network's answer — and for the tier lookup that answer sets a
+borrowing limit, so it is not a cosmetic staleness. Toggling the collateral type
+away from ERC-20 and back on the create-offer form, with the address left in
+place, re-showed a liquidity reading taken before the toggle, which the submit
+gate would have accepted as current. The label now covers the whole question
+being asked, and an answer is discarded when the lookup is switched off rather
+than kept for a later re-enable.
+
 No change to what any of the three lookups reports once it has resolved.
