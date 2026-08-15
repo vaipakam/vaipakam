@@ -744,6 +744,20 @@ const FIXTURES = [
       '- ```\n  Decide what to buy<strong>adapter</strong> selection follows.\n  ```\n',
   },
   {
+    // Found by adversarial self-review, and the FIRST false NEGATIVE among
+    // this PR's container defects — every other one blocked a clean document,
+    // which is visible and gets fixed; this one let live text through, which
+    // is not. CommonMark closes a fence when its parent container closes, so
+    // a blank line and a dedent end both the list item and the fence. The
+    // walk tracked only the delimiter, so an unclosed container fence marked
+    // the rest of the FILE literal and markup below it was never stripped.
+    name: 'fence-container-ends.md',
+    caught: true,
+    why: 'a fence opened in a list item closes when the list item does',
+    body:
+      '- ```\n  some code\n\nOperators must deploy the VPFI buy<strong>adapter</strong> now.\n',
+  },
+  {
     // Found by adversarial self-review after round 22, not by a reviewer. `>`
     // with nothing after it ends the quote's paragraph exactly as an empty
     // line ends an unquoted one — but the raw-span blank-line test sees `>`

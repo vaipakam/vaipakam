@@ -837,6 +837,18 @@ function stripContainers(line) {
   }
 }
 
+/**
+ * The column a line's content starts in, counting container prefixes.
+ *
+ * What the containers consumed plus whatever indentation survives them — NOT
+ * the raw leading whitespace, which is zero for `- - text` even though its
+ * content sits in column four.
+ */
+function contentColumn(line) {
+  const bare = stripContainers(line);
+  return line.length - bare.length + /^[ \t]*/.exec(bare)[0].length;
+}
+
 /** Lower-case, strip every non-alphanumeric. See DEAD_TOKENS. */
 function normalize(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -1261,6 +1273,17 @@ function computeFences(lines) {
   const delimiter = new Array(lines.length).fill(false);
   let openMarker = '';
   let openLen = 0;
+  // The container context the open fence lives in. A fence inside a list item
+  // or a block quote is closed by the END OF THAT CONTAINER, not only by a
+  // matching delimiter — CommonMark closes any open block when its parent
+  // closes. Tracking only `openMarker` meant an UNCLOSED container fence
+  // marked the rest of the file literal, so markup below it was never
+  // stripped and a live `buy<strong>adapter</strong>` went unseen. That is a
+  // false NEGATIVE on a blocking gate, which is the one failure this whole
+  // file exists to prevent; every other container defect here has been a
+  // false positive.
+  let openQuoteDepth = 0;
+  let openColumn = 0;
   for (let i = 0; i < lines.length; i++) {
     // Container prefixes come off first — a fence opened inside a list item or
     // a block quote starts after its marker, and a raw-line test saw only
@@ -1269,6 +1292,18 @@ function computeFences(lines) {
     // was BLOCKED. Third pass in this file to learn the same lesson about
     // containers, after the indentation and heading walks.
     const containerBare = stripContainers(lines[i]);
+    // Has the container the fence was opened in ended? A blank line does not
+    // end one — it is ordinary blank content inside the block — so only a
+    // non-blank line that has left the quote depth or dedented out of the
+    // list item counts.
+    if (openMarker && containerBare.trim() !== '') {
+      if (quoteDepth(lines[i]) < openQuoteDepth || contentColumn(lines[i]) < openColumn) {
+        openMarker = '';
+        openLen = 0;
+        flags[i] = false;
+        continue;
+      }
+    }
     const m = /^\s{0,3}(`{3,}|~{3,})/.exec(containerBare);
     // Everything below reads `containerBare`, not `lines[i]`. Matching on the
     // stripped line and then validating the closer against the RAW one meant a
@@ -1291,6 +1326,8 @@ function computeFences(lines) {
       if (!openMarker && !infoHasBacktick) {
         openMarker = marker;
         openLen = len;
+        openQuoteDepth = quoteDepth(lines[i]);
+        openColumn = contentColumn(lines[i]);
         flags[i] = true;
         delimiter[i] = true;
         continue;
@@ -2866,8 +2903,7 @@ function scanFile(path) {
       // nested underline the previous round had been asked to accept: I
       // narrowed the unbounded case and reopened the bounded one in the same
       // edit, which is the shape of half the defects on this PR.
-      const headIndent =
-        lines[i].length - bare.length + /^[ \t]*/.exec(bare)[0].length;
+      const headIndent = contentColumn(lines[i]);
       const underMatch =
         isMarkdown && i + 1 < lines.length && !inFence[i + 1] && bare.trim() !== ''
           ? /^([ \t]*)(?:(=)={0,}|(-)--+)[ \t]*$/.exec(underBare)
