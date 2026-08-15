@@ -140,7 +140,12 @@ export interface LocalLedger {
    * recovery-reservation check SKIPS for this chain (substituting zero in
    * either slot pages falsely or silences truly).
    */
-  backing?: { vpfiBalance: bigint; strandedRecoveryReserved: bigint };
+  backing?: {
+    vpfiBalance: bigint;
+    strandedRecoveryReserved: bigint;
+    // #1434 P2-w5 — the Base recovery-position earmark (zero on mirrors).
+    recoveryPositionReserved: bigint;
+  };
   outstandingFresh: bigint;
   armedFromDay: bigint;
   paidOutRecycled: bigint;
@@ -186,6 +191,23 @@ export interface LocalLedger {
      * the bucket. Counting the full figure would count it twice (#1448 r1).
      */
     releasedRemitStranded: bigint;
+    /**
+     * Σ of the LOCALLY-stranded RECYCLED-provenance value that is no
+     * longer in transit (#1434 P2-w6 / #1662 r2) — returned to bucket
+     * custody by a recovery settlement, or recorded as terminally LOST.
+     *
+     * The stranded figure above is monotone HISTORY: it retires on
+     * neither, because the composition relation needs it un-netted as a
+     * destination term. So the COVERAGE allowance — and only the
+     * coverage allowance — must net this out; otherwise `bucket +
+     * stranded` counts the same VPFI twice forever, and terminally lost
+     * tokens go on backing live reservations after there is nothing
+     * left to back them. Bounded on-chain by the stranded figure, and
+     * deliberately EXCLUDES imported old-era settlements (their
+     * stranding was never in this deployment's cumulative, so netting
+     * them would under-recognise local backing).
+     */
+    releasedRemitResolved: bigint;
     /**
      * Whether ANY recycled credit has ever run on this chain.
      *
@@ -763,7 +785,20 @@ export function checkHardInvariants(
     // Fresh: BOTH sources must agree (r2). Stale: `isCanonicalHere` already
     // IS the chain's own claim, so this collapses to that one source rather
     // than demanding agreement with a view from another point in time.
-    const allowance = isCanonicalHere ? local.composition.releasedRemitStranded : 0n;
+    // #1662 r2 — NET of what is no longer in transit: value a recovery
+    // settlement put back in the bucket, and value recorded as terminally
+    // lost. The stranded record retires on neither, so the un-netted
+    // figure would let recovered VPFI back reservations twice and let dead
+    // tokens back them forever. Clamped at zero — the on-chain cap makes
+    // resolved <= stranded, but a stale/mixed read must degrade to "no
+    // allowance", never negative.
+    const strandedNet =
+      local.composition.releasedRemitStranded >
+      local.composition.releasedRemitResolved
+        ? local.composition.releasedRemitStranded -
+          local.composition.releasedRemitResolved
+        : 0n;
+    const allowance = isCanonicalHere ? strandedNet : 0n;
     const backing = local.bucket + allowance;
     if (backing + bucketToleranceWei >= local.outstandingRecycled) continue;
 
@@ -803,7 +838,10 @@ export function checkHardInvariants(
   // snapshot could not be read (pre-P2-w2 lens or transport failure).
   for (const local of obs.allLocals.values()) {
     if (!local.backing) continue;
-    const spoken = local.bucket + local.backing.strandedRecoveryReserved;
+    const spoken =
+      local.bucket +
+      local.backing.strandedRecoveryReserved +
+      local.backing.recoveryPositionReserved;
     if (local.backing.vpfiBalance + bucketToleranceWei >= spoken) continue;
     out.push(makeFinding({
       code: 'recovery-reservation-backing',
@@ -812,15 +850,17 @@ export function checkHardInvariants(
         local.backing.vpfiBalance,
         local.bucket,
         local.backing.strandedRecoveryReserved,
+        local.backing.recoveryPositionReserved,
       ],
       severity: 'critical',
       chainId: local.chainId,
       title: 'Balance no longer covers bucket + arrival reservation',
       detail:
-        `balance + tolerance < bucket + strandedRecoveryReserved — tokens the ledger says are spoken for (recycle backing or quarantined compensation awaiting return) have been spent\n` +
+        `balance + tolerance < bucket + strandedRecoveryReserved + recoveryPositionReserved — tokens the ledger says are spoken for (recycle backing, quarantined compensation awaiting return, or the Base recovery position) have been spent\n` +
         `  balance     = ${fmt(local.backing.vpfiBalance)}\n` +
         `  bucket      = ${fmt(local.bucket)}\n` +
         `  reserved    = ${fmt(local.backing.strandedRecoveryReserved)}\n` +
+        `  recovery    = ${fmt(local.backing.recoveryPositionReserved)}\n` +
         `  spoken-for  = ${fmt(spoken)}\n` +
         `  shortfall   = ${fmt(spoken - local.backing.vpfiBalance)}\n` +
         `  tolerance   = ${fmt(bucketToleranceWei)}`,

@@ -1058,6 +1058,8 @@ const copySource = {
       'I understand the risk disclosures and the funding terms below and agree to them. My new offer charges the full term’s interest even on an early repayment and does not allow partial repayments.',
     action: 'Review offset offer',
     confirm: 'Confirm — fund and post offer',
+    figuresMoved:
+      'The figures moved while you were reviewing, so the acknowledgement cleared — tick it again to confirm against the current numbers.',
     done:
       'Offset offer posted. When a borrower accepts it, your current loan closes automatically — you don’t need to complete anything. Your collateral then becomes claimable (claim it from the Claim Center). You can cancel the offer below while it’s still open.',
     receiptReceive:
@@ -2974,6 +2976,17 @@ const copySource = {
     maxCStarLabel: 'Highest tariff I authorize (VPFI)',
     maxCStarHelp:
       'The exact tariff is re-priced at the moment the loan opens; it can never exceed this ceiling. Set it a little above the quote so a small move between now and then doesn’t block you.',
+    ceilingOvertaken: tmpl(
+      'The live tariff quote is now {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you authorized. Opening the loan now would not give you the Full tariff: it would be rejected, or opened without Full if you allowed that below. Raise the ceiling to keep the Full tariff, or untick the option to open without it.',
+      ['quote', 'ceiling'],
+    ),
+    raiseCeiling: tmpl('Raise my ceiling to {{ceiling}} VPFI', ['ceiling']),
+    armedCeilingBelowQuote: tmpl(
+      'The live tariff quote for the largest fill still possible on this offer is {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you are about to authorize. A fill priced above your ceiling can’t charge the Full tariff, so it would be rejected, or opened without Full if you allowed that below. Smaller partial fills may still price under it. You can save this either way: what counts is the quote when a fill actually happens, and it may fall back.',
+      ['quote', 'ceiling'],
+    ),
+    ceilingOvertakenSubmit:
+      'The live tariff quote has risen above the ceiling you authorized, so this acceptance would not give you the Full tariff. Raise the ceiling on the option above, or untick it to open the loan without the Full tariff.',
     maxCStarRequired:
       'Set the highest tariff you authorize (in VPFI) before opting in — a Full opt-in without a ceiling can’t be signed.',
     balanceShort: tmpl(

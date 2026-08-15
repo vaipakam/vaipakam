@@ -17,10 +17,14 @@
 #            SelectorCoverageTest  (every facet selector cut into the
 #                                   Diamond + no 4-byte selector
 #                                   collision; #71).
-#        • with `--full`      — the entire regression suite (invariants
-#            excluded — run those separately; they are slow). Use for a
-#            mainnet preflight: do not deploy contracts whose tests are
-#            red. `deploy-mainnet.sh` passes `--full`.
+#        • with `--full`      — the entire regression suite, by DELEGATING
+#            to `run-regression.sh` (chunked `--match-path` invocations +
+#            an exhaustiveness guard, so no compile unit trips the viaIR
+#            stack ceiling and no suite can be silently skipped).
+#            Invariants excluded — run those separately; they are slow.
+#            Use for a mainnet preflight: do not deploy contracts whose
+#            tests are red. `deploy-mainnet.sh` passes `--full`, as does
+#            the release-track `mainnet-gate.yml` workflow.
 #
 #   3. Deploy shell-script lint — `deploy-{chain,testnet,mainnet}.sh`:
 #        • `bash -n` syntax check.
@@ -45,7 +49,7 @@
 #
 # Usage:
 #   bash script/predeploy-check.sh            # deploy-sanity suite only
-#   bash script/predeploy-check.sh --full     # + full regression
+#   bash script/predeploy-check.sh --full     # + full (chunked) regression
 #
 # It is also invoked automatically as a preflight step inside
 # `deploy-chain.sh`, `deploy-testnet.sh` and `deploy-mainnet.sh`, so a
@@ -92,16 +96,25 @@ fi
 echo
 if [ "$MODE_FULL" -eq 1 ]; then
   echo "[predeploy 2/4] full forge regression (mainnet preflight)"
-  # Invariants are excluded — they are slow (100 runs) and run as their
-  # own pass; this gate is "the regression is green before a deploy".
-  # `--match-path 'test/*.t.sol'` forces a SPARSE compile (only the matched
-  # tests + their dependency closure) rather than the non-sparse
-  # `--no-match-path`-only form, which pulls in the standalone deploy
-  # scripts and trips the same viaIR whole-unit ceiling as step [1] (#636 /
-  # #601). globset's `*` crosses `/`, so `test/*.t.sol` still matches every
-  # current + future `*.t.sol` anywhere under `test/` — same coverage, just
-  # compiled sparsely. Mirrors `run-regression.sh`.
-  if forge test --match-path "test/*.t.sol" --no-match-path "test/invariants/*"; then
+  # DELEGATED to `run-regression.sh` — deliberately NOT a second copy of the
+  # regression command (#1620). This branch used to run its own single
+  # `forge test --match-path 'test/*.t.sol'` pass. That sparse-compile form
+  # was correct when written, but `run-regression.sh` has since recorded
+  # that ordinary feature growth (#591) re-crossed the viaIR whole-unit
+  # stack ceiling for even that single pass — which is why that script
+  # moved to CHUNKED `--match-path` invocations. This branch never followed,
+  # so the mainnet preflight (and `mainnet-gate.yml`, which runs this same
+  # `--full` path on the release track) was running the form its sibling
+  # script documents as outgrown. A ceiling trip here is a COMPILE failure,
+  # and it sets the same FAIL=1 as a red test — so it would read as
+  # "regression failed, do not deploy" while having tested nothing.
+  #
+  # One chunking implementation, one exhaustiveness guard, one place to fix
+  # when the ceiling moves again. Invariants stay excluded (they are slow —
+  # 100 runs — and run as their own pass); plain `run-regression.sh` without
+  # `--invariants` is exactly that scope, so the gate's semantics are
+  # unchanged. It forces FOUNDRY_PROFILE=default itself.
+  if bash "$SCRIPT_DIR/run-regression.sh"; then
     echo "  ✓ full regression passes"
   else
     echo "  ✗ regression failed — do not deploy red contracts" >&2
@@ -329,15 +342,66 @@ else
 fi
 
 # 3d. Stale LayerZero deploy-residue guard. T-068 Phase 6.4 stripped the
-#     old LZ deploy variables when the cross-chain layer moved to CCIP.
-#     `lzEid` / `LayerZero` are deliberately NOT banned — the LZ endpoint
-#     id is still recorded as inert chain metadata in addresses.json.
-LZ_RESIDUE='BASE_EID|LOCAL_EID|RewardOApp|OFTAdapter'
-for s in "${DEPLOY_SH[@]}"; do
-  if grep -nE "$LZ_RESIDUE" "$SCRIPT_DIR/$s" >/dev/null 2>&1; then
+#     old LZ deploy variables when the cross-chain layer moved to CCIP,
+#     and the follow-up sweep removed the last of it: the eid resolver and
+#     its `lzEid` artifact stamp, the dead `.env.example` blocks for
+#     deleted scripts, and the LZ inherited-event allowlist.
+#
+#     `lzEid` IS now banned — it used to be tolerated as "inert chain
+#     metadata", but nothing read it, the typed deployment loader already
+#     documented it as gone, and an artifact key naming a retired
+#     transport is exactly the kind of thing that gets copied forward.
+#     `LayerZero` in prose is still allowed: the migration comments that
+#     explain why a thing is shaped the way it is are worth keeping.
+#
+#     `.env.example` is scanned too. It is not a deploy script, but it is
+#     what an operator copies, and it was the worst offender — it shipped
+#     LZ_ENDPOINT_* and a whole fixed-rate-buy block for deleted scripts
+#     while omitting every CCIP_* variable the current deploy requires.
+#     The scanned SET matters as much as the pattern. `lzEid` /
+#     `lzEidForChain` can only come back from the artifact writer, the
+#     deploy script that calls it, or a committed artifact — none of
+#     which are shell wrappers. Scanning only the wrappers would have
+#     made those two patterns decorative: they would never have matched
+#     anything, and the guard would have reported success for a residue
+#     it structurally could not see. So the writer, `DeployDiamond`, the
+#     per-chain artifacts and the consolidated bundle are all in scope.
+LZ_RESIDUE='BASE_EID|LOCAL_EID|RewardOApp|OFTAdapter|LZ_ENDPOINT|REMOTE_EID|LOCAL_OAPP|lzEid|lzEidForChain|VPFI_BUY_RECEIVER_EID|WireVPFIPeers'
+LZ_SCAN=(
+  "${DEPLOY_SH[@]}"
+  "../.env.example"
+  "lib/Deployments.sol"
+  "DeployDiamond.s.sol"
+)
+# Committed deployment artifacts + the bundle every consumer imports.
+while IFS= read -r _f; do
+  LZ_SCAN+=("${_f#"$SCRIPT_DIR/"}")
+done < <(ls "$SCRIPT_DIR"/../deployments/*/addresses.json 2>/dev/null)
+LZ_SCAN+=("../../packages/contracts/src/deployments.json")
+
+# Comment lines are exempt: a note saying "this variable is gone, do not
+# carry it forward" must be allowed to name the thing it retires. The
+# comment syntax is per-language — the scan set spans shell, Solidity and
+# JSON. Getting this wrong in the strict direction is the dangerous one:
+# a Solidity migration note like `// lzEid was removed` would fail every
+# preflight, and the fix a hurried operator reaches for is deleting the
+# note rather than the residue.
+#
+# JSON has no comment syntax, so its filter is the shell one (matching
+# nothing) — correct by construction: a key in an artifact is never a
+# comment.
+_lz_hits() {
+  case "$1" in
+    *.sol) grep -nE "$LZ_RESIDUE" "$1" | grep -vE '^[0-9]+:[[:space:]]*(//|/\*|\*)' ;;
+    *)     grep -nE "$LZ_RESIDUE" "$1" | grep -vE '^[0-9]+:[[:space:]]*#' ;;
+  esac
+}
+for s in "${LZ_SCAN[@]}"; do
+  [ -f "$SCRIPT_DIR/$s" ] || continue
+  if _lz_hits "$SCRIPT_DIR/$s" >/dev/null 2>&1; then
     echo "  ✗ $s — stale LayerZero deploy residue (removed in T-068" >&2
     echo "    Phase 6.4 — the CCIP migration):" >&2
-    grep -nE "$LZ_RESIDUE" "$SCRIPT_DIR/$s" | sed 's/^/      /' >&2
+    _lz_hits "$SCRIPT_DIR/$s" | sed 's/^/      /' >&2
     FAIL=1
   else
     echo "  ✓ $s — no stale LayerZero deploy residue"

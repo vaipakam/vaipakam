@@ -6,9 +6,11 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  * Stage 3 PR4 of the Worker split (see
  * `docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`). Agent inherits
  * the broadest env shape of the three Workers because it owns the
- * most concerns — proactive notifications + cross-chain monitoring +
- * operator services + public Frames + Telegram bot + diagnostics
- * record. What it does NOT own:
+ * most concerns — proactive notifications + operator services +
+ * public Frames + Telegram bot + diagnostics record.
+ * (#1651: "cross-chain monitoring" was listed here for the
+ * buy-watchdog #687-A removed; nothing in this Worker monitors
+ * cross-chain state now.) What it does NOT own:
  *
  *   - HF watcher loop / autonomous liquidation         → apps/keeper
  *   - chain-event scan / D1 indexer / public read-API  → apps/indexer
@@ -40,14 +42,25 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *                            cross-Worker reads of indexer's loan
  *                            tables for periodic-pre-notify scans).
  *                            Native binding — not a secret.
- *   - `RPC_*`              — per-chain RPC URLs. Buy-watchdog needs
- *                            EVERY chain that has a VPFIBuyAdapter
- *                            deployed (mainnet + testnet) for
- *                            cross-chain reconciliation, so this is
- *                            the broadest RPC set of the three
- *                            Workers (includes POLYGON + POLYGON_AMOY
- *                            — agent-only — plus every other chain).
- *                            Secrets Store bindings (T-078).
+ *   - `RPC_*`              — per-chain RPC URLs, the broadest set of
+ *                            the three Workers. Secrets Store bindings
+ *                            (T-078). Consumers: every caller of
+ *                            `getChainConfigs` below, and
+ *                            `intentFusionPost.rpcForChain`. Read those
+ *                            for missing-RPC behaviour — it DIFFERS per
+ *                            consumer, so no summary is given here.
+ *
+ *                            #1651: the breadth was attributed to a
+ *                            buy-watchdog reconciling every chain with
+ *                            a VPFIBuyAdapter. #687-A removed both;
+ *                            neither exists in this Worker. What is
+ *                            verified: `RPC_POLYGON` / `RPC_POLYGON_AMOY`
+ *                            are unreachable today — no Polygon record
+ *                            in `deployments.json`, and every consumer
+ *                            gates on `getDeployment` first — so they
+ *                            are provisioned ahead of need. Keeping or
+ *                            dropping them is a Polygon-deployment
+ *                            question, not a cleanup one.
  *   - `TG_BOT_TOKEN`       — Telegram bot token. Powers the
  *                            `/tg/webhook` handshake AND the outbound
  *                            notifications dispatched by
@@ -68,13 +81,25 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *                            endpoint has no secret of its own — it
  *                            authenticates the caller by an on-chain
  *                            `ADMIN_ROLE` check (see `diagAdminAuth.ts`).
- *   - (no signing-key consumer here any more — `KEEPER_PRIVATE_KEY`
- *      moved to apps/keeper alongside `runDailyOracleSnapshot`
- *      in the Stage 3 architectural-rebalance commit. The
- *      least-privilege contract from staging plan §2: agent
- *      holds NEITHER `KEEPER_PRIVATE_KEY` NOR per-chain on-chain
- *      write access. A compromised agent produces stale
- *      notifications but can't move funds.)
+ *   - (no ON-CHAIN TRANSACTION signer here any more —
+ *      `KEEPER_PRIVATE_KEY` moved to apps/keeper alongside
+ *      `runDailyOracleSnapshot` in the Stage 3
+ *      architectural-rebalance commit. Read that narrowly: this
+ *      Worker is NOT key-free. `PUSH_CHANNEL_PK`, inventoried ~20
+ *      lines above, is a real Ethereum private key (`push.ts:66`
+ *      builds an ethers `Wallet` from it). The staging plan §2
+ *      contract is about WHERE the on-chain transaction key sits,
+ *      not about a privilege boundary.
+ *
+ *      A compromised agent can't move funds DIRECTLY, and that is
+ *      the whole of the guarantee. It CAN delete diagnostics and
+ *      support records, write `loans`, notify real users, publish
+ *      listings via `/opensea/listing`, and — via the
+ *      DATABASE-scoped shared D1 binding — corrupt state the
+ *      signing keeper acts on (#1722). The older "produces stale
+ *      notifications" summary of that blast radius is WITHDRAWN;
+ *      a threat review starting from this file should not inherit
+ *      it.)
  *   - `QUOTE_0X_RATELIMIT`,
  *     `QUOTE_1INCH_RATELIMIT`,
  *     `DIAG_RECORD_RATELIMIT` — Cloudflare built-in rate-limit
@@ -228,9 +253,8 @@ interface BaseEnv {
  * `getChainConfigs` simply skips that chain.
  */
 export interface WorkerEnv extends BaseEnv {
-  // Per-chain RPC URLs — buy-watchdog needs every chain with a
-  // VPFIBuyAdapter; periodicPreNotify needs every Diamond chain.
-  // Most expansive RPC set of the three Workers.
+  // Per-chain RPC URLs. See the module header — #1651 replaced a
+  // buy-watchdog justification that #687-A had made void.
   RPC_BASE?: SecretBinding;
   RPC_ETH?: SecretBinding;
   RPC_ARB?: SecretBinding;
@@ -265,8 +289,10 @@ export interface WorkerEnv extends BaseEnv {
  * is `undefined` and the dependent code path skips it.
  */
 export interface Env extends BaseEnv {
-  // Per-chain RPC URLs — buy-watchdog + periodicPreNotify. Each
-  // missing URL skips that chain.
+  // Per-chain RPC URLs. Missing-RPC behaviour differs per consumer
+  // (`getChainConfigs` drops the chain; `intentFusionPost` skips only
+  // its preflight) — read the call sites rather than trusting a
+  // summary here. #1651.
   RPC_BASE?: string;
   RPC_ETH?: string;
   RPC_ARB?: string;
@@ -454,9 +480,15 @@ export interface ChainConfig {
 
 /**
  * Resolve chain configs from env + the consolidated deployments
- * JSON. Same shape as apps/{keeper,indexer} versions — the meta
- * table here matches the agent's RPC-set superset (every chain
- * with a Diamond OR a VPFIBuyAdapter).
+ * JSON. Same shape as apps/{keeper,indexer} versions.
+ *
+ * #1651 — this said the meta table covers "every chain with a Diamond
+ * OR a VPFIBuyAdapter". There is no adapter since #687-A, and the set
+ * was never derived from one: a row survives only if BOTH its RPC
+ * secret is set AND `getDeployment` returns a record, so the result is
+ * Diamond-driven and self-limiting. Listing a chain here that has
+ * neither is inert, which is why `RPC_ZKEVM` can sit in the table while
+ * being deliberately never set.
  */
 export function getChainConfigs(env: Env): ChainConfig[] {
   const meta: { id: number; name: string; rpc: string | undefined }[] = [

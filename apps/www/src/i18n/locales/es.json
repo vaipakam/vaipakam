@@ -832,7 +832,7 @@
     "step4Desc": "Reembolsar a tiempo y recuperar el colateral. El prestamista reclama el principal más intereses utilizando el NFT. En caso de incumplimiento, la liquidación o la transferencia total del colateral siguen las reglas del protocolo.",
     "step4Detail1": "Presentar el NFT para reclamar fondos",
     "step4Detail2": "Recargos por mora limitados al 5%",
-    "step4Detail3": "0,1% de comisión de inicio + 1% de comisión sobre el rendimiento",
+    "step4Detail3": "0,2% de comisión de inicio + 2% de comisión sobre el rendimiento",
     "step4Detail4": "Descuento VPFI por niveles: 10% / 15% / 20% / 24% en ambas comisiones según el saldo en custodia"
   },
   "security": {
@@ -994,8 +994,8 @@
       "fees": {
         "q": "¿Qué comisiones cobra la plataforma?",
         "a1": "Dos comisiones principales más una escala de penalización por mora:",
-        "li1": "<s>Comisión de iniciación del préstamo — 0,1%</s> en préstamos ERC-20, deducida del principal del prestamista al inicio del préstamo. El prestatario recibe el 99,9% del importe ofertado pero sigue debiendo el principal completo.",
-        "li2": "<s>Comisión de rendimiento — 1%</s> sobre el interés ganado por los prestamistas y sobre los ingresos de alquiler obtenidos por los propietarios de NFT.",
+        "li1": "<s>Comisión de iniciación del préstamo — 0,2%</s> en préstamos ERC-20, deducida del principal del prestamista al inicio del préstamo. El prestatario recibe el 99,8% del importe ofertado pero sigue debiendo el principal completo.",
+        "li2": "<s>Comisión de rendimiento — 2%</s> sobre el interés ganado por los prestamistas y sobre los ingresos de alquiler obtenidos por los propietarios de NFT.",
         "li3": "<s>Comisiones por mora:</s> 1% fijo el día del impago, más 0,5% por cada día adicional, con un tope del 5% del principal. Las comisiones por mora se destinan al tesoro.",
         "a2": "Quienes tengan VPFI pueden reducir <em>ambas</em> comisiones principales mediante un único consentimiento a nivel de plataforma — véase la entrada sobre el descuento VPFI a continuación."
       },
@@ -1395,8 +1395,6 @@
     "errorSuffix": ". La transacción on-chain no se ve afectada — proceder con cautela.",
     "expectedStateChanges": "Cambios de estado esperados",
     "plusMore": "… más {{count}} adicionales",
-    "titleMalicious": "Blockaid ha marcado esta transacción como maliciosa. NO proceder.",
-    "titleWarning": "Blockaid ha emitido advertencias — revisar los cambios de estado antes de firmar.",
     "titlePreview": "Vista previa de transacción"
   },
   "consent": {

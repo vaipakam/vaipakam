@@ -1,0 +1,2897 @@
+[
+  {
+    "type": "function",
+    "name": "armRecoveryAttribution",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "clearImportedOutstanding",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "recycledInflow",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "importOutstandingCompensation",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "oldRemitter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "oldRemitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "onStrandedReturnReceived",
+    "inputs": [
+      {
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "declaredAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actualReceived",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "remainingAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "recordRecoveryCeremony",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshInflow",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledInflow",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "recordRecoveryTerminalLoss",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshLoss",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledLoss",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "releaseRemitReservation",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "remitManualBudget",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "remitManualBudgetFromRecovery",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceRemitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "remitSupplementalBudget",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "remitSupplementalBudgetFromRecovery",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceRemitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "resetReleasedRemitStrandedSeed",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "seedCompFunded",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "seedReleasedRemitStranded",
+    "inputs": [
+      {
+        "name": "upTo",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "CompFundedSeeded",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lender18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrower18",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ImportedOutstandingCleared",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "oldRemitter",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "oldRemitId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledInflow",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ManualRewardBudgetRemitted",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OutstandingCompensationImported",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "oldRemitter",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "oldRemitId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RecoveryAttributionArmed",
+    "inputs": [
+      {
+        "name": "watermark",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "retiredPosition",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RecoveryCeremonyRecorded",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshInflow",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledInflow",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recoveredCumulative",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "gateCleared",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RecoveryTerminalLossRecorded",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshLoss",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledLoss",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lossCumulative",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "gateCleared",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReleasedRemitStrandedSeedProgress",
+    "inputs": [
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "target",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "accumulated",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReleasedRemitStrandedSeedReset",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReleasedRemitStrandedSeeded",
+    "inputs": [
+      {
+        "name": "total",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reservations",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RemitReservationReleased",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledStranded",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StrandedReturnSettled",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "credited",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "overage",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "chunkShortfall",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalShortfall",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "gateCleared",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SupplementalRewardBudgetRemitted",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiCustodyRelocated",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "refId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AccessControlUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "neededRole",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AssetPaused",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BaseChainIdNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BroadcastClockDivergence",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BroadcastClockMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BroadcastDestinationMismatch",
+    "inputs": [
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BroadcastEraMismatch",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recordedEra",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "packetEra",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BroadcastEraUnauthenticated",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "packetEra",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CadenceNotAllowed",
+    "inputs": [
+      {
+        "name": "cadence",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "duration",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "principalNumeraire",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "threshold",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CadenceNotAllowedForIlliquid",
+    "inputs": [
+      {
+        "name": "principalLiquidity",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "collateralLiquidity",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "cadence",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CeremonyExceedsStranded",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sum",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CeremonyInflowNotBacked",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "need",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CeremonyProvenanceExceeded",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "component",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bound",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CeremonyReservationNotReleased",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ChainDayAlreadyReported",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CommitmentDayNotArmed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentDayNotComplete",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentDayNotLocallyClosed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentEntriesNotAscending",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentEntryMismatch",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentReportAlreadySent",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CommitmentReportOnlyMirror",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CommitmentStampNotArrived",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompFundedSeedInvalid",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteAlreadyDispatched",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayAlreadyFunded",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayLapsed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayNotFinalized",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayNotIneligible",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayNotZeroed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteDayPoolStampMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteEraMismatch",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "boundEra",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "arrivedEra",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteIncomplete",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "conservation18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "total18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteLocalCloseMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteMirrorEraUnset",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteResetRefusedExactLoss",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompQuoteResolvedZeroFinal",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompensationDayHasNoClock",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompensationDispatchPastCutoff",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiry",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dispatchCutoffGap",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompensationExceedsQuote",
+    "inputs": [
+      {
+        "name": "lenderAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerAmount18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedLender18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "quotedBorrower18",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompensationGateHeld",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "outstandingRemitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompensationHookNotSelf",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompensationNotQuoted",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CompensationSharesExceedDelivery",
+    "inputs": [
+      {
+        "name": "lenderShare18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerShare18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ConsolidationNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CountriesNotCompatible",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CrossFacetCallFailed",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "string",
+        "internalType": "string"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DayAlreadyFinalized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DayCapModeUnsetPostCutover",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DayHasNoLapseClock",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DayNotReadyToFinalize",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DestinationHasNoDayStanding",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "destChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DispatchCutoffGapOutOfBounds",
+    "inputs": [
+      {
+        "name": "dispatchCutoffGap",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DuplicateExpectedChainId",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FeeEntitlementChargeFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FeeEntitlementRequiresCanonicalVpfiChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FreshShareExceedsDelivery",
+    "inputs": [
+      {
+        "name": "freshShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshRoom",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FullTariffMaxCStarRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HealthFactorCalculationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HealthFactorTooLow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IlliquidAsset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IlliquidAssetNotAcknowledged",
+    "inputs": [
+      {
+        "name": "leg",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IlliquidLoanNoRiskMath",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ImportedMarkerMissing",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ImportedTupleAlreadySeen",
+    "inputs": [
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "oldRemitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ImportedTupleInvalid",
+    "inputs": [
+      {
+        "name": "oldRemitter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ImportedTupleIsSentinel",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitLtvAboveTier",
+    "inputs": [
+      {
+        "name": "ltv",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tierCapBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientProceeds",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientRecycleBacking",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientRemittanceFee",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentPending",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InteractionDayGlobalNotFinalized",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InteractionEmissionsNotStarted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InteractionPoolExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InteractionRewardBackingShort",
+    "inputs": [
+      {
+        "name": "requiredFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "backingRoom",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidAsset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidKeeperActions",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidLoanStatus",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KYCRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KeeperAccessRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KeeperAlreadyApproved",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KeeperNotApproved",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KeeperWhitelistFull",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KnownGlobalAlreadySet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LTVCalculationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LTVExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LapseDayAlreadyTerminal",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseDayClockMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseDayCompensated",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseDayLocalCloseMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseDayNotExpired",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiry",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseDayNotZeroed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseScheduleMarginViolated",
+    "inputs": [
+      {
+        "name": "lapseWindowSeconds",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "dispatchCutoffGap",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LapseTerminalsAlreadyArmed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LapseTerminalsNotArmed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LapseWindowOutOfBounds",
+    "inputs": [
+      {
+        "name": "lapseWindowSeconds",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LegacyBroadcastRetired",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LegacyDayNotStampable",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LegacyReceiptUnusable",
+    "inputs": [
+      {
+        "name": "receiptKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LegacyStampQuoteMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LenderCannotRepayOwnLoan",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderResolutionFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LiquidationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LoanInitiationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LoanNotActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MessengerPredatesV3",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NFTBurnFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NFTMintFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NFTRenterUpdateFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NFTStatusUpdateFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NFTTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoInteractionRewardsToClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonLiquidAsset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAuthorizedRewardMessenger",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotBorrower",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCanonicalRewardChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCanonicalVPFIChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotLender",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotNFTOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotOfferCreator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToRemit",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NumeraireSwapDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferAcceptFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferCreationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlyMirrorRewardChain",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlyStrandedReturnReceiver",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PadNumeraireRateFeedStale",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PadNumeraireRateUnavailable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PadPivotFeedUnavailable",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParameterOutOfRange",
+    "inputs": [
+      {
+        "name": "name",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "min",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PeriodicInterestDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PeriodicSettleNotApplicable",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PeriodicSettleNotDue",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dueAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "graceEndsAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PeriodicSettleSwapFailed",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PeriodicSettleSwapPathRequired",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortfall",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Permit2TokenMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "signed",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReceivedRemitNotFound",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReceivedRemitStale",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recordedSrcChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RecoveryAmountExceedsUnsolicited",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryAmountZero",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryAttributionAlreadyArmed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryDeadlineExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryPositionInsufficient",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RecoveryReceiptCreditInsufficient",
+    "inputs": [
+      {
+        "name": "sourceRemitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unspent",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RecoveryReceiptPredatesAttribution",
+    "inputs": [
+      {
+        "name": "sourceRemitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RecoverySignatureInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecoveryUserHasNoVault",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RecycledShareExceedsDelivery",
+    "inputs": [
+      {
+        "name": "recycledShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceRequiresPeriodSettle",
+    "inputs": [
+      {
+        "name": "oldLoanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "graceEndsAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReleasedRemitStrandedAlreadySeeded",
+    "inputs": [
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitAckChainMismatch",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "got",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitAckClassificationInvalid",
+    "inputs": [
+      {
+        "name": "classification",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitAckSenderMismatch",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "srcSender",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitDayAlreadyClosed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitDayNotManualEligible",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitReleaseTooEarly",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "earliest",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemitReservationNotPending",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemittanceRefundFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReportAfterFinalization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardBudgetMessengerNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardDayNotElapsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardDayNotFinalized",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardEntrySetMismatch",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardMessengerNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardPoolCapExceeded",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "remaining",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RiskAndTermsConsentRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SanctionsOracleUnavailable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedDoesNotReconcile",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedNotStarted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedNothingToScan",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeedRaceDetected",
+    "inputs": [
+      {
+        "name": "baseline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SeedRangeInvalid",
+    "inputs": [
+      {
+        "name": "upTo",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "target",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SeedWouldShrinkReleasedCount",
+    "inputs": [
+      {
+        "name": "scanned",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SeedWouldShrinkStrandedTotal",
+    "inputs": [
+      {
+        "name": "derived",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SelfCollateralizedOffer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseClockAlreadyArmed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseClockUnarmed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseDeadlineNotReached",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseNotCompensated",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ShortLapseNotShort",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SourceChainIdNotExpected",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnAwaitingAck",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnConsumedReceipt",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnDeliveryInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnNotCompensation",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnUnknownReservation",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnWrongDay",
+    "inputs": [
+      {
+        "name": "got",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "want",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnWrongEra",
+    "inputs": [
+      {
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StrandedReturnWrongSourceChain",
+    "inputs": [
+      {
+        "name": "got",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "want",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SupplementalDayNotClosed",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SupplementalFundedRecordMissing",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SupplementalReservationNotAcked",
+    "inputs": [
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TreasuryTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedCrossFacetCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UpdateNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIInvalidOriginChainId",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFITokenNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VPFIVaultBalanceInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultAlreadyBanned",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultBannedDueToSanctionedSource",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultDepositFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultResolutionFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultTransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VaultWithdrawFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VpfiNotAllowedAsRentalPrepay",
+    "inputs": []
+  }
+]

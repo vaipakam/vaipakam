@@ -3,7 +3,6 @@
   "deployedAt": "1778076640-unix",
   "diamond": "0x58824401F769b0A760b6CD98Af503Bd5ED648377",
   "chainSlug": "op-sepolia",
-  "lzEid": 40232,
   "deployBlock": 43137050,
   "escrowImpl": "0xf5C76c9E699f93ca20B0906b863Bd8Fd99B564fe",
   "treasury": "0xca3E735C593088D2f5ea5AEAa553a6bDaa6E7413",

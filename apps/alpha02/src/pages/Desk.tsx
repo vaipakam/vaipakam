@@ -40,6 +40,7 @@ import { OpenOrdersPanel } from '../components/desk/OpenOrdersPanel';
 import { PositionsPanel } from '../components/desk/PositionsPanel';
 import { HistoryPanel } from '../components/desk/HistoryPanel';
 import { useTokenMeta } from '../contracts/erc20';
+import { useNowSec } from '../hooks/useNowSec';
 import { OFFER_DURATION_DEFAULT_DAYS } from '../lib/offerSchema';
 import { signedRowToDeskRow, type DeskBookRow } from '../lib/signedOffer';
 import {
@@ -75,8 +76,15 @@ export function Desk() {
   // The TENOR comes with the pair — a market is the full (pair, tenor)
   // triple, and keeping the hard-coded 30d default would land on an
   // empty book whenever the most active market trades another tenor.
-  useEffect(() => {
-    if (pair !== null) return;
+  // A render-phase adjustment, not an effect (#1520). The default is a pure
+  // function of "no pair chosen yet" and "the list has landed", so an effect
+  // only adds a frame in which the book column still shows the "Pick a market"
+  // card — `pair` is null in that frame, so the ladder is not rendered at all
+  // (Codex #1690 r1 corrected an earlier claim here that the frame showed an
+  // empty 30d book; it cannot, that branch needs a non-null pair). Self-limiting:
+  // the guard is false the moment a pair exists, and while the list is still
+  // loading there is nothing to set.
+  if (pair === null) {
     const first = markets.data?.markets[0];
     if (first) {
       setPair({
@@ -85,7 +93,7 @@ export function Desk() {
       });
       setDays(first.durationDays);
     }
-  }, [markets.data, pair]);
+  }
 
   // Chain switch invalidates the selected pair (addresses are
   // per-chain) — reset to rediscover from that chain's markets. Gated
@@ -108,9 +116,13 @@ export function Desk() {
   const tape = useDeskTape(pair, days);
   const lendingMeta = useTokenMeta(pair?.lendingAsset);
 
+  // A dependency of the ladder rather than a read inside it (#1520): the
+  // merge below drops expired rows, so the ladder has to be recomputed as
+  // the clock advances, not only when the book refetches.
+  const nowSec = useNowSec();
+
   const ladder = useMemo(() => {
     if (!Array.isArray(book.data?.rows)) return null;
-    const nowSec = Math.floor(Date.now() / 1000);
     // #1131 slice D — merge the gasless signed book ADDITIVELY: signed
     // orders map into IndexedOffer-compatible rows tagged `signed` (see
     // lib/signedOffer's DeskBookRow note for why one unified row type
@@ -127,7 +139,7 @@ export function Desk() {
       nowSec,
       address,
     );
-  }, [book.data, signedBook.data, days, address, readChain.chainId]);
+  }, [book.data, signedBook.data, days, address, readChain.chainId, nowSec]);
 
   const lastFill = tape.data === undefined ? undefined : (tape.data?.[0] ?? null);
 

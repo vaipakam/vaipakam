@@ -49,7 +49,7 @@ scripts; not a contract regression test.
 ## B
 
 **BPS (basis points)** — 1/10,000. Used for interest rates, fees,
-LTV, treasury cuts. Example: `TREASURY_FEE_BPS = 100` = 1% cut on
+LTV, treasury cuts. Example: `TREASURY_FEE_BPS = 200` = 2% cut on
 interest. See `LibVaipakam.sol`.
 
 **BSL-1.1** — Business Source License 1.1. The repo's license — a
@@ -242,11 +242,17 @@ See ADR-0004 and
 **Lender-gated partial repay** — `Offer.allowsPartialRepay`. A creator-
 set opt-in; acceptor consents by accepting. Landed 2026-04-29.
 
-**LIF (Loan Initiation Fee)** — the 0.1% fee borrowers pay on the
-VPFI path. Held in Diamond custody until terminal; split into a
-time-weighted-tier-based rebate (proper close) or forfeited to
-treasury (default / liquidation). See `CLAUDE.md` § "VPFI Fee
-Discounts" and ADR-0003.
+**LIF (Loan Initiation Fee)** — the 0.2% fee borrowers pay on
+ERC-20 principal, charged once when the offer is accepted (rev-8
+freeze, #1352; it was 0.1%). Since #1352 it is charged in the
+**lending asset**, and the borrower's VPFI hold-tier discount is
+applied directly to it at acceptance — no VPFI enters custody and
+there is no settlement rebate. The custody-and-rebate flow described
+below is the **retired** peg-custody path, which only loans opened
+before #1352 still settle through: the VPFI was held in Diamond
+custody until terminal, then split into a tier-based rebate (proper
+close) or forfeited to treasury (default / liquidation). See
+`CLAUDE.md` § "VPFI Fee Discounts" and ADR-0003.
 
 **Liquid asset** — meets the on-chain liquidity threshold (depth +
 oracle). Eligible for LTV/HF-based loans and DEX-swap liquidation.

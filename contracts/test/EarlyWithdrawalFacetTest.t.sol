@@ -25,6 +25,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {LibSaleSolvency} from "../src/libraries/LibSaleSolvency.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -3494,5 +3495,617 @@ contract EarlyWithdrawalFacetTest is Test {
                 "torn-down vehicle must drop out of open-position view"
             );
         }
+    }
+
+    // ─── #1503 PR-E (design item 11): the sale solvency admission floor ──────
+    //
+    // The baseline loan is 1000 principal against 2000 collateral, both priced
+    // 1:1 and Liquid, with a snapshotted liquidation LTV of 8500 bps — so
+    // HF == 2.0 * 0.85 == 1.7e18, comfortably over the 1.5e18 admission floor.
+    // Every other test in this file therefore exercises the guard's PASS
+    // branch already. These cover the branch that refuses.
+
+    /// @dev Drops the collateral price so the position sits BELOW the
+    ///      admission floor while staying ABOVE the liquidation trigger:
+    ///      ratio 1.6 → HF 1.36e18, under the 1.5e18 floor but over 1e18.
+    ///      Chosen deliberately — it proves the floor is the loan's own
+    ///      ADMISSION standard, not merely "not liquidatable yet".
+    function _sinkBelowFloorButSolvent() internal returns (uint256 hf, uint256 floor) {
+        mockPrice(mockCollateralERC20, 0.8e8, 8);
+        hf = RiskFacet(address(diamond)).calculateHealthFactor(activeLoanId);
+        floor = LibVaipakam.MIN_HEALTH_FACTOR;
+        assertLt(hf, floor, "fixture must sit below the admission floor");
+        assertGt(hf, LibVaipakam.HF_LIQUIDATION_THRESHOLD, "and above liquidation");
+    }
+
+    function test_sellLoanViaBuyOffer_revertsBelowSolvencyFloor() public {
+        (uint256 hf, uint256 floor) = _sinkBelowFloorButSolvent();
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+                activeLoanId,
+                hf,
+                floor
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    function test_createLoanSaleOffer_revertsBelowSolvencyFloor() public {
+        (uint256 hf, uint256 floor) = _sinkBelowFloorButSolvent();
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+                activeLoanId,
+                hf,
+                floor
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+    }
+
+    /// @dev THE case the floor exists for: the listing is published while the
+    ///      position is healthy and the collateral falls while it rests. Only
+    ///      the read at the moment the buyer's value commits can catch that,
+    ///      which is why the binding check is at accept and not at listing.
+    function test_saleAccept_revertsAfterCollateralFallsBelowFloor() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("solvencyFloorBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        // The position deteriorates AFTER the listing rests and after the
+        // buyer signed — the drift window no frontend can observe.
+        (uint256 hf, uint256 floor) = _sinkBelowFloorButSolvent();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+                activeLoanId,
+                hf,
+                floor
+            )
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1659 — a resting-listing accept must not depend on the SELLER
+    ///      holding a standing ERC-20 allowance for the Diamond.
+    ///
+    ///      Completion settles the loan's accrued interest by pulling it from
+    ///      `originalLender`'s WALLET (T-037's direct-from-payer pattern). On
+    ///      the DIRECT sale that is sound: the seller is the transaction's
+    ///      caller and can approve in the same transaction. On this route the
+    ///      BUYER is the caller, so the seller cannot approve inside it, and a
+    ///      real seller carries no standing allowance afterwards.
+    ///
+    ///      Two crutches hide this from the rest of the suite, and this fixture
+    ///      removes both. `SetupTest` grants every participant a
+    ///      `type(uint256).max` allowance, so the pull always succeeds here
+    ///      where it would fail in production; and the pull is skipped
+    ///      altogether when accrued interest is zero, which it is whenever
+    ///      listing and accept share one timestamp — every other test, and
+    ///      every `forge script` simulation. Time has to actually pass.
+    function test_saleAccept_completesWithoutSellerStandingAllowance() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v1659NoAllowanceBuyer");
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address bv = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer); ERC20(mockERC20).approve(bv, type(uint256).max);
+        vm.prank(buyer); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
+
+        // A real seller approves what a flow needs, not an unlimited standing
+        // allowance. Drop the harness's blanket grant.
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), 0);
+
+        // Accrued interest must be non-zero or the pull never happens at all.
+        // Stay inside the 7-day listing window so the accept cannot be refused
+        // for expiry instead of for the reason under test.
+        vm.warp(block.timestamp + 3 days);
+
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            buyer,
+            "the buyer must end up the lender of record"
+        );
+    }
+
+    /// @dev The guard must not over-block: a position exactly AT its floor is
+    ///      admissible (the comparison is `<`, not `<=`).
+    function test_sellLoanViaBuyOffer_admittedExactlyAtFloor() public {
+        // HF == collateralValue * 8500/10000 / borrowValue. For HF == 1.5e18
+        // against the ~1000 borrowed (principal plus a little accrued),
+        // collateralValue must be ≈ 1500/0.85 ≈ 1765 — reached by pricing the
+        // 2000 collateral units just over 0.882e8. Pinned just ABOVE, since
+        // that is the side the guard must admit; the epsilon assert keeps this
+        // a genuine boundary fixture rather than a comfortably-healthy one
+        // that would pass even if the comparison were inverted.
+        mockPrice(mockCollateralERC20, 0.8830e8, 8);
+        uint256 hf = RiskFacet(address(diamond)).calculateHealthFactor(activeLoanId);
+        assertGe(hf, LibVaipakam.MIN_HEALTH_FACTOR, "fixture must sit at/above the floor");
+        assertLt(
+            hf,
+            LibVaipakam.MIN_HEALTH_FACTOR + 0.01e18,
+            "fixture must sit AT the boundary, not safely above it"
+        );
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "a position at its floor must still be sellable"
+        );
+    }
+
+    /// @dev Codex #1635 r10 — ordering. A listing whose loan went terminal
+    ///      (HF-liquidated, defaulted, repaid) before its stale listing was
+    ///      permissionlessly torn down must be refused for THAT reason, not
+    ///      measured for solvency first. The position no longer exists, so a
+    ///      health shortfall is a false statement about it — and the sub-floor
+    ///      price move is exactly what precedes a liquidation, so this is the
+    ///      likely shape rather than a contrived one. Both surfaces are pinned:
+    ///      `_acceptOffer` reverts `InvalidOffer` (what `LoanFacet` already used
+    ///      for this) and the preview classifies `SaleLoanNotActive`.
+    function test_saleAccept_terminalLoanRefusedBeforeSolvencyIsMeasured() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("terminalOrderingBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        // Sub-floor AND terminal — the combination that made the old ordering
+        // report a health shortfall for a position that had already closed.
+        _sinkBelowFloorButSolvent();
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.status = LibVaipakam.LoanStatus.Defaulted;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
+            .previewAccept(saleOfferId, buyer);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleLoanNotActive),
+            "preview must name the terminal loan, not a solvency shortfall"
+        );
+
+        vm.expectRevert(OfferAcceptFacet.InvalidOffer.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    // ─── Unpriceable legs (#1655) ───────────────────────────────────────────
+    //
+    // A leg is measurable for sale admission only when the LIVE
+    // `checkLiquidity` reading AND the loan's own origination record both say
+    // `Liquid`. Both are load-bearing, for different reasons: only the live
+    // reading catches a record that has gone stale in the permissive direction,
+    // and only the record says whether risk arithmetic runs for this loan at all
+    // (`RiskFacet.calculateHealthFactor` reverts `IlliquidLoanNoRiskMath`
+    // against it). An unmeasurable leg is REFUSED, and refused
+    // UNCONDITIONALLY — the progressive-risk-access consent ladder grades assets
+    // by identity and depth class, never by live priceability, so it cannot be
+    // deferred to (Codex r8).
+    //
+    // The tests below pin both axes independently: which source is consulted,
+    // in each direction, and that the answer does not move with the master
+    // switch.
+
+    /// @dev The silently-admitting case `LenderEarlyWithdrawalUXDesign.md`
+    ///      717-736 rejects. On a default deployment `riskAccessGateEnabled` is
+    ///      off, so `_assertBuyerRiskAccess` returns without checking anything —
+    ///      leaving NO consent gate on the direct sale. An unpriceable, here
+    ///      near-worthless, position must not be assignable to a generic
+    ///      standing offer against a figure nobody can compute.
+    function test_sale_refusedWhenCollateralLegIsCurrentlyUnpriceable() public {
+        assertFalse(
+            ConfigFacet(address(diamond)).getRiskAccessGateEnabled(),
+            "fixture must run on the DEFAULT deployment shape (gate off)"
+        );
+        // Live classification degrades; the loan's own snapshot is untouched
+        // and still says Liquid, so only a live read can see this.
+        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        mockPrice(mockCollateralERC20, 0.01e8, 8);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleLegUnpriceable.selector,
+                activeLoanId,
+                uint8(0) // collateral leg
+            )
+        );
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The principal leg is judged too, and names itself — `which == 1`.
+    ///      A test that only covered collateral would pass against code that
+    ///      checked one leg twice.
+    function test_sale_refusedWhenPrincipalLegIsCurrentlyUnpriceable() public {
+        mockLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleLegUnpriceable.selector,
+                activeLoanId,
+                uint8(1) // principal leg
+            )
+        );
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The staleness half of #1655, in the direction that used to let a
+    ///      sale through. `Loan.collateralLiquidity` is written once at
+    ///      origination and never refreshed, so a loan whose market has since
+    ///      degraded still reads `Liquid`. Reading the snapshot would clear
+    ///      every check below against prices the protocol no longer accepts
+    ///      and never reach the illiquid branch at all. This fixture makes the
+    ///      snapshot say Liquid EXPLICITLY, so it fails if the source reverts
+    ///      to the snapshot.
+    function test_sale_staleLiquidSnapshotDoesNotAdmitADegradedMarket() public {
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        ld.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).collateralLiquidity),
+            uint8(LibVaipakam.LiquidityStatus.Liquid),
+            "fixture's whole point: the SNAPSHOT still says Liquid"
+        );
+
+        // The market underneath it has degraded.
+        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleLegUnpriceable.selector,
+                activeLoanId,
+                uint8(0)
+            )
+        );
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The mirror direction, and the reason the snapshot is still read.
+    ///      `RiskFacet.calculateHealthFactor` gates on the SNAPSHOT and reverts
+    ///      `IlliquidLoanNoRiskMath`, so a loan carrying an illiquid snapshot
+    ///      has no health factor to compare no matter how liquid its market is
+    ///      today — it is genuinely unmeasurable, not merely stale. What this
+    ///      pins is that the refusal is the HONEST one: `SaleLegUnpriceable`,
+    ///      naming the leg, rather than the opaque `IlliquidLoanNoRiskMath` a
+    ///      live-only rule would surface by walking into the health read.
+    function test_sale_staleIlliquidSnapshotRefusesHonestlyNotOpaquely() public {
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+        // The live reading stays Liquid (set in setUp), so the snapshot is the
+        // only thing objecting — and it objects for a reason that matters.
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleLegUnpriceable.selector,
+                activeLoanId,
+                uint8(0)
+            )
+        );
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev Codex #1635 r8 — the refusal must NOT depend on the
+    ///      progressive-risk-access switch. An earlier revision admitted
+    ///      unpriceable positions when the gate was on, on the theory that the
+    ///      buyer-consent gate would then decide. It does not: that ladder
+    ///      classifies assets by identity and depth class, not by whether they
+    ///      can currently be priced.
+    function test_saleAdmission_unpriceableRefusedRegardlessOfTheRiskGate() public {
+        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+
+        (uint8 codeGateOff, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(codeGateOff, 6, "gate off: unmeasurable, so refused");
+
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        (uint8 codeGateOn, uint256 a, uint256 b) =
+            RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(codeGateOn, 6, "gate on: still refused - the ladder cannot consent to this");
+        assertEq(a, 0, "collateral leg named");
+        assertEq(b, 0, "no figure to report: nothing was measured");
+    }
+
+    /// @dev Codex #1635 r8, the concrete case that killed the switch-dependent
+    ///      branch — and the sharpest finding of the round, because it defeats
+    ///      the argument rather than the code.
+    ///
+    ///      `LibRiskAccess._isBlueChip` returns true for WETH and every
+    ///      configured PAA asset by IDENTITY, with no liquidity read, so
+    ///      `_assetRequiredLevel` yields `BlueChipOnly` — the level every vault
+    ///      holds by default. A blue-chip leg whose feed has gone stale (or
+    ///      whose sequencer check fails) is therefore unpriceable AND still
+    ///      blue-chip: the consent gate requires no opt-up and no pair consent,
+    ///      so deferring to it would hand an unmeasurable position to a
+    ///      DEFAULT-TIER buyer on both sale paths. This is the shape a
+    ///      "the switch can only add a gate" argument misses.
+    function test_sale_unpriceableBlueChipLegRefusedEvenWithConsentGateOn() public {
+        // Make the loan's existing collateral blue-chip by IDENTITY, which is
+        // the whole mechanism: `_isBlueChip` short-circuits on
+        // `asset == s.wethContract` without reading liquidity at all.
+        TestMutatorFacet(address(diamond)).setWethContractRaw(mockCollateralERC20);
+        (uint8 before, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(
+            before,
+            0,
+            "fixture must be admissible BEFORE the feed degrades, or it proves nothing"
+        );
+
+        // Consent regime ON — the state the superseded branch treated as
+        // sufficient on its own.
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        // The feed goes stale, so the live classifier calls it unpriceable
+        // while its blue-chip standing is unchanged.
+        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+
+        (uint8 code, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(
+            code,
+            6,
+            "an unpriceable blue-chip leg must be refused: the consent ladder never reads liquidity"
+        );
+    }
+
+    // ─── Inherited risk snapshots (design item 11, second requirement) ──────
+
+    /// @dev Governance tightening the admission floor AFTER origination leaves
+    ///      the loan on its older, looser snapshot. Selling it would hand the
+    ///      buyer a collateral floor they could not be given on a fresh loan
+    ///      today — the health read alone cannot see this, because the
+    ///      position is perfectly solvent against its own old terms.
+    function test_sale_refusedWhenInheritedHfFloorIsWeakerThanCurrent() public {
+        uint256 inherited = LibVaipakam.MIN_HEALTH_FACTOR; // 1.5e18 at init
+        uint256 tightened = inherited + 0.1e18;
+        vm.prank(owner);
+        RiskFacet(address(diamond)).setMinHealthFactor(tightened);
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleInheritsWeakerRiskTerms.selector,
+                activeLoanId,
+                uint8(0),
+                inherited,
+                tightened
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The gate is one-directional: a loan STRICTER than today's terms is
+    ///      fine to sell, because the buyer inherits a better position than a
+    ///      fresh loan would give them. Guards against a naive `!=` check.
+    function test_sale_admittedWhenInheritedTermsAreStricterThanCurrent() public {
+        // Loosen the live floor below what this loan was admitted under.
+        vm.prank(owner);
+        RiskFacet(address(diamond)).setMinHealthFactor(LibVaipakam.MIN_HEALTH_FACTOR - 0.1e18);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "a position on stricter-than-current terms must stay sellable"
+        );
+    }
+
+    /// @dev The current-floor comparison must mirror `LoanFacet`'s BRANCH-AWARE
+    ///      snapshot: under the depth-tiered regime a fresh loan is admitted at
+    ///      HF_LIQUIDATION_THRESHOLD (1e18), not at the tunable knob. Comparing
+    ///      a tiered loan's 1e18 snapshot against the knob would classify every
+    ///      such loan as weaker (code 2) and block it from both sale paths — a
+    ///      false positive, not a tightening.
+    ///
+    ///      Asserted against the classifier directly, and only on the HF code.
+    ///      Enabling depth-tiering after origination ALSO tightens the LTV cap,
+    ///      which legitimately trips code 4 — correct behaviour, and a
+    ///      different branch's business.
+    function test_saleAdmission_tieredLoanNotFlaggedOnTheHealthFloorBranch() public {
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.minHealthFactorAtInit = uint64(LibVaipakam.HF_LIQUIDATION_THRESHOLD);
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+        TestMutatorFacet(address(diamond)).setDepthTieredLtvEnabledRaw(true);
+
+        (uint8 code, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertTrue(
+            code != 2,
+            "a tiered-originated loan must not be flagged on the admission-floor branch"
+        );
+    }
+
+    /// @dev Equal cap snapshots say nothing about where the position actually
+    ///      sits. A loan can drift above its init-LTV cap while its health
+    ///      factor still clears the floor, and `LoanFacet._checkInitialLtvAndHf`
+    ///      would reject that collateralisation as a fresh admission — which is
+    ///      the standard a sale must meet.
+    function test_sale_refusedWhenLiveLtvExceedsTheAdmissionCap() public {
+        // Baseline is 1000 borrowed against 2000 collateral at 1:1 = 50% LTV,
+        // inside the 8000 bps cap. Halving the collateral price takes it to
+        // ~100% while HF stays at 1.7 * 0.5 = 0.85... which trips the FLOOR
+        // first, so instead shrink the cap to just under the live LTV: the
+        // position is unchanged and healthy, only the admission bar moved.
+        vm.prank(owner);
+        RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 4000, 300, 1000);
+        LibVaipakam.Loan memory ld = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.initLtvCapBpsAtInit = 4000; // compatible with current, still under live LTV
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        (uint8 code, uint256 liveLtv, uint256 cap) =
+            RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(code, 5, "live LTV over the admission cap must be classified");
+        assertGt(liveLtv, cap, "reported figures must show the breach");
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleLtvAboveAdmissionCap.selector,
+                activeLoanId,
+                liveLtv,
+                cap
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The preview must agree with the accept. A preview that checked only
+    ///      the health floor would quote this sale as fine and let the buyer
+    ///      discover the inherited-terms gate by burning gas.
+    function test_previewAccept_flagsWeakerInheritedTerms() public {
+        uint256 saleOfferId = _listSaleOffer();
+        vm.prank(owner);
+        RiskFacet(address(diamond)).setMinHealthFactor(LibVaipakam.MIN_HEALTH_FACTOR + 0.1e18);
+
+        OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
+            .previewAccept(saleOfferId, makeAddr("inheritedTermsBuyer"));
+        // SaleAdmissionBlocked, NOT the health-floor code: this position's HF
+        // is fine and only its inherited terms are stale. Reporting the floor
+        // code here would tell the buyer something false about their position
+        // (Codex #1635 r4) — the assertion this test originally made.
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleAdmissionBlocked),
+            "preview must name the inherited-terms reason, not the health floor"
+        );
+    }
+
+    /// @dev #1655 — an unpriceable leg must reach the buyer as the neutral
+    ///      blocked result, never as a health-factor shortfall. The design doc
+    ///      is explicit that the surface must "never show a health figure for a
+    ///      position that has none", and code 6 carries no figures precisely so
+    ///      the preview cannot invent one.
+    function test_previewAccept_flagsUnpriceableLegAsNeutralBlock() public {
+        uint256 saleOfferId = _listSaleOffer();
+        mockLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid);
+
+        OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
+            .previewAccept(saleOfferId, makeAddr("unpriceableLegBuyer"));
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleAdmissionBlocked),
+            "an unpriceable leg is a neutral block, not a measured health shortfall"
+        );
+        assertTrue(
+            uint8(p.errorCode) !=
+                uint8(OfferAcceptFacet.AcceptError.SalePositionBelowSolvencyFloor),
+            "must not claim a health figure for a position that has none"
+        );
+    }
+
+    /// @dev The buyer must learn this from the preview, not from a burnt-gas
+    ///      revert.
+    function test_previewAccept_saleVehicle_flagsBelowSolvencyFloor() public {
+        uint256 saleOfferId = _listSaleOffer();
+        _sinkBelowFloorButSolvent();
+        OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
+            .previewAccept(saleOfferId, makeAddr("previewSolvencyBuyer"));
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SalePositionBelowSolvencyFloor),
+            "preview must classify the sub-floor position"
+        );
+    }
+
+    /// @dev Codex #1635 r5 — an UNMEASURABLE position must not be reported as a
+    ///      measured shortfall. When the classifier itself reverts (an oracle
+    ///      that cannot price a leg the loan's flags claim is priceable), the
+    ///      guard bubbles that revert; the preview used to degrade to code 1 and
+    ///      render `SalePositionBelowSolvencyFloor` with 0/0 figures. Both
+    ///      refuse the sale, so a refusal-only assertion passes either way —
+    ///      what this test binds is that they agree on the REASON, and that the
+    ///      preview does not invent a health-factor shortfall it never measured.
+    function test_previewAccept_unpriceablePositionIsNotReportedAsBelowFloor()
+        public
+    {
+        uint256 saleOfferId = _listSaleOffer();
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector),
+            "oracle down"
+        );
+
+        OfferAcceptFacet.AcceptPreview memory p = OfferPreviewFacet(address(diamond))
+            .previewAccept(saleOfferId, makeAddr("unpriceableBuyer"));
+
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleAdmissionBlocked),
+            "an unmeasurable position must block neutrally, not claim a measured HF shortfall"
+        );
+        assertTrue(
+            p.errorCode != OfferAcceptFacet.AcceptError.SalePositionBelowSolvencyFloor,
+            "preview must not name the health floor when nothing was measured"
+        );
+    }
+
+    /// @dev The other half of the same guarantee: the ACCEPT path surfaces the
+    ///      classifier's OWN failure rather than the floor error, so the two
+    ///      surfaces cannot disagree about why a sale was refused. Asserting the
+    ///      exact bubbled data — not a bare `expectRevert` — is the point: a
+    ///      bare one would pass even if the guard reported a fabricated
+    ///      health-factor shortfall, which is the bug being excluded.
+    function test_acceptSaleVehicle_unpriceablePositionBubblesClassifierFailure()
+        public
+    {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("unpriceableAcceptBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(RiskPreviewFacet.saleAdmission.selector),
+            "oracle down"
+        );
+
+        // The classifier's own failure, NOT SalePositionBelowSolvencyFloor: the
+        // guard fails closed without inventing a measured figure.
+        vm.expectRevert(bytes("oracle down"));
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 }

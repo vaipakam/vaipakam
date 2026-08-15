@@ -122,7 +122,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       path: window.location.pathname + window.location.search,
       at: Date.now(),
     });
-    // eslint-disable-next-line no-console
     console.error('[vaipakam] uncaught render error:', error, info);
   }
 

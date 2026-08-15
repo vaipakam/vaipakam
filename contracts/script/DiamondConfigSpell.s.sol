@@ -16,7 +16,7 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *         post-deploy Diamond-side configure scripts.
  *
  * @dev Background. After `--phase contracts` lands the Diamond +
- *      Timelock + VPFI lane + Reward OApp on a chain, four further
+ *      Timelock + VPFI lane + reward messenger on a chain, four further
  *      `Configure*.s.sol` scripts have to run before the chain is
  *      operational:
  *
@@ -25,8 +25,9 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *                                       (lendingAsset, collateralAsset)
  *                                       pair.
  *        - ConfigureRewardReporter   — sets the cross-chain reward
- *                                       reporter's localEid + baseEid
- *                                       so reward reports flow.
+ *                                       reporter's canonical base chain
+ *                                       id + messenger so reward reports
+ *                                       flow (EVM chain ids, not eids).
  *        - ConfigureVPFIBuy          — sets the VPFI fee-discount price
  *                                       config; runs on every chain (the
  *                                       discount applies chain-wide).
@@ -72,8 +73,8 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *
  *        1. ConfigureOracle FIRST — every other configure (and every
  *           runtime path) needs oracle prices to be live.
- *        2. ConfigureRewardReporter — wires the reporter's localEid
- *           before the reward OApp peers are live (no on-chain
+ *        2. ConfigureRewardReporter — wires the reporter's chain ids
+ *           before the reward-messenger lanes are live (no on-chain
  *           dependency on the order, but logically pairs after
  *           Oracle).
  *        3. ConfigureVPFIBuy — sets the VPFI fee-discount price config
@@ -89,16 +90,20 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *        - ADMIN_PRIVATE_KEY (signs every Diamond-side broadcast)
  *        - per-chain oracle / risk params (ConfigureOracle reads
  *          chain-prefixed vars so the same .env works across testnets)
- *        - REWARD_OAPP_PROXY / LOCAL_EID / BASE_EID (reporter)
+ *        - REWARD_MESSENGER_PROXY (optional override) / BASE_CHAIN_ID
+ *          (reporter — chains are keyed by EVM chain id, never an eid)
  *        - VPFI_BUY_WEI_PER_VPFI (global) + the chain-prefixed
  *          <CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET (every chain)
  *        - NFT_DEFAULT_IMAGE_LENDER / _BORROWER and the per-state
  *          override URIs (NFT artwork; defaults are baked into the
  *          contract so all of these are optional).
  *
- *      ConfigureLZConfig is NOT in this spell — it's signed by the
- *      OApp owner key (DEPLOYER_PRIVATE_KEY in many setups, NOT
- *      ADMIN_PRIVATE_KEY) and runs at `--phase lz-config` separately.
+ *      Cross-chain transport config is NOT in this spell. It is
+ *      `ConfigureCcip.s.sol`, run at `--phase ccip-wire` — after the
+ *      contracts phase has landed on EVERY chain in the topology, since
+ *      it reads each one's addresses.json. (The old `--phase lz-config` /
+ *      `ConfigureLZConfig.s.sol` step named here previously is gone with
+ *      LayerZero; no wrapper dispatches that phase.)
  */
 contract DiamondConfigSpell is Script {
     function run() external {

@@ -15,7 +15,7 @@ Today this Worker does:
 - **HF band-downgrade alerts** — fires Telegram + Push notifications when borrower HF crosses watcher-defined thresholds.
 - **Daily oracle snapshot signer** — submits `OracleFacet.captureDailyPriceSnapshot` (moved here from agent in the rebalance).
 
-Tomorrow (per [`RangeOffersDesign.md`](../../docs/DesignsAndPlans/RangeOffersDesign.md) §7 of the Stage 3 plan): adds the off-chain offer matcher for Range Orders + Lender Partial Fills, submitting `matchOffers(lenderId, borrowerId)` to earn the 1% LIF matcher fee.
+Also LIVE (per [`RangeOffersDesign.md`](../../docs/DesignsAndPlans/RangeOffersDesign.md) §7 of the Stage 3 plan; this said "Tomorrow"): the off-chain offer matcher, scheduled every cron tick, for Range Orders + Lender Partial Fills, submitting `matchOffers(lenderId, borrowerId)` to earn the 1% LIF matcher fee.
 
 **Non-goals:** no user-facing reads (those belong to `apps/indexer`); no notifications setup endpoints (those belong to `apps/agent`); no public Frame / Telegram bot surface (also `apps/agent`).
 
@@ -170,7 +170,9 @@ a successful-looking command and a keeper that keeps signing
 removing the store entry is rotation-grade, and the repository documents
 rotation but **no removal procedure** — so it is not a step to improvise
 during an incident. (`apps/keeper` is its only binder — `apps/agent`
-deliberately does not hold a signing key — so an earlier "affects every
+deliberately does not bind `KEEPER_PRIVATE_KEY` (it does hold
+`PUSH_CHANNEL_PK`, an Ethereum key for signing Push notifications, but that
+is not this secret) — so an earlier "affects every
 binder" here overstated the blast radius. The reason to avoid it stands; the
 scare does not.) Stopping the schedule
 achieves the same outcome and is reversible in one command.
@@ -260,7 +262,7 @@ Keeper reads-only: `loans`, `offers`, `indexer_cursor` (the head-block stamp for
 
 ## Related
 
-- `apps/agent` — the proactive-notifications / Frame / Telegram-bot Worker (no signing key).
-- `apps/indexer` — the chain-to-D1 indexer (read-only).
+- `apps/agent` — the proactive-notifications / Frame / Telegram-bot Worker (no **on-chain transaction** key; it does hold `PUSH_CHANNEL_PK`, an Ethereum key loaded as an ethers `Wallet` to sign Push notifications).
+- `apps/indexer` — chain→D1 indexer + read-API; NOT read-only (writes D1 via POST routes, publishes borrower-authorised, on-chain-bound listings to OpenSea)).
 - `vaipakam/vaipakam-keeper-bot` (sibling repo) — public reference keeper bot for third-party operators.
 - `packages/contracts` — ABI / deployment source.

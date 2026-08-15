@@ -1,7 +1,21 @@
 # ADR-0003: Time-weighted accumulator for VPFI fee discounts
 
-**Status:** Accepted
+**Status:** Accepted — **borrower half superseded by #1352** (2026-07-20)
 **Date:** 2026-04-23 (Phase 5 implementation date; ADR backfilled 2026-05-20)
+
+> **Supersession note (#1352, rev-8 fee freeze).** The decision recorded
+> here — that a discount must be time-weighted rather than sampled at a
+> point in time — still stands, and the **lender** yield-fee half is
+> unchanged and current. The **borrower** half described below is not how
+> new loans work: #1352 retired the peg-custody path, so a new loan takes
+> no VPFI into custody and earns no settlement rebate. The borrower's
+> hold-tier discount is now applied directly to the lending-asset LIF at
+> acceptance, resolved from the live tier at that moment. Loans opened
+> before the freeze still settle through the flow described here.
+>
+> The fee rates quoted below (0.1% LIF, 1% yield fee) are the rates in
+> force when this ADR was written. The live rates are **0.2%** and
+> **2%**, and any discount is clamped at a uniform 50% of the gross fee.
 
 ## Context
 

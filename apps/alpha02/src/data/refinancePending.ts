@@ -80,13 +80,22 @@ export function useRefinancePending(
   const { readChain, address } = useActiveChain();
   const readClient = usePublicClient({ chainId: readChain.chainId });
   const queryClient = useQueryClient();
-  const [offerId, setOfferId] = useState<string | null>(null);
+  const [offerId, setOfferId] = useState<string | null>(() =>
+    marker.read(readChain.chainId, loanId),
+  );
 
-  // Re-seed whenever the chain (or loan) changes — a state initializer
-  // would freeze the first chain's marker across a network switch.
-  useEffect(() => {
+  // Re-seed when the (chain, loan) identity changes, as a render-phase
+  // ADJUSTMENT rather than in an effect (#1520) — same reasoning as
+  // offsetPending: React re-runs the render before painting, so the
+  // previous chain's marker is never displayed, where the effect version
+  // committed one frame carrying it. The initializer alone would freeze the
+  // first chain's marker, which is what the effect was there for.
+  const seedKey = `${readChain.chainId}:${loanId}`;
+  const [seededFor, setSeededFor] = useState(seedKey);
+  if (seededFor !== seedKey) {
+    setSeededFor(seedKey);
     setOfferId(marker.read(readChain.chainId, loanId));
-  }, [readChain.chainId, loanId]);
+  }
 
   const remember = useCallback(
     (id: string) => {
@@ -230,7 +239,13 @@ export function useRefinancePending(
   });
 
   // Self-heal: a deleted/foreign record clears the marker.
+  //
+  // Deliberately an effect (#1520), same reasoning as offsetPending: this
+  // invalidates persisted device state on verified chain evidence, and the
+  // marker feeds this hook's query key, so a render-derived value would keep
+  // the key naming a record already known to be gone.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (query.data === 'gone') clear();
   }, [query.data, clear]);
 

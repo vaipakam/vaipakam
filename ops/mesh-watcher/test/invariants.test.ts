@@ -140,6 +140,7 @@ function mirrorLocal(): LocalLedger {
     composition: {
       creditedRaw: 1000n * E,
       releasedRemitStranded: 0n,
+      releasedRemitResolved: 0n,
       accountingSeeded: true,
       isCanonicalRewardChain: false,
     },
@@ -149,7 +150,11 @@ function mirrorLocal(): LocalLedger {
     // #1434 P2-w2 — backing snapshot present with a healthy float and no
     // quarantine (undefined would skip the recovery-reservation check
     // suite-wide — the same anti-vacuity rule as repatriatedOut above).
-    backing: { vpfiBalance: 400n * E, strandedRecoveryReserved: 0n },
+    backing: {
+      vpfiBalance: 400n * E,
+      strandedRecoveryReserved: 0n,
+      recoveryPositionReserved: 0n,
+    },
     observedAt: 1_800_000_000n,
   });
 }
@@ -175,12 +180,17 @@ function canonicalLocal(): LocalLedger {
     composition: {
       creditedRaw: 800n * E,
       releasedRemitStranded: 0n,
+      releasedRemitResolved: 0n,
       accountingSeeded: true,
       isCanonicalRewardChain: true,
     },
     repatriatedOut: 0n,
     // #1434 P2-w2 — as on the mirror fixture: present, healthy, empty.
-    backing: { vpfiBalance: 1_000n * E, strandedRecoveryReserved: 0n },
+    backing: {
+      vpfiBalance: 1_000n * E,
+      strandedRecoveryReserved: 0n,
+      recoveryPositionReserved: 0n,
+    },
     observedAt: 1_800_000_000n,
   });
 }
@@ -219,6 +229,7 @@ function canonicalLocal(): LocalLedger {
 type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
   creditedRaw?: bigint;
   releasedRemitStranded?: bigint;
+  releasedRemitResolved?: bigint;
   accountingSeeded?: boolean;
   isCanonicalRewardChain?: boolean;
   /** `null` = the newer view could not be read on this chain. */
@@ -227,7 +238,11 @@ type LocalOverrides = Partial<Omit<LocalLedger, 'composition'>> & {
    *  Omitted: derived from the (possibly overridden) bucket so a
    *  bucket-raising test cannot trip the recovery-reservation check by
    *  fixture incoherence (the #1618 r-fixture lesson). */
-  backingOverride?: { vpfiBalance: bigint; strandedRecoveryReserved: bigint } | null;
+  backingOverride?: {
+    vpfiBalance: bigint;
+    strandedRecoveryReserved: bigint;
+    recoveryPositionReserved?: bigint;
+  } | null;
 };
 
 function coherent(
@@ -237,6 +252,7 @@ function coherent(
   const {
     creditedRaw,
     releasedRemitStranded,
+    releasedRemitResolved,
     accountingSeeded,
     isCanonicalRewardChain,
     composition,
@@ -250,12 +266,18 @@ function coherent(
   if (backingOverride === null) {
     l.backing = undefined;
   } else if (backingOverride !== undefined) {
-    l.backing = backingOverride;
+    l.backing = {
+      ...backingOverride,
+      recoveryPositionReserved:
+        backingOverride.recoveryPositionReserved ?? 0n,
+    };
   } else {
     const reserved = base.backing?.strandedRecoveryReserved ?? 0n;
+    const recovery = base.backing?.recoveryPositionReserved ?? 0n;
     l.backing = {
-      vpfiBalance: l.bucket + reserved + 200n * E,
+      vpfiBalance: l.bucket + reserved + recovery + 200n * E,
       strandedRecoveryReserved: reserved,
+      recoveryPositionReserved: recovery,
     };
   }
   if (composition === null) {
@@ -266,6 +288,8 @@ function coherent(
     creditedRaw: creditedRaw ?? l.reportedCumulative,
     releasedRemitStranded:
       releasedRemitStranded ?? baseComp.releasedRemitStranded,
+    releasedRemitResolved:
+      releasedRemitResolved ?? baseComp.releasedRemitResolved,
     accountingSeeded: accountingSeeded ?? baseComp.accountingSeeded,
     isCanonicalRewardChain:
       isCanonicalRewardChain ?? baseComp.isCanonicalRewardChain,
@@ -348,6 +372,65 @@ describe('bucket-coverage — role resolution across a stale snapshot (#1448 r11
     );
     return l;
   }
+
+  // #1434 P2-w6 / #1662 r2 — a recovery ceremony puts stranded RECYCLED
+  // value back in the bucket WITHOUT retiring the stranded record (that
+  // record is monotone history the composition relation still needs as a
+  // destination term). If the allowance kept reading the gross figure, the
+  // recovered VPFI would back reservations twice — the bucket holds it AND
+  // the allowance still claims it is in transit — so a genuine shortfall of
+  // up to everything ever recovered would go unpaged, permanently. The
+  // mutation this kills: `allowance = stranded` instead of
+  // `stranded - recovered`.
+  it('nets RECOVERED value out of the stranded coverage allowance', () => {
+    // The ceremony returned the whole 5e19: bucket rose by it, and the
+    // stranded record stayed. Reservations rose too — the recovered tokens
+    // back them once, not twice. Gross allowance would see 5e19 of phantom
+    // headroom and stay silent on a real 5e19 shortfall.
+    const l = fresh(
+      coherent(canonicalLocal(), {
+        bucket: 150_000_000_000_000_000_000n,
+        outstandingRecycled: 200_000_000_000_000_000_000n,
+        releasedRemitStranded: 50_000_000_000_000_000_000n,
+        releasedRemitResolved: 50_000_000_000_000_000_000n,
+        isCanonicalRewardChain: true,
+      }),
+    );
+    const obs: MeshObservation = {
+      ...observation(),
+      canonicalChainId: CANONICAL,
+      freshLocals: new Map([[CANONICAL, l]]),
+      allLocals: new Map([[CANONICAL, l]]),
+    };
+    const found = checkHardInvariants(obs, TOLERANCE)
+      .filter((f) => f.code === 'bucket-coverage');
+    expect(found).toHaveLength(1);
+    expect(found[0]!.severity).toBe('critical');
+  });
+
+  // The same shape with the recovery NOT yet run stays silent: the value
+  // really is in transit, and the allowance is exactly what it is for. This
+  // is what keeps the check above from being a blanket "always page".
+  it('still admits the allowance for value that is genuinely stranded', () => {
+    const l = fresh(
+      coherent(canonicalLocal(), {
+        bucket: 150_000_000_000_000_000_000n,
+        outstandingRecycled: 200_000_000_000_000_000_000n,
+        releasedRemitStranded: 50_000_000_000_000_000_000n,
+        releasedRemitResolved: 0n,
+        isCanonicalRewardChain: true,
+      }),
+    );
+    const obs: MeshObservation = {
+      ...observation(),
+      canonicalChainId: CANONICAL,
+      freshLocals: new Map([[CANONICAL, l]]),
+      allLocals: new Map([[CANONICAL, l]]),
+    };
+    const found = checkHardInvariants(obs, TOLERANCE)
+      .filter((f) => f.code === 'bucket-coverage');
+    expect(found).toEqual([]);
+  });
 
   it('does not page when a STALE snapshot predates a role migration', () => {
     const l = demotedCanonical();
@@ -2576,6 +2659,40 @@ describe('recovery-reservation backing (#1434 P2-w2, §4.1)', () => {
       backingOverride: {
         vpfiBalance: 500n * E,
         strandedRecoveryReserved: 300n * E,
+      },
+    });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    expect(
+      findings.filter((f) => f.code === 'recovery-reservation-backing'),
+    ).toHaveLength(0);
+  });
+
+  it('fires CRITICAL when the RECOVERY POSITION term is what the balance misses (#1434 P2-w5)', () => {
+    // Driven off zero then non-zero deliberately (the w2 fixture lesson):
+    // reserved = 0 so ONLY the new position term creates the shortfall —
+    // a check that ignored it would pass this fixture.
+    const local = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 450n * E,
+        strandedRecoveryReserved: 0n,
+        recoveryPositionReserved: 300n * E,
+      },
+    });
+    const findings = checkHardInvariants(obsWith(local), TOLERANCE);
+    const hits = findings.filter(
+      (f) => f.code === 'recovery-reservation-backing',
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe('critical');
+    expect(hits[0]?.detail).toContain('recovery');
+  });
+
+  it('a funded recovery position does not fire', () => {
+    const local = coherent(mirrorLocal(), {
+      backingOverride: {
+        vpfiBalance: 500n * E,
+        strandedRecoveryReserved: 0n,
+        recoveryPositionReserved: 300n * E,
       },
     });
     const findings = checkHardInvariants(obsWith(local), TOLERANCE);

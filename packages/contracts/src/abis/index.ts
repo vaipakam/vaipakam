@@ -83,6 +83,8 @@ import InteractionRewardsLensFacetABI from './InteractionRewardsLensFacet.json';
 import RewardReporterFacetABI from './RewardReporterFacet.json';
 import RewardAggregatorFacetABI from './RewardAggregatorFacet.json';
 import RewardRemittanceFacetABI from './RewardRemittanceFacet.json';
+import RewardRemittanceLensFacetABI from './RewardRemittanceLensFacet.json';
+import RewardCompensationDispatchFacetABI from './RewardCompensationDispatchFacet.json';
 import RewardCommitmentFacetABI from './RewardCommitmentFacet.json';
 import RepatriationFacetABI from './RepatriationFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
@@ -177,6 +179,8 @@ export {
   RewardReporterFacetABI,
   RewardAggregatorFacetABI,
   RewardRemittanceFacetABI,
+  RewardRemittanceLensFacetABI,
+  RewardCompensationDispatchFacetABI,
   RewardCommitmentFacetABI,
   RepatriationFacetABI,
   ConfigFacetABI,
@@ -268,6 +272,8 @@ export const DIAMOND_ABI = [
   ...RewardReporterFacetABI,
   ...RewardAggregatorFacetABI,
   ...RewardRemittanceFacetABI,
+  ...RewardRemittanceLensFacetABI,
+  ...RewardCompensationDispatchFacetABI,
   ...RewardCommitmentFacetABI,
   ...RepatriationFacetABI,
   ...ConfigFacetABI,

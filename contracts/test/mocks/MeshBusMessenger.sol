@@ -516,7 +516,7 @@ contract MeshBusMessenger is IRewardMessenger {
         return 0;
     }
 
-    function sendRemitAck(uint256, uint256, address, address payable)
+    function sendRemitAck(uint256, uint256, address, uint8, address payable)
         external
         payable
         override

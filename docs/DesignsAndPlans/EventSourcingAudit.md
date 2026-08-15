@@ -246,7 +246,9 @@ in `§1.5.1` below.
 
 #### §1.5.1 Taxonomy — exactly two levels (`top/leaf`)
 
-15 leaf categories total: 7 state-change + 8 informational.
+14 leaf categories total: 7 state-change + 7 informational.
+(Was 15 — `informational/lz-plumbing` was retired with the
+LayerZero transport; see the note under the table.)
 Two levels deep deliberately — depth 3+ duplicates info already
 in the ABI (contract name) or in event-to-handler routing
 (function name). Wildcard / glob queries against the leaf
@@ -266,15 +268,26 @@ prefix cover the realistic consumer needs.
 | `informational/liquidation` | Marks the fallback / liquidation flow path. Indexer ignores. Split values live in `s.fallbackSnapshot[loanId]`, accessible by `eth_call` if a consumer needs them; the storage transition is captured by the `state-change/loan-mutation` companion. | `LiquidationFallback`, `LiquidationFallbackSplit` |
 | `informational/claim` | Marks claim-retry / fallback execution. Indexer ignores. Storage transition is in `state-change/claim-mutation`. | `ClaimRetryExecuted` |
 | `informational/settlement` | Marks proper-close. Indexer ignores. Split values live in `s.settlementBreakdown[loanId]`, retrievable on demand; storage transitions are in `state-change/loan-mutation` (`LoanSettled`) and `state-change/claim-mutation`. | `LoanSettlementBreakdown` |
-| `informational/lz-plumbing` | LayerZero V2 endpoint / peer / DVN / option config | `PeerSet`, `EndpointSet`, `BuyOptionsSet`, `BroadcastDestinationEidsSet`, `BridgedBuyReceiverUpdated` |
 | `informational/reward-transport` | Cross-chain reward infra (broadcast / aggregation / day-finalize / chain-zeroing) | `BroadcastSent`, `BroadcastReceived`, `ChainInterestReported`, `ChainReportAggregated`, `DailyGlobalInterestFinalized`, `ChainContributionZeroed` |
 | `informational/governance` | Protocol-config bundle / image-URI / TOS version updates | `CurrentTosUpdated`, `ProtocolConfigBundleUpdated`, `DefaultImageURIUpdated` |
 
-The leaf list is closed — adding a new leaf requires updating
-this section AND the lint-script's allow-list (see §1.6) in the
-same PR. New events MUST tag with one of these 15 leaves; if
-none fit, that's a signal to either reuse an existing leaf or
-deliberately extend the taxonomy.
+**Retired leaf — `informational/lz-plumbing`.** It covered
+LayerZero V2 endpoint / peer / DVN / option config (`PeerSet`,
+`EndpointSet`, `BuyOptionsSet`, `BroadcastDestinationEidsSet`,
+`BridgedBuyReceiverUpdated`). Every contract that emitted those
+is deleted — the transport is CCIP-only and there is no
+LayerZero dependency left to inherit them from — so the leaf
+could never be validly applied again. Removing a leaf follows
+the same both-places rule as adding one; it was removed from the
+lint-script allow-list in the same change as this entry. CCIP
+transport events belong under `informational/reward-transport`
+or `informational/config`.
+
+The leaf list is closed — adding OR retiring a leaf requires
+updating this section AND the lint-script's allow-list (see
+§1.6) in the same PR. New events MUST tag with one of these 14
+leaves; if none fit, that's a signal to either reuse an existing
+leaf or deliberately extend the taxonomy.
 
 ### 1.6 CI lint enforcement of `@custom:event-category`
 
@@ -295,7 +308,7 @@ fails the build if any externally-emitted event lacks a valid
 4. Validate every tag value matches the regex
    `^(state-change|informational)/[a-z-]+$` (exactly two levels,
    lowercase + hyphens at depth-2 leaf).
-5. Validate the leaf is in the curated allow-list (the 15 above).
+5. Validate the leaf is in the curated allow-list (the 14 above).
    New leaves require explicit list extension — prevents
    accidental proliferation.
 6. Emit a consolidated `contracts/out/event-categories.json`

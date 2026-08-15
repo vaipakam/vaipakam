@@ -7,10 +7,22 @@
  * against the wallet's own chain — a free, read-only dry run of the
  * exact calldata. Nothing is broadcast.
  *
- * ADVISORY ONLY — it must never gate `canSign` or the submit path.
- * On an RPC hiccup or a preview artefact (placeholder signature,
- * not-yet-granted allowance) it degrades to a subdued "no verdict"
- * footer. The wallet-context plumbing is the only real difference
+ * The VERDICT is ADVISORY ONLY — `revert`, `approval-needed` and
+ * `unavailable` must never block signing or the submit path. On an RPC
+ * hiccup or a preview artefact (placeholder signature, not-yet-granted
+ * allowance) it degrades to a subdued "no verdict" footer.
+ *
+ * SETTLEMENT is a different question, and one caller does gate on it
+ * (Codex #1679 r5 P3 — this header used to say "must never gate
+ * `canSign`" flatly, which stopped being true at #1679 r3). A caller that
+ * shows this preview as a pre-sign disclosure may require the status to be
+ * TERMINAL — anything other than `idle`/`loading` — before enabling
+ * signing, so that consent is given against a verdict in hand rather than
+ * one still in flight. That is a liveness gate on "has it answered", not a
+ * correctness gate on "did it pass": every terminal status, including the
+ * failures above, opens it. Keep the distinction if you touch this — a
+ * caller that blocks on `revert` has misread the contract, and a caller
+ * that treats `loading` as settled has reopened the race r3 closed. The wallet-context plumbing is the only real difference
  * from the defi original: alpha02 uses `useActiveChain` + wagmi's
  * `usePublicClient` bound to the WALLET chain (never the read-chain
  * fallback — simulating on a different network than the one the
@@ -74,8 +86,87 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
   // Bound to the WALLET chain (undefined off-chain) — never the
   // read-chain fallback; see the header note.
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
-  const [result, setResult] = useState<SimResult>({ status: 'idle' });
   const reqIdRef = useRef(0);
+
+  /**
+   * The input's SIGNATURE — what would actually be sent — rather than its
+   * object identity (Codex #1679 r2 N2).
+   *
+   * Callers build this input inside a `useMemo`, so any dependency of that
+   * memo produces a fresh object even when the resulting `eth_call` is
+   * byte-identical. Restarting on identity therefore reset a settled verdict
+   * to `loading` for reasons that could not change the outcome. That was not
+   * merely wasteful: a caller whose gate consumes this status, and whose
+   * memo depends on state the user toggles, could never reach a settled
+   * verdict at all — toggling re-armed the simulation, which re-closed the
+   * gate, which is what the toggle was trying to open.
+   */
+  const inputKey = input
+    ? [
+        input.to,
+        input.data,
+        input.value?.toString() ?? '',
+        input.allowSignatureRevert ?? false,
+        input.allowAllowanceRevert ?? false,
+        input.allowNftApprovalRevert ?? false,
+      ].join('|')
+    : null;
+  /**
+   * The full CONTEXT a verdict belongs to — the wallet identity it was
+   * computed for, plus the calldata signature (Codex #1679 r4).
+   *
+   * A verdict is only about the account and chain whose state produced it.
+   * `simulate` re-arms on an account or chain switch, but only from the
+   * passive effect below — so the render in which the new `address` first
+   * appears committed with the PREVIOUS account's settled verdict still in
+   * state. A consumer gating on "has the preview settled" therefore saw a
+   * stale pass for one frame under a wallet context whose `eth_call` had
+   * never run.
+   *
+   * Stamping the context onto the stored verdict and comparing during RENDER
+   * (rather than clearing it from an effect) closes that frame structurally:
+   * a result whose context no longer matches is not a verdict at all, and
+   * cannot be read as one no matter how the effects are ordered.
+   */
+  const simContext = [
+    address ?? '',
+    walletChain?.chainId ?? '',
+    onSupportedChain,
+    inputKey ?? '',
+    // The CLIENT that would run the call, not just the chain it points at
+    // (Codex #1679 r7). wagmi can hydrate or replace `publicClient` without
+    // the address, chain or calldata moving; `simulate` re-arms on that
+    // (it closes over the client) but the stamped context would not, so the
+    // previous verdict stayed valid-looking through the new debounce. The
+    // concrete case is the one this hook creates itself: with no client the
+    // status is `unavailable`, which is TERMINAL — so a caller gating on
+    // settlement would read "answered" from a run that never happened, and
+    // open signing the moment the real client arrived. viem's `uid` is the
+    // client's identity and changes when it is replaced.
+    publicClient?.uid ?? '',
+  ].join('|');
+  /** Read by `simulate` so it does not have to close over the object. */
+  const inputRef = useRef(input);
+  /** The context `simulate` stamps onto whatever verdict it produces. */
+  const simContextRef = useRef(simContext);
+
+  const [stamped, setStamped] = useState<{ ctx: string; result: SimResult }>({
+    ctx: simContext,
+    result: { status: 'idle' },
+  });
+
+  /**
+   * The verdict, valid ONLY for the context that produced it.
+   *
+   * Note this also subsumes the synchronous stale-verdict drop that the
+   * effect below used to perform with a `setResult` on every input change:
+   * a changed `inputKey` changes the context, so the old verdict stops
+   * counting in the very same render rather than one commit later.
+   */
+  const result: SimResult =
+    stamped.ctx === simContext
+      ? stamped.result
+      : { status: input ? 'loading' : 'idle' };
 
   const simulate = useCallback(async () => {
     // Bump the request id FIRST — before any early return — so a
@@ -83,6 +174,12 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
     // in flight; otherwise it could resolve later and overwrite the
     // verdict with a stale one.
     const myReq = ++reqIdRef.current;
+    const input = inputRef.current;
+    // Every write stamps the context the verdict was computed for, so a
+    // later render under a different account / chain / calldata cannot read
+    // it as its own (see `simContext`).
+    const setResult = (r: SimResult) =>
+      setStamped({ ctx: simContextRef.current, result: r });
     if (!input || !address) {
       setResult({ status: 'idle' });
       return;
@@ -114,20 +211,31 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
         ),
       );
     }
-  }, [address, onSupportedChain, publicClient, input]);
+  }, [address, onSupportedChain, publicClient]);
 
   useEffect(() => {
-    // Drop the previous verdict SYNCHRONOUSLY on any input change —
-    // a stale "passed" must not sit under a changed receipt during
-    // the debounce window (round 1). The bump also invalidates any
-    // eth_call still in flight for the old input.
+    // Latest input for `simulate` to read. Kept in a ref so `simulate` does
+    // not change identity per keystroke, and written HERE rather than during
+    // render because `react-hooks/refs` forbids a render-phase ref write.
+    inputRef.current = input;
+    simContextRef.current = simContext;
+    // Invalidate any `eth_call` still in flight for the old context. The
+    // previous verdict needs no explicit clearing any more: it is stamped
+    // with the context that produced it and stops counting as soon as that
+    // context changes (round 1 did this with a `setResult` here, which
+    // landed a commit late — see `result`).
     reqIdRef.current++;
-    setResult(input ? { status: 'loading' } : { status: 'idle' });
     const t = setTimeout(() => {
       void simulate();
     }, debounceMs);
     return () => clearTimeout(t);
-  }, [input, simulate, debounceMs]);
+    // Keyed on the CONTEXT — which folds in the input's SIGNATURE rather
+    // than its identity (see `inputKey`), so an object rebuilt with
+    // identical calldata must not restart a settled simulation. `input` is
+    // deliberately absent from the deps for exactly that reason —
+    // including it is the bug this guards against.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simContext, simulate, debounceMs]);
 
   return { result, refresh: simulate };
 }

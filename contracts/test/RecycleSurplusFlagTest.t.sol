@@ -433,6 +433,34 @@ contract RecycleSurplusFlagTest is SetupTest {
         _agg().setRecycleSurplusMultiple(10);
     }
 
+    /// #1706 — the READ needs the same deployment gate the mutator has, and
+    /// for a sharper reason. Before this, a mirror could call the surplus
+    /// read and get a well-formed position back: the selector is cut into
+    /// every deployment, and the ledger it reads is one only Base writes, so
+    /// a mirror returned zeros that are indistinguishable from a genuine
+    /// "no surplus". A silent wrong number is worse than a revert for
+    /// anything reading this to decide something.
+    ///
+    /// Note this is NOT the `block.chainid` guard above. That one asks "is
+    /// the chain being asked about a mirror?"; this asks "should this
+    /// deployment be answering at all?". `CHAIN_ARB` is a legitimate
+    /// argument here — it is not "self" — so the older guard passes and
+    /// only the new one rejects.
+    function test_SurplusRead_RejectsNonCanonicalDeployment() public {
+        vm.chainId(CHAIN_ARB);
+        _rep().setIsCanonicalRewardChain(false);
+
+        vm.expectRevert(IVaipakamErrors.NotCanonicalRewardChain.selector);
+        _agg().getChainSurplusPosition(CHAIN_BASE, THROUGH_DAY);
+    }
+
+    /// The two guards are independent, so the canonical one must not stop a
+    /// canonical Diamond answering — otherwise #1706 would have broken every
+    /// legitimate read while looking like it only added safety.
+    function test_SurplusRead_StillAnswersOnCanonicalDeployment() public {
+        _agg().getChainSurplusPosition(CHAIN_ARB, THROUGH_DAY);
+    }
+
     // ─── Read-only ───────────────────────────────────────────────────────
 
     /// C1 flags; it never moves value. Pinned because the design rests on

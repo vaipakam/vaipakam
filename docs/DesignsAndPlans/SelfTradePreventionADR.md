@@ -22,7 +22,7 @@ fee-rebate harvesting or rank-gaming. For Vaipakam, the equivalent
 risks are:
 
 1. **LIF kickback wash-loop** — the matcher (= 1% kickback recipient
-   on the 0.1% Loan Initiation Fee) is whoever submits `matchOffers`
+   on the 0.2% Loan Initiation Fee) is whoever submits `matchOffers`
    or whoever directly accepts. If the matcher is also the lender or
    borrower, they're paying themselves a kickback. Net cost is the
    99% treasury share; tiny in absolute terms but it's free yield on

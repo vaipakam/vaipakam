@@ -2,7 +2,7 @@
 
 This document states the intended behaviour of the alpha02 connected app. It is
 the alpha02-specific functional spec distilled from the release notes through
-2026-07-12. It is intentionally written without implementation snippets.
+2026-08-12. It is intentionally written without implementation snippets.
 
 ## Purpose
 
@@ -142,6 +142,14 @@ The receipt should answer:
 Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.
+
+Clearing it afterwards is not sufficient on its own: at the moment signing is
+offered, the consent on file must be consent given against the disclosures
+currently on screen. A disclosure that has just arrived must therefore block
+signing immediately, in the same breath as it becomes visible — never only
+once a follow-up pass has cleared the tick. The two rules differ exactly when a
+disclosure resolves late, which is the common case for anything the app has to
+fetch before it can warn.
 
 Risk Disclosure and Terms links are real links and must not destroy the flow in
 progress.
@@ -353,6 +361,53 @@ Thin-market honesty rules apply.
   whole acceptance if the tariff cannot complete, or open the loan without
   Full (and without any tariff charge) in that case. The consequence of the
   current choice is stated next to it.
+- **On an acceptance or fill review**, the quote is live and keeps moving while
+  the review is open, so it can rise above the ceiling the user authorized
+  without anyone touching anything. When it does, the app says so plainly,
+  naming both the current quote and the authorized ceiling, and offers a single
+  action to raise the ceiling — stating the figure that action would authorize.
+  The ceiling is never raised on the user's behalf; the choice stays theirs.
+  The standing-offer creator's arm form carries the paired warning: arming a
+  ceiling the live quote already exceeds is called out, with both figures and
+  the consequence stated as it actually is — a fill above the ceiling cannot
+  charge the tariff, so it is rejected, or opened without Full where that
+  fallback was chosen. The quote shown is for the largest fill the offer
+  can still receive — what is already filled is excluded, so the figure is one
+  a taker could actually reach — and the warning says so, because a smaller
+  partial fill can price under the same ceiling. It
+  appears only while arming is actually available. It warns rather than refuses — what the
+  protocol judges is the quote when a fill actually happens, and it may fall
+  back before then; saving an offer is reversible in a way an acceptance is
+  not. That matches how the same form already treats a vault balance below the
+  quote.
+- Whether that warning also HOLDS signing follows the failure posture the user
+  already chose. Under the reject posture the app refuses to send an acceptance
+  it can see would be rejected. Under the open-without-Full posture it does not
+  refuse: that choice says to proceed in exactly this situation, so the warning
+  is there to make proceeding an informed decision rather than a surprise.
+- **Under the reject posture**, the app attempts a fresh read of the quote at
+  each point it is about to ask for a signature or send a transaction —
+  including before each additional wallet prompt the flow needs, whether a
+  separate permit signature or a token approval — and before EACH approval
+  prompt where a token needs its allowance reset to zero first, since that
+  path prompts twice with a mined transaction between them. This holds on the
+  signed-fill path as well as the direct accept. Those steps are paced by the
+  user and can take arbitrarily long, and a signature collected for an
+  acceptance about to be refused is exactly the waste these checks exist to
+  prevent. The attempt is BEST-EFFORT: if the read itself fails (an unreachable
+  node, a selector the deployment does not have), the app proceeds rather than
+  refusing. Its purpose is to spare the user a doomed signature, not to be a
+  second enforcement layer — the protocol enforces regardless, and a preflight
+  that failed closed on its own transport trouble would block acceptances the
+  chain would have allowed.
+- **Under the open-without-Full posture** no such re-read is required, and the
+  displayed warning may lag: the re-read exists to stop a signature that is
+  already doomed, and under that posture none is — the loan opens either way,
+  which is what the user asked for.
+- Even under the reject posture this narrows the window in which the price can
+  move unnoticed; it cannot close it. The protocol has the final word on the
+  price at the moment a transaction lands, and an acceptance can still be
+  refused there.
 - The copy is dual-fee honest: the tariff never replaces or waives the loan's
   asset fees — it adds a deeper discount on the payer's own side's fees, up to
   the overall cap — and it is non-refundable, priced on the loan's full term
@@ -595,6 +650,18 @@ Thin-market honesty rules apply.
   JavaScript.
 - A crawl policy file and a sitemap of the indexable pages ship with
   every build.
+- The public data service's root address should answer with a
+  self-describing catalogue of keyless public data surfaces, so search
+  crawlers, AI agents, and integrators can discover supported protocol
+  reads without scraping wallet-scoped app pages.
+- Public data discovery must stay read-only and keyless. It may
+  describe endpoints for market, loan, offer, activity, freshness, and
+  transparency reads, but it must not expose wallet-private state,
+  secrets, write authority, or action shortcuts.
+- The crawl policy for alpha02 must be consistent in both rendered
+  pages and response headers: a crawler that does not execute
+  JavaScript sees the same indexable / noindex decision that a browser
+  sees after the app loads.
 
 ## Privacy and Legal Posture
 
@@ -1497,6 +1564,22 @@ Its intended behaviour, as the test oracle for this surface:
   publishes signed lend depth that partial fills could not actually
   consume. Gasless borrow orders are unaffected — they already post as
   a single fixed size.
+  That substitution replaces the PARTIAL choice only. Immediate-or-
+  cancel remains available on a gasless lend order and is posted as
+  chosen, because immediate-or-cancel says when an order stops resting
+  rather than how much of it may fill — so it is not in conflict with
+  single-whole-fill, and the requirement that such an order carry an
+  expiry continues to apply to it. The ticket never posts a fill mode
+  other than the one it is showing: the mode displayed on the chips is
+  the mode that goes into the order, at every moment, including while
+  the terms that force the substitution are themselves changing.
+  Choosing to lend rather than borrow, or to post by signature rather
+  than on-chain, changes what is being agreed to, so it withdraws any
+  risk-and-terms acknowledgement already given — at the moment of the
+  change, not after it. This matters most for a signature-only post,
+  where the signature is the last checkpoint: nothing downstream
+  re-examines whether the acknowledgement matched the terms displayed
+  when it was given.
   Because nothing is locked at signing, a signed order can rest
   unbacked; the platform warns the maker when their vault does not
   currently cover the commitment (without blocking — funding later is

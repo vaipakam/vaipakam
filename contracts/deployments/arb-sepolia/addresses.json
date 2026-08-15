@@ -79,7 +79,6 @@
     "rewardClaimFacet": "0x5D2E14b6CA63912E90cf4fCE50B5455DC247320b",
     "rewardCommitmentFacet": "0x489A8cC60166Ce3f2987f00FC48d9a2D9D961A5E"
   },
-  "lzEid": 40231,
   "rewardMessenger": "0xc4989E01f45bDEA7b961F0F4Be1ceFBe4BFed437",
   "timelock": "0x3B9F9B53B902a493B24e14e386F0a5067c3ACB46",
   "treasury": "0xca3E735C593088D2f5ea5AEAa553a6bDaa6E7413",

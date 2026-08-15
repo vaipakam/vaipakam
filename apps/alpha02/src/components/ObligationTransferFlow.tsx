@@ -182,6 +182,11 @@ export function ObligationTransferFlow({
   // rather than let a stale receipt invite a doomed signature.
   useEffect(() => {
     if (pickedId !== null && candidates && !picked) {
+      // Same shape as `EarlyExitFlow`'s drift close: the point is
+      // `onCloseConfirm()` on the page's confirm slot, and the setState
+      // drops the now-dangling local pick alongside it. The trigger is the
+      // candidate book refetching — external, so nothing here to derive.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPickedId(null);
       onCloseConfirm();
     }

@@ -33,10 +33,7 @@
     "react-dom": "^19.2.4",
     "react-i18next": "^17.0.4",
     "react-is": "^19.2.5",
-    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.14.0",
-    "rehype-raw": "^7.0.0",
-    "remark-gfm": "^4.0.1",
     "valtio": "^1.13.2",
     "viem": "^2.48.4",
     "wagmi": "^2.19.5"
@@ -53,6 +50,7 @@
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vaipakam/eslint-config": "workspace:*",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "^4.1.4",
     "eslint": "^9.39.4",

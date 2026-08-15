@@ -76,13 +76,23 @@ export function useOffsetPending(
 ) {
   const { readChain, address } = useActiveChain();
   const readClient = usePublicClient({ chainId: readChain.chainId });
-  const [offerId, setOfferId] = useState<string | null>(null);
+  const [offerId, setOfferId] = useState<string | null>(() =>
+    marker.read(readChain.chainId, loanId),
+  );
 
-  // Re-seed whenever the chain (or loan) changes — a state initializer
-  // would freeze the first chain's marker across a network switch.
-  useEffect(() => {
+  // Re-seed when the (chain, loan) identity changes, as a render-phase
+  // ADJUSTMENT rather than in an effect (#1520). React re-runs the render
+  // before painting, so the previous chain's marker is never displayed —
+  // the effect version committed one frame carrying it, which on a network
+  // switch meant briefly offering "cancel" against another chain's offer.
+  // The initializer alone is not enough (it would freeze the first chain's
+  // marker), which is what the effect was there for.
+  const seedKey = `${readChain.chainId}:${loanId}`;
+  const [seededFor, setSeededFor] = useState(seedKey);
+  if (seededFor !== seedKey) {
+    setSeededFor(seedKey);
     setOfferId(marker.read(readChain.chainId, loanId));
-  }, [readChain.chainId, loanId]);
+  }
 
   const remember = useCallback(
     (id: string) => {
@@ -202,6 +212,13 @@ export function useOffsetPending(
       offerId !== null &&
       (!query.data.locked || !query.data.offerExists)
     ) {
+      // Deliberately an effect (#1520): this INVALIDATES persisted device
+      // state on verified chain evidence, so it is external-store
+      // synchronisation rather than derived state. Deriving the returned id
+      // during render would leave `offerId` — which is part of this hook's
+      // query key — still naming the offer just disproved, so the hook would
+      // keep verifying an offer it knows is gone.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       clear();
     }
   }, [query.data, offerId, clear]);

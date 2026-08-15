@@ -18,11 +18,11 @@ Before the interaction-reward mesh, every chain's daily accounting was self-cont
 
 | Risk | What it looks like | Where it's handled |
 |---|---|---|
-| **Daily liveness** | Any reporter chain misses its `closeDay` / LZ message within grace → Base can't finalize with full coverage. Recurs every 24h, not per-deploy. | §1 (delayed messages), §2 (zeroed chain reconciliation) |
+| **Daily liveness** | Any reporter chain misses its `closeDay` / CCIP reward message within grace → Base can't finalize with full coverage. Recurs every 24h, not per-deploy. | §1 (delayed messages), §2 (zeroed chain reconciliation) |
 | **Consistency divergence** | A mirror's `knownGlobalInterestUSD18[day]` ≠ Base's `getDailyGlobalInterest(day)`. Users on that mirror compute claims from the wrong denominator. Idempotent-on-match catches replays, but not a bad first-message. | ChainByChainChecks.md §6 — *critical page* rule |
-| **Ingress trust compromise** | `rewardOApp` misconfigured or its key compromised → attacker can forge any chain's contribution. Single pin, whole-reward-curve blast radius. | AdminKeysAndPause.md — timelocked behind `ADMIN_ROLE` |
-| **LZ at-least-once replay** | Same message delivered twice. Safe only if `ChainDayAlreadyReported` and "idempotent-on-match" in `onRewardBroadcastReceived` hold. Any bug = silent double-count. | Covered by `CrossChainRewardPlumbingTest.t.sol` + daily consistency check |
-| **Pause asymmetry** | Outbound (`closeDay`, `broadcastGlobal`) is pause-gated; ingress (`onChainReportReceived`, `onRewardBroadcastReceived`) is **not**, by design, so in-flight messages don't trap-and-retry during incidents. | §3 — pause response must expect messages to keep landing |
+| **Ingress trust compromise** | `rewardMessenger` or the `CcipMessenger` remote-messenger/channel maps are misconfigured → reports or broadcasts can be rejected, misrouted, or attributed to the wrong chain. | AdminKeysAndPause.md + AdminConfigurableKnobsAndSwitches.md — timelocked behind owner/admin paths |
+| **CCIP replay / re-execution** | Same message manually re-executed or delivered after an incident. Safe only if `ChainDayAlreadyReported` and "idempotent-on-match" in `onRewardBroadcastReceived` hold. Any bug = silent double-count. | Covered by reward plumbing tests + daily consistency check |
+| **Pause asymmetry** | Diamond pause stops new reward facet writes, while stand-alone `GuardianPausable` cross-chain contracts pause separately. If they are left unpaused, in-flight CCIP messages can still land through `CcipMessenger` into the reward messenger. | §3 — pause response must decide whether to pause the CCIP stack too |
 | **Selector-list drift** | Reward facet selectors live in both `DeployDiamond.s.sol` and `HelperTest.sol`. Drift breaks either prod deploys or test harness silently. | UpgradeSafety.md — "both lists MUST stay in sync" |
 | **Parameter identicality** | `graceSeconds`, `launchTimestamp`, `expectedSourceEids` must agree across chains. A silent mismatch shifts the reward curve. | ChainByChainChecks.md §5 — identicality check |
 
@@ -30,7 +30,7 @@ Before the interaction-reward mesh, every chain's daily accounting was self-cont
 
 - Treat §1 as a **recurring pager category**, not a rare incident. Zeroed chains are a normal outcome of a stuck mesh, not an exploit.
 - The critical page from ChainByChainChecks.md §6 (mirror `knownGlobal` ≠ Base's global) is **higher severity than a missed finalization** — missed finalization pays users from insurance; divergence corrupts every claim on that mirror until fixed.
-- Emergency pause (§3) stops *new* reward-path writes but cannot stop inbound LZ messages. Post-pause triage must account for ingress continuing to land.
+- Emergency pause (§3) stops *new* Diamond reward-path writes. Pause `CcipMessenger` / `VaipakamRewardMessenger` separately when the incident response needs CCIP ingress to halt too.
 
 ---
 
@@ -53,15 +53,15 @@ isDayReadyToFinalize(dayId)           // (ready, reason) — reason: 1=finalized
 ### Diagnose
 For each `expectedEid`:
 - `isChainReported(dayId, eid)` → which chain hasn't sent?
-- Check LZ scan (<layerzeroscan.com>) for the missing chain's reward OApp: is the outbound message in-flight, failed, or never sent?
+- Check the Chainlink CCIP explorer for the missing chain's `VaipakamRewardMessenger`: is the outbound message in-flight, failed, manually executable, or never sent?
 
 **Root-cause buckets:**
 - **A. Local `closeDay` was never called on the missing chain.**
-  Anyone can call it; keeper may be down. Call it manually with gas for the LZ fee.
-- **B. Local `closeDay` succeeded but LZ message stuck.**
-  Use LZ scanner to retry / bump gas. On some LZ versions, `lzReceive` can be retried from the destination.
-- **C. RewardOApp misconfigured** (`RewardOAppNotSet`, `BaseEidNotSet`, or `IsCanonical` flipped wrong way).
-  Must be fixed via timelock — see `AdminKeysAndPause.md`.
+  Anyone can call it; keeper may be down. Call it manually with native gas for the quoted CCIP fee.
+- **B. Local `closeDay` succeeded but the CCIP message is stuck.**
+  Use the CCIP explorer/manual execution path after fixing the cause (for example a paused receiver or underfunded execution).
+- **C. Reward messenger or CCIP channel misconfigured** (`RewardMessengerNotSet`, missing base chain id, wrong canonical flag, missing selector, remote messenger, channel registration, or channel peer).
+  Must be fixed through the owner/admin path — see `AdminKeysAndPause.md` and `AdminConfigurableKnobsAndSwitches.md`.
 
 ### Decide
 | Time past `dailyFirstReportAt + graceSeconds` | Action |
@@ -77,7 +77,7 @@ For each `expectedEid`:
 RewardAggregatorFacet.finalizeDay(dayId)
    → emits ChainContributionZeroed(dayId, eid) per missing chain
    → emits DailyGlobalInterestFinalized(dayId, lenderUSD18, borrowerUSD18)
-RewardAggregatorFacet.broadcastGlobal{value: lzFee}(dayId)
+RewardAggregatorFacet.broadcastGlobal{value: ccipFee}(dayId)
    → landing on every reporter via onRewardBroadcastReceived
 ```
 
@@ -93,11 +93,11 @@ broadcastGlobal(dayId)
 
 ### Post-mortem
 Required within 72h. Template:
-- Which chain was zeroed, and why (keeper down / LZ stuck / config).
-- LayerZero message hash(es) if applicable.
+- Which chain was zeroed, and why (keeper down / CCIP stuck / config).
+- CCIP message id(s) if applicable.
 - Total interest on the zeroed chain for that day (from on-chain `getChainReport` if it landed late, or from subgraph snapshot).
 - Insurance-pool payout amount and recipients.
-- Preventive action committed to (e.g., add a second redundant keeper, monitor LZ fee estimation).
+- Preventive action committed to (e.g., add a second redundant keeper, monitor CCIP fee estimation).
 
 ---
 
@@ -302,7 +302,7 @@ Run it alongside the Diamond pause to freeze the Base→mirror reward-budget
 ingress too; the receiver can be kept paused while other CCIP channels resume.
 
 ### Decide (post-pause triage)
-1. Is the issue a bad config (oracle/0x proxy/rewardOApp)? → Admin fix, unpause.
+1. Is the issue a bad config (oracle/0x proxy/rewardMessenger / CCIP registry)? → Admin fix, unpause.
 2. Is the issue a bug in a facet? → Prepare a diamond-cut replacing the facet (see `UpgradeSafety.md`). Unpause **only after** cut lands and tests pass on a fork.
 3. Is funds movement required (rescue)? → **Do not** unpause. Use `whenNotPaused`-exempt paths only; rescue logic must go through a diamond-cut.
 
@@ -840,9 +840,17 @@ command and for the case-sensitivity trap between the two guards.
 > following them would send a responder down an obsolete path while the
 > real incident continues.
 >
-> **Cross-chain ops alerting for CCIP does not exist yet** — that gap is
-> tracked on #250 Phase 1 (Tenderly presets). For a suspected cross-chain
-> problem today, the authoritative enumeration of the live pausable
+> **Cross-chain ops alerting for the CCIP TRANSPORT does not exist yet** —
+> that gap is tracked on #250 Phase 1 (Tenderly presets). Do not read that
+> as "nothing watches the mesh": since #1222 M3 B4-c the recycling mesh's
+> per-chain reward ledgers ARE watched, and the watcher pages. See
+> **§5b** below — that is the live cross-chain alert rail, and an ops
+> Telegram page about the mesh is answered there, not here. What is still
+> missing is transport-level security alerting (message forge, unexpected
+> mint), which §5b does not cover.
+>
+> For a suspected cross-chain problem today, the authoritative enumeration
+> of the live pausable
 > cross-chain set is **`contracts/script/pause-all-chains.sh`** — it names
 > `ccipMessenger`, `buybackRemittanceReceiver`,
 > `rewardRemittanceReceiver` and the #1568 C2 vpfi-return channel
@@ -1084,6 +1092,140 @@ low enough that we expect periodic benign hits — do not
 publicly comment on each one.
 
 </details>
+
+---
+
+## 5b. Recycling-mesh ledger alerts (mesh-watcher) (added 2026-08-12; #1222 M3 B4-c, #1444/#1446, #1445, #1567)
+
+### Context
+
+The recycling mesh's per-chain books are the one part of the design
+**no single-chain test can verify.** Base decides how much recycled
+reward budget a mirror may fund from its own bucket, using Base's
+*model* of that mirror's availability; the mirror then reserves against
+its *actual* bucket. Those two numbers live on different chains, are
+written by different transactions, and reconcile only through periodic
+day-close reports. A test proves each side correct in isolation. Only
+an observer reading both at once proves they still agree.
+
+`ops/mesh-watcher` is that observer. It is the successor rail to the
+retired lz-watcher of §5 and is **detection-only** — it pages humans,
+it moves nothing, and no automated response is wired to it.
+
+Three properties of the rail matter during an incident:
+
+- **It is trust-isolated on purpose.** Its own D1
+  (`vaipakam-mesh-alerts-db`, NOT the shared `vaipakam-archive`) and its
+  own Telegram identity (`TG_OPS_BOT_TOKEN` → `TG_OPS_CHAT_ID`, the
+  ops-internal bot, never the user-facing one). A compromise of the
+  user-alert bot cannot spoof these pages, and vice versa.
+- **The chain set comes from the contract, not from config** — every
+  tick reads `getExpectedSourceChainIds()`. A chain the watcher is not
+  configured for therefore surfaces as a finding rather than a silence.
+- **Reads are pinned to one block per chain**, and cross-chain
+  comparisons are freshness-gated. A stale RPC head is not reported as
+  a ledger fault.
+
+The full per-check catalogue, with the reasoning for each relation and
+its tolerances, lives in
+[`ops/mesh-watcher/README.md`](../../ops/mesh-watcher/README.md). This
+section is the response procedure, not a duplicate of it — read the
+README for *why a check exists*, read here for *what to do when it
+fires*.
+
+### Alert classes
+
+**CRITICAL — these page.** Each is a relation maintained by
+construction in the contracts, so a violation is a bug, a spoofed
+report, or storage corruption; it is never ordinary operation:
+`commit-identity`, `clamp-chain`, `attribution-ceiling`,
+`availability-formula`, `base-self-inert`, `base-ahead-of-chain`,
+`consumed-cap`, `bucket-coverage`, `bucket-composition`,
+`reported-derivation`, `role-consistency`. Plus
+`watcher-state-unavailable`, the one CRITICAL that is not a ledger
+relation — see below.
+
+**ADVISORY — necessary, not sufficient.** `stuck-settlement`,
+`report-lag`, `coverage-gap`. These are windowed signals; they
+accumulate over ticks rather than firing on one reading, and a single
+ADVISORY is a prompt to look, not to act.
+
+### Triage — do this before reaching for a lever
+
+1. **Confirm the finding is a ledger fault and not a read fault.** The
+   watcher already pins per-chain blocks, so a genuine violation
+   reproduces. Re-run one tick through the authenticated `POST /run`
+   endpoint and check the finding repeats. A finding that does not
+   reproduce at a fresh pinned block was a read artefact.
+2. **Check whether `watcher-state-unavailable` is also firing.** When
+   the watcher's own storage is degraded, ledger findings are still
+   delivered (they are computed from chain reads and do not depend on
+   storage) — but **repeat-suppression is bypassed**, so expect
+   duplicates, and the windowed advisories cannot accumulate, so
+   `stuck-settlement` / `report-lag` will not fire at all until it
+   clears. Do not read their absence as health during a storage
+   outage.
+3. **Check `role-consistency` first if it is in the batch.** It means
+   the mesh config and a chain's own canonical flag disagree, which is
+   a split-brain mesh: that chain can close its own days *and* release
+   remittances while Base still expects reports from it. Every other
+   figure in the same tick was read from a topology that is not the one
+   the contracts are acting on, so reconcile the role before drawing
+   conclusions from the rest.
+4. **Treat `coverage-gap` as a config reconciliation, not a fault.** A
+   chain in `getExpectedSourceChainIds()` that the watcher could not
+   read is a blind spot in the *observer*, and the mesh may be
+   perfectly healthy behind it. Fix the watcher's chain configuration,
+   then re-run.
+
+### Response — the levers that actually exist
+
+**There is no automated response and no "mesh pause".** Containment is
+assembled from two existing levers, in this order:
+
+1. **Stop the keeper's reward passes.** The instructions that grow the
+   per-chain ledgers are issued by the keeper's remittance,
+   acknowledgement and commitment-report passes, each gated by a
+   per-Worker secret (`REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`,
+   and `KEEPER_ENABLED` above them). Turning these off halts new
+   cross-chain reward instructions without touching lending,
+   liquidation or user claims. This is the proportionate first move for
+   a ledger-relation breach: it stops the books being written to while
+   the discrepancy is understood.
+   > Remember §3's scope note on `KEEPER_ENABLED`: it stops six jobs
+   > and leaves four running, **including the watchers that message
+   > users.** If the incident is one where users should not be hearing
+   > from the system, stopping the keeper's schedule is the lever, not
+   > the switch.
+2. **Pause the cross-chain ingress**, if the finding suggests a spoofed
+   or replayed report rather than an accounting bug —
+   `base-ahead-of-chain` is the canonical shape of that, since Base
+   accepting a cumulative *higher* than the chain's own is impossible
+   without a bad message. The authoritative enumeration of the pausable
+   cross-chain set is `contracts/script/pause-all-chains.sh`; take the
+   pause mechanics from `contracts/RUNBOOK.md` §10 and the *what* from
+   the script, per §5's note.
+   > **Do NOT reach for `AdminFacet.pause()` here.** It does not block
+   > CCIP ingress, so it would leave exactly the path you are trying to
+   > close open. See `AdminKeysAndPause.md`.
+
+**What not to do:** do not "correct" a ledger by writing a knob. None
+of the recycling knobs
+([`AdminConfigurableKnobsAndSwitches.md`](AdminConfigurableKnobsAndSwitches.md))
+repairs an inconsistent book — `setExpectedSourceChainIds` changes the
+denominator of a day already in progress, and
+`setGovernorCommitArmedFromDay` is one-shot and future-only. A
+mis-aimed knob write during an incident is unrecoverable in a way the
+incident itself may not be.
+
+### A flagged surplus is not an incident
+
+The per-chain **surplus flag** (#1567) is not part of this rail and does
+not page. It is a Diamond read reporting that a mirror is sitting on
+more recycled VPFI than its trailing 30-day budget uses, it is off by
+default, it applies to mirrors only, and **it moves nothing**.
+Disposition of a flagged surplus is deliberate, planned repatriation
+work (#1568) — never an incident response.
 
 ---
 

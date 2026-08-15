@@ -1,15 +1,48 @@
 /**
  * live-ux-sweep.mjs — whole-site UI/UX evidence sweep for review sessions.
  *
- * NOT a pass/fail driver: it gathers the raw evidence a UI/UX review
- * needs — full-page screenshots of EVERY route (desktop + mobile in
- * Basic mode, desktop again in Advanced), the console stream, failed /
- * slow / heavy network calls, and basic landmarks (title, h1 count,
- * horizontal-overflow probe) — into e2e/live/shots/ux-sweep/ plus one
- * report.json. A reviewer (human or agent) then reads the artifacts
- * and writes the findings doc (docs/FindingsAndFixes/…). Committing
- * the sweep keeps periodic UX audits reproducible instead of being
- * rebuilt in a scratchpad each time.
+ * Mostly an EVIDENCE generator, with two verdicts. It gathers what a
+ * UI/UX review needs — full-page screenshots of EVERY route (desktop +
+ * mobile in Basic mode, desktop again in Advanced), the console stream,
+ * failed / slow / heavy network calls, and basic landmarks (title, h1
+ * count, horizontal-overflow probe) — into e2e/live/shots/ux-sweep/
+ * plus one report.json. A reviewer (human or agent) then reads the
+ * artifacts and writes the findings doc (docs/FindingsAndFixes/…).
+ * Committing the sweep keeps periodic UX audits reproducible instead of
+ * being rebuilt in a scratchpad each time.
+ *
+ * What a PASS from this drive promises (#1626, owner decision
+ * 2026-08-09): the sweep stayed read-only, AND every route it was asked
+ * to visit actually loaded. Console errors, slow responses, heavy
+ * payloads and overflow probes stay evidence and do not fail the run —
+ * they are judgements a reviewer makes from the artifacts. A route that
+ * never loaded is not a judgement: the surface under review was never
+ * shown, so a PASS row in the batch would claim coverage the run does
+ * not have.
+ *
+ * "Never loaded" is three shapes, not one, because only the first of
+ * them looks like a failure at the time:
+ *   1. the navigation THREW — a timeout, a refused connection. Nothing
+ *      committed, the previous page may still be on screen, so this
+ *      route's screenshot / landmarks / devtools probe are deliberately
+ *      recorded as null;
+ *   2. the document came back 4xx/5xx. `page.goto` resolves for an
+ *      error document, so this would otherwise count as a clean visit.
+ *      Its artifacts ARE captured and kept — the error page is a real
+ *      page and its screenshot is what a reviewer wants (Codex #1648 r2
+ *      P2: only shape 1 has no artifact);
+ *   3. the route redirected away, server-side (the committed URL moved)
+ *      or client-side (the app navigated on mount). The final page
+ *      answers 200 and captures cleanly — of something else.
+ *
+ * Timeouts count, and that was argued. The case against: a 45 s budget
+ * against a live testnet makes some timeouts environmental, and turning
+ * those into batch failures re-creates the habitual-red problem #1581
+ * exists to remove. The case that won: a route that cannot load inside
+ * 45 s is a finding whoever caused it, and burying it in a report
+ * nobody opens is how it stays one. If transient timeouts do become
+ * habitual red, the fix is a smarter wait or an honest budget — not an
+ * exit code that overstates the run.
  *
  * Run (from apps/alpha02/e2e/live/):
  *   TESTNET_WALLETS_FILE=~/secrets/wallets.json node live-ux-sweep.mjs
@@ -268,6 +301,25 @@ function slugOf(route) {
   return route === '/' ? 'home' : route.replace(/^\//, '').replace(/[/:]/g, '-');
 }
 
+/**
+ * The comparable part of a URL: origin + pathname, trailing slash
+ * normalised away. Query and hash are dropped deliberately — the app
+ * adds and removes both on its own (deep links, tab state), and a
+ * redirect that only changes them has not moved the reader off the
+ * route under review. Returns null for anything unparseable so a caller
+ * treats "unknown" as "no evidence of a redirect" rather than as one.
+ */
+function pathOf(url) {
+  if (typeof url !== 'string' || url === '') return null;
+  try {
+    const u = new URL(url);
+    const p = u.pathname.length > 1 ? u.pathname.replace(/\/+$/, '') : u.pathname;
+    return `${u.origin}${p === '' ? '/' : p}`;
+  } catch {
+    return null;
+  }
+}
+
 /** Harvest a real loan-detail route from the RENDERED /positions page
  *  instead of querying the indexer with a wallets-file-derived address
  *  (CodeQL js/file-data-in-outbound-network-request — and honestly the
@@ -325,6 +377,16 @@ report.startedAt = new Date().toISOString();
 // observed yet, so exiting is honest and costs no evidence.
 for (const s of activeSessions) addressOf(s.role);
 const allBlockedRequests = [];
+// Routes that never loaded, across every session and pass. Accumulated
+// as they happen rather than derived from `report` at the end, for the
+// same reason `allBlockedRequests` is: a session that dies part-way
+// still contributes what it saw.
+const allNavFailures = [];
+// Denominator for the route tally. Counted rather than computed from
+// `routes.length × passes` because the route list is per-session (the
+// chain-scoped and disconnected sessions visit fewer) and can grow at
+// runtime when the loan-detail route is harvested.
+let routesAttempted = 0;
 // Sessions whose browser never started. Reported at the end rather than
 // exited on, so a finding from a session that DID run still wins.
 const setupFailures = [];
@@ -504,15 +566,72 @@ for (const pass of session.passes) {
       network: { responses: 0, bytes: 0, errors: [], failed: [], heavy: [] },
     };
     const started = Date.now();
+    routesAttempted += 1;
     let navError = null;
+    let httpStatus = null;
+    let servedPath = null;
+    let landedPath = null;
     try {
-      await page.goto(`${SITE}${route}`, { waitUntil: 'load', timeout: 45_000 });
+      const resp = await page.goto(`${SITE}${route}`, { waitUntil: 'load', timeout: 45_000 });
+      httpStatus = resp?.status() ?? null;
+      servedPath = pathOf(resp?.url());
       // Let data views settle: brief idle wait, tolerant of the polls.
       await page.waitForLoadState('networkidle', { timeout: 12_000 }).catch(() => {});
       await page.waitForTimeout(1_500);
+      // Read AFTER the settle waits, so a client-side redirect that runs
+      // on mount (an alias route, a guard bouncing an ineligible page)
+      // has happened by the time this is sampled.
+      landedPath = pathOf(page.url());
     } catch (e) {
       navError = String(e).slice(0, 300);
     }
+    // A THROW is not the only way a route can fail to load: `page.goto`
+    // RESOLVES for an HTTP error document, so a 404 from a broken route
+    // or a 502 from the CDN would otherwise be recorded as a clean visit
+    // and counted toward the "loaded" tally (Codex #1648 r1 P1 — the
+    // shared `visit()` helper has always made this distinction).
+    //
+    // Kept SEPARATE from `navError` rather than folded into it, because
+    // the two differ in what evidence survives: a throw may leave the
+    // PREVIOUS page on screen, so its artifacts must be nulled, whereas
+    // an error document IS the page and its screenshot is exactly what a
+    // reviewer needs. Both count as "did not load".
+    //
+    // No false positive on `/definitely-not-a-page`: alpha02's Worker
+    // runs `not_found_handling: "single-page-application"`, so an
+    // unknown path serves index.html with a 200 and the app's own
+    // NotFound surface renders under it.
+    const httpError =
+      navError === null && typeof httpStatus === 'number' && httpStatus >= 400
+        ? `HTTP ${httpStatus}`
+        : null;
+    // Nor is a 200 proof the REQUESTED route rendered. A route
+    // redirected away — server-side to a login/holding page, or
+    // client-side by a guard on mount — answers 200 from wherever it
+    // landed, so status alone would count it as covered while the
+    // surface under review was never shown (Codex #1648 r2 P1).
+    //
+    // Both hops are checked because they fail differently and the sweep
+    // sees them at different moments: `servedPath` is the URL the
+    // document was committed at (a Worker / CDN redirect), `landedPath`
+    // is where the app sat after the settle waits (a React Router
+    // redirect, which does not move the response URL at all).
+    //
+    // The route list is canonical by construction — App.tsx's alias
+    // routes (`/earn`, `/loans`, …) are deliberately excluded — so a
+    // redirect from a swept route is a regression. An operator who
+    // names an alias through `UX_SWEEP_ROUTES` will see this fire; the
+    // message prints where it landed, which makes that case
+    // self-explanatory rather than mysterious.
+    const wantPath = pathOf(`${SITE}${route}`);
+    const redirectedTo =
+      navError !== null || httpError !== null
+        ? null
+        : servedPath !== null && servedPath !== wantPath
+          ? servedPath
+          : landedPath !== null && landedPath !== wantPath
+            ? landedPath
+            : null;
     const loadMs = Date.now() - started;
     // A failed navigation may never have committed — the previous
     // route would still be loaded, so screenshot/landmarks/devtools
@@ -559,17 +678,48 @@ for (const pass of session.passes) {
       shotError,
       loadMs,
       navError,
+      httpStatus,
+      httpError,
+      servedPath,
+      landedPath,
+      redirectedTo,
       landmarks,
       devtools,
       console: sink.console,
       pageErrors: sink.pageErrors,
       network: sink.network,
     });
-    // eslint-disable-next-line no-console
+    if (navError !== null || httpError !== null || redirectedTo !== null) {
+      allNavFailures.push({
+        session: session.key,
+        pass: pass.name,
+        route,
+        loadMs,
+        error:
+          navError ??
+          (httpError !== null
+            ? `${httpError} — the route served an error document`
+            : `redirected to ${redirectedTo} — the requested route never rendered`),
+      });
+    }
     console.log(
       `[${pass.name}] ${route} — ${loadMs}ms, ${sink.network.responses} responses, ` +
         `${sink.network.errors.length} http-errors, ` +
-        `${sink.console.filter((c) => c.level === 'error' && !c.noise).length} real console errors`,
+        `${sink.console.filter((c) => c.level === 'error' && !c.noise).length} real console errors` +
+        // Say it HERE too, not only in the end-of-run tally. A failed
+        // route otherwise reads as a fast, quiet, clean visit in the
+        // live stream — "18ms, 0 responses, 0 errors" — which is the
+        // opposite of what happened. An HTTP error document and a
+        // redirect read even more innocently: both are fast,
+        // fully-successful-looking visits.
+        (navError === null && httpError === null && redirectedTo === null
+          ? ''
+          : ' — DID NOT LOAD' +
+            (httpError !== null
+              ? ` (${httpError})`
+              : redirectedTo !== null
+                ? ` (redirected to ${redirectedTo})`
+                : '')),
     );
     sink = null;
   }
@@ -593,14 +743,28 @@ await done().catch(() => {});
 // write; a non-empty list means some surface tried to mutate state
 // during a read-only audit — surface it loudly in report + exit code.
 report.blockedWriteRequests = allBlockedRequests;
+report.navigationFailures = allNavFailures;
+report.routesAttempted = routesAttempted;
 report.backgroundNetwork = backgroundNetworkBySession;
 
 const reportName = PROBE_ONLY ? 'report-devtools.json' : 'report.json';
 fs.writeFileSync(path.join(OUT_DIR, reportName), JSON.stringify(report, null, 2));
-// eslint-disable-next-line no-console
 console.log(`\nSweep complete → ${path.relative(process.cwd(), OUT_DIR)}/${reportName}`);
+// Printed on EVERY run, not only the failing ones. A tally that appears
+// solely when something broke tells the reader nothing about how much a
+// green run actually covered, and "0 did not load" is the line that
+// makes a PASS mean something (#1626).
+console.log(
+  `Routes: ${routesAttempted - allNavFailures.length}/${routesAttempted} loaded, ` +
+    `${allNavFailures.length} did NOT load`,
+);
+for (const f of allNavFailures) {
+  console.error(
+    `  NAV FAIL [${f.session}/${f.pass}] ${f.route} after ${f.loadMs}ms — ` +
+      `${f.error.split('\n')[0]}`,
+  );
+}
 if (allBlockedRequests.length > 0) {
-  // eslint-disable-next-line no-console
   console.error(
     `READ-ONLY VIOLATIONS: ${allBlockedRequests.length} page-initiated write(s) were blocked — see blockedWriteRequests in the report`,
   );
@@ -615,7 +779,25 @@ if (allBlockedRequests.length > 0) {
 // precedence live-recover-locales.mjs applies: reporting BLOCKED here
 // would discard a proven write attempt because some later session's
 // browser would not start.
-if (allBlockedRequests.length > 0) process.exit(1);
+//
+// A route that never loaded joins that branch (#1626). It is the same
+// kind of verdict for the same reason — the run observed something
+// wrong with the app, and it outranks a session that never started, so
+// it is checked BEFORE the exit-2 branch below.
+if (allBlockedRequests.length > 0 || allNavFailures.length > 0) {
+  if (allNavFailures.length > 0) {
+    console.error(
+      `NAVIGATION FAILURES: ${allNavFailures.length} of ${routesAttempted} route visit(s)` +
+        ` never loaded — see navigationFailures in the report. What evidence exists` +
+        ` differs by shape: a THROWN navigation leaves no screenshot, landmarks or` +
+        ` devtools capture at all, while an HTTP error document or a redirect` +
+        ` captures cleanly — of the error page or of wherever it landed. In every` +
+        ` case the surface under review went unseen, so the sweep cannot claim to` +
+        ` have covered it.`,
+    );
+  }
+  process.exit(1);
+}
 if (setupFailures.length > 0) {
   console.error(
     `\nBLOCKED: ${setupFailures.length} of ${activeSessions.length} session(s)` +

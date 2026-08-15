@@ -70,7 +70,38 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
 
-Placeholder facets (Phase 2): TreasuryFacet, PrecloseFacet, RefinanceFacet, EarlyWithdrawalFacet, PartialWithdrawalFacet.
+**Early-exit / settlement facets — all LIVE, none a placeholder** (#1657). An
+earlier version of this table called these "Placeholder facets (Phase 2)". They
+are not, and had not been for some time: each is cut into the Diamond by
+`DeployDiamond.s.sol` (the test-side `DiamondFacetNames.cutFacetNames()`
+mirrors that `cuts[]` array and is what the deploy-sanity suite checks against
+— update the script when adding a facet, not only the mirror), each moves
+funds, and several
+carry invariants **this document states elsewhere**: the VPFI-LIF
+settle/forfeit rules below name Preclose and Refinance as proper-settlement
+terminal paths, and the retail-deploy section lists both among the Tier-1
+entry points that revert for sanctioned callers. The retired line contradicted
+its own document in two places.
+
+"Placeholder" reads as *do not expect behaviour here*, which is the opposite of
+true on a settlement path, and it cost real time in #1503.
+
+| Facet                      | Role                                                                        |
+| -------------------------- | --------------------------------------------------------------------------- |
+| **PrecloseFacet**          | Borrower early close-out: `precloseDirect`, obligation handover to a replacement borrower (`transferObligationViaOffer`), and the offset route (`offsetWithNewOffer` → completion). Completion has TWO entries: `completeOffset` (external) and `completeOffsetInternal` — the `address(this)`-gated cross-facet entry `_acceptOffer`'s auto-link block invokes when a third party accepts the offset offer, skipping the outer `nonReentrant` because the accept already holds the diamond guard. Don't assume a manual second step |
+| **RefinanceFacet**         | Move a borrower onto better terms — `refinanceLoan`, `refinanceLoanFromAccept`. NOT an in-place edit: the replacement loan is a **separate record** (`s.offerIdToLoanId[borrowerOfferId]` → a new `loanId`) created when the new lender accepted the offer, and the old loan is terminalized **Active → Repaid**. So a completed refinance leaves **two loan records and FOUR position NFTs**: every loan carries both a `lenderTokenId` and a `borrowerTokenId`, and the old pair is *status-updated* to `LoanRepaid` — **not burned** — so `ownerOf` still resolves and the old borrower NFT stays a redeemable receipt on the original position. Load-bearing for indexer state and the terminal-path invariants: an indexer that assumes one NFT per loan, or that a terminal loan's NFTs are gone, is wrong on both counts |
+| **EarlyWithdrawalFacet**   | Lender exit: instant sale into a standing buy offer (`sellLoanViaBuyOffer`) and the listed-sale route (`createLoanSaleOffer`, which carries a MANDATORY finite expiry, → completion). Completion mirrors the offset route's shape: `completeLoanSale` (external) plus `completeLoanSaleInternal`, the `address(this)`-gated entry `_acceptOffer` invokes automatically after a buyer accepts the linked sale offer |
+| **PartialWithdrawalFacet** | Release surplus collateral while a loan is open — `calculateMaxWithdrawable`, `partialWithdrawCollateral` |
+| **TreasuryFacet**          | Treasury operations (56 functions — claims, buyback intents, remittance absorption, asset conversion). Custody is **deployment-mode dependent**: `LibFacet.recordTreasuryAccrual` only credits `treasuryBalances` when `s.treasury == address(this)`, so on the documented mainnet topology (`TREASURY_ADDRESS` = an external multisig) fees leave immediately and the claim / conversion paths have nothing at the Diamond to act on. Those paths are for Diamond-as-treasury deployments |
+
+Two of them do carry a genuine *future-scope* note in their own headers, which
+is what the retired line probably grew out of: TreasuryFacet's "expand for
+Phase 2 (governance distributions, reserves)" and PartialWithdrawalFacet's
+"expand for Phase 2 (multi-collateral, governance-configurable threshold)".
+Those describe work not yet done **on top of** shipped behaviour — they do not
+make either facet a stub. Note also that "Phase 2" appears inside several
+facets as *task* numbering (`T-092 Phase 2a`, `#671 phase 2`); that is
+unrelated to delivery status.
 
 ### Liquid vs Illiquid Assets
 
@@ -85,7 +116,21 @@ Placeholder facets (Phase 2): TreasuryFacet, PrecloseFacet, RefinanceFacet, Earl
 ### Key Constants (LibVaipakam.sol)
 
 - `MIN_HEALTH_FACTOR = 1.5e18` — minimum HF at loan initiation
-- `TREASURY_FEE_BPS = 100` — 1% treasury cut on interest
+- `TREASURY_FEE_BPS = 200` — 2% treasury cut on interest (the rev-8 fee
+  freeze, #1352; it was `100` = 1% before). Resolved **per loan** from
+  `treasuryFeeBpsAtInit`, so a governance retune never re-prices an open
+  loan. `LEGACY_TREASURY_FEE_BPS = 100` is the frozen fallback for
+  pre-#957 loans that carry no stamp — do NOT "simplify" that fallback to
+  the live knob, it would retroactively reprice every grandfathered loan
+  from 1% → 2% at repay
+- `LOAN_INITIATION_FEE_BPS = 20` — 0.2% of ERC-20 principal, charged once
+  at accept (also the #1352 freeze; was `10` = 0.1%). Since #1352 it is
+  charged in the **lending asset**, not VPFI — see the scope banner in
+  "VPFI Fee Discounts" below
+- `MAX_FEE_BPS = 5_000` (in `ConfigFacet`) — 50% ceiling for
+  `treasuryFeeBps` / `loanInitiationFeeBps`; `MAX_FEE_DISCOUNT_BPS = 5000`
+  — the uniform 50% clamp on any party's effective fee discount, which
+  binds well below the 90% per-tier setter cap (`MAX_DISCOUNT_BPS`)
 - `KYC_TIER0_THRESHOLD_NUMERAIRE = 1_000e18` / `KYC_TIER1_THRESHOLD_NUMERAIRE = 10_000e18` — two-tier KYC thresholds ($1k / $10k, numeraire-denominated). Enforcement is **dormant on the retail deploy** (see "Retail-deploy policy" below); there is no single `KYC_THRESHOLD_USD = 2000e18` constant (that value is stale)
 - `RENTAL_BUFFER_BPS = 500` — 5% buffer on NFT rental prepayment
 - `VOLATILITY_LTV_THRESHOLD_BPS = 11000` — 110% LTV collapse threshold
@@ -125,6 +170,16 @@ per-facet ABI matches `forge inspect`. It is wired as preflight step
 `[1b]` inside `deploy-{chain,testnet,mainnet}.sh` (the mainnet script
 passes `--full`), so a deploy cannot proceed past a failing check; it is
 also runnable standalone (`bash script/predeploy-check.sh`).
+
+`--full` **delegates to `run-regression.sh`** (#1620) — it does not carry
+its own regression command. There is exactly one chunking implementation;
+if the viaIR ceiling moves again, `run-regression.sh` is the only place to
+fix, and both the mainnet preflight and the release-track
+`mainnet-gate.yml` inherit the fix. Don't re-inline a `forge test` call
+here: an un-chunked pass trips the ceiling as a COMPILE failure, which this
+gate reports with the same "regression failed" wording as a red test — a
+green-looking suite that never ran is the failure mode this delegation
+exists to prevent.
 
 **When you add a facet**: add it to `DiamondFacetNames.cutFacetNames()`
 AND add its `_get<Facet>Selectors()` call to
@@ -510,9 +565,12 @@ pass the live balance.
 **Borrower LIF — Phase 5 flow**:
 
 1. At `OfferFacet.acceptOffer` on the VPFI path: borrower pays the
-   FULL 0.1% LIF equivalent in VPFI (not tier-discounted) from their
+   FULL LIF equivalent in VPFI (not tier-discounted) from their
    vault into **Diamond custody** (not treasury). Amount recorded
-   in `s.borrowerLifRebate[loanId].vpfiHeld`.
+   in `s.borrowerLifRebate[loanId].vpfiHeld`. (The rate that path was
+   built against was the pre-#1352 0.1%; grandfathered loans settle at
+   whatever they stamped. The live rate is 0.2% and is **not** charged
+   this way — see the scope banner above.)
 2. At proper settlement (`RepayFacet` terminal, `PrecloseFacet`
    direct + offset, `RefinanceFacet`):
    `LibVPFIDiscount.settleBorrowerLifProper(loan)` splits `vpfiHeld`
@@ -776,27 +834,50 @@ bash script/run-regression.sh              # full suite minus invariants
 bash script/run-regression.sh --invariants # + the invariant suites
 ```
 
-It runs `forge test --match-path 'test/*.t.sol' --no-match-path
-'test/invariants/*'` (forcing `FOUNDRY_PROFILE=default`). Driving with
-`--match-path` makes Foundry compile **sparsely** — only the matched files +
-their dependency closure — so the standalone scripts that no test imports are
-left out, and dropping that slice of IR keeps the unit under the ceiling. The
-deploy logic still compiles where it matters (DeployDiamond.s.sol is pulled in
-as a dependency of `test/deploy/DeployDiamondIntegrationTest`).
+It runs the suite in **compile-bounded CHUNKS**, forcing
+`FOUNDRY_PROFILE=default`. A single sparse `forge test --match-path
+'test/*.t.sol'` pass used to be enough — matched files + their dependency
+closure only, leaving out the standalone scripts no test imports — but ordinary
+feature growth (#591) re-crossed the ceiling for even that, so the script now
+splits the run so each `forge test` invocation stays under it:
 
-**Cannot miss a suite:** globset's `*` crosses `/` (see `contracts/foundry.toml`),
-so `test/*.t.sol` recursively matches every current and future `*.t.sol`
-anywhere under `test/` — a newly-added suite is picked up automatically; there
-is no chunk list, folder layout, or allowlist to keep in sync. (Standalone
-scripts' compile-correctness is covered separately by `forge build` /
-predeploy-check.)
+- **Top-level suites** — `find test -maxdepth 1` enumerates them, and they run
+  `CHUNK_SIZE` at a time (default 25) as brace globs of exact stems
+  (`test/{A,B,…}.t.sol`). Brace globs of stems, not a `test/*.t.sol` glob:
+  globset's `*` crosses `/`, so that pattern would recurse into the subdirs
+  and defeat the split.
+- **Subdirectory suites** — one pass per `SUBDIRS` entry (`scenarios deploy
+  fork seaport token`), chunked `SUBDIR_CHUNK_SIZE` at a time (default 3;
+  `fork` alone crossed the ceiling in a single glob by 2026-07-13).
+- **`fork` files self-gate** on the RPC each needs — `FORK_URL_BASE_SEPOLIA`
+  for the Seaport sources, `FORK_URL_MAINNET` for the rest — and are dropped
+  when unset, so a no-URL pre-deploy gate stays green.
 
-The principled cause-fix that keeps the unit small is to return **lean DTOs**
+Foundry caches `src/` across invocations, so only the first chunk pays the full
+src compile; the rest add just their own test files. Same total compile, in
+ceiling-safe units. If a chunk ever trips, tune down with `CHUNK_SIZE=N` /
+`SUBDIR_CHUNK_SIZE=N` rather than editing the script. Deploy logic still
+compiles where it matters (DeployDiamond.s.sol is pulled in as a dependency of
+`test/deploy/DeployDiamondIntegrationTest`); standalone scripts'
+compile-correctness is covered separately by `forge build` / predeploy-check.
+
+**Cannot miss a suite — but `SUBDIRS` IS a list to keep in sync.** Chunk
+membership is derived from `find`, so a newly added `*.t.sol` in an
+already-covered location is picked up automatically. A new *subdirectory* is
+not: add it to `SUBDIRS`. An exhaustiveness guard cross-checks every
+non-invariant test file against the covered set and **aborts the run** if one
+is uncovered, so the failure is loud rather than a silently skipped suite — but
+it fails the regression, so fix it by adding the subdir.
+
+`predeploy-check.sh --full` delegates here (#1620), so the mainnet preflight and
+the release-track `mainnet-gate.yml` inherit all of the above — including the
+exhaustiveness guard.
+
+The principled cause-fix that keeps each unit small is to return **lean DTOs**
 from paginated / array views (the #603 `OfferSummary`/`LoanSummary` pattern) —
-never an array of a 40+-field struct, whose ABI coder inflates peak stack. If
-the test slice alone ever trips the ceiling, fall back to splitting the run into
-two `--match-path` globs (e.g. `test/[A-M]*.t.sol` + `test/[N-Z]*.t.sol` + the
-subdirs), but that is not needed today.
+never an array of a 40+-field struct, whose ABI coder inflates peak stack.
+Chunking bounds the symptom; lean DTOs are what stop the ceiling being
+re-crossed.
 
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 

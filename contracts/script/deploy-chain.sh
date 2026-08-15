@@ -8,7 +8,7 @@
 #   3. Deploys the Timelock
 #   4. Deploys the VPFI lane (canonical on Base / Base Sepolia,
 #      mirror on every other chain — branched on chain-slug)
-#   5. Deploys the Reward OApp (also canonical-vs-mirror branched)
+#   5. Deploys the reward messenger (also canonical-vs-mirror branched)
 #   6. Syncs per-facet ABIs + the consolidated deployments JSON via
 #      `packages/contracts/` — the single-source-of-truth bundle every
 #      consumer in the monorepo (apps/{defi,www,keeper,indexer,agent})
@@ -84,7 +84,7 @@
 #     --skip-agent     — don't wrangler-deploy apps/agent
 #     --skip-cf        — alias for ALL FIVE Cloudflare-deploy flags
 #                        (defi + www + keeper + indexer + agent)
-#     --skip-vpfi      — skip the VPFI lane + reward OApp (handy when
+#     --skip-vpfi      — skip the VPFI lane + reward messenger (handy when
 #                        re-running after a partial failure that already
 #                        landed those)
 #     --fresh          — wipe contracts/deployments/<chain>/addresses.json
@@ -461,7 +461,7 @@ echo
 # --fresh wipes the markers dir before starting.
 #
 # History sidecar: after each addresses.json-updating step (Diamond,
-# Timelock, VPFI lane, Reward OApp), copy the file into
+# Timelock, VPFI lane, reward messenger), copy the file into
 # `.history/<step>-<unix-ts>.json` so the operator has a recoverable
 # audit trail of each rehearsal's intermediate states (useful when
 # investigating mid-flight failures).

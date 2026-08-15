@@ -83,7 +83,18 @@ library LibVpfiRecycle {
         // surplus as mirror funding and collide authorization ids with
         // remit ids in event-based accounting. refId here is the
         // repatriation AUTHORIZATION id.
-        RepatriationReturnRelocation
+        RepatriationReturnRelocation,
+        // #1434 P2-w6 — CUSTODY-RELOCATION class for the RECYCLED half of
+        // a recovery-ceremony settlement (append-only enum): governance
+        // brought a released compensation reservation's stranded pool-
+        // custody value home to Base (design §5.3). Same relocated-
+        // custody exclusion semantics as the two classes above, DISTINCT
+        // for provenance: refId here is the released reservation's
+        // remitId, and the fresh half deliberately does NOT come through
+        // this class — it credits the w5 RECOVERY POSITION (the ratified
+        // §5.3 unification: no emission-headroom restoration anywhere;
+        // the re-remit runs uncharged from the position).
+        RecoveryCeremonyRelocation
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -565,6 +576,21 @@ library LibVpfiRecycle {
         unearmarked = vpfiBalance > bucket ? vpfiBalance - bucket : 0;
         uint256 reserved = s.strandedRecoveryReserved;
         unearmarked = unearmarked > reserved ? unearmarked - reserved : 0;
+        // #1434 P2-w5 — the Base RECOVERY POSITION joins the subtraction,
+        // same protocol-LEDGER class as the two terms above (single
+        // writer set: the authenticated B1 return credits it, the
+        // from-recovery dispatch debits it — never a remembered
+        // balance-owner). Returned tokens sit in this same balance
+        // awaiting their uncharged re-dispatch (§4.2), and an ordinary
+        // fresh claim spending them first would strand the re-dispatch
+        // the position exists to fund. Zero on mirrors (Base-only
+        // writers), so the term is universally safe. The overage
+        // position rides the same earmark: quarantined above-entitlement
+        // value is operator custody, not claimable backing.
+        uint256 position = s.rewardBudgetRecovered
+            - s.rewardBudgetRedispatched
+            + s.strandedReturnOverage;
+        unearmarked = unearmarked > position ? unearmarked - position : 0;
     }
 
     /**

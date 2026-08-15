@@ -23,6 +23,7 @@ import {
   shortAddress,
 } from '../../lib/format';
 import type { MarketSummary, IndexedLoan, IndexedOffer } from '../../data/indexer';
+import { useNowSec } from '../../hooks/useNowSec';
 import {
   isLiveMarketRow,
   pairKey,
@@ -113,6 +114,12 @@ export function DeskHeader({
   // unreachable — visible in the ladder's source rows yet with no
   // chip to select it. Non-bucket chips render identically; live
   // emphasis below is unchanged.
+  // Liveness below is a comparison against the clock, so the clock is a
+  // dependency of both memos rather than something read inside them: an
+  // offer that expires while the desk sits open now drops out on the next
+  // tick instead of persisting until the book happens to refetch.
+  const nowSec = useNowSec();
+
   const tenorChips = useMemo((): number[] => {
     const out = new Set<number>(OFFER_DURATION_BUCKETS_DAYS);
     out.add(days);
@@ -126,14 +133,13 @@ export function DeskHeader({
         }
       }
     }
-    const nowSec = Math.floor(Date.now() / 1000);
     for (const o of bookRows ?? []) {
       // Same liveness rule the emphasis fallback uses — a tenor whose
       // only rows are expired/empty should not mint a chip.
       if (isLiveMarketRow(o, o.durationDays, nowSec)) out.add(o.durationDays);
     }
     return [...out].sort((a, b) => a - b);
-  }, [markets, pair, days, bookRows]);
+  }, [markets, pair, days, bookRows, nowSec]);
 
   // Tenor emphasis: which durations have live offers for the selected
   // pair. Markets summary first; the pair's own book rows as the
@@ -152,12 +158,11 @@ export function DeskHeader({
       }
       return out;
     }
-    const nowSec = Math.floor(Date.now() / 1000);
     for (const o of bookRows ?? []) {
       if (isLiveMarketRow(o, o.durationDays, nowSec)) out.add(o.durationDays);
     }
     return out;
-  }, [markets, pair, bookRows]);
+  }, [markets, pair, bookRows, nowSec]);
 
   const selectCustom = () => {
     if (isAddressLike(customLend) && isAddressLike(customColl)) {

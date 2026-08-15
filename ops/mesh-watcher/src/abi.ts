@@ -124,6 +124,15 @@ const EXPECTED_VIEWS: ReadonlyArray<{
       'releasedRemitStranded:uint256',
       'accountingSeeded:bool',
       'isCanonicalRewardChain:bool',
+      // #1662 P2-w6 r2 — the RESOLVED counterpart of the stranded
+      // figure: locally-stranded recycled value that is no longer in
+      // transit, whether recovered into the bucket or recorded as
+      // terminally lost. The stranded cumulative is monotone HISTORY and
+      // retires on neither, so the coverage ALLOWANCE must net this out
+      // or the same VPFI backs `bucket + stranded` twice forever — and
+      // terminally lost tokens keep backing live reservations after
+      // there is nothing left.
+      'releasedRemitResolved:uint256',
     ],
   },
   // #1568 C2 — the repatriation ledger views, on `RepatriationFacet`.
@@ -152,7 +161,8 @@ const EXPECTED_VIEWS: ReadonlyArray<{
   // #1434 P2-w2 — the backing snapshot on `InteractionRewardsLensFacet`:
   // the balance / arrival-reservation tuple the recovery-reservation check
   // compares. Shape-asserted like every other watched view — the reader's
-  // positional cast of output [6] as `strandedRecoveryReserved` must fail
+  // positional casts of output [6] as `strandedRecoveryReserved` and
+  // [7] as `recoveryPositionReserved` must fail
   // AT STARTUP on any drift, not silently misread a neighbouring word
   // (Codex #1634 r1 P2).
   {
@@ -166,6 +176,10 @@ const EXPECTED_VIEWS: ReadonlyArray<{
       'paidOutRecycled:uint256',
       'keeperBudget:uint256',
       'strandedRecoveryReserved:uint256',
+      // #1434 P2-w5 — the Base recovery-position earmark (position
+      // balance + overage quarantine), the second protocol-ledger
+      // subtrahend inside `unearmarked`. Zero on mirrors.
+      'recoveryPositionReserved:uint256',
     ],
     facet: 'lens',
   },

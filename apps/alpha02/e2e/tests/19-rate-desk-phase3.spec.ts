@@ -371,6 +371,32 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
     maker.page.getByText(/Gasless lend orders fill only as one whole loan/),
   ).toBeVisible();
 
+  // #1682 r1 F1 — the coercion is PARTIAL-ONLY. IOC stays selectable in
+  // this mode (only the Partial chip is disabled) and must survive: the
+  // signed-post collapse deliberately preserves IOC because its expiry
+  // semantics are load-bearing, so coercing it to AON would sign an order
+  // type the user did not choose AND silently retire the GTC-plus-IOC
+  // guard. The regression shipped and passed this spec, because the spec
+  // only ever exercised the Partial case.
+  await fillGroup.getByRole('button', { name: 'IOC', exact: true }).click();
+  await expect(
+    fillGroup.getByRole('button', { name: 'IOC', exact: true }),
+  ).toHaveClass(/active/);
+  await expect(
+    fillGroup.getByRole('button', { name: 'AON', exact: true }),
+  ).not.toHaveClass(/active/);
+  // ...and with IOC in force the #125 GTC-plus-IOC guard is live again,
+  // which is the half a silent coercion to AON would have hidden: the
+  // expiry is GTC here, so posting must be refused with a reason.
+  await expect(
+    maker.page.getByText(/IOC orders need an expiry/i),
+  ).toBeVisible();
+  // Back to the mode this test posts with.
+  await fillGroup.getByRole('button', { name: 'AON', exact: true }).click();
+  await expect(
+    fillGroup.getByRole('button', { name: 'AON', exact: true }),
+  ).toHaveClass(/active/);
+
   const post = maker.page.getByRole('button', {
     name: 'Sign & post to the book',
   });

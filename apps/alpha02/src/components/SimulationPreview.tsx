@@ -3,8 +3,17 @@
  * step. Renders the `useTxSimulation` verdict in plain words:
  * a passing dry run, a would-fail warning with the revert reason,
  * the benign "an approval happens first" note, or a subdued
- * no-verdict line. NEVER gates signing — flows must not read this
- * component's state into `canSign`.
+ * no-verdict line.
+ *
+ * The VERDICT never gates signing — no flow may read `revert`,
+ * `approval-needed` or `unavailable` into `canSign`. SETTLEMENT is a
+ * separate question and one flow does gate on it (Codex #1679 r7 caught
+ * this header still saying otherwise, after the same correction was made
+ * in `useTxSimulation`): a flow that shows this preview as a pre-sign
+ * disclosure may require the status to be TERMINAL before enabling
+ * signing, so consent is given against a verdict in hand. Every terminal
+ * status opens that gate, the failures included — it asks "has it
+ * answered", never "did it pass".
  */
 import { CheckCircle2, Info, Loader2, TriangleAlert } from 'lucide-react';
 import { copy } from '../content/copy';

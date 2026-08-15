@@ -20,6 +20,39 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
+      // Grouped `case` labels that share one body are idiomatic, and the rule
+      // already permits them — but only while the case is EMPTY, and a comment
+      // between two labels stops it counting as empty. `LoanTimeline.tsx`
+      // groups a dozen event kinds onto one icon and documents WHY two of them
+      // joined the group (`#393 v1-d.2`, `T-090 Sub 3`); those two notes, and
+      // nothing else, are what the rule was reporting.
+      //
+      // This does NOT weaken the check that matters. Verified against a probe:
+      // a case carrying an actual statement and falling into the next is still
+      // reported. Only label groups with no body are allowed through — which
+      // is the construct the code is using.
+      'no-fallthrough': ['error', { allowEmptyCase: true }],
+      // Honour the leading-underscore convention this codebase already
+      // writes. Six declarations were named `_hasActiveListing`, `_knob`,
+      // `_drop`, `_anchor` and `_id` — the conventional way to say "bound
+      // deliberately, not used" for a destructured field, a placeholder
+      // parameter, or a discarded tuple slot. `no-unused-vars` has no such
+      // convention by default, so it flagged all six and the intent written
+      // into the names counted for nothing.
+      //
+      // `caughtErrors: 'all'` keeps a silently swallowed `catch (e)` reported
+      // unless it is spelled `_e`; the ignore pattern is a way to state
+      // intent, not a way to opt out of the rule.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrors: 'all',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+        },
+      ],
       // Ban direct `usePublicClient` from wagmi. Bare wagmi returns the
       // WALLET-current chain's client, which diverges from the app-
       // selected chain (ChainContext) whenever the user changes the

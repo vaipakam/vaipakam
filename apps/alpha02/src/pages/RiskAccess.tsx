@@ -34,6 +34,7 @@ import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useMode } from '../app/ModeContext';
 import { formatDateTime } from '../lib/format';
 import { SECOND_READ_DELAY_MS } from '../chain/receiptSync';
+import { useNowSec } from '../hooks/useNowSec';
 import {
   RISK_TIER,
   chainNowOf,
@@ -67,6 +68,10 @@ export function RiskAccess() {
   const queryClient = useQueryClient();
   const risk = useRiskAccess();
 
+  // Chain time is derived from the device clock plus elapsed-since-fetch,
+  // so the device reading has to tick for a cooldown or linger window to
+  // lapse on screen instead of at the next unrelated re-render.
+  const nowSec = useNowSec();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -330,7 +335,7 @@ export function RiskAccess() {
                       String(s.termsVersion),
                       String(s.tierAnchorVersion),
                     )
-                  : s.tierUnlockAt > BigInt(Math.floor(chainNowOf(s, Date.now())))
+                  : s.tierUnlockAt > BigInt(Math.floor(chainNowOf(s, nowSec * 1000)))
                     ? copy.riskAccess.advancedDetail(
                         String(s.termsVersion),
                         String(s.tierAnchorVersion),
@@ -403,7 +408,7 @@ export function RiskAccess() {
                   // Chain-time anchor, not the device clock (r3) — the
                   // contract's effective-strict check compares the
                   // linger expiry with block.timestamp.
-                  strictLingerActive(s, Math.floor(chainNowOf(s, Date.now()))) ? (
+                  strictLingerActive(s, Math.floor(chainNowOf(s, nowSec * 1000))) ? (
                     <p className="muted" style={{ margin: 0 }}>
                       {copy.riskAccess.strict.lingerNote}
                     </p>

@@ -222,11 +222,14 @@ export async function publishPrepayListingToOpenSea(
     // boundary — the JS components hash to the same value as a
     // strictly-typed-then-recasted version because the on-chain
     // canonicalisation only cares about the hex content.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const recomputedHash = (await publicClient.readContract({
       address: seaport,
       abi: SEAPORT_VERIFY_ABI,
       functionName: 'getOrderHash',
+      // Directive must sit on the line directly above the cast. It used to be
+      // above the `const`, where it covered only the first line of this
+      // multiline statement and never reached the violation down here.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       args: [components as unknown as any],
     })) as Hex;
 

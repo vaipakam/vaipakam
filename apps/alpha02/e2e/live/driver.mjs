@@ -750,6 +750,17 @@ export async function launch({
     try {
       const resp = await ufetch(req.url(), {
         method: req.method(),
+        // Hand a 3xx BACK to the browser instead of following it here
+        // (#1648 r2). `fetch` follows redirects by default and returns
+        // the FINAL body, which `route.fulfill` then serves at the
+        // ORIGINAL url — so the page ends up showing another route's
+        // content while `page.url()` and the response url both still
+        // read as the requested one. Every driver is blind to a
+        // redirect under that shape, and `live-ux-sweep`'s new
+        // redirected-away check could never fire. With `manual` the
+        // 3xx + `location` reaches Chromium, which follows it itself,
+        // so the URLs move the way they would with no shim installed.
+        redirect: 'manual',
         headers: Object.fromEntries(
           Object.entries(await req.allHeaders()).filter(
             ([k]) =>

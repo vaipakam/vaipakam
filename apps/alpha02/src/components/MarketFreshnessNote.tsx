@@ -13,6 +13,7 @@ import { copy } from '../content/copy';
 import { fetchIndexerFreshness } from '../data/indexer';
 import { useActiveChain } from '../chain/useActiveChain';
 import { idleAware } from '../lib/idle';
+import { useNowSec } from '../hooks/useNowSec';
 
 /** Cursor idle time that counts as "stale". Base Sepolia mines every
  *  ~2s and the ingest cron ticks every few minutes, so half an hour of
@@ -27,8 +28,11 @@ export function MarketFreshnessNote() {
     refetchInterval: idleAware(60_000),
     queryFn: () => fetchIndexerFreshness(readChain.chainId),
   });
+  // Ticks, so a book that goes stale while this page sits open crosses the
+  // threshold on its own instead of waiting for an unrelated re-render.
+  const nowSec = useNowSec();
   if (!freshness.data) return null;
-  const ageSec = Math.floor(Date.now() / 1000) - freshness.data.updatedAt;
+  const ageSec = nowSec - freshness.data.updatedAt;
   if (ageSec < STALE_AFTER_SECONDS) return null;
   return (
     <div className="banner banner-warn" role="status">

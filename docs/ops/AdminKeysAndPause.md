@@ -164,11 +164,10 @@ AccessControlFacet.hasRole(KYC_ADMIN_ROLE, OPS_MULTISIG) == true
 | `ADMIN_ROLE` holder | Admin timelock | Admin timelock |
 | `PAUSER_ROLE` holder | Ops hot-key multisig | Ops hot-key multisig |
 | `KYC_ADMIN_ROLE` holder | Ops hot-key multisig (not timelocked) | Ops hot-key multisig (not timelocked) |
-| `rewardOApp` | Base OApp contract | Local OApp contract |
+| `rewardMessenger` | Base reward messenger | Local reward messenger |
 | `isCanonicalRewardChain` | **true** | false |
-| `localEid` | Base eid | Local eid |
-| `baseEid` | Base eid (self) | Base eid |
-| `expectedSourceEids` | List of **every other chain's** eid | (unused — only checked on canonical) |
+| `baseChainId` | Base chain id (`8453` mainnet / `84532` testnet) | Base chain id |
+| `expectedSourceChainIds` | List of **every other chain's** EVM chain id | (unused — only checked on canonical) |
 
 Verify against `ChainByChainChecks.md` after every change.
 

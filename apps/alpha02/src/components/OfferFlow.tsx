@@ -36,7 +36,10 @@ import {
   disablePermit2ForSession,
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
-import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
+import {
+  useAcceptTermsSigning,
+  useAcceptorCeilingRecheck,
+} from '../contracts/useAcceptTerms';
 import { SimulationPreview } from './SimulationPreview';
 import { CollateralPrecheck } from './CollateralPrecheck';
 import { SelectMenu } from './SelectMenu';
@@ -275,6 +278,11 @@ export function OfferFlow({ side }: { side: Side }) {
   const { write } = useDiamondWrite();
   const permit2 = usePermit2Signing();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
+  // Re-check the acceptor's tariff ceiling immediately before EVERY final
+  // write (Codex #1700 r7): the approval / Permit2 step runs after the accept
+  // signature, so the quote can cross in between and the transaction would be
+  // sent only to revert `FeeEntitlementTariffAboveAuth`, burning the gas.
+  const recheckCeiling = useAcceptorCeilingRecheck();
   const fees = useProtocolFees();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -287,9 +295,18 @@ export function OfferFlow({ side }: { side: Side }) {
   // scoped to the selected offer and must reset with it.
   const [fullTariff, setFullTariff] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
   const selectedOfferId = selected?.offerId;
-  useEffect(() => {
+  // Reset as a render-phase ADJUSTMENT rather than in an effect (#1520).
+  // The effect version committed one frame in which the PREVIOUS offer's
+  // tariff choice was live against the newly selected offer — and this choice
+  // is fee-bearing, so that frame mispriced the receipt the user was looking
+  // at. React re-runs the render before painting, so the stale choice is
+  // never displayed. An initializer alone cannot do this: it would freeze the
+  // first offer's choice, which is what the effect was there for.
+  const [fullTariffFor, setFullTariffFor] = useState(selectedOfferId);
+  if (fullTariffFor !== selectedOfferId) {
+    setFullTariffFor(selectedOfferId);
     setFullTariff(FULL_TARIFF_OFF);
-  }, [selectedOfferId]);
+  }
   const [form, setForm] = useState<OfferFormState>({
     ...initialOfferForm,
     offerType: side,
@@ -385,6 +402,14 @@ export function OfferFlow({ side }: { side: Side }) {
       clear(copy.match.offerGone);
       return;
     }
+    // Deliberately an effect (#1520): this is a DEEP-LINK arrival, not a
+    // derived value. The row does not exist until the indexer query resolves,
+    // and what happens on arrival is a multi-step flow transition — select the
+    // offer, switch to accept mode, jump to the review step. There is no
+    // render-phase expression of "when this async row lands, move the flow",
+    // and the guards above (wrong side, wrong kind, own offer, gone) all read
+    // the resolved row.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm((f) => ({ ...f, lendingAsset: row.lendingAsset, riskAndTermsConsent: false }));
     setSelected(row);
     setMode('accept');
@@ -458,15 +483,6 @@ export function OfferFlow({ side }: { side: Side }) {
   const linkedLoanKnown = mode !== 'accept' || linkedLoan.data !== undefined;
   const acceptIsLoanSale =
     mode === 'accept' && linkedLoan.data !== undefined && linkedLoan.data !== '0';
-  // Same late-disclosure rule as the illiquid warning: consent given
-  // before the sale-vehicle banner appeared must be re-given.
-  useEffect(() => {
-    if (acceptIsLoanSale) {
-      setForm((f) =>
-        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-      );
-    }
-  }, [acceptIsLoanSale]);
 
   // #986 P3 — the honest buy-a-running-loan review. A sale-vehicle
   // offer's stored fields misdescribe the deal (zero collateral, a
@@ -533,16 +549,6 @@ export function OfferFlow({ side }: { side: Side }) {
           saleData.selfBuyBlocked,
         ].join(':')
       : null;
-  const prevSaleFingerprint = useRef(saleFingerprint);
-  useEffect(() => {
-    if (prevSaleFingerprint.current === saleFingerprint) return;
-    prevSaleFingerprint.current = saleFingerprint;
-    if (saleFingerprint !== null) {
-      setForm((f) =>
-        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-      );
-    }
-  }, [saleFingerprint]);
 
   const lockedAmount = useMemo(() => {
     if (mode === 'accept' && selected) {
@@ -821,13 +827,6 @@ export function OfferFlow({ side }: { side: Side }) {
   // The liquidity query resolves asynchronously — if the illiquid
   // warning appears AFTER the user already ticked consent, that
   // consent predates the disclosure and must be re-given.
-  useEffect(() => {
-    if (reviewIsIlliquid) {
-      setForm((f) =>
-        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-      );
-    }
-  }, [reviewIsIlliquid]);
 
 
   // Receipts must show the grace window repayment is actually judged
@@ -866,14 +865,32 @@ export function OfferFlow({ side }: { side: Side }) {
   // carries an EIP-712 AcceptTerms signed at submit time, and
   // fabricating placeholder terms here would duplicate the canonical
   // submit-time builder just to preview a signature-artefact revert.
-  // Never feeds canSign — advisory by design.
+  // Its VERDICT never feeds canSign — advisory by design. Its SETTLEMENT
+  // does, in post mode only (#1679 r3, and this line said otherwise until
+  // r5 P3 caught it): signing waits for the status to be terminal, so the
+  // dry run has answered before consent is acted on. Every terminal status
+  // opens that gate, a revert included — the revert is disclosed in the
+  // footer and fingerprinted into `reviewAssertions`, never a block.
   const simTx = useMemo((): TxSimInput | null => {
     // Consent gate (round 1): createOffer reverts
     // RiskAndTermsConsentRequired while the checkbox is unticked —
     // previewing that would cry wolf on every valid offer.
-    if (mode !== 'post' || !walletChain || !form.riskAndTermsConsent) return null;
+    // No longer gated on consent (#1679 r1 F5). While it was, the dry run
+    // could only reveal a revert AFTER the box was ticked — so the warning
+    // it produces was, by construction, always a disclosure that postdated
+    // consent. Forcing consent in the payload (as the receipt path below
+    // already does) lets the preview run first, so a revert is disclosed
+    // BEFORE consent is collected rather than invalidating it afterwards.
+    // That ordering is also what keeps the fix out of a clear-and-disappear
+    // loop: the gate never has to react to a warning it caused.
+    // Scoped to the REVIEW step (#1679 r2 N4). Dropping the consent
+    // condition also made this non-null on the terms step, where the
+    // borrower flow already mounts CollateralPrecheck with the same
+    // forced-consent createOffer calldata — two debounced eth_calls per
+    // settled edit — and on paths that render no preview at all.
+    if (mode !== 'post' || step !== 'review' || !walletChain) return null;
     try {
-      const payload = toCreateOfferPayload(form, {
+      const payload = toCreateOfferPayload({ ...form, riskAndTermsConsent: true }, {
         lending: lendingMeta.data?.decimals,
         collateral: collateralMeta.data?.decimals,
       });
@@ -892,7 +909,7 @@ export function OfferFlow({ side }: { side: Side }) {
     } catch {
       return null; // form not buildable yet — footer stays hidden
     }
-  }, [mode, walletChain, form, lendingMeta.data, collateralMeta.data]);
+  }, [mode, step, walletChain, form, lendingMeta.data, collateralMeta.data]);
 
   // #1112 — early under-collateral precheck for the borrow TERMS step. Same
   // `createOffer` eth_call the review-step SimulationPreview runs, but with
@@ -1207,22 +1224,126 @@ export function OfferFlow({ side }: { side: Side }) {
         `${l.key}:${l.errored ? 'errored' : verdictFingerprint(l.verdict)}`,
     )
     .join('|');
-  // The fingerprint that was current when the user LAST ticked the
-  // consent box (stamped in the checkbox handler). canSign requires
-  // it to match the live fingerprint whenever a warning is on screen:
-  // the consent-clear effect below runs only AFTER a commit, leaving
-  // one render where a freshly-arrived warn and stale consent coexist
-  // — this derived gate closes that window without waiting for the
-  // effect.
-  const securityConsentFpRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (securityBlocked.length > 0 || securityWarned.length > 0) {
-      setForm((f) =>
-        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
-      );
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [securityFingerprint]);
+  /**
+   * EVERYTHING disclosed on the review screen that consent is given
+   * against — not just the security verdicts (#1678).
+   *
+   * The four late-disclosure rules in this file each clear consent from an
+   * effect, and an effect can never be the guard for a property that has to
+   * hold in the SAME render: it runs after the commit, so the frame where a
+   * freshly-arrived disclosure meets not-yet-cleared consent is already on
+   * screen. The security case was given a derived gate for exactly that
+   * reason; the illiquid, loan-sale and sale-terms disclosures were gated
+   * only on their answer being KNOWN (`liquidityKnown`, `linkedLoanKnown`,
+   * `saleReviewReady`), which stops a signature while an answer is pending
+   * but not on the render where it ARRIVES.
+   *
+   * One combined fingerprint rather than four parallel refs, so a
+   * disclosure added later cannot be forgotten here — it only has to be
+   * folded into this string to be covered by the gate.
+   */
+  const reviewAssertions = [
+    `sec:${securityFingerprint}`,
+    // #1679 r1 F2 — an unscreened-token notice (`gateUnsupported`) is a
+    // disclosure as much as a warning is; counting only `securityWarned`
+    // let a tick placed before the screening resolved survive it.
+    `unsupported:${securityUnsupported.map((l) => l.key).join(',')}`,
+    `illiquid:${reviewIsIlliquid ? '1' : '0'}`,
+    `loanSale:${acceptIsLoanSale ? '1' : '0'}`,
+    `sale:${saleFingerprint ?? ''}`,
+    // #1679 r1 F1 — these settle ASYNCHRONOUSLY. While they are pending the
+    // receipt shows fallback numbers and `fees.ready`/`grace.ready` hold the
+    // button closed; when the live values land, the receipt and the gate
+    // become ready in the same render. Consent is given against the terms in
+    // the receipt, so the terms themselves belong here, not just the warnings.
+    // The ONE DISPLAYED percentage only — narrowed twice, for the same
+    // reason each time: an assertion the receipt does not render is churn,
+    // and churn makes a user re-acknowledge terms that did not change.
+    // #1679 r2 N5 dropped `maxOfferDurationDays` (neither shown in the
+    // receipt nor part of an accepted offer's signed terms — `submitAccept`
+    // rechecks only the fees; post mode handles an invalidated duration via
+    // `durationValid`, and editing the duration clears consent by itself).
+    // #1679 r6 then dropped the OPPOSITE SIDE's fee: every receipt branch
+    // renders exactly one of the two — `lifPct` on both borrower branches,
+    // `yieldPct` on both lender branches, the loan-sale branch included,
+    // which hard-requires `side === 'lender'` and returns no receipt
+    // otherwise. So a governance retune of the side the user is not on
+    // advanced the epoch against an unchanged screen.
+    // Keyed on `side`, which is the same discriminant the receipt branches
+    // on, so the asserted fee and the displayed fee stay identical by
+    // construction rather than by coincidence — the condition that makes
+    // narrowing safe here, exactly as with the r3 metadata scoping.
+    `fee:${
+      fees.ready
+        ? side === 'lender'
+          ? `y${fees.treasuryFeeBps}`
+          : `l${fees.loanInitiationFeeBps}`
+        : 'pending'
+    }`,
+    `grace:${grace.ready ? grace.label : 'pending'}`,
+    // #1679 r2 N1 — the receipt's own READINESS, and the token metadata it is
+    // built from. A tick can land while the receipt still says "Preparing
+    // your review"; if the remaining gates then settle without changing their
+    // encoded values (liquidity pending → liquid and linked-loan pending → 0
+    // both encode as `false`), the finished receipt would appear against an
+    // acknowledgement of a screen that showed no terms at all.
+    `receipt:${receipt ? 'ready' : 'pending'}`,
+    // Scoped to the ACTIVE receipt (#1679 r3): accept mode reads collateral
+    // metadata only from `selectedCollateralMeta`, while `collateralMeta`
+    // still belongs to the post form. Fingerprinting both let a late response
+    // for an abandoned post-form address churn the epoch during an accept,
+    // clearing consent though no visible term changed.
+    `meta:${lendingMeta.data?.decimals ?? ''}/${lendingMeta.data?.symbol ?? ''}` +
+      (mode === 'accept'
+        ? `/${selectedCollateralMeta.data?.decimals ?? ''}/${selectedCollateralMeta.data?.symbol ?? ''}`
+        : `/${collateralMeta.data?.decimals ?? ''}/${collateralMeta.data?.symbol ?? ''}`),
+    // The WALLET this consent was given by (#1679 r4). The receipt describes
+    // what a specific account is about to sign; an account or chain switch
+    // mid-review replaces the party to the transaction, so the previous
+    // account's acknowledgement cannot carry over. `useTxSimulation` now
+    // binds its verdict to the same context, but that only covers reviews
+    // with a live preview — this makes the rule hold for every review.
+    `who:${address ?? ''}/${walletChain?.chainId ?? ''}`,
+    // #1679 r1 F5 — the dry run's verdict is a disclosure too. It is safe to
+    // include now that the preview no longer waits for consent (see `simTx`).
+    `sim:${preSign.result.status}:${
+      preSign.result.status === 'revert' ? (preSign.result.revertReason ?? '') : ''
+    }`,
+  ].join('||');
+
+  /**
+   * How many times the review's assertions have CHANGED this session.
+   *
+   * Comparing the stamped assertions to the live ones by equality is not
+   * enough (#1679 r1 F4): a disclosure that leaves and returns identical —
+   * illiquid → liquid → illiquid, or warn A → clean → warn A — ends on a
+   * value equal to what was acknowledged, so the gate would reopen even
+   * though the review changed twice since. An epoch answers the question
+   * that actually matters, "has anything changed since you consented",
+   * rather than "does it look the same as when you consented".
+   *
+   * Advanced by a render-phase adjustment (the pattern from #1677), never
+   * from an effect: an effect would land a render late, which is the exact
+   * window this gate exists to close. State rather than a ref because
+   * `react-hooks/refs` correctly forbids writing a ref during render.
+   */
+  const [seenAssertions, setSeenAssertions] = useState(reviewAssertions);
+  const [assertionEpoch, setAssertionEpoch] = useState(0);
+  if (seenAssertions !== reviewAssertions) {
+    setSeenAssertions(reviewAssertions);
+    setAssertionEpoch((e) => e + 1);
+    // Untick the box in the SAME pass (#1679 r2 N3). The epoch alone closes
+    // signing, but it left a checked box beside a dead button with nothing
+    // explaining why, and the user had to guess that untick/retick was the
+    // remedy — which also contradicted the spec line this PR added. Done
+    // here rather than in an effect for the same reason the epoch is: an
+    // effect lands a render late, which is the window all of this closes.
+    setForm((f) =>
+      f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+    );
+  }
+  /** The epoch that was current when the user LAST ticked the consent box. */
+  const consentEpochRef = useRef<number | null>(null);
 
   const canSign =
     allChecksPass(checks) &&
@@ -1242,11 +1363,33 @@ export function OfferFlow({ side }: { side: Side }) {
     linkedLoanKnown &&
     (!acceptIsLoanSale || saleReviewReady) &&
     securityGateOk &&
-    // A disclosed security warning requires consent granted AGAINST
-    // the current fingerprint — not merely consent that is still true
-    // from before the warning appeared.
-    (securityWarned.length === 0 ||
-      securityConsentFpRef.current === securityFingerprint) &&
+    // ANY disclosure on screen requires consent granted AGAINST the current
+    // set of disclosures — not merely consent that is still true from before
+    // one of them appeared (#1678: this used to cover security warnings
+    // only, so the illiquid / loan-sale / sale-terms disclosures could be
+    // signed against consent that predated them for the one frame before
+    // their clearing effect ran).
+    // Unconditional, not "only when something is disclosed": consent is
+    // given against the whole receipt, and #1679 r1 F1 showed the terms can
+    // change without any warning being present.
+    //
+    // Deliberate ref, and state would reopen the gap: the only write is the
+    // checkbox handler below, which also sets form state, so a re-render
+    // always follows and the read cannot go stale. Holding it in state
+    // would move the comparison a render later — the exact window this
+    // gate closes.
+    // eslint-disable-next-line react-hooks/refs
+    consentEpochRef.current === assertionEpoch &&
+    // The forced preview must have SETTLED, not merely been started
+    // (#1679 r3). Comparing epochs alone left signing enabled through the
+    // debounce and the eth_call, so a user could start submitting before a
+    // revert warning arrived — and once the submit closure is running, a
+    // later epoch advance cannot stop it. Making the preview precede consent
+    // is only meaningful if its verdict is in hand before signing opens.
+    // Safe against the deadlock fixed in r2 N2: ticking consent no longer
+    // restarts an identical simulation, so this cannot un-settle itself.
+    (mode !== 'post' ||
+      (preSign.result.status !== 'idle' && preSign.result.status !== 'loading')) &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
@@ -1826,6 +1969,18 @@ export function OfferFlow({ side }: { side: Side }) {
           // pre-transaction, fall to classic unconditionally; the
           // consumed step is added back to the plan (#1037 honesty).
           stepper.next('permit');
+          // Before the SECOND wallet prompt, not only before the write (Codex
+          // #1701 r3 / #1703 r2): a Permit2 signature is a prompt the user has
+          // to action, and collecting it for an acceptance the final-send check
+          // is about to refuse wastes exactly what these checks exist to spare
+          // them. The spec says a fresh read happens at every signature point;
+          // this is what makes that true rather than something to narrow.
+          await recheckCeiling({
+            lendingAsset: selected.lendingAsset as `0x${string}`,
+            amount: offerPrincipal(selected),
+            durationDays: BigInt(selected.durationDays),
+            fullTariff,
+          });
           let permitSigned: Awaited<ReturnType<typeof permit2.sign>> | null =
             null;
           try {
@@ -1847,6 +2002,12 @@ export function OfferFlow({ side }: { side: Side }) {
             // breaker, so a manual retry routes classic.
             stepper.next('send');
           reachedFinalSendRef.current = true;
+            await recheckCeiling({
+              lendingAsset: selected.lendingAsset as `0x${string}`,
+              amount: offerPrincipal(selected),
+              durationDays: BigInt(selected.durationDays),
+              fullTariff,
+            });
             try {
               const { hash } = await write('acceptOfferWithPermit', [
                 BigInt(selected.offerId),
@@ -1871,10 +2032,29 @@ export function OfferFlow({ side }: { side: Side }) {
         spender: walletChain.diamondAddress,
         amount: payAmount,
         onPrompt: () => stepper.next('approve'),
+        // Before EVERY approve prompt, not once before the helper (Codex
+        // #1703 r3): the zero-first reset path prompts twice, and the gap
+        // between them is a user-held wallet confirmation plus a mined
+        // transaction — easily long enough for the quote to cross. Passing
+        // the gate in covers both, where my earlier standalone call covered
+        // only the first.
+        beforeEachApprove: () =>
+          recheckCeiling({
+            lendingAsset: selected.lendingAsset as `0x${string}`,
+            amount: offerPrincipal(selected),
+            durationDays: BigInt(selected.durationDays),
+            fullTariff,
+          }),
       });
     }
     stepper.next('send');
     reachedFinalSendRef.current = true;
+    await recheckCeiling({
+      lendingAsset: selected.lendingAsset as `0x${string}`,
+      amount: offerPrincipal(selected),
+      durationDays: BigInt(selected.durationDays),
+      fullTariff,
+    });
     const { hash } = await write('acceptOffer', [
       BigInt(selected.offerId),
       terms,
@@ -2492,6 +2672,26 @@ export function OfferFlow({ side }: { side: Side }) {
                 value={fullTariff}
                 onChange={(v) => {
                   setFullTariff(v);
+                  // Any tariff edit also clears a STALE submit error (Codex
+                  // #1700 r3): a ceiling-blocked submit leaves this banner up,
+                  // and the prescribed recovery — raise the ceiling, or untick
+                  // Full — would otherwise clear the card's own notice while
+                  // the banner kept saying the quote exceeds a ceiling that is
+                  // no longer exceeded. The two surfaces must not disagree.
+                  //
+                  // ONLY the tariff messages (Codex #1700 r8): this onChange
+                  // ALSO fires from FullTariffOptIn's layout effect when a
+                  // BACKGROUND refresh flips the blocked mark, with no user
+                  // edit at all — so an unconditional clear would erase a
+                  // wallet rejection, a balance failure or a changed-terms
+                  // error the instant the quote crossed or recovered, leaving
+                  // the user no trace of why their attempt failed.
+                  setSubmitError((prev) =>
+                    prev === copy.tariff.ceilingOvertakenSubmit ||
+                    prev === copy.tariff.fullUnavailableNow
+                      ? null
+                      : prev,
+                  );
                   // Codex #1412 r1 — a tariff edit changes the terms
                   // the accept signature will carry, so an already-
                   // given consent no longer covers them: clear it,
@@ -2512,11 +2712,11 @@ export function OfferFlow({ side }: { side: Side }) {
                 type="checkbox"
                 checked={form.riskAndTermsConsent}
                 onChange={(e) => {
-                  // Stamp WHAT was on screen when consent was given —
-                  // canSign requires this to match the live security
-                  // fingerprint while a warning is disclosed.
+                  // Stamp WHEN consent was given, measured in review
+                  // revisions — canSign requires the review to have changed
+                  // zero times since (#1678, #1679 r1 F4).
                   if (e.target.checked) {
-                    securityConsentFpRef.current = securityFingerprint;
+                    consentEpochRef.current = assertionEpoch;
                   }
                   set({ riskAndTermsConsent: e.target.checked });
                 }}

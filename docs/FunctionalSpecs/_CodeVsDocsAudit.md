@@ -237,3 +237,23 @@ is a chain-backed interlock (requiring refinance-tag discovery the indexer
 cannot currently serve) or an accepted device-local behaviour with a warning is
 a product call, not one to settle by writing whichever the code happens to do
 into the spec.
+
+## Full-tariff ceiling overtake: creator arm form has no warning (#1702)
+
+**Spec** (`Alpha02ConnectedApp.md`, Full opt-in): an acceptance or fill review
+warns when the live quote rises above the authorized ceiling, names both
+figures, and offers to raise it.
+
+**Code**: the standing-offer creator's arm form (Open Orders) reads the live
+quote and validates that the typed ceiling is a well-formed number, but never
+compares the two. A creator can therefore save a STRICT authorization whose
+ceiling is already below the current quote. What is doomed is a fill whose OWN
+effective principal prices above that ceiling — the charge is recomputed per
+fill, so a smaller partial can price under it, and the quote can fall back.
+Still the same failure the acceptance side now prevents, on the side that
+commits first and cannot see the fills that fail.
+
+**Decision**: candidate BUG, not a stale doc. Found by Codex review of #1701
+while checking that the new spec text did not over-claim for a surface it does
+not describe. **RESOLVED** by the warning added for #1702; the spec bullet now
+describes the creator side rather than naming a gap.

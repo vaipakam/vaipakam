@@ -1670,7 +1670,7 @@
     "step4Desc": "Repay on time and reclaim the collateral. Lenders claim principal + interest using the NFT. If default occurs, liquidation or full collateral transfer follows the protocol rules.",
     "step4Detail1": "Present NFT to claim funds",
     "step4Detail2": "Late fees capped at 5%",
-    "step4Detail3": "0.1% Loan Initiation Fee + 1% Yield Fee on interest",
+    "step4Detail3": "0.2% Loan Initiation Fee + 2% Yield Fee on interest",
     "step4Detail4": "Tiered VPFI discount: 10% / 15% / 20% / 24% off both fees by vault balance"
   },
   "security": {
@@ -1834,8 +1834,8 @@
       "fees": {
         "q": "What fees does the platform charge?",
         "a1": "Two headline fees, plus a late-payment schedule:",
-        "li1": "<s>Loan Initiation Fee — 0.1%</s> on ERC-20 loans, deducted from the lender's principal at loan start. The borrower receives 99.9% of the offered amount but still owes the full principal.",
-        "li2": "<s>Yield Fee — 1%</s> on interest earned by lenders and on rental income earned by NFT owners.",
+        "li1": "<s>Loan Initiation Fee — 0.2%</s> on ERC-20 loans, deducted from the lender's principal at loan start. The borrower receives 99.8% of the offered amount but still owes the full principal.",
+        "li2": "<s>Yield Fee — 2%</s> on interest earned by lenders and on rental income earned by NFT owners.",
         "li3": "<s>Late fees:</s> 1% flat on the day of miss, plus 0.5% per additional day, capped at 5% of principal. Late fees route to treasury.",
         "a2": "VPFI holders can reduce <em>both</em> headline fees via a single platform-level consent — see the VPFI discount entry below."
       },

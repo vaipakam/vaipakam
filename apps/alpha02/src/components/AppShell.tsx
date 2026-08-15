@@ -144,11 +144,25 @@ export function AppShell() {
   const { readChain, isConnected, onSupportedChain, walletChain } =
     useActiveChain();
   const { pathname, search } = useLocation();
-  // Phone More sheet (UX-011) — closes on any navigation.
+  // Phone More sheet (UX-011) — closes on any navigation. A render-phase
+  // adjustment, not an effect (#1520).
+  //
+  // Which navigations this actually matters for (Codex #1692 r1 corrected an
+  // earlier claim here): NOT a tap on a sheet link — each of those NavLinks
+  // already calls setMoreOpen(false) in its own onClick below, before Router
+  // navigates, so the new pathname's first render already has the sheet closed.
+  // It matters for navigation that BYPASSES that handler — browser/history
+  // back-forward, and any programmatic navigate() — where with an effect the
+  // sheet stayed mounted over the first frame of the new route.
+  // The More tab staying active is NOT part of this: every MORE_SHEET
+  // destination is in moreIsActive, so highlighting it there is correct.
+  // Self-limiting — the seen-path key commits with the reset.
   const [moreOpen, setMoreOpen] = useState(false);
-  useEffect(() => {
+  const [seenPathname, setSeenPathname] = useState(pathname);
+  if (seenPathname !== pathname) {
+    setSeenPathname(pathname);
     setMoreOpen(false);
-  }, [pathname]);
+  }
 
   // UX-031 — move focus to the main content region on route change so
   // a keyboard / screen-reader user lands on the new page instead of

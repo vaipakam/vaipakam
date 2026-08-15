@@ -31,6 +31,7 @@ import { createPublicClient, http, type Abi, type Address, type PublicClient } f
 import {
   RewardRemittanceFacetABI,
   RewardReporterFacetABI,
+  RewardRemittanceLensFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
@@ -43,7 +44,14 @@ import {
   markRemitAcked,
 } from './db';
 
-const REMIT_ABI = RewardRemittanceFacetABI as Abi;
+// #1660 r9 - quoteRemitAckFee moved to the LENS facet for EIP-170
+// headroom on the mutating facet; viem resolves functions from the
+// SUPPLIED ABI before any RPC, so the keeper's remit surface must
+// combine both facets' ABIs (the Diamond routes either selector).
+const REMIT_ABI = [
+  ...(RewardRemittanceFacetABI as Abi),
+  ...(RewardRemittanceLensFacetABI as Abi),
+] as Abi;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
 
 /** Max reservation ids examined per tick (scan stays O(bounded)). */

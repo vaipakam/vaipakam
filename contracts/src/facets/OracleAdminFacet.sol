@@ -115,7 +115,8 @@ contract OracleAdminFacet {
      *        `0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619`. **MUST set
      *        the bridged-WETH9**, never WPOL.
      *
-     *      Nothing in the protocol enforces this — it is purely an
+     *      Nothing in the protocol enforces this — this setter is the
+     *      ONLY surface, not the equivalent of one, and it is purely an
      *      operator responsibility. There is no runtime check that the
      *      address is WETH-shaped, so verify against the chain's official
      *      bridge registry before setting it. **That registry, not this

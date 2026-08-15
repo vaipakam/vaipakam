@@ -42,35 +42,88 @@ returns the _effective_ value (default OR stored, whichever applies).
 ### Treasury fee on lender interest
 
 Default 2% of accrued lender
-interest goes to treasury. Range: 0% – `MAX_FEE_BPS` (the cap is
-defined alongside the setter; conventionally 10% to leave headroom
-for protocol-fee experiments without ever crossing into "majority of
-interest goes to treasury" territory). Zero is a valid setting — it
-turns the cut off entirely.
+interest goes to treasury (the rev-8 fee freeze, #1352; it was 1%
+before). Range: 0% – `MAX_FEE_BPS`, and **`MAX_FEE_BPS` is 50%, not
+the 10% this document previously claimed**. Read the guard for what
+it is: a sanity cap that stops a fat-fingered denomination, not a
+promise that governance can never take the majority of a lender's
+interest. At the ceiling a compromised admin takes exactly half of
+accrued interest on every loan settled after the write — the
+timelock, not the range guard, is what makes that survivable. Zero
+is a valid setting; it turns the cut off entirely.
+
+Note the fee is resolved per loan from the rate **stamped at
+initiation**, and a loan opened before the freeze keeps the legacy 1%
+— a knob change never re-prices an open loan.
 
 ### Loan-initiation fee
 
-Default 0.2% of principal, paid by the
-borrower in VPFI at loan start. Range matches the treasury fee cap.
-Time-weighted VPFI tier discounts can take the borrower's effective
-fee to zero — the setter cap is on the gross rate.
+Default 0.2% of principal (also the rev-8 freeze, #1352; it was
+0.1%), charged once when the offer is accepted. Range: 0% –
+`MAX_FEE_BPS` (50%), the same cap as the treasury fee.
+
+**It is charged in the LENDING ASSET, not in VPFI.** #1352 retired
+the peg-custody borrower path: a new loan takes no VPFI into Diamond
+custody and earns no settlement rebate. Instead the borrower's
+time-weighted VPFI hold tier is applied as a **direct reduction of
+the lending-asset fee at acceptance** (the "HoldOnly" path), pinned
+at origination so a post-hoc top-up cannot game it. Two conditions
+narrow it: the borrower must have given platform consent, and the
+lending asset must be liquid — an illiquid loan pays the full fee.
+
+The discount **cannot take the fee to zero.** It is clamped at 50%
+(`MAX_FEE_DISCOUNT_BPS`), so half the gross fee is the effective
+floor no matter how much VPFI is held or which tariff is opted into.
+
+Loans opened on the retired peg-custody path are still settling
+through the old lifecycle — their custody VPFI splits into a
+borrower rebate and a treasury share at proper close, and is
+forfeited whole on default. Do not read that lifecycle as evidence
+the VPFI charge is still live for new originations.
 
 ### LIF matcher kickback
 
-Out of the loan-initiation fee VPFI, the
-matcher (the bot or wallet that called `matchOffers`) takes 1% of
-the treasury slice as a kickback. Range: 0% – `MAX_FEE_BPS`. Zero
-disables the kickback entirely; useful if matcher economics need to
-shift.
+The matcher (the bot or wallet whose call created the loan —
+`matchOffers`, `acceptOffer`, the preclose-offset or refinance
+route) takes 1% of the loan-initiation fee. Range: 0% –
+`MAX_FEE_BPS` (50%); zero disables the kickback entirely.
+
+**The kickback is denominated in whatever the fee itself was
+charged in** — since #1352 that is the lending asset for new loans,
+paid synchronously at match out of the lender's vault, with the
+remainder going to treasury. Only grandfathered peg-custody loans
+pay it in VPFI, deferred to terminal settlement.
+
+One reconciliation trap worth knowing before an operator matches an
+event against a transfer: the `OfferMatched` event reports the
+matcher slice at the **gross list rate**, deliberately ignoring the
+borrower's hold-tier discount (folding it in pushed the match facet
+past the EIP-170 runtime-size limit). On a discounted fill the real
+transfer is smaller. Treat that field as a display-only upper bound;
+the on-chain transfer is the authoritative amount.
 
 ### VPFI tier discount thresholds + tier discount BPS
 
 (4 values
 each). Configures the time-weighted VPFI staking tier system that
 discounts the loan-initiation fee. Thresholds must be strictly
-monotonic; discount BPS each ≤ `MAX_DISCOUNT_BPS` and
+monotonic; discount BPS each ≤ `MAX_DISCOUNT_BPS` (90%) and
 non-decreasing across tiers. Setter rejects non-monotone or
 above-cap writes.
+
+The per-tier ceiling is **not** the ceiling that actually binds. A
+borrower's effective discount is the tier value plus, where the
+per-party Full tariff is enabled and confirmed for that loan, a flat
++10-point bonus — and the sum is then clamped to 50%
+(`MAX_FEE_DISCOUNT_BPS`) before it is applied. So configuring a
+90%-BPS tier does not create a 90% discount; it creates a discount
+that clamps to half. The same clamp bounds the lender-side yield-fee
+discount.
+
+The accumulator that produces the time-weighted value re-stamps at
+the **post-mutation** vault balance on every change, so an unstake
+takes effect immediately across every open loan's average rather
+than at the next balance change.
 
 ### Liquidation handling fee + max slippage + max liquidator incentive
 
@@ -518,6 +571,164 @@ governance-trust point — a compromised admin flipping to the
 disable-cap sentinel is something the policy explicitly tolerates as
 an emergency lever.
 
+## VPFI recycling governor, fee-entitlement tariff, and reward distribution limits
+
+Added over the 2026-07-14 → 2026-08-12 cycle (#1217, #1305, #1306,
+#1347, #1351, #1353, #1567, #1568). These are the knobs that size the
+recycled reward budget, price the opt-in fee entitlement that funds it,
+and bound what a single participant can take out of a day. Three of
+them ship **dark** and one ships **dormant** — read each sentinel
+carefully, because this group deliberately does **not** share one
+convention.
+
+**Sentinel conventions differ on purpose.** `setRecycleMarginBps`,
+`setRecycleTariffKPer1e18EthDay`, `setTariffKPerLifYear` and
+`setRewardHaircutBps` treat a stored `0` as **reset-to-library-default**.
+`setRewardClaimHorizonDays` and `setRecycleSurplusMultiple` treat `0` as
+**dark — feature off**. `setUserSideShareCapBps` **rejects** `0`
+outright, so a stored zero there always means "never configured". An
+operator who assumes one convention across the group will either arm a
+feature they meant to leave off or leave one off they meant to arm.
+
+### Platform recycling margin (`recycleMarginBps`)
+
+The edge the governor retains from absorption before sizing the
+coupled reward budget. Default **5%**; range **[1 bp, 25%]**, with `0`
+as the reset sentinel — so a literal 0% margin is expressed as `1`,
+not `0`. The ceiling exists because the margin is taken off the top of
+what funds user rewards: at 25% a compromised admin degrades the
+programme's payout rate but cannot starve it.
+
+### Absorption tariff coefficients (`recycleTariffKPer1e18EthDay`, `tariffKPerLifYear`)
+
+Two quantity schedules, never fee-value conversions — the distinction
+matters legally as well as economically (see the rewards copy rules in
+the tokenomics redesign research doc).
+
+- **`recycleTariffKPer1e18EthDay`** — VPFI per ETH of loan volume per
+  day. Default **0.05**, range **[0.001, 1.0]**. **Not wired for
+  Phase-1 absorption**; it is the older ETH·day schedule the LIF·year
+  one superseded. Setting it changes nothing on a Phase-1 deployment.
+- **`tariffKPerLifYear`** — the live coefficient `K` in the Full
+  tariff's `C* = base LIF × term-years × K`. Default **5**, range
+  **[0.1, 50]**.
+
+### Full VPFI tariff kill switch (`feeEntitlementEnabled`)
+
+Master switch for the per-party Full fee-entitlement tariff (#1347).
+**Ships dark (`false`)**: every Full opt-in fails closed and no `C*`
+is charged.
+
+Two ordering constraints, both enforced or reasoned rather than
+optional:
+
+- **Enabling reverts on a mirror (non-canonical VPFI) chain.** A `C*`
+  absorbed on a mirror credits only that chain's local recycle bucket,
+  which the Base governor cannot count or fund from — the user's
+  tariff would be stranded outside the loop it exists to fund.
+- **Do not enable before the loan-side reward cap and the lender-side
+  settlement sweep are live on the deployment.** Enabling earlier lets
+  a Full loan pay `C*` for a discount the settlement paths would not
+  yet honour, and arms an uncapped loan-side reward. Both are live as
+  of this cycle (#1353, #1354 and the #1383 family), so on a current
+  deployment this is a check, not a blocker.
+
+Disabling is always allowed, from any chain role.
+
+### Loan-side reward-cap haircut (`rewardHaircutBps`)
+
+The `m_reward` haircut in the loan-side reward ceiling
+`½ × C* × (BPS − m_reward)`. Default **2%**; range **[0, 20%]** — but
+`0` is the reset sentinel, so the 2% default is the effective floor and
+a literal 0% haircut is **not reachable** through this knob. Priced
+from the value stamped at each loan's open, so a change affects only
+loans originated afterwards.
+
+### Per-user daily share cap (`userSideShareCapBps`)
+
+The share of one day's side-half that a single participant may take on
+a single side (#1351). Default **20%**; range **[0.5%, 50%]** — bounded
+on **both** sides, unlike most knobs here, and deliberately: a
+near-zero cap throttles every honest claimant on a thin day, while an
+unbounded one defeats the anti-concentration purpose (at 100% one user
+could take an entire side-half). `0` is rejected. Applies to days
+finalized **after** the write.
+
+### Allocation-register keeper weight (`recycleRegisterKeeperBps`)
+
+RL-4's carve of the recycled residual into a keeper-gas budget.
+Default **0 — dormant**, meaning the whole residual stays in the
+bucket, which is the ratified behaviour; range **[0, 50%]**. The
+reserve weight is the implicit complement, so the two always sum to
+100%. Deliberately **not** a gauge: users never vote reward direction.
+
+### Reward claim horizon (`rewardClaimHorizonDays`)
+
+RL-3's post-claimability horizon `H`. **`0` (deploy default) is dark**
+— no clock accrues and nothing expires. Range **[180, 1095] days**, so
+a horizon can neither be sprung on dormant claimants nor stretched into
+an unbounded liability tail.
+
+Three properties an operator must understand before touching it:
+
+- The clock accrues only while an entry is genuinely **claim-executable**
+  — time during which a claimant could not have claimed does not count
+  against them.
+- Removal requires `H` **plus** a further 90-day notice period. The
+  notice is served **in addition to** `H`, never inside it.
+- **Every non-zero (re)configuration advances a strictly-monotonic
+  epoch**, which caps every entry's accrual back to the threshold and
+  forces the full 90-day notice to be re-earned — on a lengthening, a
+  shortening, or a dark reset alike. There is no retune that reaps a
+  dormant claimant without a fresh notice under the new rules.
+
+### Per-chain surplus flag multiple (`recycleSurplusMultiple`)
+
+#1567's operator signal: a mirror chain is flagged once its recycled
+availability exceeds `N ×` its trailing 30-day average daily recycled
+budget. **`0` is dark, not reset-to-default** — there is no safe
+universal `N`, and a flag firing before an operator has chosen a
+threshold is noise that teaches people to ignore it. Range **[0, 365]**.
+
+Two scope facts: the setter is **canonical-only** as well as
+ADMIN_ROLE-gated (on a mirror it would return success and emit while
+changing nothing observable — a false confirmation to governance
+automation, which is worse than a revert), and **the flag is on
+mirrors only**. The canonical chain's own recycled position is reported
+by the composition and backing reads instead. **The flag moves
+nothing**; disposition of a flagged surplus is the separate,
+deliberately-gated repatriation path (#1568).
+
+### Governor commitment arming (`governorCommitArmedFromDay`)
+
+The `D*` cutover that switches the governor from recording day stamps
+to reserving against them and consuming at claim. **One-shot and
+future-only**: it reverts if already armed, and reverts on a day at or
+before today, so no already-finalized day can flip semantics
+retroactively. Canonical-only; mirrors receive `D*` in-band with every
+subsequent broadcast, so there is **no per-chain admin step** — do not
+plan a mirror-side arming ceremony that does not exist.
+
+### Expected source chain ids (`expectedSourceChainIds`)
+
+The full list of chain ids the Base aggregator expects daily reports
+from — **including Base's own**, because Base is a source too.
+Canonical-only. The setter **overwrites** the previous list and
+**rejects duplicates** (a repeated id double-counts that chain's demand
+and self-funds its availability twice).
+
+Operational hazard worth stating in the runbook rather than the code:
+dropping a chain id mid-flight for a day already in progress causes
+that day to finalize with a lower denominator. Treat this list as a
+topology change to be made between days, not during one.
+
+### Repatriation endpoints (`repatriationEndpoints`, `repatriationTokenAdminRegistry`)
+
+Address wiring for the #1568 Mode-A planned-surplus repatriation
+transport. Address-shaped, no numeric range. They are what makes a
+flagged surplus actionable; until they are set the surplus flag is
+purely advisory.
+
 ## KYC (industrial-fork only — OFF on retail)
 
 ### KYC tier 0 / tier 1 thresholds (numeraire)
@@ -564,7 +775,7 @@ asset, protocol seizes the borrower's collateral at a per-tier
 discount and delivers it to a liquidator-supplied recipient (typically
 funded via a same-tx flash-loan from Aave V3 `flashLoanSimple` or
 Balancer V2 `flashLoan`). See
-[`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md) for
+[`docs/ops/FlashLoanLiquidatorRollout.md`](https://github.com/vaipakam/vaipakam/blob/main/docs/ops/FlashLoanLiquidatorRollout.md) for
 the per-chain operational rollout.
 
 ### Master kill-switch — `discountPathEnabled`
@@ -1218,6 +1429,12 @@ touches user funds or per-user consent state.
   knob at deploy time; the only mandatory writes are the
   chain-specific addresses (treasury, oracles, the CCIP messenger
   registry, and the sanctions oracle on retail).
+- **Dark and dormant knobs are not "unconfigured"**: the Full tariff
+  switch, the reward claim horizon, and the surplus-flag multiple all
+  ship off, and the allocation register ships dormant. A bring-up
+  checklist that treats "not written" as "needs writing" will arm
+  three features nobody decided to arm. Leave them until there is a
+  decision, and record the decision.
 - **Governance handover** (DeploymentRunbook §6): post-deploy, every
   tunable transitions from EOA-controllable to multisig-via-timelock
   controllable. Range guards apply equally to both before and after

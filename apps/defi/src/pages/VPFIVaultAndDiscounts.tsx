@@ -647,7 +647,7 @@ export default function VPFIVaultAndDiscounts() {
               // Phase 8b.2 preview: encode the classic-path
               // `depositVPFIToVault(amount)` calldata. Even when the
               // submit handler picks the Permit2 single-sig variant,
-              // the underlying state change Blockaid scans (VPFI from
+              // the underlying state transition being previewed (VPFI from
               // wallet → vault) is identical, and the classic path
               // does not require a yet-to-be-signed permit / signature
               // pair to render meaningful preview output.
@@ -1059,7 +1059,7 @@ interface DepositCardProps {
   step: VaultStep;
   /** Submit handler wired to approve-then-deposit. */
   onDeposit: () => void;
-  /** Phase 8b.2 — pending tx for the inline Blockaid preview, or
+  /** Phase 8b.2 — pending tx for the inline transaction preview, or
    *  null when the deposit input is empty / invalid. */
   previewTx: { to: Address; data: Hex; value: bigint } | null;
 }
@@ -1178,7 +1178,7 @@ function DepositCard({
       )}
 
       {/* Phase 8b.2 transaction-preview surface for the deposit step.
-          Hidden once the action is mid-flight — Blockaid only adds
+          Hidden once the action is mid-flight — the preview only adds
           value at the review-before-sign moment. */}
       {!inFlow && !exceedsBalance && (
         <SimulationPreview tx={previewTx} />

@@ -36,14 +36,18 @@ deployed**. Per chain:
 | VPFI CCIP `TokenPool` | ✓ — Lock/Release | | ✓ — Burn/Mint |
 | `VpfiPoolRateGovernor` (the pool `rateLimitAdmin`) | ✓ | | |
 | `VaipakamRewardMessenger` | ✓ | | |
-| `VpfiBuyReceiver` | | ✓ | |
-| `VPFIMirrorToken` + `VpfiBuyAdapter` | | | ✓ |
+| `RewardRemittanceReceiver` / buyback / return receivers as applicable | ✓ | topology-dependent | topology-dependent |
+| `VPFIMirrorToken` | | | ✓ |
 
 Canonical vs mirror is decided by `block.chainid` — `8453` / `84532` are
 canonical Base; every other chain is a mirror.
 
-**Chain set (design §10):** Ethereum, Base, Arbitrum, Optimism, BNB
-(mainnet) and their public testnets. zk-rollup chains are out of scope.
+The fixed-rate buy contracts (`VpfiBuyAdapter` / `VpfiBuyReceiver`) are
+not deployed in the current CCIP stack; #687-A removed that sale surface.
+
+**Chain set (design §10 / CLAUDE.md):** Ethereum, Base, Polygon,
+Arbitrum and Optimism. BNB is testnet-tier only. zk-rollup chains and
+Solana are out of scope.
 
 ---
 
@@ -74,15 +78,11 @@ The slug suffix is the chain's upper-cased registry slug
   and (after the Ownable2Step handover) of every TokenPool. On testnet
   this is the same EOA as the deployer; on mainnet it is the admin
   multisig (see §5).
-- `TREASURY_ADDRESS` — local treasury for the buy adapter.
 - `BASE_CHAIN_ID` — **mirror chains only** — the EVM chain id of
   canonical Base (`8453` mainnet, `84532` Base Sepolia).
 - `CCIP_LANE_CHAIN_IDS` — **for the wiring pass** — comma-separated EVM
   chain ids of every *remote* chain to wire a lane to.
-- Optional: `VPFI_BUY_PAYMENT_TOKEN` (default native ETH; bridged WETH on
-  BNB/Polygon mainnet — see CLAUDE.md "VPFIBuyAdapter — payment-token
-  mode by chain"), `VPFI_BUY_REFUND_TIMEOUT` (default 900s),
-  `CCIP_DEST_GAS_LIMIT` (default 400000), `CCIP_GUARDIAN`,
+- Optional: `CCIP_DEST_GAS_LIMIT` (default 400000), `CCIP_GUARDIAN`,
   `CCIP_RATE_CAPACITY` / `CCIP_RATE_REFILL` (default the design §10
   starting values — see §4).
 
@@ -211,7 +211,9 @@ must be true before any real value is routed**:
 
 1. **CCIP lanes enabled and each `CcipMessenger`'s registry configured.**
    `ConfigureCcip` sets chainId↔CCIP-selector, remote messengers, and the
-   `vpfi-buy` + `vpfi-reward` channel peers. Confirm with `--phase
+   `vpfi-reward` / `vpfi-buyback` / `vpfi-reward-budget` / `vpfi-return`
+   channel peers (#687-A: `vpfi-buy` was listed here and no longer
+   exists — see §"Canonical vs mirror"). Confirm with `--phase
    verify` and by spot-reading `chainSelectorOf` / `remoteMessengerOf` /
    `handlerOf` / `channelPeerOf` on each `CcipMessenger`.
 
@@ -236,32 +238,97 @@ must be true before any real value is routed**:
 Every cross-chain contract is `Ownable2Step`:
 
 - The **proxies** (`CcipMessenger`, `VpfiPoolRateGovernor`,
-  `VaipakamRewardMessenger`, `VPFIMirrorToken`, `VpfiBuyAdapter` /
-  `VpfiBuyReceiver`) are initialized with the admin multisig as owner.
+  `VaipakamRewardMessenger`, `VPFIMirrorToken`) are initialized with the
+  admin multisig as owner. (#687-A: `VpfiBuyAdapter` / `VpfiBuyReceiver`
+  were listed here; §"Canonical vs mirror" above already records that
+  they are not deployed in the CCIP stack.)
 - The **TokenPools** are deployed by the EOA, then `transferOwnership`'d
   to the admin multisig by `DeployCrosschain`; `ConfigureCcip`'s
   `acceptOwnership()` completes that handover.
 
 Rotating the admin multisig → governance timelock is the final step.
 
-> **Known follow-up:** `script/Handover.s.sol` still reads LayerZero-era
-> artifact keys and does **not** yet rotate the CCIP stack
-> (`CcipMessenger`, the TokenPools, `VpfiPoolRateGovernor`) to
-> governance. Until it is updated, the CCIP-stack timelock handover is a
-> **manual multisig step** — `transferOwnership(timelock)` on each
-> cross-chain contract, then `acceptOwnership()` from the timelock. Do
-> not skip it: an admin-EOA-owned cross-chain contract on mainnet
-> violates gate #3.
+> **Resolved — this is no longer a manual step.** An earlier version of
+> this note said `Handover.s.sol` does not rotate the CCIP stack. It
+> does: the script reads `ccipMessenger`, `vpfiTokenPool`,
+> `vpfiPoolRateGovernor`, `rewardMessenger`, `vpfiMirror`, both
+> remittance receivers and both return endpoints, and sends
+> `transferOwnership(timelock)` for each one it finds. Contracts absent
+> on this chain are skipped, and a contract the signing key does not
+> own is reported rather than silently passed over.
+>
+> **Both legs are still required.** The script sends only the first —
+> the **timelock** is then the pending owner and must call
+> `acceptOwnership()` on each target, scheduled and executed through the
+> governance Safe. The Safe calling `acceptOwnership()` itself reverts:
+> it is not the pending owner. Do not skip the second leg — an
+> admin-EOA-owned cross-chain contract on mainnet violates gate #3.
+>
+> The script does still read the LayerZero-era `rewardOApp` artifact key,
+> deliberately, as a fallback for the two testnet chains deployed under
+> that key before the migration.
 
 ---
 
 ## 8. Post-deploy operational steps
 
-- **Fund the `VpfiBuyReceiver` ETH float.** The cross-chain buy is two
-  legs; the receiver pays leg 2's CCIP fee from a held ETH balance. Send
-  ETH to the receiver via `fundETH()` after deploy — an unfunded receiver
-  soft-fails leg 2 and parks the minted VPFI as stuck (recoverable via
-  `retryStuckDelivery` once funded).
+### Rotation: outstanding compensations must survive the cutover (#1434 P2-w6)
+
+Before retiring a canonical Base deployment, read
+`getCompensationOutstandingChains()` on it. For every chain listed, either
+settle the compensation first (consumption ack, stranded return, or
+recovery ceremony + terminal loss), or carry it over to the new
+deployment. No unresolved compensation may be silently forgotten by a
+redeploy.
+
+**Carrying one over.** On the NEW deployment, run
+`importOutstandingCompensation(chain, oldDeployment, oldRemitId)` for each
+open tuple.
+
+- Read the tuple from the retiring deployment's `getImportedOutstanding`
+  when that deployment was ITSELF holding a carried-over gate. Its visible
+  `getCompensationOutstanding` reads a sentinel in that case, and
+  importing the sentinel is refused — no old-era acknowledgement could
+  ever match it.
+- Each tuple may be imported exactly once.
+
+The import carries no figures about the parcel, and needs none: settling a
+carried-over gate creates no spending capacity, so there is nothing a
+wrong figure could inflate. A mistaken import therefore costs only
+availability on the one chain it names — new compensation is blocked there
+until the settlement runs — and never value.
+
+**Resolving it.** The carried gate blocks new compensation for that chain
+until the operator settles it with
+`clearImportedOutstanding(chain, recycledInflow)`. That is the ONLY way it
+opens.
+
+There is deliberately no permissionless path. A mistyped import can name
+an unrelated, already-consumed historical receipt, and if that receipt's
+re-presented acknowledgement could release the gate, you would then fund a
+replacement while the genuinely outstanding delivery was still live — both
+would back mirror claims. A re-presented old-era acknowledgement is
+therefore refused outright (`RemitAckSenderMismatch`); do not wait for
+one.
+
+On settlement the recycled component re-enters bucket custody — the call
+asserts those tokens are actually present — and any fresh component simply
+remains in ordinary custody. Pass `0` when nothing came home.
+
+**Funding the replacement.** Use the ordinary CHARGED path
+(`remitManualBudget`), not a from-recovery dispatch. The new deployment's
+lifetime budget counter starts at zero and never charged for the old
+parcel, so charging it now is the correct accounting rather than a double
+charge.
+
+<!-- #687-A: a "Fund the VpfiBuyReceiver ETH float" step stood here,
+     instructing `fundETH()` after deploy with `retryStuckDelivery` as the
+     recovery path. Neither the contract nor either function exists — the
+     two-leg cross-chain buy went with the sale surface. Removed rather
+     than marked historical because this is an operator action list; the
+     §"Canonical vs mirror" note above already records why the contracts
+     are absent. -->
+
 - **Register VPFI as a CCT** in the CCIP `TokenAdminRegistry`.
   `ConfigureCcip` does this (`registerAdminViaOwner` → `acceptAdminRole`
   → `setPool`); on mainnet it is part of the multisig batch. The token's
@@ -376,6 +443,18 @@ flight, in this order when **lowering**:
      `"42161:0xMirrorDiamond,10:0xMirrorDiamond"`); leaving it unset
      logs a loud warning and leaves zeroed-day compensation quoting
      unreachable for the unregistered lanes.
+  1b. **Lapse-terminal arming (constraint-19, #1656 r2)** — the two
+     permissionless lapse terminals ship DARK
+     (`LapseTerminalsNotArmed`). Per mirror, arm them
+     (`RewardCommitmentFacet.armLapseTerminals`, ADMIN, one-shot) ONLY
+     after: (a) Base's `getLegacyManualReservations` pages read EMPTY
+     over the full id range (Pending hits released or resolved), and
+     (b) every delivered legacy receipt was stamped mirror-side
+     (`stampLegacyCompensation`) and any pre-w4 funded day seeded
+     Base-side (`seedCompFunded`, at the RECEIVED figure for
+     short-ACKed deliveries). The arm is the checklist's on-chain
+     attestation — an upgrade window's expired days cannot be lapsed
+     out from under an unstamped legacy delivery.
   2. **When a MIRROR Diamond rotates**: on Base, run
      `setMirrorRewardDeployment(chainId, newMirrorDiamond)`, then
      `clearCompQuote(dayId, chainId)` for any NONZERO quote still
@@ -395,8 +474,9 @@ flight, in this order when **lowering**:
 - [ ] `--phase verify` green on every chain (pool `rateLimitAdmin` =
       governor; ≥ 1 lane configured).
 - [ ] Each `CcipMessenger`: `chainSelectorOf` / `remoteMessengerOf` set
-      for every peer chain; `vpfi-buy` + `vpfi-reward` channels have a
-      local handler and a remote peer.
+      for every peer chain; the `vpfi-reward` / `vpfi-buyback` /
+      `vpfi-reward-budget` / `vpfi-return` channels have a local handler
+      and a remote peer.
 - [ ] Each VPFI TokenPool: lane present for every remote chain; inbound +
       outbound rate limits enabled at the design §10 values.
 - [ ] Mirror chains: `VPFIMirrorToken.tokenPool()` = the Burn/Mint pool.
@@ -404,7 +484,6 @@ flight, in this order when **lowering**:
       every mirror chain id.
 - [ ] VPFI registered in each chain's `TokenAdminRegistry` with the pool
       set.
-- [ ] `VpfiBuyReceiver` ETH float funded.
 - [ ] Mainnet: every cross-chain contract owner + the CCT admin =
       governance timelock (gate #3).
 

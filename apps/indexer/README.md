@@ -1,6 +1,6 @@
 # @vaipakam/indexer
 
-**Vaipakam chain → D1 indexer + public read-API. Cloudflare Worker. Read-only — no signing keys.**
+**Vaipakam chain → D1 indexer + public read-API. Cloudflare Worker. No ON-CHAIN transaction key — but NOT keyless and NOT read-only** (writes D1; publishes borrower-authorised, on-chain-bound Seaport listings to OpenSea).
 
 [![Workspaces typecheck](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml)
 
@@ -14,10 +14,15 @@ The **read-API Worker** of the Vaipakam off-chain stack. Stage 3 PR3 of the Work
   - `/loans/{active,recent,stats,timeseries,by-lender/:addr,by-borrower/:addr,:loanId}`
   - `/activity`
   - `/claimables/:addr`
+  - `/config/:chainId` — the governance-knob display snapshot
 
-The connected app (`apps/defi`) reads from this Worker via `VITE_INDEXER_ORIGIN`. The marketing site (`apps/www`) doesn't talk to it — `apps/www` is on-chain-read-free.
+The connected app (`apps/defi`) reads from this Worker via `VITE_INDEXER_ORIGIN`.
 
-**Non-goals:** no signing keys, no user-facing writes. Reads only. If a request needs to write state on-chain, route it through the connected app + a wallet signature, not through this Worker. The indexer's role is to be the queryable view layer, not an action surface.
+The marketing site (`apps/www`) reads exactly one route: `/config/:chainId`, for the fee and tier figures quoted in its documentation (#1612). `apps/www` remains **on-chain-read-free** — it carries no wallet, no viem and no ABI, and this snapshot is precisely how it states current figures without any of that. Treat that route as having a marketing-site consumer when changing its shape, its CORS policy, or its availability: `apps/www` bounds the request at 4 s and falls back to bundled defaults, so an outage degrades rather than breaks it, but a silent change to the bundle's field ORDER would publish wrong numbers under a "live" badge.
+
+**Non-goals:** no on-chain transaction key, and no *on-chain* writes. (Not "no signing keys": the three `ALCHEMY_WEBHOOK_SIGNING_KEY_*` entries are **HMAC** secrets. HMAC is symmetric, so holding one permits **forging** a valid webhook signature, not merely verifying — they are signing material.) If a request needs to write state on-chain, route it through the connected app + a wallet signature, not through this Worker.
+
+This is narrower than "reads only", which this file used to claim and which is false: the Worker writes the shared D1 database (including via three POST endpoints) and publishes borrower-authorised Seaport orders to OpenSea with the project's API key (empty `0x` signature — the vault's ERC-1271 check validates an order hash the borrower bound on-chain, so the Worker cannot manufacture a listing). Note also that holding no signing key is **not** an isolation boundary — the D1 binding is database-scoped, so this Worker can write tables the signing Worker reads (see #1722).
 
 **Indexer event-coverage guardrail.** `EVENT_ABI` is derived from the compiled `DIAMOND_ABI_VIEM` (never hand-typed). The `apps/indexer/scripts/check-event-coverage.mjs` script (wired into `pnpm typecheck` and exposed as `check-event-coverage`) fails CI if any contract event tagged `@custom:event-category state-change/{loan,offer}-mutation` lacks a handler in `chainIndexer.ts` AND isn't in the deliberately-not-handled allowlist. The May-2026 "every loan stuck active" bug (indexer missing preclose / offset / refinance terminal events) can't recur silently.
 
@@ -48,9 +53,21 @@ Worker secrets:
 
 | Secret | Purpose |
 |---|---|
-| `RPC_*` | Per-chain RPC URLs (carry API keys). |
+| `RPC_*` (eleven) | Per-chain RPC URLs — **carry provider API keys**, so they are leakable, billable credentials, not just endpoints. Eleven BOUND, which is not the same as eleven reached: `getChainConfigs` needs BOTH an RPC value and a `getDeployment` hit, and `deployments.json` holds only 97 / 84532 / 421614 — so at most **three** are reachable today; the rest are provisioned ahead of their deployments. Nor is it the full bound set — the agent additionally binds `RPC_POLYGON` (twelve); the keeper binds neither Polygon entry (ten). Count from `wrangler.jsonc`'s `secrets_store_secrets` block: the `Env` interface also declares `RPC_ZKEVM`, which no Worker binds. |
+| `OPENSEA_API_KEY` | Authenticated **outbound publication** of borrower-authorised, on-chain-bound Seaport listings. A write credential upstream, not a read key. |
+| `ALCHEMY_WEBHOOK_SIGNING_KEY_84532` | HMAC secret for inbound Base-Sepolia chain-event webhooks. **Symmetric — holding it permits forging a delivery, not just verifying one.** |
+| `ALCHEMY_WEBHOOK_SIGNING_KEY_421614` | Same, Arbitrum Sepolia. |
+| `ALCHEMY_WEBHOOK_SIGNING_KEY_97` | Same, BNB testnet — **live**, not ahead-of-rollout. Chain 97 is in `.active-chains` and the deployments bundle, and `CHAIN_INGEST_VIA_DO` is on, so this key gates a real ingest path and needs the same monitoring and rotation as the other two. |
 
-No signing keys ever — read-only by design.
+**Fifteen bindings in total.** This table used to list only `RPC_*` and
+close with "No signing keys ever — read-only by design", which
+undercounted the credential surface by four and asserted a read-only
+property the Worker does not have.
+
+No **on-chain signing** key — that part is true, and it is the only part
+that was. It is not an isolation boundary: the D1 binding is
+database-scoped, so this Worker can write tables the signing Worker
+reads (#1722).
 
 ### D1 — owns the canonical schema for `vaipakam-archive` (staging)
 

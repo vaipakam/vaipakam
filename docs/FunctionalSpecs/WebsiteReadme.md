@@ -82,11 +82,26 @@ Public-navigation requirements:
   the figure the protocol uses. A rate is written down once and
   referenced from every sentence and every translation that quotes it,
   rather than copied into each, so a retune updates one definition
-  instead of ten. What that reference resolves to depends on the
-  surface: a page that reads protocol configuration shows the current
-  figure, while the public marketing pages read no chain state at all
-  and show the figure shipped with the build — current as of the last
-  deploy, and never to be described to a reader as read live
+  instead of ten. Every rendered page resolves that reference against
+  the protocol's published configuration, so a documented rate follows a
+  retune rather than a release, on the public pages as much as inside
+  the app
+- a page must still render when that configuration cannot be reached,
+  and it renders the figure shipped with the build. That fallback is
+  normal operation, not an error state — a reader arriving mid-redeploy
+  gets a page, not a broken one — but it means a displayed figure has
+  two possible provenances, and the page says which it is rather than
+  presenting both identically. What it must never do is describe the
+  fallback as a failure: for most of this site's life the tooltip said a
+  chain read was "pending or unavailable" on pages where none was ever
+  attempted, which told readers something was broken about a page
+  working exactly as designed
+- the machine-readable copies are the one surface with no runtime, so
+  they resolve every reference at build time and are current as of their
+  build. That is a property of the artefact, not a gap to close: a
+  static file cannot follow a retune, and pretending otherwise by
+  leaving the reference unresolved would serve a crawler a token instead
+  of a number
 - the exception is a page documenting a governance knob's DEFAULT, which
   states a plain number rather than a reference. The two look identical
   on the page and are different claims: "the fee is X%" describes what
@@ -103,6 +118,22 @@ Public-navigation requirements:
   quotes the current rate to a holder of an older loan is telling them
   the wrong number. Documentation that names the fee in the context of
   an individual position must say that the rate is fixed at origination
+- where such a figure offers a provenance affordance, that affordance
+  must name the source it actually has. On a surface that makes no
+  chain read, describing the figure as a fallback awaiting a read —
+  "pending or unavailable" — is wrong twice over: nothing is pending,
+  nothing has failed, and a reader is told a mechanism is broken when
+  the number in front of them is the correct one. The three cases a
+  reader can be in are distinct and must read differently: the figure
+  came from the chain; a read was attempted and has not answered; no
+  read is made on this surface at all
+- a published figure that mirrors a protocol parameter must be
+  checkable against that parameter without anyone remembering to look.
+  Being right by maintenance is not a property the documentation has —
+  it is a property of whoever last edited it. Publication must fail
+  when the two disagree, and the check must fail just as loudly when it
+  cannot locate the parameter it is comparing against, since a check
+  that quietly compares nothing reports success
 - a number that is DERIVED — a worked example computing a fee on a
   stated amount — cannot be referenced that way, so it is recomputed
   whenever the rate it depends on changes, in every language the
@@ -123,6 +154,7 @@ Public-navigation requirements:
 - where a translated section refers the reader to another chapter that does not yet exist in their language, it must say so. Naming a chapter the reader cannot find is worse than omitting the pointer: it reads as a broken document rather than an untranslated one
 - every chapter a documentation page renders must be offered in that page's own contents list. A long-form guide is read by jumping, not by scrolling, so a chapter present in the body but absent from the contents list is one most readers will never find — and the absence is invisible from either the document or the contents list read on its own. This holds for the original as much as for a translation: it is a property of one edition, not a comparison between two
 - a documentation deep link that names a section is only correct if it reaches that section. Landing on the right page at the wrong place is a failure, not a partial success — the reader was told the link goes to something specific, and a long document does not make that self-correcting
+- and a link inside a published document must resolve for the reader on the site, not only for a contributor reading the same file in the repository. The same text is read from both places, so a link written as a path relative to the file satisfies only the second: on the site it is resolved against the page's address instead, asking for something that was never published. Where a document points at material that lives only in the repository, it must give an address that works from anywhere. This failure is silent in a way the anchor rules above are not — the site answers with a page rather than a missing-page error, so the reader sees the application where they expected a document and has no reason to think anything is broken
 - the public VPFI education link from the home page and footer must resolve to `/vpfi`, which is a no-wallet marketing / education route for VPFI utility
 - the connected app's VPFI page is the wallet-bearing `VPFI Vault` / discount surface for depositing externally acquired VPFI, withdrawing free vaulted VPFI, and inspecting fee-discount status; public CTAs should open that app route only when the user chooses to manage vault utility
 - public navigation should stay informational and should not carry wallet UI, wallet-connected banners, or a VPFI action dropdown unless a later design intentionally restores it

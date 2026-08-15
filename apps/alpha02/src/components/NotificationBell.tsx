@@ -88,13 +88,22 @@ export function NotificationBell() {
   // new wallet's feed as an already-open panel and clear its badge without
   // the user ever opening that inbox.
   const [lastSeen, setLastSeen] = useState<SeenCursor | null>(null);
+  // Pulls read-state IN from localStorage on an identity change — the
+  // subscribe half of the rule's own remit, not derived render output.
+  // A `key` on the parent would express the reset but would also unmount
+  // the open panel and the feed query on every chain switch.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLastSeen(address ? loadLastSeen(readChain.chainId, address) : null);
     setOpen(false);
     seenAtOpen.current = null;
   }, [readChain.chainId, address]);
 
-  const rows = data?.notifications ?? [];
+  // The `?? []` fallback is what makes this need a memo (#1520): react-query
+  // hands back a stable `data` between renders, but a fresh literal every
+  // render would change identity anyway, recomputing `unreadCount` and
+  // rebuilding `markAllRead` on every pass.
+  const rows = useMemo(() => data?.notifications ?? [], [data?.notifications]);
 
   // Unread = rows strictly newer than the persisted cursor.
   const unreadCount = useMemo(
@@ -128,7 +137,12 @@ export function NotificationBell() {
   // While the panel is open, mark everything currently loaded as read —
   // re-running when the rows resolve or a later page/refetch brings more,
   // so the badge stays cleared even if the feed arrived after the open.
+  // `markAllRead` PERSISTS the cursor (`storeLastSeen` → localStorage) and
+  // mirrors it into state so the badge repaints. Pushing state out to an
+  // external system is the rule's first sanctioned use; the setState is the
+  // mirror, not the point.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (open) markAllRead();
   }, [open, markAllRead]);
 
@@ -199,6 +213,13 @@ export function NotificationBell() {
               ) : rows.length === 0 ? (
                 <p className="notif-empty">{copy.notifications.empty}</p>
               ) : (
+                /* eslint-disable-next-line react-hooks/refs -- the
+                   open-time cursor snapshot exists precisely so the dots
+                   survive the real cursor advancing. Both writes (the
+                   identity-reset effect, and toggleOpen) set state in the
+                   same pass, so a re-render always follows; state here
+                   would instead re-render the panel mid-open and clear
+                   the dots the snapshot is for. */
                 rows.map((row) => (
                   <NotificationRow
                     key={row.id}

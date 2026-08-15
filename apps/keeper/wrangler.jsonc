@@ -10,8 +10,9 @@
   // snapshot signer (moved from agent in the Stage 3 architectural-
   // rebalance commit; co-located with the existing
   // KEEPER_PRIVATE_KEY consumer so the signing key lives on
-  // exactly one Worker, per staging plan §2). Future scope (per
-  // §7 of the Stage 3 plan): off-chain offer matcher.
+  // exactly one Worker, per staging plan §2). LIVE (per §7 of the Stage 3
+  // plan; this said "Future scope"): the off-chain offer matcher runs
+  // every cron tick and signs matchOffers/matchIntent.
   //
   // Distinct from the public reference keeper-bot at the sibling
   // `vaipakam-keeper-bot` repo (different deploy target, different
@@ -36,13 +37,50 @@
     "crons": ["* * * * *"],
   },
 
-  // D1 binding — the same `vaipakam-alerts-db` database the
-  // indexer + agent Workers also bind. Tables this Worker reads:
-  //   - `thresholds`        (per-user-loan HF bands; written by frontend)
-  //   - `link_codes`        (Telegram handshake codes; agent writes)
-  //   - `notify_state`      (per-user notify dedupe; this Worker writes)
-  //   - `loan_index_*`      (active-loan rows; written by indexer; this
+  // D1 binding — `vaipakam-archive`, the STAGING database for the
+  // 3-Worker split. NOT `vaipakam-alerts-db` (primary/production),
+  // which this comment used to name — that misdirects migration and
+  // incident work at production. The binding below is authoritative.
+  //
+  // All three Workers bind this same database id and all three WRITE
+  // it. A D1 binding is database-scoped, not table-scoped, so the
+  // per-Worker table lists below are a source convention, not an
+  // enforced boundary (#1722). Tables this Worker touches:
+  //   - `user_thresholds`   (per-user-loan HF bands; written by frontend)
+  //   - `telegram_links`    (Telegram handshake links; agent writes — but
+  //                          THIS Worker deletes from them too:
+  //                          `watcher.ts:60` calls `sweepExpiredLinks`,
+  //                          which DELETEs expired rows (`db.ts:303`).
+  //                          "agent writes" alone read as though the keeper
+  //                          only consumed this table)
+  //   - `notify_state`,
+  //     `hf_band_state`     (per-user notify + HF-band dedupe)
+  //   - `pre_grace_notify_state` (pre-grace warning dedupe; read and
+  //                          written by the scheduled `runPreGraceWatcher`)
+  //   - `indexer_cursor`    (READ ONLY — `recordHfBandNotifications`
+  //                          reads the indexer's `notified` watermark and
+  //                          `diamond` tip before materializing rows, so a
+  //                          cron sentinel can't out-sort still-pending
+  //                          event rows. The indexer owns the writes)
+  //   - `notifications`     (HF-band downgrade rows, INSERT OR IGNORE on
+  //                          the dedup key; same call path, reached from
+  //                          the scheduled `runLiquidator`)
+  //   - `loans`             (active-loan rows; written by indexer; this
   //                          Worker reads to enumerate live loans)
+  //   - `offers`            (read by dailyOracleSnapshot; NOT by the
+  //                          matcher, whose discovery is on-chain)
+  //   - `oracle_snapshot_state` (daily snapshot dedupe)
+  //   - `keeper_commitment_*`, `keeper_remit_ack*`, `liquidity_confidence`
+  //                         (commitment scan, remit ack, liquidity probe)
+  //
+  // Names verified against apps/indexer/migrations/. `thresholds`,
+  // `link_codes` and `loan_index_*` were named here and exist under no
+  // migration. The three entries above them were verified the other way
+  // round — from the live call graph rather than from this list — because
+  // a table this Worker touches but does not name is the failure mode a
+  // name check cannot catch: an auditor reading only the binding comment
+  // would conclude the keeper never writes the user-facing `notifications`
+  // inbox, and a migration author would not know to check it.
   // Cross-Worker D1 sharing is the deliberate coupling that lets the
   // three Workers stay independent without a message-bus layer
   // (Stage 3 plan §5).
@@ -70,7 +108,8 @@
   // `--remote` flag.
   //
   // `RPC_ZKEVM` is omitted (Polygon zkEVM out of scope); `RPC_POLYGON`
-  // / `RPC_POLYGON_AMOY` are agent-only. `TG_BOT_TOKEN` must still be
+  // is agent-only. (#1651: this said `RPC_POLYGON_AMOY` was agent-only
+  // too — apps/indexer binds it.) `TG_BOT_TOKEN` must still be
   // created in the store (the `VaipakamBot` token) before deploy.
   "secrets_store_secrets": [
     { "binding": "RPC_BASE",          "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "RPC_BASE" },

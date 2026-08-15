@@ -88,12 +88,16 @@ contract ConfigureRewardReporter is Script {
         // deployments/<chain>/addresses.json with chain-prefixed env
         // fallback. The reward messenger (`VaipakamRewardMessenger`,
         // T-068 CCIP) is recorded under `.rewardMessenger`; an explicit
-        // `REWARD_OAPP_PROXY` env var, when set, overrides the artifact
-        // read — the multi-chain orchestrators pass it so this script
-        // never has to depend on the artifact key staying in step.
+        // `REWARD_MESSENGER_PROXY` env var, when set, overrides the
+        // artifact read — the multi-chain orchestrators pass it so this
+        // script never has to depend on the artifact key staying in step.
+        //
+        // The LayerZero-era name `REWARD_OAPP_PROXY` is still accepted as
+        // a deprecated fallback so an existing operator .env keeps
+        // working; it is consulted only when the current name is unset.
         //
         // Defence-in-depth (PR #272): when BOTH the env var and the
-        // artifact resolve, they must agree. A stale `REWARD_OAPP_PROXY`
+        // artifact resolve, they must agree. A stale override
         // carried over from a prior chain's run in a multi-chain loop —
         // or an operator running `forge script ConfigureRewardReporter`
         // directly with an old env var — would otherwise silently wire
@@ -102,7 +106,12 @@ contract ConfigureRewardReporter is Script {
         // the env at the start of phase_configure, but a direct invoke
         // bypasses that. This mismatch check makes the bug loud.
         address diamond = Deployments.readDiamond();
-        address envOverride = vm.envOr("REWARD_OAPP_PROXY", address(0));
+        address envOverride = vm.envOr("REWARD_MESSENGER_PROXY", address(0));
+        if (envOverride == address(0)) {
+            // Deprecated LayerZero-era name — kept so an operator .env
+            // written before the CCIP rename still resolves.
+            envOverride = vm.envOr("REWARD_OAPP_PROXY", address(0));
+        }
         // Use the optional reader (returns address(0) on miss) so the
         // env-only path doesn't get blocked by a missing artifact.
         address artifactValue = Deployments.tryReadRewardMessenger();
@@ -112,7 +121,7 @@ contract ConfigureRewardReporter is Script {
             // chain's run.
             require(
                 envOverride == artifactValue,
-                "ConfigureRewardReporter: REWARD_OAPP_PROXY env disagrees with .rewardMessenger artifact "
+                "ConfigureRewardReporter: REWARD_MESSENGER_PROXY env disagrees with .rewardMessenger artifact "
                 "(likely stale env from a prior chain's run; unset and rerun, or fix the artifact)"
             );
             rewardMessenger = envOverride;

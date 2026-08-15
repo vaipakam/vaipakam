@@ -3153,6 +3153,11 @@ library LibVaipakam {
         ///      with zero global interest" from "day `D` not yet
         ///      broadcast here".
         mapping(uint256 => bool) knownGlobalSet;
+        // #687-A: a "Bridged Fixed-Rate VPFI Buy" section header stood
+        // here, describing non-Base chains getting a bridged-buy UX via
+        // VPFIBuyAdapter. Its FIELDS were removed with the excision; only
+        // the header survived, so it labelled the sequencer-uptime slots
+        // below it. Removed — there is no protocol VPFI purchase surface.
         // ─── l2 Sequencer Uptime Circuit Breaker ────────────────────────
         // On L2s (Base/Arb/OP/etc.) we must not consume Chainlink prices
         // while the sequencer has been down — users can't submit txs, so
@@ -6351,6 +6356,270 @@ library LibVaipakam {
         //   (CcipCutoverRunbook §8), alongside {clearCompQuote} for any
         //   quote standing under the retired era.
         mapping(uint32 => address) mirrorRewardDeployment;
+        // ─── #1434 P2-w4 — lapse terminals + R6 gate + supplemental ───────
+        // MIRROR-ONLY: the R6a loss observable each lapse terminal writes
+        //   (§5.2 — best figure available at lapse time, NEVER an inline
+        //   scan; overwritable by later accumulator completion;
+        //   non-blocking: state + event, gating nothing).
+        mapping(uint256 => LapsedDayLoss) lapsedDayLoss;
+        // MIRROR-ONLY (§2.5): the short-compensated deadline inputs —
+        //   first compensation credit for the day, and the last
+        //   QUALIFYING one (a supplement that cut the remaining per-side
+        //   shortfall by ≥ 1/4; smaller top-ups credit but never move
+        //   the clock). effectiveDeadline = min(lastQualifying + window,
+        //   first + 3 × window) over the day's FROZEN clock words.
+        mapping(uint256 => uint64) firstCompReceiptAt;
+        mapping(uint256 => uint64) lastQualifyingCompReceiptAt;
+        // MIRROR-ONLY (constraint-19): a legacy (pre-P2 d5) receipt spent
+        //   by {stampLegacyCompensation} — one receipt stamps one day.
+        mapping(bytes32 => bool) legacyReceiptStamped;
+        // BASE-ONLY (§5.1 R6): one compensation reservation in flight per
+        //   chain — the manual/supplemental remitId (0 = none). Set at
+        //   dispatch; cleared by the consumption ACK (w4), return
+        //   settlement (w5), or recovery settlement (w6); a cancel holds
+        //   it.
+        mapping(uint32 => uint256) compensationOutstanding;
+        // BASE-ONLY (§5.4 R6e): the enumerable outstanding-chain index —
+        //   pushed on gate-set, swap-removed on clear. A mapping alone
+        //   cannot back the rotation inventory, and the MUTABLE
+        //   destination list would omit a chain removed from it.
+        uint32[] compensationOutstandingChains;
+        // BASE-ONLY (§2.5): cumulative PER-SIDE compensation funded per
+        //   (chain, day) — original manual remit + every supplement. The
+        //   supplemental bound is per side against the standing quote
+        //   (an aggregate bound admits overfunding one side while
+        //   shorting the other).
+        mapping(uint32 => mapping(uint256 => uint256)) compFundedLender18;
+        mapping(uint32 => mapping(uint256 => uint256)) compFundedBorrower18;
+        // BASE-ONLY (#1656 r2) — the funded record EXISTS for this
+        //   chain-day (manual dispatch / supplemental / migration seed).
+        //   A dedicated flag, never the (0,0) value pair: a severe short
+        //   delivery's ACK reconciliation can legitimately round both
+        //   sides to zero, and that day must stay supplementable.
+        mapping(uint32 => mapping(uint256 => bool)) compFundedRecorded;
+        // MIRROR-ONLY (#1656 r2) — the lapse terminals' ARMING flag: the
+        //   §8 activation precondition (Base's legacy inventory reading
+        //   empty + every delivered legacy receipt stamped) becomes
+        //   enforceable on-chain state instead of ceremony discipline.
+        //   One-shot ADMIN arm; both permissionless terminals refuse
+        //   while false, so an upgrade window's expired days cannot be
+        //   lapsed out from under an unstamped legacy delivery.
+        bool lapseTerminalsArmed;
+        // MIRROR-ONLY (#1656 r11) — how many entries each side's quote
+        //   accumulation walked for the day. The short-lapse scaled arm
+        //   shaves this off the delivered pool before scaling Δq:
+        //   `_entryWindowSplitFrom` floors ONCE over an entry's whole
+        //   window, so the lapsed day's marginal can round UP by ≤1 wei
+        //   independently per covering entry — aggregate settlement is
+        //   bounded by `scaled + count` wei, and only `pool − count` in
+        //   the numerator keeps it ≤ pool. Maintained by the batch
+        //   accumulator from the feature's genesis (no deployment ever
+        //   ran the w3 accumulator without it), zeroed by reset.
+        mapping(uint256 => mapping(uint8 => uint256)) compQuoteEntryCount;
+        // ── #1434 P2-w5 (design §4.2) — the R4 stranded-return recovery ──
+        //
+        // BASE-ONLY — the RECOVERY POSITION pair. `rewardBudgetRecovered`
+        //   accumulates entitlement-bounded credits from authenticated B1
+        //   stranded returns; `rewardBudgetRedispatched` accumulates the
+        //   uncharged re-dispatches drawn from the position. The position
+        //   balance is their difference (dispatch enforces redispatched ≤
+        //   recovered). RECOVERY-POSITION EVIDENCE, never a cap deduction:
+        //   `remaining` reads the gross `rewardBudgetRemittedGlobal` alone
+        //   (#1586 ratified — a recovered parcel's cap charge happened at
+        //   its ORIGINAL dispatch and never repeats).
+        uint256 rewardBudgetRecovered;
+        uint256 rewardBudgetRedispatched;
+        // BASE-ONLY — value delivered by a B1 return ABOVE the receipt's
+        //   remaining entitlement: quarantined token-safe in this
+        //   operator-visible position, never credited to recovery (a
+        //   faulty or compromised mirror could otherwise attach a small
+        //   valid receipt to an arbitrarily large return and mint
+        //   uncharged re-dispatch capacity — a 69M bypass), never
+        //   reverted (the tokens are already at the Diamond; refusing
+        //   the message would strand the whole delivery behind the wire).
+        uint256 strandedReturnOverage;
+        // BASE-ONLY — per-receipt recovered cumulative (keyed remitId,
+        //   era-checked at ingress): the entitlement bound's "already
+        //   recovered" term, so partial/duplicate returns can never
+        //   credit past the reservation's dispatched total.
+        mapping(uint256 => uint256) remitRecoveredForReceipt;
+        // MIRROR-ONLY — lifetime VPFI returned to Base by the R4 stranded
+        //   return (observability twin of `strandedRecoveryReserved`'s
+        //   debits; the reserved sum is the LIVE earmark, this is the
+        //   monotone outflow record).
+        uint256 strandedReturnedCumulative;
+        // BASE-ONLY (#1660 r1) — per-receipt transport shortfall of a B1
+        //   return: the mirror retired its one-shot record at the DECLARED
+        //   amount, so a short actual (bridge loss) leaves value that can
+        //   never re-arrive. Recorded so Base's recovery ledger reconciles
+        //   against the mirror's outflow cumulative from on-chain state,
+        //   and so the residual entitlement is readable as transport loss
+        //   (the R6d loss ceremony's evidence), not as recoverable value.
+        mapping(uint256 => uint256) strandedReturnShortfall;
+        // BASE-ONLY (#1660 r3) - a TERMINAL B1 chunk was observed for
+        //   this receipt (mirror remainder zero): loss-evidence closure
+        //   recomputes on every later chunk (out-of-order transport is
+        //   configured - allowOutOfOrderExecution), and the closure
+        //   unwind (day markers + funded contribution) runs exactly once.
+        mapping(uint256 => bool) strandedReturnTerminalized;
+        // #1659 — sale proceeds held in Diamond custody by `OfferAcceptFacet`
+        //   on the resting-listing accept, consumed by
+        //   `EarlyWithdrawalFacet._completeLoanSaleImpl`'s net settlement so the
+        //   seller's forfeited accrued interest and any rate shortfall are
+        //   deducted from the INCOMING proceeds rather than pulled from the
+        //   seller's wallet (which cannot work when the buyer is the caller).
+        //   Keyed by the UNDERLYING loan id, not the sale offer id. Written and
+        //   consumed inside one atomic accept-then-complete transaction, so a
+        //   non-zero value observed between transactions would be a bug.
+        mapping(uint256 => uint256) saleProceedsEscrow;
+        // ── #1434 P2-w6 (design §5.3/§5.4) — the recovery ceremony ──
+        //
+        // BASE-ONLY — governance-evidenced TERMINAL LOSS recorded against
+        //   a released reservation's stranded value (§5.3: the residue
+        //   neither ceremony-recovered nor still in pool custody). One
+        //   term of the full-custody-resolution identity the R6 gate
+        //   clears on: recovered + terminalLoss == stranded (r.total).
+        mapping(uint256 => uint256) ceremonyTerminalLoss;
+        // BASE-ONLY (#1662 r1) — the ceremony-recovered cumulatives BY
+        //   PROVENANCE component, each bounded by the reservation's own
+        //   dispatched split (fresh ≤ r.fresh, recycled ≤ r.recycled): a
+        //   compensation reservation is fresh-only by construction, so a
+        //   ceremony crediting "recycled" custody for one would relabel
+        //   fresh-provenance value into the bucket's claimable custody —
+        //   the total bound alone cannot see that.
+        mapping(uint256 => uint256) ceremonyFreshRecovered;
+        mapping(uint256 => uint256) ceremonyRecycledRecovered;
+        // BASE-ONLY (#1662 r2) — the per-receipt TERMINAL-LOSS split by
+        //   provenance. Their sum is `ceremonyTerminalLoss` (kept as the
+        //   custody-resolution term); the split exists because the
+        //   RECYCLED half of a loss retires locally-stranded backing
+        //   exactly as a recovery does — the value is gone, so an
+        //   external checker must stop counting it as in-transit.
+        mapping(uint256 => uint256) ceremonyFreshLoss;
+        mapping(uint256 => uint256) ceremonyRecycledLoss;
+        // BASE-ONLY (#1662 r2) — the per-receipt UNCHARGED re-dispatch
+        //   drawn against THIS receipt's recovery credit. The position is
+        //   a pooled balance, but a contradicted receipt may only ever
+        //   have ITS OWN unspent credit clawed: sizing the claw on the
+        //   global balance confiscates other receipts' capacity, which
+        //   they can never re-credit (their per-receipt entitlement is
+        //   already exhausted). Every from-recovery dispatch therefore
+        //   NAMES its source receipt and is bounded by that receipt's
+        //   own unspent credit.
+        mapping(uint256 => uint256) recoveryRedispatchedForReceipt;
+        // BASE-ONLY (#1662 r3) — the per-receipt recovery credit VOIDED by
+        //   a contradicting consumed attestation. Distinct from the
+        //   redispatched counter (that value was legitimately spent; this
+        //   was confiscated), and load-bearing rather than cosmetic: the
+        //   physical claw is bounded by the POOLED balance, so a receipt
+        //   whose contradiction could only be partly absorbed would
+        //   otherwise still read as having unspent credit — and become
+        //   spendable again the moment ANOTHER receipt replenished the
+        //   pool, drawing against backing that was never its own. The
+        //   whole remaining credit is voided at the contradiction,
+        //   whatever the pool could absorb at that instant.
+        mapping(uint256 => uint256) recoveryClawedForReceipt;
+        // BASE-ONLY (#1662 r5, re-documented r7) — every imported tuple
+        //   ever seen, keyed `keccak256(abi.encode(dstChainId,
+        //   oldRemitter, oldRemitId))` — the CHAIN is part of the key.
+        //   Set at IMPORT and never cleared: permanent replay protection,
+        //   one parcel one import. (It is a boolean marker only; the
+        //   fresh-recovery attribution this once pointed at was removed
+        //   in r6 along with the mint that needed it.)
+        mapping(bytes32 => bool) importedTupleSeen;
+        // EVERY CHAIN (#1662 r7, delabelled r11) — the reservation nonce
+        //   at which PER-RECEIPT recovery attribution was armed. Receipts
+        //   at or below it predate attribution: their recovery credit was
+        //   recorded, but the spending and claws against it were only
+        //   ever tracked GLOBALLY, so their per-receipt counters read
+        //   zero and would report already-spent credit as unspent —
+        //   letting a legacy receipt draw against a later receipt's
+        //   backing. Legacy receipts are therefore not drawable at all;
+        //   their value remains reachable through the ordinary charged
+        //   path.
+        //
+        //   NOT Base-only, despite everything it governs being so. The
+        //   refresh arms UNCONDITIONALLY (r11), because a chain's
+        //   canonical status is mutable: a DEMOTED former canonical still
+        //   holds real history, and a canonical-gated arm would skip it
+        //   and could never catch up (the fresh-deploy auto-arm requires a
+        //   zero nonce). So a populated slot on a mirror is EXPECTED, not
+        //   a migration defect — it reads armed at nonce ZERO, which
+        //   constrains nothing, since every receipt id starts at 1 and
+        //   `remitReservationNonce` only advances on canonical-gated
+        //   surfaces. A fresh canonical deploy arms at zero for the same
+        //   reason: no receipts exist yet.
+        uint256 recoveryAttributionArmedAt;
+        bool recoveryAttributionArmed;
+        // BASE-ONLY (§5.4 R6e, reshaped #1662 r1) — the imported
+        //   outstanding-compensation record for a chain after a Base
+        //   deployment rotation: the RAW old-era tuple, not its hash —
+        //   the evidenced settlement books recovered custody against the
+        //   OLD-era remitId as provenance refId. While set, the chain's
+        //   gate is held at the IMPORTED sentinel — OLD-ERA evidence this
+        //   deployment never issued; new-era acks/returns never match it.
+        //   #1662 r7 — the ADMIN evidenced settlement
+        //   ({clearImportedOutstanding}) is the SOLE release. The r1 shape
+        //   also let a mirror re-present its consumed attestation against
+        //   this tuple, but the tuple is operator-supplied and no
+        //   reachable check authenticates it, so that branch was removed
+        //   and old-era acks now fail the era check outright.
+        mapping(uint32 => ImportedOutstanding) importedOutstanding;
+        // BASE-ONLY (#1662 r2) — Σ of the LOCALLY-stranded
+        //   RECYCLED-provenance value that is no longer in transit,
+        //   whether because a recovery settlement returned it to bucket
+        //   custody or because governance recorded it as terminally LOST.
+        //   Capped at `recycleReleasedRemitStrandedCumulative`.
+        //
+        //   Why it exists: the release moved `paidOutRecycled -> stranded`;
+        //   a ceremony moves that same value back into `recycleBucket`
+        //   WITHOUT retiring the stranded record (the composition bound
+        //   needs the un-netted destination term to stay balanced). So the
+        //   coverage allowance `bucket + stranded` would back the same
+        //   VPFI twice forever — permanent phantom headroom on a CRITICAL
+        //   invariant. External checkers net THIS out of the ALLOWANCE
+        //   while reading composition un-netted (mesh-watcher's
+        //   `bucket-coverage` rule).
+        //
+        //   Two exclusions matter. (1) TERMINAL LOSS counts here too: the
+        //   tokens are gone, so leaving them in the allowance lets a dead
+        //   50 back live reservations forever. (2) An IMPORTED old-era
+        //   settlement does NOT count: its stranding happened on the
+        //   RETIRED deployment and was never in this deployment's
+        //   cumulative, so netting it would under-recognise local backing
+        //   and page a false CRITICAL shortfall.
+        //
+        //   #1662 r3 — stored UNCAPPED, capped only where it is PUBLISHED.
+        //   On an in-place-upgraded Diamond the stranded cumulative stays
+        //   zero or partial until the one-time seed ceremony finishes, and
+        //   a resolution recorded in that window would have been saturated
+        //   away against a floor that had not been established yet — with
+        //   the seed's later assignment doing no recomputation, the
+        //   discarded portion would read as still-in-transit forever,
+        //   restoring the exact phantom allowance this counter removes.
+        uint256 recycleReleasedRemitResolvedCumulative;
+    }
+
+    /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
+    ///         best per-side figure available AT THE TERMINAL, written by
+    ///         {lapseZeroedDay} (full loss — nothing was compensated) and
+    ///         {lapseShortCompensatedDay} (the funded-vs-quoted shortfall).
+    ///         `partial` marks a figure taken from an incomplete quote
+    ///         accumulation (or none); the permissionless accumulator may
+    ///         complete afterwards and overwrite it — the record gates
+    ///         NOTHING (R6a ratifies the exact figure may not gate
+    ///         retirement).
+    struct LapsedDayLoss {
+        uint256 lender18;
+        uint256 borrower18;
+        // A figure taken from an incomplete quote accumulation (or none).
+        bool partialFigure;
+        // True when written by the SHORT-compensated terminal (a funded
+        // day that terminated below quote), false for the full lapse.
+        bool shortLapse;
+        // Set once either terminal wrote the record (a genuine zero loss
+        // must be distinguishable from "never lapsed").
+        bool recorded;
     }
 
     /// @notice #1434 P2-w3 — one chain-day's standing compensation quote on
@@ -6534,6 +6803,22 @@ library LibVaipakam {
         uint256 liabilityBorrower18;
     }
 
+    /// @notice #1434 P2-w6 (§5.4 R6e, reshaped #1662 r1) — an imported
+    ///         OLD-ERA outstanding compensation for a chain: the retired
+    ///         deployment's receipt tuple, carried onto the rotated-in
+    ///         deployment so its R6 gate cannot silently forget an
+    ///         unresolved delivery.
+    struct ImportedOutstanding {
+        address oldRemitter;
+        uint256 oldRemitId;
+        // #1662 r6 — no parcel figures are carried: an imported
+        //   settlement mints no re-dispatch capacity, so there is nothing
+        //   for a fabricated figure to inflate. Rounds 4-5 carried them
+        //   (operator-supplied, then read from the predecessor) to bound
+        //   that mint; neither authenticates against a compromised ADMIN,
+        //   who supplies the predecessor address as well.
+    }
+
     /// @notice #1222 M3 B2-d2 — one reward-budget remittance's delivered-
     ///         backing reservation. Reserved (status = Pending) BEFORE the
     ///         CCIP dispatch under a Base-generated `remitId`; annotated with
@@ -6561,6 +6846,50 @@ library LibVaipakam {
         uint256 armedFreshFull;
         uint256 recycledFull;
         uint256[] dayIds;
+        // #1434 P2-w4 (#1656 r1) — the DECLARED per-side split of a
+        // COMPENSATION reservation (zero for ordinary batch remits): the
+        // ACK reconciles `compFunded*` from declared down to received
+        // using these, so a fee-on-transfer shortfall re-opens exactly
+        // the supplemental headroom the short delivery left.
+        uint256 declaredLender18;
+        uint256 declaredBorrower18;
+        // #1656 r3 - finalization was FORCED (operator-evidenced, no
+        // received figure): the FIRST authentic ACK that later arrives
+        // may still run the declared-to-received reconciliation exactly
+        // once, then clears this.
+        bool forcedFinalized;
+        // #1434 P2-w5 (§4.2) - this reservation was funded from the
+        // RECOVERY POSITION (uncharged re-dispatch): no 69M headroom was
+        // charged at dispatch, so no path may ever "restore" headroom
+        // for it; the R6d ceremony reads this to route a physical
+        // recovery back to the position rather than the cap.
+        bool fundedFromRecovery;
+        // #1660 r3 - a CONSUMED acknowledgement (or its operator-forced
+        // equivalent) settled this receipt: the delivered value entered
+        // the mirror's compensated pools as claim backing. A consumed
+        // receipt is NOT B1-recoverable - crediting a return against it
+        // would reuse the original dispatch's cap lineage while the
+        // consumed value still backs claims (a 69M bypass).
+        bool consumedAcked;
+        // #1660 r4 - the declared per-side contribution has been unwound
+        // from `compFunded*` (by release OR by the B1 terminal-return
+        // unwind - whichever ran first). One flag, both writers guarded:
+        // a released reservation's late-returning message must not
+        // subtract the same contribution twice and erase a replacement's
+        // funding.
+        bool declaredUnwound;
+        // #1660 r5 - the ack specifically attested classification
+        // QUARANTINED: the B1 return's eligibility evidence. Distinct
+        // from the absence of `consumedAcked` - a non-consumed ack can
+        // also describe a PROVISIONAL receipt that later confirms as
+        // consumed, and only true quarantine is terminal mirror-side.
+        bool quarantineAcked;
+        // #1660 r9 - the classification-conflict claw ran for this
+        // receipt (one-shot): the ack path is permissionlessly
+        // re-presentable, and a replayed conflict must not repeatedly
+        // move UNRELATED receipts' recovery credit into the overage
+        // quarantine off the global position balance.
+        bool conflictClawed;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered
@@ -6581,6 +6910,15 @@ library LibVaipakam {
         // rotated deployment (receipts key by (remitter, remitId), so
         // different deployments' receipts co-exist).
         address remitter;
+        // #1656 r8 - the arrival's CLASSIFICATION (0 = credited /
+        //   consumed, 1 = quarantined into the stranded-recovery
+        //   reservation, 2 = provisionally credited awaiting its era
+        //   broadcast). The ACK wire carries `consumed = (this == 0)` so
+        //   the R6 gate clears only on CONSUMPTION acks (SS5.1's ratified
+        //   evidence) - a stranded delivery's clearing evidence is the w5
+        //   return, never its own delivery ack. Updated by the confirm /
+        //   demote hook when a provisional credit settles.
+        uint8 classification;
     }
 
     /// @notice Governor PR-3b (#1217 §3.1) — the per-day pool composition

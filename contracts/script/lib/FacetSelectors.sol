@@ -5,6 +5,8 @@ import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
+import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
+import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -174,5 +176,48 @@ library FacetSelectors {
         s[26] = VaipakamNFTFacet.setExternalUrlBase.selector;
         s[27] = VaipakamNFTFacet.setDefaultImage.selector;
         s[28] = VaipakamNFTFacet.getImageURIFor.selector;
+    }
+
+    /// @notice Full external selector surface of {RiskPreviewFacet} (8) —
+    ///         mirrors `DeployDiamond._getRiskPreviewFacetSelectors`.
+    ///
+    /// @dev    #1649. This facet is not itself refreshed for its own sake by the
+    ///         curated scripts; it is here because OTHER facets they refresh
+    ///         cross-call it. `EarlyWithdrawalFacet` (RedeployFacets) and
+    ///         `OfferAcceptFacet` (ReplaceStaleFacets) both route their sale
+    ///         paths through `saleAdmission`, added in #1503. Refreshing either
+    ///         host WITHOUT routing that selector installs sale entry points
+    ///         that cross-call an unrouted selector, so every sale reverts
+    ///         `FunctionDoesNotExist` through the Diamond fallback — new code
+    ///         live and broken. Same class of dependency the #658 note on
+    ///         `ConsolidationFacet` records for the liquidation family.
+    ///
+    ///         Consumers partition this list by live routing (Add the unrouted,
+    ///         Replace the routed), so it is correct against a pre-#1503 diamond
+    ///         and a current one alike.
+    function riskPreview() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
+        s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
+        s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
+        s[3] = RiskPreviewFacet.assertObligationTransferAllowed.selector;
+        s[4] = RiskPreviewFacet.acceptMidTierAckPair.selector;
+        s[5] = RiskPreviewFacet.previewCreatorBlock.selector;
+        s[6] = RiskPreviewFacet.previewIntent.selector;
+        s[7] = RiskPreviewFacet.saleAdmission.selector;
+    }
+
+    /// @notice Full external selector surface of {OfferPreviewFacet} (1).
+    ///
+    /// @dev    #1649. Paired with {riskPreview} for the same reason, one step
+    ///         milder. `ReplaceStaleFacets` refreshes `OfferAcceptFacet`, which
+    ///         after #1503 REFUSES a sale that fails admission. Leaving the
+    ///         preview on stale bytecode does not break routing — it quotes the
+    ///         accept as fine and lets the transaction revert, which is exactly
+    ///         the preview/accept divergence #1503 exists to remove,
+    ///         reintroduced by a partial refresh.
+    function offerPreview() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = OfferPreviewFacet.previewAccept.selector;
     }
 }

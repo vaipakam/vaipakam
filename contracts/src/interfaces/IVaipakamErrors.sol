@@ -386,6 +386,120 @@ interface IVaipakamErrors {
     ///         (its inputs are frozen, so there is nothing to
     ///         re-accumulate — re-DISPATCH is the retry lever).
     error CompQuoteAlreadyDispatched(uint256 dayId);
+
+    /// @notice #1656 r11 — the day's lapse loss is recorded EXACT
+    ///         (conservation proved), so its completed accumulation may
+    ///         not be reset out from under the published record.
+    error CompQuoteResetRefusedExactLoss(uint256 dayId);
+
+    // ── #1434 P2-w5 — the R4 stranded return + recovery position ──
+
+    /// @notice The caller is not the configured return-channel receiver.
+    error OnlyStrandedReturnReceiver(address caller);
+
+    /// @notice The return names a reservation issued by ANOTHER Base
+    ///         deployment (pre-rotation dispatch) — settles via the R6e
+    ///         rotation runbook, never here.
+    error StrandedReturnWrongEra(address remitter);
+
+    /// @notice No reservation exists under this remitId.
+    error StrandedReturnUnknownReservation(uint256 remitId);
+
+    /// @notice The authenticated source chain is not the chain this
+    ///         reservation was dispatched to (Codex #1600 r1 P1 — the
+    ///         chain binding).
+    error StrandedReturnWrongSourceChain(uint32 got, uint32 want);
+
+    /// @notice Wrong token, zero actual, or actual above declared.
+    error StrandedReturnDeliveryInvalid();
+
+    /// @notice #1660 r1 — the named reservation is not a COMPENSATION
+    ///         dispatch (single-day, fresh-only, per-side declared): an
+    ///         ordinary batch reservation's recycled component never
+    ///         charged the lifetime cap, so crediting its total would
+    ///         mint uncharged re-dispatch capacity (a 69M bypass).
+    error StrandedReturnNotCompensation(uint256 remitId);
+
+    /// @notice #1660 r2 — the reported day is not the reservation's own
+    ///         single day: settlement and loss evidence must bind to the
+    ///         authoritative obligation, never a wire-supplied one.
+    error StrandedReturnWrongDay(uint256 got, uint256 want);
+
+    /// @notice #1660 r3 - the receipt was CONSUMED (consumed ack or its
+    ///         forced equivalent): its value backs mirror claims, so a
+    ///         return against it would reuse the dispatch cap lineage.
+    error StrandedReturnConsumedReceipt(uint256 remitId);
+
+    /// @notice #1660 r4 - the return arrived before the receipt's ack:
+    ///         positive NON-consumption evidence (an Acked-non-consumed
+    ///         or Released reservation) is required before any credit,
+    ///         because out-of-order transport could otherwise land a
+    ///         faulty mirror's return ahead of its consumed attestation.
+    ///         Re-executable once the permissionless ack lands.
+    error StrandedReturnAwaitingAck(uint256 remitId, uint8 status);
+
+    /// @notice #1660 r6 - the ack wire's classification word is zero or
+    ///         out of range: zero is the retired generation-1 bool-false
+    ///         shape, refused re-executably rather than misread.
+    error RemitAckClassificationInvalid(uint8 classification);
+
+    // -- #1434 P2-w6 - the recovery ceremony + R6e rotation --
+
+    /// @notice Ceremony records apply to RELEASED reservations only.
+    error CeremonyReservationNotReleased(uint256 remitId);
+
+    /// @notice recovered + terminal loss would pass the reservation's
+    ///         dispatched total - over-recording refused.
+    error CeremonyExceedsStranded(uint256 remitId, uint256 sum, uint256 total);
+
+    /// @notice The Diamond does not hold the value the ceremony claims
+    ///         arrived - a books-only recovery must roll back here.
+    error CeremonyInflowNotBacked(uint256 remitId, uint256 bal, uint256 need);
+
+    /// @notice #1662 r1 — a ceremony component exceeds the reservation's
+    ///         own dispatched provenance split (fresh vs recycled).
+    error CeremonyProvenanceExceeded(
+        uint256 remitId,
+        uint256 component,
+        uint256 bound
+    );
+
+    /// @notice #1662 r2 — an uncharged re-dispatch exceeds the NAMED
+    ///         source receipt's own unspent recovery credit.
+    error RecoveryReceiptCreditInsufficient(
+        uint256 sourceRemitId,
+        uint256 requested,
+        uint256 unspent
+    );
+
+    /// @notice #1662 r2 — the imported tuple names the gate SENTINEL as
+    ///         its old-era remit id (the operator read the retiring
+    ///         deployment's visible gate instead of its imported record).
+    error ImportedTupleIsSentinel();
+
+    /// @notice #1662 r7 — this receipt predates per-receipt recovery
+    ///         attribution, so its unspent figure is not reconstructible
+    ///         and it may not fund an uncharged re-dispatch.
+    error RecoveryReceiptPredatesAttribution(uint256 sourceRemitId);
+
+    /// @notice #1662 r7 — attribution is a one-shot arming.
+    error RecoveryAttributionAlreadyArmed();
+
+    /// @notice #1662 r5 — this tuple was already imported once. One
+    ///         parcel, one import: the gate returns to zero at settlement,
+    ///         so a replay would mint a second attribution.
+    error ImportedTupleAlreadySeen(uint32 dstChainId, uint256 oldRemitId);
+
+    /// @notice Imported tuple names zero or THIS deployment (an own-era
+    ///         reservation needs no import).
+    error ImportedTupleInvalid(address oldRemitter);
+
+    /// @notice No imported marker stands for this chain.
+    error ImportedMarkerMissing(uint32 dstChainId);
+
+    /// @notice A from-recovery dispatch exceeds the recovery position
+    ///         balance (recovered − redispatched).
+    error RecoveryPositionInsufficient(uint256 requested, uint256 available);
     /// @notice The side's conservation sum does not equal the day's folded
     ///         side total — the accumulation has not covered every entry.
     error CompQuoteIncomplete(
@@ -441,6 +555,71 @@ interface IVaipakamErrors {
     ///         deterministically (0,0) again — there is nothing to
     ///         restate.
     error CompQuoteResolvedZeroFinal(uint256 dayId, uint32 chainId);
+    // ─── #1434 P2-w4 — lapse terminals + R6 gate + supplemental ─────────────
+    /// @notice The full-lapse terminal needs a deliberately-zeroed day.
+    error LapseDayNotZeroed(uint256 dayId);
+    /// @notice A compensated day never takes the FULL lapse — its exits
+    ///         are the supplemental top-up or the short-lapse terminal.
+    error LapseDayCompensated(uint256 dayId);
+    /// @notice R1d — no lapse before the day's local interest close ran
+    ///         (a lapse without a fold would retire unfolded demand).
+    error LapseDayLocalCloseMissing(uint256 dayId);
+    /// @notice The day has no frozen clock, or froze under version 0
+    ///         (pre-schedule) — not lapse-eligible; healable by re-broadcast.
+    error LapseDayClockMissing(uint256 dayId);
+    /// @notice The day's frozen expiry has not passed.
+    error LapseDayNotExpired(uint256 dayId, uint256 expiry);
+    /// @notice The day already reached a terminal (lapsed, short-lapsed,
+    ///         or resolved-zero) — terminals are monotone.
+    error LapseDayAlreadyTerminal(uint256 dayId);
+    /// @notice The short-lapse terminal needs a CONFIRMED compensation.
+    error ShortLapseNotCompensated(uint256 dayId);
+    /// @notice The pools cover the standing per-side quotes — nothing is
+    ///         short; the day prices at full Δq already.
+    error ShortLapseNotShort(uint256 dayId);
+    /// @notice §2.5's bounded deadline (min(lastQualifying + window,
+    ///         first + 3×window)) has not passed.
+    error ShortLapseDeadlineNotReached(uint256 dayId, uint256 deadline);
+    /// @notice R6 — one compensation reservation in flight per chain; the
+    ///         standing one must settle (ACK / return / recovery) first.
+    error CompensationGateHeld(uint32 chainId, uint256 outstandingRemitId);
+    /// @notice A supplemental tops up a day a manual remit already CLOSED.
+    error SupplementalDayNotClosed(uint256 dayId, uint32 chainId);
+    /// @notice The closing reservation must be ACKED (value consumed) —
+    ///         for a dead reservation, release is the tool.
+    error SupplementalReservationNotAcked(uint256 remitId, uint8 status);
+    /// @notice Constraint-19 — the legacy stamp needs the day's COMPLETED
+    ///         quote first (the legacy wire carried no per-side split; the
+    ///         stamp cannot invent one).
+    error LegacyStampQuoteMissing(uint256 dayId);
+    /// @notice Constraint-19 — the named receipt does not exist, or was
+    ///         already spent on a day (one receipt stamps one day).
+    error LegacyReceiptUnusable(bytes32 receiptKey);
+    /// @notice Constraint-19 — the day is not stampable: not zeroed,
+    ///         already terminal, or already compensated.
+    error LegacyDayNotStampable(uint256 dayId);
+    /// @notice #1434 P2-w4 (#1656 r1) — a compensated day whose receipt
+    ///         clocks predate the w4 upgrade (both zero) is not
+    ///         short-lapse-eligible until {armShortLapseClock} starts its
+    ///         bounded window — without this, the deadline formula would
+    ///         read one window past the epoch and fire immediately.
+    error ShortLapseClockUnarmed(uint256 dayId);
+    /// @notice The clock armer is one-shot per day.
+    error ShortLapseClockAlreadyArmed(uint256 dayId);
+    /// @notice #1434 P2-w4 (#1656 r1) — the supplemental needs the
+    ///         per-side funded record its bound reads; a pre-w4 funded day
+    ///         has none until the ADMIN seed backfills it.
+    error SupplementalFundedRecordMissing(uint256 dayId, uint32 chainId);
+    /// @notice #1434 P2-w4 (#1656 r1) — the seed's figures must fit the
+    ///         day's recorded scalar funding and the standing quote.
+    error CompFundedSeedInvalid(uint256 dayId, uint32 chainId);
+    /// @notice #1434 P2-w4 (#1656 r2) — the lapse terminals are DARK until
+    ///         the ADMIN arms them (the constraint-19 activation gate,
+    ///         on-chain): arming attests the legacy inventory read empty
+    ///         and every delivered legacy receipt was stamped.
+    error LapseTerminalsNotArmed();
+    /// @notice The terminals arm once.
+    error LapseTerminalsAlreadyArmed();
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by

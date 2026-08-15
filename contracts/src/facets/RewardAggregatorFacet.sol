@@ -880,27 +880,30 @@ contract RewardAggregatorFacet is
      *         question the guard needs to ask, and only `block.chainid`
      *         answers it unconditionally.
      *
-     *         **This view is NOT gated to the canonical deployment, and the
-     *         caller must enforce that context** (Codex #1653 r4 P2). The
+     *         **`onlyCanonical` is a SECOND, different guard** (#1706). The
      *         `block.chainid` check above only refuses to report on the
-     *         chain it is running on; it says nothing about whether this
-     *         Diamond is the canonical one. The selector is cut into every
-     *         deployment (`DeployDiamond.s.sol`), so on a mirror this
-     *         function is callable and will read that mirror's copy of a
-     *         ledger only Base populates — returning an unpopulated
-     *         position that is indistinguishable from a real zero. An
-     *         earlier revision of this comment asserted the surface "only
-     *         runs on the canonical Diamond", which is a deployment
-     *         convention rather than anything the code enforces. Gating the
-     *         view on `isCanonicalRewardChain` would make it enforced, and
-     *         is a behaviour change deliberately out of scope for a
-     *         comment correction.
+     *         chain this Diamond is running on; it says nothing about
+     *         whether this Diamond is the canonical one. The selector is cut
+     *         into every deployment, so before #1706 a mirror could call
+     *         this and read its own unpopulated copy of a ledger only Base
+     *         writes — returning a well-formed position indistinguishable
+     *         from a genuine zero, with no signal that it was meaningless. A
+     *         silent wrong number is worse than a revert for anything
+     *         reading this to make a decision, so a mirror now reverts
+     *         {NotCanonicalRewardChain}.
+     *
+     *         The two guards are not redundant and neither subsumes the
+     *         other: `onlyCanonical` answers "should this deployment be
+     *         answering at all?", the `block.chainid` check answers "is the
+     *         chain being asked about a mirror?". A caller needs both to be
+     *         wrong in different ways before it gets a wrong answer.
      * @param  chainId    The MIRROR chain to inspect.
      * @param  throughDay Inclusive last day of the trailing window.
      */
     function getChainSurplusPosition(uint32 chainId, uint256 throughDay)
         external
         view
+        onlyCanonical
         returns (
             uint256 availRecycled,
             uint256 avgDailyBudget,
@@ -1445,6 +1448,26 @@ contract RewardAggregatorFacet is
      *                               therefore apply the allowance only while
      *                               the role still holds, rather than assuming
      *                               a mirror's total is structurally zero.
+     * @return releasedRemitResolved #1662 r2 — Σ of the LOCALLY-stranded
+     *                               RECYCLED-provenance value that is no
+     *                               longer in transit: returned to bucket
+     *                               custody by a recovery settlement, OR
+     *                               recorded as terminally LOST. The
+     *                               stranded figure above deliberately does
+     *                               NOT retire on either: it is monotone
+     *                               history, and the composition relation
+     *                               needs it un-netted as a destination
+     *                               term. So a checker's coverage ALLOWANCE
+     *                               — and only the allowance — must net
+     *                               this out (`stranded - resolved`), or
+     *                               the same VPFI backs reservations twice
+     *                               forever, and terminally lost tokens go
+     *                               on backing live reservations after
+     *                               there is nothing left. Bounded on-chain
+     *                               by the stranded figure. Excludes
+     *                               IMPORTED old-era settlements, whose
+     *                               stranding was never in this
+     *                               deployment's cumulative.
      */
     function getRecycleCompositionPosition()
         external
@@ -1453,7 +1476,8 @@ contract RewardAggregatorFacet is
             uint256 creditedRaw,
             uint256 releasedRemitStranded,
             bool accountingSeeded,
-            bool isCanonicalRewardChain
+            bool isCanonicalRewardChain,
+            uint256 releasedRemitResolved
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -1461,7 +1485,15 @@ contract RewardAggregatorFacet is
             s.recycleCreditedCumulative,
             s.recycleReleasedRemitStrandedCumulative,
             s.recycleAccountingSeeded || s.recycleCreditedCumulative != 0,
-            s.isCanonicalRewardChain
+            s.isCanonicalRewardChain,
+            // #1662 r3 — capped HERE, not at the write site: the stored
+            // cumulative accrues uncapped so resolutions recorded before
+            // the one-time stranded seed completes are not silently
+            // discarded against a floor that does not exist yet.
+            s.recycleReleasedRemitResolvedCumulative
+                > s.recycleReleasedRemitStrandedCumulative
+                ? s.recycleReleasedRemitStrandedCumulative
+                : s.recycleReleasedRemitResolvedCumulative
         );
     }
 

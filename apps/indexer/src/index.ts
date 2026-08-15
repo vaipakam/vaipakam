@@ -38,16 +38,24 @@
  *
  * NO Telegram webhook, NO Frames, NO quote / scan proxies — those
  * live on apps/agent. NO HF watcher / liquidation — that's apps/keeper.
- * The indexer is operator-key-free.
+ * The indexer is free of on-chain transaction keys (NOT credential-free — it binds OPENSEA_API_KEY, which authorises upstream publication, plus three Alchemy webhook verification keys).
  *
- * **Almost read-only.** As of #335 the Worker accepts ONE write
- * surface — `POST /loans/:loanId/prepay-listing/match-source` —
- * for best-effort analytics breadcrumbs from the dapp. That
- * single endpoint is rate-limited per-IP via the
+ * **Not read-only.** This block used to say the Worker accepts ONE
+ * write surface. There are THREE POST routes below —
+ * `/hooks/chain-event` (HMAC-verified Alchemy webhook ingest),
+ * the signed-offer POST, and
+ * `/loans/:loanId/prepay-listing/match-source` — plus authenticated
+ * outbound publication of borrower-authorised, on-chain-bound Seaport
+ * listings to OpenSea — posted with an EMPTY `0x` signature; the vault's
+ * ERC-1271 check validates an order hash the borrower bound on-chain.
+ *
+ * The match-source endpoint is rate-limited per-IP via the
  * `OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT` binding (matching the
  * defensive posture apps/agent's POST proxies use) and stores
- * non-financial metadata only (no signing keys, no on-chain
- * state writes). The rest of the surface stays public-read.
+ * non-financial metadata only. No on-chain signing key is held here —
+ * but that is not an isolation boundary: the D1 binding is
+ * database-scoped, so writes from this Worker land in tables the
+ * signing Worker reads (#1722). The GET surface stays public-read.
  */
 
 import { handleApiIndex } from './apiIndex';

@@ -248,7 +248,7 @@ export function backingSnapshotUnavailableGap(
       `getRecycleBackingSnapshot() could not be read on chain ${chainId} — ${describeFailure(failure)}.\n\n` +
       `The balance / arrival-reservation tuple is UNKNOWN this tick, so the recovery-reservation backing check did NOT run for this chain (substituting zero would page a false CRITICAL after any real quarantine, and substituting the reservation as zero would silently stop alarming on spent recovery backing).\n\n` +
       (preP2
-        ? `The 7-output snapshot does not exist in this Diamond's CURRENT CUT — either a pre-P2-w2 lens facet, or a partial refresh; selector/shape absence cannot distinguish the two. Refresh the InteractionRewardsLensFacet to close this gap.`
+        ? `The 8-output snapshot does not exist in this Diamond's CURRENT CUT — either a pre-P2-w5 lens facet, or a partial refresh; selector/shape absence cannot distinguish the two. Refresh the InteractionRewardsLensFacet to close this gap.`
         : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
   };
 }
@@ -319,10 +319,13 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
         releasedRemitStranded: bigint;
         accountingSeeded: boolean;
         isCanonicalRewardChain: boolean;
+        releasedRemitResolved: bigint;
       }
     | undefined;
   try {
-    const c = await readView<readonly [bigint, bigint, boolean, boolean]>(
+    const c = await readView<
+      readonly [bigint, bigint, boolean, boolean, bigint]
+    >(
       target.client,
       target.diamond,
       'getRecycleCompositionPosition',
@@ -334,6 +337,7 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
       releasedRemitStranded: c[1],
       accountingSeeded: c[2],
       isCanonicalRewardChain: c[3],
+      releasedRemitResolved: c[4],
     };
   } catch (err) {
     composition = undefined;
@@ -370,11 +374,17 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
   // returns), so an old lens decodes short and the read fails — which is
   // the correct UNKNOWN, not a value.
   let backing:
-    | { vpfiBalance: bigint; strandedRecoveryReserved: bigint }
+    | {
+        vpfiBalance: bigint;
+        strandedRecoveryReserved: bigint;
+        recoveryPositionReserved: bigint;
+      }
     | undefined;
   try {
     const snap = await readView<
-      readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint]
+      readonly [
+        bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint,
+      ]
     >(
       target.client,
       target.diamond,
@@ -383,7 +393,11 @@ async function readLocalLedger(target: ChainTarget): Promise<LocalRead> {
       blockNumber,
       INTERACTION_REWARDS_LENS_ABI,
     );
-    backing = { vpfiBalance: snap[0], strandedRecoveryReserved: snap[6] };
+    backing = {
+      vpfiBalance: snap[0],
+      strandedRecoveryReserved: snap[6],
+      recoveryPositionReserved: snap[7],
+    };
   } catch (err) {
     backing = undefined;
     viewGaps.push(backingSnapshotUnavailableGap(target.chainId, err));

@@ -444,7 +444,7 @@ contract RepatriationAccountingTest is SetupTest {
         _mut().setRecycleBucketRaw(100 ether);
         _mut().setRecycleCreditedCumulativeRaw(0); // unseeded upgrade shape
         _mut().debitRepatriationSurplusRaw(60 ether);
-        (uint256 creditedRaw, , bool seeded, ) =
+        (uint256 creditedRaw, , bool seeded, , ) =
             _agg().getRecycleCompositionPosition();
         assertTrue(seeded, "seed-before-debit stamps the seeded flag");
         assertEq(

@@ -1,7 +1,8 @@
 /**
- * apps/agent Worker entry — proactive notifications + cross-chain
- * monitoring + operator services + public Frames + Telegram bot +
- * diagnostics record.
+ * apps/agent Worker entry — proactive notifications + operator
+ * services + public Frames + Telegram bot + diagnostics record.
+ * (#1651: "cross-chain monitoring" was listed here for the
+ * buy-watchdog #687-A removed.)
  *
  * Stage 3 PR4 of the Worker split (see
  * `docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`). The agent is
@@ -19,9 +20,16 @@
  * `apps/keeper` in the Stage 3 architectural-rebalance commit
  * (matches the staging plan §2 least-privilege contract:
  * `KEEPER_PRIVATE_KEY` lives on exactly one Worker — the keeper).
- * Agent therefore no longer signs ANY on-chain transaction; a
- * compromised agent can produce stale notifications but can't
- * move funds.
+ * Agent therefore no longer signs ANY on-chain transaction, so a
+ * compromised agent can't move funds DIRECTLY. That is the whole
+ * of the guarantee — it is NOT "produces stale notifications", the
+ * claim this comment used to make. This Worker deletes diagnostics
+ * and support records, writes `loans`, notifies real users, holds
+ * `PUSH_CHANNEL_PK` (a real Ethereum key), publishes listings via
+ * `/opensea/listing`, and shares a DATABASE-scoped D1 binding with
+ * the signing keeper — so it can corrupt state the keeper acts on
+ * (#1722). Direct fund movement is the only thing the missing
+ * transaction key rules out.
  *
  * `fetch()`:
  *   POST /tg/webhook                        — Telegram bot handshake
