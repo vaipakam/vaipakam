@@ -61,7 +61,6 @@ const SEVERE_GAP_BLOCKS = 5000;
 /** A watermark snapshot older than this (seconds) is treated as stale —
  *  the RPC probe isn't returning fresh data, so "direct RPC" isn't a
  *  healthy fallback. */
-const WATERMARK_STALE_SEC = 90;
 
 /** Cadence for the popover's live safe-block poll. Only runs while the
  *  popover is open, so the RPC cost is bounded by how long the user
@@ -107,7 +106,8 @@ export function IndexerStatusBadge({ compact }: Props) {
   // alerts, allowances, buy-vpfi, data-rights, claims-without-wallet)
   // where the badge is the only subscriber, the probe runs at 180 s
   // instead of 30 s — 6× less background RPC for no UX cost.
-  const { snapshot: watermarkSnapshot } = useLiveWatermark(watermarkPolicy('cool'));
+  const { snapshot: watermarkSnapshot, status: watermarkStatus } =
+    useLiveWatermark(watermarkPolicy('cool'));
   const { maxFrontier, anyLoading } = useDataFreshness();
   // #757 Phase B — orthogonal "transport" dimension: is the page being PUSHED
   // updates (Live) or relying on the always-on background poll (Polling)?
@@ -179,11 +179,16 @@ export function IndexerStatusBadge({ compact }: Props) {
     watermarkSnapshot && watermarkSnapshot.safeBlock > 0n
       ? Number(watermarkSnapshot.safeBlock)
       : null;
-  const watermarkAgeSec = watermarkSnapshot
-    ? Math.floor(Date.now() / 1000) - watermarkSnapshot.fetchedAt
-    : null;
-  const watermarkHealthy =
-    safeHead !== null && watermarkAgeSec !== null && watermarkAgeSec < WATERMARK_STALE_SEC;
+  // An EXPLICIT failure outranks the age. `WatermarkContext` publishes
+  // `unreachable` the moment a probe fails, and widening the age threshold to
+  // match the cool tier's cadence (630 s) meant the badge would otherwise keep
+  // showing green for minutes after the app already knew RPC was down. Age
+  // answers "is this snapshot too old to trust"; status answers "did the last
+  // probe actually work", and only the second can be known promptly.
+  // Same reasoning as ChainDiagnosticsPanel: `live` means the last probe
+  // succeeded, while an age derived from the carried-over `fetchedAt` measures
+  // how long the chain has been quiet. Only the first is a health signal.
+  const watermarkHealthy = safeHead !== null && watermarkStatus === 'live';
 
   // `maxFrontier` is the freshest block any of this page's data sources
   // (central indexer OR client-side RPC tail-scans) has reached — what
