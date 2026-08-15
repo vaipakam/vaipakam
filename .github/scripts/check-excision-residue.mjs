@@ -742,6 +742,50 @@ function linkClosePositions(text, literalAt) {
   return closes;
 }
 
+/**
+ * A `.jsonc` prefix with its comments removed, for string-parity counting.
+ *
+ * Scans rather than regex-replaces, because the two constructs are mutually
+ * exclusive and only a scan can tell them apart: a `//` inside a string value
+ * is data, and a `"` inside a comment is not a delimiter. Escapes are honoured
+ * so `"\\""` does not read as a close.
+ */
+function jsoncCodeOnly(src) {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (inString) {
+      out += c;
+      if (c === '\\') {
+        i++;
+        continue;
+      }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '/') {
+      const nl = src.indexOf('\n', i);
+      if (nl === -1) break;
+      i = nl;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      const end = src.indexOf('*/', i + 2);
+      if (end === -1) break;
+      i = end + 1;
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
 /** Lower-case, strip every non-alphanumeric. See DEAD_TOKENS. */
 function normalize(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -1177,6 +1221,12 @@ function computeFences(lines) {
       .replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '')
       .replace(/^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/, '');
     const m = /^\s{0,3}(`{3,}|~{3,})/.exec(containerBare);
+    // Everything below reads `containerBare`, not `lines[i]`. Matching on the
+    // stripped line and then validating the closer against the RAW one meant a
+    // quoted fence could open but never close: the slice landed inside the `> `
+    // prefix, the trailing-content test failed, and every later line stayed
+    // classified as fenced — so prose after the quote was treated as literal
+    // and a live mention passed.
     if (m) {
       const marker = m[1][0];
       const len = m[1].length;
@@ -1187,7 +1237,7 @@ function computeFences(lines) {
         delimiter[i] = true;
         continue;
       }
-      if (marker === openMarker && len >= openLen && !lines[i].slice(m[0].length).trim()) {
+      if (marker === openMarker && len >= openLen && !containerBare.slice(m[0].length).trim()) {
         openMarker = '';
         openLen = 0;
         flags[i] = true;
@@ -2423,7 +2473,12 @@ function scanFile(path) {
       // exemption is for string VALUES, so it has to establish that it is in
       // one: the nearest structural quote before the span must be an opening
       // one.
-      const before = text.slice(0, map[a]).replace(/\\[\s\S]/g, '');
+      // Quotes inside a COMMENT cannot open a JSON string, so counting every
+      // raw `"` before the span let one comment flip the parity and hand the
+      // span back to the prose rules — silencing a real configuration
+      // spelling. Comments are stripped with a scan that itself tracks string
+      // state, because a `//` inside a string value is data, not a comment.
+      const before = jsoncCodeOnly(text.slice(0, map[a]));
       const quotes = (before.match(/"/g) || []).length;
       if (quotes % 2 === 0) {
         // Even number of quotes before it ⇒ NOT inside a string literal.
@@ -2526,8 +2581,19 @@ function scanFile(path) {
         // continuation begins with `>` and none of them starts a new block —
         // so treating each marker as a boundary meant a live mention could
         // hide simply by being wrapped inside a quote.
-        if (/^\s{0,3}>/.test(lines[i]) !== /^\s{0,3}>/.test(lines[i - 1] ?? ''))
-          return true;
+        {
+          const quoted = /^\s{0,3}>/.test(lines[i]);
+          const prevQuoted = /^\s{0,3}>/.test(lines[i - 1] ?? '');
+          // ENTERING a quote is a boundary. LEAVING one is only a boundary if
+          // the line is genuinely outside the paragraph: CommonMark allows a
+          // LAZY CONTINUATION, where a wrapped paragraph's later lines drop the
+          // `>` and remain the same block. Round 20 fixed the continuation case
+          // INSIDE the quote and opened this one on the way out — treating the
+          // marker's disappearance as a break let the same wrapped phrase hide
+          // by starting inside a quote and finishing outside it.
+          const lazy = prevQuoted && !quoted && lines[i].trim() !== '';
+          if (quoted !== prevQuoted && !lazy) return true;
+        }
         // Thematic breaks — `***`, `---`, `___`, optionally spaced. A reader
         // sees a horizontal rule dividing two blocks; the walk saw nothing and
         // fused the sentence before it with the one after. Note the overlap
@@ -2704,26 +2770,40 @@ function scanFile(path) {
       // digest. That direction is worse than the miss it fixes: a false BLOCK
       // on an ordinary edit trains people to re-pin without reading, which is
       // the one habit that would make this whole gate worthless.
-      const setext =
+      // The SAME container stripping the heading text gets — looped, because
+      // quotes and list markers nest. A Setext heading nested two list levels
+      // deep has an underline behind two containers, and a single pass did not
+      // reach it, so the heading was classified and its underline was not.
+      let underBare = i + 1 < lines.length ? lines[i + 1] : '';
+      for (;;) {
+        const stripped = underBare
+          .replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '')
+          .replace(/^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/, '');
+        if (stripped === underBare) break;
+        underBare = stripped;
+      }
+      // What remains after the containers come off is CONTENT indentation, and
+      // Markdown caps a Setext underline at three spaces of it. An unbounded
+      // `^\s*` here accepted any depth, which made a `---` indented four or
+      // more spaces below a line of prose — a paragraph continuation, or a
+      // fragment of an indented code block — read as a heading underline. That
+      // is the false-BLOCK direction: an unrelated documentation edit above
+      // such a line moved the ancestry hash and failed the gate. The allowance
+      // is measured from the heading line's own indentation rather than from
+      // column zero, so a heading nested inside a list keeps its underline
+      // while a top-level one gets the plain three-space limit.
+      const headIndent = /^[ \t]*/.exec(lines[i])[0].length;
+      const underMatch =
         isMarkdown && i + 1 < lines.length && !inFence[i + 1] && bare.trim() !== ''
-          ? /^\s*(=|-)\1{2,}\s*$/.exec(
-              // The SAME container stripping the heading text gets. A Setext
-              // heading nested two list levels deep has an underline indented
-              // by four container spaces, and a three-space expression did not
-              // reach it — so the heading was classified and its underline was
-              // not, leaving the substitution path open in exactly the nesting
-              // this round set out to close.
-              lines[i + 1]
-                .replace(/^(?:[ \t]{0,3}>[ \t]?)+/, '')
-                .replace(/^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/, ''),
-            )
+          ? /^([ \t]*)(=|-)\2{2,}[ \t]*$/.exec(underBare)
           : null;
+      const setext = underMatch && underMatch[1].length <= headIndent + 3 ? underMatch : null;
       if (!atx && !bold && !setext) continue;
       // A `**Bold lead-in**` sits below any ATX heading; level 7 orders it so.
       // A Setext heading takes the ATX level its underline corresponds to, so
       // the two syntaxes interleave in one ancestry rather than forming
       // separate ladders.
-      const level = atx ? atx[1].length : setext ? (setext[1] === '=' ? 1 : 2) : 7;
+      const level = atx ? atx[1].length : setext ? (setext[2] === '=' ? 1 : 2) : 7;
       if (level >= deepest) continue;
       deepest = level;
       // The PREFIX-STRIPPED text, so `> ## Current` and `## Current` hash the

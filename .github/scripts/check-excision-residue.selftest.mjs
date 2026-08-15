@@ -744,6 +744,40 @@ const FIXTURES = [
       '- ```\n  Decide what to buy<strong>adapter</strong> selection follows.\n  ```\n',
   },
   {
+    // Round 21 P1. A `"` inside a `.jsonc` COMMENT cannot open a JSON string,
+    // but the structural-quote parity counted it — so a single quote in a
+    // comment above flipped the span out of the string-value branch, the `:`
+    // read as a sentence end, and a real configuration spelling went silent.
+    name: 'jsonc-comment-quote.jsonc',
+    caught: true,
+    why: 'a quote inside a comment does not open a JSON string',
+    body: '{\n  // A 6" clearance is required.\n  "operation":"buy:adapter"\n}\n',
+  },
+  {
+    // Round 21 P1, the mirror of round 20's quote-wrap fix. CommonMark allows
+    // a LAZY CONTINUATION: a wrapped paragraph's later lines may drop the `>`
+    // and remain the same block. Treating the marker's disappearance as a
+    // boundary let the same wrapped phrase hide by starting inside a quote and
+    // finishing outside it.
+    name: 'quote-lazy-continuation.md',
+    caught: true,
+    why: 'a line that drops the `>` can still continue the quoted paragraph',
+    body: '> Operators must deploy the VPFI buy\nadapter before launch.\n',
+  },
+  {
+    // Round 21 P1, the other half of round 20's container fix. The fence was
+    // MATCHED against the container-stripped line but its closer was validated
+    // against the raw one, so the trailing-content slice landed inside the
+    // `> ` prefix and never came back empty. A quoted fence could open and
+    // never close, which left every later line in the file classified as code
+    // — and a live mention below it passed unseen.
+    name: 'quoted-fence-closes.md',
+    caught: true,
+    why: 'a fence opened inside a block quote also closes inside one',
+    body:
+      '> ```\n> sample\n> ```\n\nDecide what to buy<strong>adapter</strong> selection follows.\n',
+  },
+  {
     name: 'link-destination.md',
     caught: true,
     why: 'a link URL sits between two words rendered side by side',
