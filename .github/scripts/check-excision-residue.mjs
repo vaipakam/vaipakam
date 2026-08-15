@@ -1377,10 +1377,18 @@ function normalizeWithMap(text, sourcePath, withMap = true, fencedOffsets = null
     // Every emitted character maps to the reference's START offset, so the
     // digest window and the boundary tests still point at the source text.
     if (decodeRefs && text[i] === '&' && !(fencedOffsets && fencedOffsets(i))) {
-      // HTML consumes a legacy named reference WITHOUT its semicolon, so the
-      // pattern is widened for the HTML family only — CommonMark is stricter,
-      // and applying the loose form to Markdown would decode text a reader sees
-      // literally.
+      // A semicolon is REQUIRED here, including on the HTML path — and that is
+      // a known gap, not the intended end state. HTML does consume a legacy
+      // named reference without one, so `buy&nbsp adapter` renders the retired
+      // phrase and this misses it. Widening the pattern was tried twice in
+      // review and reverted both times: `;?` is greedy, so it matched
+      // `nbspadapter` as the entity name, decoded it to nothing, and ate the
+      // following word — a worse failure than the one it fixed. The sound
+      // version needs HTML's following-character rules and is on #1758.
+      //
+      // An earlier version of this comment described the widening as though it
+      // were implemented. It never was, and a comment claiming behaviour the
+      // code does not have is worse here than no comment at all.
       const ref = /^&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|[a-zA-Z][a-zA-Z0-9]{1,31});/.exec(
         text.slice(i, i + 40),
       );
