@@ -30,13 +30,13 @@ export function useOnchainTokenInfo(
   address: string | null | undefined,
 ): OnchainTokenInfo {
   const publicClient = useDiamondPublicClient();
+  const valid = !!address && ADDRESS_RE.test(address);
   const [info, setInfo] = useState<OnchainTokenInfo>(EMPTY);
 
   useEffect(() => {
-    if (!address || !ADDRESS_RE.test(address)) {
-      setInfo(EMPTY);
-      return;
-    }
+    // Disabled case DERIVED below — see `useAssetTier` for why an effect is
+    // the wrong place to reset it.
+    if (!valid) return;
     let cancelled = false;
     const t = setTimeout(() => {
       const addr = address as Address;
@@ -56,7 +56,7 @@ export function useOnchainTokenInfo(
       cancelled = true;
       clearTimeout(t);
     };
-  }, [address, publicClient]);
+  }, [valid, address, publicClient]);
 
-  return info;
+  return valid ? info : EMPTY;
 }

@@ -28,33 +28,34 @@ export function useAssetLiquidity(
 ): AssetLiquidityStatus {
   const diamondRead = useDiamondRead();
   const valid = !!asset && ADDR_RE.test(asset);
-  const [status, setStatus] = useState<AssetLiquidityStatus>(
-    valid ? 'loading' : 'unknown',
-  );
+  // Result TAGGED with the asset it describes; `'unknown'` (disabled) and
+  // `'loading'` (in flight) are DERIVED. See `useAssetTier` for the reasoning
+  // — this hook has the same shape and the same one-frame stale window.
+  const [result, setResult] = useState<{
+    asset: string;
+    status: 'liquid' | 'illiquid' | 'unknown';
+  } | null>(null);
 
   useEffect(() => {
-    if (!valid) {
-      setStatus('unknown');
-      return;
-    }
+    if (!valid) return;
     let cancelled = false;
-    setStatus('loading');
     (async () => {
+      // `checkLiquidity(address) → uint8` — enum LiquidityStatus:
+      // 0 = Liquid, 1 = Illiquid (fail-closed).
+      let next: 'liquid' | 'illiquid' | 'unknown';
       try {
-        // `checkLiquidity(address) → uint8` — enum LiquidityStatus:
-        // 0 = Liquid, 1 = Illiquid (fail-closed).
-        const res = await diamondRead.checkLiquidity(asset);
-        if (cancelled) return;
-        setStatus(Number(res) === 0 ? 'liquid' : 'illiquid');
+        next = Number(await diamondRead.checkLiquidity(asset)) === 0 ? 'liquid' : 'illiquid';
       } catch {
-        if (cancelled) return;
-        setStatus('unknown');
+        next = 'unknown';
       }
+      if (cancelled) return;
+      setResult({ asset: asset as string, status: next });
     })();
     return () => {
       cancelled = true;
     };
   }, [valid, diamondRead, asset]);
 
-  return status;
+  if (!valid) return 'unknown';
+  return result?.asset === asset ? result.status : 'loading';
 }

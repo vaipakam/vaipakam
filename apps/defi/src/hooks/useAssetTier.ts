@@ -29,36 +29,40 @@ export function useAssetTier(
 ): AssetTierStatus {
   const diamondRead = useDiamondRead();
   const valid = !!asset && ADDR_RE.test(asset);
-  const [status, setStatus] = useState<AssetTierStatus>(valid ? 'loading' : 'unknown');
+  // The result is TAGGED with the asset it describes, and both `'unknown'`
+  // (disabled) and `'loading'` (in flight) are DERIVED from it below rather
+  // than stored. Storing them meant writing state from the effect body, which
+  // paints the PREVIOUS asset's tier for one frame before correcting it — a
+  // caller rendering "Tier 3 → up to 80% LTV" would flash the old asset's
+  // allowance beside the new asset's name. Deriving closes that window in both
+  // directions: a switch to an invalid asset, and a switch back to a valid one,
+  // which the earlier shape left showing a stale tier until the fetch landed.
+  const [result, setResult] = useState<{
+    asset: string;
+    status: 0 | 1 | 2 | 3 | 'unknown';
+  } | null>(null);
 
   useEffect(() => {
-    if (!valid) {
-      setStatus('unknown');
-      return;
-    }
+    if (!valid) return;
     let cancelled = false;
-    setStatus('loading');
     (async () => {
+      // `getEffectiveLiquidityTier(address) → uint8` — fail-closed to 0
+      // (asset(0), not Liquid, etc.); never reverts.
+      let next: 0 | 1 | 2 | 3 | 'unknown';
       try {
-        // `getEffectiveLiquidityTier(address) → uint8` — fail-closed to 0
-        // (asset(0), not Liquid, etc.); never reverts.
-        const res = await diamondRead.getEffectiveLiquidityTier(asset);
-        if (cancelled) return;
-        const n = Number(res);
-        if (n === 0 || n === 1 || n === 2 || n === 3) {
-          setStatus(n as 0 | 1 | 2 | 3);
-        } else {
-          setStatus('unknown');
-        }
+        const n = Number(await diamondRead.getEffectiveLiquidityTier(asset));
+        next = n === 0 || n === 1 || n === 2 || n === 3 ? (n as 0 | 1 | 2 | 3) : 'unknown';
       } catch {
-        if (cancelled) return;
-        setStatus('unknown');
+        next = 'unknown';
       }
+      if (cancelled) return;
+      setResult({ asset: asset as string, status: next });
     })();
     return () => {
       cancelled = true;
     };
   }, [valid, diamondRead, asset]);
 
-  return status;
+  if (!valid) return 'unknown';
+  return result?.asset === asset ? result.status : 'loading';
 }
