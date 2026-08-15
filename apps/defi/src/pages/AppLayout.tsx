@@ -3,7 +3,7 @@ import { NL as NavLink } from "../components/L";
 import {
   isSupportedLocale,
   withLocalePrefix,
-} from "../components/LocaleResolver";
+} from "../i18n/localePath";
 import type { SupportedLocale } from "../i18n/glossary";
 import { useTheme } from "../context/ThemeContext";
 import { useWallet } from "../context/WalletContext";

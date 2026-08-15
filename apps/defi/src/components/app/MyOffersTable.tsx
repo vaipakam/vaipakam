@@ -2,10 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { L as Link } from '../L';
 import { bpsToPercent } from '../../lib/format';
-import {
-  ASSET_TYPE_LABELS,
-  OFFER_TYPE_LABELS,
-} from '../../pages/OfferBook';
+import { ASSET_TYPE_LABELS, OFFER_TYPE_LABELS } from '../../lib/offerData';
 import type { MyOfferRow } from '../../hooks/useMyOffers';
 import { CardInfo } from '../CardInfo';
 import { HoverTip } from '../HoverTip';

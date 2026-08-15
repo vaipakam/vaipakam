@@ -4,7 +4,7 @@ import { InfoTip } from '@vaipakam/ui/InfoTip';
 import { getCardHelp } from '../lib/cardHelp';
 import { useMode } from '../context/ModeContext';
 import { useProtocolConfig } from '../hooks/useProtocolConfig';
-import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
+import { isSupportedLocale, withLocalePrefix } from '../i18n/localePath';
 import type { SupportedLocale } from '../i18n/glossary';
 
 /** Format basis points as a percentage string (100 → "1", 575 → "5.75"). */

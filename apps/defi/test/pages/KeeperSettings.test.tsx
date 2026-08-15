@@ -44,7 +44,8 @@ vi.mock('../../src/context/WalletContext', () => ({
   useWallet: () => walletMock,
 }));
 
-import KeeperSettings, { DEFAULT_KEEPER_ACTIONS } from '../../src/pages/KeeperSettings';
+import KeeperSettings from '../../src/pages/KeeperSettings';
+import { DEFAULT_KEEPER_ACTIONS } from '../../src/lib/keeperActions';
 
 function renderPage(mode: 'basic' | 'advanced' = 'advanced') {
   localStorage.setItem('vaipakam.uiMode', mode);

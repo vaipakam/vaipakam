@@ -13,13 +13,13 @@ import {
   indexedToRawOffer,
   type IndexedOffer,
 } from '../lib/indexerClient';
+import { offerHeadline } from '../lib/offerHeadline';
 import {
   toOfferData,
-  offerHeadline,
+  OFFER_TYPE_LABELS,
   type OfferData,
   type RawOffer,
-  OFFER_TYPE_LABELS,
-} from './OfferBook';
+} from '../lib/offerData';
 import { bpsToPercent, formatDate } from '../lib/format';
 import { AddressDisplay } from '../components/app/AddressDisplay';
 import { OwnOfferMidTierAck } from '../components/app/OwnOfferMidTierAck';

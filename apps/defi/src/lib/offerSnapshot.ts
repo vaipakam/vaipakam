@@ -1,4 +1,4 @@
-import type { OfferData } from '../pages/OfferBook';
+import type { OfferData } from './offerData';
 
 /**
  * localStorage-backed snapshot of offer terms, keyed per

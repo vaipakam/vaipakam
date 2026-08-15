@@ -49,8 +49,8 @@ import type { LucideIcon } from 'lucide-react';
 import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond';
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
-import { useDataFreshness } from '../../context/DataFreshnessContext';
-import { useRealtimePush } from '../../context/RealtimePushContext';
+import { useDataFreshness } from '../../context/dataFreshnessStore';
+import { useRealtimePush } from '../../context/realtimePushStore';
 import './IndexerStatusBadge.css';
 
 /** Block-space thresholds — single source of truth here AND mirrored
