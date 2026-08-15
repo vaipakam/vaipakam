@@ -47,6 +47,14 @@ write. The dialog now requires an on/off setting to say exactly "true" or
 outright rather than quietly choosing "off" for you. Turning a switch off is of
 course still allowed; it just has to be asked for.
 
-Nine tests now cover this dialog, which had none. Run against the previous
-version, four of them fail — one with React's own "too many re-renders" guard,
-which is the freeze reproduced directly, and two on the blank on/off switch.
+An on/off setting is now written exactly one way — `true` or `false`. The
+encoder had historically also accepted `1` and `0`, and a first pass at this
+kept them while the dialog itself required the words, which left the two halves
+disagreeing about what a valid entry is. They agree now, on the stricter side:
+the dialog has always shown these values as `true`/`false` and says so in the
+field, and extra spellings for a switch that turns a live mechanism on and off
+are the same looseness that caused the original fault.
+
+Ten tests now cover this dialog, which had none. Run against the previous
+version, five of them fail — one with React's own "too many re-renders" guard,
+which is the freeze reproduced directly, and the rest on the on/off handling.

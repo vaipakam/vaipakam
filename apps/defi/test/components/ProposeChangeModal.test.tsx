@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ProposeChangeModal } from '../../src/components/admin/ProposeChangeModal';
 import type { KnobMeta } from '../../src/lib/protocolConsoleKnobs';
+import { encodeKnobSetCall } from '../../src/lib/safeDeepLink';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 
 /*
  * #1520 — the modal's arg pre-fill.
@@ -147,6 +149,13 @@ describe('ProposeChangeModal — arg pre-fill', () => {
   });
 });
 
+/** Exercise `coerceArg`'s bool branch, which isn't exported directly.
+ *  `encodeKnobSetCall` coerces every arg BEFORE it encodes, so an unacceptable
+ *  bool throws from the coercion, ahead of any ABI lookup for the stub knob. */
+function coerceBoolForTest(value: string) {
+  return encodeKnobSetCall(boolKnob, DIAMOND_ABI_VIEM, [value]);
+}
+
 /** The Safe address is validated before the args are, so a submit-path test
  *  has to fill it or it never reaches the check under test. */
 function fillSafeAddress() {
@@ -196,6 +205,23 @@ describe('ProposeChangeModal — boolean kill switches', () => {
     expect(
       screen.getByText(/must be exactly "true" or "false"/i),
     ).toBeInTheDocument();
+  });
+
+  it('rejects 1/0, and the encoder agrees — one spelling, no second opinion', () => {
+    // An intermediate fix left the modal requiring true/false while `coerceArg`
+    // still accepted 1/0, so the two layers disagreed about what is valid.
+    // Pinned here because the failure mode of that disagreement is silent: the
+    // stricter layer wins and the looser one's support is dead code that reads
+    // as if it works.
+    renderModal(boolKnob, true);
+    fireEvent.change(argInputs()[0], { target: { value: '1' } });
+    fillSafeAddress();
+    fireEvent.click(screen.getByRole('button', { name: /open in safe/i }));
+    expect(
+      screen.getByText(/must be exactly "true" or "false"/i),
+    ).toBeInTheDocument();
+    expect(() => coerceBoolForTest('1')).toThrow(/Expected "true" or "false"/);
+    expect(() => coerceBoolForTest('0')).toThrow(/Expected "true" or "false"/);
   });
 
   it('accepts an explicit false — turning a switch off is legitimate, blankness is not', () => {
