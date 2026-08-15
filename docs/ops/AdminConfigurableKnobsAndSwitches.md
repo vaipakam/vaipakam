@@ -530,9 +530,20 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
   deploy exports it unconditionally ("whether this chain is the
   canonical itself or a mirror") and `ConfigureRewardReporter` writes
   it, so an audit reading `8453` on Base is reading a correctly
-  configured Diamond, not drift. (The struct comment in `LibVaipakam`
-  still says "zero on Base itself", describing a field the canonical
-  chain does not consult rather than the value it is given.) Note this
+  configured Diamond, not drift. (Three contract comments said "zero on
+  Base" until #1641 corrected them — the struct field, its setter, and a
+  guard in `RewardAggregatorFacet` that cited the wording as its reason
+  for reading `block.chainid`. That guard is still right, for a stronger
+  reason: `baseChainId` is admin-settable, so a check reading it to
+  answer "am I the canonical chain?" could be turned off by a governance
+  write. The canonical MARKER is `isCanonicalRewardChain`, set
+  explicitly — but do not read that as this field being irrelevant:
+  `isMirrorRewardChain` is `!isCanonicalRewardChain && baseChainId != 0`,
+  so a non-canonical deployment that leaves `baseChainId` at zero is not
+  classified as a mirror and receives canonical / single-chain semantics,
+  which reaches mirror claim pricing and the commitment / remittance
+  paths. Zero here is a configuration state with consequences, not an
+  absence.) Note this
   is a chain id, NOT a CCIP chain
   selector: since T-068 the reward flow identifies chains by
   `block.chainid` and leaves selector translation to the messenger. The
@@ -1102,10 +1113,20 @@ inbound delivery rejects a missing handler as `UnknownChannel`.
 
   Individual handlers still need not compare the argument themselves —
   `VaipakamRewardMessenger`, `RewardRemittanceReceiver`,
-  `BuybackRemittanceReceiver` and `VpfiReturnReceiver` do not, the
-  remittance receivers binding deployment identity from the payload
-  instead — and that is now correct rather than a gap, because the check
-  has been done for them one layer up.
+  `BuybackRemittanceReceiver` and `VpfiReturnReceiver` do not — and that
+  is now correct rather than a gap, because the check has been done for
+  them one layer up.
+
+  Do not generalise about what they bind INSTEAD; it differs per
+  receiver, and for one of them per wire generation. `RewardRemittanceReceiver`
+  binds a `remitter` (the sending deployment's own address) but only on
+  the newer payload shapes — the legacy two-field shape is still accepted
+  for delayed and replayed deliveries and carries none.
+  `VpfiReturnReceiver` binds an `issuingBase`, which answers a different
+  question: the receiving side accepts it only if it equals itself.
+  `BuybackRemittanceReceiver` binds nothing — its payload is a declared
+  token cross-checked against the delivered one, which proves the
+  delivery is self-consistent and says nothing about who sent it.
 
 **All four of these settings refuse to be re-pointed in place.** An
 assignment that conflicts with a live value reverts; re-stating a value

@@ -30,8 +30,41 @@ library LibKeeperReward {
 
     /// @dev Phase 0 fixed rate: 1 VPFI (in 18-dec base units) costs
     ///      0.001 ETH = 1e15 wei. So `vpfiUnits = weiAmount * 1e18 /
-    ///      RATE`. Same rate as `cfgVpfiBuyRate` for parity with the
-    ///      buy flow.
+    ///      RATE`. This is the KEEPER-SPECIFIC anchor. It used to be
+    ///      described as matching `cfgVpfiBuyRate` "for parity with the
+    ///      buy flow", but that surface was removed in the #687-A legal
+    ///      excision and there is nothing left to be in parity with
+    ///      (#1641). The constant stays because keeper gas reimbursement
+    ///      still needs a wei→VPFI conversion.
+    ///
+    ///      Two OTHER anchors express the same 1 VPFI = 0.001 ETH
+    ///      relationship for different features, and none of the three
+    ///      reads the others — changing one does NOT move the rest:
+    ///        - `LibVaipakam.VPFI_PER_ETH_FIXED_PHASE1` — the documented
+    ///          Phase-1 peg, dormant since Recycling M1 (#1346). Like this
+    ///          one, a compile-time constant.
+    ///        - `VPFIDiscountFacet.setVPFIDiscountRate` — the fee-discount
+    ///          quote's price anchor, and NOT a constant: it is a
+    ///          governance-settable runtime slot with no built-in value.
+    ///          Storage starts at zero, which `LibVPFIDiscount` reads as
+    ///          "discount disabled" rather than as any rate, and nothing in
+    ///          the code puts 1e15 there — `ConfigureVPFIBuy` requires an
+    ///          explicit `VPFI_BUY_WEI_PER_VPFI` and `DeployTestnetVPFI`
+    ///          defaults to `1e12`. 1e15 is nonetheless the DOCUMENTED
+    ///          value for Base Sepolia: `docs/ops/BaseSepoliaDeploy.md` §4
+    ///          instructs the operator to configure exactly that (Codex
+    ///          #1653 r4 P2).
+    ///
+    ///          Read that as the runbook's value, NOT as the deployed
+    ///          state (Codex #1653 r6 P2). Nothing here verifies the
+    ///          transaction ran, and nothing prevents a later governance
+    ///          write, so what the slot actually holds on any chain is a
+    ///          question only an on-chain read answers. That is precisely
+    ///          why it is the one of the three that can silently diverge:
+    ///          the other two are compile-time constants and cannot.
+    ///      Named here rather than left implicit so an audit or a repeg
+    ///      that starts from this constant sees the other two (Codex
+    ///      #1653 r1 P2).
     uint256 internal constant FIXED_VPFI_PER_ETH_RATE_WEI = 1e15;
     /// @dev Codex round-1 P1 — VPFI scaling factor (18 decimals). The
     ///      conversion `(wei * VPFI_DECIMALS_SCALE) / RATE` produces

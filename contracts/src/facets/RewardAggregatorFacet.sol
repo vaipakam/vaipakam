@@ -865,15 +865,20 @@ contract RewardAggregatorFacet is
      *
      *         **The guard reads `block.chainid`, NOT `s.baseChainId`** (Codex
      *         #1579 r2 P2 — the r1 fix used the latter and did not work).
-     *         `setBaseChainId` documents itself as the destination for
-     *         MIRROR-side reports and **"Zero on Base"**, so on the canonical
-     *         Diamond `s.baseChainId` is legitimately 0 and never matches the
-     *         real chain id — the guard would have passed the very call it
-     *         exists to reject. `RewardReporterFacet` states the rule this
-     *         now follows: *"a chain's own identity is `block.chainid`, read
-     *         directly."* "Is this me?" is exactly the question that guard
-     *         needs to ask, and only `block.chainid` answers it
-     *         unconditionally.
+     *         The reason recorded here was that `setBaseChainId` documented
+     *         itself as **"Zero on Base"**, so `s.baseChainId` would never
+     *         match the real chain id on the canonical Diamond. That
+     *         justification was WRONG: both deploy scripts export
+     *         `BASE_CHAIN_ID` unconditionally, so the canonical Diamond
+     *         stores Base's own chain id and `s.baseChainId` WOULD match
+     *         (#1641). The guard is right anyway, for the general reason
+     *         `RewardReporterFacet` states: *"a chain's own identity is
+     *         `block.chainid`, read directly."* Reading a
+     *         governance-settable field to answer "am I Base?" is the wrong
+     *         question whichever value it happens to hold — an admin write
+     *         could then turn the guard off. "Is this me?" is exactly the
+     *         question the guard needs to ask, and only `block.chainid`
+     *         answers it unconditionally.
      *
      *         **`onlyCanonical` is a SECOND, different guard** (#1706). The
      *         `block.chainid` check above only refuses to report on the
