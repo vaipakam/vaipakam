@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useLayoutEffect, useRef } from 'react';
 import { fetchLoanStats, type LoanStats } from '../lib/indexerClient';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
@@ -44,15 +44,30 @@ export function useLoanStats(): UseLoanStatsResult {
   const [result, setResult] = useState<{ chainId: number; stats: LoanStats | null } | null>(
     null,
   );
-  const [refreshing, setRefreshing] = useState(false);
+  // Scoped to the chain being refreshed, not a bare boolean — a reload started
+  // on chain A must not pin chain B's page in its loading state.
+  const [refreshingChain, setRefreshingChain] = useState<number | null>(null);
+
+  // The chain currently being asked about, readable from an async
+  // continuation. `reload()` has no cancellation of its own, so without this
+  // its completion committed unconditionally: a reload on chain A settling
+  // after the switch to B overwrote B's answer with an A-tagged one, and the
+  // page then read as loading until the next watermark tick restored it.
+  // Layout effect rather than a render-phase ref write, which is unsafe under
+  // concurrent rendering.
+  const activeChain = useRef(chainId);
+  useLayoutEffect(() => {
+    activeChain.current = chainId;
+  }, [chainId]);
 
   const load = useCallback(async () => {
-    setRefreshing(true);
+    const forChain = chainId;
+    setRefreshingChain(forChain);
     try {
-      const next = await fetchLoanStats(chainId).catch(() => null);
-      setResult({ chainId, stats: next });
+      const next = await fetchLoanStats(forChain).catch(() => null);
+      if (forChain === activeChain.current) setResult({ chainId: forChain, stats: next });
     } finally {
-      setRefreshing(false);
+      setRefreshingChain((c) => (c === forChain ? null : c));
     }
   }, [chainId]);
 
@@ -75,7 +90,7 @@ export function useLoanStats(): UseLoanStatsResult {
     stats: matched ? result.stats : null,
     // An explicit `reload()` reports loading even though the question is
     // unchanged; it is called from handlers, never from an effect.
-    loading: refreshing || !matched,
+    loading: refreshingChain === chainId || !matched,
     reload: load,
   };
 }
