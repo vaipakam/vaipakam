@@ -270,7 +270,7 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
   // ── Buy VPFI ──────────────────────────────────────────────────────────
   "buy-vpfi.overview": {
     summary: "cardHelp.buyVpfiOverview",
-    learnMoreHref: `${TOKENOMICS}#3-vpfi-issuance--buy-flow`,
+    learnMoreHref: `${TOKENOMICS}#8-vpfi-acquisition-and-vault-utility`,
   },
   "buy-vpfi.discount-status": {
     summary: "cardHelp.buyVpfiDiscountStatus",
