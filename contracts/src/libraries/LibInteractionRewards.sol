@@ -2590,24 +2590,19 @@ library LibInteractionRewards {
 
         (
             EntrySplit memory toUser,
-            EntrySplit memory toTreasury,
+            ,
             ,
             EntryPriceState memory st
         ) = _entryPriceCore(s, id, e);
         // A zero-value window prices nothing, pays nothing, and — once the
         // cursor covers it — can never grow: there is no clock to run for it.
         if (!st.priced) return (expired, 0, 0);
-        // The EXPIRY credit below uses the RAW (uncapped) split: an expired
-        // reward recycles to the bucket rather than being paid to the side, so
-        // like a forfeit it is exempt from the loan-side cap (Codex #1371 r2).
-        // The EXECUTABLE gate instead tests the pool-capped USER split — what
-        // a claim would actually pay ({_poolCappedPayable}). Slice 2d: the
-        // core prices the REMAINING window, so a part-claimed entry is reaped
-        // for exactly its unsettled days — never a double-credit of days the
-        // walk already paid (which is why the interim part-claimed stopgap
-        // could be deleted rather than refined).
-        EntrySplit memory split_ = st.rawSplit;
-        uint256 freshShare = split_.total - split_.recycled;
+        // #1434 — this core call now serves the CLOCK only, not the credit.
+        // It answers "could the claimant claim right now", which is what the
+        // executable accumulator gates on: `_poolCappedPayable(toUser)` is
+        // what a claim would actually pay. The settlement quantities come from
+        // the day primitive at the end of this function, so the raw split is
+        // no longer read here — an expiry no longer prices itself.
         // Claim-EXECUTABLE gate: the accumulator only advances while the
         // CLAIMANT could actually claim right now. The claim is ATOMIC-
         // AGGREGATE — `claimInteractionRewardsTo` processes ALL of the user's
@@ -2768,93 +2763,137 @@ library LibInteractionRewards {
             return (expired, 0, 0);
         }
 
-        // ALL-OR-NOTHING expiry (Codex #1317): terminalise ONLY if the
-        // entry's FULL fresh share fits the batch's remaining creditable
-        // headroom (`freshHeadroom` = the 69M pool cap AND the recycle-bucket
-        // backing room, minimised per entry by the caller). A PARTIAL credit
-        // would reap the claimant while silently dropping the uncreditable
-        // fresh remainder — so defer the whole entry instead, and RECORD the
-        // block so the countdown pauses and the next touch re-baselines from
-        // a creditable state (never a fresh accrual — the claimant already
-        // served the full window; the defer is a protocol-side crediting
-        // constraint, and the claim path stays open to them throughout).
+        // #1434 — EXPIRY SETTLES THROUGH THE DAY PRIMITIVE.
         //
-        // Codex #1699 r1 P1 — the DELIVERED allowance joins this same
-        // all-or-nothing decision, rather than being charged afterwards.
-        // Terminalising an armed entry the claimant's own walk would have
-        // DEFERRED for missing delivery destroys the entry and credits its
-        // fresh share out of custody held for other obligations; recording
-        // the spend after the fact cannot undo that. Folded into the existing
-        // gate deliberately — a second, separate check could disagree with
-        // this one about whether the entry is creditable.
+        // Everything below used to be computed here: the D1-capped
+        // obligation, the delivered gate, the headroom decision, the credit.
+        // Three review rounds produced three different wrong quantities for
+        // the SAME number (raw; a split that leaves unstamped mirror loans
+        // untrimmed; a claim-path aggregate that is per-USER, chunk-bounded
+        // and loan-side capped). The defect was never the arithmetic — it was
+        // owning a second implementation of settlement.
         //
-        // Only the ARMED portion is bounded (`split_.armedFresh`): an entry's
-        // pre-`D*` fresh predates arming and no remittance funded it, so
-        // bounding the whole `freshShare` would strand ordinary expiries on
-        // every mirror. The existing defer semantics carry over unchanged —
-        // the block is RECORDED so the countdown pauses, and the wait clears
-        // when the next remittance lands.
-        // Codex #1699 r2 P1 — measure against the BATCH-LOCAL allowance the
-        // caller threads and depletes, never the storage figure: the facet
-        // accumulates `rewardBudgetArmedFreshPaid` only after its loop, so a
-        // per-entry storage read is stale for every entry after the first.
-        // Codex #1699 r4 P2 — measure the CAPPED armed obligation, not the raw
-        // one. `split_` is `st.rawSplit`, deliberately PRE-cap because the
-        // forfeit day accrual needs it; but Base remits against the CAPPED
-        // liability the commitment report states. An entry with 1 raw demand
-        // and a 0.4 D1 cap is fully claimable and fully funded at 0.4, so
-        // demanding 1 of delivered allowance defers it forever — nobody owes
-        // the discarded 0.6. Same class as the other round-4 findings:
-        // comparing the bound against a quantity larger than anything a
-        // remittance will fund turns a satisfiable wait into a wedge.
-        // Codex #1699 r5 P2 — derive this from the GROUPED D1 calculation, not
-        // from `_entryPriceCore`. The round-4 fix moved off `st.rawSplit` to
-        // the loan-side-capped split, which is the right idea at the wrong
-        // stage: `_loanSideCapCompute` returns the UNTRIMMED split for
-        // UNSTAMPED loans, and mirror loans are never stamped (it says so
-        // itself — they "are bounded by the D1 (user, side, day) share cap on
-        // their local claim, not here"). So on the very chain this bound
-        // exists for, `cappedArmed` was still the raw figure and the wedge
-        // survived the fix.
+        // `processUserSideDay` already allocates each entry's share WITHIN the
+        // shared D1 ceiling, applies `deliveredCapForDay`, and distinguishes
+        // the two fresh bounds correctly: a 69M shortfall TRUNCATES and
+        // advances (monotone — deferring would livelock), while a DELIVERED
+        // shortfall DEFERS (it grows with every remittance — truncating would
+        // permanently underpay funding merely in flight). `_persistDay` then
+        // records the D1 consumption, so a sibling expiry sees the reduced
+        // headroom instead of being handed the same aggregate.
         //
-        // `_userArmedFreshNeed` is the claim's own grouped, D1-capped figure —
-        // the same quantity the clock gate uses, reached through the
-        // fail-closed lens staticcall so the dry-run engine is not inlined
-        // here a second time (that inlining is what breached EIP-170 in r4).
-        // Clamping rather than substituting keeps a single entry from ever
-        // demanding more than its own raw share when the user holds others.
-        uint256 rawArmed = split_.armedFresh;
-        uint256 groupNeed = _userArmedFreshNeed(s, e.user);
-        uint256 cappedArmed = rawArmed < groupNeed ? rawArmed : groupNeed;
-        bool deliveredShort =
-            cappedArmed != 0 && cappedArmed > deliveredAllowance;
-        if (freshShare > freshHeadroom || deliveredShort) {
+        // `recycleSettlement` states the one way expiry differs from a claim:
+        // the reward recycles to the bucket rather than paying a side, so the
+        // loan-side cap must not bind it (#1371 r2) — the identical rule, and
+        // the identical mechanism, forfeits already use.
+        uint256 d = _shareOfPoolCursorDay(s, id, e);
+        if (d >= e.endDay) return (expired, 0, 0);
+
+        // #1434 — EXPIRY MIRRORS THE CLAIM'S TWO LEGS, not just its walk.
+        //
+        // `claimInteractionRewardsTo` settles an entry-path LEGACY leg plus
+        // the ShareOfPool walk, because the cursor does not represent
+        // pre-cutover days at all: `_shareOfPoolCursorDay` jumps straight to
+        // `armedFrom` for a spanning entry, and with no arming it returns
+        // `startDay` on a day the primitive refuses outright
+        // (`DayCapModeUnsetPostCutover`, deliberately behind the readiness
+        // gate). Routing ALL of expiry through the primitive therefore handled
+        // the armed leg and dropped the legacy one — the primitive owns armed
+        // days, and that domain is narrower than expiry's input.
+        //
+        // A wholly pre-cutover entry carries no armed value, so no D1 group,
+        // no delivered bound and no loan-side question arise: it settles as a
+        // whole, exactly as it always did.
+        if (
+            !_isArmedDay(s, d)
+                || s.dayCapMode[d] != LibVaipakam.CapMode.ShareOfPool
+        ) {
+            EntrySplit memory raw = st.rawSplit;
+            uint256 legacyFresh = raw.total - raw.recycled;
+            if (legacyFresh > freshHeadroom) {
+                s.rewardEntryObsBlocked[id] = true;
+                return (expired, 0, 0);
+            }
+            expired = raw;
+            freshCredited = legacyFresh;
+            e.processed = true;
+            emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
+            return (expired, freshCredited, 0);
+        }
+
+        uint256[] memory set = new uint256[](1);
+        set[0] = id;
+        DryRunState memory ctx = _noDryRun();
+        ctx.recycleSettlement = true;
+        (DayCharge memory charge, DaySlice[] memory slices) = processUserSideDay(
+            e.user,
+            d,
+            set,
+            PoolBudget({
+                fresh: freshHeadroom,
+                recycled: s.recycleBucket,
+                deliveredFresh: deliveredAllowance
+            }),
+            ctx
+        );
+        // A deferred day (delivered shortfall, recycled drought, unready row)
+        // credits nothing and keeps the entry live. RECORD the block so the
+        // countdown pauses and the next touch re-baselines from a creditable
+        // state — the claimant already served the full window, so this is a
+        // protocol-side crediting constraint, never a fresh accrual.
+        if (!charge.advanced) {
             s.rewardEntryObsBlocked[id] = true;
             return (expired, 0, 0);
         }
-        // #1353 (M2 PR-5c) — NO loan-side cap here: an expired reward recycles
-        // to the bucket (it is not emitted to the side), so like a forfeit it is
-        // uncapped — the cap bounds reward PAID TO A USER only (Codex #1371 r2).
-        // Recycling the full amount back into the pool is not over-reward.
-        // Codex #1699 r5 P2 — the CREDIT is capped with the gate, per the
-        // owner's funding decision: a mirror entry is credited only the armed
-        // fresh a remittance actually funds. Gate and credit MUST move
-        // together — gating on the capped figure while crediting the raw one
-        // would spend delivered funding that was never delivered, which is the
-        // double-spend this whole slice exists to stop.
+        // #1434 — ALL-OR-NOTHING SURVIVES, scoped to the DAY.
         //
-        // `expired.armedFresh` deliberately stays RAW. It is the COMMITMENT
-        // the facet retires via `consumeArmedFresh`, and that must retire the
-        // cap-truncated remainder too — under-retiring leaks the difference
-        // and permanently depresses every later day's availability for reward
-        // that can never be drawn. So the two quantities part ways here:
-        // `armedDelivered` is what moved and what charges the delivered bound;
-        // `expired.armedFresh` is what was owed and what retires.
-        expired = split_;
-        freshCredited = freshShare - (rawArmed - cappedArmed);
-        armedDelivered = cappedArmed;
-        e.processed = true;
-        emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
+        // Chunking fixes the ACROSS-days case: unpriced days keep their value
+        // because the cursor advances only over days actually settled. It does
+        // NOT fix the WITHIN-day case. A 69M shortfall deliberately TRUNCATES
+        // and advances (the pool is monotone, so deferring would livelock a
+        // claimant), routing the remainder to `cappedOff` — commitment retired,
+        // no value credited. For a CLAIM that is right: the claimant is paid
+        // what exists and the trimmed tail was never drawable anyway.
+        //
+        // For an EXPIRY it is not. Expiry is not the claimant's own claim; it
+        // REAPS them. Truncating here would destroy the remainder on someone
+        // who never asked to be settled, and unlike a claim there is no
+        // livelock to avoid — the claim path stays open to them throughout, so
+        // deferring costs nothing but a later sweep. That is the rule this
+        // path has always had (`testExpirySweepDefersAtFullFreshExhaustion`,
+        // `testExpiryIsAllOrNothingAtNearExhaustion`), and the unification
+        // keeps it rather than quietly widening what a sweep may discard.
+        if (charge.freshShortfall != 0) {
+            s.rewardEntryObsBlocked[id] = true;
+            return (expired, 0, 0);
+        }
+        // Advances the cursor and sets `processed` at the window's end, so a
+        // long entry reaps ACROSS SWEEPS instead of terminalising on a
+        // 30-day chunk and discarding the rest. All-or-nothing is now
+        // per-priced-chunk, which is what removes that value loss.
+        _persistDay(s, e.user, e.side, d, set, slices);
+
+        // A recycle settlement routes through the TREASURY leg (that is what
+        // `loanSideChargeable == false` selects in `_attributeLegs`); expiry
+        // credits the BUCKET rather than treasury, which is the caller's job.
+        //
+        // COMMITMENT RETIREMENT STAYS RAW: `cappedOff.armedFresh` is the
+        // 69M-truncated remainder that moved no tokens, and its commitment
+        // must still retire or the difference leaks and permanently depresses
+        // every later day's availability. So `armedFresh` (what was OWED,
+        // retired by `consumeArmedFresh`) and `freshCredited` / `armedDelivered`
+        // (what actually MOVED) deliberately differ.
+        expired.recycled = charge.toTreasury.recycled;
+        expired.armedFresh =
+            charge.toTreasury.armedFresh + charge.cappedOff.armedFresh;
+        expired.total = charge.toTreasury.total + charge.cappedOff.armedFresh;
+        freshCredited = charge.toTreasury.armedFresh;
+        // Only an ARMED day draws on delivered funding — the same filter the
+        // walk's paid-side write applies, for the same reason.
+        armedDelivered = _isArmedDay(s, d) ? freshCredited : 0;
+        if (e.processed) {
+            emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
+        }
     }
 
     /// @notice RL-3 — UX view: the entry's horizon state for the
@@ -4574,6 +4613,22 @@ library LibInteractionRewards {
         bool active;
         LoanSideCarry[] loanSide;
         uint256[] setCursors;
+        /// @dev #1434 — this settlement RECYCLES to the bucket rather than
+        ///      paying the side, so the loan-side cap must not bind it.
+        ///
+        ///      Not a dry-run concern despite living here: carried on this
+        ///      struct because it is already the per-call settlement context
+        ///      every pricing site threads, and a field costs no viaIR stack
+        ///      slot where a sixth parameter to {processUserSideDay} would.
+        ///
+        ///      Forfeits already set this implicitly via {_isForfeited}. An
+        ///      EXPIRY is the same case for the same reason (#1371 r2): the
+        ///      reward recycles rather than being emitted to a side, so it is
+        ///      bounded by the D1 `(user, side, day)` ceiling ALONE. Expiry
+        ///      cannot reuse the forfeit predicate itself — a forfeit routes
+        ///      to treasury while an expiry credits the bucket — so it states
+        ///      the shared property directly.
+        bool recycleSettlement;
     }
 
     /// @dev The inert overlay settling callers pass. Internal so the test
@@ -4747,7 +4802,14 @@ library LibInteractionRewards {
             // gone, with its commitment left outstanding. Forfeits are bounded
             // by the D1 `(user, side, day)` ceiling alone.
             EntrySplit memory vs = _splitDayAmount(v, freshDaily, recycledDaily);
-            bool isForfeit = _isForfeited(s, e);
+            // #1434 — an EXPIRY recycles to the bucket exactly as a forfeit
+            // does, so it takes the same treatment for the same stated reason:
+            // the loan-side cap bounds reward PAID TO A USER, and neither is.
+            // Before this, expiry priced itself outside this function and
+            // re-derived the D1 obligation by hand — three rounds of review,
+            // three different wrong quantities. It now asks the one component
+            // that owns the concept.
+            bool isForfeit = _isForfeited(s, e) || dry.recycleSettlement;
             slices[i].loanSideChargeable = !isForfeit;
             if (isForfeit) {
                 cEff[i] = v;

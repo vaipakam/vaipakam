@@ -135,6 +135,7 @@ FACETS=(
   "VaultFactoryFacet"
   "InteractionRewardsFacet"
   "RewardClaimFacet"
+  "RewardHorizonSweepFacet"
   "InteractionRewardsLensFacet"
   "LegalFacet"
   "LoanFacet"

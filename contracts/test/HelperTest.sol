@@ -70,6 +70,7 @@ import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulato
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -1942,7 +1943,7 @@ contract HelperTest {
         // + the RL-3 (#1305) claim-horizon sweep.
         // #1351 slice 2c — the two CLAIM entry points moved to
         // {RewardClaimFacet} (EIP-170).
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](8);
         selectors[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
         selectors[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
@@ -1956,7 +1957,6 @@ contract HelperTest {
         selectors[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         // RL-3 (#1305) — the mutating claim-horizon sweep (its id-keyed read
         // views live on the lens facet).
-        selectors[8] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
         return selectors;
     }
 
@@ -1970,6 +1970,20 @@ contract HelperTest {
         selectors = new bytes4[](2);
         selectors[0] = RewardClaimFacet.claimInteractionRewards.selector;
         selectors[1] = RewardClaimFacet.claimInteractionRewardsTo.selector;
+        return selectors;
+    }
+
+    /// @dev #1434 — the claim-horizon sweep, on its own facet. Expiry settles
+    ///      through the ShareOfPool engine now, and neither InteractionRewards
+    ///      nor RewardClaim had the EIP-170 headroom to host it.
+    function getRewardHorizonSweepFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] =
+            RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
         return selectors;
     }
 

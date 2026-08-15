@@ -15,6 +15,7 @@ import {
     InteractionRewardsLensFacet
 } from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -128,7 +129,7 @@ contract MeshThreeChainE2ETest is Test {
         private
         returns (IDiamondCut.FacetCut[] memory cuts)
     {
-        cuts = new IDiamondCut.FacetCut[](10);
+        cuts = new IDiamondCut.FacetCut[](11);
         cuts[0] = _cut(
             address(new AccessControlFacet()),
             helper.getAccessControlFacetSelectors()
@@ -149,6 +150,11 @@ contract MeshThreeChainE2ETest is Test {
         cuts[5] = _cut(
             address(new RewardClaimFacet()),
             helper.getRewardClaimFacetSelectors()
+        );
+        // #1434 — claim-horizon sweep on its own facet (EIP-170).
+        cuts[10] = _cut(
+            address(new RewardHorizonSweepFacet()),
+            helper.getRewardHorizonSweepFacetSelectors()
         );
         cuts[6] = _cut(
             address(new RewardReporterFacet()),

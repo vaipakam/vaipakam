@@ -137,6 +137,7 @@ import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulato
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -313,6 +314,7 @@ contract SetupTest is Test {
     ProtocolBroadcastFacet protocolBroadcastFacet;
     InteractionRewardsFacet interactionRewardsFacet;
     RewardClaimFacet rewardClaimFacet;
+    RewardHorizonSweepFacet rewardHorizonSweepFacet;
     InteractionRewardsLensFacet interactionRewardsLensFacet;
     RewardAggregatorFacet rewardAggregatorFacet;
     RewardRemittanceFacet rewardRemittanceFacet;
@@ -427,6 +429,7 @@ contract SetupTest is Test {
         protocolBroadcastFacet = new ProtocolBroadcastFacet();
         interactionRewardsFacet = new InteractionRewardsFacet();
         rewardClaimFacet = new RewardClaimFacet();
+        rewardHorizonSweepFacet = new RewardHorizonSweepFacet();
         interactionRewardsLensFacet = new InteractionRewardsLensFacet();
         rewardAggregatorFacet = new RewardAggregatorFacet();
         rewardRemittanceFacet = new RewardRemittanceFacet();
@@ -463,7 +466,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](73);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](74);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -705,6 +708,13 @@ contract SetupTest is Test {
             facetAddress: address(rewardClaimFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRewardClaimFacetSelectors()
+        });
+        // #1434 — the claim-horizon sweep, own facet: expiry settles through
+        // the ShareOfPool engine and neither host had EIP-170 room.
+        cuts[73] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardHorizonSweepFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardHorizonSweepFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

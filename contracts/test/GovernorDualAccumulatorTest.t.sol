@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -87,6 +88,17 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
     function _facet() internal view returns (InteractionRewardsFacet) {
         return InteractionRewardsFacet(address(diamond));
+    }
+
+    /// @dev #1434 — the claim-horizon sweep is hosted on its OWN facet,
+    ///      {RewardHorizonSweepFacet}: once expiry began settling through the
+    ///      ShareOfPool engine, neither InteractionRewardsFacet nor
+    ///      RewardClaimFacet had the EIP-170 headroom to carry it. Same Diamond
+    ///      address and same 4-byte selector throughout — only the facet that
+    ///      serves it moved — so this accessor exists purely to give the test
+    ///      the right compile-time type.
+    function _sweeper() internal view returns (RewardHorizonSweepFacet) {
+        return RewardHorizonSweepFacet(address(diamond));
     }
 
     ///  #1306 follow-up — read-only lens accessor (getters moved off
@@ -184,7 +196,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         while (remaining > 0) {
             uint256 step = remaining < 7 days ? remaining : 7 days;
             vm.warp(vm.getBlockTimestamp() + step);
-            uint256 s = _facet().sweepExpiredInteractionRewards(ids);
+            uint256 s = _sweeper().sweepExpiredInteractionRewards(ids);
             swept += s;
             remaining -= step;
             if (s > 0) break;
@@ -598,7 +610,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 id = _seedEntry(alice, 45, 5, 6);
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
-        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         // Accrue to just under the H + notice threshold, funded throughout.
         _accrueExec(ids, 180 days + 90 days - 7 days);
 
@@ -614,7 +626,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         vm.warp(vm.getBlockTimestamp() + 7 days);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(ids),
+            _sweeper().sweepExpiredInteractionRewards(ids),
             0,
             "near-exhaustion defers the whole entry, never partial-credits"
         );
@@ -626,7 +638,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // fresh share credits and the full armed fresh + recycled commitments
         // retire (no remainder ever dropped).
         _mut().setInteractionPoolPaidOut(0);
-        uint256 swept = _facet().sweepExpiredInteractionRewards(ids);
+        uint256 swept = _sweeper().sweepExpiredInteractionRewards(ids);
         assertApproxEqAbs(
             swept,
             floor5 / 2 + recycled5 / 2,
@@ -666,13 +678,13 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 walked = _seedEntry(alice, 47, 5, 6);
         uint256[] memory one = new uint256[](1);
         one[0] = walked;
-        _facet().sweepExpiredInteractionRewards(one); // stamp the clock
+        _sweeper().sweepExpiredInteractionRewards(one); // stamp the clock
         _accrueExec(one, 180 days + 90 days - 7 days);
         vm.warp(vm.getBlockTimestamp() + 7 days);
         _mut().setInteractionPoolPaidOut(0);
         _mut().setRewardEntryClaimNextDayRaw(walked, 6);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(one),
+            _sweeper().sweepExpiredInteractionRewards(one),
             0,
             "a fully walked entry has no remaining value to reap"
         );
@@ -688,7 +700,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256[] memory pair = new uint256[](2);
         pair[0] = spanning;
         pair[1] = twin;
-        _facet().sweepExpiredInteractionRewards(pair); // stamp both clocks
+        _sweeper().sweepExpiredInteractionRewards(pair); // stamp both clocks
         _accrueExec(pair, 180 days + 90 days - 7 days);
         vm.warp(vm.getBlockTimestamp() + 7 days);
 
@@ -696,8 +708,8 @@ contract GovernorDualAccumulatorTest is SetupTest {
         a[0] = spanning;
         uint256[] memory b = new uint256[](1);
         b[0] = twin;
-        uint256 creditSpanning = _facet().sweepExpiredInteractionRewards(a);
-        uint256 creditTwin = _facet().sweepExpiredInteractionRewards(b);
+        uint256 creditSpanning = _sweeper().sweepExpiredInteractionRewards(a);
+        uint256 creditTwin = _sweeper().sweepExpiredInteractionRewards(b);
         assertGt(creditTwin, 0, "the twin's armed day is genuinely reapable");
         assertEq(
             creditSpanning,
@@ -721,7 +733,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 id = _seedEntry(alice, 50, 5, 6);
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
-        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
 
         // DROUGHT: drain the bucket, then serve MORE than the whole
         // window + notice under heartbeat sweeps.
@@ -736,7 +748,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // there must be NO instant reap — the window has to be re-served.
         _mut().setRecycleBucketRaw(1_000_000 ether);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(ids),
+            _sweeper().sweepExpiredInteractionRewards(ids),
             0,
             "no instant reap after the drought - the clock was paused"
         );
@@ -773,7 +785,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
-        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
 
         _mut().setRecycleBucketRaw(0); // drought
         assertEq(
@@ -783,7 +795,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
         _mut().setRecycleBucketRaw(1_000_000 ether);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(ids),
+            _sweeper().sweepExpiredInteractionRewards(ids),
             0,
             "no instant reap after refill - the clock was paused"
         );
@@ -808,7 +820,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256[] memory ids = new uint256[](2);
         ids[0] = shorter;
         ids[1] = longer;
-        _facet().sweepExpiredInteractionRewards(ids); // stamp the clocks
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clocks
 
         // Bucket covers the shorter's day-5 slice alone, not the joint draw.
         uint256 each = recycled5 / 2;
@@ -827,7 +839,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         vm.warp(vm.getBlockTimestamp() + 7 days);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(ids),
+            _sweeper().sweepExpiredInteractionRewards(ids),
             0,
             "the touch advances, sees the joint drought, and pauses - no reap"
         );
@@ -836,7 +848,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // bucket refilled, the window still has to be finished the honest way.
         _mut().setRecycleBucketRaw(1_000_000 ether);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(ids),
+            _sweeper().sweepExpiredInteractionRewards(ids),
             0,
             "no instant reap after refill - the drought interval was dropped"
         );
@@ -857,7 +869,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256[] memory ids = new uint256[](2);
         ids[0] = a;
         ids[1] = b;
-        _facet().sweepExpiredInteractionRewards(ids); // stamp both clocks
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp both clocks
 
         // Bucket covers each entry's recycled slice alone, NOT both: the
         // joint day defers, the claim reverts, both clocks must pause.
@@ -871,7 +883,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         _mut().setRecycleBucketRaw(1_000_000 ether);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(ids),
+            _sweeper().sweepExpiredInteractionRewards(ids),
             0,
             "no instant reap after the drought - both clocks were paused"
         );
@@ -958,7 +970,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // wedge under test, since both simply credit zero.
         _mut().setInteractionPoolPaidOut(0);
         _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
-        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         _accrueExec(ids, 180 days + 90 days - 7 days);
         vm.warp(vm.getBlockTimestamp() + 7 days);
 
@@ -967,7 +979,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // that never expires anything, which is exactly how an earlier expiry
         // test in this programme turned out to be vacuous.
         uint256 snap = vm.snapshotState();
-        uint256 fullCredit = _facet().sweepExpiredInteractionRewards(ids);
+        uint256 fullCredit = _sweeper().sweepExpiredInteractionRewards(ids);
         uint256 fullCharge = _mut().getArmedFreshPaidRaw();
         vm.revertToState(snap);
         assertGt(fullCredit, 0, "LIVE: the entry reaps when unconstrained");
@@ -985,7 +997,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // Fund EXACTLY the capped liability — what Base would really remit.
         _mut().setArmedFreshLedgerRaw(needCapped, 0);
 
-        uint256 credited = _facet().sweepExpiredInteractionRewards(ids);
+        uint256 credited = _sweeper().sweepExpiredInteractionRewards(ids);
         assertGt(
             credited,
             0,
@@ -1011,7 +1023,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 id = _seedEntry(alice, 46, 5, 6);
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
-        _facet().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         // Accrue to just under the H + notice threshold, funded throughout.
         _accrueExec(ids, 180 days + 90 days - 7 days);
 
@@ -1026,7 +1038,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // share can't be credited (pool exhausted) → deferred, not burned.
         vm.warp(vm.getBlockTimestamp() + 7 days);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(ids),
+            _sweeper().sweepExpiredInteractionRewards(ids),
             0,
             "zero-credit expiry deferred"
         );

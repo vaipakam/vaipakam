@@ -70,6 +70,7 @@ import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol
 // T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -243,6 +244,8 @@ contract DeployDiamond is Script {
         // #1351 slice 2c — the CLAIM entry points live on their own facet so the
         // ShareOfPool day walk (~5.8 KB inlined) has EIP-170 room.
         RewardClaimFacet rewardClaimFacet = new RewardClaimFacet();
+        RewardHorizonSweepFacet rewardHorizonSweepFacet =
+            new RewardHorizonSweepFacet();
         // #1306 follow-up — read-only lens carved off InteractionRewardsFacet
         // for EIP-170 headroom (view/getter surface only, shared storage).
         InteractionRewardsLensFacet interactionRewardsLensFacet =
@@ -285,7 +288,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](72);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](73);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -320,6 +323,13 @@ contract DeployDiamond is Script {
         );
         cuts[25] = _buildCut(address(interactionRewardsFacet), _getInteractionRewardsSelectors());
         cuts[67] = _buildCut(address(rewardClaimFacet), _getRewardClaimFacetSelectors());
+        // #1434 — the claim-horizon sweep on its own facet: it settles through
+        // the ShareOfPool engine now, and neither existing host had room for
+        // it (see RewardHorizonSweepFacet's header for the measured sizes).
+        cuts[72] = _buildCut(
+            address(rewardHorizonSweepFacet),
+            _getRewardHorizonSweepSelectors()
+        );
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -873,6 +883,9 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("protocolBroadcastFacet", address(protocolBroadcastFacet));
         Deployments.writeFacet("interactionRewardsFacet", address(interactionRewardsFacet));
         Deployments.writeFacet("rewardClaimFacet", address(rewardClaimFacet));
+        Deployments.writeFacet(
+            "rewardHorizonSweepFacet", address(rewardHorizonSweepFacet)
+        );
         Deployments.writeFacet("interactionRewardsLensFacet", address(interactionRewardsLensFacet));
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
@@ -952,6 +965,7 @@ contract DeployDiamond is Script {
         console.log("ProtocolBroadcastFacet:", address(protocolBroadcastFacet));
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
         console.log("RewardClaimFacet:", address(rewardClaimFacet));
+        console.log("RewardHorizonSweepFacet:", address(rewardHorizonSweepFacet));
         console.log("InteractionRewardsLensFacet:", address(interactionRewardsLensFacet));
         console.log("FeeEntitlementFacet: ", address(feeEntitlementFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
@@ -2131,7 +2145,7 @@ contract DeployDiamond is Script {
         // #1351 slice 2c — the two CLAIM entry points moved to
         // {RewardClaimFacet} (EIP-170: the ShareOfPool day walk inlines ~5.8 KB
         // and this facet had 481 B of headroom).
-        s = new bytes4[](9);
+        s = new bytes4[](8);
         s[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
         s[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
@@ -2143,9 +2157,6 @@ contract DeployDiamond is Script {
         s[5] = InteractionRewardsFacet.liquidationRewardClose.selector;
         s[6] = InteractionRewardsFacet.terminalRewardClose.selector;
         s[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
-        // RL-3 (#1305) — the mutating claim-horizon sweep (its id-keyed
-        // read views live on the lens facet).
-        s[8] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
     }
 
     /// @dev #1306 follow-up — read-only view/getter surface split off
@@ -2204,6 +2215,18 @@ contract DeployDiamond is Script {
         s = new bytes4[](2);
         s[0] = RewardClaimFacet.claimInteractionRewards.selector;
         s[1] = RewardClaimFacet.claimInteractionRewardsTo.selector;
+    }
+
+    /// @dev #1434 — the claim-horizon sweep. Its own facet because expiry now
+    ///      settles through the ShareOfPool engine and neither existing host
+    ///      had the headroom; the id-keyed read views stay on the lens facet.
+    function _getRewardHorizonSweepSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {

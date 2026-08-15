@@ -76,6 +76,7 @@ import ProtocolBroadcastFacetABI from './ProtocolBroadcastFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
 // #1351 slice 2c — CLAIM entry points split off for EIP-170 headroom.
 import RewardClaimFacetABI from './RewardClaimFacet.json';
+import RewardHorizonSweepFacetABI from './RewardHorizonSweepFacet.json';
 // #1306 follow-up — read-only lens split off InteractionRewardsFacet.
 import InteractionRewardsLensFacetABI from './InteractionRewardsLensFacet.json';
 // #687-A removed the cross-chain VPFI buy contracts (VpfiBuyAdapter /
@@ -175,6 +176,7 @@ export {
   ProtocolBroadcastFacetABI,
   InteractionRewardsFacetABI,
   RewardClaimFacetABI,
+  RewardHorizonSweepFacetABI,
   InteractionRewardsLensFacetABI,
   RewardReporterFacetABI,
   RewardAggregatorFacetABI,
@@ -268,6 +270,7 @@ export const DIAMOND_ABI = [
   ...InteractionRewardsFacetABI,
   // #1351 slice 2c — CLAIM entry points split off for EIP-170 headroom.
   ...RewardClaimFacetABI,
+  ...RewardHorizonSweepFacetABI,
   ...InteractionRewardsLensFacetABI,
   ...RewardReporterFacetABI,
   ...RewardAggregatorFacetABI,

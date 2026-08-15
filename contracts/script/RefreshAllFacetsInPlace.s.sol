@@ -37,6 +37,7 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -185,7 +186,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 72;
+    uint256 internal constant EXPECTED_FACETS = 73;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -905,6 +906,18 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "rewardClaimFacet",
             address(new RewardClaimFacet()),
             _getRewardClaimFacetSelectors()
+        );
+        // #1434 — the claim-horizon sweep moved onto its OWN facet when expiry
+        // was unified onto the ShareOfPool engine. Listed here for exactly the
+        // reason the slice-2c note above records: this script only
+        // Replace/Adds the selectors it lists, so omitting the destination
+        // facet would leave `sweepExpiredInteractionRewards` routed at the old
+        // implementation — the pre-unification expiry, with its hand-derived
+        // D1 obligation — while every other reward facet moved forward.
+        items[72] = Item(
+            "rewardHorizonSweepFacet",
+            address(new RewardHorizonSweepFacet()),
+            _getRewardHorizonSweepSelectors()
         );
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

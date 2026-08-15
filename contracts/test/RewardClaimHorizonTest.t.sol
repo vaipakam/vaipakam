@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
@@ -78,6 +79,17 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         return InteractionRewardsFacet(address(diamond));
     }
 
+    /// @dev #1434 — the claim-horizon sweep is hosted on its OWN facet,
+    ///      {RewardHorizonSweepFacet}: once expiry began settling through the
+    ///      ShareOfPool engine, neither InteractionRewardsFacet nor
+    ///      RewardClaimFacet had the EIP-170 headroom to carry it. Same Diamond
+    ///      address and same 4-byte selector throughout — only the facet that
+    ///      serves it moved — so this accessor exists purely to give the test
+    ///      the right compile-time type.
+    function _sweeper() internal view returns (RewardHorizonSweepFacet) {
+        return RewardHorizonSweepFacet(address(diamond));
+    }
+
     /// @dev #1306 follow-up — read-only countdown view moved to the lens.
     function _lens() internal view returns (InteractionRewardsLensFacet) {
         return InteractionRewardsLensFacet(address(diamond));
@@ -116,7 +128,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         while (remaining > 0) {
             uint256 step = remaining < MAX_GAP ? remaining : MAX_GAP;
             vm.warp(vm.getBlockTimestamp() + step);
-            uint256 s = _facet().sweepExpiredInteractionRewards(_ids(id));
+            uint256 s = _sweeper().sweepExpiredInteractionRewards(_ids(id));
             swept += s;
             remaining -= step;
             if (s > 0) break; // expired — stop warping
@@ -125,13 +137,13 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
 
     function testDarkByDefaultNothingStampsOrExpires() public {
         uint256 id = _seedClaimableEntry();
-        assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
+        assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0);
         (uint64 stamp, uint64 expiry) = _lens().getRewardEntryExpiry(id);
         assertEq(stamp, 0, "dark: no clock");
         assertEq(expiry, 0, "dark: no expiry");
         // A year later, still nothing.
         vm.warp(block.timestamp + 400 days);
-        assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
+        assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0);
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
             LibVaipakam.RewardDelivery.Wallet
@@ -145,7 +157,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         uint256 required = 180 days + NOTICE;
 
         // Touch 1: stamps, accrues nothing yet.
-        assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
+        assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0);
         (uint64 stamp, uint64 expiry) = _lens().getRewardEntryExpiry(id);
         assertGt(stamp, 0, "clock started");
         // Countdown = now + the full required executable time (nothing accrued).
@@ -168,7 +180,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         uint256 bucketBefore = _cfg().getRecycleBucket();
         uint256 poolBefore = _lens().getInteractionPoolPaidOut();
         vm.warp(vm.getBlockTimestamp() + MAX_GAP);
-        uint256 swept = _facet().sweepExpiredInteractionRewards(_ids(id));
+        uint256 swept = _sweeper().sweepExpiredInteractionRewards(_ids(id));
         assertGt(swept, 0, "expires at H + notice of executable time");
         assertEq(
             _cfg().getRecycleBucket() - bucketBefore,
@@ -190,7 +202,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testClaimBeforeExpiryAlwaysWins() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         _accrue(id, 120 days); // partway through the horizon
 
         vm.prank(alice);
@@ -215,7 +227,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         );
         _mut().closeRewardEntryRaw(id, 3);
 
-        assertEq(_facet().sweepExpiredInteractionRewards(_ids(id)), 0);
+        assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0);
         (uint64 stamp, ) = _lens().getRewardEntryExpiry(id);
         assertEq(stamp, 0, "clock never starts while blocked");
 
@@ -223,7 +235,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         _mut().setKnownGlobalDailyInterest(2, 1e18, 1e18, true);
         _mut().setDayCapThreshold18(2, type(uint256).max);
         vm.warp(block.timestamp + 1 days);
-        _facet().sweepExpiredInteractionRewards(_ids(id));
+        _sweeper().sweepExpiredInteractionRewards(_ids(id));
         (stamp, ) = _lens().getRewardEntryExpiry(id);
         assertGt(stamp, 0, "clock starts once claimable");
     }
@@ -235,7 +247,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testUnobservedGapIsNotCreditedAsExecutableTime() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         _accrue(id, 180 days + 60 days); // horizon + 60 of the 90 notice days
 
         // A long UNOBSERVED interval passes with no keeper touch.
@@ -243,7 +255,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         // A single executable sweep after: the 200-day gap > MAX_GAP is NOT
         // credited, so the entry is NOT expirable despite 200 wall-clock days.
         assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _sweeper().sweepExpiredInteractionRewards(_ids(id)),
             0,
             "unobserved gap over the bound is not credited; no premature expiry"
         );
@@ -261,21 +273,21 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testMaxObservationGapBoundary() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         // Accrue the whole horizon, then all but MAX_GAP of the notice.
         _accrue(id, 180 days + NOTICE - MAX_GAP);
 
         // A gap just OVER the bound does not credit → still not expirable.
         vm.warp(vm.getBlockTimestamp() + MAX_GAP + 1);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _sweeper().sweepExpiredInteractionRewards(_ids(id)),
             0,
             "gap over the bound is dropped"
         );
         // A gap exactly AT the bound credits → crosses the threshold, expires.
         vm.warp(vm.getBlockTimestamp() + MAX_GAP);
         assertGt(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _sweeper().sweepExpiredInteractionRewards(_ids(id)),
             0,
             "gap at the bound is credited and completes the window"
         );
@@ -287,13 +299,13 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
 
         // Remittance outage: the chain cannot pay the claim → no stamp.
         deal(address(vpfi), address(diamond), 0);
-        _facet().sweepExpiredInteractionRewards(_ids(id));
+        _sweeper().sweepExpiredInteractionRewards(_ids(id));
         (uint64 stamp, ) = _lens().getRewardEntryExpiry(id);
         assertEq(stamp, 0, "no clock while the chain cannot pay");
 
         // Funding arrives → the accumulator starts here.
         deal(address(vpfi), address(diamond), DIAMOND_SEED);
-        _facet().sweepExpiredInteractionRewards(_ids(id));
+        _sweeper().sweepExpiredInteractionRewards(_ids(id));
         _accrue(id, 180 days + 60 days); // horizon + 60 notice days
 
         // Mid-notice outage: touches during it credit nothing; recovery does
@@ -302,7 +314,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         assertEq(_accrue(id, 60 days), 0, "unfunded touches never accrue");
         deal(address(vpfi), address(diamond), DIAMOND_SEED);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _sweeper().sweepExpiredInteractionRewards(_ids(id)),
             0,
             "recovery alone never expires"
         );
@@ -321,13 +333,13 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
 
         // Flagged owner: the claim path rejects them → clock never starts.
         oracle.setFlagged(alice, true);
-        _facet().sweepExpiredInteractionRewards(_ids(id));
+        _sweeper().sweepExpiredInteractionRewards(_ids(id));
         (uint64 stamp, ) = _lens().getRewardEntryExpiry(id);
         assertEq(stamp, 0, "no clock while the owner is sanctioned");
 
         // Delisted: the accumulator starts and accrues.
         oracle.setFlagged(alice, false);
-        _facet().sweepExpiredInteractionRewards(_ids(id));
+        _sweeper().sweepExpiredInteractionRewards(_ids(id));
         _accrue(id, 180 days + 60 days);
 
         // Re-flagged mid-notice: sanctioned touches credit nothing.
@@ -345,7 +357,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testReconfigurationReEarnsExecutableNotice() public {
         _cfg().setRewardClaimHorizonDays(365);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         // Accrue 300 executable days — inside the 365-day horizon phase.
         _accrue(id, 300 days);
 
@@ -368,7 +380,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testDarkResetReEarnsNotice() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         // Accrue the ENTIRE window — the entry is at the brink of expiry.
         _accrue(id, 180 days + NOTICE - MAX_GAP);
 
@@ -395,17 +407,17 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testObservedShortOutageIsNotCredited() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         _accrue(id, 180 days + 50 days); // elapsed ≈ 230, needs 40 more
 
         // Short observed outage: keeper sees non-executable, then recovery
         // within the max-gap bound (total 6 days < 7).
         vm.warp(vm.getBlockTimestamp() + 3 days);
         deal(address(vpfi), address(diamond), 0);
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // observed block
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // observed block
         deal(address(vpfi), address(diamond), DIAMOND_SEED);
         vm.warp(vm.getBlockTimestamp() + 3 days);
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // recovery re-baseline
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // recovery re-baseline
 
         // The FULL 40 executable days are still required: 37 is not enough
         // (would be, at 34, had the 6-day observed outage been credited).
@@ -423,7 +435,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testCountdownIncludesPendingHeartbeatGap() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         _accrue(id, 180 days + NOTICE - MAX_GAP); // elapsed ≈ required − 7
 
         // Exactly a max-gap later: a sweep now would credit the pending 7
@@ -436,7 +448,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
             "view credits the pending heartbeat gap"
         );
         assertGt(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _sweeper().sweepExpiredInteractionRewards(_ids(id)),
             0,
             "and a sweep indeed removes it now"
         );
@@ -449,12 +461,12 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testSameBlockDoubleRetuneReEarnsNotice() public {
         _cfg().setRewardClaimHorizonDays(365);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         _accrue(id, 300 days); // elapsed ≈ 300, inside the 365 horizon
 
         // retune1 → reconcile (caps 300→250) → retune2, all same block.
         _cfg().setRewardClaimHorizonDays(250);
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // reconcile to 250
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // reconcile to 250
         _cfg().setRewardClaimHorizonDays(180);
 
         // Under a non-monotonic epoch the second retune would be a no-op and
@@ -479,7 +491,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testExpiryNeverRevertsOnBucketBacking() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         _accrue(id, 180 days + NOTICE - MAX_GAP); // to just under threshold
 
         // Label the ENTIRE Diamond balance as bucket ⇒ zero backing room for
@@ -488,7 +500,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         _mut().setRecycleBucketRaw(vpfi.balanceOf(address(diamond)));
         vm.warp(vm.getBlockTimestamp() + MAX_GAP);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _sweeper().sweepExpiredInteractionRewards(_ids(id)),
             0,
             "no revert at zero backing - deferred, not reverted"
         );
@@ -511,7 +523,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         MockSanctionsList oracle = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         _accrue(id, 180 days + NOTICE - MAX_GAP); // to just under threshold
 
         // A max-gap passes and the owner is sanctioned, with NO keeper touch —
@@ -544,7 +556,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testProcessedEntryHasNoCountdown() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         _accrue(id, 60 days);
 
         (, uint64 liveExpiry) = _lens().getRewardEntryExpiry(id);
@@ -565,7 +577,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testCountdownPausesAtPoolExhaustion() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry(); // all-fresh entry
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         _accrue(id, 180 days + NOTICE - MAX_GAP); // to just under threshold
 
         // Exhaust the 69M fresh pool with NO keeper touch (so only the VIEW
@@ -601,7 +613,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
     function testAccrualPausesWhenFullClaimExceedsBalance() public {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
         (uint256 fullClaim, , ) = _lens().previewInteractionRewards(alice);
         assertGt(fullClaim, 1, "entry has a claimable amount");
 
@@ -651,7 +663,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         uint256[] memory both = new uint256[](2);
         both[0] = idA;
         both[1] = idB;
-        _facet().sweepExpiredInteractionRewards(both);
+        _sweeper().sweepExpiredInteractionRewards(both);
         (uint256 aggregate, , ) = _lens().previewInteractionRewards(alice);
         assertGt(aggregate, 1, "user has an aggregate claim");
 
@@ -710,7 +722,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         // (not just the swept entry's), so idB — which no keeper has swept —
         // is now resolvable and counted (the xkk fix). The aggregate jumps to
         // include B's ~1000x value.
-        _facet().sweepExpiredInteractionRewards(_ids(idA));
+        _sweeper().sweepExpiredInteractionRewards(_ids(idA));
         (uint256 aggFull, , ) = _lens().previewInteractionRewards(alice);
         assertGt(aggFull, pre + 1000e18, "unswept idB is now counted");
 
@@ -751,7 +763,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         uint256[] memory both = new uint256[](2);
         both[0] = idA;
         both[1] = idF;
-        _facet().sweepExpiredInteractionRewards(both);
+        _sweeper().sweepExpiredInteractionRewards(both);
         (uint256 payout, , ) = _lens().previewInteractionRewards(alice);
         assertGt(payout, 0, "A previews non-zero");
 
@@ -801,7 +813,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 required = 180 days + NOTICE;
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
 
         // Accrue to five days under the threshold.
         assertEq(_accrue(id, required - 5 days), 0, "just under threshold");
@@ -818,7 +830,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         // wall time elapsed.
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         assertEq(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _sweeper().sweepExpiredInteractionRewards(_ids(id)),
             0,
             "the paused span is not credited as executable time"
         );
@@ -840,7 +852,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 required = 180 days + NOTICE;
         uint256 id = _seedClaimableEntry();
-        _facet().sweepExpiredInteractionRewards(_ids(id)); // stamp
+        _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
 
         // Accrue to exactly one heartbeat under the threshold.
         assertEq(_accrue(id, required - MAX_GAP), 0, "one gap under threshold");
@@ -851,7 +863,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         AdminFacet(address(diamond)).unpause();
         vm.warp(vm.getBlockTimestamp() + MAX_GAP);
         assertGt(
-            _facet().sweepExpiredInteractionRewards(_ids(id)),
+            _sweeper().sweepExpiredInteractionRewards(_ids(id)),
             0,
             "no-op unpause drops nothing; the final interval expires the entry"
         );
