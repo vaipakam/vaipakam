@@ -2622,6 +2622,15 @@ function scanFile(path) {
         // the prose either side of it into a mention that no reader sees.
         if (fenceDelimiter[i]) return true;
         if (inFence[i]) continue;
+        // A BLANK QUOTED LINE is a paragraph break. `>` with nothing after it
+        // ends the quote's paragraph exactly as an empty line ends an
+        // unquoted one, but the blank-line test above works on the raw span
+        // and `>` is not empty text, while the depth test below sees no
+        // change. So two paragraphs inside one quote fused into a phrase no
+        // reader sees — a false BLOCK on a clean document. Round 20 opened
+        // this when it stopped treating every quoted line as a boundary; the
+        // case had been covered by accident until then.
+        if (quoteDepth(lines[i]) > 0 && stripContainers(lines[i]).trim() === '') return true;
         // `#` alone on a line is a valid EMPTY heading — micromark renders it
         // as `<h1></h1>` — so end-of-line closes the marker just as whitespace
         // does. Requiring whitespace missed it and fused the blocks either

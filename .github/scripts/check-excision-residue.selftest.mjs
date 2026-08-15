@@ -744,6 +744,18 @@ const FIXTURES = [
       '- ```\n  Decide what to buy<strong>adapter</strong> selection follows.\n  ```\n',
   },
   {
+    // Found by adversarial self-review after round 22, not by a reviewer. `>`
+    // with nothing after it ends the quote's paragraph exactly as an empty
+    // line ends an unquoted one — but the raw-span blank-line test sees `>`
+    // as non-empty and the depth test sees no change, so two paragraphs in
+    // one quote fused. Round 20 opened this when it stopped treating every
+    // quoted line as a boundary; until then it was covered by accident.
+    name: 'quote-blank-line.md',
+    caught: false,
+    why: 'a `>` line with no content is a paragraph break inside the quote',
+    body: '> Decide what to buy\n>\n> Adapter selection follows.\n',
+  },
+  {
     // Round 22 P1, accepted in HALF. CommonMark allows a Setext underline of
     // ONE or more characters; requiring three missed the single-character
     // form, fusing the paragraphs either side of a heading. Only the `=` form
