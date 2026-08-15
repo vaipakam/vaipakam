@@ -24,7 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { deflateSync } from 'node:zlib';
+import { crc32, deflateRawSync, deflateSync } from 'node:zlib';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
@@ -98,6 +98,70 @@ const FIXTURES = [
     // rules. My first version of this fixture asserted otherwise and failed,
     // correctly. What this pins is that the scan terminates and invents nothing.
     body: 'Docs ' + ']('.repeat(2000) + ' notes.\n',
+  },
+  {
+    // Round 8 P1. A real DOCX: ZIP of deflated XML. The sentence exists only
+    // inside the compressed part, so reading the container's bytes saw nothing
+    // and the file passed a gate claiming whole-tree coverage. Built here with
+    // `deflateRawSync` rather than committed as a binary blob, so the fixture
+    // is reviewable as source.
+    name: 'guidance.docx',
+    caught: true,
+    why: 'a DOCX paragraph naming the retired surface must be read, not skipped',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>' +
+          'Operators must deploy the VPFI buy adapter before launch.' +
+          '</w:t></w:r></w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
+    // The other half, inline direction. Word segments a single WORD across runs
+    // at arbitrary points — a spell-check marker here — so a run boundary is
+    // nothing on the page and must delete to nothing. `buyRequest` is one of
+    // the two `identifierOnly` tokens, so it is caught only if the source span
+    // behind it is one word: replacing run tags with a space would break the
+    // span and let a dead identifier escape by however Word happened to split
+    // it. (My first version of this fixture asserted the opposite — that tags
+    // become a space — and failed, correctly: `buy adapter` with only a space
+    // between IS a mention under the gate's own rules, in a `.docx` exactly as
+    // in a `.md`. Nothing about the space was doing the work.)
+    name: 'run-split.docx',
+    caught: true,
+    why: 'a run boundary inside a word is nothing on the page',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body><w:p>' +
+          '<w:r><w:t>buy</w:t></w:r>' +
+          '<w:proofErr w:type="spellStart"/>' +
+          '<w:r><w:t>Request</w:t></w:r>' +
+          '</w:p></w:body></w:document>',
+      ],
+    ],
+  },
+  {
+    // …and the block direction, which is what stops that deletion from fusing
+    // the document. A paragraph boundary IS something on the page, so it
+    // becomes a blank line and the two sentences either side of it stay two
+    // sentences. Same inline-vs-block split the HTML path already draws.
+    name: 'paragraph-split.docx',
+    caught: false,
+    why: 'a paragraph boundary separates what the reader sees',
+    zip: [
+      ['[Content_Types].xml', '<?xml version="1.0"?><Types/>'],
+      [
+        'word/document.xml',
+        '<?xml version="1.0"?><w:document><w:body>' +
+          '<w:p><w:r><w:t>Decide what to buy</w:t></w:r></w:p>' +
+          '<w:p><w:r><w:t>Request a quote from the desk</w:t></w:r></w:p>' +
+          '</w:body></w:document>',
+      ],
+    ],
   },
   {
     name: 'link-destination.md',
@@ -206,11 +270,67 @@ function pdfFixtures() {
   ];
 }
 
+/**
+ * Office fixtures are built as REAL ZIP archives — local headers, central
+ * directory, EOCD — with raw-deflated parts, so the extractor is exercised
+ * against the container format rather than a mock of it. Written as source
+ * (part name + XML) rather than committed as binary, so a reviewer can read
+ * what the document says.
+ */
+function zipFixtures() {
+  return FIXTURES.filter((f) => f.zip).map((f) => {
+    const locals = [];
+    const central = [];
+    let offset = 0;
+    for (const [name, xml] of f.zip) {
+      const nameBuf = Buffer.from(name, 'utf8');
+      const raw = Buffer.from(xml, 'utf8');
+      const comp = deflateRawSync(raw);
+      const sum = crc32(raw);
+      const lh = Buffer.alloc(30);
+      lh.writeUInt32LE(0x04034b50, 0);
+      lh.writeUInt16LE(20, 4);
+      lh.writeUInt16LE(8, 8); // deflate
+      lh.writeUInt32LE(sum, 14);
+      lh.writeUInt32LE(comp.length, 18);
+      lh.writeUInt32LE(raw.length, 22);
+      lh.writeUInt16LE(nameBuf.length, 26);
+      locals.push(lh, nameBuf, comp);
+
+      const ch = Buffer.alloc(46);
+      ch.writeUInt32LE(0x02014b50, 0);
+      ch.writeUInt16LE(20, 4);
+      ch.writeUInt16LE(20, 6);
+      ch.writeUInt16LE(8, 10);
+      ch.writeUInt32LE(sum, 16);
+      ch.writeUInt32LE(comp.length, 20);
+      ch.writeUInt32LE(raw.length, 24);
+      ch.writeUInt16LE(nameBuf.length, 28);
+      ch.writeUInt32LE(offset, 42);
+      central.push(ch, nameBuf);
+      offset += lh.length + nameBuf.length + comp.length;
+    }
+    const localPart = Buffer.concat(locals);
+    const centralPart = Buffer.concat(central);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(f.zip.length, 8);
+    eocd.writeUInt16LE(f.zip.length, 10);
+    eocd.writeUInt32LE(centralPart.length, 12);
+    eocd.writeUInt32LE(localPart.length, 16);
+    return { ...f, buf: Buffer.concat([localPart, centralPart, eocd]) };
+  });
+}
+
 const git = (...args) =>
   execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
 function run() {
-  const all = [...FIXTURES.map((f) => ({ ...f, buf: Buffer.from(f.body) })), ...pdfFixtures()];
+  const all = [
+    ...FIXTURES.filter((f) => !f.zip).map((f) => ({ ...f, buf: Buffer.from(f.body) })),
+    ...zipFixtures(),
+    ...pdfFixtures(),
+  ];
   // `recursive: false` — refuse to adopt an existing directory rather than
   // writing into, and later deleting, something this run did not create.
   mkdirSync(join(REPO, DIR));

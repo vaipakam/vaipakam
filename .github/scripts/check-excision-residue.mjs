@@ -91,7 +91,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { inflateSync } from 'node:zlib';
+import { inflateRawSync, inflateSync } from 'node:zlib';
 
 /**
  * Signature test for formats whose bytes are not prose in any sense.
@@ -394,7 +394,7 @@ const EXCLUDED_PREFIXES = [
  */
 const PINNED = new Map([
   [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "5d7c21a1ff7a"]],
-  [".github/scripts/check-excision-residue.selftest.mjs", [6, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "22c8f45050b9"]],
+  [".github/scripts/check-excision-residue.selftest.mjs", [9, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "45062ea605de"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],
   ["SECURITY.md", [7, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "09e46e416b30"]],
@@ -1115,6 +1115,111 @@ function extractPdfText(buf) {
   return out.join(' ');
 }
 
+/**
+ * Office Open XML (`.docx` / `.xlsx` / `.pptx`) is a ZIP of deflated XML. The
+ * rendered sentence exists only inside those compressed parts, so reading the
+ * container's bytes as text sees nothing — a tracked document reading "deploy
+ * the VPFI buy adapter" passed a gate that claims whole-tree coverage.
+ *
+ * This is the same blindness the PDF path exists to remove, arriving by a
+ * different route: ZIP was deliberately taken OUT of the binary-signature
+ * exemption earlier in this PR so these files would not be skipped. They were
+ * not skipped — they were read as noise, which is worse, because the ledger
+ * recorded a count that looked like coverage.
+ *
+ * Only the text-bearing parts are decoded. Everything else in the archive
+ * (styles, themes, relationships, embedded media) is markup or binary whose
+ * "text" would be attribute soup.
+ */
+const OFFICE_TEXT_PARTS =
+  /^(word\/(document|header\d*|footer\d*|footnotes|endnotes|comments)\.xml|xl\/(sharedStrings\.xml|worksheets\/sheet\d+\.xml)|ppt\/(slides|notesSlides)\/[^/]+\.xml)$/;
+
+function extractOfficeText(buf) {
+  // Locate the End Of Central Directory record by scanning back from the tail;
+  // the comment field is variable-length, so the signature is not at a fixed
+  // offset. Bounded to the maximum comment size plus the record itself.
+  const EOCD_SIG = 0x06054b50;
+  let eocd = -1;
+  const from = Math.max(0, buf.length - (0xffff + 22));
+  for (let i = buf.length - 22; i >= from; i--) {
+    if (buf.readUInt32LE(i) === EOCD_SIG) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd === -1) return '';
+  const entryCount = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16); // central directory offset
+  const out = [];
+  // Cumulative across the FILE, exactly as the PDF path bounds itself: a
+  // per-entry limit alone lets an archive of many individually-small parts
+  // drive total allocation without bound, which on a BLOCKING job is a denial
+  // of the gate rather than a skipped file.
+  let inflatedTotal = 0;
+  for (let n = 0; n < entryCount; n++) {
+    if (p + 46 > buf.length || buf.readUInt32LE(p) !== 0x02014b50) break;
+    const method = buf.readUInt16LE(p + 10);
+    const compSize = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28);
+    const extraLen = buf.readUInt16LE(p + 30);
+    const commentLen = buf.readUInt16LE(p + 32);
+    const localOff = buf.readUInt32LE(p + 42);
+    const name = buf.subarray(p + 46, p + 46 + nameLen).toString('utf8');
+    p += 46 + nameLen + extraLen + commentLen;
+    if (!OFFICE_TEXT_PARTS.test(name)) continue;
+    // The local header repeats the name/extra lengths, and they need NOT match
+    // the central directory's — the data offset must be computed from the local
+    // record or the read starts mid-header.
+    if (localOff + 30 > buf.length || buf.readUInt32LE(localOff) !== 0x04034b50) continue;
+    const lNameLen = buf.readUInt16LE(localOff + 26);
+    const lExtraLen = buf.readUInt16LE(localOff + 28);
+    const dataAt = localOff + 30 + lNameLen + lExtraLen;
+    if (dataAt + compSize > buf.length) continue;
+    let xml = buf.subarray(dataAt, dataAt + compSize);
+    if (method === 8) {
+      try {
+        const remaining = MAX_INFLATED_BYTES - inflatedTotal;
+        if (remaining <= 0) break; // budget spent; stop reading this file
+        // Raw deflate — ZIP stores no zlib header.
+        xml = inflateRawSync(xml, { maxOutputLength: remaining });
+        inflatedTotal += xml.length;
+      } catch {
+        continue; // undecodable part; treat like any other unreadable stream
+      }
+    } else if (method !== 0) {
+      continue; // stored or deflate only; anything else is not ours to decode
+    }
+    // BLOCK elements first, inline runs second — the same inline-vs-block
+    // distinction `crossesBlockBoundary` already draws for HTML, because it is
+    // the same question: does the reader see one phrase or two?
+    //
+    // Word splits a single WORD across runs at arbitrary points — a spell-check
+    // marker or a formatting change turns `buyRequest` into
+    // `<w:t>buy</w:t></w:r><w:r><w:t>Request</w:t>` — so a run boundary is
+    // nothing on the page and must delete to nothing, or a dead identifier
+    // typed into a document escapes the gate by however Word happened to
+    // segment it. A paragraph, table cell, line break or shared-string
+    // boundary IS something on the page, so it becomes a blank line, which is
+    // the boundary rule the scan already applies to every other format.
+    // Blanket-replacing every tag with a space got the second right and the
+    // first wrong; deleting every tag does the reverse.
+    out.push(
+      renderRefs(
+        xml
+          .toString('utf8')
+          .replace(
+            /<\/(?:w:p|w:tc|w:tr|a:p|a:tc|si)>|<(?:w:br|w:cr|w:tab|a:br)\b[^>]*>/g,
+            '\n\n',
+          )
+          .replace(/<[^>]*>/g, ''),
+      ),
+    );
+  }
+  // Parts are separate documents (a header is not the body). Same reasoning as
+  // the block elements above.
+  return out.join('\n\n');
+}
+
 function isRecognizedBinary(path) {
   let head;
   try {
@@ -1139,9 +1244,14 @@ function scanFile(path) {
     // repo-root-relative ledger key.
     const raw = readFileSync(join(REPO_ROOT, path));
     // A PDF's bytes are a container, not prose — decode what it draws.
-    text = raw.subarray(0, 4).toString('latin1') === '%PDF'
-      ? extractPdfText(raw)
-      : raw.toString('utf8');
+    const head4 = raw.subarray(0, 4);
+    text =
+      head4.toString('latin1') === '%PDF'
+        ? extractPdfText(raw)
+        : // `PK\x03\x04` — Office Open XML is a ZIP of deflated XML.
+          head4[0] === 0x50 && head4[1] === 0x4b && head4[2] === 0x03 && head4[3] === 0x04
+          ? extractOfficeText(raw)
+          : raw.toString('utf8');
   } catch (err) {
     // FAIL CLOSED. Returning "no hits" here treated an unreadable file exactly
     // like a clean one, which is a complete exemption for any path that cannot
