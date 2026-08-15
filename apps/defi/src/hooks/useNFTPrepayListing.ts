@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useLayoutEffect, useRef } from 'react';
 import { useDiamondContract, useDiamondPublicClient } from '../contracts/useDiamond';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
@@ -227,12 +227,28 @@ export function useNFTPrepayListing(
     listing: IndexedPrepayListing | null | undefined;
   } | null>(null);
   const [refreshingKey, setRefreshingKey] = useState<string | null>(null);
+  // The question currently on screen, readable from an async continuation.
+  // Without it, a settle for loan A landing while loan B is displayed replaces
+  // the single result slot with an A-tagged answer: B's tag then never matches,
+  // and because changing `result` does not re-run B's fetch effect, `loading`
+  // stays true and both action surfaces stay hidden INDEFINITELY. That is the
+  // stale-frame-becomes-stuck-page failure from #1757 round 2, reached through
+  // a post-transaction settle instead of a slow read.
+  //
+  // Layout effect, not a render-phase ref write — the unsafe-under-concurrent-
+  // rendering pattern #1747 was about.
+  const activeKey = useRef(reqKey);
+  useLayoutEffect(() => {
+    activeKey.current = reqKey;
+  }, [reqKey]);
   const listing = result?.key === reqKey ? result.listing : null;
   // Only the CURRENT question's answer may be written, so every post-action
   // settle below goes through this rather than touching state directly.
   const commitListing = useCallback(
     (next: IndexedPrepayListing | null | undefined) => {
-      if (reqKey) setResult({ key: reqKey, listing: next });
+      // Only the question ON SCREEN may be written. A settle for a loan the
+      // user has navigated away from is dropped rather than parked in the slot.
+      if (reqKey && reqKey === activeKey.current) setResult({ key: reqKey, listing: next });
     },
     [reqKey],
   );
@@ -264,7 +280,7 @@ export function useNFTPrepayListing(
     let cancelled = false;
     void (async () => {
       const row = await fetchLoanById(chainId, Number(loanId));
-      if (cancelled || !row) return;
+      if (cancelled || !row || reqKey !== activeKey.current) return;
       setResult({ key: reqKey, listing: row.prepayListing });
     })();
     return () => {
