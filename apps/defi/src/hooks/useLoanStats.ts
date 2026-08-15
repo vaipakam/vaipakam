@@ -36,39 +36,46 @@ export function useLoanStats(): UseLoanStatsResult {
   const chain = useReadChain();
   const chainId = chain.chainId ?? DEFAULT_CHAIN.chainId;
   const { version } = useLiveWatermark(watermarkPolicy('cool'));
-  const [stats, setStats] = useState<LoanStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Tagged with the chain the aggregates describe. `loading` is DERIVED, so a
+  // chain switch cannot render one network's loan totals under another's name
+  // for a frame. `version` is NOT part of the key: a watermark tick asks the
+  // same question hoping for a fresher answer, and treating it as a new
+  // question would blank the charts on every tick.
+  const [result, setResult] = useState<{ chainId: number; stats: LoanStats | null } | null>(
+    null,
+  );
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
+    setRefreshing(true);
     try {
-      const next = await fetchLoanStats(chainId);
-      setStats(next);
-    } catch {
-      setStats(null);
+      const next = await fetchLoanStats(chainId).catch(() => null);
+      setResult({ chainId, stats: next });
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
   }, [chainId]);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     (async () => {
-      try {
-        const next = await fetchLoanStats(chainId);
-        if (cancelled) return;
-        setStats(next);
-      } catch {
-        if (cancelled) return;
-        setStats(null);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      const next = await fetchLoanStats(chainId).catch(() => null);
+      if (cancelled) return;
+      setResult({ chainId, stats: next });
     })();
     return () => {
       cancelled = true;
     };
+    // `version` re-runs the fetch without invalidating the current answer —
+    // see the note on the key above.
   }, [chainId, version]);
 
-  return { stats, loading, reload: load };
+  const matched = result?.chainId === chainId;
+  return {
+    stats: matched ? result.stats : null,
+    // An explicit `reload()` reports loading even though the question is
+    // unchanged; it is called from handlers, never from an effect.
+    loading: refreshing || !matched,
+    reload: load,
+  };
 }
