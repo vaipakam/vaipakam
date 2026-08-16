@@ -98,7 +98,7 @@ Three things worth knowing:
   to where the fragment was written, so retitling one to match its PR
   number does not re-date it.
 
-[`assemble.test.sh`](assemble.test.sh) covers all of this against
+[`assemble.test.sh`](../assemble.test.sh) covers all of this against
 throwaway repositories with fragments committed at chosen UTC timestamps;
 run it after any change to the assembler.
 

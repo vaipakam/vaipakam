@@ -590,11 +590,34 @@ bash docs/ReleaseNotes/assemble.sh           # today UTC
 bash docs/ReleaseNotes/assemble.sh 2026-05-20  # explicit date
 ```
 
-The script concatenates pending fragments into
-`docs/ReleaseNotes/ReleaseNotes-<date>.md`, removes the fragments, and
-prints the commit steps. **Review the assembled file — add an intro
+The script concatenates the fragments **belonging to that UTC day** into
+`docs/ReleaseNotes/ReleaseNotes-<date>.md`, removes the ones it consumed,
+and prints the commit steps. **Review the assembled file — add an intro
 paragraph by hand if the day's threads form a coherent arc** — then
 commit.
+
+**A run does not clear the whole backlog.** A fragment belongs to the UTC
+day its PR merged, which is the trap this enforces: at `+05:30` every
+merge between 18:30 and midnight UTC shows a local date one day ahead, and
+assembling "today" locally has misfiled fragments twice. So each run takes
+only its own day, names the fragments it held back and the day each
+belongs to, and leaves them for their own run. Clear a multi-day backlog
+by running the script once per day.
+
+Three behaviours to know:
+
+- `--allow-mixed-dates` takes every pending fragment regardless of day,
+  for when folding them together is deliberate.
+- A fragment that has never been committed is always taken — it was
+  written in the PR doing the assembling, so it has no day of its own.
+- A shallow clone, or any repository whose history cannot be read, is
+  **refused**: the dates it reports are fabricated rather than missing.
+  Run `git fetch --unshallow` first. Renaming a fragment is safe; renames
+  are followed back to where it was written.
+
+[`docs/ReleaseNotes/assemble.test.sh`](../ReleaseNotes/assemble.test.sh)
+asserts all of the above and runs on every PR — run it after touching the
+assembler.
 
 ### 6.3 FunctionalSpecs corpus — DOC-SOURCED, NEVER code-sourced
 
