@@ -60,6 +60,28 @@ The script concatenates every pending fragment into
 if it already exists), then removes the consumed fragments. Review the
 result, add an intro paragraph, and commit:
 
+### The date must be the fragment's UTC merge day
+
+A fragment belongs to the day its PR merged **in UTC** — the clock
+`assemble.sh` uses when you pass no date. Local time is a trap here: at
+`+05:30` every merge between 18:30 and midnight UTC shows a local date
+one day ahead, so assembling "today" locally files those fragments a day
+late. That misfiling has happened twice.
+
+The assembler now checks each pending fragment's add-commit date and
+**refuses to run** if any of them belongs to a different day than the one
+being assembled, naming the offenders. Assemble each day separately:
+
+```bash
+bash docs/ReleaseNotes/assemble.sh 2026-08-16
+bash docs/ReleaseNotes/assemble.sh 2026-08-17
+```
+
+Pass `--allow-mixed-dates` when folding days together is deliberate. A
+fragment with no add-commit — written and assembled inside the same PR —
+is skipped by the check rather than refused.
+
+
 ```bash
 git add -A docs/ReleaseNotes/
 git commit -m "docs: release notes <date>"

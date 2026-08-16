@@ -1010,6 +1010,11 @@ work and never lag behind a merge.
   `YYYY-MM-DD` to override). It concatenates every pending fragment into
   `docs/ReleaseNotes/ReleaseNotes-<date>.md`, removes the fragments, and
   prints the commit steps. Review, add an intro paragraph, commit.
+  **The date is the fragment's UTC merge day, not the local one** — at
+  `+05:30` a merge after 18:30 UTC reads as tomorrow locally, which has
+  misfiled fragments twice. The assembler now refuses a run whose pending
+  fragments were added on a different UTC day, naming them; assemble each
+  day separately, or pass `--allow-mixed-dates` if folding is deliberate.
 - A non-blocking CI check (`.github/workflows/release-notes-drift.yml`)
   warns in the Actions tab if a merge to `main` changed `contracts/src/`
   or `apps/` but added no `docs/ReleaseNotes/` entry.
