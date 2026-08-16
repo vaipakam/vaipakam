@@ -4235,30 +4235,48 @@ library LibVaipakam {
         // messenger contract address whose `TierUpdated` payloads we
         // accept.
         //
-        // NOT WIRED UP as of #1641: no code reads or writes this slot.
-        // The comment here used to claim it was "validated via the
-        // messenger's existing `channelPeer` mapping", which was false in
-        // both halves — the slot is read by nothing, and at the time
-        // `channelPeerOf` was asserted non-zero rather than compared to
-        // the sender (#1631).
+        // RETIRED — DELIBERATELY UNREAD AND UNWRITTEN (#1770). Nothing
+        // reads or writes this slot, and nothing is meant to. It is
+        // declared only so that removing it does not shift every field
+        // below it in this struct on a deployed Diamond.
         //
-        // The second half stopped being false when #1650 shipped:
-        // `CcipMessenger._ccipReceive` now carries the originator on the
-        // wire and rejects a mismatch against `channelPeerOf`
-        // (`UnauthorizedChannelPeer`). So business-peer authentication
-        // EXISTS — it just lives at the adapter, once for every channel,
-        // rather than in this per-deployment slot.
+        // History. The slot was allocated for the Diamond-side half of
+        // the check `CrossChainRewardSystem.md` ("Sender authentication")
+        // specified: the messenger validates the business peer, forwards
+        // `(payload, srcChainId, businessPeer)`, and the Diamond then
+        // checks `srcChainId == s.baseChainId` AND `businessPeer ==
+        // s.baseAuthorizedMessenger`. The messenger half is built; this
+        // half never was. The comment here used to claim it was
+        // "validated via the messenger's existing `channelPeer` mapping",
+        // which was false in both halves at the time — the slot is read
+        // by nothing, and `channelPeerOf` was asserted non-zero rather
+        // than compared to the sender (#1631, corrected in #1653).
         //
-        // That is the argument for RETIRING this slot rather than
-        // building it: the leg `CrossChainRewardSystem.md` ("Sender
-        // authentication") specified is now covered a layer down, and a
-        // second copy of the same check in Diamond storage would be a
-        // duplicate that can drift out of agreement with the adapter's.
-        // What authenticates a `TierUpdated` on a mirror is
-        // {MirrorTierReceiverFacet} — `msg.sender == s.rewardMessenger`
-        // plus `sourceChainId == s.baseChainId` — on top of the adapter's
-        // peer check. The retire-or-build decision is still open; the
-        // slot is kept for storage-layout stability either way.
+        // Why retired rather than completed. #1650 put the originator on
+        // the wire (envelope v2) and made `CcipMessenger._ccipReceive`
+        // reject a mismatch against `channelPeerOf`
+        // (`UnauthorizedChannelPeer`). By the time a `TierUpdated` reaches
+        // {MirrorTierReceiverFacet} the originator has ALREADY been
+        // compared against configuration once. Comparing it here against a
+        // second local copy of the same address would not check the
+        // message — it would check whether two pieces of local config
+        // agree, which is a deployment assertion dressed as authentication,
+        // and a drift surface with a live lane behind it.
+        //
+        // Not to be confused with the `baseChainId` check one field up,
+        // which looks similar and is NOT redundant: the adapter does not
+        // constrain the source chain, and the reward channel is configured
+        // in both directions, so `sourceChainId == s.baseChainId` is what
+        // stops one mirror's peer pushing a tier update to another. That
+        // check compares a MESSAGE-DERIVED fact against config; this slot
+        // would have compared config against config.
+        //
+        // What authenticates a mirror `TierUpdated` today, in order:
+        // the CCIP router's `Any2EVMMessage.sender ==
+        // remoteMessengerOf[srcChain]`; the envelope originator ==
+        // `channelPeerOf[channelId][srcChain]`; then, in
+        // {MirrorTierReceiverFacet}, `msg.sender == s.rewardMessenger`,
+        // `sourceChainId == s.baseChainId`, and nonce monotonicity.
         address baseAuthorizedMessenger;
         // ── Cross-chain buyback custody (Base) ──────────────────────────
         //
