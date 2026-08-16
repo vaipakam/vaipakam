@@ -2625,7 +2625,6 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/invariants/InterestMonotonicity.invariant.t.sol](../../contracts/test/invariants/InterestMonotonicity.invariant.t.sol) — amount-due non-decreasing as time advances.
 - [contracts/test/invariants/PerAssetPause.invariant.t.sol](../../contracts/test/invariants/PerAssetPause.invariant.t.sol) — paused-asset blocks new create/accept across all flows.
 - [contracts/test/invariants/OfferLoanLinkage.invariant.t.sol](../../contracts/test/invariants/OfferLoanLinkage.invariant.t.sol) — every loan points to an accepted offer.
-- [contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol](../../contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol) — rewardPerTokenStored never decreases; per-user earned grows until claim.
 - [contracts/test/invariants/DefaultTiming.invariant.t.sol](../../contracts/test/invariants/DefaultTiming.invariant.t.sol) — defaults only trigger after grace-period window.
 - [contracts/test/invariants/FundsConservation.invariant.t.sol](../../contracts/test/invariants/FundsConservation.invariant.t.sol) / [VaultSolvency.invariant.t.sol](../../contracts/test/invariants/VaultSolvency.invariant.t.sol) — no phantom funds, vault balances conserved.
 - [contracts/test/invariants/LoanStatusMonotonicity.invariant.t.sol](../../contracts/test/invariants/LoanStatusMonotonicity.invariant.t.sol) — loan status only moves forward.
@@ -2633,7 +2632,6 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/invariants/CollateralMonotonicity.invariant.t.sol](../../contracts/test/invariants/CollateralMonotonicity.invariant.t.sol) — collateral balance only grows during loan life (addCollateral-only).
 - [contracts/test/invariants/FallbackSettlement.invariant.t.sol](../../contracts/test/invariants/FallbackSettlement.invariant.t.sol) — fallback settlement consistent with HF/LTV collapse flags.
 - [contracts/test/invariants/InteractionRewards.invariant.t.sol](../../contracts/test/invariants/InteractionRewards.invariant.t.sol) — reward emission stays within schedule + per-user cap.
-- [contracts/test/invariants/StakingBalances.invariant.t.sol](../../contracts/test/invariants/StakingBalances.invariant.t.sol) — sum(userStaked) == totalStaked, pool-cap respected.
 - [contracts/test/invariants/VPFISupplyCap.invariant.t.sol](../../contracts/test/invariants/VPFISupplyCap.invariant.t.sol) — total VPFI supply never exceeds hard cap.
 - [contracts/test/invariants/MetricsCountersParity.invariant.t.sol](../../contracts/test/invariants/MetricsCountersParity.invariant.t.sol) — MetricsFacet counters match raw storage.
 - [contracts/test/invariants/NFTCountParity.invariant.t.sol](../../contracts/test/invariants/NFTCountParity.invariant.t.sol) / [NFTOwnerAuthority.invariant.t.sol](../../contracts/test/invariants/NFTOwnerAuthority.invariant.t.sol) — position-NFT count + authority correctness.
