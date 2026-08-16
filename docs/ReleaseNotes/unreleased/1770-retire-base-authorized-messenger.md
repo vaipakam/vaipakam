@@ -32,26 +32,46 @@ This is the same failure the recent run of corrections kept turning up — a
 second description of a fact drifting away from the first — except with funds
 behind it rather than a comment.
 
+A misdirected partner setting cannot be caught this way either, which is the
+other reason the second copy earns nothing. Pointing a network's partner
+setting at the wrong contract makes the lane refuse the *right* sender rather
+than accept a wrong one: a message carries the name of the conversation it
+belongs to, and that name is stamped from whoever sent it, so only the
+conversation's registered contract can send on it at all. The failure is a
+lane that stops, not a lane that lets something through — and a second stored
+copy of the address adds only a further way for two records to disagree, with
+neither of them saying which is stale.
+
 ### A neighbouring check that looks similar and is not
 
 The mirror also checks that a tier update came from the canonical network, and
-that one is genuinely necessary. The conversation carrying rewards traffic is
-configured in both directions, so establishing that a message came from its
-configured partner does not establish which end of the conversation it came
-from. Without the network check, one mirror could push a tier update to
-another. That check compares something recovered from the message against
-configuration; the abandoned one would have compared configuration against
-configuration. The resemblance is only in shape.
+that check stays. It is defence in depth rather than the only thing standing
+in the way: the messenger already refuses a message from a network it has no
+partner configured for on that conversation, and a correctly configured mirror
+has exactly one partner. What the network check adds is what still holds if a
+partner is ever configured for a network that should not be sending tier
+updates at all.
+
+That is still a different thing from the abandoned check. It constrains a fact
+recovered from the message more tightly than configuration alone does; the
+abandoned one would have compared configuration against configuration and
+constrained nothing further.
 
 The full set of checks a tier update passes today — the transport's own sender
 check, the sender-identity check in the adapter, the paired-messenger check,
-the source-network check, and ordering — is now recorded alongside the retired
-field, so the next reader can see what protects the path without having to
+the source-network check, and ordering — is now recorded where the field used
+to be, so the next reader can see what protects the path without having to
 reconstruct it.
 
-### The field itself stays where it is
+### The field is removed outright
 
-Removing it would move every field declared after it, which is not a change
-worth making to a live deployment to reclaim one unused slot. It stays
-declared, unread, and now says plainly that this is deliberate rather than
-unfinished.
+An earlier draft of this change kept it, on the stated grounds that removing it
+would move every field declared after it. That was wrong, and checking rather
+than reasoning is what settled it: the field shared a slot with its neighbour,
+and the next field along is of a kind that always begins a new slot. A
+before-and-after comparison of the entire structure's layout shows one field
+gone and **not a single other field moved**.
+
+So it is deleted rather than kept and explained. Keeping a permanently unused
+field alive on a justification that turned out not to hold would have been the
+same kind of residue this change exists to clear.

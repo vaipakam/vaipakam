@@ -4231,45 +4231,61 @@ library LibVaipakam {
         // `srcChainId == s.baseChainId` (NOT the CCIP selector; the
         // messenger already translates per Codex round-9 P1 #4).
         //
-        // Mirror-side authenticated business peer — the Base diamond /
-        // messenger contract address whose `TierUpdated` payloads we
-        // accept.
+        // The `sourceChainId == s.baseChainId` check is DEFENCE IN DEPTH,
+        // not the sole source-chain constraint. The adapter constrains it
+        // too, via configuration: `_ccipReceive` resolves
+        // `channelPeerOf[channelId][sourceChainId]` and rejects a zero
+        // entry, and `ConfigureCcip.s.sol` wires a mirror's reward-channel
+        // peer for `baseChainId` only — so under the supported
+        // configuration a message from another mirror fails at the adapter
+        // before reaching here. This check is what still holds if an extra
+        // peer entry is ever added for a chain that should not be pushing
+        // tier updates (Codex #1771 r1 P2 #3 — an earlier version of this
+        // comment claimed the adapter was chain-agnostic, which is wrong).
         //
-        // RETIRED — DELIBERATELY UNREAD AND UNWRITTEN (#1770). Nothing
-        // reads or writes this slot, and nothing is meant to. It is
-        // declared only so that removing it does not shift every field
-        // below it in this struct on a deployed Diamond.
+        // ── RETIRED SLOT: `address baseAuthorizedMessenger` (#1770) ─────
         //
-        // History. The slot was allocated for the Diamond-side half of
-        // the check `CrossChainRewardSystem.md` ("Sender authentication")
-        // specified: the messenger validates the business peer, forwards
+        // REMOVED, not merely unused. It sat here, between
+        // `currentTierTableVersion` and `buybackAllowedToken`, and was
+        // read and written by nothing for its entire life.
+        //
+        // Removing it is layout-neutral, which is why it could go. It
+        // packed into the same slot as `currentTierTableVersion`
+        // (uint16 + address = 22 bytes), and the field after it is a
+        // mapping, which always starts a fresh slot. Verified rather than
+        // reasoned about: a `forge inspect ... storageLayout` diff over
+        // the whole struct before and after shows 493 → 492 fields, one
+        // removed, and ZERO fields moved. An earlier revision of this
+        // change kept the field on the stated grounds that removing it
+        // would shift everything below — that was simply wrong
+        // (Codex #1771 r1 P2 #1).
+        //
+        // What it was for. The Diamond-side half of the check
+        // `CrossChainRewardSystem.md` ("Sender authentication") specified:
+        // the messenger validates the business peer, forwards
         // `(payload, srcChainId, businessPeer)`, and the Diamond then
-        // checks `srcChainId == s.baseChainId` AND `businessPeer ==
-        // s.baseAuthorizedMessenger`. The messenger half is built; this
-        // half never was. The comment here used to claim it was
+        // checks `srcChainId == s.baseChainId` AND
+        // `businessPeer == s.baseAuthorizedMessenger`. The messenger half
+        // is built; this half never was. Its comment used to claim it was
         // "validated via the messenger's existing `channelPeer` mapping",
-        // which was false in both halves at the time — the slot is read
-        // by nothing, and `channelPeerOf` was asserted non-zero rather
-        // than compared to the sender (#1631, corrected in #1653).
+        // false in both halves at the time (#1631, corrected in #1653).
         //
         // Why retired rather than completed. #1650 put the originator on
         // the wire (envelope v2) and made `CcipMessenger._ccipReceive`
         // reject a mismatch against `channelPeerOf`
-        // (`UnauthorizedChannelPeer`). By the time a `TierUpdated` reaches
-        // {MirrorTierReceiverFacet} the originator has ALREADY been
-        // compared against configuration once. Comparing it here against a
-        // second local copy of the same address would not check the
-        // message — it would check whether two pieces of local config
-        // agree, which is a deployment assertion dressed as authentication,
-        // and a drift surface with a live lane behind it.
-        //
-        // Not to be confused with the `baseChainId` check one field up,
-        // which looks similar and is NOT redundant: the adapter does not
-        // constrain the source chain, and the reward channel is configured
-        // in both directions, so `sourceChainId == s.baseChainId` is what
-        // stops one mirror's peer pushing a tier update to another. That
-        // check compares a MESSAGE-DERIVED fact against config; this slot
-        // would have compared config against config.
+        // (`UnauthorizedChannelPeer`). A Diamond-side allowlist cannot
+        // catch a mispointed peer, because a mispointed peer fails CLOSED
+        // rather than open: `sendMessage` stamps `channelId` from
+        // `channelOf[msg.sender]`, so only the registered handler of a
+        // channel can send on it, and `registerChannel` keeps
+        // `handlerOf`/`channelOf` one-to-one under clear-before-repoint.
+        // A message therefore only carries the reward channelId if its
+        // originator IS Base's registered reward handler — so a mirror
+        // whose peer is mispointed rejects the legitimate sender rather
+        // than accepting a wrong one. A second stored copy would add a
+        // way for the two records to disagree, and disagreement stops a
+        // live lane with neither record saying which is stale (Codex
+        // #1771 r1 P2 #2, refuted with the send-path binding above).
         //
         // What authenticates a mirror `TierUpdated` today, in order:
         // the CCIP router's `Any2EVMMessage.sender ==
@@ -4277,7 +4293,9 @@ library LibVaipakam {
         // `channelPeerOf[channelId][srcChain]`; then, in
         // {MirrorTierReceiverFacet}, `msg.sender == s.rewardMessenger`,
         // `sourceChainId == s.baseChainId`, and nonce monotonicity.
-        address baseAuthorizedMessenger;
+        //
+        // Do NOT re-add the field to close a "gap" — there is no gap;
+        // the layout is byte-identical either way.
         // ── Cross-chain buyback custody (Base) ──────────────────────────
         //
         // Set of remittance-token addresses per chain that the
