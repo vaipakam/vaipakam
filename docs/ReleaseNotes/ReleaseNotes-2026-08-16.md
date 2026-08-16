@@ -1,17 +1,47 @@
 # Release Notes — 2026-08-16
 
-Two entries, both cleaning up after the securities excisions on user-facing
-surfaces rather than in contract code.
+Seven entries. Two of them close a gap that let one party spend another's
+consent; the rest are corrections to things that described the platform
+inaccurately, plus one change to how the build reports its own limits.
 
-The first repairs the tokenomics "Learn more" links, which had been serving a
-404 from a base URL that never followed the specification to its new home —
-and, underneath that, two anchors pointing at sections describing removed
-programmes. The two are separate excision tracks: the fixed-rate VPFI sale was
-removed in #687-A, the `5% APR` staking yield in #687-B. The second entry
-removes the retired buy widget's strings from the marketing site's translation
-bundles, where seven languages still carried a "Buy VPFI" label for a surface
-that no longer exists — the #687-A one. Nothing rendered those strings; they
-shipped in the bundle regardless.
+**The consent gap is the substantive one, and it appeared twice.** An offer
+carries a deadline, and that deadline is the author's consent to *when* — the
+one term that says the offer may stop being available. Two routes read every
+other term of an offer and never that one: a lender selling a position directly
+into a standing offer to buy, and a borrower handing an obligation to whoever
+authored a standing offer to take it. Both could bind an offer whose window had
+already closed, spending the author's committed funds or handing them a debt
+after they had stopped agreeing to it. Both now refuse before anything moves.
+The guard they needed already existed and was in use on the ordinary
+acceptance path; it had simply never been called on these two. Finding the
+second was a direct consequence of fixing the first: the specification was
+rewritten to state the rule by what a path *does* rather than by naming the
+paths it applies to, and checking that broader claim is what surfaced the
+sibling.
+
+Three entries correct prose and configuration that had drifted from the
+product. The tokenomics "Learn more" links were serving a 404 from a base URL
+that never followed the specification to its new home, with two anchors beneath
+that pointing at removed programmes — and those are separate excision tracks:
+the fixed-rate VPFI sale went in #687-A, the `5% APR` staking yield in #687-B.
+The marketing site's translation bundles still carried the retired buy widget's
+strings, including a "Buy VPFI" label in seven languages for a surface that no
+longer exists; nothing rendered them, and they shipped anyway. And a
+cross-chain check that was specified but never built is now retired rather than
+left sitting as a pending obligation.
+
+One entry stops a documented figure from going stale: the Overview's worked
+example read its two fee rates from the live configuration while the amounts
+computed from them were fixed in the page — agreeing today, and guaranteed to
+disagree the first time either fee is retuned, with the live-sourced half
+lending credibility to the stale half.
+
+The last is a build-tooling change with a longer shadow than it looks. Each
+part of the contract has a hard ceiling on compiled size, and the guard for it
+was silent until something crossed the line — so a part with one byte to spare
+looked identical to one half empty. It now reports how much room each part has
+left. Six qualify as tight; two have about thirty bytes, one of which nobody
+had noticed because no recent change happened to touch it.
 
 ## Thread — the tokenomics help links point at a document that exists (PR #1765)
 
@@ -77,3 +107,287 @@ came into view: the marketing site's bundles carry fifty-four further
 namespaces that belong entirely to the connected app — well over a thousand
 strings the marketing site never renders. That is filed separately; this
 change stays inside the one namespace the page actually uses.
+
+## A lender offer past its deadline can no longer be consumed by a direct position sale
+
+An offer to lend carries a deadline. Past it, the offer is dead everywhere it
+can be filled or matched — the row survives in storage because nothing sweeps
+it away, so every path that could bind it to a loan is expected to refuse it
+on sight.
+
+One path did not. A lender selling their position directly into a standing
+offer to buy went through checks on what kind of offer it was and whether it
+had already been taken, but never on whether its deadline had passed. So an
+offer whose window had closed, and which nobody had yet got around to
+cancelling, stayed consumable: the seller could take the principal the offer's
+author had set aside and mark it as filled, after the period that author
+agreed to had ended.
+
+Nothing here was mispriced. The author got exactly the loan they described, at
+their stated terms. What they did not get was the right to stop offering — the
+deadline they set was the whole of their consent to the timing, and it was
+being read by every other route and ignored by this one.
+
+The sale now refuses an offer past its deadline, before anything moves. The
+caller is told which offer expired and when, so the refusal can be explained
+rather than just reported.
+
+Two details worth stating, because both are places a fix like this commonly
+goes wrong:
+
+**An offer with no deadline is not an expired offer.** Offers may be authored
+to stand until cancelled, recorded as the absence of a deadline. A check
+written as "now is at or past the deadline" reads that absence as the earliest
+possible instant and rejects every such offer. The sale routes through the
+shared helper that already handles this, rather than re-deriving the rule.
+
+**The deadline second is already closed.** An offer good until a given moment
+is not fillable *at* that moment. This matches every other fill path, and is
+now pinned by its own test so a later simplification cannot quietly reopen a
+one-second window.
+
+This is one of the contract-side gaps recorded against the lender
+early-withdrawal work. It was the one that moved another party's funds outside
+the window they consented to, and the guard it needed already existed and was
+already in use elsewhere — it had simply never been called here.
+
+## The worked example's arithmetic, and the site search, now move with the rates they are computed from
+
+The Overview walks a reader through a specific loan — a thousand dollars, eight
+percent, thirty days — and prints what each party ends up with. The two fee
+rates in that passage were already read from the published protocol
+configuration. The amounts computed from them were not: they were written into
+the page as fixed numbers.
+
+They agree today. They stop agreeing the first time either fee is retuned, and
+the way they stop is the problem. The rate moves, the arithmetic beneath it
+does not, and the rate carries a marker saying it came from the live published
+configuration — so a reader comparing the two has every reason to trust the
+half that is now wrong. This is the same contradiction a previous sweep had to
+clear by hand ("the rate says one thing and the sum below says another"), set
+up to happen again on a schedule nobody controls.
+
+Those amounts are now computed from the same configuration the rates come
+from, at the moment the page is read. There is no longer a version of the page
+where the rate and the sum disagree, because the sum is derived from the rate
+rather than remembered alongside it.
+
+### What a reader sees differently
+
+Almost nothing today, which is the intended outcome. Three small changes:
+
+- The money amounts now always show cents. One figure previously read as a
+  whole number and now shows two decimal places, so that a future change of a
+  fraction of a cent cannot hide behind a rounded display.
+- Nothing else. In particular the six-decimal figure is unchanged, and an
+  earlier draft of this change altered it in error — see below.
+- On non-English pages the amounts now follow that language's own number
+  conventions automatically, rather than depending on each translation having
+  been written with the right separators.
+
+### Why the arithmetic is done in whole units of the smallest denomination
+
+The computation deliberately mirrors how the protocol itself calculates,
+working in the currency's smallest unit and discarding fractions at each step,
+rather than in ordinary decimals.
+
+This is not fussiness. An earlier draft of this change used ordinary decimal
+arithmetic and produced a figure one unit different in the last place from what
+the protocol actually pays — and then presented it on a page that calls the
+figure exact and says settlement uses it. The number written on the page
+originally was right; the more "precise" computed one was wrong. A page that
+disagrees with the contract about what a settlement pays is worse than a page
+whose figure is merely old, so the arithmetic follows the chain's rules rather
+than approximating them.
+
+### On the marker that says where a figure came from
+
+A computed figure only claims to come from the published configuration when
+**every** input it was computed from was read live. If any input falls back to
+the value bundled with the site, the result is marked as bundled too.
+
+This matters because a computed figure could otherwise inherit a confidence
+none of its parts had — one live rate and one fallback could produce a number
+presented as fully published. The marker exists to be precise about provenance,
+so it defers to the least certain input rather than the most.
+
+### The site search was reading the same figures from the wrong place
+
+The help search builds its index by substituting these figures into the text
+it searches, so the index carries whatever the numbers were when it was built.
+It was built once, from the values shipped with the site, before the published
+configuration had been fetched — and never rebuilt.
+
+After a retune that produces a specific failure: searching for a figure
+**printed on a page** could miss that page's own section, and a result summary
+could contradict the page it links to. That is the exact problem substituting
+figures into the index was introduced to prevent, reintroduced by building the
+index too early.
+
+The index is now tied to the configuration snapshot it was built from, so a
+newer snapshot naturally produces a fresh index rather than relying on anyone
+remembering to discard the old one.
+
+Alongside this, the description of which configuration field backs which figure
+now lives in one place instead of two. The page renderer and the search index
+each had their own copy, which is the same kind of duplication that caused the
+problem being fixed here.
+
+### Scope
+
+This covers the worked example and the site search. The remaining threads on
+this topic are unchanged and still tracked: the machine-readable exports, which
+cannot follow a retune without introducing a network dependency at build time
+and so need a deliberate decision either way; naming which network the figures
+describe; passages that quote a fee fixed at a loan's creation rather than the
+current one; and re-checking a long-lived snapshot for freshness.
+
+## A cross-chain check that was specified but never built is now retired rather than left pending
+
+A storage field on each mirror deployment was set aside for a check on
+incoming tier updates: the address of the contract on the canonical network
+whose messages the mirror would accept. It was allocated, shipped, and written
+up in the design as something the mirror validates on arrival. Nothing ever
+read or wrote it. A previous change corrected the field's own description to
+say so and deliberately left one question open — whether to finish building the
+check or to abandon it.
+
+This settles that question: the check is abandoned, and **the field is deleted**
+rather than kept and explained. Deleting it moves nothing else — it shared a
+storage slot with its neighbour, and the field after it is of a kind that always
+begins a new one, so every other field stays exactly where it was.
+
+Nothing about how the protocol behaves changes. The check was never running, so
+there is none to remove.
+
+### Why abandoning it is the safer of the two
+
+Separate work has since put the sender's identity on the wire and made the
+shared cross-chain adapter reject any message whose sender is not the partner
+configured for that conversation. So by the time a tier update reaches the
+mirror's own logic, who sent it has already been established against
+configuration once.
+
+Doing it again one layer up would not check the message a second time. It would
+compare one stored copy of an address against another stored copy of the same
+address — a check on whether a deployment agrees with itself, wearing the
+appearance of a check on the message. That distinction matters because the two
+copies have nothing keeping them in step. If they ever disagreed, a working
+lane would stop delivering, and the reason would be invisible from the message:
+both records look equally authoritative and neither says which one is stale.
+
+This is the same failure the recent run of corrections kept turning up — a
+second description of a fact drifting away from the first — except with funds
+behind it rather than a comment.
+
+A misdirected partner setting cannot be caught this way either, which is the
+other reason the second copy earns nothing. Pointing a network's partner
+setting at the wrong contract makes the lane refuse the *right* sender rather
+than accept a wrong one: a message carries the name of the conversation it
+belongs to, and that name is stamped from whoever sent it, so only the
+conversation's registered contract can send on it at all. The failure is a
+lane that stops, not a lane that lets something through — and a second stored
+copy of the address adds only a further way for two records to disagree, with
+neither of them saying which is stale.
+
+### A neighbouring check that looks similar and is not
+
+The mirror also checks that a tier update came from the canonical network, and
+that check stays. It is defence in depth rather than the only thing standing
+in the way: the messenger already refuses a message from a network it has no
+partner configured for on that conversation, and a correctly configured mirror
+has exactly one partner. What the network check adds is what still holds if a
+partner is ever configured for a network that should not be sending tier
+updates at all.
+
+That is still a different thing from the abandoned check. It constrains a fact
+recovered from the message more tightly than configuration alone does; the
+abandoned one would have compared configuration against configuration and
+constrained nothing further.
+
+The full set of checks a tier update passes today — the transport's own sender
+check, the sender-identity check in the adapter, the paired-messenger check,
+the source-network check, and ordering — is now recorded where the field used
+to be, so the next reader can see what protects the path without having to
+reconstruct it.
+
+### The field is removed outright
+
+An earlier draft of this change kept it, on the stated grounds that removing it
+would move every field declared after it. That was wrong, and checking rather
+than reasoning is what settled it: the field shared a slot with its neighbour,
+and the next field along is of a kind that always begins a new slot. A
+before-and-after comparison of the entire structure's layout shows one field
+gone and **not a single other field moved**.
+
+So it is deleted rather than kept and explained. Keeping a permanently unused
+field alive on a justification that turned out not to hold would have been the
+same kind of residue this change exists to clear.
+
+## Handing over an obligation can no longer consume an offer past its deadline
+
+A borrower leaving a loan early may hand the obligation to someone else, by
+consuming a standing offer that person had already published saying what they
+were willing to borrow and on what terms. That offer can carry a deadline.
+
+The handover never looked at it. It checked that the offer was the right kind,
+that nobody had taken it already, that it was not reserved for a different
+purpose, that it had not been partly filled, and that its assets matched the
+loan — and then bound it. So an offer whose window had closed, and which nobody
+had yet cleaned up, could still be used: the departing borrower could hand a
+live debt to someone whose stated willingness had already lapsed.
+
+The person on the receiving end is not present when this happens. They
+published terms, the window they set passed, and the obligation arrived anyway.
+Their deadline was the whole of their consent to *when*, and it was the one
+condition the handover did not read.
+
+This is the same gap that was just closed on the lender side, where a lender
+selling a position could draw on an offer past its deadline. Both paths reach a
+standing offer without going through the ordinary acceptance route, so neither
+inherited the deadline check that route performs. Both now refuse, before
+anything moves.
+
+Two details, both places a fix of this shape commonly goes wrong:
+
+**An offer with no deadline has not expired.** Offers may be published to stand
+until withdrawn, recorded as the absence of a deadline. A check written as "now
+is at or past the deadline" reads that absence as the earliest possible moment
+and rejects every such offer. Both paths route through the shared helper that
+already knows the difference.
+
+**The deadline moment is already closed.** An offer good until a given instant
+cannot be taken *at* that instant. Consistent with every other route, and now
+pinned by its own test.
+
+A third route was checked at the same time and deliberately left alone: a
+borrower refinancing their own loan consumes an offer they authored themselves,
+so ignoring the deadline there overrides nobody's wishes but their own.
+
+## The contract size guard now says how close each part is to its limit
+
+Each part of the protocol's contract has a hard ceiling on how much compiled
+code it may contain. Going over means it cannot be deployed at all, so a guard
+already fails the test run when any part exceeds it.
+
+That guard is a wall: it says nothing until someone crosses it. A part sitting
+one byte under the ceiling looks exactly like one that is half empty, right up
+until the next person adds a line and discovers — after writing a perfectly
+correct change — that there was no room for it.
+
+That is not hypothetical. Measuring found **two parts within about thirty bytes
+of the ceiling**, which is roughly one more safety check each, and four more
+inside a kilobyte. None of it was visible from a passing test run, and one of
+the two was found only because a change happened to touch it; the other had
+been sitting there unnoticed.
+
+The guard now also reports, on every run, any part with less than a kilobyte of
+room left, naming it and saying how much it has. Six parts currently qualify.
+The wall becomes a gradient: running short is visible while there is still time
+to plan for it, rather than arriving as a blocked change on someone else's
+work.
+
+Deliberately a report rather than a failure. A part may legitimately sit close
+to its ceiling for a while, and failing the run for that would only teach
+people to raise the threshold instead of reading it. Exceeding the actual limit
+still fails, which is where refusal belongs.
