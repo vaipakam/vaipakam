@@ -782,6 +782,79 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
+    /// @dev #1503 design item 23 — a sale buyer binds the LIVE loan's
+    ///      behavioural terms, not the vehicle's.
+    ///
+    ///      The vehicle offer does not carry them: `_buildSaleParams` assigns
+    ///      only `useFullTermInterest`, so `allowsPartialRepay`,
+    ///      `allowsPrepayListing` and `periodicInterestCadence` took struct
+    ///      defaults. A buyer could therefore sign "this position does not allow
+    ///      partial repayment" against a loan that does, and the check PASSED —
+    ///      the vehicle genuinely said so. The binding was satisfied while
+    ///      asserting the reverse of the truth about the acquired position.
+    ///
+    ///      Signs `false` by hand rather than via `buildSaleTerms` (which now
+    ///      mirrors the loan) precisely to reconstruct what a pre-fix client
+    ///      would have sent.
+    function testSaleAcceptRejectsStaleBehaviouralTerms() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v2BehaviouralBuyer");
+
+        // The live position DOES allow partial repayment.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        // What the vehicle says, and what a pre-fix client would have signed.
+        t.allowsPartialRepay = false;
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferAcceptFacet.OfferTermsMismatch.selector, uint8(18))
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev Companion to the above: binding the loan's ACTUAL value is accepted,
+    ///      so the guard rejects the falsehood rather than the field. Without
+    ///      this, a guard that rejected every sale accept would look correct.
+    function testSaleAcceptHonoursTrueBehaviouralTerms() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v2BehaviouralBuyerOk");
+
+        // This one actually completes, so the buyer needs funding + the two
+        // approvals setUp gives its own actors (diamond for the pull, vault for
+        // the deposit). The reject case above needs none: it fails at the
+        // binding before any value moves, which is itself the ordering proof.
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        // buildSaleTerms mirrors the live loan, so this signs `true`.
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        assertTrue(t.allowsPartialRepay, "helper must mirror the live loan");
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
     /// @dev #951 (Codex #959 round-6, P1) — the linked loan's OWN borrower cannot
     ///      buy the lender position of their own debt (it would leave an Active
     ///      loan with lender == borrower). The generic self-trade check only
