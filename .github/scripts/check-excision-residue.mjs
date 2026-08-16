@@ -483,8 +483,16 @@ const PINNED = new Map([
   ["docs/FunctionalSpecs/README.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "242c30f2f5e3"]],
   ["docs/FunctionalSpecs/TokenomicsTechSpec.md", [2, "RETRACTION — the §8 supersede banner", "4b76320c09c4"]],
   ["docs/GLOSSARY.md", [6, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "857792c509dd"]],
-  ["docs/ReleaseNotes/unreleased/1651-excision-residue-ratchet.md", [1, "RETRACTION — this gate's own fragment, quoting the dead phrase as the example of what now fails", "fba24ce27446"]],
-  ["docs/ReleaseNotes/unreleased/1672-layerzero-residue-removal.md", [3, "RETRACTION — describes text that WRONGLY implied the surface was live, and its removal", "a49a87d89dbb"]],
+  // NOTE — two `docs/ReleaseNotes/unreleased/` entries were dropped here when
+  // `assemble.sh` folded those fragments into their dated files
+  // (`1651-excision-residue-ratchet.md` → 2026-08-15,
+  // `1672-layerzero-residue-removal.md` → 2026-08-12). That is the ordinary end
+  // of a fragment's life, not a loss of coverage: the text moved from the
+  // scanned `unreleased/` carveout into `docs/ReleaseNotes/`, which is excluded
+  // on purpose because an assembled note is a dated record of what was true
+  // when it was written. Expect to drop, not re-point, a fragment's pin at
+  // every assembly — re-pointing it at the dated file would re-admit the
+  // exclusion this ledger deliberately sits outside.
   ["docs/TestScopes/AdvancedUserGuideTestMatrix.md", [3, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "83bed4aa55e1"]],
   ["docs/ToDo.md", [31, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "e68c77fade19"]],
   ["docs/internal/ContractFollowupsFromRehearsal-2026-05-06.md", [10, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "c1d15d0eef44"]],

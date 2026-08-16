@@ -1,3 +1,26 @@
+# Release Notes — 2026-08-14
+
+Three entries. Two correct documents that described the system inaccurately,
+but in opposite directions, and the difference is worth keeping separate.
+
+One removes references to a security vendor the product no longer uses — a
+surface that is genuinely gone, so the prose was describing something that had
+ceased to exist. The other corrects a staging plan that understated what the
+indexer Worker actually does. That Worker is live, and the document claimed
+narrower access than it holds; nothing was removed. An understated
+least-privilege claim is the more consequential of the two, because it is
+exactly the kind of statement a reader leans on when reasoning about blast
+radius, and it fails quietly in the direction of false comfort.
+
+Neither changes behaviour, and that is precisely why they are worth recording:
+prose has no compiler, so a document that misdescribes a live system stays
+wrong indefinitely and costs the next reader real time. The pattern is common
+enough by this point that a blocking gate for one instance of it lands the
+following day.
+
+The third entry clears the unused lint-suppression backlog in the other app,
+which turned up two live errors the suppressions had been hiding.
+
 ## The staging plan described the indexer Worker as doing less than it does (#1715)
 
 The Cloudflare staging plan's architecture section explains why the three
@@ -173,3 +196,110 @@ step, and whichever request loses the race is rejected. An expired code is now
 also spent when presented, instead of being left behind.
 
 Nothing else in this change alters behaviour.
+
+## Removed references to a security vendor the product no longer uses (#1717)
+
+The pre-sign transaction preview — the panel that checks, before you approve,
+whether a transaction would succeed or fail — was originally built on a
+third-party scanning service, briefly moved to a second one, and now uses
+neither. It runs the check directly against the chain from the browser and
+reports the outcome. It does not itemise what the transaction would change;
+that richer view was the departed vendor's, and describing the current panel
+as showing "what a transaction will do" overstates it. That change shipped some time
+ago, but references to the original vendor were left behind in several places.
+
+Most of them were harmless bookkeeping. One was not.
+
+A completed security due-diligence questionnaire prepared for a partner
+described the product as routing transaction previews through a server-side
+proxy for that vendor, and stated that the associated API keys were held
+server-side. Neither is true: there is no such proxy, and there is no key. The
+questionnaire's own covering text notes that access to that partner's service
+can be suspended depending on the answers given, which makes an inaccurate
+answer in it a different kind of problem from a stale comment.
+
+The original wording has been struck through rather than rewritten, with a
+correction recorded alongside it. That preserves what was written in case the
+document was actually sent — quietly editing a compliance answer to match
+reality afterwards would destroy the only record of what a partner was told.
+**Whether it was sent, and therefore whether a proactive correction is owed,
+needs a human decision and is flagged in the document rather than assumed
+either way.**
+
+The rest:
+
+- The design document defining how the background services were split apart
+  contains a table recording where each module of the old combined service was
+  routed. It named two modules that have since been deleted, and placed a third
+  against a service other than the one it now lives in. Rather than rewrite the
+  rows, the table is now explicitly labelled for what it is — a record of the
+  split as it happened, not a description of any service as it stands today —
+  with every original row kept and each later change noted beside it. It also
+  now says plainly that it cannot be used to work out what a service is capable
+  of, and points at where to look instead.
+
+  That last point turned out to matter more than the deletions: three
+  notification modules the table assigns to one service also exist in the
+  transaction-signing one, which a single-destination column cannot express.
+  Anyone using the table to bound what the signing service can do would have
+  concluded it cannot send notifications, which is the opposite of true. The
+  sizing inventory earlier in the same document names the two deleted modules
+  as well, and is deliberately left unedited: it is the evidence the split
+  decision rested on, and is marked as a snapshot of that moment.
+- Twenty translated user-facing strings across ten languages named the vendor
+  in warnings that are never displayed. Removed — they were dead weight that
+  translators would keep maintaining, naming a company the project has no
+  relationship with.
+- A handful of code comments and one glossary entry.
+
+Their unused siblings in the same translation block were left in place; whether
+that whole block is dead is a separate question from this one.
+
+No behaviour changes — no rendered text, and no runtime code path, was
+affected.
+
+## apps/defi: cleared the unused lint-suppression backlog, and found two live errors hiding in it
+
+The lending app carried sixteen lint suppressions that no longer suppressed
+anything. Clearing them was meant to be routine tidying — the smallest slice of
+the wider effort to get the app's full lint run to zero — but two of them turned
+out to be covering genuine errors that the app's lint run had been carrying
+unnoticed.
+
+Fourteen were simply inert: they suppressed a console-output rule the app has
+never actually switched on, so they could not have been suppressing anything.
+The sibling app that has already reached a clean lint run had removed exactly
+this class of leftover, so these follow it.
+
+The other two were the interesting ones, and they failed the same way. A
+suppression of this kind applies only to the single line immediately after it.
+Both had been written above a statement that spans several lines, so each came
+to rest on the opening line while the thing it was meant to excuse sat further
+down — outside its reach. In both cases the rule had been firing for real, and
+the app's lint run had been carrying those errors unnoticed, camouflaged among
+the warnings about the suppressions themselves.
+
+The first documented a deliberate, correct exception: a
+pricing hook reads chain data for a chain the caller names explicitly, rather
+than whichever chain the wallet happens to be on, so it is allowed to bypass a
+rule that otherwise steers every read through a shared wrapper. That reasoning
+still holds. Here the explanation written above the import had grown to five
+lines, so the suppression came to rest on a line of prose and stopped covering
+the import entirely. The explanation now sits above the suppression rather than
+between it and the import.
+
+The second sits at a marketplace-publishing call, where a value is deliberately
+cast loosely at the boundary to an external contract's typed interface because
+only the encoded content matters to the hash being recomputed. That reasoning
+also still holds, but the suppression had been written above the opening line of
+a multi-line call while the cast itself is four lines further in. It now sits
+directly above the cast.
+
+Both notes record why the placement matters, so the next person to expand either
+explanation doesn't silently push the suppression off its target again. No
+behaviour changes: the same code runs, against the same chain, as before.
+
+Worth noting for whoever picks up the rest of this cleanup: because the app has
+never enabled the console-output rule, the fourteen deliberate console calls
+those directives described are now unremarked. Turning that rule on is a
+separate decision, not part of this change.
