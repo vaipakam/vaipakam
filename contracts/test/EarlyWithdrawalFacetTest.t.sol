@@ -463,6 +463,71 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
+    /// @dev #1503 design item 8 — the direct sale checked the buy offer's TYPE
+    ///      and `accepted` flag but never its GTT deadline. A lender offer past
+    ///      `expiresAt` and not yet permissionlessly cancelled stayed
+    ///      consumable, letting the seller withdraw the creator's still-vaulted
+    ///      principal AFTER the window that creator consented to had closed.
+    function testSellLoanRevertsExpiredBuyOffer() public {
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.expiresAt = uint64(block.timestamp + 1 days);
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+
+        // Past the creator's stated deadline.
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalFacet.OfferExpired.selector,
+                buyOfferId,
+                o.expiresAt
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev Boundary: `isOfferExpired` treats `now >= expiresAt` as expired, so
+    ///      the deadline second itself is already closed. Pins the `>=` rather
+    ///      than letting a later `>` refactor reopen a one-second window.
+    function testSellLoanRevertsAtExactExpiryBoundary() public {
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.expiresAt = uint64(block.timestamp + 1 days);
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+
+        vm.warp(uint256(o.expiresAt));
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalFacet.OfferExpired.selector,
+                buyOfferId,
+                o.expiresAt
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev The GTC sentinel (`expiresAt == 0`) means "never expires", NOT
+    ///      "expired at the epoch". A guard written as a bare
+    ///      `block.timestamp >= expiresAt` would reject every GTC offer on this
+    ///      path; assert the sentinel still reaches the later checks.
+    function testSellLoanGtcBuyOfferNotTreatedAsExpired() public {
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.expiresAt = 0;
+        o.amountFilled = 1; // trip a LATER guard, proving expiry did not fire
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+
+        vm.warp(block.timestamp + 365 days);
+
+        vm.prank(lender);
+        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
     // ─── sellLoanViaBuyOffer success ──────────────────────────────────────────
 
     function testSellLoanViaBuyOfferSuccess() public {

@@ -257,3 +257,28 @@ commits first and cannot see the fills that fail.
 while checking that the new spec text did not over-claim for a surface it does
 not describe. **RESOLVED** by the warning added for #1702; the spec bullet now
 describes the creator side rather than naming a gap.
+
+## Direct position sale ignored a standing offer's deadline (#1503 item 8)
+
+**Spec** (`ProjectDetailsREADME.md`, "Offer expiry (GTT)"): at and after its
+deadline an offer "can no longer be accepted or matched", and every fill /
+match / preview path "refuse[s] expired offers before any state change."
+
+**Code**: the direct position sale — a lender selling an existing position
+into a standing offer to buy — validated the offer's type and its already-taken
+flag, but never its deadline. An offer past its deadline and not yet cleaned up
+therefore stayed consumable through that one route: the seller could draw the
+principal its author had set aside and mark the offer taken after the window
+the author consented to had closed.
+
+**Decision**: candidate BUG, not a stale doc — the spec's intent was already
+unambiguous. The divergence was one of enumeration rather than intent: the
+spec listed the routes it expected to matter ("direct accepts, matchOffers,
+previewAccept, previewMatch") and a position sale is none of those by name,
+while being exactly one of them in substance. The guard the path needed already
+existed and was already in use on the accept path; it had simply never been
+called here. **RESOLVED** — the guard is now applied before any lien release or
+vault movement, and the spec's enumeration now states the rule by what a path
+*does* (binds a standing offer to a loan, spending its author's committed
+funds) rather than by a list of path names that a new route can silently fall
+outside of.
