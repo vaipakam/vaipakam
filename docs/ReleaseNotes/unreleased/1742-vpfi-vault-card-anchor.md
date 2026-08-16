@@ -1,17 +1,29 @@
-## Thread — the VPFI vault card links to a section that exists (PR #1765)
+## Thread — the tokenomics help links point at a document that exists (PR #1765)
 
-The "Learn more" link on the VPFI vault overview card pointed at a
-tokenomics-spec anchor for a VPFI issuance and buy flow. That section no
-longer carries that name: section 3 of the spec is Token Allocation, and the
-acquisition and vault material lives in section 8. The link therefore landed
-on the wrong part of the document, and its anchor text asserted a purchase
-flow that the #687-A securities excision removed. It now points at the
-section that answers the question the card is asking.
+Every "Learn more" link on a card that cited the tokenomics specification was
+serving a 404. The base URL still addressed the spec at its old top-level
+path; the document now lives under the functional-specs directory, and the
+constant had not followed it. Ten links were affected.
 
-The three sibling cards on the same surface point at the fee-discount
-section, which is a real heading, and were left alone.
+Two anchors were stale on top of that. The VPFI vault overview card pointed
+at a section named for a VPFI issuance and buy flow — a surface the #687-A
+securities excision removed — where the acquisition and vault material is now
+section 8. The dashboard rewards summary pointed at a rewards section that
+does not exist; section 7 is the *removed* staking-yield program, so once the
+base URL was corrected that link would have taken a reader to a retired
+programme. It now points at platform interaction rewards, which is what the
+card describes.
 
-This was found while scoping #1742, which asks for the retired `buy-vpfi`
+Every remaining anchor was checked against the specification's actual
+headings and resolves.
+
+The card help file also carries seven links to numbered README sections that
+no longer exist — the README was shortened and those sections went with it.
+Those are left alone here: unlike the tokenomics links there is no
+corresponding heading to repoint them at, so each needs a decision about
+where it should lead. That is filed separately.
+
+The first of these was found while scoping #1742, which asks for the retired `buy-vpfi`
 route spelling to be added to the excision ratchet. It is the same shape as
 the PWA manifest shortcut that opened that issue: a clickable target whose
 label or address asserts a removed surface is the assertion, regardless of

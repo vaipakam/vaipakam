@@ -47,8 +47,12 @@ export interface CardHelpEntry {
 }
 
 const README = "https://github.com/vaipakam/vaipakam/blob/main/README.md";
+// `docs/FunctionalSpecs/` — the spec moved under that directory and this
+// constant did not follow, so EVERY card using it served a 404. Fixing one
+// card's fragment on top of a dead base would have changed nothing a user
+// could see.
 const TOKENOMICS =
-  "https://github.com/vaipakam/vaipakam/blob/main/docs/TokenomicsTechSpec.md";
+  "https://github.com/vaipakam/vaipakam/blob/main/docs/FunctionalSpecs/TokenomicsTechSpec.md";
 
 export const CARD_HELP: Record<string, CardHelpEntry> = {
   // ── Dashboard ──────────────────────────────────────────────────────────
@@ -66,7 +70,7 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
   },
   "dashboard.rewards-summary": {
     summary: "cardHelp.dashboardRewardsSummary",
-    learnMoreHref: `${TOKENOMICS}#7-rewards`,
+    learnMoreHref: `${TOKENOMICS}#4-platform-interaction-rewards`,
   },
   "dashboard.auto-lend-intent": {
     summary: "cardHelp.dashboardAutoLendIntent",
