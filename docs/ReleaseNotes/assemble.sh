@@ -118,8 +118,31 @@ else
   selected=()
   held=()
   for f in "${frags[@]}"; do
-    added="$(TZ=UTC git -C "$DIR" log --diff-filter=A \
-      --format='%cd' --date=format-local:'%Y-%m-%d' -1 -- "$f" 2>/dev/null || true)"
+    # `--follow` because a rename is otherwise indistinguishable from an add:
+    # path-limited history starts at the new name, so renaming a fragment re-
+    # dates it to the rename. The routine trigger is renaming a fragment to
+    # match its PR number once the number is known, which is often the next day
+    # — this script's own fragment was renamed that way, though within the same
+    # UTC day, so it read correctly either way.
+    #
+    # The status is captured rather than swallowed. `git log` exits 0 with EMPTY
+    # output for a path it has no history for, which is how an uncommitted
+    # fragment is recognised — so a NON-zero exit means something else entirely
+    # (unreadable or partial history), and `|| true` would launder that into
+    # "uncommitted", select the fragment for whatever date was asked, and then
+    # DELETE it after misfiling it. stderr is deliberately not redirected, so
+    # git's own diagnosis reaches the operator.
+    status=0
+    added="$(TZ=UTC git -C "$DIR" log --follow --diff-filter=A \
+      --format='%cd' --date=format-local:'%Y-%m-%d' -1 -- "$f")" || status=$?
+    if (( status != 0 )); then
+      echo "" >&2
+      echo "Error: cannot read git history for $(basename "$f") (git exited $status)." >&2
+      echo "Fragment dates are unavailable, and assembling would consume the" >&2
+      echo "fragment under a date nothing verified. Repair the repository, or" >&2
+      echo "pass --allow-mixed-dates to assemble without dating." >&2
+      exit 1
+    fi
     if [ -z "$added" ] || [ "$added" = "$DATE" ]; then
       selected+=("$f")
     else

@@ -132,9 +132,52 @@ check "succeeds"        "$?"                                                    
 check "warns it cannot date" "$(says "$msg" 'not a git work tree')" "1"
 check "everything folded"    "$(sections "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")"    "2"
 
-# ── Argument handling ────────────────────────────────────────────────────────
-echo "T7: argument handling"
+# ── A rename is not an addition ──────────────────────────────────────────────
+# Path-limited history starts at the NEW name, so without `--follow` a fragment
+# renamed on a later day dates to the rename rather than to when it was written.
+# This is a live case: fragments get renamed to match their PR number once the
+# number is known, which is routinely the day after.
+echo "T7: a renamed fragment keeps its original day"
 W="$ROOT/t7"; build "$W"
+git -C "$W" mv docs/ReleaseNotes/unreleased/0001-a.md \
+              docs/ReleaseNotes/unreleased/0001-a-renamed.md
+GIT_AUTHOR_DATE='2026-08-17T12:00:00Z' GIT_COMMITTER_DATE='2026-08-17T12:00:00Z' \
+  git -C "$W" commit -q -m rename
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-16 2>&1)"
+check "the 08-16 run still claims it"  "$?"                                                            "0"
+check "it is folded into 08-16"        "$(sections "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-16.md")" "1"
+check "the renamed file is not held back" "$(says "$msg" '0001-a-renamed.md')"                         "0"
+check "the genuine 08-17 one still is"    "$(says "$msg" '0002-b.md')"                                 "1"
+check "no 08-17 file written by this run" "$([ -f "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md" ] && echo yes || echo no)" "no"
+
+# ── An unreadable history must abort, not read as "uncommitted" ──────────────
+# `git log` exits 0 with empty output for a path it has no history for, which
+# is how an uncommitted fragment is recognised. A NON-zero exit means something
+# else, and swallowing it would select the fragment for any date and then delete
+# it.
+#
+# Modelled as a git that fails ONLY on `log` — the real shape of the case, an
+# otherwise-valid repository missing an object `log` needs. A git that failed at
+# everything would instead trip the is-this-a-work-tree check and take the
+# no-git branch, which is a different (and honest) path: it says it cannot date.
+echo "T8: an unreadable git history aborts"
+W="$ROOT/t8"; build "$W"
+mkdir -p "$ROOT/fakebin"
+REAL_GIT="$(command -v git)"
+cat > "$ROOT/fakebin/git" <<EOF
+#!/bin/sh
+for a in "\$@"; do [ "\$a" = "log" ] && exit 128; done
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$ROOT/fakebin/git"
+msg="$(PATH="$ROOT/fakebin:$PATH" bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-16 2>&1)"
+check "aborts"           "$?"                                    "1"
+check "says why"         "$(says "$msg" 'cannot read git history')" "1"
+check "nothing consumed" "$(pending "$W")"                       "2"
+
+# ── Argument handling ────────────────────────────────────────────────────────
+echo "T9: argument handling"
+W="$ROOT/t9"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
 bash "$S" --nope              >/dev/null 2>&1; check "unknown option refused" "$?" "1"
 bash "$S" 2026-08-16 2026-08-17 >/dev/null 2>&1; check "two dates refused"   "$?" "1"

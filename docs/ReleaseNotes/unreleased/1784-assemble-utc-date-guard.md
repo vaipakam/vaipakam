@@ -33,14 +33,23 @@ date's run sees the other day's files and stops, so neither day can be
 produced without moving files by hand — and a mixed backlog is precisely the
 situation the dating exists to handle.
 
-Three smaller behaviours round it out. A `--allow-mixed-dates` flag takes
-every pending fragment regardless of day, for when folding them together is
-deliberate. A fragment that has never been committed is always taken, since
-that is one written and assembled inside the same pull request and has no day
-of its own yet. And a shallow clone is refused outright: a fragment older than
-the shallow boundary reports the boundary commit's date instead of its own,
-which looks entirely ordinary and is wrong — worse under selection than under
-a refusal, because it would quietly pull the wrong fragments into a day.
+A `--allow-mixed-dates` flag takes every pending fragment regardless of day,
+for when folding them together is deliberate. A fragment that has never been
+committed is always taken, since that is one written and assembled inside the
+same pull request and has no day of its own yet.
+
+Three ways of reading the wrong day back out of git are closed off. A shallow
+clone is refused outright: a fragment older than the shallow boundary reports
+the boundary commit's date instead of its own, which looks entirely ordinary
+and is wrong — worse under selection than under a refusal, because it would
+quietly pull the wrong fragments into a day. A renamed fragment is followed
+back to where it was written rather than dated to the rename, which matters
+because fragments are routinely renamed to match their pull-request number
+once that number is known, often on the following day. And a repository whose
+history cannot be read at all now stops the run: an unreadable history and a
+never-committed fragment both come back empty, and treating the first as the
+second would have filed the fragment under an unverified date and then deleted
+it.
 
 The assembler also now has a test suite of its own, wired into the docs-drift
 workflow so it runs on every pull request. It builds throwaway repositories

@@ -93,6 +93,10 @@ Three things worth knowing:
 - **A shallow clone is refused.** A fragment older than the shallow
   boundary reports the boundary commit's date rather than its own, which
   looks entirely ordinary and is wrong. Run `git fetch --unshallow` first.
+  A repository whose history cannot be read at all stops the run for the
+  same reason. **Renaming a fragment is safe** — renames are followed back
+  to where the fragment was written, so retitling one to match its PR
+  number does not re-date it.
 
 [`assemble.test.sh`](assemble.test.sh) covers all of this against
 throwaway repositories with fragments committed at chosen UTC timestamps;
