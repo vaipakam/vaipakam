@@ -79,13 +79,35 @@ export const KNOB_DEFAULTS: Record<KnobName, KnobDefault> = {
  */
 export const EXAMPLE = {
   principal: 1_000,
-  aprPercent: 8,
+  /** In BPS, matching how the contract carries a rate. */
+  aprBps: 800,
   days: 30,
 } as const;
 
-/** The example's interest, in USDC. Depends on no knob. */
-const exampleInterest = () =>
-  (EXAMPLE.principal * (EXAMPLE.aprPercent / 100) * EXAMPLE.days) / 365;
+/**
+ * USDC base units (micro-USDC). The example is computed in INTEGERS at
+ * this scale, not in floating point, because the protocol is.
+ */
+const USDC = 1_000_000;
+const BPS = 10_000;
+const DAYS_PER_YEAR = 365;
+
+/**
+ * The example's interest, in micro-USDC — mirroring the contract's
+ * `LibEntitlement.proRataInterest`:
+ *
+ *   (principal * rateBps * elapsedDays) / (DAYS_PER_YEAR * BASIS_POINTS)
+ *
+ * Solidity integer division FLOORS, and the docs call the resulting
+ * figure "exact" and say settlement uses it — so the arithmetic here has
+ * to match the chain's, not merely approximate it (Codex #1751 r1 P2).
+ * Depends on no knob.
+ */
+const exampleInterestMicro = () =>
+  Math.floor(
+    (EXAMPLE.principal * USDC * EXAMPLE.aprBps * EXAMPLE.days) /
+      (DAYS_PER_YEAR * BPS)
+  );
 
 export type DerivedName =
   | 'exampleBorrowerReceives'
@@ -125,21 +147,30 @@ export const DERIVED_FIGURES: Record<DerivedName, DerivedFigure> = {
   // borrower.
   exampleBorrowerReceives: {
     dependsOn: ['loanInitiationFeeBps'],
-    compute: (k) =>
-      EXAMPLE.principal * (1 - k.loanInitiationFeeBps / 10_000),
+    compute: (k) => {
+      const principal = EXAMPLE.principal * USDC;
+      const fee = Math.floor((principal * k.loanInitiationFeeBps) / BPS);
+      return (principal - fee) / USDC;
+    },
     format: 'currency2',
   },
   // Principal + interest, less the treasury's cut of the INTEREST only.
   exampleLenderNet: {
     dependsOn: ['treasuryFeeBps'],
-    compute: (k) =>
-      EXAMPLE.principal +
-      exampleInterest() * (1 - k.treasuryFeeBps / 10_000),
+    compute: (k) => {
+      const interest = exampleInterestMicro();
+      // `splitTreasury` floors the treasury share and gives the lender
+      // the REMAINDER, so the lender absorbs the truncation rather than
+      // both sides rounding independently.
+      const treasury = Math.floor((interest * k.treasuryFeeBps) / BPS);
+      return (EXAMPLE.principal * USDC + interest - treasury) / USDC;
+    },
     format: 'currency2',
   },
   exampleTreasuryYieldFee: {
     dependsOn: ['treasuryFeeBps'],
-    compute: (k) => exampleInterest() * (k.treasuryFeeBps / 10_000),
+    compute: (k) =>
+      Math.floor((exampleInterestMicro() * k.treasuryFeeBps) / BPS) / USDC,
     format: 'currency2',
   },
   // The same figure unrounded. The page shows both, and the point of
@@ -148,7 +179,8 @@ export const DERIVED_FIGURES: Record<DerivedName, DerivedFigure> = {
   // and unrounded figures come from one computation.
   exampleTreasuryYieldFeeExact: {
     dependsOn: ['treasuryFeeBps'],
-    compute: (k) => exampleInterest() * (k.treasuryFeeBps / 10_000),
+    compute: (k) =>
+      Math.floor((exampleInterestMicro() * k.treasuryFeeBps) / BPS) / USDC,
     format: 'currency6',
   },
 };

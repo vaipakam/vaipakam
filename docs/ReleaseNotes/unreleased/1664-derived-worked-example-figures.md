@@ -26,13 +26,26 @@ Almost nothing today, which is the intended outcome. Three small changes:
 - The money amounts now always show cents. One figure previously read as a
   whole number and now shows two decimal places, so that a future change of a
   fraction of a cent cannot hide behind a rounded display.
-- One figure was very slightly wrong and is now right. The passage quoting the
-  fee to six decimal places had been rounded down where it should have been
-  rounded up — a difference of one unit in the last place, previously invisible
-  because it was typed rather than calculated.
+- Nothing else. In particular the six-decimal figure is unchanged, and an
+  earlier draft of this change altered it in error — see below.
 - On non-English pages the amounts now follow that language's own number
   conventions automatically, rather than depending on each translation having
   been written with the right separators.
+
+### Why the arithmetic is done in whole units of the smallest denomination
+
+The computation deliberately mirrors how the protocol itself calculates,
+working in the currency's smallest unit and discarding fractions at each step,
+rather than in ordinary decimals.
+
+This is not fussiness. An earlier draft of this change used ordinary decimal
+arithmetic and produced a figure one unit different in the last place from what
+the protocol actually pays — and then presented it on a page that calls the
+figure exact and says settlement uses it. The number written on the page
+originally was right; the more "precise" computed one was wrong. A page that
+disagrees with the contract about what a settlement pays is worse than a page
+whose figure is merely old, so the arithmetic follows the chain's rules rather
+than approximating them.
 
 ### On the marker that says where a figure came from
 
