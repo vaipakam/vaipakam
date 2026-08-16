@@ -41,6 +41,9 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
  *           6. Arming is one-shot and future-only.
  */
 contract GovernorDualAccumulatorTest is SetupTest {
+    /// @dev Mirror of the library signal, for `vm.expectEmit`.
+    event RewardEntryExpiryBegun(uint256 indexed entryId, address indexed user);
+
     MockRewardMessenger internal messenger;
     VPFIToken internal vpfi;
 
@@ -714,6 +717,95 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _mut().getRewardEntryProcessedRaw(id),
             "and the entry is finally terminalised"
         );
+    }
+
+    /// @dev #1434 (Codex #1699 r8 P1) — a claim racing a PARTLY-SWEPT entry
+    ///      must not silently lose the already-recycled value.
+    ///
+    ///      Chunked reaping makes every credited chunk irreversible. While the
+    ///      entry stayed claimable in between, an owner claiming mid-sweep got
+    ///      nothing for what the bucket had already absorbed — and no removal
+    ///      signal had been emitted to explain it, contradicting the guarantee
+    ///      that a claim before removal wins.
+    ///
+    ///      The resolution is that the FIRST crediting chunk IS the removal
+    ///      point: it announces itself and closes the claim. This asserts the
+    ///      announcement happens and the claim is closed from that instant —
+    ///      not that the claimant is quietly shortchanged.
+    function testP1bFirstCreditedChunkIsTheRemovalPoint() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+
+        uint256 id = _seedEntry(alice, 92, 4, 6); // straddles the cutover
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        assertFalse(
+            _mut().getRewardEntryExpiryBegunRaw(id),
+            "LIVE: not yet at the removal point"
+        );
+
+        // The first chunk credits, so it must ANNOUNCE the removal.
+        vm.expectEmit(true, true, false, false);
+        emit RewardEntryExpiryBegun(id, alice);
+        uint256 first = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertGt(first, 0, "LIVE: the chunk genuinely credited");
+        assertTrue(
+            _mut().getRewardEntryExpiryBegunRaw(id),
+            "the first credited chunk is the removal point"
+        );
+
+        // From here the claim must not reach it at all — neither paying twice
+        // for what was recycled nor paying a silently reduced amount.
+        // The claim finds nothing at all — it reverts rather than paying a
+        // reduced amount, which is the stronger guarantee.
+        vm.prank(alice);
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertFalse(
+            _mut().getRewardEntryProcessedRaw(id),
+            "LIVE: and the entry is still mid-sweep, not terminalised"
+        );
+    }
+
+    /// @dev #1434 (Codex #1699 r8 P1) — a WHOLLY pre-cutover entry terminalises
+    ///      in one pass and can never be paid again.
+    ///
+    ///      The spanning bootstrap keyed only on `startDay < armedFrom`, so an
+    ///      entry whose whole window predates the cutover matched it too: it
+    ///      was credited to the bucket, had its cursor stamped, and was never
+    ///      marked processed — leaving a claim free to pay the SAME entry a
+    ///      second time through the whole-window path.
+    function testP1bWhollyLegacyEntryTerminalisesOnceOnly() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        // Arm well AFTER the entry's window: days 2-4 are wholly pre-cutover.
+        (uint256 floor9, ) = _armAndFinalize(9, 700 ether);
+        assertGt(floor9, 0, "armed day exists, but past this entry");
+
+        uint256 id = _seedEntry(alice, 93, 2, 4);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        uint256 reaped = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertGt(reaped, 0, "LIVE: the wholly-legacy entry genuinely reaps");
+        assertTrue(
+            _mut().getRewardEntryProcessedRaw(id),
+            "and terminalises in that ONE pass"
+        );
+
+        // The double-spend: a claim must find nothing left to pay.
+        vm.prank(alice);
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 
     function testExpiryReapsExactlyTheRemainingWindow() public {

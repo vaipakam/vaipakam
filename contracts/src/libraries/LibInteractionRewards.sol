@@ -116,6 +116,20 @@ library LibInteractionRewards {
         uint256 recycled
     );
 
+    /// @notice #1434 (Codex #1699 r8 P1) — the expiry sweep has begun moving
+    ///         this entry's value; it is no longer claimable by its owner.
+    ///         This is the REMOVAL POINT. `RewardEntryExpired` still follows at
+    ///         terminalization carrying the whole-entry accounting.
+    ///
+    ///         Emitted once per entry, on the FIRST chunk that credits. A
+    ///         deferred sweep credits nothing and emits nothing — the entry
+    ///         stays claimable, which is why "a claim before removal wins"
+    ///         remains true.
+    /// @param entryId Reward entry.
+    /// @param user    Entry owner.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryExpiryBegun(uint256 indexed entryId, address indexed user);
+
     // ─── Schedule helpers ────────────────────────────────────────────────────
 
     uint256 private constant CUTOFF_0 = 182;
@@ -1651,6 +1665,9 @@ library LibInteractionRewards {
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
             if (
                 !e.processed &&
+                // #1434 (Codex #1699 r8 P1) — the sweep owns it past the
+                // removal point; the walk must not pay its remaining days.
+                !e.expiryBegun &&
                 e.side == side &&
                 (
                     s.rewardEntryClaimNextDay[id] != 0 ||
@@ -2503,6 +2520,23 @@ library LibInteractionRewards {
         }
     }
 
+
+    /// @dev #1434 (Codex #1699 r8 P1) — mark the REMOVAL POINT on the first
+    ///      chunk that actually credits, and announce it.
+    ///
+    ///      Called from every crediting expiry path (the legacy bootstrap and
+    ///      each armed chunk) rather than only the first, because which one
+    ///      runs first depends on the entry's shape. Idempotent by the flag.
+    function _beginExpiry(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e
+    ) private {
+        if (e.expiryBegun) return;
+        e.expiryBegun = true;
+        emit RewardEntryExpiryBegun(id, e.user);
+    }
+
     /**
      * @notice RL-3 (#1305, Codex #1317 r7) — advance an entry's
      *         EXECUTABLE-ELAPSED claim-horizon accumulator and, once it has
@@ -2804,9 +2838,48 @@ library LibInteractionRewards {
         // the following sweeps, which is exactly the per-chunk shape the rest
         // of this path already has.
         uint256 armedFrom = s.governorCommitArmedFromDay;
+        // #1434 (Codex #1699 r8 P1) — dispatch EXACTLY as `_processEntry` does,
+        // and dispatch BEFORE reading the cursor.
+        //
+        // `_shareOfPoolCursorDay` answers "which armed day is next", so for a
+        // wholly pre-cutover entry it returns `armedFrom` — a day PAST the
+        // entry's own window. Reading it first made expiry bail at
+        // `d >= endDay` and such an entry could never be reaped at all. The
+        // wholly-legacy case has no armed day to ask about; it settles its
+        // whole window and terminalises, exactly as the claim path does.
+        if (armedFrom == 0 || e.endDay <= armedFrom) {
+            EntrySplit memory whole = st.rawSplit;
+            uint256 wholeFresh = whole.total - whole.recycled;
+            if (wholeFresh > freshHeadroom) {
+                s.rewardEntryObsBlocked[id] = true;
+                return (expired, 0, 0);
+            }
+            _beginExpiry(s, id, e);
+            expired = whole;
+            freshCredited = wholeFresh;
+            e.processed = true;
+            s.rewardEntryExpiredAccum[id] += whole.total;
+            s.rewardEntryExpiredRecycledAccum[id] += whole.recycled;
+            emit RewardEntryExpired(
+                id,
+                e.user,
+                s.rewardEntryExpiredAccum[id],
+                s.rewardEntryExpiredRecycledAccum[id]
+            );
+            return (expired, freshCredited, 0);
+        }
         if (
             armedFrom != 0
                 && e.startDay < armedFrom
+                // Codex #1699 r8 P1 — SPANS the cutover, not merely starts
+                // before it. Without this an entry whose whole window is
+                // pre-cutover also matched: it credited its full legacy value,
+                // stamped the cursor to `armedFrom`, and never terminalised,
+                // so every later sweep no-ops at `d >= endDay` while a claim
+                // still routes through the whole-window branch and can PAY THE
+                // SAME ENTRY AGAIN. A wholly pre-cutover entry belongs to the
+                // terminal branch below, which marks it processed.
+                && armedFrom < e.endDay
                 && s.rewardEntryClaimNextDay[id] == 0
         ) {
             // ALL fresh by the regime identity — pre-`D*` days contribute no
@@ -2819,6 +2892,7 @@ library LibInteractionRewards {
                 s.rewardEntryObsBlocked[id] = true;
                 return (expired, 0, 0);
             }
+            _beginExpiry(s, id, e);
             s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
             s.rewardEntryExpiredAccum[id] += legacyFresh;
             expired.total = legacyFresh;
@@ -2844,21 +2918,29 @@ library LibInteractionRewards {
         // A wholly pre-cutover entry carries no armed value, so no D1 group,
         // no delivered bound and no loan-side question arise: it settles as a
         // whole, exactly as it always did.
-        if (
-            !_isArmedDay(s, d)
-                || s.dayCapMode[d] != LibVaipakam.CapMode.ShareOfPool
-        ) {
-            EntrySplit memory raw = st.rawSplit;
-            uint256 legacyFresh = raw.total - raw.recycled;
-            if (legacyFresh > freshHeadroom) {
-                s.rewardEntryObsBlocked[id] = true;
-                return (expired, 0, 0);
-            }
-            expired = raw;
-            freshCredited = legacyFresh;
-            e.processed = true;
-            emit RewardEntryExpired(id, e.user, expired.total, expired.recycled);
-            return (expired, freshCredited, 0);
+        // An ARMED day whose ShareOfPool stamp has not landed yet DEFERS.
+        //
+        // What stood here terminalised the entry and credited `st.rawSplit`,
+        // which was right while this branch also caught wholly pre-cutover
+        // entries. It no longer does — the dispatch above owns that case — so
+        // the ONLY state that still reaches here is an armed day awaiting its
+        // stamp (a mirror between broadcasts). Terminalising THAT would pay an
+        // armed day's value with neither the D1 ceiling nor the delivered
+        // bound applied, and destroy the rest of the entry on the way out.
+        //
+        // The `!_isArmedDay(s, d)` arm that used to guard this is dead here and
+        // was removed rather than left to imply a reachability it does not
+        // have: every path to this line has `d >= armedFrom` — a stamped
+        // cursor comes from `_persistDay` (`d + 1`, `d >= armedFrom`) or the
+        // legacy-leg stamp (`= armedFrom`), and an unset cursor floors at
+        // `armedFrom`.
+        //
+        // A missing stamp is transient, so this is a DEFER, not a refusal: the
+        // wait clears when the broadcast arrives, and the entry stays fully
+        // claimable meanwhile because nothing was credited.
+        if (s.dayCapMode[d] != LibVaipakam.CapMode.ShareOfPool) {
+            s.rewardEntryObsBlocked[id] = true;
+            return (expired, 0, 0);
         }
 
         uint256[] memory set = new uint256[](1);
@@ -2911,6 +2993,7 @@ library LibInteractionRewards {
         // long entry reaps ACROSS SWEEPS instead of terminalising on a
         // 30-day chunk and discarding the rest. All-or-nothing is now
         // per-priced-chunk, which is what removes that value loss.
+        _beginExpiry(s, id, e);
         _persistDay(s, e.user, e.side, d, set, slices);
 
         // A recycle settlement routes through the TREASURY leg (that is what
@@ -3438,6 +3521,13 @@ library LibInteractionRewards {
     {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (e.processed) return (toUser, toTreasury);
+        // #1434 (Codex #1699 r8 P1) — past the REMOVAL POINT. The expiry sweep
+        // has already moved value from this entry into the recycle bucket, and
+        // that is irreversible; paying the claimant from here would either
+        // double-spend what was recycled or hand them a silently reduced
+        // amount. `_beginExpiry` announced the removal, so this is the
+        // documented "claim before removal wins" boundary, not a silent loss.
+        if (e.expiryBegun) return (toUser, toTreasury);
 
         uint256 armedFrom = s.governorCommitArmedFromDay;
         if (armedFrom == 0 || e.endDay <= armedFrom) {

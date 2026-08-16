@@ -2406,6 +2406,25 @@ library LibVaipakam {
         // to default could claim, then default, dodging the §4 forfeit).
         bool closed;
         uint256 perDayNumeraire18; // Numeraire18 interest-per-day snapshotted at register
+        /// @dev #1434 (Codex #1699 r8 P1) — APPENDED AT THE TAIL
+        ///      (struct-in-mapping tail widening is layout-safe).
+        ///
+        ///      The expiry sweep began MOVING this entry's value. Set on the
+        ///      FIRST crediting chunk, never unset.
+        ///
+        ///      Unifying expiry onto the day engine made a reap CHUNKED, and
+        ///      every credited chunk is IRREVERSIBLE — the value is already in
+        ///      the recycle bucket. Leaving the entry claimable between chunks
+        ///      meant an owner who claimed mid-sweep silently lost whatever had
+        ///      already been recycled, with no removal signal to explain it,
+        ///      contradicting the guarantee that a claim before removal wins.
+        ///
+        ///      So the first credited chunk IS the removal point: from that
+        ///      instant the claim paths skip the entry and a public signal
+        ///      marks it. "A claim before removal wins" stays true and becomes
+        ///      precisely observable — a deferral still credits nothing and
+        ///      leaves the entry fully claimable.
+        bool expiryBegun;
     }
 
     /**

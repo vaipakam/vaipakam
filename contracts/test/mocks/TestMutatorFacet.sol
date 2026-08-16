@@ -688,7 +688,9 @@ contract TestMutatorFacet {
             processed: false,
             forfeited: false,
             closed: false, // #1002 (S4) — seeded open; tests close via closeLoan/mutator
-            perDayNumeraire18: perDayNumeraire18
+            perDayNumeraire18: perDayNumeraire18,
+            // #1434 r8 — seeded BEFORE the removal point, like a live entry.
+            expiryBegun: false
         });
         s.userRewardEntryIds[user].push(id);
         // #1067 — mirror production `_allocEntry`: maintain the O(1) membership
@@ -1882,6 +1884,16 @@ contract TestMutatorFacet {
         returns (uint256)
     {
         return LibVaipakam.storageSlot().rewardEntryClaimNextDay[id];
+    }
+
+    /// @notice #1434 r8 test-only — whether the sweep has passed this entry's
+    ///         REMOVAL POINT (the first chunk that credited).
+    function getRewardEntryExpiryBegunRaw(uint256 id)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().rewardEntries[id].expiryBegun;
     }
 
     /// @notice #1434 test-only — whether the entry is terminalised.
