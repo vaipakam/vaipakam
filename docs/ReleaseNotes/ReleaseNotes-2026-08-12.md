@@ -9,7 +9,7 @@ timeline — and note that where a thread says "now" it means "as of its
 own merge", which a later thread in the same file sometimes revises.
 
 *Later addition:* the catch-up above was assembled part-way through
-2026-08-12, and seven further threads merged the same day. They are
+2026-08-12, and eight further threads merged the same day. They are
 appended at the end of this file rather than woven into the arcs below,
 so the five-arc summary describes the catch-up window only.
 
@@ -8602,6 +8602,35 @@ backups, the dated findings reports, and a captured audit artifact.
 Those are records of what was true on a date, and a record that gets
 edited to stay current is no longer a record.
 
+## Desk order ticket — the fill mode you picked is the one that gets posted
+
+The rate desk's order ticket shows the fill mode in force, and posts it.
+
+A gasless lend order can only ever fill as one whole loan, so the ticket
+switches the default "Partial" to "AON" and disables the Partial chip in that
+mode. Previously the ticket stored one mode and corrected it a beat later,
+which left a moment where the ticket claimed partial fill in a mode that cannot
+serve it — and everything read off that claim during the moment, including the
+order preview and the fee estimate, described an order that could not be
+posted. The mode shown is now derived from the terms rather than corrected
+after the fact, so the chip and the order always agree.
+
+While making that change we introduced, and then fixed before release, a worse
+version of the same problem: the correction was applied to every mode instead of
+only to Partial. A lender who chose "IOC" — immediate-or-cancel, which the
+ticket still offers in this mode — would have seen AON highlighted and signed an
+AON order, and the rule that an IOC order needs an expiry would have stopped
+applying to it. Only Partial is converted now, matching what the posting path
+itself does, and the automated desk test drives the IOC case so the same
+substitution cannot return unnoticed.
+
+Separately, switching between lending and borrowing, or between posting on-chain
+and posting by signature, now clears the risk-and-terms tick immediately rather
+than a moment afterwards. Those switches change what is being agreed to, and the
+tick has to fall with them. For a signature-only post this matters more than it
+looks: there is no second checkpoint after the signature, so the terms on screen
+when the box was ticked are the only record of what the user agreed to.
+
 ## Connected app — two stale-value hazards in the notification bell and the recovery form (PR #TBD)
 
 The connected app's lint configuration keeps React's hook rules visible as
@@ -8754,7 +8783,7 @@ instead of waiting to be dismissed.
 This is the first of several passes over this class of finding; the underlying
 check stays advisory until the remaining cases are judged.
 
-### The fee figures on the public pages now follow the protocol, not the release
+## The fee figures on the public pages now follow the protocol, not the release
 
 The documentation quotes several governance-tunable figures — the fee on lender
 interest, the loan initiation fee, the VPFI discount tiers and their thresholds.

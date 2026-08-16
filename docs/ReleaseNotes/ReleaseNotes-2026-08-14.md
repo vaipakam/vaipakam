@@ -1,157 +1,25 @@
 # Release Notes — 2026-08-14
 
-A documentation and configuration day: five of the seven entries remove
-descriptions of things that no longer exist. An agent worker explained by a
-component that was deleted, two chain settings for a removed page, deploy
-runbooks instructing operators to call functions that are gone, references to
-a security vendor the product no longer uses, and a staging plan that
-understated what the indexer Worker actually does.
+Three entries. Two correct documents that described the system inaccurately,
+but in opposite directions, and the difference is worth keeping separate.
 
-None of these change behaviour, and that is precisely why they are worth
-recording: prose has no compiler, so a removed surface described as live stays
+One removes references to a security vendor the product no longer uses — a
+surface that is genuinely gone, so the prose was describing something that had
+ceased to exist. The other corrects a staging plan that understated what the
+indexer Worker actually does. That Worker is live, and the document claimed
+narrower access than it holds; nothing was removed. An understated
+least-privilege claim is the more consequential of the two, because it is
+exactly the kind of statement a reader leans on when reasoning about blast
+radius, and it fails quietly in the direction of false comfort.
+
+Neither changes behaviour, and that is precisely why they are worth recording:
+prose has no compiler, so a document that misdescribes a live system stays
 wrong indefinitely and costs the next reader real time. The pattern is common
 enough by this point that a blocking gate for one instance of it lands the
 following day.
 
-The other two entries clear lint-suppression backlogs. The connected app's is
-now empty and enforced, so a stale suppression fails the build. Clearing the
-same backlog in the other app turned up two live errors that the suppressions
-had been hiding.
-
-## Stale lint suppressions in the connected app now fail the build (#1520)
-
-The connected app's lint config has spent several changes promoting
-correctness rules from advisory to blocking, each one promoted at the moment
-its violation count reached zero. That work is finished.
-
-It left something behind that is easy to miss. Driving those rules to zero
-did not mean deleting every place they fired — a number of them were
-deliberate, correct code that the rule cannot recognise as such, and each of
-those carries a suppression comment with the reasoning written next to it.
-That is the intended end state rather than debt. But it does mean the app now
-carries a meaningful number of suppressions, and until now nothing checked
-whether any of them still had a reason to exist.
-
-The problem is not a suppression that is wrong today. It is one that stops
-being needed and stays anyway: the code around it gets rewritten, the rule
-would no longer fire, and the comment sits there inert. Nothing is broken and
-nothing is reported. It becomes a problem only later, when that same file
-regresses — and the leftover comment silently suppresses the new violation, so
-the rule that was promoted specifically to catch it never fires. The
-suppression has quietly pre-authorised the bug.
-
-The linter can already detect this, and was already detecting it — but only as
-a warning, which does not fail anything, so the count was free to drift. It is
-now an error, on the same principle every other rule here was promoted under:
-the count is at zero, so lock it there. A suppression that outlives its cause
-now fails the build rather than accumulating unnoticed.
-
-To be precise about what this does not do: it is not what catches a
-suppression attached to the wrong line. That case leaves the real violation
-unsuppressed, so the rule itself already fails. This is strictly about
-suppressions that have outlived the thing they were written for.
-
-No product behaviour changes — this affects only what the build refuses to
-accept.
-
-## Agent worker — configuration explained by a component that was removed (PR #TBD)
-
-The agent worker's configuration was documented in many places — both of
-its module headers, two interface comments, the chain-resolution helper, its
-deployment config and that config's own header, its database binding, its
-README, its package description, the sibling keeper worker's config, and the
-active Cloudflare staging plan — by reference to a monitoring component that
-reconciled the removed VPFI purchase flow. That component went with the
-purchase flow. The explanations stayed.
-
-Three of those were false in ways that mattered beyond tidiness:
-
-The database binding listed a family of purchase-reconciliation tables among
-what this worker reads. No such tables exist — nothing creates them and
-nothing reads them. Anyone auditing what this worker can reach was told it
-reads data that was never there.
-
-Two configs claimed both Polygon endpoints were unique to this worker. One is
-also used by the indexer.
-
-The README and package description advertised cross-chain reconciliation as a
-current responsibility. It was removed rather than renamed: the worker has no
-other cross-chain-monitoring concern, and inventing a replacement to preserve
-the bullet would have been the same defect in a new coat.
-
-**What this change deliberately does not do** is replace the old explanations
-with new ones. Review repeatedly caught the replacements being wrong in the
-same way: any sentence summarising how this worker uses its endpoints — how
-many consumers there are, what happens when one is missing, whether a request
-still reaches upstream — read as plausible and turned out not to survive
-tracing the actual code path.
-
-So the descriptions are now pointers, not summaries: the comments name the
-consumers and say to read them, and state only what was verified end to end.
-The one substantive finding is recorded plainly — the two Polygon endpoints
-are unreachable today, because no Polygon deployment record exists and every
-consumer checks for one first. They are provisioned ahead of need, which is a
-legitimate operator choice; whether to keep them is a deployment question, not
-a cleanup one.
-
-One explanation **is** replaced rather than removed, and it is worth saying why
-that is not the same mistake. The active staging plan told the operator to
-create the Workers' secrets with a command that creates a different kind of
-secret than the one the Workers actually bind. That command completes
-successfully and leaves the binding empty, so the failure surfaces at runtime
-as a missing secret rather than at provisioning time — the least legible place
-to find it. Removing the step was not an option, since the operator still has
-to provision the secrets somehow.
-
-So this one was verified end to end instead of deferred: the store identifier
-comes from the Worker configs, which all three share; the required flags come
-from the tool's own help text, including one that defaults to writing
-somewhere the deploy never reads. The plan now separates the two mechanisms
-and says which secrets use which, because the two lists are genuinely
-different and the overlap is what made the original wrong. The related
-follow-up issue was closed as fixed here rather than left open.
-
-A configuration comment that is confidently wrong is worse than one that tells
-you where to look.
-
-No behaviour changes.
-
-## Chain configuration — two settings for a page that no longer exists (PR #TBD)
-
-Every chain the apps know about carried two extra settings: a link target for
-the chain's native gas token, and one for its bridged wrapped-ether token. Both
-existed for a single purpose — the removed VPFI purchase page used them to link
-the asset name a user was paying in to the right reference page, which mattered
-because the "same" wrapped token is a different contract on each chain.
-
-That page and the helper that read these settings were removed some time ago
-for legal reasons. The settings were not. They stayed declared in three
-packages and filled in for all thirteen chains, with nothing anywhere reading
-either of them.
-
-This removes both. It is deletion of data that no longer feeds anything, not a
-change to what any chain does — the values were never displayed after the page
-that displayed them was withdrawn.
-
-Two judgement calls worth recording:
-
-A third setting added at the same time and for the same page — the chain's
-native gas symbol — is **kept**. It is also declared in the newer connected
-app's own chain list, so whether it is still wanted is a separate question from
-this cleanup, and answering it here would have quietly widened a tidy-up into a
-change to a different application.
-
-A comment on the BNB chain entry described a constraint the removed purchase
-contract had to satisfy, and a deployment check that enforced it. Both are gone,
-so the comment documented a rule nothing can apply. Replaced with a note saying
-what it described and why it went, rather than deleted outright — silently
-removing it would re-open the question of why the constraint is absent.
-
-Historical references elsewhere — in the task list, older release notes, and a
-chain-safety audit — are deliberately untouched. They are accurate records of
-work that happened.
-
-No user-visible behaviour changes.
+The third entry clears the unused lint-suppression backlog in the other app,
+which turned up two live errors the suppressions had been hiding.
 
 ## The staging plan described the indexer Worker as doing less than it does (#1715)
 
@@ -328,50 +196,6 @@ step, and whichever request loses the race is rejected. An expired code is now
 also spent when presented, instead of being left behind.
 
 Nothing else in this change alters behaviour.
-
-## Deploy runbooks no longer instruct operators to call functions that were deleted (#1716)
-
-Two operator runbooks still told whoever was following them to configure and
-operate a cross-chain purchase flow that was removed for legal reasons some
-time ago. Seven of the functions they name no longer exist; calling any of them
-fails outright.
-
-The reason this is worth a release note rather than a quiet tidy-up is where
-the instructions sat.
-
-One of the two documents opens by declaring itself the gate between "the
-contracts pass their tests" and "real users can route real value through the
-protocol", and states that every step in it is a hard prerequisite. Its
-pre-launch checklist contained boxes that could never be ticked, because the
-contracts they refer to are not deployed and cannot be. A checklist with an
-impossible item has only two outcomes, and both are bad: either a release
-blocks on a phantom step, or people learn to tick boxes they have not actually
-verified. On a pre-launch gate the second is the dangerous one.
-
-The same document's incident-response section was worse in a quieter way. It
-told a responder handling a funds-at-risk situation to check pending refunds
-using a recovery function that does not exist, and listed a message type that
-was removed with the flow. That is time taken from someone under pressure, at
-the exact moment they can least afford it.
-
-The other document is the current cross-chain cutover runbook, and it already
-contradicted itself: an early section correctly records that these contracts
-are not part of the deployed stack, while three later sections continue to
-treat them as live, including a funding step and its own checklist box. Nobody
-reading it end to end could tell which half was current.
-
-Steps that cannot be performed are now removed rather than annotated. Where a
-reader might otherwise wonder whether something was dropped by mistake, a short
-note records what stood there and why it went. Explanations that were merely
-wrong — a treasury setting described as belonging to the purchase flow, two
-configuration values documented as required when nothing reads them any more —
-are corrected in place.
-
-Three sibling runbooks referenced the same removed surface and were left
-untouched: each already carries a banner saying so, and those banners are the
-model the corrections here follow.
-
-No behaviour changes — these are operator instructions only.
 
 ## Removed references to a security vendor the product no longer uses (#1717)
 

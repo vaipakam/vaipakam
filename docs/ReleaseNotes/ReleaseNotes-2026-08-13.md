@@ -3,17 +3,18 @@
 Two threads of work dominate the day, and they are unrelated to each other.
 
 The larger is the connected app's render-correctness sweep (#1520), which
-accounts for eight of the seventeen entries. Each one is the same underlying
+accounts for eight of the twenty entries. Each one is the same underlying
 fault seen from a different screen: a value read at the wrong moment, so the
 interface describes the thing you were looking at a moment ago rather than
 the thing in front of you now. The phone "More" sheet stayed open across a
-navigation, the desk order ticket could post a fill mode other than the one
-selected, the offer review carried a previous offer's tariff choice, and three
-screens showed a stale first frame. The consent surfaces are the sharp end of
-it — an acknowledgement that fails to clear when the figures beneath it change
-is a signature collected against something the user did not see. The day
-closes that group out: the last of the four React hook rules becomes enforced
-rather than advisory, so these cannot silently return.
+navigation, the offer review carried a previous offer's tariff choice, and
+three screens showed a stale first frame. The consent surfaces are the sharp
+end of it — an acknowledgement that fails to clear when the figures beneath it
+change is a signature collected against something the user did not see. The
+day closes that group out twice over: the last of the four React hook rules
+becomes enforced rather than advisory, and the suppression backlog those rules
+left behind is emptied and made blocking, so neither the faults nor a stale
+suppression can silently return.
 
 The other is the rewards programme's recovery ceremony (#1434 P2-w6), which
 gives stranded compensation value a settlement path. Value whose delivery
@@ -23,7 +24,9 @@ could decide.
 
 The remainder are corrections to things that described the system inaccurately
 — a facet table calling five live settlement facets unbuilt, two protocol
-console guards for a contract that no longer exists, six dead lint
+console guards for a contract that no longer exists, an agent worker explained
+by a component that was deleted, two chain settings for a removed page, deploy
+runbooks instructing operators to call functions that are gone, six dead lint
 suppressions, and two duplicate definitions of the hook-order guard.
 
 ## P2-w6 — stranded compensation value gets a settlement, and rotations carry open compensations (#1434 R6d/R6e)
@@ -128,35 +131,6 @@ sheet as they are tapped.
 
 Nothing about when the sheet opens, what it contains, or which tab is highlighted
 has changed.
-
-## Desk order ticket — the fill mode you picked is the one that gets posted
-
-The rate desk's order ticket shows the fill mode in force, and posts it.
-
-A gasless lend order can only ever fill as one whole loan, so the ticket
-switches the default "Partial" to "AON" and disables the Partial chip in that
-mode. Previously the ticket stored one mode and corrected it a beat later,
-which left a moment where the ticket claimed partial fill in a mode that cannot
-serve it — and everything read off that claim during the moment, including the
-order preview and the fee estimate, described an order that could not be
-posted. The mode shown is now derived from the terms rather than corrected
-after the fact, so the chip and the order always agree.
-
-While making that change we introduced, and then fixed before release, a worse
-version of the same problem: the correction was applied to every mode instead of
-only to Partial. A lender who chose "IOC" — immediate-or-cancel, which the
-ticket still offers in this mode — would have seen AON highlighted and signed an
-AON order, and the rule that an IOC order needs an expiry would have stopped
-applying to it. Only Partial is converted now, matching what the posting path
-itself does, and the automated desk test drives the IOC case so the same
-substitution cannot return unnoticed.
-
-Separately, switching between lending and borrowing, or between posting on-chain
-and posting by signature, now clears the risk-and-terms tick immediately rather
-than a moment afterwards. Those switches change what is being agreed to, and the
-tick has to fall with them. For a signature-only post this matters more than it
-looks: there is no second checkpoint after the signature, so the terms on screen
-when the box was ticked are the only record of what the user agreed to.
 
 ## Offer review: the tariff choice resets with the offer, and consent clearing has one owner
 
@@ -321,6 +295,42 @@ other four were earned.
 
 No user-visible behaviour changes.
 
+## Stale lint suppressions in the connected app now fail the build (#1520)
+
+The connected app's lint config has spent several changes promoting
+correctness rules from advisory to blocking, each one promoted at the moment
+its violation count reached zero. That work is finished.
+
+It left something behind that is easy to miss. Driving those rules to zero
+did not mean deleting every place they fired — a number of them were
+deliberate, correct code that the rule cannot recognise as such, and each of
+those carries a suppression comment with the reasoning written next to it.
+That is the intended end state rather than debt. But it does mean the app now
+carries a meaningful number of suppressions, and until now nothing checked
+whether any of them still had a reason to exist.
+
+The problem is not a suppression that is wrong today. It is one that stops
+being needed and stays anyway: the code around it gets rewritten, the rule
+would no longer fire, and the comment sits there inert. Nothing is broken and
+nothing is reported. It becomes a problem only later, when that same file
+regresses — and the leftover comment silently suppresses the new violation, so
+the rule that was promoted specifically to catch it never fires. The
+suppression has quietly pre-authorised the bug.
+
+The linter can already detect this, and was already detecting it — but only as
+a warning, which does not fail anything, so the count was free to drift. It is
+now an error, on the same principle every other rule here was promoted under:
+the count is at zero, so lock it there. A suppression that outlives its cause
+now fails the build rather than accumulating unnoticed.
+
+To be precise about what this does not do: it is not what catches a
+suppression attached to the wrong line. That case leaves the real violation
+unsuppressed, so the rule itself already fails. This is strictly about
+suppressions that have outlived the thing they were written for.
+
+No product behaviour changes — this affects only what the build refuses to
+accept.
+
 ## Six dead lint suppressions removed from the live UX sweep
 
 The committed live-UX sweep driver carried six suppression comments for a lint rule
@@ -368,6 +378,105 @@ One deliberate asymmetry: two of the packages keep their own copies of the
 lint plugin dependencies, because they also have a fuller lint setup that
 imports them and that nothing currently runs. Removing those would have
 broken that setup without failing anything today.
+
+No user-visible behaviour changes.
+
+## Agent worker — configuration explained by a component that was removed (PR #TBD)
+
+The agent worker's configuration was documented in many places — both of
+its module headers, two interface comments, the chain-resolution helper, its
+deployment config and that config's own header, its database binding, its
+README, its package description, the sibling keeper worker's config, and the
+active Cloudflare staging plan — by reference to a monitoring component that
+reconciled the removed VPFI purchase flow. That component went with the
+purchase flow. The explanations stayed.
+
+Three of those were false in ways that mattered beyond tidiness:
+
+The database binding listed a family of purchase-reconciliation tables among
+what this worker reads. No such tables exist — nothing creates them and
+nothing reads them. Anyone auditing what this worker can reach was told it
+reads data that was never there.
+
+Two configs claimed both Polygon endpoints were unique to this worker. One is
+also used by the indexer.
+
+The README and package description advertised cross-chain reconciliation as a
+current responsibility. It was removed rather than renamed: the worker has no
+other cross-chain-monitoring concern, and inventing a replacement to preserve
+the bullet would have been the same defect in a new coat.
+
+**What this change deliberately does not do** is replace the old explanations
+with new ones. Review repeatedly caught the replacements being wrong in the
+same way: any sentence summarising how this worker uses its endpoints — how
+many consumers there are, what happens when one is missing, whether a request
+still reaches upstream — read as plausible and turned out not to survive
+tracing the actual code path.
+
+So the descriptions are now pointers, not summaries: the comments name the
+consumers and say to read them, and state only what was verified end to end.
+The one substantive finding is recorded plainly — the two Polygon endpoints
+are unreachable today, because no Polygon deployment record exists and every
+consumer checks for one first. They are provisioned ahead of need, which is a
+legitimate operator choice; whether to keep them is a deployment question, not
+a cleanup one.
+
+One explanation **is** replaced rather than removed, and it is worth saying why
+that is not the same mistake. The active staging plan told the operator to
+create the Workers' secrets with a command that creates a different kind of
+secret than the one the Workers actually bind. That command completes
+successfully and leaves the binding empty, so the failure surfaces at runtime
+as a missing secret rather than at provisioning time — the least legible place
+to find it. Removing the step was not an option, since the operator still has
+to provision the secrets somehow.
+
+So this one was verified end to end instead of deferred: the store identifier
+comes from the Worker configs, which all three share; the required flags come
+from the tool's own help text, including one that defaults to writing
+somewhere the deploy never reads. The plan now separates the two mechanisms
+and says which secrets use which, because the two lists are genuinely
+different and the overlap is what made the original wrong. The related
+follow-up issue was closed as fixed here rather than left open.
+
+A configuration comment that is confidently wrong is worse than one that tells
+you where to look.
+
+No behaviour changes.
+
+## Chain configuration — two settings for a page that no longer exists (PR #TBD)
+
+Every chain the apps know about carried two extra settings: a link target for
+the chain's native gas token, and one for its bridged wrapped-ether token. Both
+existed for a single purpose — the removed VPFI purchase page used them to link
+the asset name a user was paying in to the right reference page, which mattered
+because the "same" wrapped token is a different contract on each chain.
+
+That page and the helper that read these settings were removed some time ago
+for legal reasons. The settings were not. They stayed declared in three
+packages and filled in for all thirteen chains, with nothing anywhere reading
+either of them.
+
+This removes both. It is deletion of data that no longer feeds anything, not a
+change to what any chain does — the values were never displayed after the page
+that displayed them was withdrawn.
+
+Two judgement calls worth recording:
+
+A third setting added at the same time and for the same page — the chain's
+native gas symbol — is **kept**. It is also declared in the newer connected
+app's own chain list, so whether it is still wanted is a separate question from
+this cleanup, and answering it here would have quietly widened a tidy-up into a
+change to a different application.
+
+A comment on the BNB chain entry described a constraint the removed purchase
+contract had to satisfy, and a deployment check that enforced it. Both are gone,
+so the comment documented a rule nothing can apply. Replaced with a note saying
+what it described and why it went, rather than deleted outright — silently
+removing it would re-open the question of why the constraint is absent.
+
+Historical references elsewhere — in the task list, older release notes, and a
+chain-safety audit — are deliberately untouched. They are accurate records of
+work that happened.
 
 No user-visible behaviour changes.
 
@@ -615,3 +724,47 @@ It does not stop you saving. What the protocol judges is the quote at the
 moment of the fill, and that may fall back below your ceiling before anyone
 accepts — so the form treats this the same way it already treats a vault
 balance below the quote: it tells you, and leaves the decision with you.
+## Deploy runbooks no longer instruct operators to call functions that were deleted (#1716)
+
+Two operator runbooks still told whoever was following them to configure and
+operate a cross-chain purchase flow that was removed for legal reasons some
+time ago. Seven of the functions they name no longer exist; calling any of them
+fails outright.
+
+The reason this is worth a release note rather than a quiet tidy-up is where
+the instructions sat.
+
+One of the two documents opens by declaring itself the gate between "the
+contracts pass their tests" and "real users can route real value through the
+protocol", and states that every step in it is a hard prerequisite. Its
+pre-launch checklist contained boxes that could never be ticked, because the
+contracts they refer to are not deployed and cannot be. A checklist with an
+impossible item has only two outcomes, and both are bad: either a release
+blocks on a phantom step, or people learn to tick boxes they have not actually
+verified. On a pre-launch gate the second is the dangerous one.
+
+The same document's incident-response section was worse in a quieter way. It
+told a responder handling a funds-at-risk situation to check pending refunds
+using a recovery function that does not exist, and listed a message type that
+was removed with the flow. That is time taken from someone under pressure, at
+the exact moment they can least afford it.
+
+The other document is the current cross-chain cutover runbook, and it already
+contradicted itself: an early section correctly records that these contracts
+are not part of the deployed stack, while three later sections continue to
+treat them as live, including a funding step and its own checklist box. Nobody
+reading it end to end could tell which half was current.
+
+Steps that cannot be performed are now removed rather than annotated. Where a
+reader might otherwise wonder whether something was dropped by mistake, a short
+note records what stood there and why it went. Explanations that were merely
+wrong — a treasury setting described as belonging to the purchase flow, two
+configuration values documented as required when nothing reads them any more —
+are corrected in place.
+
+Three sibling runbooks referenced the same removed surface and were left
+untouched: each already carries a banner saying so, and those banners are the
+model the corrections here follow.
+
+No behaviour changes — these are operator instructions only.
+
