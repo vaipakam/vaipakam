@@ -247,23 +247,83 @@ export function formatKnob(value: number, format: KnobFormat, locale: string): s
 }
 
 /**
- * The default knob map, plus an empty live-set — what a build-time
- * consumer resolves derived figures against (#1664 item 1).
- *
- * Both callers here substitute compile-time DEFAULTS: neither has a
- * config snapshot. So every derived figure computes from defaults and is
- * correctly not-live, which is the honest answer for an artifact built
- * before any fetch happens.
+ * Shape this registry needs from a protocol-config snapshot. Declared
+ * structurally rather than importing `MarketingProtocolConfig` so this
+ * module stays free of any dependency on the hook that fetches it — the
+ * build script imports this file too.
  */
-export function defaultKnobResolution(): {
+export interface KnobConfigSource {
+  treasuryFeeBps: number;
+  loanInitiationFeeBps: number;
+  tierThresholdsTokens: readonly number[];
+  tierDiscountBps: readonly number[];
+}
+
+/**
+ * How each knob is read from a config snapshot.
+ *
+ * This lived in `LiveValue.tsx` until #1664 item 2, which was the wrong
+ * home: the search index needs the same mapping, and a second copy of
+ * "which config field backs which token" is exactly the drift this
+ * registry exists to prevent. It is React-free, so it belongs here with
+ * the names, defaults and formats it describes.
+ */
+const KNOB_READS: Record<
+  KnobName,
+  (c: KnobConfigSource | null) => number | null
+> = {
+  treasuryFeeBps: (c) => (c ? c.treasuryFeeBps : null),
+  loanInitiationFeeBps: (c) => (c ? c.loanInitiationFeeBps : null),
+  tier1Min: (c) => (c ? c.tierThresholdsTokens[0] : null),
+  tier2Min: (c) => (c ? c.tierThresholdsTokens[1] : null),
+  tier3Min: (c) => (c ? c.tierThresholdsTokens[2] : null),
+  tier4Min: (c) => (c ? c.tierThresholdsTokens[3] : null),
+  tier1DiscountBps: (c) => (c ? c.tierDiscountBps[0] : null),
+  tier2DiscountBps: (c) => (c ? c.tierDiscountBps[1] : null),
+  tier3DiscountBps: (c) => (c ? c.tierDiscountBps[2] : null),
+  tier4DiscountBps: (c) => (c ? c.tierDiscountBps[3] : null),
+};
+
+/**
+ * Resolve every knob against a config snapshot, returning the values to
+ * display and the set that were actually read live.
+ *
+ * `null` — a build script, a failed fetch, a page that makes no read —
+ * yields all defaults and an empty live-set, which is the honest answer
+ * rather than a special case.
+ */
+export function resolveKnobs(config: KnobConfigSource | null): {
   values: Record<KnobName, number>;
   live: ReadonlySet<KnobName>;
 } {
   const values = {} as Record<KnobName, number>;
+  const live = new Set<KnobName>();
   for (const name of Object.keys(KNOB_DEFAULTS) as KnobName[]) {
-    values[name] = KNOB_DEFAULTS[name].defaultValue;
+    const read = KNOB_READS[name](config);
+    values[name] = read ?? KNOB_DEFAULTS[name].defaultValue;
+    if (read !== null) live.add(name);
   }
-  return { values, live: new Set<KnobName>() };
+  return { values, live };
+}
+
+/**
+ * Resolve ANY `{liveValue:...}` name — knob or derived — against a
+ * config snapshot. One entry point, so the three consumers cannot
+ * disagree about what a token means or where its value came from.
+ */
+export function resolveLiveValue(
+  name: string,
+  config: KnobConfigSource | null
+): { value: number; isLive: boolean; format: KnobFormat } | null {
+  const { values, live } = resolveKnobs(config);
+  if (isDerived(name)) return resolveDerived(name, values, live);
+  const spec = KNOB_DEFAULTS[name as KnobName];
+  if (!spec) return null;
+  return {
+    value: values[name as KnobName],
+    isLive: live.has(name as KnobName),
+    format: spec.format,
+  };
 }
 
 /** Matches a whole inline-code token: `{liveValue:knobName}`. */

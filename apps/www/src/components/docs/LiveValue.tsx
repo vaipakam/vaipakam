@@ -59,12 +59,8 @@
 
 import { useProtocolConfig } from '../../hooks/useProtocolConfig';
 import {
-  KNOB_DEFAULTS,
   formatKnob,
-  isDerived,
-  resolveDerived,
-  type KnobFormat,
-  type KnobName,
+  resolveLiveValue,
   type LiveValueName,
 } from '../../lib/liveValueKnobs';
 
@@ -80,18 +76,6 @@ export type { KnobName };
  */
 type ChainRead = (config: ReturnType<typeof useProtocolConfig>['config']) => number | null;
 
-const KNOB_READS: Record<KnobName, ChainRead> = {
-  treasuryFeeBps: (c) => (c ? c.treasuryFeeBps : null),
-  loanInitiationFeeBps: (c) => (c ? c.loanInitiationFeeBps : null),
-  tier1Min: (c) => (c ? c.tierThresholdsTokens[0] : null),
-  tier2Min: (c) => (c ? c.tierThresholdsTokens[1] : null),
-  tier3Min: (c) => (c ? c.tierThresholdsTokens[2] : null),
-  tier4Min: (c) => (c ? c.tierThresholdsTokens[3] : null),
-  tier1DiscountBps: (c) => (c ? c.tierDiscountBps[0] : null),
-  tier2DiscountBps: (c) => (c ? c.tierDiscountBps[1] : null),
-  tier3DiscountBps: (c) => (c ? c.tierDiscountBps[2] : null),
-  tier4DiscountBps: (c) => (c ? c.tierDiscountBps[3] : null),
-};
 
 interface LiveValueProps {
   knob: LiveValueName;
@@ -113,7 +97,6 @@ interface LiveValueProps {
 }
 
 export function LiveValue({ knob, locale }: LiveValueProps) {
-  const spec = KNOB_DEFAULTS[knob as KnobName];
   // The bail-out sits BELOW the hook (#1521). Two things to know:
   //
   // 1. As written before, this was a rules-of-hooks violation — `spec`
@@ -136,39 +119,18 @@ export function LiveValue({ knob, locale }: LiveValueProps) {
   // Robustness: token typos (e.g. `{liveValue:treasuryFeebps}`) fall
   // through to inline code rendering so the bug is visible in the
   // page rather than rendering a silent misleading value.
-  const derived = isDerived(knob);
-  if (!spec && !derived) return <code>{`{liveValue:${knob}}`}</code>;
+  // ONE resolver for knobs and derived figures alike (#1664 item 2).
+  // The mapping from config field to token used to live here; the search
+  // index needed the same mapping, and a second copy of it is exactly the
+  // drift this registry exists to prevent.
+  const resolved = resolveLiveValue(knob, config);
 
-  let value: number;
-  let isLive: boolean;
-  let format: KnobFormat;
+  // Robustness: token typos (e.g. `{liveValue:treasuryFeebps}`) fall
+  // through to inline code rendering so the bug is visible in the page
+  // rather than rendering a silent misleading value.
+  if (!resolved) return <code>{`{liveValue:${knob}}`}</code>;
 
-  if (derived) {
-    // A derived figure is arithmetic over the SAME knobs the rates
-    // beside it render from (#1664 item 1), resolved from the resolved
-    // knob map rather than from a read of its own — which is what makes
-    // it impossible for the figure and the rate above it to disagree.
-    const knobValues = {} as Record<KnobName, number>;
-    const liveKnobs = new Set<KnobName>();
-    for (const name of Object.keys(KNOB_DEFAULTS) as KnobName[]) {
-      const read = KNOB_READS[name]?.(config) ?? null;
-      knobValues[name] = read ?? KNOB_DEFAULTS[name].defaultValue;
-      if (read !== null) liveKnobs.add(name);
-    }
-    const r = resolveDerived(knob, knobValues, liveKnobs);
-    value = r.value;
-    // Provenance is ALL-or-nothing across the inputs. A figure computed
-    // partly from a bundled fallback IS bundled, and badging it
-    // `published` would overstate exactly what the badge exists to state
-    // precisely.
-    isLive = r.isLive;
-    format = r.format;
-  } else {
-    const live = KNOB_READS[knob as KnobName]?.(config) ?? null;
-    value = live ?? spec.defaultValue;
-    isLive = live !== null;
-    format = spec.format;
-  }
+  const { value, isLive, format } = resolved;
 
   const display = formatKnob(value, format, locale);
 

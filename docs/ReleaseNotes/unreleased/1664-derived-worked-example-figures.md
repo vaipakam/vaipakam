@@ -1,4 +1,4 @@
-## The worked example's arithmetic now moves with the rates it is computed from
+## The worked example's arithmetic, and the site search, now move with the rates they are computed from
 
 The Overview walks a reader through a specific loan — a thousand dollars, eight
 percent, thirty days — and prints what each party ends up with. The two fee
@@ -57,6 +57,28 @@ This matters because a computed figure could otherwise inherit a confidence
 none of its parts had — one live rate and one fallback could produce a number
 presented as fully published. The marker exists to be precise about provenance,
 so it defers to the least certain input rather than the most.
+
+### The site search was reading the same figures from the wrong place
+
+The help search builds its index by substituting these figures into the text
+it searches, so the index carries whatever the numbers were when it was built.
+It was built once, from the values shipped with the site, before the published
+configuration had been fetched — and never rebuilt.
+
+After a retune that produces a specific failure: searching for a figure
+**printed on a page** could miss that page's own section, and a result summary
+could contradict the page it links to. That is the exact problem substituting
+figures into the index was introduced to prevent, reintroduced by building the
+index too early.
+
+The index is now tied to the configuration snapshot it was built from, so a
+newer snapshot naturally produces a fresh index rather than relying on anyone
+remembering to discard the old one.
+
+Alongside this, the description of which configuration field backs which figure
+now lives in one place instead of two. The page renderer and the search index
+each had their own copy, which is the same kind of duplication that caused the
+problem being fixed here.
 
 ### Scope
 

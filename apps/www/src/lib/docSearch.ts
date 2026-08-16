@@ -24,12 +24,9 @@
 
 import type { TFunction } from 'i18next';
 import {
-  KNOB_DEFAULTS,
-  defaultKnobResolution,
   formatKnob,
-  isDerived,
-  resolveDerived,
-  type KnobName,
+  resolveLiveValue,
+  type KnobConfigSource,
 } from './liveValueKnobs';
 
 /**
@@ -175,24 +172,19 @@ function sliceSections(raw: string): RawSection[] {
  * Reading `KNOB_DEFAULTS` also removes the drift note this file used to
  * carry, since there is no second copy left to update.
  */
-function substituteLiveValueDefaults(text: string, fileLocale: string): string {
+function substituteLiveValues(
+  text: string,
+  fileLocale: string,
+  config: KnobConfigSource | null,
+): string {
   // Optional backticks on each side so both the inline-code form
   // (`{liveValue:foo}`) and any bare-token form get rewritten. Deliberately
   // looser than the renderer's anchored match: this is an index, and a
   // token in a code sample is better indexed by its value than by its
   // syntax.
-  return text.replace(/`?\{liveValue:([a-zA-Z0-9]+)\}`?/g, (raw, knob: string) => {
-    if (isDerived(knob)) {
-      // Index the derived figure by its VALUE too (#1664 item 1) —
-      // otherwise searching for a number printed on a page misses the
-      // section that prints it, which is the exact failure this
-      // substitution exists to prevent.
-      const { values, live } = defaultKnobResolution();
-      const r = resolveDerived(knob, values, live);
-      return formatKnob(r.value, r.format, fileLocale);
-    }
-    const spec = KNOB_DEFAULTS[knob as KnobName];
-    return spec ? formatKnob(spec.defaultValue, spec.format, fileLocale) : raw;
+  return text.replace(/`?\{liveValue:([a-zA-Z0-9]+)\}`?/g, (raw, name: string) => {
+    const r = resolveLiveValue(name, config);
+    return r ? formatKnob(r.value, r.format, fileLocale) : raw;
   });
 }
 
@@ -215,9 +207,33 @@ interface IndexedSection {
  *
  * Memoized per locale so language toggles don't re-slice the markdown.
  */
+/**
+ * Keyed on locale AND the config snapshot's identity (#1664 item 2).
+ *
+ * The index substitutes `{liveValue:...}` tokens into the searchable
+ * body, so it embeds whatever the figures were when it was built. Built
+ * once at first search — before the snapshot lands — it would keep
+ * serving bundled defaults for the session: searching for a figure
+ * PRINTED on a page could then miss that page's own section, and a result
+ * snippet could contradict the page it links to. That is precisely what
+ * substituting into the index was introduced to prevent.
+ *
+ * The store replaces its snapshot object only when something actually
+ * changes, so identity is a sound cache key: same snapshot, same index;
+ * new snapshot, natural miss and rebuild. No invalidation call, and no
+ * way to forget one.
+ */
 const indexCache = new Map<string, IndexedSection[]>();
+let indexCacheConfig: KnobConfigSource | null | undefined;
 
-function buildIndex(locale: string): IndexedSection[] {
+function buildIndex(
+  locale: string,
+  config: KnobConfigSource | null,
+): IndexedSection[] {
+  if (indexCacheConfig !== config) {
+    indexCache.clear();
+    indexCacheConfig = config;
+  }
   const cached = indexCache.get(locale);
   if (cached) return cached;
 
@@ -230,7 +246,7 @@ function buildIndex(locale: string): IndexedSection[] {
   ): void => {
     if (!raw) return;
     for (const sec of sliceSections(raw)) {
-      const body = substituteLiveValueDefaults(sec.body, fileLocale);
+      const body = substituteLiveValues(sec.body, fileLocale, config);
       out.push({
         docKind,
         locale: fileLocale,
@@ -329,13 +345,19 @@ export function searchDocs(
   query: string,
   locale: string,
   t: TFunction,
+  /**
+   * The published protocol-config snapshot, or `null` for bundled
+   * defaults (#1664 item 2). Passed in rather than read from the store so
+   * this module stays React-free — the same reason `t` is a parameter.
+   */
+  config: KnobConfigSource | null = null,
   limit = 50,
 ): SearchHit[] {
   const trimmed = query.trim();
   if (trimmed.length < 2) return [];
 
   const queryLc = trimmed.toLowerCase();
-  const index = buildIndex(locale);
+  const index = buildIndex(locale, config);
 
   const hits: SearchHit[] = [];
   for (const sec of index) {
