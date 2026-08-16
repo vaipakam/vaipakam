@@ -358,22 +358,7 @@
       "howTitle": "Cómo funciona",
       "analyticsHint": "¿Buscas estadísticas de todo el protocolo y suministro circulante? Consulta la",
       "analyticsLink": "página de Analíticas"
-    },
-    "connectTitle": "Conecta tu billetera",
-    "unsupportedNetwork": "Red no compatible",
-    "buy": "VPFI",
-    "buying": "Comprando…",
-    "approving": "Aprobando…",
-    "approvingVpfi": "Aprobando VPFI…",
-    "depositToVault": "Depositar en Vault",
-    "depositing": "Depositando…",
-    "unstakeToWallet": "Retirar a la billetera",
-    "unstaking": "Retirando…",
-    "buyFailed": "Compra fallida",
-    "depositFailed": "Depósito fallido",
-    "unstakeFailed": "Retiro fallido",
-    "buyTimedOut": "La compra expiró — fondos devueltos",
-    "vaultBalanceZero": "Tu saldo VPFI en Vault es 0 — deposita VPFI primero."
+    }
   },
   "claimCenter": {
     "connectTitle": "Conecta tu billetera",

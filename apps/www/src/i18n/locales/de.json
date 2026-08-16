@@ -358,22 +358,7 @@
       "howTitle": "So funktioniert es",
       "analyticsHint": "Suchen Sie protokollweite Statistiken und den umlaufenden Bestand? Siehe",
       "analyticsLink": "Analyse-Seite"
-    },
-    "connectTitle": "Wallet verbinden",
-    "unsupportedNetwork": "Nicht unterstütztes Netzwerk",
-    "buy": "VPFI kaufen",
-    "buying": "Kaufe…",
-    "approving": "Genehmige…",
-    "approvingVpfi": "Genehmige VPFI…",
-    "depositToVault": "In Vault einzahlen",
-    "depositing": "Einzahlung läuft…",
-    "unstakeToWallet": "In Wallet abziehen",
-    "unstaking": "Abzug läuft…",
-    "buyFailed": "Kauf fehlgeschlagen",
-    "depositFailed": "Einzahlung fehlgeschlagen",
-    "unstakeFailed": "Abzug fehlgeschlagen",
-    "buyTimedOut": "Kauf-Timeout — Mittel zurückgegeben",
-    "vaultBalanceZero": "Ihr Vaipakam Vault VPFI-Saldo ist 0 — zahlen Sie zuerst VPFI ein."
+    }
   },
   "claimCenter": {
     "connectTitle": "Wallet verbinden",

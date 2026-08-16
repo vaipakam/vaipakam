@@ -358,22 +358,7 @@
       "howTitle": "Comment ça marche",
       "analyticsHint": "Vous cherchez des statistiques globales du protocole et l'offre en circulation ? Consultez la",
       "analyticsLink": "page d'analyses"
-    },
-    "connectTitle": "Connectez votre portefeuille",
-    "unsupportedNetwork": "Réseau non pris en charge",
-    "buy": "VPFI",
-    "buying": "Achat en cours…",
-    "approving": "Approbation…",
-    "approvingVpfi": "Approbation VPFI…",
-    "depositToVault": "Déposer dans le vault",
-    "depositing": "Dépôt en cours…",
-    "unstakeToWallet": "Retirer vers le portefeuille",
-    "unstaking": "Retrait en cours…",
-    "buyFailed": "Échec de l'achat",
-    "depositFailed": "Échec du dépôt",
-    "unstakeFailed": "Échec du retrait",
-    "buyTimedOut": "Délai d'achat expiré — fonds retournés",
-    "vaultBalanceZero": "Votre solde VPFI dans le vault est de 0 — déposez d'abord du VPFI."
+    }
   },
   "claimCenter": {
     "connectTitle": "Connectez votre portefeuille",
