@@ -4231,35 +4231,71 @@ library LibVaipakam {
         // `srcChainId == s.baseChainId` (NOT the CCIP selector; the
         // messenger already translates per Codex round-9 P1 #4).
         //
-        // Mirror-side authenticated business peer — the Base diamond /
-        // messenger contract address whose `TierUpdated` payloads we
-        // accept.
+        // The `sourceChainId == s.baseChainId` check is DEFENCE IN DEPTH,
+        // not the sole source-chain constraint. The adapter constrains it
+        // too, via configuration: `_ccipReceive` resolves
+        // `channelPeerOf[channelId][sourceChainId]` and rejects a zero
+        // entry, and `ConfigureCcip.s.sol` wires a mirror's reward-channel
+        // peer for `baseChainId` only — so under the supported
+        // configuration a message from another mirror fails at the adapter
+        // before reaching here. This check is what still holds if an extra
+        // peer entry is ever added for a chain that should not be pushing
+        // tier updates (Codex #1771 r1 P2 #3 — an earlier version of this
+        // comment claimed the adapter was chain-agnostic, which is wrong).
         //
-        // NOT WIRED UP as of #1641: no code reads or writes this slot.
-        // The comment here used to claim it was "validated via the
-        // messenger's existing `channelPeer` mapping", which was false in
-        // both halves — the slot is read by nothing, and at the time
-        // `channelPeerOf` was asserted non-zero rather than compared to
-        // the sender (#1631).
+        // ── RETIRED SLOT: `address baseAuthorizedMessenger` (#1770) ─────
         //
-        // The second half stopped being false when #1650 shipped:
-        // `CcipMessenger._ccipReceive` now carries the originator on the
-        // wire and rejects a mismatch against `channelPeerOf`
-        // (`UnauthorizedChannelPeer`). So business-peer authentication
-        // EXISTS — it just lives at the adapter, once for every channel,
-        // rather than in this per-deployment slot.
+        // REMOVED, not merely unused. It sat here, between
+        // `currentTierTableVersion` and `buybackAllowedToken`, and was
+        // read and written by nothing for its entire life.
         //
-        // That is the argument for RETIRING this slot rather than
-        // building it: the leg `CrossChainRewardSystem.md` ("Sender
-        // authentication") specified is now covered a layer down, and a
-        // second copy of the same check in Diamond storage would be a
-        // duplicate that can drift out of agreement with the adapter's.
-        // What authenticates a `TierUpdated` on a mirror is
-        // {MirrorTierReceiverFacet} — `msg.sender == s.rewardMessenger`
-        // plus `sourceChainId == s.baseChainId` — on top of the adapter's
-        // peer check. The retire-or-build decision is still open; the
-        // slot is kept for storage-layout stability either way.
-        address baseAuthorizedMessenger;
+        // Removing it is layout-neutral, which is why it could go. It
+        // packed into the same slot as `currentTierTableVersion`
+        // (uint16 + address = 22 bytes), and the field after it is a
+        // mapping, which always starts a fresh slot. Verified rather than
+        // reasoned about: a `forge inspect ... storageLayout` diff over
+        // the whole struct before and after shows 493 → 492 fields, one
+        // removed, and ZERO fields moved. An earlier revision of this
+        // change kept the field on the stated grounds that removing it
+        // would shift everything below — that was simply wrong
+        // (Codex #1771 r1 P2 #1).
+        //
+        // What it was for. The Diamond-side half of the check
+        // `CrossChainRewardSystem.md` ("Sender authentication") specified:
+        // the messenger validates the business peer, forwards
+        // `(payload, srcChainId, businessPeer)`, and the Diamond then
+        // checks `srcChainId == s.baseChainId` AND
+        // `businessPeer == s.baseAuthorizedMessenger`. The messenger half
+        // is built; this half never was. Its comment used to claim it was
+        // "validated via the messenger's existing `channelPeer` mapping",
+        // false in both halves at the time (#1631, corrected in #1653).
+        //
+        // Why retired rather than completed. #1650 put the originator on
+        // the wire (envelope v2) and made `CcipMessenger._ccipReceive`
+        // reject a mismatch against `channelPeerOf`
+        // (`UnauthorizedChannelPeer`). A Diamond-side allowlist cannot
+        // catch a mispointed peer, because a mispointed peer fails CLOSED
+        // rather than open: `sendMessage` stamps `channelId` from
+        // `channelOf[msg.sender]`, so only the registered handler of a
+        // channel can send on it, and `registerChannel` keeps
+        // `handlerOf`/`channelOf` one-to-one under clear-before-repoint.
+        // A message therefore only carries the reward channelId if its
+        // originator IS Base's registered reward handler — so a mirror
+        // whose peer is mispointed rejects the legitimate sender rather
+        // than accepting a wrong one. A second stored copy would add a
+        // way for the two records to disagree, and disagreement stops a
+        // live lane with neither record saying which is stale (Codex
+        // #1771 r1 P2 #2, refuted with the send-path binding above).
+        //
+        // What authenticates a mirror `TierUpdated` today, in order:
+        // the CCIP router's `Any2EVMMessage.sender ==
+        // remoteMessengerOf[srcChain]`; the envelope originator ==
+        // `channelPeerOf[channelId][srcChain]`; then, in
+        // {MirrorTierReceiverFacet}, `msg.sender == s.rewardMessenger`,
+        // `sourceChainId == s.baseChainId`, and nonce monotonicity.
+        //
+        // Do NOT re-add the field to close a "gap" — there is no gap;
+        // the layout is byte-identical either way.
         // ── Cross-chain buyback custody (Base) ──────────────────────────
         //
         // Set of remittance-token addresses per chain that the

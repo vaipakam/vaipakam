@@ -187,6 +187,8 @@ This is the EAGER version broadcast that closes the lazy-adoption gap from round
 
 **Sender authentication (round-1 P1 #2 + round-4 P1 #4)**: the mirror inbound handler validates the **business-peer mapping** that `VaipakamRewardMessenger` already exposes for REPORT/BROADCAST messages — NOT the raw `Any2EVMMessage.sender` field. Codex caught that in the existing CCIP adapter, `Any2EVMMessage.sender` is the *remote `CcipMessenger`*, not the business peer; the messenger resolves the actual peer through its channel-peer mapping before forwarding the decoded payload to the diamond. The tier-update inbound path mirrors that pattern exactly: the messenger validates `channelPeer[srcChainSelector] == decodedBusinessPeer` and forwards a `(payload, srcChainId, businessPeer)` triple to the diamond — where `srcChainId` is the EVM chain id (the messenger's existing translation step from CCIP selector → EVM chain id, per Codex round-9 P1 #4). The diamond then checks `srcChainId == s.baseChainId` AND `businessPeer == s.baseAuthorizedMessenger`. Using `Any2EVMMessage.sender` directly would reject every legitimate tier update because the address would always be the local `CcipMessenger` adapter, not the Base business peer.
 
+> **SUPERSEDED IN PART (#1770) — the Diamond-side `businessPeer == s.baseAuthorizedMessenger` leg is retired, not pending.** The messenger-side leg above is built and is the one that holds: since #1650, `CcipMessenger` carries the originator in a versioned envelope and rejects any message whose originator is not `channelPeerOf[channelId][sourceChainId]` (`UnauthorizedChannelPeer`) — so the business peer is authenticated once, at the adapter, for every channel. The Diamond-side comparison this paragraph adds on top would not check the message; it would check a second local copy of an address against the first, which is a deployment-consistency assertion rather than authentication, and a drift surface. `s.baseAuthorizedMessenger` is therefore **removed from the storage struct**, not merely left unused — its removal is layout-neutral (it packed with `currentTierTableVersion`, and the next field is a mapping, which always starts a fresh slot; verified by a whole-struct `storageLayout` diff showing zero fields moved). The `srcChainId == s.baseChainId` leg is NOT superseded and remains required, as **defence in depth**: the adapter does constrain the source chain via configuration — it resolves `channelPeerOf[channelId][sourceChainId]` and rejects a zero entry, and `ConfigureCcip.s.sol` wires a mirror's reward-channel peer for `baseChainId` only — so the Diamond check is what still holds if an extra peer entry is ever configured for a chain that should not be pushing tier updates. See the retired-slot note in `LibVaipakam.sol` for the full ordering of checks that authenticate a mirror `TierUpdated` today, and for why a Diamond-side allowlist cannot catch a mispointed peer (a mispointed peer fails closed, because the send path stamps the channel id from the caller).
+
 **Reward-messenger payload-size gate update (Codex round-4 P1 #5 + round-9 P1 #1)**: the existing `VaipakamRewardMessenger` rejects every inbound payload whose ABI length doesn't match the current 4-word REPORT/BROADCAST shape. The new `TierUpdated` payload is **8 ABI words** (`kind`, `user`, `effectiveTier`, `computedAt`, `nonce`, `tierExpirySec`, `tierTableVersion`). Sub 2 MUST extend the messenger's payload-size gate to accept both the existing 4-word shape AND the new 8-word `TierUpdated` shape — without that change, every mirror tier update will revert at the messenger's pre-decode length check before reaching the new decode branch. The messenger's existing dispatch-by-kind pattern handles the actual branching; this is purely a size-check update.
 
 **Mandatory tier freshness on mirrors (Codex round-2 P1 #3)**: the mirror fee path additionally enforces a maximum cache age. At fee-application time, `LibVPFIDiscount.tryApply` / `tryApplyYieldFee` compare `now - userTierCache[user].lastUpdateSec` against `cfgMirrorTierMaxAgeSec` (default 60 days, governance-bounded 30-180 days). If the cache is older than the bound, the fee is charged WITHOUT the discount (tier resolves to 0 for that fee). This is the on-chain backstop against the "stake then never return + nobody pokes" worst case: the user accepts the tier-0 fee on the mirror until they transact on Base again (which fires a fresh protocol-funded auto-broadcast). No keeper required for correctness.
@@ -391,9 +393,6 @@ struct CachedTier {
 }
 mapping(address => CachedTier) userTierCache;
 
-// Authenticated remote sender — the Base messenger that the
-// inbound handler accepts TierUpdated messages from.
-address baseAuthorizedMessenger;
 uint256 baseChainId; // EVM chain id of Base (per round-9 P1 #4 — NOT the CCIP selector; the messenger already translates)
 
 // Max `tierTableVersion` seen across all inbound TierUpdated payloads.
@@ -402,6 +401,16 @@ uint256 baseChainId; // EVM chain id of Base (per round-9 P1 #4 — NOT the CCIP
 // (Codex round-9 P1 #7 — mirrors don't query Base for the current
 // version; they adopt the highest seen.)
 uint16 currentTierTableVersion;
+
+// `address baseAuthorizedMessenger;` STOOD HERE — REMOVED (#1770).
+// Specified as the Diamond-side copy of the authenticated remote
+// sender; superseded by the adapter-side originator check #1650
+// shipped (see the note under "Sender authentication" above) and
+// deleted from the struct. Deleting it is layout-neutral because in
+// the REAL struct it sat immediately after `currentTierTableVersion`
+// (uint16 + address = 22 bytes, one slot) and immediately before
+// `mapping(...) buybackAllowedToken`, and a mapping always begins a
+// fresh slot. Do not re-add it.
 ```
 
 `CachedTier` packs into a single slot (8 + 40 + 64 + 40 = 152 bits). One slot per user with a cached tier.
