@@ -282,3 +282,25 @@ vault movement, and the spec's enumeration now states the rule by what a path
 *does* (binds a standing offer to a loan, spending its author's committed
 funds) rather than by a list of path names that a new route can silently fall
 outside of.
+
+## Obligation transfer ignores the incoming borrower's offer deadline (sibling of #1503 item 8)
+
+**Spec** (`ProjectDetailsREADME.md`, "Offer expiry (GTT)"): the deadline binds
+every route by which a standing offer can be bound to a loan, not only the ones
+a user would call "accepting" it.
+
+**Code**: `PrecloseFacet.transferObligationViaOffer` reads the incoming
+borrower's standing Borrower Offer directly — it does not route through the
+gated accept path — and validates the offer's type, its already-taken flag, its
+refinance tag, its partial-fill state and asset continuity. It never consults
+the deadline. An exiting borrower can therefore hand their obligation to an
+author whose offer window has closed.
+
+**Decision**: candidate BUG, same class as #1503 item 8 and found by the
+adversarial self-review of that fix, when checking whether the spec's
+generalised wording was true of the other offer-consuming routes. It is not the
+same as the refinance path, which was checked at the same time and is sound:
+there the offer's creator must be the borrower acting, so the deadline being
+ignored overrides nobody's consent but the actor's own. Here the offer belongs
+to a third party. **OPEN** — tracked separately rather than folded into the
+item-8 PR, which is scoped to one path and one guard.
