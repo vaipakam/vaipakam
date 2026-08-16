@@ -82,8 +82,9 @@ problem being fixed here.
 
 ### Scope
 
-This covers the worked example, which is the passage where a retune would be
-most visibly self-contradictory. The other threads on this topic — the search
-index, the machine-readable exports, naming which network the figures describe,
-and passages that describe a fee fixed at a loan's creation rather than the
-current one — are unchanged and remain tracked.
+This covers the worked example and the site search. The remaining threads on
+this topic are unchanged and still tracked: the machine-readable exports, which
+cannot follow a retune without introducing a network dependency at build time
+and so need a deliberate decision either way; naming which network the figures
+describe; passages that quote a fee fixed at a loan's creation rather than the
+current one; and re-checking a long-lived snapshot for freshness.
