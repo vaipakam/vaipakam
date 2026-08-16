@@ -584,10 +584,52 @@ contract OfferAcceptFacet is
             if (t.amount != saleLoan.principal) revert OfferTermsMismatch(6);
             if (saleLoan.collateralAmount < t.collateralAmount) revert OfferTermsMismatch(7);
             if (t.durationDays != saleLoan.durationDays) revert OfferTermsMismatch(9);
+            // #1503 (design item 23) — the BEHAVIOURAL terms bind against the
+            // live loan too, for the same reason principal and duration do: a
+            // sale buyer is acquiring that position, not originating a fresh
+            // one, so what they sign must describe the position they get.
+            //
+            // These used to bind against the sale VEHICLE offer, which does not
+            // carry them: `_buildSaleParams` assigns only `useFullTermInterest`
+            // (#408/#410/#413, after a Codex round-1 P2 found a memory default
+            // silently opting out of the full-term floor). The other four were
+            // never assigned, so they took memory defaults — `false`, `false`,
+            // `false`, `None` — while the live loan carries its own values.
+            //
+            // A buyer therefore signed "this position does not allow partial
+            // repayment, does not allow prepay listing, does not allow parallel
+            // sale, and settles no periodic interest", the check PASSED because
+            // the vehicle genuinely said that, and the loan they acquired could
+            // say the opposite on all four. The binding was satisfied while
+            // conveying the reverse of the truth.
+            //
+            // `useFullTermInterest` moves too. It agrees either way today (the
+            // builder sets it from the loan, and the loan's copy is
+            // snapshot-and-locked at initiation), so this is a no-op for it now
+            // — but binding it against the acquired position is what stays
+            // correct if the builder ever stops mirroring, which is precisely
+            // how the other three came to be wrong.
+            //
+            // `allowsParallelSale` (20) deliberately does NOT move: it lives on
+            // `Offer` and is never snapshotted onto `Loan`, so there is no live
+            // counterpart to bind against. It describes the offer's own
+            // parallel-sale opt-in (paired with `parallelSaleOrderHash`, 22),
+            // not the acquired position, and stays bound against the offer
+            // below with the other offer-scoped terms.
+            if (t.useFullTermInterest != saleLoan.useFullTermInterest) revert OfferTermsMismatch(17);
+            if (t.allowsPartialRepay != saleLoan.allowsPartialRepay) revert OfferTermsMismatch(18);
+            if (t.allowsPrepayListing != saleLoan.allowsPrepayListing) revert OfferTermsMismatch(19);
+            if (t.periodicInterestCadence != uint8(saleLoan.periodicInterestCadence))
+                revert OfferTermsMismatch(23);
         } else {
             if (t.amount != roleAmount) revert OfferTermsMismatch(6);
             if (t.collateralAmount != o.collateralAmount) revert OfferTermsMismatch(7);
             if (t.durationDays != o.durationDays) revert OfferTermsMismatch(9);
+            if (t.useFullTermInterest != o.useFullTermInterest) revert OfferTermsMismatch(17);
+            if (t.allowsPartialRepay != o.allowsPartialRepay) revert OfferTermsMismatch(18);
+            if (t.allowsPrepayListing != o.allowsPrepayListing) revert OfferTermsMismatch(19);
+            if (t.periodicInterestCadence != uint8(o.periodicInterestCadence))
+                revert OfferTermsMismatch(23);
         }
         if (t.interestRateBps != roleRate) revert OfferTermsMismatch(8);
         if (t.tokenId != o.tokenId) revert OfferTermsMismatch(10);
@@ -597,13 +639,13 @@ contract OfferAcceptFacet is
         if (t.assetType != uint8(o.assetType)) revert OfferTermsMismatch(14);
         if (t.collateralAssetType != uint8(o.collateralAssetType)) revert OfferTermsMismatch(15);
         if (t.prepayAsset != o.prepayAsset) revert OfferTermsMismatch(16);
-        if (t.useFullTermInterest != o.useFullTermInterest) revert OfferTermsMismatch(17);
-        if (t.allowsPartialRepay != o.allowsPartialRepay) revert OfferTermsMismatch(18);
-        if (t.allowsPrepayListing != o.allowsPrepayListing) revert OfferTermsMismatch(19);
+        // 17-19 + 23 are bound in the sale/non-sale branch above: on a sale
+        // they describe the position being acquired, so they bind against the
+        // live loan rather than the vehicle. 20 stays here — `allowsParallelSale`
+        // has no `Loan` counterpart and is offer-scoped, like 22 beneath it.
         if (t.allowsParallelSale != o.allowsParallelSale) revert OfferTermsMismatch(20);
         if (t.refinanceTargetLoanId != o.refinanceTargetLoanId) revert OfferTermsMismatch(21);
         if (t.parallelSaleOrderHash != o.parallelSaleOrderHash) revert OfferTermsMismatch(22);
-        if (t.periodicInterestCadence != uint8(o.periodicInterestCadence)) revert OfferTermsMismatch(23);
         // linkedLoanId — the auto-linked sale/offset target (0 for a normal
         // offer). saleOfferToLoanId takes precedence; both 0 ⇒ must bind 0.
         uint256 linked = saleLoanId;
