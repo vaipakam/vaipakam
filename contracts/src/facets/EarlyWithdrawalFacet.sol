@@ -862,6 +862,35 @@ contract EarlyWithdrawalFacet is
         // internal builder flow (sale vehicle here, offset in
         // PrecloseFacet).
         params.useFullTermInterest = loan.useFullTermInterest;
+        // #1503 (design item 23) — the SAME rule, for the three behavioural
+        // terms the line above forgot. `_buildSaleParams` assigned only
+        // `useFullTermInterest`, so these took struct defaults (`false`,
+        // `false`, `None`) on every sale vehicle while the live loan carried
+        // its real values.
+        //
+        // A buyer then reviewed and signed "this position does not allow
+        // partial repayment, does not allow prepay listing, and settles no
+        // periodic interest", and the accept-time binding compared that against
+        // the vehicle and AGREED — because the vehicle genuinely said so. The
+        // position they received could permit all three. These are exactly the
+        // terms that decide what the borrower may do to the buyer afterwards.
+        //
+        // Mirroring at LISTING time (rather than binding the live loan at
+        // acceptance) is sufficient and permanently correct because all three
+        // are immutable for the loan's lifetime: `LoanFacet` writes them once
+        // at initiation and nothing else in `src/` ever writes them again.
+        // Principal is the field that genuinely needs a live read — a partial
+        // repay shrinks it — and these are not like principal.
+        //
+        // Keeping the vehicle TRUTHFUL also keeps every consumer correct
+        // without change: the accept binding, the review screens that display
+        // `offer.allowsPartialRepay`, and every other client that reads the
+        // offer. Making the loan authoritative at acceptance instead would have
+        // required a coordinated change across four separate terms builders and
+        // left an upgrade window where old and new halves disagree.
+        params.allowsPartialRepay = loan.allowsPartialRepay;
+        params.allowsPrepayListing = loan.allowsPrepayListing;
+        params.periodicInterestCadence = loan.periodicInterestCadence;
         // Phase 6: keeper enables are per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. The outgoing lender (sale-
         // offer creator) can enable specific keepers on this sale offer

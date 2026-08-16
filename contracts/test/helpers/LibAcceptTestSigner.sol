@@ -112,16 +112,6 @@ library LibAcceptTestSigner {
         t.amount = loan.principal;
         t.collateralAmount = loan.collateralAmount;
         t.durationDays = loan.durationDays;
-        // #1503 item 23 — the behavioural terms bind against the live loan on a
-        // sale too, so a caller building "the terms a buyer would legitimately
-        // sign" must take them from the loan, not the vehicle offer (which
-        // carries struct defaults for three of the four). Mirrors the client's
-        // `useAcceptTerms` sale branch. `allowsParallelSale` is excluded: it has
-        // no `Loan` counterpart and stays offer-scoped.
-        t.useFullTermInterest = loan.useFullTermInterest;
-        t.allowsPartialRepay = loan.allowsPartialRepay;
-        t.allowsPrepayListing = loan.allowsPrepayListing;
-        t.periodicInterestCadence = uint8(loan.periodicInterestCadence);
     }
 
     /// @notice #1347 — build `AcceptTerms` with the acceptor's per-party Full

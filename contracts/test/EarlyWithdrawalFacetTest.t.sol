@@ -796,20 +796,41 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      Signs `false` by hand rather than via `buildSaleTerms` (which now
     ///      mirrors the loan) precisely to reconstruct what a pre-fix client
     ///      would have sent.
-    function testSaleAcceptRejectsStaleBehaviouralTerms() public {
-        uint256 saleOfferId = _listSaleOffer();
-        (address buyer, uint256 buyerPk) = makeAddrAndKey("v2BehaviouralBuyer");
-
-        // The live position DOES allow partial repayment.
+    ///      Sets the loan's flag BEFORE listing. In production these flags are
+    ///      written once at loan initiation, from the originating offer, and
+    ///      never again — so a real vehicle always snapshots final values, and
+    ///      the mutator here stands in for "this loan was originated permitting
+    ///      partial repay", not for a post-init change (which cannot happen).
+    function testSaleVehicleMirrorsLivePositionTerms() public {
         LibVaipakam.Loan memory ld =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         ld.allowsPartialRepay = true;
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
 
+        uint256 saleOfferId = _listSaleOffer();
+
+        LibVaipakam.Offer memory vehicle =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        assertTrue(
+            vehicle.allowsPartialRepay,
+            "vehicle must carry the position's partial-repay term"
+        );
+    }
+
+    function testSaleAcceptRejectsStaleBehaviouralTerms() public {
+        // Position permits partial repay; the vehicle now says so too.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v2BehaviouralBuyer");
+
         LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
             address(diamond), buyer, saleOfferId, true, activeLoanId
         );
-        // What the vehicle says, and what a pre-fix client would have signed.
+        // What a pre-fix vehicle said, and what a client reading it would sign.
         t.allowsPartialRepay = false;
         bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
 
@@ -824,6 +845,11 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      so the guard rejects the falsehood rather than the field. Without
     ///      this, a guard that rejected every sale accept would look correct.
     function testSaleAcceptHonoursTrueBehaviouralTerms() public {
+        LibVaipakam.Loan memory pre =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        pre.allowsPartialRepay = true;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, pre);
+
         uint256 saleOfferId = _listSaleOffer();
         (address buyer, uint256 buyerPk) = makeAddrAndKey("v2BehaviouralBuyerOk");
 
@@ -839,16 +865,12 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(buyer);
         ERC20(mockERC20).approve(buyerVault, type(uint256).max);
 
-        LibVaipakam.Loan memory ld =
-            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        ld.allowsPartialRepay = true;
-        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
-
-        // buildSaleTerms mirrors the live loan, so this signs `true`.
+        // The vehicle mirrors the position, so building from the offer — which
+        // is what every client does — yields the position's real value.
         LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
             address(diamond), buyer, saleOfferId, true, activeLoanId
         );
-        assertTrue(t.allowsPartialRepay, "helper must mirror the live loan");
+        assertTrue(t.allowsPartialRepay, "vehicle must carry the live term");
         bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
 
         vm.prank(buyer);

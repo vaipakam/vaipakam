@@ -350,24 +350,10 @@ export function useAcceptTermsSigning() {
       // created by the loan's LENDER, offsets by its borrower — offset
       // offers keep the plain offer-field binding (the contract's
       // else-branch).
-      // #1503 item 23 — the BEHAVIOURAL terms are live-bound too. The sale
-      // vehicle offer does not carry them: the contract-side builder assigns
-      // only `useFullTermInterest`, so the other three take struct defaults
-      // (false / false / None) while the live loan holds its real values.
-      // Sourcing them from the offer would sign "no partial repay, no prepay
-      // listing, no periodic settlement" against a position that may allow all
-      // three — and now OfferTermsMismatch on 18/19/23 rather than binding a
-      // falsehood. `allowsParallelSale` is NOT here: it has no `Loan`
-      // counterpart, is never snapshotted at initiation, and stays offer-scoped
-      // alongside `parallelSaleOrderHash`.
       let saleLoan: {
         principal: bigint;
         durationDays: bigint;
         collateralAmount: bigint;
-        useFullTermInterest: boolean;
-        allowsPartialRepay: boolean;
-        allowsPrepayListing: boolean;
-        periodicInterestCadence: number;
       } | null = null;
       if (linkedLoanId !== 0n) {
         const loan = (await publicClient.readContract({
@@ -387,10 +373,6 @@ export function useAcceptTermsSigning() {
             principal: loan.principal as bigint,
             durationDays: loan.durationDays as bigint,
             collateralAmount: loan.collateralAmount as bigint,
-            useFullTermInterest: Boolean(loan.useFullTermInterest),
-            allowsPartialRepay: Boolean(loan.allowsPartialRepay),
-            allowsPrepayListing: Boolean(loan.allowsPrepayListing),
-            periodicInterestCadence: Number(loan.periodicInterestCadence),
           };
         }
       }
@@ -525,22 +507,14 @@ export function useAcceptTermsSigning() {
         assetType: Number(o.assetType),
         collateralAssetType: Number(o.collateralAssetType),
         prepayAsset: o.prepayAsset as Address,
-        useFullTermInterest: saleLoan
-          ? saleLoan.useFullTermInterest
-          : Boolean(o.useFullTermInterest),
-        allowsPartialRepay: saleLoan
-          ? saleLoan.allowsPartialRepay
-          : Boolean(o.allowsPartialRepay),
-        allowsPrepayListing: saleLoan
-          ? saleLoan.allowsPrepayListing
-          : Boolean(o.allowsPrepayListing),
+        useFullTermInterest: Boolean(o.useFullTermInterest),
+        allowsPartialRepay: Boolean(o.allowsPartialRepay),
+        allowsPrepayListing: Boolean(o.allowsPrepayListing),
         allowsParallelSale: Boolean(o.allowsParallelSale),
         refinanceTargetLoanId: o.refinanceTargetLoanId as bigint,
         linkedLoanId,
         parallelSaleOrderHash: o.parallelSaleOrderHash as Hex,
-        periodicInterestCadence: saleLoan
-          ? saleLoan.periodicInterestCadence
-          : Number(o.periodicInterestCadence),
+        periodicInterestCadence: Number(o.periodicInterestCadence),
         riskAndTermsConsent: input.consent,
         // Always acknowledge BOTH legs' assets — the contract reads the
         // ack only for a leg it classifies illiquid; acknowledging both
