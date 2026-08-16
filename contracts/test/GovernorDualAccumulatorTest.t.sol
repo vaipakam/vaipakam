@@ -808,6 +808,107 @@ contract GovernorDualAccumulatorTest is SetupTest {
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 
+    /// @dev #1434 (Codex #1699 r9 P1) — once removal has BEGUN, a fresh
+    ///      shortfall must TERMINATE the entry, never defer it forever.
+    ///
+    ///      Two guards of mine collided. Deferring on a 69M shortfall protects
+    ///      a still-claimable owner from being reaped with part of their value
+    ///      discarded. The removal point protects an owner from silently
+    ///      losing what was already recycled. Together they trapped the tail:
+    ///      the first chunk credits and removes, the pool draw shrinks the
+    ///      MONOTONE headroom, the next chunk defers forever, and the claim
+    ///      path now skips the entry — so the guard against silent loss became
+    ///      the cause of it.
+    ///
+    ///      Sequencing by the removal point resolves it: defer before, and
+    ///      truncate-and-advance after, exactly as a claim does against the
+    ///      same monotone budget.
+    function testP1bRemovedEntryTerminatesUnderAShortfall() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+
+        uint256 id = _seedEntry(alice, 95, 4, 6); // spans: legacy + armed
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        // Chunk one: credits the legacy leg and crosses the removal point.
+        uint256 first = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertGt(first, 0, "LIVE: the first chunk credited");
+        assertTrue(
+            _mut().getRewardEntryExpiryBegunRaw(id),
+            "LIVE: and removal has begun"
+        );
+        assertFalse(
+            _mut().getRewardEntryProcessedRaw(id),
+            "LIVE: with a tail still owed"
+        );
+
+        // Now starve the monotone 69M budget. Before this fix the tail would
+        // defer here and, because the budget can only shrink, defer forever.
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP
+        );
+
+        _sweeper().sweepExpiredInteractionRewards(ids);
+        assertTrue(
+            _mut().getRewardEntryProcessedRaw(id),
+            "a removed entry always terminalises, never strands its tail"
+        );
+    }
+
+    /// @dev #1434 (Codex #1699 r9 P1) — a ROLE transition retires the
+    ///      delivered residual, in both directions.
+    ///
+    ///      The delivered bound is mirror-scoped (`received - paid`), but the
+    ///      role flag is mutable both ways and the counters persisted across
+    ///      it. A mirror holding a residual could be promoted — canonical
+    ///      armed claims ignore the bound AND skip the paid-ledger write, so
+    ///      they consume the very tokens that residual backed — and then
+    ///      demoted, whereupon the untouched counters offer the SAME headroom
+    ///      again. Unrelated custody funding a duplicate spend.
+    ///
+    ///      Retiring by levelling paid up to received errs safe: a chain
+    ///      resumes with NO delivered headroom and earns it back from the next
+    ///      remittance.
+    function testP1bRoleTransitionRetiresTheDeliveredResidual() public {
+        _rep().setIsCanonicalRewardChain(false);
+        _mut().setArmedFreshLedgerRaw(10 ether, 4 ether);
+        (, uint256 residual) = RewardRemittanceLensFacet(address(diamond))
+            .getDeliveredFreshBound();
+        assertEq(residual, 6 ether, "LIVE: the mirror holds a 6 residual");
+
+        // Promote. The canonical era reads UNBOUNDED by design — bounding a
+        // canonical chain would brick it — so the bound itself says nothing
+        // here. What matters is whether the residual survives underneath.
+        _rep().setIsCanonicalRewardChain(true);
+        (, uint256 afterPromote) = RewardRemittanceLensFacet(address(diamond))
+            .getDeliveredFreshBound();
+        assertEq(
+            afterPromote,
+            type(uint256).max,
+            "LIVE: canonical is unbounded, as designed"
+        );
+
+        // Demote — THE double-spend vector. Canonical-era armed claims ignore
+        // the bound and skip the paid-ledger write, so they can consume the
+        // tokens that residual was backing; if it survives the round trip the
+        // same headroom is offered a second time.
+        _rep().setIsCanonicalRewardChain(false);
+        (, uint256 afterDemote) = RewardRemittanceLensFacet(address(diamond))
+            .getDeliveredFreshBound();
+        assertEq(
+            afterDemote,
+            0,
+            "and a round trip cannot resurrect the same headroom"
+        );
+    }
+
     function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);

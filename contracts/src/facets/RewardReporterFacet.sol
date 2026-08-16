@@ -1076,6 +1076,30 @@ contract RewardReporterFacet is
         {
             s.recoveryAttributionArmed = true;
         }
+        // Codex #1699 r9 P1 — RETIRE the delivered residual at every role
+        // transition, in BOTH directions.
+        //
+        // This flag is mutable both ways, and the delivered-fresh bound is
+        // mirror-scoped: `received - paid`. Scoping only at PAYOUT time leaves
+        // the residual sitting in storage across a role change. A mirror with
+        // 10 delivered and 4 paid carries 6; promoted to canonical, armed
+        // claims ignore the bound AND deliberately skip the paid-ledger write,
+        // so they can consume the very tokens that 6 was backing. Demote
+        // again and the untouched counters offer the SAME 6 a second time —
+        // unrelated custody funding a duplicate spend.
+        //
+        // Retiring by levelling paid up to received makes the residual zero
+        // without falsifying either total's era meaning, and it is the safe
+        // direction: a chain resumes with NO delivered headroom and earns it
+        // back from the next remittance. Erring the other way would hand it
+        // free allowance. Only on an ACTUAL transition, so a redundant
+        // same-value call changes nothing.
+        if (old != on) {
+            uint256 received = s.rewardBudgetArmedFreshReceived;
+            if (s.rewardBudgetArmedFreshPaid < received) {
+                s.rewardBudgetArmedFreshPaid = received;
+            }
+        }
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("isCanonicalRewardChain"),

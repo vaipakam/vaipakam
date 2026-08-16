@@ -2985,7 +2985,26 @@ library LibInteractionRewards {
         // path has always had (`testExpirySweepDefersAtFullFreshExhaustion`,
         // `testExpiryIsAllOrNothingAtNearExhaustion`), and the unification
         // keeps it rather than quietly widening what a sweep may discard.
-        if (charge.freshShortfall != 0) {
+        // Codex #1699 r9 P1 — all-or-nothing applies BEFORE the removal point;
+        // after it, the terminal cap policy does.
+        //
+        // These two rules looked independent and are not. Deferring on a fresh
+        // shortfall protects an owner who is still claimable from being reaped
+        // with part of their value discarded. But the 69M headroom is MONOTONE
+        // non-increasing, so once removal has begun a deferral can never clear:
+        // the first chunk credits, the pool draw shrinks the headroom, the next
+        // chunk defers forever, `_processEntry` now skips the entry, and the
+        // claimant permanently loses the tail with no `RewardEntryExpired` ever
+        // emitted. The guard against silent loss became the cause of it.
+        //
+        // Sequencing them by the removal point resolves it. Before removal the
+        // owner is still whole and still claimable, so DEFER. After removal
+        // they have already been reaped — the "never reap someone mid-claim"
+        // rationale is spent — and what remains is protocol bookkeeping that
+        // must TERMINATE. So the day truncates and advances exactly as a claim
+        // does against the same monotone budget, with `cappedOff` carrying the
+        // remainder's commitment for retirement.
+        if (charge.freshShortfall != 0 && !e.expiryBegun) {
             s.rewardEntryObsBlocked[id] = true;
             return (expired, 0, 0);
         }
