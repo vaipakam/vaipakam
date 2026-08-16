@@ -487,8 +487,8 @@ export default function VPFIVaultAndDiscounts() {
             size={22}
             style={{ verticalAlign: "middle", marginRight: 8 }}
           />
-          {t('appNav.buyVpfi')}
-          <CardInfo id="buy-vpfi.overview" />
+          {t('appNav.vpfiVault')}
+          <CardInfo id="vpfi-vault.overview" />
         </h1>
         <p className="page-subtitle">{t('vpfiVault.pageSubtitle')}</p>
       </div>
@@ -583,7 +583,7 @@ export default function VPFIVaultAndDiscounts() {
         <StepHeader
           index={1}
           title={t('vpfiVault.step2Title')}
-          cardHelpId="buy-vpfi.deposit"
+          cardHelpId="vpfi-vault.deposit"
         />
         <div
           style={{
@@ -687,7 +687,7 @@ export default function VPFIVaultAndDiscounts() {
           <StepHeader
             index={2}
             title={t('vpfiVault.step3Title')}
-            cardHelpId="buy-vpfi.unstake"
+            cardHelpId="vpfi-vault.unstake"
           />
           <UnstakeCard
             value={unstakeInput}
@@ -873,7 +873,7 @@ export function DiscountStatusCard({
     <div className="card" style={{ marginBottom: 20 }}>
       <div className="card-title" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
         {t('vpfiVaultCards.discountStatusTitle')}
-        <CardInfo id="buy-vpfi.discount-status" />
+        <CardInfo id="vpfi-vault.discount-status" />
       </div>
 
       <div

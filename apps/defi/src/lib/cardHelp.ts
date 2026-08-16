@@ -271,21 +271,21 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
     learnMoreHref: `${README}#6-loan-closure--repayment`,
   },
 
-  // ── Buy VPFI ──────────────────────────────────────────────────────────
-  "buy-vpfi.overview": {
-    summary: "cardHelp.buyVpfiOverview",
+  // ── VPFI Vault ──────────────────────────────────────────────────────────
+  "vpfi-vault.overview": {
+    summary: "cardHelp.vpfiVaultOverview",
     learnMoreHref: `${TOKENOMICS}#8-vpfi-acquisition-and-vault-utility`,
   },
-  "buy-vpfi.discount-status": {
-    summary: "cardHelp.buyVpfiDiscountStatus",
+  "vpfi-vault.discount-status": {
+    summary: "cardHelp.vpfiVaultDiscountStatus",
     learnMoreHref: `${TOKENOMICS}#6-fee-discounts-and-vpfi-utility`,
   },
-  "buy-vpfi.deposit": {
-    summary: "cardHelp.buyVpfiDeposit",
+  "vpfi-vault.deposit": {
+    summary: "cardHelp.vpfiVaultDeposit",
     learnMoreHref: `${TOKENOMICS}#6-fee-discounts-and-vpfi-utility`,
   },
-  "buy-vpfi.unstake": {
-    summary: "cardHelp.buyVpfiUnstake",
+  "vpfi-vault.unstake": {
+    summary: "cardHelp.vpfiVaultUnstake",
     learnMoreHref: `${TOKENOMICS}#6-fee-discounts-and-vpfi-utility`,
   },
 

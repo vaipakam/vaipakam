@@ -1047,7 +1047,7 @@ export default function CreateOffer() {
                     <p className="stat-label" style={{ margin: "0 0 8px" }}>
                       {t('lenderDiscountCard.borrowerBody1', discountBannerParams)}
                       <a href="/vpfi-vault" target="_blank" rel="noopener noreferrer">
-                        {t('lenderDiscountCard.buyVpfi')}
+                        {t('lenderDiscountCard.vpfiVault')}
                       </a>
                       {t('lenderDiscountCard.routingNote')}
                     </p>
@@ -1060,7 +1060,7 @@ export default function CreateOffer() {
                     <p className="stat-label" style={{ margin: "0 0 8px" }}>
                       {t('lenderDiscountCard.lenderBody1', discountBannerParams)}
                       <a href="/vpfi-vault" target="_blank" rel="noopener noreferrer">
-                        {t('lenderDiscountCard.buyVpfi')}
+                        {t('lenderDiscountCard.vpfiVault')}
                       </a>
                       {t('lenderDiscountCard.routingNote')}
                     </p>

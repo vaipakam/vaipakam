@@ -141,7 +141,7 @@ export default function VPFIDiscountConsentCard() {
               rel="noopener noreferrer"
               style={{ color: "var(--brand)", display: 'inline-flex', alignItems: 'center', gap: 3 }}
             >
-              {t('vpfiDiscountConsent.buyVpfiLink')}
+              {t('vpfiDiscountConsent.vpfiVaultLink')}
               <ExternalLink size={11} />
             </a>
             {t('vpfiDiscountConsent.bodySuffix')}
