@@ -200,9 +200,45 @@ check "aborts"           "$?"                                    "1"
 check "says why"         "$(says "$msg" 'cannot read git history')" "1"
 check "nothing consumed" "$(pending "$W")"                       "2"
 
-# ── Argument handling ────────────────────────────────────────────────────────
-echo "T9: argument handling"
+# ── A reused fragment name must not inherit the old file's day ───────────────
+# History is keyed by PATH, not content. `<TASK-ID>-<slug>.md` names recur, and
+# an assembled fragment's name keeps its add-commit forever, so a brand-new
+# fragment reusing one would be dated to whenever the PREVIOUS file was written.
+echo "T9: a reused fragment name is dated as new, not inherited"
 W="$ROOT/t9"; build "$W"
+_frag "$W" 0009-reused '2026-08-15T09:00:00Z'          # used...
+git -C "$W" rm -q docs/ReleaseNotes/unreleased/0009-reused.md
+GIT_AUTHOR_DATE='2026-08-15T12:00:00Z' GIT_COMMITTER_DATE='2026-08-15T12:00:00Z' \
+  git -C "$W" commit -q -m "assemble 0009"             # ...assembled and gone
+printf '## new\n' > "$W/docs/ReleaseNotes/unreleased/0009-reused.md"  # name reused
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
+check "the 08-17 run succeeds"          "$?"                              "0"
+check "the reused name is not held"     "$(says "$msg" '0009-reused.md')" "0"
+check "not dated to the old file's day" "$(says "$msg" '2026-08-15 UTC')" "0"
+check "folded with 08-17's own"         "$(sections "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "2"
+
+# ── A rename below git's similarity threshold cannot be paired ───────────────
+# `-M` is DETECTION by similarity, not a record of intent: `git mv` plus a
+# substantial rewrite before staging reports a plain add and a plain delete with
+# nothing linking them. Unrecoverable — but the run says what it saw rather than
+# misfiling in silence.
+echo "T10: an unpairable staged rename is announced, not silently misfiled"
+W="$ROOT/t10"; build "$W"
+git -C "$W" mv docs/ReleaseNotes/unreleased/0001-a.md \
+              docs/ReleaseNotes/unreleased/0001-a-rewritten.md
+# Replace the content wholesale so similarity detection cannot pair the two.
+printf 'totally different content, sharing no line with the original\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a-rewritten.md"
+git -C "$W" add -A
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
+check "the run still succeeds"        "$?"                                    "0"
+check "it announces the ambiguity"    "$(says "$msg" 'staged deletion')"      "1"
+check "naming the added fragment"     "$(says "$msg" '0001-a-rewritten.md')"  "1"
+check "and the deleted one"           "$(says "$msg" '0001-a.md')"            "1"
+
+# ── Argument handling ────────────────────────────────────────────────────────
+echo "T11: argument handling"
+W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
 bash "$S" --nope              >/dev/null 2>&1; check "unknown option refused" "$?" "1"
 bash "$S" 2026-08-16 2026-08-17 >/dev/null 2>&1; check "two dates refused"   "$?" "1"

@@ -612,10 +612,16 @@ Three behaviours to know:
   written in the PR doing the assembling, so it has no day of its own.
 - A shallow clone, or any repository whose history cannot be read, is
   **refused**: the dates it reports are fabricated rather than missing.
-  Run `git fetch --unshallow` first. Renaming a fragment is safe; renames
-  are followed back to where it was written, including one staged but not
-  yet committed. Use `git mv` rather than a plain `mv` — git can only pair
-  an old and new name through the index.
+  Run `git fetch --unshallow` first.
+- A **committed** rename is safe — it is followed back to where the
+  fragment was written. An **uncommitted** one is recoverable only when
+  git can pair the two names: use `git mv` rather than a plain `mv`, and
+  note that even then pairing is similarity *detection*, so a rename plus
+  a substantial rewrite reads as an unrelated add and delete. The run says
+  so rather than guessing; commit the rename first if the day matters.
+- A **reused filename** is dated as new. History is keyed by path, so an
+  assembled-and-deleted fragment name keeps its add-commit; a fresh
+  fragment reusing it does not inherit that day.
 
 [`docs/ReleaseNotes/assemble.test.sh`](../ReleaseNotes/assemble.test.sh)
 asserts all of the above and runs on every PR — run it after touching the

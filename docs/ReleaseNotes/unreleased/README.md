@@ -94,12 +94,19 @@ Three things worth knowing:
   boundary reports the boundary commit's date rather than its own, which
   looks entirely ordinary and is wrong. Run `git fetch --unshallow` first.
   A repository whose history cannot be read at all stops the run for the
-  same reason. **Renaming a fragment is safe** — renames are followed back
-  to where the fragment was written, so retitling one to match its PR
-  number does not re-date it. Use `git mv` (or stage the rename) if you
-  rename one before committing: git can only pair an old and new name
-  through the index, so a plain `mv` left unstaged reads as a brand-new
-  fragment.
+  same reason. **A committed rename is safe** — it is followed back to
+  where the fragment was written, so retitling one to match its PR number
+  does not re-date it.
+- **An uncommitted rename is only recoverable if git can pair the two
+  names.** `git mv` (or staging the rename) lets it: a plain `mv` left
+  unstaged reads as a brand-new fragment, since pairing needs the index.
+  Even staged, pairing is rename *detection* by similarity — `git mv`
+  plus a substantial rewrite drops below the threshold and reads as an
+  unrelated add and delete. The run announces that state rather than
+  guessing; commit the rename first if the original day matters.
+- **A reused filename does not inherit the old file's day.** History is
+  keyed by path, so an assembled-and-deleted `123-task.md` keeps its
+  add-commit forever. A new fragment reusing that name is dated as new.
 
 [`assemble.test.sh`](../assemble.test.sh) covers all of this against
 throwaway repositories with fragments committed at chosen UTC timestamps;

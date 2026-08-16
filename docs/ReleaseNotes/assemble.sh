@@ -131,6 +131,8 @@ else
   # `-z` rather than parsing quoted paths: a rename record is the status byte
   # pair, then the NEW path, then the OLD path, each NUL-terminated.
   declare -A RENAMED_FROM=()
+  staged_adds=()
+  staged_dels=()
   git_root="$(git -C "$DIR" rev-parse --show-toplevel)"
   while IFS= read -r -d '' entry; do
     xy="${entry:0:2}"
@@ -138,8 +140,34 @@ else
     if [ "${xy:0:1}" = "R" ] || [ "${xy:1:1}" = "R" ]; then
       IFS= read -r -d '' oldpath || break
       RENAMED_FROM["$git_root/$newpath"]="$git_root/$oldpath"
+    elif [ "${xy:0:1}" = "A" ]; then
+      staged_adds+=("$(basename "$newpath")")
+    elif [ "${xy:0:1}" = "D" ]; then
+      staged_dels+=("$(basename "$newpath")")
     fi
   done < <(git -C "$DIR" status --porcelain=v1 -z -M -- "$UNREL")
+
+  # `-M` is rename DETECTION, by similarity index — not a record of what the
+  # operator did. `git mv` followed by a substantial rewrite before staging
+  # drops below the threshold, and git then reports a plain add and a plain
+  # delete with nothing linking them. The rename map is empty, the new path has
+  # no history, and the fragment reads as newly written.
+  #
+  # That state is genuinely ambiguous: a heavily-rewritten rename and a
+  # deliberate "drop that fragment, write this one" are the same two records.
+  # Guessing either way would be wrong half the time, so say what was seen and
+  # let the operator decide — the alternative is a silent misfiling, which is
+  # the failure this whole selection pass exists to prevent.
+  if (( ${#staged_adds[@]} > 0 && ${#staged_dels[@]} > 0 )); then
+    echo "note: the index holds both a staged new fragment and a staged deletion:"
+    echo "        added:   ${staged_adds[*]}"
+    echo "        deleted: ${staged_dels[*]}"
+    echo "      If that was one fragment renamed and rewritten, git could not pair"
+    echo "      the two (rename detection is by similarity), so the new name will be"
+    echo "      dated to THIS run rather than to when it was written. Commit the"
+    echo "      rename first if that matters."
+    echo ""
+  fi
 
   selected=()
   held=()
@@ -161,10 +189,29 @@ else
     #
     # The query runs against the pre-rename path when the index reports one, so
     # a staged rename dates from where the fragment was actually written.
-    probe="${RENAMED_FROM[$f]:-$f}"
+    #
+    # It runs at all ONLY for a path the current commit actually has. Fragment
+    # names are reused — `<TASK-ID>-<slug>.md` recurs — and history is keyed by
+    # PATH, not by content: a name that was used, assembled and deleted months
+    # ago still has an add-commit. Asking about a brand-new file that happens to
+    # reuse that name returns the OLD file's date, which held the new fragment
+    # back for a day it has nothing to do with. Existing in HEAD is what
+    # separates "this fragment was committed and has a day" from "this name was
+    # committed once, by someone else's fragment".
+    probe=""
+    rel="${f#"$git_root"/}"
+    if [ -n "${RENAMED_FROM[$f]:-}" ]; then
+      probe="${RENAMED_FROM[$f]}"
+    elif git -C "$DIR" cat-file -e "HEAD:$rel" 2>/dev/null; then
+      probe="$f"
+    fi
+
     status=0
-    added="$(TZ=UTC git -C "$DIR" log --follow --diff-filter=A \
-      --format='%cd' --date=format-local:'%Y-%m-%d' -1 -- "$probe")" || status=$?
+    added=""
+    if [ -n "$probe" ]; then
+      added="$(TZ=UTC git -C "$DIR" log --follow --diff-filter=A \
+        --format='%cd' --date=format-local:'%Y-%m-%d' -1 -- "$probe")" || status=$?
+    fi
     if (( status != 0 )); then
       echo "" >&2
       echo "Error: cannot read git history for $(basename "$f") (git exited $status)." >&2

@@ -48,7 +48,14 @@ because fragments are routinely renamed to match their pull-request number
 once that number is known, often on the following day — including a rename
 staged but not yet committed, which no amount of history-following can
 resolve on its own, since git can only pair the two names through the index.
-And a repository whose
+Where even the index cannot pair them — pairing is similarity detection, and
+a rename plus a substantial rewrite falls below the threshold — the run says
+what it saw rather than guessing, because a heavily-rewritten rename and a
+deliberate replace are the same two records. A filename that has been used
+before is dated as new rather than inheriting the day of whatever fragment
+held that name previously, since history is keyed by path and an
+assembled-and-deleted name keeps its add-commit indefinitely. And a
+repository whose
 history cannot be read at all now stops the run: an unreadable history and a
 never-committed fragment both come back empty, and treating the first as the
 second would have filed the fragment under an unverified date and then deleted
