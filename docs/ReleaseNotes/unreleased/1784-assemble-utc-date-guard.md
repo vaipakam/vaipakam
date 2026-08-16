@@ -1,10 +1,10 @@
-## Tooling — the release-note assembler refuses fragments from another day
+## Tooling — the release-note assembler files fragments by their own UTC day
 
-The assembler folds every pending fragment into a file named for a date, and
-until now it never checked whether the fragments belonged to that date. It
-took whatever was sitting in the pending directory and wrote it under whichever
-day it was told. That is fine when the two agree and silently wrong when they
-do not.
+The assembler folds pending fragments into a file named for a date, and until
+now it never checked whether the fragments belonged to that date. It took
+whatever was sitting in the pending directory and wrote it under whichever day
+it was told. That is fine when the two agree and silently wrong when they do
+not.
 
 They disagree in a specific, recurring window. A fragment belongs to the day
 its pull request merged, measured in UTC — the same clock the assembler uses
@@ -20,13 +20,30 @@ nothing — there was no failure to notice, just a file with the wrong date on
 it. The information needed to catch it was available all along: each
 fragment's own add-commit records when it arrived, in UTC.
 
-So the assembler now reads that commit for every pending fragment and refuses
-to run if any of them belongs to a different day than the one being assembled,
-listing which fragments and which day each came from. The fix is usually to
-assemble each day separately. Where folding days together is deliberate — a
-backlog being cleared, a day with a single stray fragment — a new
-`--allow-mixed-dates` flag proceeds anyway.
+So the assembler now reads that commit for every pending fragment and takes
+only the ones belonging to the day being assembled. Anything from another day
+is named, told which day it belongs to, and left in place. A backlog spanning
+several days is cleared by running the assembler once per day, and each day's
+file contains that day's work.
 
-A fragment with no add-commit yet is skipped rather than refused. That is the
-case where a fragment is written and assembled inside the same pull request,
-which is an ordinary thing to do and not something the guard should block.
+Selecting rather than refusing matters more than it might sound. An earlier
+draft of this change refused the whole run whenever two days were pending,
+which would have made a mixed backlog impossible to assemble at all: every
+date's run sees the other day's files and stops, so neither day can be
+produced without moving files by hand — and a mixed backlog is precisely the
+situation the dating exists to handle.
+
+Three smaller behaviours round it out. A `--allow-mixed-dates` flag takes
+every pending fragment regardless of day, for when folding them together is
+deliberate. A fragment that has never been committed is always taken, since
+that is one written and assembled inside the same pull request and has no day
+of its own yet. And a shallow clone is refused outright: a fragment older than
+the shallow boundary reports the boundary commit's date instead of its own,
+which looks entirely ordinary and is wrong — worse under selection than under
+a refusal, because it would quietly pull the wrong fragments into a day.
+
+The assembler also now has a test suite of its own. It builds throwaway
+repositories with fragments committed at chosen UTC timestamps and drives the
+real script against them, covering the two-day backlog, the empty-day refusal,
+the override, the shallow clone, the uncommitted fragment, a checkout with no
+git at all, and argument handling.

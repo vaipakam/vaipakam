@@ -55,12 +55,17 @@ bash docs/ReleaseNotes/assemble.sh            # uses today's UTC date
 bash docs/ReleaseNotes/assemble.sh 2026-05-20 # or an explicit date
 ```
 
-The script concatenates every pending fragment into
+The script concatenates the fragments belonging to that day into
 `ReleaseNotes-<date>.md` (creating it with a header if absent, appending
 if it already exists), then removes the consumed fragments. Review the
 result, add an intro paragraph, and commit:
 
-### The date must be the fragment's UTC merge day
+```bash
+git add -A docs/ReleaseNotes/
+git commit -m "docs: release notes <date>"
+```
+
+### The date is the fragment's UTC merge day
 
 A fragment belongs to the day its PR merged **in UTC** — the clock
 `assemble.sh` uses when you pass no date. Local time is a trap here: at
@@ -68,24 +73,30 @@ A fragment belongs to the day its PR merged **in UTC** — the clock
 one day ahead, so assembling "today" locally files those fragments a day
 late. That misfiling has happened twice.
 
-The assembler now checks each pending fragment's add-commit date and
-**refuses to run** if any of them belongs to a different day than the one
-being assembled, naming the offenders. Assemble each day separately:
+So a run takes only the fragments whose add-commit lands on the day being
+assembled. Anything from another day is named, told which day it belongs
+to, and left in place for its own run. A backlog spanning two days is
+cleared by running the script once per day:
 
 ```bash
 bash docs/ReleaseNotes/assemble.sh 2026-08-16
 bash docs/ReleaseNotes/assemble.sh 2026-08-17
 ```
 
-Pass `--allow-mixed-dates` when folding days together is deliberate. A
-fragment with no add-commit — written and assembled inside the same PR —
-is skipped by the check rather than refused.
+Three things worth knowing:
 
+- **`--allow-mixed-dates`** takes every pending fragment regardless of
+  day, for when folding them together is deliberate.
+- **A fragment with no add-commit is always taken.** That is one written
+  and assembled inside the same PR — it has no day of its own yet, so it
+  belongs to the run creating it.
+- **A shallow clone is refused.** A fragment older than the shallow
+  boundary reports the boundary commit's date rather than its own, which
+  looks entirely ordinary and is wrong. Run `git fetch --unshallow` first.
 
-```bash
-git add -A docs/ReleaseNotes/
-git commit -m "docs: release notes <date>"
-```
+[`assemble.test.sh`](assemble.test.sh) covers all of this against
+throwaway repositories with fragments committed at chosen UTC timestamps;
+run it after any change to the assembler.
 
 See [`feedback_post_merge_definition_of_done`] in agent memory and the
 "Release notes" section of `CLAUDE.md` for the surrounding workflow.

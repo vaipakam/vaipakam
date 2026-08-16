@@ -1012,9 +1012,13 @@ work and never lag behind a merge.
   prints the commit steps. Review, add an intro paragraph, commit.
   **The date is the fragment's UTC merge day, not the local one** — at
   `+05:30` a merge after 18:30 UTC reads as tomorrow locally, which has
-  misfiled fragments twice. The assembler now refuses a run whose pending
-  fragments were added on a different UTC day, naming them; assemble each
-  day separately, or pass `--allow-mixed-dates` if folding is deliberate.
+  misfiled fragments twice. A run therefore takes only the fragments
+  belonging to its day and names the ones it held back; clear a
+  multi-day backlog by running it once per day. `--allow-mixed-dates`
+  takes everything when folding is deliberate, an uncommitted fragment
+  is always taken (it has no day yet), and a shallow clone is refused
+  because its dates are fabricated. `docs/ReleaseNotes/assemble.test.sh`
+  covers all of it — run it after touching the assembler.
 - A non-blocking CI check (`.github/workflows/release-notes-drift.yml`)
   warns in the Actions tab if a merge to `main` changed `contracts/src/`
   or `apps/` but added no `docs/ReleaseNotes/` entry.
