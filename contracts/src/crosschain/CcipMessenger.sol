@@ -164,9 +164,25 @@ contract CcipMessenger is
     mapping(address => bytes32) public channelOf;
 
     /// @notice channelId → remote chain id → the channel's domain contract
-    ///         on that remote chain. Surfaced to the local handler as the
-    ///         inbound `sourceSender`; the handler does its own equality
-    ///         check against the peer it expects. Zero = unconfigured.
+    ///         on that remote chain. THIS ADAPTER is what checks it: since
+    ///         #1650, {_ccipReceive} compares the envelope's originator
+    ///         against this entry and reverts `UnauthorizedChannelPeer` on
+    ///         a mismatch. The verified value is then surfaced to the local
+    ///         handler as the inbound `sourceSender`, already authenticated.
+    ///         Zero = unconfigured.
+    /// @dev A handler must NOT re-check `sourceSender` against its own
+    ///      stored copy of the expected peer. This comment used to say the
+    ///      handler "does its own equality check", which was false in both
+    ///      halves at the time — no shipped handler compared it, and this
+    ///      map was only asserted non-zero rather than matched (#1631).
+    ///      #1650 made the map a real guard here; #1770 then retired the
+    ///      Diamond-side second copy that would have re-checked it, because
+    ///      comparing an already-verified originator against a second
+    ///      locally stored address checks whether two pieces of config
+    ///      agree rather than checking the message. See the retired-slot
+    ///      note in `LibVaipakam.sol` and the "Originator Authentication
+    ///      Happens Once, at the Messenger" intent in
+    ///      `docs/FunctionalSpecs/ProjectDetailsREADME.md` §10.
     mapping(bytes32 => mapping(uint256 => address)) public channelPeerOf;
 
     /// @notice Remote chain id → peer address → the channelId that peer is

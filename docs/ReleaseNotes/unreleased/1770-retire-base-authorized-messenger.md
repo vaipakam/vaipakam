@@ -6,8 +6,12 @@ whose messages the mirror would accept. It was allocated, shipped, and written
 up in the design as something the mirror validates on arrival. Nothing ever
 read or wrote it. A previous change corrected the field's own description to
 say so and deliberately left one question open — whether to finish building the
-check or to abandon it. This settles that question: it is abandoned, and the
-field is now documented as permanently unused.
+check or to abandon it.
+
+This settles that question: the check is abandoned, and **the field is deleted**
+rather than kept and explained. Deleting it moves nothing else — it shared a
+storage slot with its neighbour, and the field after it is of a kind that always
+begins a new one, so every other field stays exactly where it was.
 
 Nothing about how the protocol behaves changes. The check was never running, so
 there is none to remove.

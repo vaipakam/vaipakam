@@ -393,12 +393,6 @@ struct CachedTier {
 }
 mapping(address => CachedTier) userTierCache;
 
-// REMOVED (#1770). Specified here as the Diamond-side copy of the
-// authenticated remote sender; superseded by the adapter-side
-// originator check #1650 shipped (see the note under "Sender
-// authentication" above) and deleted from the struct, which is
-// layout-neutral — it packed with `currentTierTableVersion` and the
-// next field is a mapping. Do not re-add it.
 uint256 baseChainId; // EVM chain id of Base (per round-9 P1 #4 — NOT the CCIP selector; the messenger already translates)
 
 // Max `tierTableVersion` seen across all inbound TierUpdated payloads.
@@ -407,6 +401,16 @@ uint256 baseChainId; // EVM chain id of Base (per round-9 P1 #4 — NOT the CCIP
 // (Codex round-9 P1 #7 — mirrors don't query Base for the current
 // version; they adopt the highest seen.)
 uint16 currentTierTableVersion;
+
+// `address baseAuthorizedMessenger;` STOOD HERE — REMOVED (#1770).
+// Specified as the Diamond-side copy of the authenticated remote
+// sender; superseded by the adapter-side originator check #1650
+// shipped (see the note under "Sender authentication" above) and
+// deleted from the struct. Deleting it is layout-neutral because in
+// the REAL struct it sat immediately after `currentTierTableVersion`
+// (uint16 + address = 22 bytes, one slot) and immediately before
+// `mapping(...) buybackAllowedToken`, and a mapping always begins a
+// fresh slot. Do not re-add it.
 ```
 
 `CachedTier` packs into a single slot (8 + 40 + 64 + 40 = 152 bits). One slot per user with a cached tier.
