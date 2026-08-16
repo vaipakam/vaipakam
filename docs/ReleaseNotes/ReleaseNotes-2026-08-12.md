@@ -8,6 +8,11 @@ not merge order, so read this as a map of the month rather than a
 timeline — and note that where a thread says "now" it means "as of its
 own merge", which a later thread in the same file sometimes revises.
 
+*Later addition:* the catch-up above was assembled part-way through
+2026-08-12, and seven further threads merged the same day. They are
+appended at the end of this file rather than woven into the arcs below,
+so the five-arc summary describes the catch-up window only.
+
 Five arcs account for most of it.
 
 **The VPFI recycling programme went from a ratified design to a working,
@@ -8596,3 +8601,435 @@ Left alone deliberately: the dated release-notes archive, the older-docs
 backups, the dated findings reports, and a captured audit artifact.
 Those are records of what was true on a date, and a record that gets
 edited to stay current is no longer a record.
+
+## Connected app — two stale-value hazards in the notification bell and the recovery form (PR #TBD)
+
+The connected app's lint configuration keeps React's hook rules visible as
+advisories and promotes each one to a hard error only once the existing code
+is clean against it, so the standard is raised deliberately rather than
+declared and then ignored. This is the second such group: the rule that
+checks an effect or memo actually declares the values it reads.
+
+Four reports, two underlying causes, both the same shape — a value that
+could not be declared as the dependency it already was.
+
+The notification bell derived its row list with a fallback to an empty list
+on every render. The list the server sends is stable between renders, but
+the fallback produced a brand-new empty list each pass, so the unread count
+was recomputed and the mark-all-read action rebuilt every time the component
+rendered, whether or not anything had changed. The derivation is now
+memoised, so both settle when the feed does.
+
+The asset-recovery page resets itself to a blank form in two places: when the
+connected wallet or network changes, and when another browser tab writes a
+recovery record for the same account. That reset helper was redefined on
+every render, which meant the two effects could not name it as a dependency
+without re-running the reset on every render — so it went undeclared, and the
+effects were, on paper, reading a value they did not admit to. The helper is
+now stable (it only clears form fields, so it never needs to change), and
+both effects declare it. Behaviour is unchanged: the resets still happen
+exactly when identity changes or another tab writes.
+
+Also removed four suppression comments that no longer suppress anything —
+their rules are switched off in this configuration, so the comments were
+telling future readers a check was being waived when none was running. The
+one explaining why a regex deliberately matches control characters keeps its
+explanation, as a plain comment.
+
+With the group at zero, the dependency rule is now enforced as an error, so a
+future effect that quietly reads an undeclared value fails the build instead
+of joining a backlog. Refs were promoted the same way in the previous slice;
+purity and set-state-in-effect remain advisory and are tracked in #1520.
+
+No user-visible behaviour changes.
+
+## Connected app — time-based readouts now advance on their own (PR #TBD)
+
+Several parts of the connected app compare against "now": how long ago the
+indexer last ingested, whether an offer has expired, whether a risk-tier
+cooldown has lapsed. All of them read the clock while the screen was being
+drawn, which sounds harmless and is not — it means the value was fixed at
+whatever moment React happened to render, and then stayed there. A freshness
+note could sit at the same age indefinitely, an offer already past its expiry
+could keep occupying a tenor chip and a rung of the rate ladder, and a
+cooldown that had in fact elapsed could keep reporting as still counting,
+until something unrelated on the page forced a redraw.
+
+These surfaces now read the time through a small shared clock that advances
+every thirty seconds, so each of them reaches its own threshold on its own:
+the age keeps counting, the expired offer drops out, the cooldown lapses on
+screen. Thirty seconds is deliberately coarse — every one of these thresholds
+is measured in minutes or longer, so a finer tick would cost redraws without
+changing anything a user could see.
+
+The order ticket is the one place that deliberately keeps reading the clock
+exactly rather than on the tick. Its preset expiries ("24 hours", "7 days")
+are relative to the moment you post, and the ticket already promised to
+re-resolve that deadline fresh at submit so a form left open does not post a
+stale one. The validation you see while filling the ticket in now follows the
+ticking clock, while the deadline actually submitted is still resolved to the
+second. As a side effect the preview numbers are steadier than before: each
+recalculation used to take its own reading, so a preset expiry differed
+slightly every time the preview was rebuilt.
+
+With these cleared, the rule that forbids reading such values mid-render is
+enforced as an error, joining the two rules promoted in the previous slices.
+One suppression remains, on the submit path described above, and it records
+why: the check cannot tell that the code runs from a button press rather than
+during drawing, and following the tick there would be the regression.
+
+Behaviour worth watching after release: anything that shows an age or hides an
+expired row should now change without being prompted. The tick is real time
+passing, which is why it is verified on the deployed site rather than in the
+unit suite.
+
+## Frontend correctness — the ref-during-render lint group, judged site by site (PR #TBD)
+
+The alpha02 app lints against the React hooks plugin's newer rules, with
+most of them left advisory while the existing code is worked through
+deliberately. This clears the smallest of those groups — reading or
+writing a ref while rendering — and turns it into a hard error so it
+cannot come back.
+
+The group was expected to be the one most likely to contain real
+user-visible bugs. It turned out to be almost the opposite: five of the
+six sites are deliberate, and converting them to ordinary state would
+have introduced defects rather than removed them. Two of them gate whether
+a submit button may be used at all when a security warning is showing;
+they compare the live warning against the fingerprint the user actually
+consented to, and they read it during render precisely because the effect
+that clears stale consent does not run until after the screen has been
+painted. Moving that comparison into state would delay it by one render —
+briefly permitting a signature against a warning nobody agreed to, which
+is the exact window the check exists to close. The others are a
+notification panel's "new" dots, which are supposed to survive the read
+cursor advancing underneath them, and a rate-ladder change highlight,
+which by definition needs the previous snapshot. Each now carries a note
+explaining why it stays as it is, so the next reader does not helpfully
+"fix" it.
+
+The sixth was a genuine problem and is fixed: a component recorded the
+connected wallet address into a ref while rendering, for a background
+sync channel to read later. A render that React abandons or double-invokes
+could leave that ref holding an address the interface never actually
+committed to, and the sync channel would then scope its work to the wrong
+wallet. The value is now recorded after the render is committed instead,
+which cannot be late for this consumer.
+
+Closes #1520 in part — the three larger rule groups (impure work during
+render, state set inside effects, and stale effect dependencies) remain
+advisory and are the next slices. Their counts had drifted upward since
+the issue was filed, so the issue's table was corrected as part of this
+work.
+
+## Connected app — a network switch no longer shows the previous chain's listing marker (PR #TBD)
+
+Three hooks track a "pending" record the user created from this device — a
+position listed for sale, a posted offset offer, a posted refinance offer.
+Each remembers the record's id locally so the app can offer to cancel it, and
+each re-read that local memory whenever the wallet switched network or the
+loan changed.
+
+That re-read happened *after* the screen had already been drawn, so for one
+frame the app displayed the previous chain's remembered id. On a network
+switch that meant briefly offering a cancel action against an offer belonging
+to a different chain. Clicking in that window would have failed rather than
+cancelled the wrong thing, but it was still a control the user should never
+have been shown. The re-read now happens while the screen is being computed,
+before anything is painted, so the stale frame no longer exists. Seeding the
+value once at startup would not have fixed this on its own — it would have
+frozen the first chain's id and never noticed the switch, which is exactly
+what the after-the-fact re-read was there to catch.
+
+Four related places in the same hooks were reviewed and deliberately left as
+they are, each now recording why. Three of them reconcile the device's memory
+against what the chain actually reports — the memory is written to storage and
+also decides which record the app re-verifies, so making it a purely computed
+value would leave the app checking a record it had just disproved. The fourth
+is the "your listing ended elsewhere" notice, which has to outlive the
+condition that raised it: the moment the notice is shown the app clears the
+stale memory, so a computed value would appear and vanish in the same instant
+instead of waiting to be dismissed.
+
+This is the first of several passes over this class of finding; the underlying
+check stays advisory until the remaining cases are judged.
+
+### The fee figures on the public pages now follow the protocol, not the release
+
+The documentation quotes several governance-tunable figures — the fee on lender
+interest, the loan initiation fee, the VPFI discount tiers and their thresholds.
+Each is written once and referenced from every sentence and every translation
+that mentions it, so there is one place to change rather than seventy.
+
+On the public site that reference had nowhere to resolve to. It fell back to the
+value shipped with the build, which meant the figures were only ever as current
+as the last deploy: after a governance change the pages would keep stating the
+old rate until someone remembered to edit it. That is exactly the drift that had
+just been cleaned up across the overview pages and both user guides.
+
+They now resolve against the protocol's published configuration. A change to a
+fee reaches the public documentation on its own, in every language, without a
+release.
+
+### Without giving the marketing site a wallet or a chain client
+
+The site has no wallet connection and no contract code in it, and that is worth
+keeping — it is the surface a stranger loads first, and it should stay light. So
+the figures are read from the configuration the platform already publishes for
+this purpose, the same source the connected app consults first for the numbers it
+displays. One small request, no contract interfaces added to the page.
+
+The trade is honest and worth stating: this follows a governance change within
+roughly the time it takes to be observed and published, rather than being read
+from the chain at the instant you load the page. For a fee rate on a
+documentation page that is the right granularity.
+
+### And the tooltip no longer reports a failure that never happened
+
+Hovering one of these figures used to say the value was a compile-time default
+because a chain read was "pending or unavailable" — on pages where no read was
+ever attempted. A reader curious enough to hover was told something was broken
+about a page working exactly as designed.
+
+The tooltip now says where the number actually came from, and the two cases are
+genuinely different: a figure that tracks the published configuration, or the one
+shipped with this page when that configuration could not be reached. The second
+still happens — during a redeploy, or if a published figure is too old to trust —
+and a page always renders either way, because a documentation page that fails to
+show a number is worse than one showing a slightly older one.
+
+The machine-readable copies of the docs keep resolving their figures at build
+time. A static file has no runtime and cannot follow a change; leaving the
+reference unresolved to signal that would just serve a crawler a placeholder
+instead of a number.
+
+## Thread — Relative links in published documents now fail the build (PR #1654)
+
+Markdown under the marketing site's content directory is rendered by the
+single-page app at a route, so a link written relatively is resolved by
+the browser against that route rather than against the repository. A
+reference to a neighbouring runbook file therefore asks the site for a
+path that has no route and no published asset — and because the site is
+configured to serve the app shell for anything it does not recognise, the
+reader gets a page with a success status instead of the document they
+clicked, and no error anywhere.
+
+That failure is invisible from both sides, which is why this adds a check
+rather than only a correction. In the repository the link looks right and
+works. On the site it produces a page rather than a missing-page error,
+so nobody reports it — a reader who lands on the app shell assumes they
+misread the link. A one-off sweep would fix today's instances and none of
+tomorrow's.
+
+The constraint worth stating, because it is what rules relative links out
+entirely: the same bytes have to work in two places. A contributor
+reading the file in the repository needs a link that resolves there; a
+reader on the site needs one that resolves over the web. Only an absolute
+address satisfies both. The check therefore accepts absolute web
+addresses, mail links, in-page anchors and site-absolute routes, and
+rejects everything else. Whether a site-absolute route actually exists is
+a separate question with a separate failure mode and is tracked
+separately.
+
+A sweep of all four published document sets — the admin runbook, the
+whitepaper, the user guides and the overview, thirty-two files across ten
+languages — found exactly one offender, in the admin runbook, pointing at
+the flash-loan liquidator rollout runbook. It now uses an absolute
+address. Because that file is a mirror of a canonical copy kept elsewhere
+in the repository, the correction was made to the canonical and
+re-synced; the check knows about that relationship and, when it finds a
+problem in a mirrored file, names the canonical as the place to fix it
+rather than sending someone to edit a generated copy.
+
+The check reads the documents with a real markdown parser rather than
+matching text, so a link shown inside a code block or inline code — being
+displayed, not followed — is not reported, and a reference-style link is
+caught at its definition. It also refuses to pass when it finds no
+documents at all, so a moved content directory cannot read as a clean
+result forever.
+
+Closes #1639.
+
+## The last of the LayerZero residue, and the CCIP variables that were never written down
+
+The cross-chain layer has been Chainlink CCIP only since T-068, and the
+contracts themselves are clean — what remains of LayerZero in
+`contracts/src` is commentary explaining why a thing is shaped the way it
+is, and there is no LayerZero dependency left for anything to import.
+The residue was all in the layer around the contracts: the deploy
+scripts, the artifacts they stamp, and the file an operator copies before
+a deploy.
+
+**The operator config was the serious one.** `.env.example` still shipped
+a LayerZero endpoint for six chains, a peer-setter block, and the entire
+fixed-rate VPFI buy stack — receiver, adapter, executor options, refund
+timeout, and per-chain payment tokens — for scripts that have all been
+deleted. Nothing read any of it. Meanwhile it documented **none** of the
+CCIP variables the current deploy actually needs, four of which have no
+default and abort the run when unset. An operator following the template
+would have carefully filled in variables that do nothing and then had
+their deploy fail on ones nobody told them about. Both halves are fixed:
+the dead blocks are gone, replaced by short notes naming what was removed
+so a stale `.env` gets deleted rather than translated, and the CCIP
+router, RMN proxy, token-admin registry, registry module owner, lane
+chain ids, guardian and rate-limit knobs are now written down with their
+defaults.
+
+Two smaller traps came out of the same file. It set `REWARD_VERSION`
+twice, and the second one won — since the reward-messenger proxy is
+CREATE2-addressed off that value, an operator following the template
+would have landed the proxy at a different address than intended. And it
+named `BASE_EID` and `REWARD_EXPECTED_SOURCE_EIDS`, which nothing reads,
+while omitting `BASE_CHAIN_ID` and `REWARD_EXPECTED_SOURCE_CHAIN_IDS`,
+which the reward wiring genuinely requires. Chains are keyed by EVM chain
+id now; an endpoint id is not a thing that can be translated.
+
+**A LayerZero endpoint id was still being stamped into every new
+deployment.** The artifact writer had an endpoint-id lookup table and
+wrote the result to `addresses.json` on each deploy. It was kept as
+"inert chain metadata", but nothing read it, and the typed deployment
+loader that consumers import already documented the field as removed —
+so the code, the data and the documentation disagreed three ways. The
+resolver and the stamp are gone, the field is out of the six per-chain
+artifacts and the consolidated bundle, and the loader's description now
+matches. The genuinely-still-needed LayerZero-era keys are untouched and
+explained: the deploy scripts still read `rewardOApp` as a fallback,
+because two testnet chains were deployed under that key and their
+artifacts are the record of it.
+
+**The environment variable naming the old transport is now the old
+name.** `REWARD_MESSENGER_PROXY` is what the reward wiring reads;
+`REWARD_OAPP_PROXY` still works as a deprecated fallback, so nobody's
+existing `.env` breaks.
+
+Also removed: the event-category linter's allowlist for LayerZero
+inherited events, which listed five contracts that no longer exist and
+could never have matched anything.
+
+**The guard that was supposed to prevent this has been widened.** A
+pre-deploy check already scanned the deploy scripts for LayerZero
+residue, and it worked — nothing it looked for got through. It simply
+did not look at `.env.example`, which is not a deploy script but is what
+an operator copies, and it deliberately tolerated the endpoint id. It now
+covers both, plus the endpoint variables, the peer-setter variables and
+the buy-receiver id, while still allowing a comment to *name* a retired
+variable — a note that says "this is gone, do not carry it forward" has
+to be able to say what it is. The widened guard was tested against a
+deliberately reintroduced variable before being trusted.
+
+The deploy runbooks were reconciled rather than rewritten. The Base
+Sepolia cookbook had no status banner at all and opened by quoting an
+endpoint id; it now says plainly that it is a pre-migration document and
+points at the two scripts that replace it. The BNB banner already
+existed but claimed the current deploy still produces a buy adapter,
+which it has not since that surface was removed. The main deployment
+runbook's dead reward-proxy section is now marked dead in place, so
+someone arriving from the table of contents sees it without having to
+scroll back to the banner at the top.
+
+**One thing this sweep was wrong about, and corrected.** An earlier draft
+of this note repeated the cutover runbook's warning that the handover
+script does not rotate the CCIP stack to the governance timelock, leaving
+it a manual multisig step. That warning is out of date and the script
+does rotate it — messenger, token pool, rate governor, reward messenger,
+mirror token, both remittance receivers and both return endpoints, each
+handed to the timelock, with contracts absent on a given chain skipped
+and any the signing key does not own reported rather than passed over.
+The stale warning has been replaced with what the script actually does.
+
+What remains true is that the handover is **two legs**: the script sends
+the transfer, and the timelock must then accept, scheduled and executed
+through the governance Safe. The mainnet wrapper's own header said the
+Safe should call accept — it cannot, because the timelock is the pending
+owner, so that instruction is corrected too.
+
+**Three defects in the first cut of this change, caught in review.** All
+three were in the new material rather than the removals, and two of them
+would have broken a deploy:
+
+- The CCIP variables were documented under the names the Forge scripts
+  read, not the names an operator sets. `deploy-chain.sh` resolves a
+  per-slug `CCIP_ROUTER_<SLUG>` and exports the bare name itself — and
+  treats a hand-set bare `CCIP_ROUTER` as a hard error precisely because
+  that is how one chain's router gets wired into another chain's deploy.
+  The template now shows the per-slug form.
+- The template pre-filled the canonical Base chain id with the testnet
+  value. Mainnet only forces the real value inside its configure phase,
+  so the earlier contract-deploy and lane-wiring phases would have used
+  whatever was in the environment — and the mirror-chain preflight checks
+  only that the value is *set*, not that it is right. A copied template
+  would therefore have wired a mainnet mirror to the testnet reward hub.
+  It now ships unset so the preflight stops and the operator chooses.
+- The environment rename introduced a regression of its own: the deploy
+  wrappers clear the old variable name before injecting the address they
+  resolved from the artifact, and the new name — which takes priority —
+  was not being cleared. A value left in an operator's `.env` would have
+  outranked the wrapper and tripped the mismatch check on multi-chain
+  runs. Both wrappers now clear and populate the current name.
+
+A second review round found four more, again all in the new material:
+
+- Only the router and RMN entries had been converted to per-slug names;
+  the two CCT registry addresses were still documented bare, and the
+  wrappers resolve all four the same way. Fixed.
+- The template's advice for the reward-messenger override — "populate
+  once, reuse everywhere", inherited from the CREATE2 bootstrap — is
+  false today. That deploy path is gone: the messenger is created with an
+  ordinary deploy, no script reads the version variable that used to salt
+  it, and the committed artifacts hold a different address per chain. So
+  a single reused value makes the agreement check abort. The variable is
+  removed, the override is documented as best left unset, and the two
+  deploy wrappers stop telling operators to bump a version that no longer
+  does anything.
+- The widened guard did not scan the files that can actually recreate the
+  endpoint-id stamp — the artifact writer, the deploy script that calls
+  it, the committed artifacts, the consumed bundle. Those two patterns
+  were therefore decorative: they could never have matched, and the guard
+  would have reported success for residue it structurally could not see.
+  The scan set now covers them, and that was verified by putting the
+  field back into an artifact and watching the gate fail.
+- The runbook's "adding a new chain" checklist still told operators to
+  edit the deleted endpoint-id resolver — a procedure that cannot be
+  completed. It now names the CCIP selector resolver and the per-slug
+  infrastructure variables that go with it.
+
+The pattern across both rounds is worth recording: every defect was in
+something newly written, not in anything removed. Deleting dead code is
+low-risk; describing what replaced it is where the mistakes were.
+
+A third round found seven more, and this is where the loop earned its
+keep — two of them were factual claims this change had itself introduced
+or repeated. The default list of chains the reward aggregator expects
+reports from omitted the canonical chain itself and one live mirror,
+which would have dropped Base's own interest out of the global
+denominator and made the mirror's reports arrive from an unknown source.
+The template's per-chain infrastructure stanzas stopped after four of the
+six supported testnets. The runbook still asserted a version variable
+must match across chains, three paragraphs from the note explaining that
+nothing reads it. The spell's header still pointed at a deploy phase no
+wrapper dispatches. And the comment exemption added in the previous round
+recognised only shell comments, while the scan set had just grown to
+include Solidity files — so a migration note reading `// lzEid was
+removed` would have failed every preflight, and the obvious fix under
+time pressure is to delete the note rather than the residue. The
+exemption is now per-language, verified against four cases: a Solidity
+comment naming the field passes, Solidity code declaring it fails, an
+artifact key fails, a shell comment passes.
+
+A fourth round found two, both about completeness rather than
+correctness. The per-chain infrastructure stanzas covered the testnets
+but not a single mainnet slug, so the template was unusable for the
+deploy it matters most for; all six mainnet slugs now have their four
+addresses. And retiring the LayerZero event category from the linter
+broke a documented invariant: that taxonomy is a closed list maintained
+in two places, and the specification still declared the retired category
+valid and counted fifteen leaves. Both sides now agree on fourteen, and
+the rule is restated to cover retiring a leaf, not only adding one — the
+direction that was left implicit is exactly the one that went wrong.
+
+A note for whoever picks up the event taxonomy next: the linter reports
+229 violations against that closed list, none of them related to this
+change. They are years of newer categories — reward-governor,
+reward-compensation, buyback-intent and a dozen more — that were used in
+the contracts without being added to either the specification or the
+allow-list. That is a real reconciliation and is not attempted here.
