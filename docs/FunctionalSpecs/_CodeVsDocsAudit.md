@@ -302,5 +302,8 @@ generalised wording was true of the other offer-consuming routes. It is not the
 same as the refinance path, which was checked at the same time and is sound:
 there the offer's creator must be the borrower acting, so the deadline being
 ignored overrides nobody's consent but the actor's own. Here the offer belongs
-to a third party. **OPEN** — tracked separately rather than folded into the
-item-8 PR, which is scoped to one path and one guard.
+to a third party. **RESOLVED** (#1773) — the guard now runs alongside the
+existing offer-shape checks, before the collateral top-up, the borrower rewrite
+and the position-NFT work, routed through the same shared helper so the
+never-expires sentinel keeps one definition. Tracked separately from the item-8
+PR rather than folded in, so each path carried its own tests.
