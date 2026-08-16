@@ -45,7 +45,7 @@ Vaipakam 面向四类用户：
 - 你们双方都会收到一个 position NFT - 你的表示“我应收到 1,000 USDC + interest”；他们的表示“我 repay 后应取回我的 WETH”
 - Loan clock 开始计时
 
-系统会从 loaned amount 中收取一笔很小的 **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**，并转入 protocol treasury。因此 borrower 收到的是 998 USDC，而不是 1,000。（你也可以用 **VPFI** 支付该 fee，让 borrower 收到完整的 1,000；VPFI 会在下文说明。）
+系统会从 loaned amount 中收取一笔很小的 **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**，并转入 protocol treasury。因此 borrower 收到的是 `{liveValue:exampleBorrowerReceives}` USDC，而不是 1,000。（你也可以用 **VPFI** 支付该 fee，让 borrower 收到完整的 1,000；VPFI 会在下文说明。）
 
 ### Step 3 — 时间经过；borrower 还款
 
@@ -57,13 +57,13 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 
 他们点击 **Repay**，签署 transaction，1,006.58 USDC 进入 loan settlement。随后：
 
-- 你收到 **1,006.44 USDC**（principal + interest，扣除仅针对 interest portion 的 `{liveValue:treasuryFeeBps}`% Yield Fee 后）
-- Treasury 收到 **0.13 USDC** 作为 Yield Fee
+- 你收到 **`{liveValue:exampleLenderNet}` USDC**（principal + interest，扣除仅针对 interest portion 的 `{liveValue:treasuryFeeBps}`% Yield Fee 后）
+- Treasury 收到 **`{liveValue:exampleTreasuryYieldFee}` USDC** 作为 Yield Fee
 - Borrower 的 WETH 被 unlock
 
-以上数字均四舍五入到分。准确的 interest 是 6.575342 USDC，准确的 Yield Fee 是 0.131506 USDC；因此用一个四舍五入后的数字去减另一个，会差出一分钱 — protocol 是按未四舍五入的金额结算的。
+以上数字均四舍五入到分。准确的 interest 是 6.575342 USDC，准确的 Yield Fee 是 `{liveValue:exampleTreasuryYieldFeeExact}` USDC；因此用一个四舍五入后的数字去减另一个，会差出一分钱 — protocol 是按未四舍五入的金额结算的。
 
-你的 dashboard 上会出现 **Claim** button。点击后，1,006.44 USDC 会从 settlement 移到你的 wallet。Borrower 点击 claim 后，他们的 WETH 会回到自己的 wallet。Loan 随之 close。
+你的 dashboard 上会出现 **Claim** button。点击后，`{liveValue:exampleLenderNet}` USDC 会从 settlement 移到你的 wallet。Borrower 点击 claim 后，他们的 WETH 会回到自己的 wallet。Loan 随之 close。
 
 ### Step 4 — 如果 borrower 没有还款怎么办？
 

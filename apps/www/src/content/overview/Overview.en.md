@@ -73,7 +73,7 @@ The instant they accept:
 
 A small **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)** is taken from the loaned
 amount and routed to the protocol treasury. So the borrower receives
-998 USDC, not 1,000. (You can pay the fee in **VPFI** instead and the
+`{liveValue:exampleBorrowerReceives}` USDC, not 1,000. (You can pay the fee in **VPFI** instead and the
 borrower receives the full 1,000 — more on VPFI below.)
 
 ### Step 3 — Time passes; the borrower repays
@@ -87,18 +87,18 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 They click **Repay**, sign a transaction, and 1,006.58 USDC moves
 into the loan settlement. From this:
 
-- You receive **1,006.44 USDC** (principal + interest minus a `{liveValue:treasuryFeeBps}`%
+- You receive **`{liveValue:exampleLenderNet}` USDC** (principal + interest minus a `{liveValue:treasuryFeeBps}`%
   Yield Fee on the interest portion only)
-- The treasury receives **0.13 USDC** as the Yield Fee
+- The treasury receives **`{liveValue:exampleTreasuryYieldFee}` USDC** as the Yield Fee
 - The borrower's WETH is unlocked
 
 Those figures are rounded to the cent. The exact interest is
-6.575342 USDC and the exact Yield Fee 0.131506 USDC, so subtracting
+6.575342 USDC and the exact Yield Fee `{liveValue:exampleTreasuryYieldFeeExact}` USDC, so subtracting
 one rounded number from another leaves you a cent off — the protocol
 settles on the unrounded amounts.
 
 You see a **Claim** button on your dashboard. You click it and the
-1,006.44 USDC moves from settlement into your wallet. The borrower
+`{liveValue:exampleLenderNet}` USDC moves from settlement into your wallet. The borrower
 clicks claim and their WETH moves back to their wallet. The loan is
 closed.
 

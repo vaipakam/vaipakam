@@ -21,8 +21,10 @@
  *   `{liveValue:tier1Min}`
  *   `{liveValue:tier3DiscountBps}`
  * which the custom `code` component in `markdownToc.tsx` rewrites to
- * `<LiveValue knob="..." />`. Each token resolves to a registered knob
- * in {@link KNOB_DEFAULTS}.
+ * `<LiveValue knob="..." />`. Each token resolves to either a registered
+ * knob (`KNOB_DEFAULTS`) or a figure derived from one or more knobs
+ * (`DERIVED_FIGURES`) — the token syntax does not distinguish them, and
+ * neither does the resolver.
  *
  * Why a single component (vs. raw text):
  * - A retune updates one definition rather than every sentence in
@@ -58,35 +60,26 @@
  */
 
 import { useProtocolConfig } from '../../hooks/useProtocolConfig';
-import { KNOB_DEFAULTS, formatKnob, type KnobName } from '../../lib/liveValueKnobs';
-
-export type { KnobName };
+import {
+  formatKnob,
+  resolveLiveValue,
+  type LiveValueName,
+} from '../../lib/liveValueKnobs';
 
 /**
- * Chain reads only — one per knob.
+ * Adding a value to the docs is now entirely a registry edit: add the
+ * name to `KnobName` (or `DerivedName`), its default and format to
+ * `KNOB_DEFAULTS` (or its inputs and formula to `DERIVED_FIGURES`), and
+ * its config read to `KNOB_READS` — all in `lib/liveValueKnobs.ts` —
+ * then use `{liveValue:<name>}` in markdown. Nothing is added here.
  *
- * The default value and display format come from {@link KNOB_DEFAULTS}.
- * Adding a value to the docs means: add the name to `KnobName` and an
- * entry to `KNOB_DEFAULTS` (both in `lib/liveValueKnobs.ts`), add its
- * read here, then use `{liveValue:<knobName>}` in markdown.
+ * The per-knob config reads used to live in this file, which is why the
+ * search index could not use them and substituted bundled defaults
+ * unconditionally (#1664 item 2). They are in the registry now, beside
+ * the names and formats they describe.
  */
-type ChainRead = (config: ReturnType<typeof useProtocolConfig>['config']) => number | null;
-
-const KNOB_READS: Record<KnobName, ChainRead> = {
-  treasuryFeeBps: (c) => (c ? c.treasuryFeeBps : null),
-  loanInitiationFeeBps: (c) => (c ? c.loanInitiationFeeBps : null),
-  tier1Min: (c) => (c ? c.tierThresholdsTokens[0] : null),
-  tier2Min: (c) => (c ? c.tierThresholdsTokens[1] : null),
-  tier3Min: (c) => (c ? c.tierThresholdsTokens[2] : null),
-  tier4Min: (c) => (c ? c.tierThresholdsTokens[3] : null),
-  tier1DiscountBps: (c) => (c ? c.tierDiscountBps[0] : null),
-  tier2DiscountBps: (c) => (c ? c.tierDiscountBps[1] : null),
-  tier3DiscountBps: (c) => (c ? c.tierDiscountBps[2] : null),
-  tier4DiscountBps: (c) => (c ? c.tierDiscountBps[3] : null),
-};
-
 interface LiveValueProps {
-  knob: KnobName;
+  knob: LiveValueName;
   /**
    * Locale of the DOCUMENT this value appears in — not the UI language
    * (#1610 review round 5).
@@ -105,7 +98,6 @@ interface LiveValueProps {
 }
 
 export function LiveValue({ knob, locale }: LiveValueProps) {
-  const spec = KNOB_DEFAULTS[knob];
   // The bail-out sits BELOW the hook (#1521). Two things to know:
   //
   // 1. As written before, this was a rules-of-hooks violation — `spec`
@@ -125,16 +117,20 @@ export function LiveValue({ knob, locale }: LiveValueProps) {
   // UserGuide and AdminKnobsDocs all reach it via `markdownComponents()`.
   const { config, chainReads } = useProtocolConfig();
 
+  // ONE resolver for knobs and derived figures alike (#1664 item 2).
+  // The mapping from config field to token used to live here; the search
+  // index needed the same mapping, and a second copy of it is exactly the
+  // drift this registry exists to prevent.
+  const resolved = resolveLiveValue(knob, config);
+
   // Robustness: token typos (e.g. `{liveValue:treasuryFeebps}`) fall
-  // through to inline code rendering so the bug is visible in the
-  // page rather than rendering a silent misleading value.
-  if (!spec) return <code>{`{liveValue:${knob}}`}</code>;
+  // through to inline code rendering so the bug is visible in the page
+  // rather than rendering a silent misleading value.
+  if (!resolved) return <code>{`{liveValue:${knob}}`}</code>;
 
-  const live = KNOB_READS[knob]?.(config) ?? null;
-  const value = live ?? spec.defaultValue;
-  const isLive = live !== null;
+  const { value, isLive, format } = resolved;
 
-  const display = formatKnob(value, spec.format, locale);
+  const display = formatKnob(value, format, locale);
 
   return (
     <span

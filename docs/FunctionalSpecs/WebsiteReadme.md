@@ -96,6 +96,23 @@ Public-navigation requirements:
   chain read was "pending or unavailable" on pages where none was ever
   attempted, which told readers something was broken about a page
   working exactly as designed
+- a figure the documentation COMPUTES from one of those rates must be
+  derived from the same configuration, not written into the page as a
+  fixed number beside it. A worked example that states what each party
+  receives is arithmetic over the fee rates printed above it, and the
+  two halves must not be able to disagree. Writing the result as a
+  literal guarantees that they eventually will: the rate follows a
+  retune and the sum does not, and because the rate carries a marker
+  saying it came from the published configuration, a reader comparing
+  them has every reason to trust the half that is now wrong. The
+  narrative choices an example makes — its loan size, its rate, its
+  term — are not configuration and stay as written; only the amounts
+  computed from a tunable rate are derived
+- a computed figure claims the published provenance only when EVERY
+  input it was computed from was read live; if any input fell back to
+  the value shipped with the build, the result is a fallback too. A
+  figure must not inherit a confidence none of its parts had, and the
+  marker defers to the least certain input rather than the most
 - the machine-readable copies are the one surface with no runtime, so
   they resolve every reference at build time and are current as of their
   build. That is a property of the artefact, not a gap to close: a

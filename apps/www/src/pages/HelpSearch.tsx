@@ -16,6 +16,7 @@
 
 import { useMemo, useEffect, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useProtocolConfig } from '../hooks/useProtocolConfig';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
 import Navbar from '../components/Navbar';
@@ -50,10 +51,15 @@ export default function HelpSearch() {
 
   const query = params.get('q') ?? '';
   const lang = useActiveLocale();
+  // #1664 item 2 — the index embeds resolved `{liveValue:...}` figures,
+  // so it must be rebuilt when the snapshot settles. `config` in the
+  // dependency list is what makes results re-derive rather than staying
+  // on the bundled defaults the first search happened to see.
+  const { config } = useProtocolConfig();
 
   const hits = useMemo(
-    () => (query.length >= 2 ? searchDocs(query, lang, t) : []),
-    [query, lang, t],
+    () => (query.length >= 2 ? searchDocs(query, lang, t, config) : []),
+    [query, lang, t, config],
   );
 
   const grouped = useMemo(() => {
