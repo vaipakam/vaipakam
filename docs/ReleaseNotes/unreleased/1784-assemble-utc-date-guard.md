@@ -42,8 +42,11 @@ the shallow boundary reports the boundary commit's date instead of its own,
 which looks entirely ordinary and is wrong — worse under selection than under
 a refusal, because it would quietly pull the wrong fragments into a day.
 
-The assembler also now has a test suite of its own. It builds throwaway
-repositories with fragments committed at chosen UTC timestamps and drives the
-real script against them, covering the two-day backlog, the empty-day refusal,
-the override, the shallow clone, the uncommitted fragment, a checkout with no
-git at all, and argument handling.
+The assembler also now has a test suite of its own, wired into the docs-drift
+workflow so it runs on every pull request. It builds throwaway repositories
+with fragments committed at chosen UTC timestamps and drives the real script
+against them, covering the two-day backlog, the empty-day refusal, the
+override, the shallow clone, the uncommitted fragment, a checkout with no git
+at all, and argument handling. Both of the failures above were the kind a
+reader cannot check by eye — the output looks ordinary either way — which is
+the argument for asserting them rather than reviewing them.

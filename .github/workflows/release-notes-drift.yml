@@ -132,6 +132,23 @@ jobs:
           node .github/scripts/check-docs-paths.mjs
           echo "Docs path gate OK." >> "$GITHUB_STEP_SUMMARY"
 
+      # Release-note assembler tests. The assembler decides which pending
+      # fragments belong to the day being assembled, and gets that decision
+      # from git history — both halves fail SILENTLY when wrong, producing a
+      # plausible-looking notes file rather than an error. Two such failures
+      # have already shipped (#1769, #1783), so the cases are asserted rather
+      # than eyeballed.
+      #
+      # Blocking, and unconditional rather than path-filtered: the suite runs
+      # in about two seconds against throwaway repositories it builds itself,
+      # and it depends on git behaviour (`--diff-filter=A`, shallow-boundary
+      # attribution) that can change underneath an untouched script.
+      - name: Release-note assembler tests
+        run: |
+          set -euo pipefail
+          bash docs/ReleaseNotes/assemble.test.sh
+          echo "Release-note assembler tests OK." >> "$GITHUB_STEP_SUMMARY"
+
       # Excision ratchet (#1651). Same shape and the same reason as the gate
       # above — a removed thing keeps being described as live, and prose has
       # no compiler. This one pins a COUNT per file rather than banning a
