@@ -759,7 +759,14 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   offer: at and after the deadline the offer can no longer be
   accepted or matched. Direct accepts, matchOffers calls, previewAccept
   classifiers, and previewMatch classifiers all refuse expired offers
-  before any state change.
+  before any state change. This covers **every** route by which a
+  standing offer can be bound to a loan, not only the ones a user would
+  describe as "accepting" it — including a lender selling an existing
+  position directly into a standing offer to buy, which consumes that
+  offer and draws on the principal its author set aside. The deadline is
+  the author's consent to the timing, so a path that can spend their
+  committed funds must honour it whether or not the author is the one
+  initiating.
 - The optional deadline must lie strictly in the future when the offer
   is created, and must lie within one year from creation. Out-of-bounds
   values are rejected by the create call. The chosen value is immutable

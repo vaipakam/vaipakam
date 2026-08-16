@@ -257,3 +257,50 @@ commits first and cannot see the fills that fail.
 while checking that the new spec text did not over-claim for a surface it does
 not describe. **RESOLVED** by the warning added for #1702; the spec bullet now
 describes the creator side rather than naming a gap.
+
+## Direct position sale ignored a standing offer's deadline (#1503 item 8)
+
+**Spec** (`ProjectDetailsREADME.md`, "Offer expiry (GTT)"): at and after its
+deadline an offer "can no longer be accepted or matched", and every fill /
+match / preview path "refuse[s] expired offers before any state change."
+
+**Code**: the direct position sale — a lender selling an existing position
+into a standing offer to buy — validated the offer's type and its already-taken
+flag, but never its deadline. An offer past its deadline and not yet cleaned up
+therefore stayed consumable through that one route: the seller could draw the
+principal its author had set aside and mark the offer taken after the window
+the author consented to had closed.
+
+**Decision**: candidate BUG, not a stale doc — the spec's intent was already
+unambiguous. The divergence was one of enumeration rather than intent: the
+spec listed the routes it expected to matter ("direct accepts, matchOffers,
+previewAccept, previewMatch") and a position sale is none of those by name,
+while being exactly one of them in substance. The guard the path needed already
+existed and was already in use on the accept path; it had simply never been
+called here. **RESOLVED** — the guard is now applied before any lien release or
+vault movement, and the spec's enumeration now states the rule by what a path
+*does* (binds a standing offer to a loan, spending its author's committed
+funds) rather than by a list of path names that a new route can silently fall
+outside of.
+
+## Obligation transfer ignores the incoming borrower's offer deadline (sibling of #1503 item 8)
+
+**Spec** (`ProjectDetailsREADME.md`, "Offer expiry (GTT)"): the deadline binds
+every route by which a standing offer can be bound to a loan, not only the ones
+a user would call "accepting" it.
+
+**Code**: `PrecloseFacet.transferObligationViaOffer` reads the incoming
+borrower's standing Borrower Offer directly — it does not route through the
+gated accept path — and validates the offer's type, its already-taken flag, its
+refinance tag, its partial-fill state and asset continuity. It never consults
+the deadline. An exiting borrower can therefore hand their obligation to an
+author whose offer window has closed.
+
+**Decision**: candidate BUG, same class as #1503 item 8 and found by the
+adversarial self-review of that fix, when checking whether the spec's
+generalised wording was true of the other offer-consuming routes. It is not the
+same as the refinance path, which was checked at the same time and is sound:
+there the offer's creator must be the borrower acting, so the deadline being
+ignored overrides nobody's consent but the actor's own. Here the offer belongs
+to a third party. **OPEN** — tracked separately rather than folded into the
+item-8 PR, which is scoped to one path and one guard.
