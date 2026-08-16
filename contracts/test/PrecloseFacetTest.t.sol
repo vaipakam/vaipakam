@@ -725,6 +725,101 @@ contract PrecloseFacetTest is Test {
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, selfOffer);
     }
 
+    /// @dev #1773 — builds the same valid new-borrower offer the success path
+    ///      uses, varying only the GTT deadline, so the expiry tests below
+    ///      isolate the guard rather than any other term.
+    function _createNewBorrowerOffer(uint64 expiresAt_) private returns (uint256) {
+        vm.prank(newBorrower);
+        return OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: expiresAt_,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+    }
+
+    /// @dev #1773 — the obligation transfer reads the incoming borrower's offer
+    ///      straight from storage rather than hopping through `_acceptOffer`,
+    ///      so it inherited none of that entry's gates and never consulted the
+    ///      deadline. The exiting borrower could hand a live obligation to an
+    ///      author whose consent window had already closed.
+    function testTransferObligationRevertsExpiredOffer() public {
+        uint64 deadline = uint64(block.timestamp + 1 days);
+        uint256 offerId = _createNewBorrowerOffer(deadline);
+
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PrecloseFacet.OfferExpired.selector,
+                offerId,
+                deadline
+            )
+        );
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, offerId);
+    }
+
+    /// @dev Boundary: `isOfferExpired` treats `now >= expiresAt` as expired, so
+    ///      the deadline second itself is already closed. Pins the `>=` against
+    ///      a later `>` refactor reopening a one-second window.
+    function testTransferObligationRevertsAtExactExpiryBoundary() public {
+        uint64 deadline = uint64(block.timestamp + 1 days);
+        uint256 offerId = _createNewBorrowerOffer(deadline);
+
+        vm.warp(uint256(deadline));
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PrecloseFacet.OfferExpired.selector,
+                offerId,
+                deadline
+            )
+        );
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, offerId);
+    }
+
+    /// @dev The GTC sentinel (`expiresAt == 0`) means "never expires", NOT
+    ///      "expired at the epoch" — a guard written as a bare
+    ///      `block.timestamp >= expiresAt` would reject every GTC offer here.
+    ///      After the same warp, a GTC offer must reach the LATER term checks
+    ///      instead: 30 days no longer fits the loan's remaining term, so
+    ///      `InvalidOfferTerms` is the proof that expiry did not fire.
+    function testTransferObligationGtcOfferNotTreatedAsExpired() public {
+        uint256 offerId = _createNewBorrowerOffer(0);
+
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(borrower);
+        vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, offerId);
+    }
+
     function testTransferObligationSuccess() public {
         vm.prank(newBorrower);
         uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
