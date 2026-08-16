@@ -358,22 +358,7 @@
       "howTitle": "如何运作",
       "analyticsHint": "想查看协议整体统计和流通供应量？请查看",
       "analyticsLink": "数据分析页面"
-    },
-    "connectTitle": "连接您的钱包",
-    "unsupportedNetwork": "不支持的网络",
-    "buy": "购买 VPFI",
-    "buying": "购买中…",
-    "approving": "授权中…",
-    "approvingVpfi": "正在授权 VPFI…",
-    "depositToVault": "存入 Vault",
-    "depositing": "存款中…",
-    "unstakeToWallet": "提取到钱包",
-    "unstaking": "提取中…",
-    "buyFailed": "购买失败",
-    "depositFailed": "存款失败",
-    "unstakeFailed": "提取失败",
-    "buyTimedOut": "购买超时 — 资金已退回",
-    "vaultBalanceZero": "您的 Vault VPFI 余额为 0 — 请先存入 VPFI。"
+    }
   },
   "claimCenter": {
     "connectTitle": "连接您的钱包",

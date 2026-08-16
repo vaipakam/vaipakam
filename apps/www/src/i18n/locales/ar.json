@@ -358,22 +358,7 @@
       "howTitle": "كيف يعمل",
       "analyticsHint": "تبحث عن إحصاءات البروتوكول العامة والمعروض المتداول؟ راجع",
       "analyticsLink": "صفحة التحليلات"
-    },
-    "connectTitle": "اربط محفظتك",
-    "unsupportedNetwork": "شبكة غير مدعومة",
-    "buy": "شراء VPFI",
-    "buying": "جارٍ الشراء…",
-    "approving": "جارٍ الاعتماد…",
-    "approvingVpfi": "جارٍ اعتماد VPFI…",
-    "depositToVault": "إيداع في Vault",
-    "depositing": "جارٍ الإيداع…",
-    "unstakeToWallet": "سحب إلى المحفظة",
-    "unstaking": "جارٍ السحب…",
-    "buyFailed": "فشل الشراء",
-    "depositFailed": "فشل الإيداع",
-    "unstakeFailed": "فشل السحب",
-    "buyTimedOut": "انتهت مهلة الشراء — تمت إعادة الأموال",
-    "vaultBalanceZero": "رصيد VPFI في Vault الخاص بك هو 0 — أودع VPFI أولاً."
+    }
   },
   "claimCenter": {
     "connectTitle": "اربط محفظتك",

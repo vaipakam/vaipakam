@@ -358,22 +358,7 @@
       "howTitle": "இது எப்படி வேலை செய்கிறது",
       "analyticsHint": "Protocol-wide stats மற்றும் circulating supply வேண்டுமா? பார்க்கவும்",
       "analyticsLink": "Analytics page"
-    },
-    "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
-    "unsupportedNetwork": "ஆதரிக்கப்படாத நெட்வொர்க்",
-    "buy": "VPFI வாங்கு",
-    "buying": "வாங்கப்படுகிறது…",
-    "approving": "ஒப்புதல் வழங்கப்படுகிறது…",
-    "approvingVpfi": "VPFI ஒப்புதல் வழங்கப்படுகிறது…",
-    "depositToVault": "Vault இல் வைப்பு செய்",
-    "depositing": "வைப்பு செய்யப்படுகிறது…",
-    "unstakeToWallet": "வாலெட்டுக்கு வெளியேற்று",
-    "unstaking": "வெளியேற்றப்படுகிறது…",
-    "buyFailed": "வாங்குதல் தோல்வி",
-    "depositFailed": "வைப்பு தோல்வி",
-    "unstakeFailed": "வெளியேற்றம் தோல்வி",
-    "buyTimedOut": "வாங்குதல் நேரம் முடிந்தது — நிதி திருப்பி அனுப்பப்பட்டது",
-    "vaultBalanceZero": "உங்கள் Vault VPFI இருப்பு 0 — முதலில் VPFI வைப்பு செய்யவும்."
+    }
   },
   "claimCenter": {
     "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
