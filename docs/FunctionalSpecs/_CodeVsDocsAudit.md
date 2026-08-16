@@ -307,3 +307,45 @@ existing offer-shape checks, before the collateral top-up, the borrower rewrite
 and the position-NFT work, routed through the same shared helper so the
 never-expires sentinel keeps one definition. Tracked separately from the item-8
 PR rather than folded in, so each path carried its own tests.
+
+## The spec cites three test files that do not exist (two for an excised programme)
+
+**Spec** (`ProjectDetailsREADME.md`, the test-coverage citations around
+§"Deployment" and §"Staking"): three named test files are cited as the evidence
+for specific invariants —
+
+- `contracts/test/Create2DeploymentTest.t.sol` — "deterministic address +
+  post-handover role invariant", cited as a pair with
+  `DeployerZeroRolesTest.t.sol`.
+- `contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol` —
+  "rewardPerTokenStored never decreases; per-user earned grows until claim".
+- `contracts/test/invariants/StakingBalances.invariant.t.sol` —
+  "sum(userStaked) == totalStaked, pool-cap respected".
+
+**Code**: none of the three files exists. The cited sibling
+`DeployerZeroRolesTest.t.sol` *does*, so half of that pair went missing rather
+than the whole citation being stale. The two staking invariants are the sharper
+case: `rewardPerTokenStored` and `totalStaked` appear nowhere in `contracts/`
+at all — neither in `src/` nor in `test/` — which is consistent with the
+staking-yield programme having been removed by the #687-B securities excision.
+
+**Decision**: candidate STALE DOC rather than a bug, but not a link repair, so
+recorded here rather than silently edited. Two distinct dispositions are needed
+and each is an intent decision, not a path fix:
+
+- The two staking invariants describe guarantees about a programme that no
+  longer exists. The spec should not merely re-point them — it should stop
+  asserting them, and the surrounding text needs checking for the same reason
+  the excision ratchet exists: a removed surface described as live is the
+  thing #687-B set out to remove.
+- The create2 citation may be a renamed or folded-in test rather than a removed
+  one; `LibCreate2Deploy.sol` is still in `src/`, so the behaviour is live even
+  though the named test is not. Whoever knows where that coverage went should
+  say so; guessing at a replacement path would assert coverage this audit has
+  not established.
+
+Found while repairing genuinely broken relative links in the live doc bands,
+where these three resolved to nothing. The four repairable links were fixed in
+that pass; these were deliberately left, because a spec whose claims are
+sourced from the documents must not have those claims quietly rewritten to
+match whatever the tree happens to contain.
