@@ -45,7 +45,10 @@ and is wrong — worse under selection than under a refusal, because it would
 quietly pull the wrong fragments into a day. A renamed fragment is followed
 back to where it was written rather than dated to the rename, which matters
 because fragments are routinely renamed to match their pull-request number
-once that number is known, often on the following day. And a repository whose
+once that number is known, often on the following day — including a rename
+staged but not yet committed, which no amount of history-following can
+resolve on its own, since git can only pair the two names through the index.
+And a repository whose
 history cannot be read at all now stops the run: an unreadable history and a
 never-committed fragment both come back empty, and treating the first as the
 second would have filed the fragment under an unverified date and then deleted

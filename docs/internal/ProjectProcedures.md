@@ -613,7 +613,9 @@ Three behaviours to know:
 - A shallow clone, or any repository whose history cannot be read, is
   **refused**: the dates it reports are fabricated rather than missing.
   Run `git fetch --unshallow` first. Renaming a fragment is safe; renames
-  are followed back to where it was written.
+  are followed back to where it was written, including one staged but not
+  yet committed. Use `git mv` rather than a plain `mv` — git can only pair
+  an old and new name through the index.
 
 [`docs/ReleaseNotes/assemble.test.sh`](../ReleaseNotes/assemble.test.sh)
 asserts all of the above and runs on every PR — run it after touching the

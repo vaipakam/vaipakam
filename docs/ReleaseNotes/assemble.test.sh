@@ -36,6 +36,15 @@ check() {  # check <condition-description> <actual> <expected>
 #   0002-b.md — 2026-08-17 10:00 UTC
 build() {
   local d="$1"
+  # Refuse to reuse a directory. Two cases sharing one has already produced a
+  # wrong result twice while this suite was being written: the second `build`
+  # layers fresh fragments on top of whatever the first case left behind, and
+  # the assertions then measure a state no case intended. Loud beats subtle.
+  if [ -e "$d" ]; then
+    echo "  FAIL — test bug: build() called twice on $d" >&2
+    FAILED=1
+    return 1
+  fi
   mkdir -p "$d/docs/ReleaseNotes/unreleased"
   cp "$SRC" "$d/docs/ReleaseNotes/assemble.sh"
   printf '# unreleased\n' > "$d/docs/ReleaseNotes/unreleased/README.md"
@@ -150,6 +159,22 @@ check "the renamed file is not held back" "$(says "$msg" '0001-a-renamed.md')"  
 check "the genuine 08-17 one still is"    "$(says "$msg" '0002-b.md')"                                 "1"
 check "no 08-17 file written by this run" "$([ -f "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md" ] && echo yes || echo no)" "no"
 
+# ── A rename staged but not yet committed ────────────────────────────────────
+# `--follow` cannot help here: no commit connects the new name to the old one,
+# so the history query returns empty and the fragment reads as newly written —
+# taken for whatever day was asked, then deleted. The index knows, and
+# `git status -M` reports it, so the pre-rename path is what gets dated.
+echo "T8: a staged (uncommitted) rename keeps the original day"
+W="$ROOT/t8"; build "$W"
+git -C "$W" mv docs/ReleaseNotes/unreleased/0001-a.md \
+              docs/ReleaseNotes/unreleased/0001-a-staged.md   # staged, NOT committed
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
+check "the 08-17 run succeeds"        "$?"                                    "0"
+check "the staged rename is held back" "$(says "$msg" '0001-a-staged.md')"    "1"
+check "dated to where it was written"  "$(says "$msg" '2026-08-16 UTC')"      "1"
+check "so only 08-17's own is folded"  "$(sections "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "1"
+check "and it survives on disk"        "$([ -f "$W/docs/ReleaseNotes/unreleased/0001-a-staged.md" ] && echo yes || echo no)" "yes"
+
 # ── An unreadable history must abort, not read as "uncommitted" ──────────────
 # `git log` exits 0 with empty output for a path it has no history for, which
 # is how an uncommitted fragment is recognised. A NON-zero exit means something
@@ -160,8 +185,8 @@ check "no 08-17 file written by this run" "$([ -f "$W/docs/ReleaseNotes/ReleaseN
 # otherwise-valid repository missing an object `log` needs. A git that failed at
 # everything would instead trip the is-this-a-work-tree check and take the
 # no-git branch, which is a different (and honest) path: it says it cannot date.
-echo "T8: an unreadable git history aborts"
-W="$ROOT/t8"; build "$W"
+echo "T8b: an unreadable git history aborts"
+W="$ROOT/t8b"; build "$W"
 mkdir -p "$ROOT/fakebin"
 REAL_GIT="$(command -v git)"
 cat > "$ROOT/fakebin/git" <<EOF

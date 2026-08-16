@@ -96,7 +96,10 @@ Three things worth knowing:
   A repository whose history cannot be read at all stops the run for the
   same reason. **Renaming a fragment is safe** — renames are followed back
   to where the fragment was written, so retitling one to match its PR
-  number does not re-date it.
+  number does not re-date it. Use `git mv` (or stage the rename) if you
+  rename one before committing: git can only pair an old and new name
+  through the index, so a plain `mv` left unstaged reads as a brand-new
+  fragment.
 
 [`assemble.test.sh`](../assemble.test.sh) covers all of this against
 throwaway repositories with fragments committed at chosen UTC timestamps;

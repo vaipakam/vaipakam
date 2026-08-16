@@ -115,6 +115,32 @@ elif [ "$(git -C "$DIR" rev-parse --is-shallow-repository 2>/dev/null)" = "true"
   echo "pass --allow-mixed-dates to assemble everything without dating." >&2
   exit 1
 else
+  # An UNCOMMITTED rename defeats `--follow`: no commit connects the new name to
+  # the old one, so the history query comes back empty and the fragment reads as
+  # newly written — assembled under whatever day was asked, then deleted. The
+  # index knows better, and `git status -M` will say so (`R old -> new`), so ask
+  # it once up front and date the old name instead.
+  #
+  # Scope: a rename staged in the INDEX. A rename made with plain `mv` and left
+  # unstaged is NOT recoverable — git reports it as an unrelated deletion plus an
+  # untracked file (` D old.md` / `?? new.md`) because rename detection needs the
+  # index — and is genuinely indistinguishable from having deleted one fragment
+  # and written another. `git mv`, or staging the rename, is what makes it
+  # knowable.
+  #
+  # `-z` rather than parsing quoted paths: a rename record is the status byte
+  # pair, then the NEW path, then the OLD path, each NUL-terminated.
+  declare -A RENAMED_FROM=()
+  git_root="$(git -C "$DIR" rev-parse --show-toplevel)"
+  while IFS= read -r -d '' entry; do
+    xy="${entry:0:2}"
+    newpath="${entry:3}"
+    if [ "${xy:0:1}" = "R" ] || [ "${xy:1:1}" = "R" ]; then
+      IFS= read -r -d '' oldpath || break
+      RENAMED_FROM["$git_root/$newpath"]="$git_root/$oldpath"
+    fi
+  done < <(git -C "$DIR" status --porcelain=v1 -z -M -- "$UNREL")
+
   selected=()
   held=()
   for f in "${frags[@]}"; do
@@ -132,9 +158,13 @@ else
     # "uncommitted", select the fragment for whatever date was asked, and then
     # DELETE it after misfiling it. stderr is deliberately not redirected, so
     # git's own diagnosis reaches the operator.
+    #
+    # The query runs against the pre-rename path when the index reports one, so
+    # a staged rename dates from where the fragment was actually written.
+    probe="${RENAMED_FROM[$f]:-$f}"
     status=0
     added="$(TZ=UTC git -C "$DIR" log --follow --diff-filter=A \
-      --format='%cd' --date=format-local:'%Y-%m-%d' -1 -- "$f")" || status=$?
+      --format='%cd' --date=format-local:'%Y-%m-%d' -1 -- "$probe")" || status=$?
     if (( status != 0 )); then
       echo "" >&2
       echo "Error: cannot read git history for $(basename "$f") (git exited $status)." >&2
