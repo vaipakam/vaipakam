@@ -21,8 +21,10 @@
  *   `{liveValue:tier1Min}`
  *   `{liveValue:tier3DiscountBps}`
  * which the custom `code` component in `markdownToc.tsx` rewrites to
- * `<LiveValue knob="..." />`. Each token resolves to a registered knob
- * in {@link KNOB_DEFAULTS}.
+ * `<LiveValue knob="..." />`. Each token resolves to either a registered
+ * knob (`KNOB_DEFAULTS`) or a figure derived from one or more knobs
+ * (`DERIVED_FIGURES`) — the token syntax does not distinguish them, and
+ * neither does the resolver.
  *
  * Why a single component (vs. raw text):
  * - A retune updates one definition rather than every sentence in
@@ -64,19 +66,18 @@ import {
   type LiveValueName,
 } from '../../lib/liveValueKnobs';
 
-export type { KnobName };
-
 /**
- * Chain reads only — one per knob.
+ * Adding a value to the docs is now entirely a registry edit: add the
+ * name to `KnobName` (or `DerivedName`), its default and format to
+ * `KNOB_DEFAULTS` (or its inputs and formula to `DERIVED_FIGURES`), and
+ * its config read to `KNOB_READS` — all in `lib/liveValueKnobs.ts` —
+ * then use `{liveValue:<name>}` in markdown. Nothing is added here.
  *
- * The default value and display format come from {@link KNOB_DEFAULTS}.
- * Adding a value to the docs means: add the name to `KnobName` and an
- * entry to `KNOB_DEFAULTS` (both in `lib/liveValueKnobs.ts`), add its
- * read here, then use `{liveValue:<knobName>}` in markdown.
+ * The per-knob config reads used to live in this file, which is why the
+ * search index could not use them and substituted bundled defaults
+ * unconditionally (#1664 item 2). They are in the registry now, beside
+ * the names and formats they describe.
  */
-type ChainRead = (config: ReturnType<typeof useProtocolConfig>['config']) => number | null;
-
-
 interface LiveValueProps {
   knob: LiveValueName;
   /**
@@ -116,9 +117,6 @@ export function LiveValue({ knob, locale }: LiveValueProps) {
   // UserGuide and AdminKnobsDocs all reach it via `markdownComponents()`.
   const { config, chainReads } = useProtocolConfig();
 
-  // Robustness: token typos (e.g. `{liveValue:treasuryFeebps}`) fall
-  // through to inline code rendering so the bug is visible in the
-  // page rather than rendering a silent misleading value.
   // ONE resolver for knobs and derived figures alike (#1664 item 2).
   // The mapping from config field to token used to live here; the search
   // index needed the same mapping, and a second copy of it is exactly the
