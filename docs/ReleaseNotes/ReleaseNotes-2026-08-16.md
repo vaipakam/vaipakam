@@ -1,15 +1,17 @@
 # Release Notes — 2026-08-16
 
-Two entries, both cleaning up after the #687-A securities excision on
-user-facing surfaces rather than in contract code.
+Two entries, both cleaning up after the securities excisions on user-facing
+surfaces rather than in contract code.
 
 The first repairs the tokenomics "Learn more" links, which had been serving a
 404 from a base URL that never followed the specification to its new home —
-and, underneath that, two anchors pointing at sections describing programmes
-the excision removed. The second removes the retired buy widget's strings from
-the marketing site's translation bundles, where seven languages still carried
-a "Buy VPFI" label for a surface that no longer exists. Nothing rendered those
-strings; they shipped in the bundle regardless.
+and, underneath that, two anchors pointing at sections describing removed
+programmes. The two are separate excision tracks: the fixed-rate VPFI sale was
+removed in #687-A, the `5% APR` staking yield in #687-B. The second entry
+removes the retired buy widget's strings from the marketing site's translation
+bundles, where seven languages still carried a "Buy VPFI" label for a surface
+that no longer exists — the #687-A one. Nothing rendered those strings; they
+shipped in the bundle regardless.
 
 ## Thread — the tokenomics help links point at a document that exists (PR #1765)
 
