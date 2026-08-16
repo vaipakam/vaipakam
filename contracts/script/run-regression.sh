@@ -71,11 +71,27 @@ SUBDIRS=(scenarios deploy fork seaport token)
 mapfile -t TOP < <(find test -maxdepth 1 -name '*.t.sol' -printf '%f\n' | sed 's/\.t\.sol$//' | sort)
 
 FAILED=0
-run() {  # run(label, glob...)
-  local label="$1"; shift
+run() {  # run(label, glob)
+  local label="$1"; local glob="$2"
+  # #1780 — the deploy chunk carries `FacetSizeLimitTest`'s headroom report,
+  # which ALWAYS PASSES by design (it reports facets running out of EIP-170
+  # room rather than failing them). Foundry hides logs from passing tests
+  # below `-vv`, so without this the report is silent on the `--full` path —
+  # i.e. exactly the mainnet preflight and release gate that most want to know
+  # a facet is nearly full. `predeploy-check.sh` fixed its own non-full branch;
+  # this branch delegates HERE, so it needs its own answer.
+  #
+  # Scoped to the deploy chunk on purpose: `-vv` across the whole regression
+  # would print logs from every passing test in the suite and bury the six
+  # lines this exists to surface.
+  local extra=()
+  case "$glob" in
+    test/deploy/*) extra=(-vv) ;;
+  esac
   echo ""
-  echo "===== $label : forge test --match-path '$*' ====="
-  "${PREFIX[@]}" forge test --match-path "$*" "${FORGE_ARGS[@]}" || { echo "CHUNK FAILED: $label" >&2; FAILED=1; }
+  echo "===== $label : forge test --match-path '$glob' ${extra[*]} ====="
+  "${PREFIX[@]}" forge test --match-path "$glob" "${FORGE_ARGS[@]}" "${extra[@]}" \
+    || { echo "CHUNK FAILED: $label" >&2; FAILED=1; }
 }
 
 n=0; chunk=()
