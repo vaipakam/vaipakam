@@ -173,9 +173,21 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // cut (no selector overlap, order-independent).
     uint256 internal constant SELECTOR_BUDGET = 120;
 
-    // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
-    // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 73;
+    // Must equal DeployDiamond's `cuts` array length. A mismatch means a facet
+    // was added to DeployDiamond but not mirrored into `_deployItems()` here.
+    //
+    // `public` so an EXTERNAL guardrail can assert it —
+    // `test/deploy/RefreshScriptFacetParityTest` compares this against
+    // `DiamondFacetNames.cutFacetNames().length`. That cross-check has to live
+    // outside this file, because the `require` in `refresh()` below compares
+    // `items.length` against THIS constant: omit a facet from both (the natural
+    // way to omit one, since you touch neither line) and the require passes
+    // while the refresh silently leaves that facet on stale bytecode. #1791's
+    // Codex F1 was exactly that, and this script's own guard could not see it.
+    //
+    // The parity test deliberately lives in `test/`, not here: a production
+    // refresh script must not import test code to check itself.
+    uint256 public constant EXPECTED_FACETS = 73;
 
     function refresh() external {
         uint256 cid = block.chainid;

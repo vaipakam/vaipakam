@@ -182,13 +182,47 @@ gate reports with the same "regression failed" wording as a red test — a
 green-looking suite that never ran is the failure mode this delegation
 exists to prevent.
 
-**When you add a facet**: add it to `DiamondFacetNames.cutFacetNames()`
-AND add its `_get<Facet>Selectors()` call to
-`SelectorCoverageTest._populateRoutedSet()`. **When you add a function to
-a facet**: add its selector to the matching `_get<Facet>Selectors()` in
-`DeployDiamond.s.sol` (and `HelperTest.sol`) — `SelectorCoverageTest`
-fails otherwise. A deeper deploy-*integration* test (runs `DeployDiamond`
-and loupe-asserts the built Diamond) is tracked as Issue #72.
+**When you add a facet**: it must be registered in **SEVEN** places under
+`contracts/`. This list was two entries long until #1793; the omitted five
+are where #1780's new facet actually went missing, and two of them fail
+**silently** — see below.
+
+| # | Place | What it drives |
+| --- | --- | --- |
+| 1 | `script/DeployDiamond.s.sol` | `cuts[]`, `_get<Facet>Selectors()`, **and a `Deployments.writeFacet(...)` line** |
+| 2 | `script/RedeployFacets.s.sol` | the curated partial refresh (if the facet is in one of its families) |
+| 3 | `script/RefreshAllFacetsInPlace.s.sol` | `_deployItems()`'s `items[]` **and** `EXPECTED_FACETS` |
+| 4 | `test/deploy/DiamondFacetNames.sol` | `cutFacetNames()` — ground truth for the whole deploy-sanity suite |
+| 5 | `test/deploy/SelectorCoverageTest.t.sol` | `_populateRoutedSet()` |
+| 6 | `test/HelperTest.sol` | the test-side Diamond build |
+| 7 | `test/SetupTest.t.sol` | shared test setup |
+
+Outside `contracts/`: the `FACETS=(...)` array in
+`script/exportFrontendAbis.sh` and the `packages/contracts/src/abis/index.ts`
+barrel (both covered in "Frontend ABI sync" above), plus a field on the
+`Deployment` type in `packages/contracts/src/deployments.ts` whenever #1
+writes a new key.
+
+**Two of the seven do not fail loudly, so do not rely on a red check:**
+
+- **#3's guard compares against itself.** `require(items.length ==
+  EXPECTED_FACETS, "...facet count drift vs DeployDiamond")` says
+  "vs DeployDiamond" but checks the script's own constant — omit the facet
+  from both lines and it passes, and the refresh then leaves that facet on
+  stale bytecode. `test/deploy/RefreshScriptFacetParityTest` (#1793) now
+  cross-checks `EXPECTED_FACETS` against `cutFacetNames()`, which is what
+  makes this one loud.
+- **#1's `writeFacet` omission is invisible to `predeploy-check`.** Step 4b
+  validates that every key *written* to the deployment artifact is typed on
+  `Deployment`; it is structurally blind to a key never written, so the gate
+  reports success and the facet's address is recoverable only from broadcast
+  logs. Still unguarded — tracked in #1793.
+
+**When you add a function to a facet**: add its selector to the matching
+`_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —
+`SelectorCoverageTest` fails otherwise. A deeper deploy-*integration* test
+(runs `DeployDiamond` and loupe-asserts the built Diamond) is tracked as
+Issue #72.
 
 ## Conventions
 
