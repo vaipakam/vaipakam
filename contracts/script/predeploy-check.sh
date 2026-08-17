@@ -614,7 +614,7 @@ else
   # the exact-coverage guard could not see the loss. No such string exists in
   # either script today; the guard is for the one someone adds later.
   strip_sol_comments() {
-    awk '
+    awk -v blank="${2:-0}" '
       BEGIN { inblk = 0 }
       {
         line = $0; out = ""; i = 1; instr = 0; q = ""
@@ -623,8 +623,10 @@ else
           if (inblk) { if (two == "*/") { inblk = 0; i += 2 } else { i++ }; continue }
           # Inside a string literal, comment markers are just characters.
           if (instr) {
-            out = out ch
-            if (ch == "\\") { out = out substr(line, i + 1, 1); i += 2; continue }
+            # blank=1 drops the CONTENTS (keeping the quotes) so a call name
+            # written inside a diagnostic string is not counted as a call.
+            if (blank != 1 || ch == q) { out = out ch }
+            if (ch == "\\") { if (blank != 1) { out = out substr(line, i + 1, 1) }; i += 2; continue }
             if (ch == q) { instr = 0 }
             i++
             continue
@@ -640,6 +642,15 @@ else
   }
   DEPLOY_FLAT="$(strip_sol_comments "$DEPLOY_SOL")"
   REFRESH_FLAT="$(strip_sol_comments "$REFRESH_SOL")"
+  # A second view with string CONTENTS blanked, used ONLY for counting call sites
+  # (Codex #1798 r3/r4). Making the stripper string-aware was right for parsing —
+  # a `//` in a string must not delete real code — but it also meant a call name
+  # written inside a diagnostic (`console.log("_buildCut(")`) counted as a call
+  # while remaining unparseable, so the exact-coverage guard would FAIL a deploy
+  # over log text. Counting outside strings and parsing inside them is what both
+  # halves actually need.
+  DEPLOY_COUNT="$(strip_sol_comments "$DEPLOY_SOL" 1)"
+  REFRESH_COUNT="$(strip_sol_comments "$REFRESH_SOL" 1)"
 
   CUT_GETTER_VAR="$(printf '%s' "$DEPLOY_FLAT" \
     | grep -oE '_buildCut[[:space:]]*\([[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors[[:space:]]*\(\)' \
@@ -675,9 +686,9 @@ else
     _def=$(printf '%s' "$1" | grep -oE "function[[:space:]]+$2[[:space:]]*\(" | grep -c . || true)
     echo $((_all - _def))
   }
-  N_CUT_CALLS=$(count_calls "$DEPLOY_FLAT" '_buildCut')
-  N_WRITE_CALLS=$(count_calls "$DEPLOY_FLAT" 'writeFacet')
-  N_ITEM_CALLS=$(count_calls "$REFRESH_FLAT" 'Item')
+  N_CUT_CALLS=$(count_calls "$DEPLOY_COUNT" '_buildCut')
+  N_WRITE_CALLS=$(count_calls "$DEPLOY_COUNT" 'writeFacet')
+  N_ITEM_CALLS=$(count_calls "$REFRESH_COUNT" 'Item')
   N_CUT_PAIRS=$(printf '%s\n' "$CUT_GETTER_VAR" | grep -c . || true)
   N_WRITE_PAIRS=$(printf '%s\n' "$WROTE_VAR_KEY" | grep -c . || true)
   N_ITEM_PAIRS=$(printf '%s\n' "$REFRESH_GETTER_KEY" | grep -c . || true)
