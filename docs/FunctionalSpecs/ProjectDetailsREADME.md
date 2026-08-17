@@ -1230,6 +1230,44 @@ The preview should preserve the resolved economic terms even when acceptance is 
 
 ## 6. Loan Closure & Repayment
 
+### Every status change must be observable, and observability belongs to the transition
+
+A loan's status is intended to change in exactly one way: through the single
+permitted-transition check, which rejects any move not on the allow-list. Two
+consequences are intended to follow from that, and both are requirements rather
+than implementation detail.
+
+- **Every status change is announced, and the announcement is the transition's
+  own responsibility — never the surrounding operation's.** A reader outside the
+  platform must be able to learn that a loan moved between states without
+  knowing which operation moved it. Leaving the announcement to each operation
+  makes correctness a per-operation obligation that can be forgotten silently:
+  an operation that announces nothing, or that announces a different loan than
+  the one whose status moved, produces no error anywhere while leaving external
+  readers permanently wrong about that loan. Announcing from the transition
+  itself makes an unobservable status change impossible to construct, which is
+  a stronger guarantee than any process that checks whether each operation
+  remembered.
+- **The announcement identifies the loan whose status actually moved.** Where an
+  operation touches more than one loan — a settlement that ends a temporary
+  holding record while completing a different, longer-lived one — each affected
+  loan's own change is announced under its own identity. An announcement naming
+  a related-but-different loan is worse than silence: it looks like coverage.
+
+A companion rule follows for the tooling: an automated check that verifies
+announcements are handled must take its input from the transitions that exist,
+not only from the announcements that exist. A check built the second way is
+blind to precisely the failure it exists to prevent, because a state change that
+announces nothing does not appear in a list of announcements. Satisfying the
+first requirement above satisfies this one as a side effect — if every
+transition announces, the two lists are the same list.
+
+Non-terminal edges are still announced, but reading them is optional: an
+external projection is not required to mirror transient states, and must not
+treat a move back into an ongoing state as a reason to overwrite what it holds.
+The requirement is that no loan is left presented as ongoing once the platform
+considers it finished.
+
 ### Repayment Logic
 
 **ERC-20 Lending:**
