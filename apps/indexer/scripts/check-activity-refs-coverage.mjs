@@ -390,6 +390,7 @@ for (const file of memberFiles) {
         priorInputs.size !== names.length || names.some((n) => !priorInputs.has(n));
       if (differs) {
         abiConflicts.push({
+          kind: 'overload',
           event: item.name,
           message: `${item.name} — two ABI signatures with different arguments (${[...priorInputs].join(', ')} vs ${names.join(', ')}); a name-keyed mapper cannot be correct for both`,
         });
@@ -409,6 +410,7 @@ for (const file of memberFiles) {
       const nonNumeric = aliases.filter((a) => !numeric.includes(a));
       for (const a of nonNumeric) {
         abiConflicts.push({
+          kind: 'nonNumericReference',
           event: item.name,
           message: `${item.name}.${a} — named like a ${field} reference but typed '${typeOf.get(a)}', which the Number(args…) mapping shape cannot read as an id`,
         });
@@ -506,6 +508,28 @@ const alwaysExits = (stmt) => {
   return false;
 };
 
+/**
+ * Stricter than `alwaysExits`: does this statement guarantee the FUNCTION
+ * returned? (Codex round-9 P2.)
+ *
+ * `break` leaves the switch but not the function — control lands after it, where
+ * `pluckActivityRefs` returns the all-null fallback. So a clause that
+ * conditionally returns a good mapping and otherwise breaks was being treated as
+ * finished, while the false branch filed NULL. Leaving the switch and having
+ * returned are different claims, and only the second is what "mapped" means.
+ */
+const alwaysReturns = (stmt) => {
+  if (!stmt) return false;
+  if (ts.isReturnStatement(stmt) || ts.isThrowStatement(stmt)) return true;
+  if (ts.isBlock(stmt)) return alwaysReturns(stmt.statements[stmt.statements.length - 1]);
+  if (ts.isIfStatement(stmt)) {
+    return (
+      Boolean(stmt.elseStatement) && alwaysReturns(stmt.thenStatement) && alwaysReturns(stmt.elseStatement)
+    );
+  }
+  return false;
+};
+
 /** Every `return` in a clause, not descending into nested functions. */
 const collectReturns = (node, out) => {
   if (
@@ -573,6 +597,10 @@ const isNullLiteral = (expr) =>
 
     const last = clause.statements[clause.statements.length - 1];
     if (!alwaysExits(last)) continue; // falls through: bind the next clause too
+    // Exits the switch WITHOUT returning (a `break`): control continues after the
+    // switch, to the all-null fallback this checker never sees. Record that as an
+    // unresolvable path so any field claimed here is reported, not trusted.
+    const escapesWithoutReturning = !alwaysReturns(last);
 
     const labels = pendingLabels;
     const returnNodes = pendingReturns;
@@ -601,6 +629,32 @@ const isNullLiteral = (expr) =>
       }
       return { props, spread };
     });
+    if (escapesWithoutReturning) {
+      scopes.push({ opaque: 'a path leaves the switch via break/continue and falls to the all-null default' });
+    }
+
+    // A local `args` shadows the function parameter, so `args.loanId` in this
+    // clause is NOT the decoded event arguments (Codex round-9 P2). Resolving it
+    // properly needs a type checker and a full Program; refusing to reason about
+    // a shadowed name is the sound alternative, and the shape rule below would
+    // otherwise accept a hand-built object as if it were the wire data.
+    const shadowsArgs = (() => {
+      let found = false;
+      const walk = (n) => {
+        if (found) return;
+        if (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n)) return;
+        if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === 'args') found = true;
+        if (ts.isParameter(n) && ts.isIdentifier(n.name) && n.name.text === 'args') found = true;
+        ts.forEachChild(n, walk);
+      };
+      for (const st of clause.statements) walk(st);
+      return found;
+    })();
+    if (shadowsArgs) {
+      structural.push(
+        `case '${label}' declares a local named 'args', shadowing the decoded event arguments — this checker cannot tell the two apart`,
+      );
+    }
 
     for (const label of labels) {
       const fields = new Set();
@@ -662,9 +716,18 @@ const isNullLiteral = (expr) =>
           }
         }
         if (!bad && anyOpaque) {
+          // Name the specific reason rather than listing every possibility: a
+          // `break` that falls past the switch is a different defect from a
+          // spread, and the reader should not have to work out which one it was.
+          const opaqueScope = scopes.find((sc) => sc.opaque);
+          const spreadScope = scopes.find((sc) => sc.spread);
           bad = {
             text: '<some return path>',
-            why: 'a return path supplies this field by spread, shorthand, or a non-literal return — it cannot be resolved here',
+            why: opaqueScope
+              ? opaqueScope.opaque
+              : spreadScope
+                ? 'a return path supplies this field by spread, so its source cannot be resolved here'
+                : 'a return path does not name this field at all',
           };
         }
 
@@ -746,13 +809,20 @@ for (const key of Object.keys(DELIBERATELY_NOT_SCOPED)) {
   }
 }
 
-// Only conflicts on events this checker actually reasons about. The live ABI has
-// one genuine overload — `StuckERC20Recovered`, an ops recovery event carrying no
-// loan or offer reference and mapped nowhere — and failing the run on that would
-// be reporting a problem this check does not have. It becomes a failure the moment
-// such an event carries a reference or is mapped.
+// The relevance filter applies to OVERLOADS ONLY (Codex round-9 P2).
+//
+// The live ABI has one genuine overload — `StuckERC20Recovered`, an ops recovery
+// event carrying no reference and mapped nowhere — and failing the run on that
+// would be reporting a problem this check does not have.
+//
+// A non-numeric reference name is the opposite case, and filtering it the same way
+// made the type validation self-defeating: an event named `bytes32 loanId` is
+// EXCLUDED from `carries` by the numeric filter and has no case, so it is neither
+// carried nor mapped — precisely the condition that discarded its own conflict.
+// The check only ever fired for events that were already in scope, which is where
+// it was least needed. These are always reported.
 const relevantAbiConflicts = abiConflicts.filter(
-  (c) => carries.has(c.event) || mapped.has(c.event),
+  (c) => c.kind !== 'overload' || carries.has(c.event) || mapped.has(c.event),
 );
 
 if (
