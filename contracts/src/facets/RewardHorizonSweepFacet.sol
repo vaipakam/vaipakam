@@ -172,7 +172,22 @@ contract RewardHorizonSweepFacet is
             if (freshCredited != 0) armedFreshPaid += armedDelivered;
             unchecked { ++i; }
         }
-        if (freshTotal + recycledTotal == 0) return 0;
+        // Codex #1699 r10 P1 — a CAPPED-ONLY terminal chunk still has a
+        // commitment to retire.
+        //
+        // Once removal has begun a shortfall truncates and terminalises, so a
+        // final chunk can move NO tokens (`freshTotal` and `recycledTotal`
+        // both zero) while carrying the whole remaining obligation in
+        // `armedFreshTotal` via `cappedOff`. Returning here on the token
+        // totals alone skipped `consumeArmedFresh` for exactly that chunk, and
+        // the commitment stayed in `outstandingCommitFresh` forever —
+        // depressing fundability for every later day even after backing
+        // recovered, on an entry nobody can claim any more.
+        //
+        // The comment below already promised this retirement happens "even
+        // when the pool cap truncated the creditable fresh". This is the
+        // guard that was contradicting it.
+        if (freshTotal + recycledTotal == 0 && armedFreshTotal == 0) return 0;
 
         // Fresh share: consumes the 69M pool (tokens leave the fresh
         // budget) exactly like a forfeit — already per-entry capped above.

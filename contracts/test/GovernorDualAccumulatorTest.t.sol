@@ -825,8 +825,16 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      same monotone budget.
     function testP1bRemovedEntryTerminatesUnderAShortfall() public {
         _cfg().setRewardClaimHorizonDays(180);
-        (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
+        // FRESH-ONLY armed day, deliberately. A recycled share moves
+        // regardless of the 69M pool, so with any recycled component the
+        // "exhausted" terminal chunk still moves tokens and still reads
+        // claim-executable — and neither fixed path (the removed-entry gate
+        // bypass, the capped-only commitment retirement) ever runs. Both r10
+        // mutants survived against the 700-ether-recycled version of this
+        // fixture for exactly that reason.
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
         assertGt(floor5, 0, "armed day has a fresh floor");
+        assertEq(recycled5, 0, "LIVE: and NO recycled share");
 
         uint256 id = _seedEntry(alice, 95, 4, 6); // spans: legacy + armed
         uint256[] memory ids = new uint256[](1);
@@ -855,10 +863,33 @@ contract GovernorDualAccumulatorTest is SetupTest {
             LibVaipakam.VPFI_INTERACTION_POOL_CAP
         );
 
-        _sweeper().sweepExpiredInteractionRewards(ids);
+        (, uint256 outFBefore, , ) = _agg().getGovernorCommitState();
+        assertGt(outFBefore, 0, "LIVE: there is a commitment to retire");
+
+        uint256 last = _sweeper().sweepExpiredInteractionRewards(ids);
+        // LIVE: the terminal chunk moved NOTHING — zero fresh under the
+        // exhausted pool, zero recycled by construction. This is the state
+        // both r10 fixes exist for: the entry reads non-executable (post-cap
+        // payable is zero), so only the removed-entry bypass reaches the
+        // settlement at all, and the facet's early-return guard sees both
+        // token totals at zero with the whole obligation in `cappedOff`.
+        assertEq(last, 0, "LIVE: the terminal chunk credits zero tokens");
         assertTrue(
             _mut().getRewardEntryProcessedRaw(id),
             "a removed entry always terminalises, never strands its tail"
+        );
+        // Codex #1699 r10 P1 — terminalising is NOT the whole property, and
+        // asserting only `processed` is what let the leak through. A final
+        // chunk under full exhaustion moves no tokens and carries its entire
+        // remaining obligation in `cappedOff`; the facet used to return early
+        // on the token totals alone and skip `consumeArmedFresh`, leaving that
+        // obligation in the outstanding sum FOREVER — depressing every later
+        // day's fundability on an entry nobody can claim any more.
+        (, uint256 outFAfter, , ) = _agg().getGovernorCommitState();
+        assertLt(
+            outFAfter,
+            outFBefore,
+            "and its commitment retires with it, never leaking"
         );
     }
 

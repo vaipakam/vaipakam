@@ -37,12 +37,28 @@ one. The practical consequences:
   exhausted, an entry could previously be closed out while none of its
   value was returned.
 
-- **A reap still never partially credits within a day.** Where the overall
-  emissions budget is nearly exhausted, an expiry waits rather than taking
-  what fits and discarding the rest. A claimant asking to be paid is right
-  to take what is available; someone being reaped without asking is not, and
-  their own claim remains open to them throughout, so waiting costs nothing
+- **A reap never partially credits while the owner can still claim.** Where
+  the overall emissions budget is nearly exhausted, an expiry waits rather
+  than taking what fits and discarding the rest. A claimant asking to be paid
+  is right to take what is available; someone being reaped without asking is
+  not, and while their own claim is still open to them, waiting costs nothing
   but time.
+
+- **Once a reap has actually moved value, that changes — deliberately.** The
+  first pass that credits anything removes the reward: it is announced, and
+  the owner's claim to it closes from that moment. From then on the reward
+  must finish rather than wait, because the emissions budget only ever
+  shrinks — a wait that began after removal could never end, and the reward
+  would be left permanently unfinished with its owner already unable to
+  claim. So a later shortfall settles for what the budget allows and
+  completes, and any remainder it could not fund is discarded rather than
+  held.
+
+  This is a real trade, stated plainly: tail value CAN be discarded, but only
+  after the owner has been removed and told, and only to guarantee the reward
+  terminates. The alternative — waiting forever on a budget that cannot grow
+  — loses the same value AND leaves the reward stuck, with no signal that
+  anything happened.
 
 The claim-horizon sweep also moves onto its own internal component. It now
 shares the settlement engine, and no existing component had room for it

@@ -2602,11 +2602,32 @@ library LibInteractionRewards {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint32 horizonDays = s.rewardClaimHorizonDays;
-        if (horizonDays == 0) return (expired, 0, 0);
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (e.processed || e.user == address(0)) return (expired, 0, 0);
+
+        // Codex #1699 r10 P1 — once removal has BEGUN, the pre-removal gates
+        // no longer apply, and leaving them in the way made r9's terminal
+        // policy UNREACHABLE in exactly the states that needed it.
+        //
+        // Every gate below asks a question about a claimant who still holds a
+        // claim: is the feature on, is the entry claimable, could its owner
+        // claim right now, has the notice elapsed. Past the removal point the
+        // owner has none — the claim paths skip the entry — so those questions
+        // have no subject, and answering them with an early return leaves a
+        // removed entry unterminated forever. Two live examples: with the
+        // lifetime cap exhausted `_poolCappedPayable` is permanently zero and
+        // the executability gate returns every time; setting the horizon knob
+        // dark returns at the very first line.
+        //
+        // So after removal this function does ONE thing — finish the
+        // settlement bookkeeping. What stays enforced is what remains true of
+        // a removed entry regardless: it must not already be processed, it
+        // must have a real owner and a real window, and its cursor must cover
+        // the day being priced.
+        bool removed = e.expiryBegun;
+        if (horizonDays == 0 && !removed) return (expired, 0, 0);
         if (e.forfeited || _entryTerminalForfeit(s, e)) return (expired, 0, 0);
-        if (!_entryClaimable(s, e)) return (expired, 0, 0);
+        if (!_entryClaimable(s, e) && !removed) return (expired, 0, 0);
         if (e.startDay >= e.endDay) return (expired, 0, 0);
 
         // The cursor must actually cover the window — a claim blocked on
@@ -2703,7 +2724,7 @@ library LibInteractionRewards {
 
         uint64 lastObs = s.rewardEntryExecObsAt[id];
 
-        if (!executable) {
+        if (!executable && !removed) {
             // Observed non-executable. Before the first executable
             // observation there is no clock to break (stay unstarted).
             // Afterwards, record the block and advance the stamp so the
@@ -2793,7 +2814,9 @@ library LibInteractionRewards {
 
         uint256 required =
             hSec + uint256(LibVaipakam.REWARD_CLAIM_HORIZON_NOTICE_DAYS) * 1 days;
-        if (elapsed < required) {
+        // A removed entry has already served its window; the notice gate is a
+        // question about a claimant who still has a claim to serve.
+        if (elapsed < required && !removed) {
             return (expired, 0, 0);
         }
 

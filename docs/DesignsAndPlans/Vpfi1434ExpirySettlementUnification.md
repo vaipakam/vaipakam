@@ -128,14 +128,51 @@ it to a claim — one bound, one place.
   actually settled, so unpriced days keep their value and a long entry
   reaps over several sweeps. That removes the value-loss P1.
 
-  It does NOT fix the within-day case, and the old rule still guards it. A
-  69M shortfall deliberately truncates-and-advances, routing the remainder
-  to `cappedOff` — commitment retired, no value credited. For a CLAIM that
-  is correct: the pool is monotone, so deferring would livelock a claimant
-  who is asking to be paid, and the trimmed tail was never drawable. For an
-  EXPIRY it is not: expiry REAPS someone who never asked to be settled, and
-  their claim path stays open throughout, so deferring costs only a later
-  sweep. Expiry therefore defers on `charge.freshShortfall != 0`.
+  It does NOT fix the within-day case, and the old rule guards it UP TO THE
+  REMOVAL POINT. A 69M shortfall deliberately truncates-and-advances, routing
+  the remainder to `cappedOff` — commitment retired, no value credited. For a
+  CLAIM that is correct: the pool is monotone, so deferring would livelock a
+  claimant who is asking to be paid, and the trimmed tail was never drawable.
+  For an expiry of a STILL-CLAIMABLE entry it is not: expiry reaps someone
+  who never asked, and their claim path stays open, so deferring costs only a
+  later sweep.
+
+  **After the removal point the rule INVERTS, and must.** The two guards are
+  sequenced, not both applied (Codex r9). Once a chunk has credited, the
+  entry is removed and the claim paths skip it — so a deferral can never be
+  cleared by the claimant, and the 69M budget it waits on only shrinks. That
+  wait is permanent: the tail is stranded, no `RewardEntryExpired` is ever
+  emitted, and the commitment never retires. The guard against silent loss
+  becomes its cause. So the condition is `charge.freshShortfall != 0 &&
+  !e.expiryBegun`: defer before removal, truncate-and-terminate after.
+
+  **This sequencing is documented platform doctrine, not new policy.** The
+  canonical FunctionalSpec (`ProjectDetailsREADME.md`, position-sale
+  timing) states it generally: *timing gates protect the moment of entry,
+  never strand a committed settlement* — a purchase entered before the
+  deadline must remain completable however the gates would answer later.
+  And `TokenomicsTechSpec.md` (#1351 slice 2d-0) already ratified the
+  per-source half for the payment path: a recycled shortfall DEFERS
+  because the bucket refills; a fresh shortfall is TERMINAL because the
+  69M schedule only shrinks. Rounds 9–10 bring the expiry path into line
+  with both — the removal point is the "moment of entry", and everything
+  after it is a committed settlement.
+
+  **A removed entry also bypasses the pre-removal gates** (Codex r10). The
+  feature switch, claimability, executability and notice gates each ask a
+  question about a claimant who still holds a claim; past removal there is no
+  such claimant, and answering them with an early return made the terminal
+  policy unreachable in precisely the states needing it — an exhausted
+  lifetime cap makes `_poolCappedPayable` permanently zero, and a dark
+  horizon knob returns at the first line. After removal this path does one
+  thing: finish the settlement bookkeeping.
+
+  **Terminal progress must still retire the commitment** (Codex r10). A final
+  chunk under exhaustion can move NO tokens while carrying its whole
+  remaining obligation in `cappedOff`, so a caller that returns early on
+  token totals alone skips `consumeArmedFresh` and leaks that obligation into
+  the outstanding sum permanently. Asserting `processed` does not catch this;
+  the test asserts the outstanding commitment DECREASES.
 
   **The same truncation rule is right for a claim and wrong for an expiry.**
   Two tests (`testExpirySweepDefersAtFullFreshExhaustion`,
@@ -153,3 +190,14 @@ shortfall, and the D1 trim. Only the last two are properties under test.
 Every expiry test therefore carries a liveness control per precondition,
 and is proven by reverting the fix and confirming it fails at the
 *intended* assertion rather than an incidental one.
+
+A sixth way in, found by the mutation pass itself: the post-removal
+terminal fixture must use a **fresh-only** armed day. A recycled share
+moves regardless of the 69M pool, so with any recycled component a
+"fully exhausted" terminal chunk still moves tokens and still reads
+claim-executable — the removed-entry gate bypass and the capped-only
+commitment retirement are then both dead code under the test, which
+passes against their reversions. Both r10 mutants survived a
+recycled-carrying version of the fixture for exactly this reason; the
+test now stamps a zero recycled credit, asserts it (`recycled5 == 0`),
+and asserts the terminal sweep returns zero tokens moved.
