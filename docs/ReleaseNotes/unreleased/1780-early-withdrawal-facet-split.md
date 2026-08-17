@@ -76,3 +76,17 @@ together. They were one component, so refreshing only the listed route would
 leave the direct route running the code from before the split while everything
 around it moved on — the same half-applied-family hazard the redeployment script
 already documents for other paired components. The script now carries both.
+
+A second, quieter consequence of the same split. There is a standing rule that a
+redeployment script touching any component that hosts a sale must also reinstall
+the routing for a shared check those sales call — get that wrong and the new sale
+code goes live calling something nothing routes, so every sale fails. Four places
+record which components those hosts are, and the split made that list one short:
+the direct route is now its own host. No redeployment path was actually broken —
+the script that touches these components reinstalls both halves and the routing
+alongside them — but the list is what a future script's author would rely on, and
+a list that quietly under-counts is the failure this rule exists to prevent. All
+four now name three hosts, and say why the count is not something a compile can
+check: the shared check is reached through a helper that is folded into whoever
+calls it, so the set of hosts is "whoever calls that helper" and nothing verifies
+it mechanically.

@@ -159,7 +159,7 @@ export const MIN_SALE_LISTING_SECONDS = 3_600n;
 
 /** Seller economics of selling a lender position into a buy offer —
  *  one definition for the picker rows, the review receipt, and the
- *  submit re-check. Mirrors EarlyWithdrawalFacet's net settlement TO
+ *  submit re-check. Mirrors EarlyWithdrawalDirectFacet's net settlement TO
  *  THE WEI: seconds-precision, elapsed measured from the #641
  *  interest clock, remaining = remaining-term seconds minus elapsed
  *  (floored at 0), and the shortfall computed as the DIFFERENCE OF

@@ -183,14 +183,23 @@ library FacetSelectors {
     ///
     /// @dev    #1649. This facet is not itself refreshed for its own sake by the
     ///         curated scripts; it is here because OTHER facets they refresh
-    ///         cross-call it. `EarlyWithdrawalFacet` (RedeployFacets) and
-    ///         `OfferAcceptFacet` (ReplaceStaleFacets) both route their sale
-    ///         paths through `saleAdmission`, added in #1503. Refreshing either
-    ///         host WITHOUT routing that selector installs sale entry points
+    ///         cross-call it. THREE sale hosts route their sale paths through
+    ///         `saleAdmission`, added in #1503 — `EarlyWithdrawalFacet` and
+    ///         `EarlyWithdrawalDirectFacet` (both RedeployFacets) and
+    ///         `OfferAcceptFacet` (ReplaceStaleFacets). Refreshing ANY of those
+    ///         hosts WITHOUT routing that selector installs sale entry points
     ///         that cross-call an unrouted selector, so every sale reverts
     ///         `FunctionDoesNotExist` through the Diamond fallback — new code
     ///         live and broken. Same class of dependency the #658 note on
     ///         `ConsolidationFacet` records for the liquidation family.
+    ///
+    ///         The count is three rather than two since #1780 split the direct
+    ///         lender-exit route into its own facet. The cross-call is not made
+    ///         by the facets directly — it is inside `LibSaleSolvency`, which
+    ///         INLINES into every caller, so the host set is "whoever calls that
+    ///         library", not a list any compile checks. Add a sale host and this
+    ///         enumeration is what tells you the new curated script must route
+    ///         `saleAdmission` too.
     ///
     ///         Consumers partition this list by live routing (Add the unrouted,
     ///         Replace the routed), so it is correct against a pre-#1503 diamond

@@ -1,6 +1,9 @@
 /**
  * Lender early exit — sell the lender position into an existing open
- * lending ("buy") offer via EarlyWithdrawalFacet.sellLoanViaBuyOffer.
+ * lending ("buy") offer via EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer
+ * (that route moved out of EarlyWithdrawalFacet in #1780; the call surface
+ * is unchanged — the app still targets the one Diamond address, and the
+ * merged DIAMOND_ABI_VIEM spans both facets).
  *
  * Economics (mirrors the facet): the buyer's already-vaulted
  * principal funds the payout; the seller receives
