@@ -41,6 +41,16 @@ read all pick up three new entries — a wide but entirely mechanical change,
 worth flagging so a reviewer seeing forty-odd touched files knows what they
 are.
 
+One consequence to expect rather than puzzle over. Moving those three shared
+error definitions means every component's machine-readable interface picks them
+up, and two of the four components the public reference keeper bot reads are
+among them. That bot lives in its own repository on its own release cadence, so
+its committed copies now differ from freshly compiled ones and the pre-deploy
+gate will say so. It is advisory by design, not a blocker, and nothing about the
+bot's behaviour changes: the functions it calls are untouched, and the three
+errors are lender-sale conditions it never triggers. Worth a re-sync next time
+that repository is touched; not worth holding a deploy for.
+
 One operational note for redeployments: the two components must be refreshed
 together. They were one component, so refreshing only the listed route would
 leave the direct route running the code from before the split while everything
