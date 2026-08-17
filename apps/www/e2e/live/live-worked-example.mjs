@@ -207,13 +207,31 @@ try {
     missingKnobs.length ? `missing: ${missingKnobs.join(', ')}` : INPUT_KNOBS.join(', '),
   );
 
+  // Two INDEPENDENTLY produced facts, required to agree (Codex #1778
+  // r7 P2). The span attributes are component-owned — each `LiveValue`
+  // labels its own figure from the resolver — while the document marker
+  // is store-owned, written in `publish()` from the store's conclusion.
+  // A regression that mislabels fallback spans as `published` passes
+  // every span-based assertion; the store's own marker is the witness
+  // that catches it, and vice versa.
+  const overviewDocSource = await documentConfigSource();
+
   if (REQUIRE_PUBLISHED) {
+    record(
+      'the Overview document accepted a published snapshot',
+      overviewDocSource === 'published',
+      `document marker: ${overviewDocSource}`,
+    );
     record(
       'every input knob came from the published snapshot',
       knobsLive,
       knobSpans.map((s) => `${s.name}=${s.source}`).join(', ') || 'no knob spans',
     );
   } else {
+    skip(
+      'the Overview document accepted a published snapshot',
+      'REQUIRE_PUBLISHED is off for this target',
+    );
     skip(
       'every input knob came from the published snapshot',
       'REQUIRE_PUBLISHED is off for this target',
