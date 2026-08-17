@@ -2,6 +2,9 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
+import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
+import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {RefreshAllFacetsInPlace} from "../../script/RefreshAllFacetsInPlace.s.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
 
@@ -63,6 +66,17 @@ contract RefreshItemsProbe is RefreshAllFacetsInPlace {
 }
 
 contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
+    /// @dev Mirrors `DeployDiamondIntegrationTest`'s constants so the deploy in
+    ///      the selector-set test below behaves identically.
+    uint256 internal constant DEPLOYER_KEY = 1;
+    address internal constant TREASURY = address(0xBEEF);
+
+    /// @dev Selector sets for the equality check. Mappings for O(1) membership,
+    ///      plus a list so the reverse direction can be iterated.
+    mapping(bytes4 => bool) private _routedByDeploy;
+    mapping(bytes4 => bool) private _cutByRefresh;
+    bytes4[] private _routedList;
+
     function test_RefreshScript_FacetCount_MatchesDiamond() public {
         uint256 refreshExpects = new RefreshAllFacetsInPlace().EXPECTED_FACETS();
         uint256 diamondHas = cutFacetNames().length;
@@ -143,6 +157,96 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
                     )
                 );
             }
+        }
+    }
+
+    /// @notice The refresh's selector set must EQUAL what `DeployDiamond`
+    ///         actually routes onto a Diamond.
+    ///
+    /// @dev    Codex #1795 round-2 P1, and the case neither assertion above can
+    ///         reach. Both of those are structural — a count, then
+    ///         non-emptiness and uniqueness. None of them looks at *identity*.
+    ///         So a change that SWAPS one cut facet for another at the same
+    ///         total passes everything: `DeployDiamond` and `cutFacetNames()`
+    ///         carry the new facet while `_deployItems()` still carries the
+    ///         retired one, all 73 slots stay populated and unique, and the
+    ///         refresh then omits the new facet *and* recuts the retired
+    ///         selectors — the half-applied state this file exists to prevent.
+    ///
+    ///         Compared by SELECTOR SET rather than by name, deliberately.
+    ///         `cutFacetNames()` holds contract names (`DiamondLoupeFacet`)
+    ///         while `items[].key` holds addresses.json keys
+    ///         (`diamondLoupeFacet`); normalising between them means
+    ///         lowercasing the first character, which breaks on acronym-initial
+    ///         names like `VPFITokenFacet`. A naming heuristic inside a drift
+    ///         guard is just a new drift surface. Selector sets need no mapping.
+    ///
+    ///         Ground truth is the Diamond `DeployDiamond.run()` actually
+    ///         builds, read back through the loupe — not a list maintained
+    ///         here. Re-deriving the canonical union locally would mean copying
+    ///         `SelectorCoverageTest._populateRoutedSet()`'s 73 calls, i.e.
+    ///         adding an eighth registry place, which is the very drift the
+    ///         suite warns about. Same `runWith` + `DEPLOY_SKIP_ARTIFACTS`
+    ///         pattern `DeployDiamondIntegrationTest` uses, for the same
+    ///         reasons documented there (thread-local args, no artifact
+    ///         clobber).
+    ///
+    ///         `DiamondCutFacet` is excluded on both sides: the
+    ///         `VaipakamDiamond` constructor installs it, so it is not in any
+    ///         `cuts[]` list, not in `cutFacetNames()`, and not in
+    ///         `_deployItems()` — exactly as `DiamondFacetNames` documents.
+    function test_RefreshScript_SelectorSet_MatchesDeployedDiamond() public {
+        // ── canonical side: what a real deploy routes ──────────────────
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("DEPLOY_SKIP_ARTIFACTS", "true");
+        DeployDiamond deployScript = new DeployDiamond();
+        address deployer = vm.addr(DEPLOYER_KEY);
+        deployScript.runWith(deployer, TREASURY, DEPLOYER_KEY);
+        address diamond = deployScript.diamond();
+
+        IDiamondLoupe.Facet[] memory live = IDiamondLoupe(diamond).facets();
+        uint256 routedCount;
+        for (uint256 i; i < live.length; ++i) {
+            for (uint256 j; j < live[i].functionSelectors.length; ++j) {
+                bytes4 sel = live[i].functionSelectors[j];
+                if (sel == IDiamondCut.diamondCut.selector) continue; // constructor-installed
+                if (!_routedByDeploy[sel]) {
+                    _routedByDeploy[sel] = true;
+                    _routedList.push(sel);
+                    routedCount++;
+                }
+            }
+        }
+        assertGt(routedCount, 0, "loupe returned no selectors - deploy did not build a Diamond");
+
+        // ── refresh side: what an in-place refresh would cut ───────────
+        RefreshAllFacetsInPlace.Item[] memory items = new RefreshItemsProbe().deployItemsForTest();
+        for (uint256 i; i < items.length; ++i) {
+            for (uint256 j; j < items[i].selectors.length; ++j) {
+                bytes4 sel = items[i].selectors[j];
+                _cutByRefresh[sel] = true;
+                assertTrue(
+                    _routedByDeploy[sel],
+                    string.concat(
+                        "the refresh would cut selector ",
+                        vm.toString(sel),
+                        " (facet '",
+                        items[i].key,
+                        "') that DeployDiamond does not route - a retired facet is still listed in _deployItems()"
+                    )
+                );
+            }
+        }
+
+        for (uint256 i; i < _routedList.length; ++i) {
+            assertTrue(
+                _cutByRefresh[_routedList[i]],
+                string.concat(
+                    "DeployDiamond routes selector ",
+                    vm.toString(_routedList[i]),
+                    " that the refresh would NOT cut - a facet is missing from _deployItems()"
+                )
+            );
         }
     }
 }
