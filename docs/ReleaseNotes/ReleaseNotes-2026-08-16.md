@@ -12,22 +12,25 @@ was enforced everywhere except where it mattered most. Both now refuse.
 step** — one already out of step, the other arranged to go that way on a
 schedule nobody controls.
 
-The one that had already gone wrong: a design document described a cross-chain
-identity check as something the receiving side performs on arrival. Nothing
-ever performed it, and the storage field reserved for it was never read or
-written. That field is now removed outright, because the check it was for is
-done a layer down, and a second copy would have compared a deployment against
-itself rather than checking anything about the message.
+The one that had already gone wrong: a design document promised that, on top of
+the sender authentication the cross-chain messenger performs, the receiving
+contract would check the sender's identity a second time against its own stored
+copy. That second check was never built — the storage field reserved for it was
+never read or written. The field is now removed outright rather than completed:
+the messenger's own check covers what it was for, and a second copy would have
+compared a deployment against itself rather than checking anything about the
+message.
 
 The other has not gone wrong yet, and the work is to stop it rather than to
 correct it. The Overview's worked example printed its money amounts as fixed
 numbers beside two fee rates read live from the published configuration. Those
-agree today. They stop agreeing the first time either fee is retuned — and the
-half that is then wrong is the half carrying the marker saying it is current,
-which is what makes it worth doing early rather than after. The amounts are now
-computed from the same configuration, and the site search was fixed alongside
-them, because it had been building its index from bundled defaults before the
-live values arrived.
+agree today. They stop agreeing the first time either fee is retuned — and in a
+way arranged to mislead: the rate updates and stays right, the unmarked
+arithmetic beside it goes stale, and the freshness marker on the rate lends the
+whole passage a currency the stale half does not have. That is what makes it
+worth doing early rather than after. The amounts are now computed from the same
+configuration, and the site search was fixed alongside them, because it had
+been building its index from bundled defaults before the live values arrived.
 
 **Two are residue from the securities excisions**, on user-facing surfaces
 rather than in contract code. The tokenomics "Learn more" links had been serving
