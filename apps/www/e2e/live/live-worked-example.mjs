@@ -40,8 +40,18 @@
  */
 import { chromium } from 'playwright';
 
-const BASE = process.env.WWW_ORIGIN ?? 'https://vaipakam.com';
-const IS_PRODUCTION = BASE === 'https://vaipakam.com';
+/**
+ * Normalise before deciding anything from the origin. A string compare
+ * classified `https://vaipakam.com/` (trailing slash) and the canonical
+ * redirect host `https://www.vaipakam.com` as non-production, which
+ * turned the production-only provenance requirement off for the same
+ * deployed surface purely on URL spelling (Codex #1778 r3 P2).
+ */
+const RAW_ORIGIN = process.env.WWW_ORIGIN ?? 'https://vaipakam.com';
+const PARSED_ORIGIN = new URL(RAW_ORIGIN);
+/** No trailing slash — route paths are appended directly. */
+const BASE = PARSED_ORIGIN.origin;
+const IS_PRODUCTION = PARSED_ORIGIN.hostname.replace(/^www\./, '') === 'vaipakam.com';
 /** Default: demand a live snapshot on production, allow bundled elsewhere. */
 const REQUIRE_PUBLISHED = process.env.REQUIRE_PUBLISHED
   ? process.env.REQUIRE_PUBLISHED !== '0'
@@ -106,22 +116,47 @@ const skip = (name, why) => {
 };
 
 const browser = await chromium.launch();
-const page = await browser.newPage();
+// Pin the locale. Every expectation here — the figure strings, the knob
+// text, the no-results regex — is English. On an operator machine set to
+// a supported non-English locale the site renders `0,2` and a localised
+// no-results message, which would skip all four arithmetic checks as an
+// apparent retune AND let a broken search pass, because the localised
+// message does not match the English regex (Codex #1778 r3 P2).
+const context = await browser.newContext({ locale: 'en-US' });
+const page = await context.newPage();
 page.on('console', (m) => {
   if (m.type() === 'error') console.log(`  [console.error] ${m.text()}`);
 });
+
+/**
+ * Did THIS document receive a published config snapshot?
+ *
+ * The provenance assertion below reads the Overview document's spans, but
+ * the search page is a SEPARATE document with its own fetch. If that one
+ * fails while the live rates equal the bundled defaults, its fallback
+ * index still contains the figure and the search check passes without a
+ * published snapshot ever arriving — no rebuild, nothing exercised
+ * (Codex #1778 r3 P2). So the fetch is observed directly per document.
+ */
+let configOk = false;
+page.on('response', (res) => {
+  if (/\/config\/\d+(\?|$)/.test(new URL(res.url()).pathname + new URL(res.url()).search)) {
+    if (res.status() === 200) configOk = true;
+  }
+});
+const gotoFresh = async (url) => {
+  configOk = false;
+  await page.goto(url, { waitUntil: 'networkidle', timeout: 60_000 });
+  // The snapshot is fetched after first paint; give it room so a slow
+  // fetch reads as slow rather than as "not live".
+  await page.waitForTimeout(3_000);
+};
 
 console.log(`Target: ${BASE}  (published snapshot ${REQUIRE_PUBLISHED ? 'REQUIRED' : 'optional'})\n`);
 
 try {
   // ── 1. Overview: the derived figures render, with honest provenance ──
-  await page.goto(`${BASE}/help/overview`, {
-    waitUntil: 'networkidle',
-    timeout: 60_000,
-  });
-  // The snapshot is fetched after first paint; give it room so a slow
-  // fetch reads as slow rather than as "not live".
-  await page.waitForTimeout(3_000);
+  await gotoFresh(`${BASE}/help/overview`);
 
   const spans = await page.$$eval('[data-live-value]', (els) =>
     els.map((e) => ({
@@ -264,26 +299,59 @@ try {
     // One retry: a retune is a single discrete event, so a second attempt
     // on the new value almost always lands on a stable pair.
     for (let attempt = 1; attempt <= 2 && !settled; attempt++) {
-      await page.goto(`${BASE}/help/search?q=${encodeURIComponent(query)}`, {
-        waitUntil: 'networkidle',
-        timeout: 60_000,
-      });
-      await page.waitForTimeout(3_000);
+      await gotoFresh(`${BASE}/help/search?q=${encodeURIComponent(query)}`);
 
-      const bodyText = await page.textContent('body');
-      const found = !/no results|no matches/i.test(bodyText) && bodyText.includes(query);
+      // The search document is a SEPARATE fetch from the Overview's. If
+      // it failed, the fallback index still contains the figure whenever
+      // live equals bundled, so the check below would pass without a
+      // published snapshot ever arriving (Codex #1778 r3 P2).
+      const searchDocPublished = configOk;
+
+      // Look inside an actual Overview RESULT, not the whole body.
+      // `HelpSearch` interpolates the query into its result-count line and
+      // into the always-present "Search the web" link, so
+      // `body.includes(query)` is true for any hit at all — including an
+      // unrelated one — and a non-empty hit list also removes the
+      // no-results message (Codex #1778 r3 P2).
+      const found = await page.$$eval(
+        'a[href*="/help/overview"]',
+        (links, q) => links.some((a) => a.textContent.includes(q)),
+        query,
+      );
 
       // Re-read the source of the figure before believing the result.
-      await page.goto(`${BASE}/help/overview`, { waitUntil: 'networkidle', timeout: 60_000 });
-      await page.waitForTimeout(3_000);
+      await gotoFresh(`${BASE}/help/overview`);
       const after = await readExactFigure();
 
-      if (after === query) {
+      if (after === undefined) {
+        // A retune changes the figure; it cannot remove the span. A
+        // missing span is a broken page, not an unstable snapshot, and
+        // must not fall through to the configuration-race skip
+        // (Codex #1778 r3 P2).
         settled = true;
+        record(
+          'exampleTreasuryYieldFeeExact still renders after the search',
+          false,
+          'the span disappeared between loads — a deploy or a partial page failure, not a retune',
+        );
+      } else if (after === query) {
+        settled = true;
+        if (REQUIRE_PUBLISHED) {
+          record(
+            'the search document received a published snapshot',
+            searchDocPublished,
+            searchDocPublished ? 'config fetch succeeded' : 'config fetch did not succeed on that document',
+          );
+        } else {
+          skip(
+            'the search document received a published snapshot',
+            'REQUIRE_PUBLISHED is off for this target',
+          );
+        }
         record(
           `search finds the page printing ${query}`,
           found,
-          found ? 'a result quotes the figure' : 'no result quoting the figure',
+          found ? 'an Overview result quotes the figure' : 'no Overview result quotes the figure',
         );
       } else if (attempt === 1) {
         console.log(
