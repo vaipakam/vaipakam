@@ -619,8 +619,12 @@ Three behaviours to know:
   them wholesale would have meant reaching for `--allow-mixed-dates`
   every time, which turns the dating off entirely. A repository whose
   history cannot be read at all still stops the run outright.
-- A **committed** rename is safe — it is followed back to where the
-  fragment was written. An **uncommitted** one is recoverable only when
+- A **committed** rename is followed back to where the fragment was
+  written — provided the content did not change much in the same commit.
+  Rename detection is by similarity, so a rename committed together with a
+  substantial rewrite reads as an unrelated add and delete and dates to the
+  rewrite; commit the rename on its own first when the original day
+  matters. An **uncommitted** one is recoverable only when
   git can pair the two names: use `git mv` rather than a plain `mv`, and
   note that even then pairing is similarity *detection*, so a rename plus
   a substantial rewrite reads as an unrelated add and delete. The run says

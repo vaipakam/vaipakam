@@ -112,8 +112,29 @@ mapfile -t frags < <(printf '%s\n' "${frags[@]}" | sort)
 if (( ALLOW_MIXED )); then
   : # take every pending fragment, whatever day it came from
 elif ! git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  # No git — an export or tarball. Dating is impossible, so say the guard is
-  # off rather than let it look like it ran and found nothing.
+  # This probe fails for TWO very different situations and they must not share
+  # an outcome. A genuine export or tarball has no `.git` anywhere and simply
+  # cannot be dated — assembling everything is the honest response. A checkout
+  # with DAMAGED `.git` metadata fails the same probe, and treating that as an
+  # export would disable dating and consume every pending fragment on a broken
+  # repository, which is the opposite of the promise made everywhere else here.
+  #
+  # So look for the metadata rather than trusting the probe: walk up from the
+  # script's directory for a `.git` entry. Present but unusable = damaged.
+  _damaged=0
+  _probe_dir="$DIR"
+  while :; do
+    if [ -e "$_probe_dir/.git" ]; then _damaged=1; break; fi
+    [ "$_probe_dir" = "/" ] && break
+    _probe_dir="$(dirname "$_probe_dir")"
+  done
+  if (( _damaged )); then
+    echo "Error: a .git entry exists but git cannot read this work tree." >&2
+    echo "Fragment dates are unavailable, and assembling would consume every" >&2
+    echo "pending fragment under a date nothing verified. Repair the checkout," >&2
+    echo "or pass --allow-mixed-dates to assemble without dating." >&2
+    exit 1
+  fi
   echo "note: not a git work tree — cannot date fragments, assembling all pending." >&2
 else
   # A shallow repository does NOT get a blanket refusal, though an earlier
@@ -180,6 +201,25 @@ else
   #
   # `-z` rather than parsing quoted paths: a rename record is the status byte
   # pair, then the NEW path, then the OLD path, each NUL-terminated.
+  # `git status` READ FIRST, into a file, with its exit status checked. Feeding
+  # the loop from a process substitution puts the command on the far side of a
+  # pipe where `set -e` cannot see it: an unreadable or corrupt index prints
+  # git's fatal error, yields no rows, and the loop simply runs zero times —
+  # leaving an empty rename map that reads exactly like "no renames staged".
+  # A file also keeps the NUL-delimited output intact, which a variable cannot.
+  _status_out="$(mktemp)"
+  if ! git -C "$DIR" status --porcelain=v1 -z -M -- "$UNREL" > "$_status_out"; then
+    rm -f "$_status_out"
+    echo "" >&2
+    echo "Error: could not read the git index, so a staged rename cannot be" >&2
+    echo "distinguished from a newly written fragment. Assembling now could" >&2
+    echo "file a renamed fragment under the wrong day and then delete it." >&2
+    echo "" >&2
+    echo "Repair the checkout, or pass --allow-mixed-dates to assemble without" >&2
+    echo "dating." >&2
+    exit 1
+  fi
+
   declare -A RENAMED_FROM=()
   staged_adds=()
   staged_dels=()
@@ -194,7 +234,8 @@ else
     elif [ "${xy:0:1}" = "D" ]; then
       staged_dels+=("$(basename "$newpath")")
     fi
-  done < <(git -C "$DIR" status --porcelain=v1 -z -M -- "$UNREL")
+  done < "$_status_out"
+  rm -f "$_status_out"
 
   # `-M` is rename DETECTION, by similarity index — not a record of what the
   # operator did. `git mv` followed by a substantial rewrite before staging
@@ -251,15 +292,41 @@ else
     rel="${f#"$git_root"/}"
     if [ -n "${RENAMED_FROM[$f]:-}" ]; then
       probe="${RENAMED_FROM[$f]}"
-    elif git -C "$DIR" cat-file -e "HEAD:$rel" 2>/dev/null; then
-      probe="$f"
+    else
+      # `cat-file -e` answers only "does this object exist", so it returns the
+      # SAME failure for a path absent from HEAD and for an object database it
+      # cannot read — and the second would fall through to "new fragment",
+      # consuming a committed one under any requested date. `ls-tree` separates
+      # them: absent is exit 0 with empty output, an unreadable repository is a
+      # non-zero exit.
+      _lst_status=0
+      # `-C "$git_root"`, not `-C "$DIR"`: a PATHSPEC is interpreted relative to
+      # the directory git runs in, unlike the `HEAD:<path>` revision syntax this
+      # replaced, which was always repo-root-relative. Running it from `$DIR`
+      # makes every committed fragment look absent — the same wrong-base class
+      # as the symlink and --git-common-dir fixes, hit a third time.
+      _lst="$(git -C "$git_root" ls-tree --name-only HEAD -- "$rel")" || _lst_status=$?
+      if (( _lst_status != 0 )); then
+        echo "" >&2
+        echo "Error: cannot read HEAD to check $(basename "$f") (git exited $_lst_status)." >&2
+        echo "Whether this fragment is already committed is unknown, so dating" >&2
+        echo "it would be a guess. Repair the checkout, or pass" >&2
+        echo "--allow-mixed-dates to assemble without dating." >&2
+        exit 1
+      fi
+      [ -n "$_lst" ] && probe="$f"
     fi
 
     status=0
     added=""
     added_sha=""
     if [ -n "$probe" ]; then
-      raw="$(TZ=UTC git -C "$DIR" log --follow --diff-filter=A \
+      # `--no-show-signature` because `log.showSignature=true` in the operator's
+      # config prepends GPG verification lines to STDOUT even with a custom
+      # --format, so `added` would carry several signature lines plus the date
+      # and never match. This repo signs its squash merges, so the config is a
+      # plausible one to have set.
+      raw="$(TZ=UTC git -C "$DIR" log --no-show-signature --follow --diff-filter=A \
         --format='%H %cd' --date=format-local:'%Y-%m-%d' -1 -- "$probe")" || status=$?
       added_sha="${raw%% *}"
       added="${raw#* }"

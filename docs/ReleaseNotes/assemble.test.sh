@@ -303,6 +303,63 @@ check "it is folded in, not lost"  "$(sections "$W/docs/ReleaseNotes/ReleaseNote
 check "the count includes it"      "$(says "$msg" 'Assembled 2 fragment')"                         "1"
 check "and it is consumed on disk" "$([ -f "$W/docs/ReleaseNotes/unreleased/0004-a[1]-b.md" ] && echo yes || echo no)" "no"
 
+# ── A signed-commit config must not poison the date query ───────────────────
+# `log.showSignature=true` prepends GPG verification lines to STDOUT even with a
+# custom --format, so the captured value would carry signature text plus the
+# date and never match. This repo signs its squash merges, so it is a plausible
+# config for an operator to have set.
+echo "T10d: log.showSignature does not break dating"
+W="$ROOT/t10d"; build "$W"
+git -C "$W" config log.showSignature true
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-16 2>&1)"
+check "the run succeeds"            "$?"                                                            "0"
+check "its own day is folded"       "$(sections "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-16.md")" "1"
+check "the other day is held back"  "$(says "$msg" '2026-08-17 UTC')"                               "1"
+
+# ── A damaged checkout must not read as a clean export ──────────────────────
+# Both fail `rev-parse --is-inside-work-tree`, but only an export can honestly
+# assemble everything undated; doing that on a broken repository would consume
+# every pending fragment under a date nothing verified.
+echo "T10e: damaged .git metadata is refused, not treated as an export"
+W="$ROOT/t10e"; build "$W"
+mv "$W/.git/HEAD" "$W/.git/HEAD.bak"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
+check "refused"          "$?"                                        "1"
+check "says why"         "$(says "$msg" 'git cannot read this work tree')" "1"
+check "nothing consumed" "$(pending "$W")"                           "2"
+mv "$W/.git/HEAD.bak" "$W/.git/HEAD"
+
+# ── An unreadable index must not read as "no renames staged" ────────────────
+echo "T10f: an unreadable index aborts"
+W="$ROOT/t10f"; build "$W"
+mkdir -p "$ROOT/fakebin2"
+REAL_GIT2="$(command -v git)"
+cat > "$ROOT/fakebin2/git" <<EOF2
+#!/bin/sh
+for a in "\$@"; do [ "\$a" = "status" ] && exit 128; done
+exec "$REAL_GIT2" "\$@"
+EOF2
+chmod +x "$ROOT/fakebin2/git"
+msg="$(PATH="$ROOT/fakebin2:$PATH" bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-16 2>&1)"
+check "aborts"           "$?"                                          "1"
+check "says why"         "$(says "$msg" 'could not read the git index')" "1"
+check "nothing consumed" "$(pending "$W")"                             "2"
+
+# ── An unreadable HEAD must not read as "fragment not committed" ────────────
+echo "T10g: an unreadable HEAD lookup aborts"
+W="$ROOT/t10g"; build "$W"
+mkdir -p "$ROOT/fakebin3"
+cat > "$ROOT/fakebin3/git" <<EOF3
+#!/bin/sh
+for a in "\$@"; do [ "\$a" = "ls-tree" ] && exit 128; done
+exec "$REAL_GIT2" "\$@"
+EOF3
+chmod +x "$ROOT/fakebin3/git"
+msg="$(PATH="$ROOT/fakebin3:$PATH" bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-16 2>&1)"
+check "aborts"           "$?"                              "1"
+check "says why"         "$(says "$msg" 'cannot read HEAD')" "1"
+check "nothing consumed" "$(pending "$W")"                  "2"
+
 # ── Argument handling ────────────────────────────────────────────────────────
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

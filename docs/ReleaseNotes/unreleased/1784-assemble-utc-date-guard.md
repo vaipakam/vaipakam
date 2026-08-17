@@ -65,6 +65,15 @@ never-committed fragment both come back empty, and treating the first as the
 second would have filed the fragment under an unverified date and then deleted
 it.
 
+Underneath all of that sits one rule: when git cannot answer the question, the
+run stops rather than guessing. An unreadable index, an unreadable HEAD, an
+unreadable history and a damaged checkout each used to produce a plausible
+wrong answer — no renames staged, fragment not committed, fragment newly
+written, this is an export — and each of those answers led to a fragment being
+filed under an unverified date and then deleted. They now abort and say which
+question could not be answered. A damaged checkout is distinguished from a
+genuine export by looking for the metadata rather than trusting the probe.
+
 The assembler also now has a test suite of its own, wired into the docs-drift
 workflow so it runs on every pull request. It builds throwaway repositories
 with fragments committed at chosen UTC timestamps and drives the real script

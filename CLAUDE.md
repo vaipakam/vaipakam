@@ -1008,8 +1008,10 @@ work and never lag behind a merge.
 - **After the day's PRs merge**, fold the fragments into the dated file:
   `bash docs/ReleaseNotes/assemble.sh` (defaults to today UTC; pass a
   `YYYY-MM-DD` to override). It concatenates every pending fragment into
-  `docs/ReleaseNotes/ReleaseNotes-<date>.md`, removes the fragments, and
-  prints the commit steps. Review, add an intro paragraph, commit.
+  `docs/ReleaseNotes/ReleaseNotes-<date>.md`, removes **the ones it
+  consumed**, and prints the commit steps. Review, add an intro paragraph,
+  commit. It does NOT clear the whole backlog — fragments belonging to
+  other UTC days are named and left pending for their own run.
   **The date is the fragment's UTC merge day, not the local one** — at
   `+05:30` a merge after 18:30 UTC reads as tomorrow locally, which has
   misfiled fragments twice. A run therefore takes only the fragments

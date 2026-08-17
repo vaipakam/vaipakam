@@ -83,7 +83,7 @@ bash docs/ReleaseNotes/assemble.sh 2026-08-16
 bash docs/ReleaseNotes/assemble.sh 2026-08-17
 ```
 
-Three things worth knowing:
+Worth knowing:
 
 - **`--allow-mixed-dates`** takes every pending fragment regardless of
   day, for when folding them together is deliberate.
@@ -99,9 +99,13 @@ Three things worth knowing:
   meant reaching for the override every time — which turns the dating
   off.) A repository whose history cannot be read at all stops the run
   for the same reason.
-- **A committed rename is safe** — it is followed back to where the
-  fragment was written, so retitling one to match its PR number does not
-  re-date it.
+- **A committed rename is followed back** to where the fragment was
+  written, so retitling one to match its PR number does not re-date it —
+  **as long as the content did not change much in the same commit.**
+  Rename detection is by similarity, so a rename committed *together with*
+  a substantial rewrite reads as an unrelated add and delete, and the
+  fragment dates to the rewrite. Commit the rename on its own first when
+  the original day matters.
 - **An uncommitted rename is only recoverable if git can pair the two
   names.** `git mv` (or staging the rename) lets it: a plain `mv` left
   unstaged reads as a brand-new fragment, since pairing needs the index.
