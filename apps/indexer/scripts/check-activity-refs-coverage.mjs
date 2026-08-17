@@ -32,7 +32,7 @@
  * Run: `node apps/indexer/scripts/check-activity-refs-coverage.mjs`
  *      (or `pnpm --filter @vaipakam/indexer check-activity-refs-coverage`)
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -86,19 +86,22 @@ const DELIBERATELY_NOT_SCOPED = {
   LiquidationFallback: 'TODO(#1794) — liquidation fallback entry',
   LiquidationFallbackSplit: 'TODO(#1794) — split-route liquidation fallback',
   LiquidationFallbackOracleUnavailable: 'TODO(#1794) — fallback taken because the oracle was unavailable',
-  FlashLoanLiquidationCompleted: 'TODO(#1794) — flash-loan liquidation route',
   LoanFallbackPending: 'TODO(#1794) — fallback episode opened',
   LoanCuredFromFallback: 'TODO(#1794) — fallback episode cured',
-  BackstopFilled: 'TODO(#1794) — backstop fill against a loan',
+  // Dual-carrying: split per field so mapping one cannot mask a regression on
+  // the other (Codex round-1 P2).
+  'BackstopFilled.loanId': 'TODO(#1794) — backstop fill against a loan',
+  'BackstopFilled.offerId': 'TODO(#1794) — backstop fill, offer side',
   BackstopLoanClaimed: 'TODO(#1794) — backstop claim',
   LenderBackstopOptInSet: 'TODO(#1794) — per-loan backstop opt-in',
   BorrowerSurplusClaimed: 'TODO(#1794) — borrower surplus claim',
-  LoanClaimedAndCompounded: 'TODO(#1794) — claim-and-compound',
   ClaimRetryExecuted: 'TODO(#1794) — claim retry',
   SanctionedProceedsLocked: 'TODO(#1794) — proceeds withheld from a flagged party',
-  OfferSaleProceedsSplit: 'TODO(#1794) — per-recipient proceeds split on a parallel-sale fill',
+  'OfferSaleProceedsSplit.loanId': 'TODO(#1794) — proceeds split, loan side',
+  'OfferSaleProceedsSplit.offerId': 'TODO(#1794) — proceeds split, offer side',
   IntentMatched: 'TODO(#1794) — standing-intent match',
-  SignedOfferFilled: 'TODO(#1794) — gasless signed offer filled',
+  'SignedOfferFilled.loanId': 'TODO(#1794) — gasless signed offer filled, loan side',
+  'SignedOfferFilled.offerId': 'TODO(#1794) — gasless signed offer filled, offer side',
   SignedOfferMatched: 'TODO(#1794) — gasless signed offer matched',
   AutoDailyDeducted: 'TODO(#1794) — NFT-rental daily deduction',
   AutoExtendBorrowerCapsChanged: 'TODO(#1794) — borrower auto-extend caps',
@@ -112,6 +115,13 @@ const DELIBERATELY_NOT_SCOPED = {
   SwapAllAdaptersFailed: 'TODO(#1794) — every swap adapter failed',
   VPFIDiscountApplied: 'TODO(#1794) — VPFI fee discount applied',
   VPFIYieldFeeDiscountApplied: 'TODO(#1794) — VPFI yield-fee discount applied',
+
+  // NB: FlashLoanLiquidationCompleted and LoanClaimedAndCompounded are NOT
+  // listed. They exist only in standalone ABIs (FlashLoanLiquidator,
+  // AggregatorAdapterImplementation) that the barrel never spreads into
+  // DIAMOND_ABI, so no log carrying them can reach pluckActivityRefs. They were
+  // phantom backlog admitted by an over-broad directory scan (Codex round-1 P2);
+  // the stale-entry check now flags them if re-added.
 
   // ── offerId side ───────────────────────────────────────────────────────
   // Genuinely not offer-scoped: companion payloads whose primary event already
@@ -137,16 +147,50 @@ const DELIBERATELY_NOT_SCOPED = {
 };
 
 // ── 1. Events whose compiled ABI carries loanId / offerId ───────────────
+// Membership comes from the barrel's `DIAMOND_ABI` spread list, NOT from every
+// JSON in the directory (Codex round-1 P2). The directory also holds STANDALONE
+// contracts the barrel imports and re-exports but deliberately does NOT spread —
+// `AggregatorAdapterImplementation`, `FlashLoanLiquidator`. Their events can
+// never reach `pluckActivityRefs`, because the indexer's `EVENT_ABI` is derived
+// from `DIAMOND_ABI_VIEM`, so enforcing them manufactures phantom backlog that
+// would grow with every future standalone contract. Enforced set == decodable set.
 const REF_FIELDS = ['loanId', 'offerId'];
+const barrelSrc = readFileSync(join(ABI_DIR, 'index.ts'), 'utf8');
+
+/** `import FooABI from './Foo.json'` → identifier -> filename */
+const importedFile = new Map();
+for (const m of barrelSrc.matchAll(/import\s+([A-Za-z0-9_]+)\s+from\s+'\.\/([^']+\.json)'/g)) {
+  importedFile.set(m[1], m[2]);
+}
+
+const diamondBlock = barrelSrc.match(/export const DIAMOND_ABI\s*=\s*\[([\s\S]*?)\n\]/);
+if (!diamondBlock) {
+  console.error(
+    '[check-activity-refs-coverage] could not locate the DIAMOND_ABI array in the abis barrel.\n' +
+      'If it was restructured, update this script — do not delete the check.',
+  );
+  process.exit(1);
+}
+const memberFiles = [];
+for (const m of diamondBlock[1].matchAll(/\.\.\.([A-Za-z0-9_]+)/g)) {
+  const file = importedFile.get(m[1]);
+  if (file) memberFiles.push(file);
+}
+if (memberFiles.length === 0) {
+  console.error(
+    '[check-activity-refs-coverage] resolved zero DIAMOND_ABI members — refusing to pass vacuously.',
+  );
+  process.exit(1);
+}
+
 /** eventName -> Set<field> */
 const carries = new Map();
-for (const file of readdirSync(ABI_DIR)) {
-  if (!file.endsWith('.json') || file.startsWith('_')) continue;
+for (const file of memberFiles) {
   let parsed;
   try {
     parsed = JSON.parse(readFileSync(join(ABI_DIR, file), 'utf8'));
   } catch {
-    continue; // not an ABI document — index.ts et al are not read here
+    continue;
   }
   const items = Array.isArray(parsed) ? parsed : parsed.abi;
   if (!Array.isArray(items)) continue;
@@ -192,16 +236,55 @@ const mapped = new Map();
     labels.push(positions[i].name);
     // A fall-through label has nothing but whitespace before the next case.
     if (!/\S/.test(chunk.replace(/case\s+'[A-Za-z0-9_]+'\s*:/g, ''))) continue;
+
+    // Strip comments BEFORE matching (Codex round-1 P2). Without this, a mapping
+    // left commented out by a refactor —
+    //   // loanId: Number(args.loanId as bigint),
+    //   loanId: null,
+    // — is the FIRST match and the field reads as mapped, so the regression this
+    // script exists to catch passes green. A guardrail a stale comment can
+    // satisfy is worse than none.
+    const code = chunk.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+    // Restrict to the returned object rather than the whole chunk, so an
+    // unrelated `loanId:` in a local literal cannot stand in for the return.
+    const ret = code.match(/return\s*\{([\s\S]*?)\}\s*;/);
+    const scope = ret ? ret[1] : code;
+
     const fields = new Set();
     for (const field of REF_FIELDS) {
       // `loanId: Number(args.loanId as bigint)` counts; `loanId: null` does not.
-      const re = new RegExp(`${field}\\s*:\\s*([^,\\n]+)`);
-      const hit = chunk.match(re);
+      const hit = scope.match(new RegExp(`\\b${field}\\s*:\\s*([^,\\n]+)`));
       if (hit && !/^null\b/.test(hit[1].trim())) fields.add(field);
     }
     for (const label of labels) mapped.set(label, fields);
     labels.length = 0;
   }
+}
+
+// ── 2b. Dual-carrying events must be exempted per field ────────────────
+// Codex round-1 P2. An event-wide key exempts BOTH references, and the stale
+// check below only fires when EVERY carried field is mapped. So for an event
+// carrying both, a slice that maps only `loanId` leaves the event-wide entry
+// live, and a later regression dropping that mapping is silently re-covered by
+// it — defeating the per-field guarantee this script advertises. Requiring
+// `Event.loanId` / `Event.offerId` keys for dual-carrying events also makes the
+// summary count exemptions in the same unit it reports gaps.
+const wideOnDual = [];
+for (const key of Object.keys(DELIBERATELY_NOT_SCOPED)) {
+  if (key.includes('.')) continue;
+  const fields = carries.get(key);
+  if (fields && fields.size > 1) wideOnDual.push(key);
+}
+if (wideOnDual.length) {
+  console.error(
+    '\n✖ activity-refs coverage: these events carry BOTH loanId and offerId, so an\n' +
+      '  event-wide allowlist entry would mask a per-field regression. Split each into\n' +
+      "  '<Event>.loanId' and '<Event>.offerId' entries:\n",
+  );
+  for (const k of wideOnDual) console.error(`    ${k} (carries ${[...carries.get(k)].join(', ')})`);
+  console.error('');
+  process.exit(1);
 }
 
 // ── 3. Report ──────────────────────────────────────────────────────────
@@ -231,6 +314,14 @@ for (const key of Object.keys(DELIBERATELY_NOT_SCOPED)) {
   const has = carries.get(event);
   if (!has) {
     dead.push(`${key} — no compiled event carries a loanId/offerId under this name`);
+    continue;
+  }
+  // Codex round-1 P2: a field-specific key must be checked against THAT field.
+  // Testing only that some reference-bearing `Foo` exists leaves a `Foo.loanId`
+  // exemption live after an ABI revision drops `loanId` but keeps `offerId` —
+  // an obsolete exemption that never reports stale, contradicting the guarantee.
+  if (field && !has.has(field)) {
+    dead.push(`${key} — the event no longer carries ${field}; remove this entry`);
     continue;
   }
   const fields = field ? [field] : [...has];
