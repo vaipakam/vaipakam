@@ -63,8 +63,6 @@ contract EarlyWithdrawalFacet is
 {
     using SafeERC20 for IERC20;
 
-    /// @notice Emitted when a loan is sold to a new lender.
-
     /// @notice Emitted when a loan sale offer is created and linked to a live loan (Option 2, step 1).
     /// @param loanId The live loan being sold.
     /// @param saleOfferId The borrower-style offer created to execute the sale.
