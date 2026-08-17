@@ -607,20 +607,32 @@ else
   #     must come FIRST, since flattening destroys the line ends that terminate
   #     `//` comments.
   #
-  # Awk state machine rather than perl/python, to add no dependency. It does not
-  # model string literals, which is safe here: no key or import path in either
-  # script contains `//` or `/*`.
+  # Awk state machine rather than perl/python, to add no dependency. It DOES model
+  # string literals (Codex #1798 r3 P2): a `//` inside a string — a URL in a
+  # `console.log`, say — would otherwise start a comment and delete every
+  # registration after it on that line, from the counter and the parser alike, so
+  # the exact-coverage guard could not see the loss. No such string exists in
+  # either script today; the guard is for the one someone adds later.
   strip_sol_comments() {
     awk '
       BEGIN { inblk = 0 }
       {
-        line = $0; out = ""; i = 1
+        line = $0; out = ""; i = 1; instr = 0; q = ""
         while (i <= length(line)) {
-          two = substr(line, i, 2)
+          ch = substr(line, i, 1); two = substr(line, i, 2)
           if (inblk) { if (two == "*/") { inblk = 0; i += 2 } else { i++ }; continue }
+          # Inside a string literal, comment markers are just characters.
+          if (instr) {
+            out = out ch
+            if (ch == "\\") { out = out substr(line, i + 1, 1); i += 2; continue }
+            if (ch == q) { instr = 0 }
+            i++
+            continue
+          }
+          if (ch == "\"" || ch == "'"'"'") { instr = 1; q = ch; out = out ch; i++; continue }
           if (two == "/*") { inblk = 1; i += 2; continue }
           if (two == "//") { break }
-          out = out substr(line, i, 1); i++
+          out = out ch; i++
         }
         print out
       }
@@ -634,8 +646,8 @@ else
     | sed -E 's/.*address[[:space:]]*\(([A-Za-z0-9_]+)\)[[:space:]]*,[[:space:]]*(_get[A-Za-z0-9]+Selectors)[[:space:]]*\(\)/\2 \1/' \
     | sort -u)"
   WROTE_VAR_KEY="$(printf '%s' "$DEPLOY_FLAT" \
-    | grep -oE 'writeFacet[[:space:]]*\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)' \
-    | sed -E 's/.*"([A-Za-z0-9]+)"[[:space:]]*,[[:space:]]*address[[:space:]]*\(([A-Za-z0-9_]+)\)/\2 \1/' \
+    | grep -oE 'writeFacet[[:space:]]*\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)[[:space:]]*\)' \
+    | sed -E 's/.*"([A-Za-z0-9]+)"[[:space:]]*,[[:space:]]*address[[:space:]]*\(([A-Za-z0-9_]+)\)[[:space:]]*\)/\2 \1/' \
     | sort -u)"
   REFRESH_GETTER_KEY="$(printf '%s' "$REFRESH_FLAT" \
     | grep -oE 'Item[[:space:]]*\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address[[:space:]]*\([[:space:]]*new[[:space:]]+[A-Za-z0-9_]+[[:space:]]*\([[:space:]]*\)[[:space:]]*\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors[[:space:]]*\(\)' \
@@ -700,6 +712,32 @@ else
       FAIL=1
     else
       echo "  ✓ every cut facet is written to the deployment artifact"
+    fi
+
+    # ...and the REVERSE direction (Codex #1798 r3 P1). Retiring a facet by
+    # deleting its `_buildCut` and refresh `Item` while leaving the `writeFacet`
+    # behind keeps every per-construct count exact and the one-way comparison
+    # above empty. The deploy then constructs that facet, records its address, and
+    # cuts nothing — so the artifact advertises a live facet that is not installed,
+    # which is a worse lie than an absent key: a consumer reading the address gets
+    # a contract the Diamond will never route to.
+    #
+    # `cutFacet` is the one legitimate exception: DiamondCutFacet is installed by
+    # the Diamond's CONSTRUCTOR, so it is deliberately absent from `cuts[]` while
+    # still belonging in the artifact. Named explicitly rather than pattern-matched,
+    # so a second uncut write cannot hide behind it.
+    UNCUT_WRITES="$(comm -13 \
+      <(printf '%s\n' "$CUT_GETTER_VAR" | awk '{print $2}' | sort -u) \
+      <(printf '%s\n' "$WROTE_VAR_KEY"  | awk '{print $1}' | sort -u) \
+      | grep -v '^cutFacet$' || true)"
+    if [ -n "$UNCUT_WRITES" ]; then
+      echo "  ✗ facets WRITTEN to addresses.json but never cut into the Diamond:" >&2
+      printf '      %s\n' $UNCUT_WRITES >&2
+      echo "    the artifact would advertise an address the Diamond does not route to." >&2
+      echo "    Either cut the facet or drop its Deployments.writeFacet(...) line." >&2
+      FAIL=1
+    else
+      echo "  ✓ every written facet is cut into the Diamond (constructor-installed cutFacet aside)"
     fi
 
     # 2. variable ↔ key must be ONE-TO-ONE before anything is built on it
