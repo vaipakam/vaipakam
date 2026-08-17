@@ -31,6 +31,22 @@ const stubClient = {
   },
 } as never;
 
+function seedLoan(h: SqliteD1, loanId: number, status: string) {
+  h.db
+    .prepare(
+      `INSERT INTO loans (chain_id, loan_id, offer_id, status, lender, borrower,
+         principal, collateral_amount, asset_type, collateral_asset_type,
+         lending_asset, collateral_asset, duration_days, token_id,
+         collateral_token_id, lender_token_id, borrower_token_id,
+         lender_current_owner, borrower_current_owner, interest_rate_bps,
+         start_time, start_block, start_at, updated_at)
+       VALUES (?, ?, 1, ?, '0xlend', '0xborrow', '100', '200', 0, 0,
+         '0xasset', '0xcoll', 30, '0', '0', '1', '2', '0xlend', '0xborrow',
+         500, 0, 0, 0, 0)`,
+    )
+    .run(CHAIN, loanId, status);
+}
+
 function seedActiveLoan(h: SqliteD1, loanId: number) {
   h.db
     .prepare(
@@ -105,5 +121,117 @@ describe('processLoanLogs — HF-liquidation status projection (#1293)', () => {
     const res2 = await run(h, [hfLog('HFLiquidationTriggered', 9)]);
     expect(res2.statusUpdates).toBe(0); // already terminal — no-op
     expect(statusOf(h, 9)).toBe('defaulted');
+  });
+});
+
+/**
+ * #1782 — `LoanStatusChanged`, emitted by `LibLifecycle.transition` for EVERY
+ * status edge, is the general safety net behind the specific handlers above.
+ * These assert exactly what the handler claims: it flips a stranded row to the
+ * terminal status the chain reports, skips the non-terminal edges rather than
+ * overwriting a status with a guess, promotes a rescued `fallback_pending` row,
+ * and leaves an ALREADY-terminal row alone (Repaid→Settled belongs to the claim
+ * handlers, which know whether both sides have claimed).
+ *
+ * Enum slots are append-only and stable: Active=0, Repaid=1, Defaulted=2,
+ * Settled=3, FallbackPending=4, InternalMatched=5.
+ */
+const statusChangedLog = (
+  loanId: number,
+  from: number,
+  to: number,
+  block = 100,
+  logIndex = 0,
+) => ({
+  eventName: 'LoanStatusChanged',
+  args: { loanId: BigInt(loanId), from, to },
+  blockNumber: BigInt(block),
+  transactionHash: `0x${'cd'.repeat(32)}`,
+  logIndex,
+});
+
+describe('processLoanLogs — LoanStatusChanged safety net (#1782)', () => {
+  const run = (h: SqliteD1, logs: ReturnType<typeof statusChangedLog>[]) =>
+    processLoanLogs(
+      logs,
+      { DB: h.d1 } as unknown as Env,
+      CHAIN,
+      new Map([[100n, 500]]),
+      stubClient,
+      DIAMOND,
+    );
+
+  it.each([
+    ['Repaid', 1, 'repaid'],
+    ['Defaulted', 2, 'defaulted'],
+    ['Settled', 3, 'settled'],
+    ['InternalMatched', 5, 'internal_matched'],
+  ])('flips an active loan on a terminal edge to %s', async (_n, to, want) => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 20);
+    const res = await run(h, [statusChangedLog(20, 0, to as number)]);
+    expect(res.statusUpdates).toBe(1);
+    expect(statusOf(h, 20)).toBe(want);
+  });
+
+  it.each([
+    ['Active (a FallbackPending cure)', 0],
+    ['FallbackPending', 4],
+  ])('does NOT overwrite status on a non-terminal edge to %s', async (_n, to) => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 21);
+    const res = await run(h, [statusChangedLog(21, 1, to as number)]);
+    expect(res.statusUpdates).toBe(0);
+    expect(statusOf(h, 21)).toBe('active');
+  });
+
+  it('maps an unknown future enum value to no status write', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 22);
+    const res = await run(h, [statusChangedLog(22, 0, 99)]);
+    expect(res.statusUpdates).toBe(0);
+    expect(statusOf(h, 22)).toBe('active');
+  });
+
+  it('promotes a rescued fallback_pending row', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 23, 'fallback_pending');
+    const res = await run(h, [statusChangedLog(23, 4, 1)]);
+    expect(res.statusUpdates).toBe(1);
+    expect(statusOf(h, 23)).toBe('repaid');
+  });
+
+  it('leaves an ALREADY-terminal row alone (Repaid -> Settled)', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedLoan(h, 24, 'repaid');
+    const res = await run(h, [statusChangedLog(24, 1, 3)]);
+    expect(res.statusUpdates).toBe(0);
+    expect(statusOf(h, 24)).toBe('repaid'); // the claim handlers own this edge
+  });
+
+  // The skip cases above cannot discriminate on their own: "nothing happened"
+  // is also what you get with no handler at all. This one pairs a skipped edge
+  // with a flipped one in the SAME scan, so exactly-one update proves the
+  // handler ran AND chose correctly.
+  it('skips the non-terminal edge while flipping the terminal one in one scan', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 26); // gets a FallbackPending edge — must stay active
+    seedActiveLoan(h, 27); // gets a Repaid edge — must flip
+    const res = await run(h, [
+      statusChangedLog(26, 0, 4, 100, 0),
+      statusChangedLog(27, 0, 1, 100, 1),
+    ]);
+    expect(res.statusUpdates).toBe(1);
+    expect(statusOf(h, 26)).toBe('active');
+    expect(statusOf(h, 27)).toBe('repaid');
+  });
+
+  it('is idempotent on re-scan', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 25);
+    await run(h, [statusChangedLog(25, 0, 1)]);
+    const res2 = await run(h, [statusChangedLog(25, 0, 1)]);
+    expect(res2.statusUpdates).toBe(0);
+    expect(statusOf(h, 25)).toBe('repaid');
   });
 });
