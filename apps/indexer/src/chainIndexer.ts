@@ -3189,6 +3189,47 @@ export async function processLoanLogs(
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
       await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+    } else if (log.eventName === 'LoanStatusChanged') {
+      // #1782 — the SAFETY NET, not a replacement for the specific terminal
+      // handlers above. `LibLifecycle.transition` is the one primitive every
+      // status write is required to route through, and it now emits on every
+      // edge, so a transition that is invisible here is no longer
+      // constructible. The handlers above still carry the work this one cannot
+      // know about (clearing a prepay listing, keying off a non-`loanId` arg on
+      // offset/refinance); this branch only guarantees a loan never sits
+      // `active` in D1 while the chain says otherwise.
+      //
+      // That class had already been hand-patched twice — `HFLiquidationTriggered`
+      // (#1293) and the sale-vehicle temp loan (#971) — each time because a
+      // caller emitted nothing, or named a different loan than the one it
+      // transitioned. Both remain handled explicitly; this makes the next one a
+      // non-event.
+      //
+      // Reuses LOAN_STATUS_TO_INDEXER_TERMINAL, so Active(0), FallbackPending(4)
+      // and any future enum value map to `undefined` and are skipped — a
+      // FallbackPending cure back to Active must NOT overwrite a status, and we
+      // never write a guessed one. Guarded to ('active','fallback_pending') for
+      // the same reason the #762 read is: idempotent on re-scan, and a
+      // fallback_pending row is still promotable. It deliberately does NOT
+      // promote an already-terminal row (Repaid→Settled lands on a 'repaid'
+      // row and is skipped) — that edge belongs to the claim handlers, which
+      // know whether both sides have claimed.
+      const to = Number(a.to as number | bigint);
+      const terminal = LOAN_STATUS_TO_INDEXER_TERMINAL[to];
+      if (terminal !== undefined) {
+        const loanId = Number(a.loanId as bigint);
+        const now = Math.floor(Date.now() / 1000);
+        const r = await env.DB.prepare(
+          `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
+           WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
+        )
+          .bind(terminal, Number(log.blockNumber), now, now, chainId, loanId)
+          .run();
+        if ((r.meta?.changes ?? 0) > 0) {
+          statusUpdates++;
+          await _deletePrepayListing(env, chainId, loanId);
+        }
+      }
     } else if (log.eventName === 'LoanLiquidated') {
       const r = await flipLoanStatus(env, chainId, a, log, 'liquidated');
       if (r) statusUpdates++;
