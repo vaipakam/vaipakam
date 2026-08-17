@@ -551,14 +551,32 @@ const readsArgPath = (expr) => {
   if (!expr || !ts.isCallExpression(expr)) return null;
   if (!ts.isIdentifier(expr.expression) || expr.expression.text !== 'Number') return null;
   if (expr.arguments.length !== 1) return null;
-  let arg = expr.arguments[0];
-  while (ts.isAsExpression(arg) || ts.isParenthesizedExpression(arg)) arg = arg.expression;
+  // Assertions and parentheses are unwrapped at EVERY step, not just the outside
+  // (Codex round-10 P2). `args.fields` is typed `unknown`, so the only type-safe
+  // way to read a tuple reference is
+  // `(args.fields as { refinanceTargetLoanId: bigint }).refinanceTargetLoanId` —
+  // valid TypeScript that the old walk rejected, because it stopped at the inner
+  // AsExpression before reaching `args`. That made the round-6 tuple expectation
+  // unsatisfiable by any type-safe mapping: the checker demanded a reference it
+  // would then refuse to accept.
+  const unwrap = (n) => {
+    let cur = n;
+    while (
+      ts.isAsExpression(cur) ||
+      ts.isParenthesizedExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isTypeAssertionExpression?.(cur)
+    ) {
+      cur = cur.expression;
+    }
+    return cur;
+  };
   // `args.a.b.c` → "a.b.c"; anything not rooted at `args` is rejected.
   const parts = [];
-  let cur = arg;
+  let cur = unwrap(expr.arguments[0]);
   while (ts.isPropertyAccessExpression(cur)) {
     parts.unshift(cur.name.text);
-    cur = cur.expression;
+    cur = unwrap(cur.expression);
   }
   if (!ts.isIdentifier(cur) || cur.text !== 'args') return null;
   return parts.length ? parts.join('.') : null;
@@ -597,10 +615,39 @@ const isNullLiteral = (expr) =>
 
     const last = clause.statements[clause.statements.length - 1];
     if (!alwaysExits(last)) continue; // falls through: bind the next clause too
-    // Exits the switch WITHOUT returning (a `break`): control continues after the
-    // switch, to the all-null fallback this checker never sees. Record that as an
+    // Exits the switch WITHOUT returning: control continues after the switch, to
+    // the all-null fallback this checker never sees. Record that as an
     // unresolvable path so any field claimed here is reported, not trusted.
-    const escapesWithoutReturning = !alwaysReturns(last);
+    //
+    // Any statement, not just the last (Codex round-10 P2): `if (…) break;` before
+    // a final valid return leaves `alwaysReturns(last)` true while the break path
+    // still reaches the fallback. Nested loops and switches are NOT descended
+    // into — a `break` inside them binds to them, not to this clause.
+    const hasAbruptExit = (nodes) => {
+      let found = false;
+      const walk = (n) => {
+        if (found) return;
+        if (
+          ts.isFunctionDeclaration(n) ||
+          ts.isFunctionExpression(n) ||
+          ts.isArrowFunction(n) ||
+          ts.isForStatement(n) ||
+          ts.isForOfStatement(n) ||
+          ts.isForInStatement(n) ||
+          ts.isWhileStatement(n) ||
+          ts.isDoStatement(n) ||
+          ts.isSwitchStatement(n)
+        ) {
+          return;
+        }
+        if (ts.isBreakStatement(n) || ts.isContinueStatement(n)) found = true;
+        ts.forEachChild(n, walk);
+      };
+      for (const n of nodes) walk(n);
+      return found;
+    };
+    const escapesWithoutReturning =
+      !alwaysReturns(last) || hasAbruptExit(clause.statements);
 
     const labels = pendingLabels;
     const returnNodes = pendingReturns;
@@ -643,8 +690,20 @@ const isNullLiteral = (expr) =>
       const walk = (n) => {
         if (found) return;
         if (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n)) return;
-        if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === 'args') found = true;
-        if (ts.isParameter(n) && ts.isIdentifier(n.name) && n.name.text === 'args') found = true;
+        // Binding NAMES recursively (Codex round-10 P2): `const { args } = …` puts
+        // the binding inside an ObjectBindingPattern, which an identifier-only
+        // test walks straight past.
+        if (ts.isVariableDeclaration(n) || ts.isParameter(n)) {
+          const bindsArgs = (name) => {
+            if (!name) return false;
+            if (ts.isIdentifier(name)) return name.text === 'args';
+            if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+              return name.elements.some((el) => ts.isBindingElement(el) && bindsArgs(el.name));
+            }
+            return false;
+          };
+          if (bindsArgs(n.name)) found = true;
+        }
         ts.forEachChild(n, walk);
       };
       for (const st of clause.statements) walk(st);
@@ -776,7 +835,13 @@ for (const [event, fields] of [...carries].sort((a, b) => a[0].localeCompare(b[0
       mappedFields++;
       continue;
     }
-    if (DELIBERATELY_NOT_SCOPED[event] || DELIBERATELY_NOT_SCOPED[`${event}.${field}`]) {
+    // `Object.hasOwn`, not truthiness (Codex round-10 P2): an event named like an
+    // inherited prototype member — `toString`, `constructor` — would otherwise
+    // find that inherited value and read as allowlisted with no entry present.
+    if (
+      Object.hasOwn(DELIBERATELY_NOT_SCOPED, event) ||
+      Object.hasOwn(DELIBERATELY_NOT_SCOPED, `${event}.${field}`)
+    ) {
       allowlisted++;
       continue;
     }
