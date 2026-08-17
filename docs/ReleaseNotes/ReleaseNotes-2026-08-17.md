@@ -1,3 +1,21 @@
+# Release Notes — 2026-08-17
+
+One entry, and it is about the notes themselves. The tooling that assembles this
+file now checks that each fragment it folds in actually belongs to the date on the
+file — a thing it never did, and which had quietly misfiled a day's work twice.
+
+Worth reading for one reason beyond the fix: the same class of mistake it
+addresses is the class it kept making while being written. A query that cannot
+answer a question returning a confident answer anyway — that a fragment was never
+committed, that a repository has full history, that a broken checkout is a clean
+export — was the shape of every defect found across ten review rounds, several of
+them inside fixes for earlier ones. The result is a tool that stops and says what
+it could not establish, rather than proceeding on a plausible guess and then
+deleting the evidence.
+
+This file is itself the first product of that: assembled by the new code, from a
+shallow checkout, which the first design of the guard would have refused outright.
+
 ## Tooling — the release-note assembler files fragments by their own UTC day
 
 The assembler folds pending fragments into a file named for a date, and until
