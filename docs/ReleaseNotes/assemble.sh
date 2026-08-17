@@ -8,9 +8,15 @@
 # `docs/ReleaseNotes/ReleaseNotes-<date>.md` and removes them, so the
 # release-notes update is mechanical rather than remembered.
 #
+# A fragment belongs to the UTC day its PR merged, and only the fragments
+# belonging to the requested day are folded in; the rest are named and left
+# for their own run. See "UTC-day selection" below for why.
+#
 # Usage:
-#   bash docs/ReleaseNotes/assemble.sh              # today (UTC)
-#   bash docs/ReleaseNotes/assemble.sh 2026-05-20   # explicit date
+#   bash docs/ReleaseNotes/assemble.sh                     # today (UTC)
+#   bash docs/ReleaseNotes/assemble.sh 2026-05-20          # explicit date
+#   bash docs/ReleaseNotes/assemble.sh --allow-mixed-dates # take every pending
+#                                                          # fragment, any day
 #
 # The dated file is created with a header if absent, or appended to if
 # it already exists. Review the result, add an intro paragraph by hand,
@@ -18,9 +24,57 @@
 
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `pwd -P`, not `pwd`. Every path comparison below is against
+# `git rev-parse --show-toplevel`, which is always PHYSICAL. A logical `pwd`
+# through a symlinked checkout returns the symlink path instead, the repo-root
+# prefix then fails to strip, and every fragment's `HEAD:<rel>` lookup misses —
+# so each one reads as newly written and the whole selection pass silently
+# becomes a no-op. Not an edge case when it happens: it disables the guard
+# entirely, for every fragment, while looking like an ordinary successful run.
+# Bash 4+ REQUIRED, and checked here so the failure is one clear line at the
+# top rather than a `mapfile: command not found` partway through a run. Stock
+# macOS ships Bash 3.2, where `mapfile` and `declare -A` do not exist.
+#
+# Declared rather than worked around. Both are load-bearing: `mapfile` is what
+# keeps a fragment whose name holds a glob metacharacter from silently vanishing
+# from the list, and `declare -A` keys the staged-rename map and the shallow
+# boundary set by arbitrary path strings, which Bash 3 can only fake by encoding
+# paths into variable names. Two sibling scripts in this repo already require
+# Bash 4 the same way (`run-regression.sh` uses `mapfile` + `declare -A`,
+# `deploy-chain.sh` uses `declare -A`), and `run-regression.sh` additionally
+# needs GNU `find -printf`. The baseline was already Bash 4; what was missing
+# was saying so. `brew install bash` on macOS.
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "Error: this script requires Bash 4 or newer (found ${BASH_VERSION})." >&2
+  echo "" >&2
+  echo "It uses mapfile and associative arrays, both absent from the Bash 3.2" >&2
+  echo "that stock macOS ships. Install a newer bash (e.g. 'brew install bash')" >&2
+  echo "and run it with that, e.g. '/opt/homebrew/bin/bash ${BASH_SOURCE[0]}'." >&2
+  exit 1
+fi
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 UNREL="$DIR/unreleased"
-DATE="${1:-$(date -u +%Y-%m-%d)}"
+
+DATE=""
+ALLOW_MIXED=0
+for a in "$@"; do
+  case "$a" in
+    --allow-mixed-dates) ALLOW_MIXED=1 ;;
+    -*)
+      echo "Error: unknown option '$a'" >&2
+      exit 1
+      ;;
+    *)
+      if [ -n "$DATE" ]; then
+        echo "Error: more than one date given ('$DATE' and '$a')" >&2
+        exit 1
+      fi
+      DATE="$a"
+      ;;
+  esac
+done
+DATE="${DATE:-$(date -u +%Y-%m-%d)}"
 
 if ! printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
   echo "Error: date must be YYYY-MM-DD (got '$DATE')" >&2
@@ -45,7 +99,326 @@ if [ "${#frags[@]}" -eq 0 ]; then
 fi
 
 # Deterministic order — task-id-prefixed filenames sort sensibly.
-IFS=$'\n' frags=($(printf '%s\n' "${frags[@]}" | sort)); unset IFS
+#
+# `mapfile`, not `frags=($(...))`. An unquoted command substitution is both
+# word-split AND pathname-expanded, and `nullglob` is on a few lines above — so
+# a fragment whose name contains a glob metacharacter expands to nothing and
+# VANISHES from the list. It is then neither assembled nor removed, while the
+# run still reports success and a count that silently excludes it. `mapfile`
+# does neither expansion.
+mapfile -t frags < <(printf '%s\n' "${frags[@]}" | sort)
+
+# ── UTC-day selection ────────────────────────────────────────────────────────
+# A fragment belongs to the day its PR merged, measured in UTC — the same clock
+# `date -u` above uses to pick the default. But the operator reads merge dates
+# in local time, and for `+05:30` every merge between 18:30 and 24:00 UTC shows
+# a local date one day AHEAD. Assemble on the local day and those fragments get
+# folded into a file dated a day after the day they actually shipped.
+#
+# That gap has produced the same misfiling twice — once caught in review
+# (#1769), once caught by hand on the next assembly (#1783). Both times the
+# tooling was silent: assembly took whatever was pending and asked no questions.
+# So ask here. Each fragment's own add-commit carries the answer, and comparing
+# it to the target date costs one `git log` per file.
+#
+# SELECT, don't refuse. Refusing the whole run whenever two days are pending
+# would make a mixed backlog unassemblable: every date's run sees the other
+# day's files and fails, so neither day can be produced without moving files by
+# hand — and a mixed backlog is precisely the case this exists to handle. So a
+# run takes the fragments belonging to ITS day, says which ones it held back and
+# for when, and leaves those in place for their own run.
+#
+# A fragment with NO add-commit is taken, not held back: it is untracked, which
+# means it was written in the PR doing the assembling, so it has no day of its
+# own yet and belongs to the run creating it.
+if (( ALLOW_MIXED )); then
+  : # take every pending fragment, whatever day it came from
+elif ! git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  # This probe fails for TWO very different situations and they must not share
+  # an outcome. A genuine export or tarball has no `.git` anywhere and simply
+  # cannot be dated — assembling everything is the honest response. A checkout
+  # with DAMAGED `.git` metadata fails the same probe, and treating that as an
+  # export would disable dating and consume every pending fragment on a broken
+  # repository, which is the opposite of the promise made everywhere else here.
+  #
+  # So look for the metadata rather than trusting the probe: walk up from the
+  # script's directory for a `.git` entry. Present but unusable = damaged.
+  _damaged=0
+  _probe_dir="$DIR"
+  while :; do
+    # `-L` as well as `-e`: `-e` FOLLOWS symlinks, so a `.git` that is a
+    # DANGLING link is invisible to it. Git cannot read such a checkout either,
+    # but the entry plainly exists — treating it as a git-less export would
+    # assemble every pending fragment under the requested date and delete them.
+    # Test the directory entry itself, not what it resolves to.
+    if [ -e "$_probe_dir/.git" ] || [ -L "$_probe_dir/.git" ]; then
+      _damaged=1; break
+    fi
+    [ "$_probe_dir" = "/" ] && break
+    _probe_dir="$(dirname "$_probe_dir")"
+  done
+  if (( _damaged )); then
+    echo "Error: a .git entry exists but git cannot read this work tree." >&2
+    echo "Fragment dates are unavailable, and assembling would consume every" >&2
+    echo "pending fragment under a date nothing verified. Repair the checkout," >&2
+    echo "or pass --allow-mixed-dates to assemble without dating." >&2
+    exit 1
+  fi
+  echo "note: not a git work tree — cannot date fragments, assembling all pending." >&2
+else
+  # A shallow repository does NOT get a blanket refusal, though an earlier
+  # revision gave it one. The refusal was correct about the danger and wrong
+  # about its reach: only a fragment whose add-commit falls AT the shallow
+  # boundary has a fabricated date — one added after the boundary has a genuine
+  # add-commit and reads correctly. Refusing every shallow clone made the tool
+  # unusable in the environment it actually runs in (this repository's own
+  # checkout is shallow), and the only escape offered was --allow-mixed-dates,
+  # which turns the dating off entirely. A guard whose realistic outcome is
+  # "operator reaches for the override every time" protects nothing.
+  #
+  # So load the boundary commits instead and check each fragment against them.
+  # `git rev-parse --git-common-dir`, not --git-dir: in a linked worktree the
+  # shallow file lives in the common dir.
+  git_root="$(git -C "$DIR" rev-parse --show-toplevel)"
+
+  declare -A SHALLOW_BOUNDARY=()
+  # The probe's STATUS is checked, not just its output. `$(...)` of a failed
+  # `rev-parse` is the empty string, which is not "true", so a probe that FAILS
+  # inside a genuinely shallow checkout reads as "not shallow" — the boundary set
+  # stays empty, the per-fragment boundary check never runs, and a fragment whose
+  # add-commit IS the boundary is accepted and deleted under the boundary's
+  # fabricated date. Same fault as the six in `e53a0f952`: a failure that is
+  # indistinguishable from a benign answer.
+  _shallow_status=0
+  _is_shallow="$(git -C "$DIR" rev-parse --is-shallow-repository 2>/dev/null)" \
+    || _shallow_status=$?
+  if (( _shallow_status != 0 )); then
+    echo "Error: could not determine whether this repository is shallow" >&2
+    echo "(git rev-parse --is-shallow-repository exited $_shallow_status)." >&2
+    echo "" >&2
+    echo "A shallow checkout dates a truncated fragment to the boundary commit" >&2
+    echo "rather than to itself, so without this answer a fragment could be" >&2
+    echo "filed under a fabricated date and then deleted. Refusing instead." >&2
+    exit 1
+  fi
+  if [ "$_is_shallow" = "true" ]; then
+    # `--git-common-dir` answers RELATIVE TO THE DIRECTORY GIT RAN IN, which is
+    # `$DIR`, not the repo root — resolving it against the root instead walks
+    # out of the repository and the file is simply never found, leaving the
+    # boundary set empty and this whole check silently inert. Resolve it where
+    # git actually meant it, and make it absolute and physical while here.
+    #
+    # If the repo says it is shallow, the boundary list is REQUIRED — proceeding
+    # without it would run the fabricated-date case completely unguarded, which
+    # is the one thing this branch exists to prevent. So every way of failing to
+    # get it stops the run rather than leaving an empty set behind. `cd ""`
+    # silently succeeds and stays put, so an empty answer here would otherwise
+    # resolve to `$DIR`, find no `shallow` file, and look exactly like a healthy
+    # non-shallow repository.
+    cdir_rel="$(git -C "$DIR" rev-parse --git-common-dir 2>/dev/null || true)"
+    common_dir=""
+    if [ -n "$cdir_rel" ]; then
+      common_dir="$(cd "$DIR" && cd "$cdir_rel" 2>/dev/null && pwd -P)" || common_dir=""
+    fi
+    if [ -z "$common_dir" ] || [ ! -r "$common_dir/shallow" ]; then
+      echo "Error: the repository is shallow, but its boundary list could not be" >&2
+      echo "read, so there is no way to tell a fragment's real date from the" >&2
+      echo "boundary's. Refusing rather than dating on an unchecked history." >&2
+      echo "" >&2
+      echo "Run 'git fetch --unshallow' (or clone at full depth) and retry, or" >&2
+      echo "pass --allow-mixed-dates to assemble without dating." >&2
+      exit 1
+    fi
+    while IFS= read -r boundary_sha; do
+      [ -n "$boundary_sha" ] && SHALLOW_BOUNDARY["$boundary_sha"]=1
+    done < "$common_dir/shallow"
+  fi
+
+  # An UNCOMMITTED rename defeats `--follow`: no commit connects the new name to
+  # the old one, so the history query comes back empty and the fragment reads as
+  # newly written — assembled under whatever day was asked, then deleted. The
+  # index knows better, and `git status -M` will say so (`R old -> new`), so ask
+  # it once up front and date the old name instead.
+  #
+  # Scope: a rename staged in the INDEX. A rename made with plain `mv` and left
+  # unstaged is NOT recoverable — git reports it as an unrelated deletion plus an
+  # untracked file (` D old.md` / `?? new.md`) because rename detection needs the
+  # index — and is genuinely indistinguishable from having deleted one fragment
+  # and written another. `git mv`, or staging the rename, is what makes it
+  # knowable.
+  #
+  # `-z` rather than parsing quoted paths: a rename record is the status byte
+  # pair, then the NEW path, then the OLD path, each NUL-terminated.
+  # `git status` READ FIRST, into a file, with its exit status checked. Feeding
+  # the loop from a process substitution puts the command on the far side of a
+  # pipe where `set -e` cannot see it: an unreadable or corrupt index prints
+  # git's fatal error, yields no rows, and the loop simply runs zero times —
+  # leaving an empty rename map that reads exactly like "no renames staged".
+  # A file also keeps the NUL-delimited output intact, which a variable cannot.
+  _status_out="$(mktemp)"
+  if ! git -C "$DIR" status --porcelain=v1 -z -M -- "$UNREL" > "$_status_out"; then
+    rm -f "$_status_out"
+    echo "" >&2
+    echo "Error: could not read the git index, so a staged rename cannot be" >&2
+    echo "distinguished from a newly written fragment. Assembling now could" >&2
+    echo "file a renamed fragment under the wrong day and then delete it." >&2
+    echo "" >&2
+    echo "Repair the checkout, or pass --allow-mixed-dates to assemble without" >&2
+    echo "dating." >&2
+    exit 1
+  fi
+
+  declare -A RENAMED_FROM=()
+  staged_adds=()
+  staged_dels=()
+  while IFS= read -r -d '' entry; do
+    xy="${entry:0:2}"
+    newpath="${entry:3}"
+    if [ "${xy:0:1}" = "R" ] || [ "${xy:1:1}" = "R" ]; then
+      IFS= read -r -d '' oldpath || break
+      RENAMED_FROM["$git_root/$newpath"]="$git_root/$oldpath"
+    elif [ "${xy:0:1}" = "A" ]; then
+      staged_adds+=("$(basename "$newpath")")
+    elif [ "${xy:0:1}" = "D" ]; then
+      staged_dels+=("$(basename "$newpath")")
+    fi
+  done < "$_status_out"
+  rm -f "$_status_out"
+
+  # `-M` is rename DETECTION, by similarity index — not a record of what the
+  # operator did. `git mv` followed by a substantial rewrite before staging
+  # drops below the threshold, and git then reports a plain add and a plain
+  # delete with nothing linking them. The rename map is empty, the new path has
+  # no history, and the fragment reads as newly written.
+  #
+  # That state is genuinely ambiguous: a heavily-rewritten rename and a
+  # deliberate "drop that fragment, write this one" are the same two records.
+  # Guessing either way would be wrong half the time, so say what was seen and
+  # let the operator decide — the alternative is a silent misfiling, which is
+  # the failure this whole selection pass exists to prevent.
+  if (( ${#staged_adds[@]} > 0 && ${#staged_dels[@]} > 0 )); then
+    echo "note: the index holds both a staged new fragment and a staged deletion:"
+    echo "        added:   ${staged_adds[*]}"
+    echo "        deleted: ${staged_dels[*]}"
+    echo "      If that was one fragment renamed and rewritten, git could not pair"
+    echo "      the two (rename detection is by similarity), so the new name will be"
+    echo "      dated to THIS run rather than to when it was written. Commit the"
+    echo "      rename first if that matters."
+    echo ""
+  fi
+
+  selected=()
+  held=()
+  for f in "${frags[@]}"; do
+    # `--follow` because a rename is otherwise indistinguishable from an add:
+    # path-limited history starts at the new name, so renaming a fragment re-
+    # dates it to the rename. The routine trigger is renaming a fragment to
+    # match its PR number once the number is known, which is often the next day
+    # — this script's own fragment was renamed that way, though within the same
+    # UTC day, so it read correctly either way.
+    #
+    # The status is captured rather than swallowed. `git log` exits 0 with EMPTY
+    # output for a path it has no history for, which is how an uncommitted
+    # fragment is recognised — so a NON-zero exit means something else entirely
+    # (unreadable or partial history), and `|| true` would launder that into
+    # "uncommitted", select the fragment for whatever date was asked, and then
+    # DELETE it after misfiling it. stderr is deliberately not redirected, so
+    # git's own diagnosis reaches the operator.
+    #
+    # The query runs against the pre-rename path when the index reports one, so
+    # a staged rename dates from where the fragment was actually written.
+    #
+    # It runs at all ONLY for a path the current commit actually has. Fragment
+    # names are reused — `<TASK-ID>-<slug>.md` recurs — and history is keyed by
+    # PATH, not by content: a name that was used, assembled and deleted months
+    # ago still has an add-commit. Asking about a brand-new file that happens to
+    # reuse that name returns the OLD file's date, which held the new fragment
+    # back for a day it has nothing to do with. Existing in HEAD is what
+    # separates "this fragment was committed and has a day" from "this name was
+    # committed once, by someone else's fragment".
+    probe=""
+    rel="${f#"$git_root"/}"
+    if [ -n "${RENAMED_FROM[$f]:-}" ]; then
+      probe="${RENAMED_FROM[$f]}"
+    else
+      # `cat-file -e` answers only "does this object exist", so it returns the
+      # SAME failure for a path absent from HEAD and for an object database it
+      # cannot read — and the second would fall through to "new fragment",
+      # consuming a committed one under any requested date. `ls-tree` separates
+      # them: absent is exit 0 with empty output, an unreadable repository is a
+      # non-zero exit.
+      _lst_status=0
+      # `-C "$git_root"`, not `-C "$DIR"`: a PATHSPEC is interpreted relative to
+      # the directory git runs in, unlike the `HEAD:<path>` revision syntax this
+      # replaced, which was always repo-root-relative. Running it from `$DIR`
+      # makes every committed fragment look absent — the same wrong-base class
+      # as the symlink and --git-common-dir fixes, hit a third time.
+      _lst="$(git -C "$git_root" ls-tree --name-only HEAD -- "$rel")" || _lst_status=$?
+      if (( _lst_status != 0 )); then
+        echo "" >&2
+        echo "Error: cannot read HEAD to check $(basename "$f") (git exited $_lst_status)." >&2
+        echo "Whether this fragment is already committed is unknown, so dating" >&2
+        echo "it would be a guess. Repair the checkout, or pass" >&2
+        echo "--allow-mixed-dates to assemble without dating." >&2
+        exit 1
+      fi
+      [ -n "$_lst" ] && probe="$f"
+    fi
+
+    status=0
+    added=""
+    added_sha=""
+    if [ -n "$probe" ]; then
+      # `--no-show-signature` because `log.showSignature=true` in the operator's
+      # config prepends GPG verification lines to STDOUT even with a custom
+      # --format, so `added` would carry several signature lines plus the date
+      # and never match. This repo signs its squash merges, so the config is a
+      # plausible one to have set.
+      raw="$(TZ=UTC git -C "$DIR" log --no-show-signature --follow --diff-filter=A \
+        --format='%H %cd' --date=format-local:'%Y-%m-%d' -1 -- "$probe")" || status=$?
+      added_sha="${raw%% *}"
+      added="${raw#* }"
+      [ "$added" = "$raw" ] && added=""   # empty result: no add-commit at all
+    fi
+    if (( status != 0 )); then
+      echo "" >&2
+      echo "Error: cannot read git history for $(basename "$f") (git exited $status)." >&2
+      echo "Fragment dates are unavailable, and assembling would consume the" >&2
+      echo "fragment under a date nothing verified. Repair the repository, or" >&2
+      echo "pass --allow-mixed-dates to assemble without dating." >&2
+      exit 1
+    fi
+    # An add-commit that IS a shallow boundary is not this fragment's commit —
+    # it is where the truncated history stops, wearing an ordinary-looking date.
+    if [ -n "$added_sha" ] && [ -n "${SHALLOW_BOUNDARY[$added_sha]:-}" ]; then
+      echo "" >&2
+      echo "Error: $(basename "$f") dates to the shallow boundary, not to its own" >&2
+      echo "add-commit — the history that would answer was truncated away, and" >&2
+      echo "$added is the boundary's date rather than this fragment's." >&2
+      echo "" >&2
+      echo "Run 'git fetch --unshallow' (or clone at full depth) and retry, or" >&2
+      echo "pass --allow-mixed-dates to assemble without dating." >&2
+      exit 1
+    fi
+    if [ -z "$added" ] || [ "$added" = "$DATE" ]; then
+      selected+=("$f")
+    else
+      held+=("$(basename "$f")  ($added UTC)")
+    fi
+  done
+  if (( ${#held[@]} > 0 )); then
+    echo "Holding back ${#held[@]} fragment(s) that belong to another UTC day:"
+    printf '  %s\n' "${held[@]}"
+    echo "Run this script again with each of those dates to assemble them."
+    echo ""
+  fi
+  if (( ${#selected[@]} == 0 )); then
+    echo "Error: no pending fragment belongs to $DATE — nothing to assemble." >&2
+    echo "Re-run with one of the dates listed above." >&2
+    exit 1
+  fi
+  frags=("${selected[@]}")
+fi
 
 if [ ! -f "$OUT" ]; then
   printf '# Release Notes — %s\n' "$DATE" > "$OUT"

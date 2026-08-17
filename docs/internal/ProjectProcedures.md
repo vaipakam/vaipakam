@@ -590,11 +590,55 @@ bash docs/ReleaseNotes/assemble.sh           # today UTC
 bash docs/ReleaseNotes/assemble.sh 2026-05-20  # explicit date
 ```
 
-The script concatenates pending fragments into
-`docs/ReleaseNotes/ReleaseNotes-<date>.md`, removes the fragments, and
-prints the commit steps. **Review the assembled file — add an intro
+The script concatenates the fragments **belonging to that UTC day** into
+`docs/ReleaseNotes/ReleaseNotes-<date>.md`, removes the ones it consumed,
+and prints the commit steps. **Review the assembled file — add an intro
 paragraph by hand if the day's threads form a coherent arc** — then
 commit.
+
+**A run does not clear the whole backlog.** A fragment belongs to the UTC
+day its PR merged, which is the trap this enforces: at `+05:30` every
+merge between 18:30 and midnight UTC shows a local date one day ahead, and
+assembling "today" locally has misfiled fragments twice. So each run takes
+only its own day, names the fragments it held back and the day each
+belongs to, and leaves them for their own run. Clear a multi-day backlog
+by running the script once per day.
+
+Behaviours to know:
+
+- **Bash 4+ is required** — the script refuses on line one otherwise, naming
+  the version it found. Stock macOS ships Bash 3.2, which lacks `mapfile` and
+  associative arrays; `brew install bash` and invoke that binary.
+- `--allow-mixed-dates` takes every pending fragment regardless of day,
+  for when folding them together is deliberate.
+- A fragment that has never been committed is always taken — it was
+  written in the PR doing the assembling, so it has no day of its own.
+- A **shallow clone** is fine as long as it did not truncate the answer.
+  A fragment added after the shallow boundary has a genuine add-commit
+  and is dated normally; only one whose add-commit resolves to the
+  boundary itself is **refused, by name**, since that date belongs to the
+  boundary rather than to the fragment. Run `git fetch --unshallow` and
+  retry when that happens. CI checkouts are routinely shallow — refusing
+  them wholesale would have meant reaching for `--allow-mixed-dates`
+  every time, which turns the dating off entirely. A repository whose
+  history cannot be read at all still stops the run outright.
+- A **committed** rename is followed back to where the fragment was
+  written — provided the content did not change much in the same commit.
+  Rename detection is by similarity, so a rename committed together with a
+  substantial rewrite reads as an unrelated add and delete and dates to the
+  rewrite; commit the rename on its own first when the original day
+  matters. An **uncommitted** one is recoverable only when
+  git can pair the two names: use `git mv` rather than a plain `mv`, and
+  note that even then pairing is similarity *detection*, so a rename plus
+  a substantial rewrite reads as an unrelated add and delete. The run says
+  so rather than guessing; commit the rename first if the day matters.
+- A **reused filename** is dated as new. History is keyed by path, so an
+  assembled-and-deleted fragment name keeps its add-commit; a fresh
+  fragment reusing it does not inherit that day.
+
+[`docs/ReleaseNotes/assemble.test.sh`](../ReleaseNotes/assemble.test.sh)
+asserts all of the above and runs on every PR — run it after touching the
+assembler.
 
 ### 6.3 FunctionalSpecs corpus — DOC-SOURCED, NEVER code-sourced
 

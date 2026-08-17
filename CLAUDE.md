@@ -1008,8 +1008,22 @@ work and never lag behind a merge.
 - **After the day's PRs merge**, fold the fragments into the dated file:
   `bash docs/ReleaseNotes/assemble.sh` (defaults to today UTC; pass a
   `YYYY-MM-DD` to override). It concatenates every pending fragment into
-  `docs/ReleaseNotes/ReleaseNotes-<date>.md`, removes the fragments, and
-  prints the commit steps. Review, add an intro paragraph, commit.
+  `docs/ReleaseNotes/ReleaseNotes-<date>.md`, removes **the ones it
+  consumed**, and prints the commit steps. Review, add an intro paragraph,
+  commit. It does NOT clear the whole backlog — fragments belonging to
+  other UTC days are named and left pending for their own run.
+  **The date is the fragment's UTC merge day, not the local one** — at
+  `+05:30` a merge after 18:30 UTC reads as tomorrow locally, which has
+  misfiled fragments twice. A run therefore takes only the fragments
+  belonging to its day and names the ones it held back; clear a
+  multi-day backlog by running it once per day. `--allow-mixed-dates`
+  takes everything when folding is deliberate, an uncommitted fragment
+  is always taken (it has no day yet), and in a shallow clone only the
+  fragments whose add-commit resolves to the boundary itself are refused,
+  by name — one added after the boundary has a real add-commit and is
+  dated normally, so CI's shallow checkouts are fine and the override is
+  not the answer to them. The script needs Bash 4+. `docs/ReleaseNotes/assemble.test.sh`
+  covers all of it — run it after touching the assembler.
 - A non-blocking CI check (`.github/workflows/release-notes-drift.yml`)
   warns in the Actions tab if a merge to `main` changed `contracts/src/`
   or `apps/` but added no `docs/ReleaseNotes/` entry.
