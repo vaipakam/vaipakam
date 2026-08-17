@@ -355,7 +355,23 @@ if (!fnMatch) {
   );
   process.exit(1);
 }
-const body = fnMatch[0];
+/**
+ * The function body with comments stripped ONCE, before any parsing.
+ *
+ * Round 1 stripped comments per case-chunk, which left every structural decision
+ * — where cases begin, where `default:` ends the last one — reading raw text. Two
+ * consequences, the second found while fixing the first:
+ *
+ *   · a comment mentioning `case 'Foo':` invents a label and a phantom chunk;
+ *   · the `default:` clamp below latched onto the words "falls to `default:`"
+ *     inside the #1782 comment, 8.5k characters before the real one.
+ *
+ * Comments cannot be a structural input. Line comments are cut only where `//`
+ * is not part of `://`, so a URL in a string survives.
+ */
+const body = fnMatch[0]
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
 /**
  * Split the switch into per-case blocks. Consecutive `case 'A': case 'B':`
@@ -366,32 +382,57 @@ const mapped = new Map();
 /** Mappings that look present but do not unconditionally read a real alias. */
 const suspectMappings = [];
 {
-  const CASE_RE = /case\s+'([A-Za-z0-9_]+)'\s*:/g;
+  // Either quote style (Codex round-5 P2). A `case "LoanSold":` — valid
+  // TypeScript, and what a reformat or a different author produces — was never
+  // discovered, so the event's allowlist entry stayed falsely live and went on
+  // masking a later removal of the very mapping that should have retired it.
+  // Fixing a TODO has to trip the stale-entry check, or the allowlist rots.
+  const CASE_RE = /case\s+['"]([A-Za-z0-9_]+)['"]\s*:/g;
   const labels = [];
   let m;
   const positions = [];
   while ((m = CASE_RE.exec(body)) !== null) positions.push({ name: m[1], end: m.index + m[0].length });
+  // `default:` terminates the last case's chunk. Without this the final case
+  // runs to the end of the function and absorbs the default clause's
+  // `{ actor: null, loanId: null, offerId: null }` — which the every-path rule
+  // below then reads as a nullable fallback belonging to that case. Found by
+  // that rule flagging `PrepayListingMatched.loanId`, a mapping that is in fact
+  // correct and unconditional: the defect was in this splitter, not the indexer.
+  const defaultIdx = body.search(/\bdefault\s*:/);
   for (let i = 0; i < positions.length; i++) {
     const start = positions[i].end;
-    const stop = i + 1 < positions.length ? positions[i + 1].end : body.length;
+    let stop = i + 1 < positions.length ? positions[i + 1].end : body.length;
+    if (defaultIdx !== -1 && defaultIdx > start && defaultIdx < stop) stop = defaultIdx;
     const chunk = body.slice(start, stop);
     labels.push(positions[i].name);
     // A fall-through label has nothing but whitespace before the next case.
-    if (!/\S/.test(chunk.replace(/case\s+'[A-Za-z0-9_]+'\s*:/g, ''))) continue;
+    if (!/\S/.test(chunk.replace(/case\s+['"][A-Za-z0-9_]+['"]\s*:/g, ''))) continue;
 
-    // Strip comments BEFORE matching (Codex round-1 P2). Without this, a mapping
-    // left commented out by a refactor —
-    //   // loanId: Number(args.loanId as bigint),
-    //   loanId: null,
-    // — is the FIRST match and the field reads as mapped, so the regression this
-    // script exists to catch passes green. A guardrail a stale comment can
-    // satisfy is worse than none.
-    const code = chunk.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    // Already comment-free: `body` is stripped once, above. That is what closes
+    // Codex round-1 P2 — a mapping left commented out by a refactor, sitting
+    // above a live `loanId: null`, used to be the first match and read as mapped,
+    // so the regression this script exists to catch passed green.
+    const code = chunk;
 
-    // Restrict to the returned object rather than the whole chunk, so an
-    // unrelated `loanId:` in a local literal cannot stand in for the return.
-    const ret = code.match(/return\s*\{([\s\S]*?)\}\s*;/);
-    const scope = ret ? ret[1] : code;
+    // EVERY return path, not just the first (Codex round-5 P2).
+    //
+    // Restricting to the returned object keeps an unrelated `loanId:` in a
+    // local literal from standing in for the return — but reading only the FIRST
+    // returned object meant a case shaped like
+    //
+    //     if (ok) return { actor, loanId: Number(args.loanId as bigint), ... };
+    //     return { actor: null, loanId: null, offerId: null };
+    //
+    // was marked mapped off the happy path while the fallback wrote NULL. The
+    // shape rule from round 4 did not establish an unconditional read after all,
+    // because "unconditional" is a property of ALL paths and I was checking one.
+    //
+    // A `return` this cannot parse as an object literal is reported rather than
+    // ignored, so an unparsed path cannot pass as a clean one.
+    const retObjects = [...code.matchAll(/return\s*\{([\s\S]*?)\}\s*;/g)].map((r) => r[1]);
+    const returnCount = (code.match(/\breturn\b/g) ?? []).length;
+    const unparsedReturns = returnCount - retObjects.length;
+    const scopes = retObjects.length > 0 ? retObjects : [code];
 
     /**
      * A mapping counts only if it UNCONDITIONALLY reads one of the event's own
@@ -418,10 +459,14 @@ const suspectMappings = [];
     for (const label of labels) {
       const fields = new Set();
       for (const field of REF_FIELDS) {
-        const hit = scope.match(new RegExp(`\\b${field}\\s*:\\s*([^,\\n]+)`));
-        if (!hit) continue;
-        const expr = hit[1].trim();
-        if (/^null\b/.test(expr)) continue; // deliberately unmapped
+        // One expression per return path that names this field.
+        const exprs = scopes
+          .map((s) => s.match(new RegExp(`\\b${field}\\s*:\\s*([^,\\n]+)`)))
+          .filter(Boolean)
+          .map((h) => h[1].trim());
+        if (exprs.length === 0) continue;
+        // Deliberately unmapped on every path.
+        if (exprs.every((e) => /^null\b/.test(e))) continue;
 
         const accepted = aliasNames.get(label)?.get(field);
         if (!accepted || accepted.size === 0) continue; // event carries no such ref
@@ -444,14 +489,21 @@ const suspectMappings = [];
         // offset event picking one of two aliases still fits; something genuinely
         // computed does not) is REPORTED, not silently dropped, and widening it
         // is then a conscious edit here rather than an accident.
-        const shapeOk = [...accepted].some((alias) =>
-          new RegExp(`^Number\\(\\s*args\\.${alias}(\\s+as\\s+bigint)?\\s*\\)$`).test(expr),
-        );
-        // Belt and braces: `null` anywhere in a mapping expression means the
-        // column can end up empty, whatever the surrounding syntax.
-        const mentionsNull = /\bnull\b/.test(expr);
+        //
+        // Applied to EVERY return path (round 5): the weakest path decides, so a
+        // guarded happy path plus a null fallback is not an unconditional read.
+        const badExpr = exprs.find((e) => {
+          const shapeOk = [...accepted].some((alias) =>
+            new RegExp(`^Number\\(\\s*args\\.${alias}(\\s+as\\s+bigint)?\\s*\\)$`).test(e),
+          );
+          // Belt and braces: `null` anywhere in a mapping expression means the
+          // column can end up empty, whatever the surrounding syntax.
+          return !shapeOk || /\bnull\b/.test(e);
+        });
+        const expr = badExpr ?? exprs[0];
+        const mentionsNull = badExpr !== undefined && /\bnull\b/.test(badExpr);
 
-        if (shapeOk && !mentionsNull) {
+        if (badExpr === undefined && unparsedReturns === 0) {
           fields.add(field);
         } else {
           suspectMappings.push({
@@ -460,7 +512,9 @@ const suspectMappings = [];
             expr,
             why: mentionsNull
               ? 'can resolve to null'
-              : `not an unconditional read of an accepted alias (${[...accepted].join(' / ')})`,
+              : badExpr === undefined
+                ? `${unparsedReturns} return path(s) in this case could not be read as an object literal`
+                : `not an unconditional read of an accepted alias (${[...accepted].join(' / ')})`,
           });
         }
       }
