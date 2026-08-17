@@ -642,12 +642,48 @@ else
     | sed -E 's/Item\([[:space:]]*"([A-Za-z0-9]+)".*[[:space:]](_get[A-Za-z0-9]+Selectors)\(\)/\2 \1/' \
     | sort -u)"
 
-  # Refuse to pass vacuously: a refactor that changes any of these call
-  # shapes must break the check loudly, not empty it. Bounds are minimums,
-  # not exact counts, so adding a facet does not require editing this file.
-  if [ "$(printf '%s\n' "$CUT_GETTER_VAR" | grep -c .)" -lt 50 ] \
-    || [ "$(printf '%s\n' "$WROTE_VAR_KEY" | grep -c .)" -lt 50 ] \
-    || [ "$(printf '%s\n' "$REFRESH_GETTER_KEY" | grep -c .)" -lt 50 ]; then
+  # EXACT coverage of what is there, not a floor (Codex #1798 r1 P1).
+  #
+  # A minimum-count guard only catches a refactor that breaks EVERY call shape.
+  # One registration that stops matching — a key with a character the pattern
+  # rejects, `Item("backstop-Facet", ...)` — drops silently out of the harvest,
+  # stays far above any floor, and is then absent from every comparison below, so
+  # the gate passes while that facet is written under no key at all. Same defect
+  # as a vacuity guard that is per-run rather than per-item.
+  #
+  # So each construct is COUNTED in the source and the count must equal the number
+  # of pairs parsed from it. Unparsed occurrences are the failure. No hand-kept
+  # totals: both sides are derived, so adding a facet needs no edit here.
+  # A helper's own DEFINITION is not a call site: `function _buildCut(` matches
+  # the same text as its 73 invocations, which is why this counted 74. Definitions
+  # are subtracted rather than the pattern being narrowed, so the count stays
+  # correct however the call sites are written.
+  count_calls() { # <flattened source> <name>
+    _all=$(printf '%s' "$1" | grep -oE "[^A-Za-z0-9_]$2\(" | grep -c . || true)
+    _def=$(printf '%s' "$1" | grep -oE "function[[:space:]]+$2\(" | grep -c . || true)
+    echo $((_all - _def))
+  }
+  N_CUT_CALLS=$(count_calls "$DEPLOY_FLAT" '_buildCut')
+  N_WRITE_CALLS=$(count_calls "$DEPLOY_FLAT" 'writeFacet')
+  N_ITEM_CALLS=$(count_calls "$REFRESH_FLAT" 'Item')
+  N_CUT_PAIRS=$(printf '%s\n' "$CUT_GETTER_VAR" | grep -c . || true)
+  N_WRITE_PAIRS=$(printf '%s\n' "$WROTE_VAR_KEY" | grep -c . || true)
+  N_ITEM_PAIRS=$(printf '%s\n' "$REFRESH_GETTER_KEY" | grep -c . || true)
+  UNPARSED=""
+  [ "$N_CUT_PAIRS" -eq "$N_CUT_CALLS" ] || UNPARSED="$UNPARSED
+    _buildCut: $N_CUT_CALLS call(s) in DeployDiamond.s.sol, $N_CUT_PAIRS parsed"
+  [ "$N_WRITE_PAIRS" -eq "$N_WRITE_CALLS" ] || UNPARSED="$UNPARSED
+    writeFacet: $N_WRITE_CALLS call(s) in DeployDiamond.s.sol, $N_WRITE_PAIRS parsed"
+  [ "$N_ITEM_PAIRS" -eq "$N_ITEM_CALLS" ] || UNPARSED="$UNPARSED
+    Item: $N_ITEM_CALLS call(s) in RefreshAllFacetsInPlace.s.sol, $N_ITEM_PAIRS parsed"
+  if [ -n "$UNPARSED" ]; then
+    echo "  ✗ some facet registrations could not be parsed, so they would be" >&2
+    echo "    invisible to the comparisons below:$UNPARSED" >&2
+    echo "    Every call must match the expected shape. Fix the registration (or this" >&2
+    echo "    check if a shape legitimately changed) — do not let one drop out." >&2
+    FAIL=1
+  elif [ "$N_CUT_PAIRS" -lt 50 ] || [ "$N_WRITE_PAIRS" -lt 50 ] || [ "$N_ITEM_PAIRS" -lt 50 ]; then
+    # Backstop for the case the counts agree because BOTH sides went to zero.
     echo "  ✗ harvested implausibly few facet registrations — a call shape this" >&2
     echo "    check greps for has probably changed. Fix this check; do not delete it." >&2
     FAIL=1
@@ -666,7 +702,28 @@ else
       echo "  ✓ every cut facet is written to the deployment artifact"
     fi
 
-    # 2. the refresh script labels each facet with the deploy's own key
+    # 2. variable ↔ key must be ONE-TO-ONE before anything is built on it
+    #    (Codex #1798 r1 P1). The awk map below keys on the variable, so two
+    #    writes for one variable silently collapse to whichever key sorts last.
+    #    The dangerous direction is the other one: two writes sharing a KEY —
+    #    `writeFacet("aggregatorAdapterFactoryFacet", address(backstopFacet))`
+    #    next to the correct aggregator write — leave both comparisons below
+    #    empty while, at deploy time, the second write overwrites the first key's
+    #    address with the wrong facet. The artifact is then confidently wrong,
+    #    which is worse than the missing keys this step was written to catch.
+    DUP_VARS="$(printf '%s\n' "$WROTE_VAR_KEY" | awk 'NF{print $1}' | sort | uniq -d || true)"
+    DUP_KEYS="$(printf '%s\n' "$WROTE_VAR_KEY" | awk 'NF{print $2}' | sort | uniq -d || true)"
+    if [ -n "$DUP_VARS" ] || [ -n "$DUP_KEYS" ]; then
+      echo "  ✗ writeFacet registrations are not one-to-one:" >&2
+      [ -z "$DUP_VARS" ] || { echo "      facet variable(s) written under more than one key:" >&2
+                              printf '        %s\n' $DUP_VARS >&2; }
+      [ -z "$DUP_KEYS" ] || { echo "      key(s) written from more than one facet variable —" >&2
+                              echo "      the later write OVERWRITES the earlier address:" >&2
+                              printf '        %s\n' $DUP_KEYS >&2; }
+      FAIL=1
+    fi
+
+    # 3. the refresh script labels each facet with the deploy's own key
     DEPLOY_GETTER_KEY="$(awk 'NR==FNR{k[$1]=$2;next} ($2 in k){print $1, k[$2]}' \
       <(printf '%s\n' "$WROTE_VAR_KEY") <(printf '%s\n' "$CUT_GETTER_VAR") | sort -u)"
     KEY_DRIFT="$(awk 'NR==FNR{d[$1]=$2;next} ($1 in d) && d[$1]!=$2 {print $1" deploy="d[$1]" refresh="$2}' \
