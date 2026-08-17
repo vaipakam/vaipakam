@@ -138,12 +138,31 @@ else
     # out of the repository and the file is simply never found, leaving the
     # boundary set empty and this whole check silently inert. Resolve it where
     # git actually meant it, and make it absolute and physical while here.
-    common_dir="$(cd "$DIR" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
-    if [ -r "$common_dir/shallow" ]; then
-      while IFS= read -r boundary_sha; do
-        [ -n "$boundary_sha" ] && SHALLOW_BOUNDARY["$boundary_sha"]=1
-      done < "$common_dir/shallow"
+    #
+    # If the repo says it is shallow, the boundary list is REQUIRED — proceeding
+    # without it would run the fabricated-date case completely unguarded, which
+    # is the one thing this branch exists to prevent. So every way of failing to
+    # get it stops the run rather than leaving an empty set behind. `cd ""`
+    # silently succeeds and stays put, so an empty answer here would otherwise
+    # resolve to `$DIR`, find no `shallow` file, and look exactly like a healthy
+    # non-shallow repository.
+    cdir_rel="$(git -C "$DIR" rev-parse --git-common-dir 2>/dev/null || true)"
+    common_dir=""
+    if [ -n "$cdir_rel" ]; then
+      common_dir="$(cd "$DIR" && cd "$cdir_rel" 2>/dev/null && pwd -P)" || common_dir=""
     fi
+    if [ -z "$common_dir" ] || [ ! -r "$common_dir/shallow" ]; then
+      echo "Error: the repository is shallow, but its boundary list could not be" >&2
+      echo "read, so there is no way to tell a fragment's real date from the" >&2
+      echo "boundary's. Refusing rather than dating on an unchecked history." >&2
+      echo "" >&2
+      echo "Run 'git fetch --unshallow' (or clone at full depth) and retry, or" >&2
+      echo "pass --allow-mixed-dates to assemble without dating." >&2
+      exit 1
+    fi
+    while IFS= read -r boundary_sha; do
+      [ -n "$boundary_sha" ] && SHALLOW_BOUNDARY["$boundary_sha"]=1
+    done < "$common_dir/shallow"
   fi
 
   # An UNCOMMITTED rename defeats `--follow`: no commit connects the new name to
