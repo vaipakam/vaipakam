@@ -244,7 +244,22 @@ const isAliasOf = (field, name) =>
   typeof name === 'string' &&
   (REF_SHAPE[field].test(name) || REF_EXTRA_ALIASES[field].includes(name));
 
-const barrelSrc = readFileSync(join(ABI_DIR, 'index.ts'), 'utf8');
+/**
+ * The barrel, with comments stripped (Codex round-4 P2).
+ *
+ * The spread and import patterns below are text matches, so a member disabled
+ * by commenting it out — `// ...OfferMatchFacetABI`, the natural way to remove
+ * one — still read as live. The enforced set then included a facet the indexer
+ * no longer decodes, every mapping and exemption for it stayed falsely current,
+ * and the event count did not budge. Same defect as the commented-out mapping in
+ * `pluckActivityRefs` (round 1): I stripped comments there and not here.
+ *
+ * Line comments are cut only where `//` is not part of `://`, so a URL inside a
+ * string survives.
+ */
+const barrelSrc = readFileSync(join(ABI_DIR, 'index.ts'), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
 /**
  * `import FooABI from './Foo.json'` → identifier -> filename. Either quote
@@ -411,21 +426,41 @@ const suspectMappings = [];
         const accepted = aliasNames.get(label)?.get(field);
         if (!accepted || accepted.size === 0) continue; // event carries no such ref
 
-        const readsAlias = [...accepted].some((alias) =>
-          new RegExp(`\\bargs\\.${alias}\\b`).test(expr),
+        // Accept only the exact shape every live mapping already uses:
+        //   Number(args.<accepted alias> as bigint)
+        //
+        // A POSITIVE shape rule, not a blacklist (Codex round-4 P2). Round 3
+        // rejected a leading literal `null`; round 4 slipped
+        // `args.offerID == null ? (null) : Number(args.lenderOfferId as bigint)`
+        // past it — the accepted alias appears, and the parenthesised `null`
+        // dodged the pattern, so a misspelled condition wrote NULL to every row
+        // while the check read green. Each round I widened the blacklist and
+        // each round a new decoration walked through it, which is the argument
+        // for enumerating what is ALLOWED instead: a shape cannot be satisfied
+        // by wrapping, and "unconditionally reads a decoded argument" is
+        // precisely what this shape expresses.
+        //
+        // Deliberately narrow. A future mapping needing a different form (an
+        // offset event picking one of two aliases still fits; something genuinely
+        // computed does not) is REPORTED, not silently dropped, and widening it
+        // is then a conscious edit here rather than an accident.
+        const shapeOk = [...accepted].some((alias) =>
+          new RegExp(`^Number\\(\\s*args\\.${alias}(\\s+as\\s+bigint)?\\s*\\)$`).test(expr),
         );
-        const nullable = /(\?\?|\?|:)\s*null\b/.test(expr);
+        // Belt and braces: `null` anywhere in a mapping expression means the
+        // column can end up empty, whatever the surrounding syntax.
+        const mentionsNull = /\bnull\b/.test(expr);
 
-        if (readsAlias && !nullable) {
+        if (shapeOk && !mentionsNull) {
           fields.add(field);
         } else {
           suspectMappings.push({
             event: label,
             field,
             expr,
-            why: !readsAlias
-              ? `reads no accepted alias (${[...accepted].join(' / ')})`
-              : 'can resolve to null',
+            why: mentionsNull
+              ? 'can resolve to null'
+              : `not an unconditional read of an accepted alias (${[...accepted].join(' / ')})`,
           });
         }
       }
