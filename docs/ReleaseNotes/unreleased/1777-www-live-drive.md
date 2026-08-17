@@ -8,7 +8,10 @@ afterwards, so the next person began again from nothing.
 
 The drive for the recently changed worked example is now committed alongside the
 site, with a short guide covering how to run one and what belongs in a new one.
-Nothing about the site changes; this is the checking, not the thing checked.
+The site changes in one small, deliberate way to support it — each page now
+carries a machine-readable marker stating whether it accepted the published
+configuration, described below — and in no other; what the pages display is
+untouched.
 
 ### Why an automated pre-merge check is not enough here
 
