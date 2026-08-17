@@ -173,9 +173,21 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // cut (no selector overlap, order-independent).
     uint256 internal constant SELECTOR_BUDGET = 120;
 
-    // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
-    // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 73;
+    // Must equal DeployDiamond's `cuts` array length. A mismatch means a facet
+    // was added to DeployDiamond but not mirrored into `_deployItems()` here.
+    //
+    // `public` so an EXTERNAL guardrail can assert it —
+    // `test/deploy/RefreshScriptFacetParityTest` compares this against
+    // `DiamondFacetNames.cutFacetNames().length`. That cross-check has to live
+    // outside this file, because the `require` in `refresh()` below compares
+    // `items.length` against THIS constant: omit a facet from both (the natural
+    // way to omit one, since you touch neither line) and the require passes
+    // while the refresh silently leaves that facet on stale bytecode. #1791's
+    // Codex F1 was exactly that, and this script's own guard could not see it.
+    //
+    // The parity test deliberately lives in `test/`, not here: a production
+    // refresh script must not import test code to check itself.
+    uint256 public constant EXPECTED_FACETS = 73;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -772,7 +784,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///         `addresses.json` key and inherited selector list. The facet set,
     ///         order, types, and getters mirror `DeployDiamond`'s `cuts[0..62]`
     ///         exactly — keep this in lockstep when a facet is added there.
-    function _deployItems() private returns (Item[] memory items) {
+    /// @dev `internal` rather than `private` so `RefreshScriptFacetParityTest`
+    ///      can drive it through a probe subclass and assert every slot is
+    ///      POPULATED — not merely allocated. Codex #1795 P1: the array is sized
+    ///      `new Item[](EXPECTED_FACETS)`, so a forgotten `items[N] = Item(...)`
+    ///      leaves a zero-valued slot while every length check — the `require` in
+    ///      `refresh()` and a count-only test alike — still passes, and the live
+    ///      refresh then skips that facet. Only reading the contents catches it.
+    function _deployItems() internal returns (Item[] memory items) {
         items = new Item[](EXPECTED_FACETS);
         items[0] = Item("diamondLoupeFacet", address(new DiamondLoupeFacet()), _getLoupeSelectors());
         items[1] = Item("ownershipFacet", address(new OwnershipFacet()), _getOwnershipSelectors());
