@@ -143,21 +143,42 @@ try {
   }
 
   const knobSpans = spans.filter((s) => INPUT_KNOBS.includes(s.name));
-  const knobsLive = knobSpans.length > 0 && knobSpans.every((s) => s.source === 'published');
+  // EVERY declared input must be present and published — not "at least one
+  // and all of those found". Renaming or dropping one knob span would
+  // otherwise leave `knobsLive` true on the survivors, pass the published
+  // and provenance checks, and turn all four arithmetic assertions into
+  // skips, so the drive would exit 0 having never observed that input at
+  // all (Codex #1778 r2 P2).
+  const knobsLive = INPUT_KNOBS.every((name) =>
+    knobSpans.some((s) => s.name === name && s.source === 'published'),
+  );
+  const missingKnobs = INPUT_KNOBS.filter((name) => !knobSpans.some((s) => s.name === name));
 
   // An all-bundled render is indistinguishable from a healthy one by
   // value alone, because the bundled defaults ARE the current on-chain
   // values. On production that is a failed indexer fetch, and letting it
   // pass would mean the drive never observes the published snapshot it
   // exists to check (Codex #1778 r1 P2).
+  //
+  // A missing knob is its own failure, reported separately from an
+  // unpublished one, so the output says which of the two went wrong.
+  record(
+    'every declared input knob is present',
+    missingKnobs.length === 0,
+    missingKnobs.length ? `missing: ${missingKnobs.join(', ')}` : INPUT_KNOBS.join(', '),
+  );
+
   if (REQUIRE_PUBLISHED) {
     record(
-      'input knobs came from the published snapshot',
+      'every input knob came from the published snapshot',
       knobsLive,
       knobSpans.map((s) => `${s.name}=${s.source}`).join(', ') || 'no knob spans',
     );
   } else {
-    skip('input knobs came from the published snapshot', 'REQUIRE_PUBLISHED is off for this target');
+    skip(
+      'every input knob came from the published snapshot',
+      'REQUIRE_PUBLISHED is off for this target',
+    );
   }
 
   // Provenance defers to the least certain input: a derived figure may
@@ -219,25 +240,68 @@ try {
   // pre-snapshot, survives the rebuild, still finds the page). Its full
   // power arrives the first time a retune makes the two differ, which is
   // exactly when the bug would bite.
-  const exact = spans.find((s) => s.name === 'exampleTreasuryYieldFeeExact');
-  const query = exact?.text;
+  // The two loads must sit on ONE config snapshot. The search page is a
+  // fresh document whose store fetches independently, so a retune landing
+  // between them makes this check meaningless in BOTH directions
+  // (Codex #1778 r2 P2): a healthy rebuilt index correctly omits the old
+  // figure and reads as a regression, while a stale-index implementation
+  // that retained the old value would read as a pass. So the figure is
+  // re-read from the Overview afterwards and the result is only trusted
+  // if it did not move.
+  const readExactFigure = async () => {
+    const found = await page.$$eval('[data-live-value]', (els) =>
+      els.map((e) => ({ name: e.getAttribute('data-live-value'), text: e.textContent.trim() })),
+    );
+    return found.find((s) => s.name === 'exampleTreasuryYieldFeeExact')?.text;
+  };
+
+  let query = spans.find((s) => s.name === 'exampleTreasuryYieldFeeExact')?.text;
+  let settled = false;
 
   if (!query) {
     record('search finds the page printing the exact figure', false, 'no figure to search for');
   } else {
-    await page.goto(`${BASE}/help/search?q=${encodeURIComponent(query)}`, {
-      waitUntil: 'networkidle',
-      timeout: 60_000,
-    });
-    await page.waitForTimeout(3_000);
+    // One retry: a retune is a single discrete event, so a second attempt
+    // on the new value almost always lands on a stable pair.
+    for (let attempt = 1; attempt <= 2 && !settled; attempt++) {
+      await page.goto(`${BASE}/help/search?q=${encodeURIComponent(query)}`, {
+        waitUntil: 'networkidle',
+        timeout: 60_000,
+      });
+      await page.waitForTimeout(3_000);
 
-    const bodyText = await page.textContent('body');
-    const found = !/no results|no matches/i.test(bodyText) && bodyText.includes(query);
-    record(
-      `search finds the page printing ${query}`,
-      found,
-      found ? 'a result quotes the figure' : 'no result quoting the figure',
-    );
+      const bodyText = await page.textContent('body');
+      const found = !/no results|no matches/i.test(bodyText) && bodyText.includes(query);
+
+      // Re-read the source of the figure before believing the result.
+      await page.goto(`${BASE}/help/overview`, { waitUntil: 'networkidle', timeout: 60_000 });
+      await page.waitForTimeout(3_000);
+      const after = await readExactFigure();
+
+      if (after === query) {
+        settled = true;
+        record(
+          `search finds the page printing ${query}`,
+          found,
+          found ? 'a result quotes the figure' : 'no result quoting the figure',
+        );
+      } else if (attempt === 1) {
+        console.log(
+          `      configuration moved mid-run (${query} → ${after ?? 'nothing'}); ` +
+            `retrying the search with the current figure`,
+        );
+        query = after;
+        if (!query) break;
+      }
+    }
+
+    if (!settled) {
+      skip(
+        'search finds the page printing the exact figure',
+        'the published configuration changed mid-run, so the two page loads sat on ' +
+          'different snapshots and the result would be meaningless either way',
+      );
+    }
   }
 } finally {
   await browser.close();
