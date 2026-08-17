@@ -348,9 +348,11 @@ and the spec's own text, not an inspection of what the tree happens to contain
 Left alone deliberately, and an earlier revision of this entry understated it by
 saying the implementation was "live" so only the coverage was missing. That is
 not what the tree shows. `contracts/script/lib/LibCreate2Deploy.sol` exists —
-under `script/`, not `src/` — but nothing imports or calls it; a repo-wide
-search finds only its own declaration and one prose mention in
-`docs/ops/DeploymentRunbook.md`. And both deploy scripts say the opposite of
+under `script/`, not `src/` — but **nothing imports or calls it**. Every
+reference to the name in the tree is inert: its own declaration, one prose
+mention in `docs/ops/DeploymentRunbook.md`, and a row in
+`docs/internal/batch5-unsafe-typecast-triage.csv` inventorying a cast inside
+it. Not one is a use. And both deploy scripts say the opposite of
 the spec's claim: `deploy-testnet.sh` and `deploy-mainnet.sh` each state that
 the reward-messenger deploy uses a plain `new` rather than CREATE2.
 
