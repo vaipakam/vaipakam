@@ -222,6 +222,24 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
         // ── refresh side: what an in-place refresh would cut ───────────
         RefreshAllFacetsInPlace.Item[] memory items = new RefreshItemsProbe().deployItemsForTest();
         for (uint256 i; i < items.length; ++i) {
+            // Codex round-3 P1: selector-set equality is STILL blind to a wrong
+            // implementation. Keep the canonical selector getter but instantiate a
+            // different facet — `Item(key, address(new WrongFacet()),
+            // _getRightSelectors())` — and the union is unchanged, so both
+            // directions below pass. The refresh would then route those selectors
+            // to a facet that does not implement them, and the script's own
+            // post-cut verification passes too, because it compares live routing
+            // against that same wrong address.
+            //
+            // So the IMPLEMENTATION is compared as well, by `codehash` rather than
+            // by address: the refresh deploys fresh instances by design, so the
+            // addresses MUST differ while the runtime code must not.
+            bytes32 itemCodeHash = items[i].impl.codehash;
+            assertTrue(
+                itemCodeHash != bytes32(0),
+                string.concat("items[", vm.toString(i), "] impl has no runtime code")
+            );
+
             for (uint256 j; j < items[i].selectors.length; ++j) {
                 bytes4 sel = items[i].selectors[j];
                 _cutByRefresh[sel] = true;
@@ -233,6 +251,20 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
                         " (facet '",
                         items[i].key,
                         "') that DeployDiamond does not route - a retired facet is still listed in _deployItems()"
+                    )
+                );
+                assertEq(
+                    itemCodeHash,
+                    IDiamondLoupe(diamond).facetAddress(sel).codehash,
+                    string.concat(
+                        "items[",
+                        vm.toString(i),
+                        "] ('",
+                        items[i].key,
+                        "') would cut selector ",
+                        vm.toString(sel),
+                        " to an implementation whose runtime code differs from the facet that owns it on the"
+                        " deployed Diamond - the wrong facet is instantiated for these selectors"
                     )
                 );
             }
