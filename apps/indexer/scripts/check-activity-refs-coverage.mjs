@@ -155,7 +155,16 @@ const DELIBERATELY_NOT_SCOPED = {
   // Genuinely not offer-scoped: companion payloads whose primary event already
   // carries the reference, so scoping both would double-count the timeline.
   // Same rationale as LoanInitiatedDetails above.
-  OfferCreatedDetails: 'companion payload to OfferCreated, which is offer-scoped already',
+  'OfferCreatedDetails.offerId': 'companion payload to OfferCreated, which is offer-scoped already',
+  // Entered scope with the round-6 tuple traversal: the loan reference is
+  // `fields.refinanceTargetLoanId`, nested in the terms struct. Marked TODO
+  // rather than exempt because it is a genuine question, not a companion-payload
+  // case like the offer side: that id is the loan a refinance offer TARGETS, not
+  // a loan this event happened to. Filing the row under it would put an offer
+  // creation on the target loan's timeline, which may well be what a reader
+  // wants — but that is a product call for the slice that makes it.
+  'OfferCreatedDetails.loanId':
+    'TODO(#1794) — refinance TARGET loan inside the terms tuple; scoping it puts an offer creation on that loan timeline, which needs a deliberate decision',
   OfferCanceledDetails: 'companion payload to OfferCanceled, which is offer-scoped already',
 
   // TODO(#1794): real gaps on the offer side. NOTE these are NOT the same
@@ -331,9 +340,27 @@ for (const file of memberFiles) {
   if (!Array.isArray(items)) continue;
   for (const item of items) {
     if (item?.type !== 'event' || !Array.isArray(item.inputs)) continue;
-    const names = item.inputs.map((i) => i?.name);
+    // Tuple components too, carrying the decoded ACCESS PATH (Codex round-6 P2).
+    // Collecting only top-level input names left references nested in a struct
+    // outside coverage entirely — and one is live in the current ABI:
+    // `OfferCreatedDetails` carries `fields.refinanceTargetLoanId`, so the event
+    // was enforced for its top-level `offerId` and never asked about the loan.
+    // The path is what the mapping check needs, since the indexer would read it
+    // as `args.fields.refinanceTargetLoanId`.
+    const names = [];
+    const collect = (inputs, prefix) => {
+      for (const i of inputs ?? []) {
+        if (!i?.name) continue;
+        const path = prefix ? `${prefix}.${i.name}` : i.name;
+        names.push(path);
+        if (Array.isArray(i.components)) collect(i.components, path);
+      }
+    };
+    collect(item.inputs, '');
     for (const field of REF_FIELDS) {
-      const aliases = names.filter((n) => isAliasOf(field, n));
+      // Shape-matching applies to the LAST path segment: `fields.newLoanId` is a
+      // loan reference for the same reason `newLoanId` is.
+      const aliases = names.filter((n) => isAliasOf(field, n.split('.').pop()));
       if (aliases.length === 0) continue;
       if (!carries.has(item.name)) carries.set(item.name, new Set());
       carries.get(item.name).add(field);
@@ -389,9 +416,12 @@ const suspectMappings = [];
   // Fixing a TODO has to trip the stale-entry check, or the allowlist rots.
   const CASE_RE = /case\s+['"]([A-Za-z0-9_]+)['"]\s*:/g;
   const labels = [];
+  let pendingCode = '';
   let m;
   const positions = [];
-  while ((m = CASE_RE.exec(body)) !== null) positions.push({ name: m[1], end: m.index + m[0].length });
+  while ((m = CASE_RE.exec(body)) !== null) {
+    positions.push({ name: m[1], start: m.index, end: m.index + m[0].length });
+  }
   // `default:` terminates the last case's chunk. Without this the final case
   // runs to the end of the function and absorbs the default clause's
   // `{ actor: null, loanId: null, offerId: null }` — which the every-path rule
@@ -399,20 +429,55 @@ const suspectMappings = [];
   // that rule flagging `PrepayListingMatched.loanId`, a mapping that is in fact
   // correct and unconditional: the defect was in this splitter, not the indexer.
   const defaultIdx = body.search(/\bdefault\s*:/);
+  /**
+   * Does this chunk definitely leave the switch, or can control reach the next
+   * label? (Codex round-6 P2.)
+   *
+   * The old test was "is the chunk empty" — so a chunk with a CONDITIONAL return
+   * and no terminator after it counted as complete, while at runtime the false
+   * branch falls into the following case and returns ITS object. A case guarded
+   * that way, falling through to an allowlisted event whose return is
+   * `loanId: null`, wrote NULL whenever the condition was false and still read as
+   * mapped here.
+   *
+   * Terminator is judged at brace depth 0, so a `return` inside the guard's own
+   * block does not count as terminating the case.
+   */
+  const terminates = (chunk) => {
+    let depth = 0;
+    let top = '';
+    for (const ch of chunk) {
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      else if (depth === 0) top += ch;
+    }
+    return /(?:\breturn\b[^;]*;|\bthrow\b[^;]*;|\bbreak\b\s*;|\bcontinue\b\s*;)\s*$/.test(top.trim());
+  };
+
   for (let i = 0; i < positions.length; i++) {
     const start = positions[i].end;
-    let stop = i + 1 < positions.length ? positions[i + 1].end : body.length;
+    // Slice to the next label's START, not past it: including the label text only
+    // to strip it again made the fall-through test read its own leftovers.
+    let stop = i + 1 < positions.length ? positions[i + 1].start : body.length;
     if (defaultIdx !== -1 && defaultIdx > start && defaultIdx < stop) stop = defaultIdx;
     const chunk = body.slice(start, stop);
     labels.push(positions[i].name);
-    // A fall-through label has nothing but whitespace before the next case.
-    if (!/\S/.test(chunk.replace(/case\s+['"][A-Za-z0-9_]+['"]\s*:/g, ''))) continue;
+    // Accumulate this label into the next chunk unless control cannot escape it:
+    // an empty chunk (a plain shared label) or a non-empty one that can fall
+    // through are the same situation — the following case's returns bind here too.
+    // The chunk's OWN text accumulates as well, so a conditional return in a
+    // falling-through case is still one of the paths validated for these labels.
+    if (!/\S/.test(chunk) || !terminates(chunk)) {
+      pendingCode += chunk;
+      continue;
+    }
 
     // Already comment-free: `body` is stripped once, above. That is what closes
     // Codex round-1 P2 — a mapping left commented out by a refactor, sitting
     // above a live `loanId: null`, used to be the first match and read as mapped,
     // so the regression this script exists to catch passed green.
-    const code = chunk;
+    const code = pendingCode + chunk;
+    pendingCode = '';
 
     // EVERY return path, not just the first (Codex round-5 P2).
     //
@@ -459,14 +524,24 @@ const suspectMappings = [];
     for (const label of labels) {
       const fields = new Set();
       for (const field of REF_FIELDS) {
-        // One expression per return path that names this field.
-        const exprs = scopes
-          .map((s) => s.match(new RegExp(`\\b${field}\\s*:\\s*([^,\\n]+)`)))
-          .filter(Boolean)
-          .map((h) => h[1].trim());
-        if (exprs.length === 0) continue;
-        // Deliberately unmapped on every path.
-        if (exprs.every((e) => /^null\b/.test(e))) continue;
+        // One expression per return path — and a path that does NOT name the
+        // field is a hole, not something to drop (Codex round-6 P2).
+        //
+        // `.filter(Boolean)` used to discard any returned object without an
+        // explicit `loanId:`, so a fallback of the form `{ ...fallback }` (with
+        // `fallback.loanId = null`) vanished from the check and the event still
+        // counted as mapped while that path wrote NULL. A spread cannot be
+        // resolved by reading text, so it is reported rather than assumed benign.
+        const perScope = scopes.map((s) => {
+          const h = s.match(new RegExp(`\\b${field}\\s*:\\s*([^,\\n]+)`));
+          return h ? h[1].trim() : null;
+        });
+        const exprs = perScope.filter((e) => e !== null);
+        if (exprs.length === 0) continue; // field never named on any path
+        // Deliberately unmapped: every path that names it says null, and no path
+        // leaves it unexplained.
+        if (exprs.every((e) => /^null\b/.test(e)) && exprs.length === perScope.length) continue;
+        const opaqueScopes = perScope.length - exprs.length;
 
         const accepted = aliasNames.get(label)?.get(field);
         if (!accepted || accepted.size === 0) continue; // event carries no such ref
@@ -494,7 +569,11 @@ const suspectMappings = [];
         // guarded happy path plus a null fallback is not an unconditional read.
         const badExpr = exprs.find((e) => {
           const shapeOk = [...accepted].some((alias) =>
-            new RegExp(`^Number\\(\\s*args\\.${alias}(\\s+as\\s+bigint)?\\s*\\)$`).test(e),
+            // Dots in a tuple access path are escaped, so `fields.newLoanId`
+            // cannot be satisfied by `fieldsXnewLoanId`.
+            new RegExp(
+              `^Number\\(\\s*args\\.${alias.replace(/\./g, '\\.')}(\\s+as\\s+bigint)?\\s*\\)$`,
+            ).test(e),
           );
           // Belt and braces: `null` anywhere in a mapping expression means the
           // column can end up empty, whatever the surrounding syntax.
@@ -503,7 +582,7 @@ const suspectMappings = [];
         const expr = badExpr ?? exprs[0];
         const mentionsNull = badExpr !== undefined && /\bnull\b/.test(badExpr);
 
-        if (badExpr === undefined && unparsedReturns === 0) {
+        if (badExpr === undefined && unparsedReturns === 0 && opaqueScopes === 0) {
           fields.add(field);
         } else {
           suspectMappings.push({
@@ -512,9 +591,11 @@ const suspectMappings = [];
             expr,
             why: mentionsNull
               ? 'can resolve to null'
-              : badExpr === undefined
-                ? `${unparsedReturns} return path(s) in this case could not be read as an object literal`
-                : `not an unconditional read of an accepted alias (${[...accepted].join(' / ')})`,
+              : badExpr !== undefined
+                ? `not an unconditional read of an accepted alias (${[...accepted].join(' / ')})`
+                : opaqueScopes > 0
+                  ? `${opaqueScopes} return path(s) do not name this field explicitly (a spread cannot be resolved from text)`
+                  : `${unparsedReturns} return path(s) in this case could not be read as an object literal`,
           });
         }
       }
