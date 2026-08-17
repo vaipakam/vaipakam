@@ -1763,6 +1763,34 @@ Lenders may exit or attempt to exit their positions before maturity. For Phase 1
 - The borrower’s payment obligations under the live loan must remain well defined after the lender exit.
 - NFT ownership and claim rights must move consistently with the economic position.
 
+The rules below hold for **every** lender exit route, and are stated here rather
+than under one option because the hazard they address does not belong to a
+particular route. Where a rule was first written for one route and applies to
+both, this is its home — a rule kept under a single option is a rule the other
+option's reader will not see, which is how a route acquires a protection its
+sibling already has.
+
+- **No exit fills against an offer past its deadline.** Wherever a lender exit
+  consumes or creates an offer, an offer whose deadline has passed is not
+  fillable, however fresh the other party's own commitment is. This binds at the
+  moment of the fill, not at the moment the offer was found.
+- **No party may end up owing itself.** An exit that would leave the lender side
+  and the borrower side of one live loan held by the same party is refused,
+  whichever route produced it. Party identity resolves to whoever currently holds
+  the relevant position NFT, never to a stored origination address that may have
+  gone stale on the secondary market.
+- **A buyer may not enter a position sale at or after the loan's due date**, on
+  any route: the remaining term is zero and the buyer would be purchasing
+  nothing. The refusal happens before the buyer commits funds. A purchase already
+  entered before that moment is the opposite case — its settlement must remain
+  completable and is never refused on maturity grounds. Timing gates protect the
+  moment of entry; they never strand a committed purchase.
+- **One live sale route per position.** A position already being sold through one
+  route cannot simultaneously be sold through another; the seller ends the first
+  before starting the second. This is symmetric — neither route is privileged
+  over the other — because the failure it prevents is the same in both
+  directions: one position handed to two buyers.
+
 ### Option 1: Sell the Loan to Another Lender
 
 The original lender may transfer the active lender position to a new lender.

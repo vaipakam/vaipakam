@@ -41,6 +41,26 @@ read all pick up three new entries — a wide but entirely mechanical change,
 worth flagging so a reviewer seeing forty-odd touched files knows what they
 are.
 
+Alongside the split, four rules that govern every lender exit moved to where they
+apply. They had been written into the listed route's section as that route was
+built out — an offer past its deadline cannot be filled, a party must not end up
+owing itself, a buyer must not enter at or after the loan's due date, and one
+position must not be sold through two routes at once — which meant a reader of
+the direct route never met them. They now sit in the section the specification
+already had for rules shared across every exit route, stated without reference to
+a particular route. Nothing about either route's intended behaviour changed; what
+changed is that a reader of either one now sees the rules that bind it. Rules that
+are genuinely specific to a listing stay with the listing.
+
+This also corrects a finding recorded earlier the same day, which had claimed the
+direct route was missing from the specification entirely. It was not: it has a
+full section covering who may sell, what must hold before a sale, how accrued
+interest and any rate shortfall are treated, what the seller must be shown before
+confirming, and what the borrower experiences afterwards. The earlier claim came
+from searching the specification for a function name — and the specification is
+deliberately written without function names, so that search could only ever have
+come back empty. The real gap was narrower and is the one described above.
+
 One consequence to expect rather than puzzle over. Moving those three shared
 error definitions means every component's machine-readable interface picks them
 up, and two of the four components the public reference keeper bot reads are
