@@ -8,11 +8,14 @@ afterwards, so the next person began again from nothing.
 
 The drive for the recently changed worked example is now committed alongside the
 site, with a short guide covering how to run one and what belongs in a new one.
-The site changes in one small, deliberate way to support it — each page that
-consults the published configuration now states, in a machine-readable marker,
-whether it accepted it, described below — and in no other; what the pages
-display is untouched, and pages that never consult the configuration carry no
-marker at all, which is itself the signal that nothing ran.
+The site changes in one small, deliberate way to support it — a browser
+document in which the published configuration has been consulted now states,
+in a machine-readable marker, whether it was accepted, described below — and
+in no other; what the pages display is untouched. The marker belongs to the
+browser document, not to a route: once written it survives in-app navigation,
+which is correct, because it records what this document's one shared
+configuration read concluded. Its absence means that read never ran in this
+document at all.
 
 ### Why an automated pre-merge check is not enough here
 
@@ -58,9 +61,10 @@ Establishing this for every page the drive visits needed one small change to
 the site itself: each page that consults the published configuration now
 states, in a machine-readable marker, whether it accepted it or fell back to
 its bundled values — the same conclusion the page already reaches internally,
-exposed rather than guessed at. A page that never consults it carries no
-marker, and the check reads that absence as "nothing ran" rather than as
-success. Review showed why nothing less suffices: two successive attempts to
+exposed rather than guessed at. The marker is scoped to the browser document
+— it survives in-app navigation, since it records the document's one shared
+configuration read — and its absence means that read never ran in this
+document, which the check treats as "nothing ran" rather than as success. Review showed why nothing less suffices: two successive attempts to
 infer it from the outside each re-implemented part of the page's own acceptance
 rules and each got a case wrong. The page knows; the check now asks it.
 

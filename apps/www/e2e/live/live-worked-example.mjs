@@ -249,21 +249,33 @@ try {
       `${[...new Set(derivedSpans.map((s) => s.source))].join('/') || 'none'} (expected ${expectedSource})`,
   );
 
-  // Values, but only while the live rates still match the shipped
-  // defaults — otherwise a legitimate governance retune would read as a
-  // regression. The skips are tallied, so a retuned run cannot look like
-  // a complete pass.
-  const atDefaults = INPUT_KNOBS.every((k) =>
-    knobSpans.some((s) => s.name === k && s.text === DEFAULT_KNOB_TEXT[k]),
-  );
+  // Values, but a figure is only skipped when a knob IT DEPENDS ON has
+  // been retuned — one global all-knobs predicate would let a retune of
+  // either knob retire the assertions on figures computed entirely from
+  // the other, and a formula regression there would exit 0
+  // (Codex #1778 r8 P2). The mapping mirrors each figure's `dependsOn`
+  // in the registry: borrower-receives is the only figure on the
+  // initiation fee; the three treasury figures depend only on the
+  // treasury fee. The skips are tallied, so a retuned run cannot look
+  // like a complete pass.
+  const FIGURE_KNOBS = {
+    exampleBorrowerReceives: ['loanInitiationFeeBps'],
+    exampleLenderNet: ['treasuryFeeBps'],
+    exampleTreasuryYieldFee: ['treasuryFeeBps'],
+    exampleTreasuryYieldFeeExact: ['treasuryFeeBps'],
+  };
+  const knobAtDefault = (k) =>
+    knobSpans.some((s) => s.name === k && s.text === DEFAULT_KNOB_TEXT[k]);
   const knobReport = knobSpans.map((s) => `${s.name}=${s.text}`).join(', ') || 'none';
 
   for (const [name, expected] of Object.entries(EXPECTED_AT_DEFAULTS)) {
     const hit = spans.find((s) => s.name === name);
-    if (!atDefaults) {
+    const retuned = FIGURE_KNOBS[name].filter((k) => !knobAtDefault(k));
+    if (retuned.length) {
       skip(
         `${name} matches the contract's integer arithmetic`,
-        `live rates differ from the shipped defaults (${knobReport}); rendered ${hit?.text ?? 'nothing'}`,
+        `its input ${retuned.join(', ')} differs from the shipped default (${knobReport}); ` +
+          `rendered ${hit?.text ?? 'nothing'}`,
       );
       continue;
     }
