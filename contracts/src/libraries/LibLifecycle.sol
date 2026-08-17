@@ -51,6 +51,14 @@ library LibLifecycle {
     ///      so a transition that is invisible off-chain is no longer
     ///      constructible — there is no call site left that could forget. It
     ///      also makes a write-side static check on call sites unnecessary.
+    ///      The id comes from `loan.id` rather than from a caller-supplied
+    ///      argument. That is sound because `loan.id` is written exactly once,
+    ///      at creation (`LoanFacet.sol:953` is its only writer anywhere in
+    ///      `src/`), so it cannot drift from the storage key the caller indexed
+    ///      by. It is also the safer of the two: a `loanId` parameter would let
+    ///      a call site pass one loan's id while transitioning another, which is
+    ///      the precise failure #1782 describes — an event naming a different
+    ///      loan than the one that moved.
     /// @param loanId The loan whose status changed.
     /// @param from Status before the edge.
     /// @param to Status after the edge.
