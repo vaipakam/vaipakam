@@ -346,6 +346,8 @@ const aliasNames = new Map();
  * skipped because the event dropped out of the reference-carrying set entirely.
  */
 const eventInputs = new Map();
+/** ABI-side problems: overloaded signatures, reference names that aren't numeric. */
+const abiConflicts = [];
 for (const file of memberFiles) {
   let parsed;
   try {
@@ -365,304 +367,317 @@ for (const file of memberFiles) {
     // The path is what the mapping check needs, since the indexer would read it
     // as `args.fields.refinanceTargetLoanId`.
     const names = [];
+    /** path -> ABI type, so a reference can be required to be numeric. */
+    const typeOf = new Map();
     const collect = (inputs, prefix) => {
       for (const i of inputs ?? []) {
         if (!i?.name) continue;
         const path = prefix ? `${prefix}.${i.name}` : i.name;
         names.push(path);
+        typeOf.set(path, i.type ?? '');
         if (Array.isArray(i.components)) collect(i.components, path);
       }
     };
     collect(item.inputs, '');
+
+    // An overloaded event name is two different argument bags reaching ONE case
+    // (Codex round-8 P2). `decodeEventLog` can produce either, so a mapper keyed
+    // on the name cannot be right for both unless they agree. Rejected rather
+    // than silently collapsed to whichever signature was parsed last.
+    const priorInputs = eventInputs.get(item.name);
+    if (priorInputs) {
+      const differs =
+        priorInputs.size !== names.length || names.some((n) => !priorInputs.has(n));
+      if (differs) {
+        abiConflicts.push({
+          event: item.name,
+          message: `${item.name} — two ABI signatures with different arguments (${[...priorInputs].join(', ')} vs ${names.join(', ')}); a name-keyed mapper cannot be correct for both`,
+        });
+      }
+    }
     eventInputs.set(item.name, new Set(names));
     for (const field of REF_FIELDS) {
       // Shape-matching applies to the LAST path segment: `fields.newLoanId` is a
       // loan reference for the same reason `newLoanId` is.
       const aliases = names.filter((n) => isAliasOf(field, n.split('.').pop()));
-      if (aliases.length === 0) continue;
+      // A reference must also DECODE as a number (Codex round-8 P2). The accepted
+      // mapping shape is `Number(args.x as bigint)`, so a reference-shaped name
+      // typed `bytes32` or `address` would hand viem a hex string and persist an
+      // imprecise or out-of-range value. Name shape says "this is meant to be a
+      // reference"; the type says "and it can actually be read as one".
+      const numeric = aliases.filter((a) => /^u?int(\d+)?$/.test(typeOf.get(a) ?? ''));
+      const nonNumeric = aliases.filter((a) => !numeric.includes(a));
+      for (const a of nonNumeric) {
+        abiConflicts.push({
+          event: item.name,
+          message: `${item.name}.${a} — named like a ${field} reference but typed '${typeOf.get(a)}', which the Number(args…) mapping shape cannot read as an id`,
+        });
+      }
+      if (numeric.length === 0) continue;
       if (!carries.has(item.name)) carries.set(item.name, new Set());
       carries.get(item.name).add(field);
       // Kept per event+field for the mapping check below, which must confirm the
       // returned expression reads one of THESE inputs (Codex round-3 P2).
       if (!aliasNames.has(item.name)) aliasNames.set(item.name, new Map());
-      aliasNames.get(item.name).set(field, new Set(aliases));
+      aliasNames.get(item.name).set(field, new Set(numeric));
     }
   }
 }
 
 // ── 2. What pluckActivityRefs actually maps, per field ──────────────────
+/**
+ * Parsed with the TypeScript compiler, not with regexes.
+ *
+ * The regex version of this section survived eight review rounds, and every one
+ * of them found another way for text to satisfy it while the indexer did
+ * something else: a commented-out mapping, a `case "X":` in the other quote
+ * style, a second return path, a parenthesised `null`, a spread, an unbraced
+ * guard that falls through, a `loanId:` nested inside another object literal.
+ * Each fix was correct and none of them ended the class, because "does this
+ * source text mean what I think" is not a question a regex can answer — the
+ * supply of decorations is unbounded, and every one of them reports GREEN.
+ *
+ * `typescript` is already a devDependency here and `tsc` already runs in the
+ * same `typecheck` chain, so parsing properly costs no new dependency. The AST
+ * answers all of those structurally: comments are not nodes; a case label is a
+ * string literal whatever quotes it was written with; `return` statements are
+ * enumerable; a spread is a distinct node kind; property lookup is top-level by
+ * construction; and whether control can leave a clause is a statement question,
+ * not a suffix-matching one.
+ */
+const ts = (await import('typescript')).default;
+
 const src = readFileSync(CHAIN_INDEXER, 'utf8');
-const fnMatch = src.match(/function pluckActivityRefs\([\s\S]*?\n\}\n/);
-if (!fnMatch) {
+const sourceFile = ts.createSourceFile(CHAIN_INDEXER, src, ts.ScriptTarget.Latest, true);
+
+/** Find `function pluckActivityRefs(...)`. */
+let fnNode = null;
+const findFn = (node) => {
+  if (ts.isFunctionDeclaration(node) && node.name?.text === 'pluckActivityRefs') fnNode = node;
+  if (!fnNode) ts.forEachChild(node, findFn);
+};
+ts.forEachChild(sourceFile, findFn);
+if (!fnNode) {
   console.error(
     '[check-activity-refs-coverage] could not locate pluckActivityRefs() in chainIndexer.ts.\n' +
       'If it was renamed or moved, update this script — do not delete the check.',
   );
   process.exit(1);
 }
-/**
- * The function body with comments stripped ONCE, before any parsing.
- *
- * Round 1 stripped comments per case-chunk, which left every structural decision
- * — where cases begin, where `default:` ends the last one — reading raw text. Two
- * consequences, the second found while fixing the first:
- *
- *   · a comment mentioning `case 'Foo':` invents a label and a phantom chunk;
- *   · the `default:` clamp below latched onto the words "falls to `default:`"
- *     inside the #1782 comment, 8.5k characters before the real one.
- *
- * Comments cannot be a structural input. Line comments are cut only where `//`
- * is not part of `://`, so a URL in a string survives.
- */
-const body = fnMatch[0]
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
-/**
- * Split the switch into per-case blocks. Consecutive `case 'A': case 'B':`
- * labels share one return, so labels accumulate until a block with a body.
- */
-/** eventName -> Set<field it returns non-null> */
+/** The switch on the event name. */
+let switchNode = null;
+const findSwitch = (node) => {
+  if (ts.isSwitchStatement(node) && !switchNode) switchNode = node;
+  if (!switchNode) ts.forEachChild(node, findSwitch);
+};
+ts.forEachChild(fnNode, findSwitch);
+if (!switchNode) {
+  console.error(
+    '[check-activity-refs-coverage] pluckActivityRefs() no longer contains a switch.\n' +
+      'If its shape changed, update this script — do not delete the check.',
+  );
+  process.exit(1);
+}
+
+/** eventName -> Set<field it returns non-null on every path> */
 const mapped = new Map();
 /** Mappings that look present but do not unconditionally read a real alias. */
 const suspectMappings = [];
-{
-  // Either quote style (Codex round-5 P2). A `case "LoanSold":` — valid
-  // TypeScript, and what a reformat or a different author produces — was never
-  // discovered, so the event's allowlist entry stayed falsely live and went on
-  // masking a later removal of the very mapping that should have retired it.
-  // Fixing a TODO has to trip the stale-entry check, or the allowlist rots.
-  const CASE_RE = /case\s+['"]([A-Za-z0-9_]+)['"]\s*:/g;
-  const labels = [];
-  let pendingCode = '';
-  let m;
-  const positions = [];
-  while ((m = CASE_RE.exec(body)) !== null) {
-    positions.push({ name: m[1], start: m.index, end: m.index + m[0].length });
-  }
-  // `default:` terminates the last case's chunk. Without this the final case
-  // runs to the end of the function and absorbs the default clause's
-  // `{ actor: null, loanId: null, offerId: null }` — which the every-path rule
-  // below then reads as a nullable fallback belonging to that case. Found by
-  // that rule flagging `PrepayListingMatched.loanId`, a mapping that is in fact
-  // correct and unconditional: the defect was in this splitter, not the indexer.
-  const defaultIdx = body.search(/\bdefault\s*:/);
-  /**
-   * Does this chunk definitely leave the switch, or can control reach the next
-   * label? (Codex round-6 P2.)
-   *
-   * The old test was "is the chunk empty" — so a chunk with a CONDITIONAL return
-   * and no terminator after it counted as complete, while at runtime the false
-   * branch falls into the following case and returns ITS object. A case guarded
-   * that way, falling through to an allowlisted event whose return is
-   * `loanId: null`, wrote NULL whenever the condition was false and still read as
-   * mapped here.
-   *
-   * Terminator is judged at brace depth 0, so a `return` inside the guard's own
-   * block does not count as terminating the case.
-   */
-  const terminates = (chunk) => {
-    let depth = 0;
-    let top = '';
-    for (const ch of chunk) {
-      if (ch === '{') depth++;
-      else if (ch === '}') depth--;
-      else if (depth === 0) top += ch;
-    }
-    // Statement by statement, because an UNBRACED guard keeps its return at depth
-    // zero (Codex round-7 P2): `if (args.loanId != null) return { … };` ends the
-    // chunk with a depth-0 `return`, and a suffix test reads that as
-    // unconditional. Splitting on `;` puts the guard and its return in ONE
-    // statement, which then does not start with `return`, so the case is
-    // correctly treated as able to fall through.
-    //
-    // `else`-led statements are not counted either. That is conservative — an
-    // if/else where both arms return does terminate — and conservative is the safe
-    // direction here: it only makes the next case's returns bind too, never fewer.
-    return top
-      .split(';')
-      .map((s) => s.trim())
-      .some((s) => /^(?:return|throw|break|continue)\b/.test(s));
-  };
+/** Structural problems in the switch itself. */
+const structural = [];
 
-  for (let i = 0; i < positions.length; i++) {
-    const start = positions[i].end;
-    // Slice to the next label's START, not past it: including the label text only
-    // to strip it again made the fall-through test read its own leftovers.
-    let stop = i + 1 < positions.length ? positions[i + 1].start : body.length;
-    if (defaultIdx !== -1 && defaultIdx > start && defaultIdx < stop) stop = defaultIdx;
-    const chunk = body.slice(start, stop);
-    labels.push(positions[i].name);
-    // Accumulate this label into the next chunk unless control cannot escape it:
-    // an empty chunk (a plain shared label) or a non-empty one that can fall
-    // through are the same situation — the following case's returns bind here too.
-    // The chunk's OWN text accumulates as well, so a conditional return in a
-    // falling-through case is still one of the paths validated for these labels.
-    if (!/\S/.test(chunk) || !terminates(chunk)) {
-      pendingCode += chunk;
+/**
+ * Does this clause definitely leave the switch?
+ *
+ * A clause falls through when control can reach its end, which is a property of
+ * its LAST statement — not of whether a `return` appears somewhere inside it.
+ * An `if` without an `else` never qualifies, which is exactly the unbraced-guard
+ * case; an if/else where both arms return does.
+ */
+const alwaysExits = (stmt) => {
+  if (!stmt) return false;
+  if (ts.isReturnStatement(stmt) || ts.isThrowStatement(stmt)) return true;
+  if (ts.isBreakStatement(stmt) || ts.isContinueStatement(stmt)) return true;
+  if (ts.isBlock(stmt)) return alwaysExits(stmt.statements[stmt.statements.length - 1]);
+  if (ts.isIfStatement(stmt)) {
+    return Boolean(stmt.elseStatement) && alwaysExits(stmt.thenStatement) && alwaysExits(stmt.elseStatement);
+  }
+  return false;
+};
+
+/** Every `return` in a clause, not descending into nested functions. */
+const collectReturns = (node, out) => {
+  if (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node)
+  ) {
+    return;
+  }
+  if (ts.isReturnStatement(node)) out.push(node);
+  ts.forEachChild(node, (c) => collectReturns(c, out));
+};
+
+/**
+ * Read `Number(args.<path> as bigint)` — as a SHAPE in the tree, not as text.
+ * Returns the argument path, or null when the expression is anything else.
+ */
+const readsArgPath = (expr) => {
+  if (!expr || !ts.isCallExpression(expr)) return null;
+  if (!ts.isIdentifier(expr.expression) || expr.expression.text !== 'Number') return null;
+  if (expr.arguments.length !== 1) return null;
+  let arg = expr.arguments[0];
+  while (ts.isAsExpression(arg) || ts.isParenthesizedExpression(arg)) arg = arg.expression;
+  // `args.a.b.c` → "a.b.c"; anything not rooted at `args` is rejected.
+  const parts = [];
+  let cur = arg;
+  while (ts.isPropertyAccessExpression(cur)) {
+    parts.unshift(cur.name.text);
+    cur = cur.expression;
+  }
+  if (!ts.isIdentifier(cur) || cur.text !== 'args') return null;
+  return parts.length ? parts.join('.') : null;
+};
+
+const isNullLiteral = (expr) =>
+  expr && (expr.kind === ts.SyntaxKind.NullKeyword || ts.isIdentifier(expr) && expr.text === 'undefined');
+
+{
+  /** Labels accumulate across fall-through clauses, along with their returns. */
+  let pendingLabels = [];
+  let pendingReturns = [];
+  const seenLabels = new Set();
+
+  for (const clause of switchNode.caseBlock.clauses) {
+    if (ts.isDefaultClause(clause)) continue; // the NULL fallback, by design
+    const label = ts.isStringLiteralLike(clause.expression) ? clause.expression.text : null;
+    if (label === null) {
+      structural.push(
+        `a case label is not a string literal (${clause.expression.getText(sourceFile)}) — this checker cannot resolve it`,
+      );
       continue;
     }
+    // A duplicate label is dead code: JavaScript takes the FIRST match, so a
+    // later case silently never runs while overwriting this checker's view of
+    // the event (Codex round-8 P2).
+    if (seenLabels.has(label)) {
+      structural.push(`duplicate case label '${label}' — the later case is dead code, the first one wins at runtime`);
+    }
+    seenLabels.add(label);
 
-    // Already comment-free: `body` is stripped once, above. That is what closes
-    // Codex round-1 P2 — a mapping left commented out by a refactor, sitting
-    // above a live `loanId: null`, used to be the first match and read as mapped,
-    // so the regression this script exists to catch passed green.
-    const code = pendingCode + chunk;
-    pendingCode = '';
+    pendingLabels.push(label);
+    const returns = [];
+    for (const stmt of clause.statements) collectReturns(stmt, returns);
+    pendingReturns.push(...returns);
 
-    // EVERY return path, not just the first (Codex round-5 P2).
-    //
-    // Restricting to the returned object keeps an unrelated `loanId:` in a
-    // local literal from standing in for the return — but reading only the FIRST
-    // returned object meant a case shaped like
-    //
-    //     if (ok) return { actor, loanId: Number(args.loanId as bigint), ... };
-    //     return { actor: null, loanId: null, offerId: null };
-    //
-    // was marked mapped off the happy path while the fallback wrote NULL. The
-    // shape rule from round 4 did not establish an unconditional read after all,
-    // because "unconditional" is a property of ALL paths and I was checking one.
-    //
-    // A `return` this cannot parse as an object literal is reported rather than
-    // ignored, so an unparsed path cannot pass as a clean one.
-    const retObjects = [...code.matchAll(/return\s*\{([\s\S]*?)\}\s*;/g)].map((r) => r[1]);
-    const returnCount = (code.match(/\breturn\b/g) ?? []).length;
-    const unparsedReturns = returnCount - retObjects.length;
-    const scopes = retObjects.length > 0 ? retObjects : [code];
+    const last = clause.statements[clause.statements.length - 1];
+    if (!alwaysExits(last)) continue; // falls through: bind the next clause too
 
-    /**
-     * A mapping counts only if it UNCONDITIONALLY reads one of the event's own
-     * ABI aliases (Codex round-3 P2).
-     *
-     * Accepting anything but a literal leading `null` let a nullable or
-     * misspelled expression stand in for a real mapping:
-     *
-     *     offerId: args.offerID == null ? null : Number(args.offerID as bigint)
-     *
-     * `offerID` is not in the decoded args, so every row gets `offer_id = NULL`
-     * — exactly the state this guardrail exists to detect — while TypeScript and
-     * the old check both stayed green. A field-name typo is the realistic
-     * version. So two conditions now: the expression must name an accepted alias
-     * for THIS event, and must not be able to resolve to null.
-     *
-     * Reported per case rather than silently un-counted: a mapping that looks
-     * present but fails these tests is a likelier bug than an absent one.
-     */
-    // Per label, not shared: consecutive `case 'A': case 'B':` labels share one
-    // return statement but are different events, so they can accept different
-    // aliases — one may legitimately map from the shared expression while the
-    // other does not carry that reference at all.
+    const labels = pendingLabels;
+    const returnNodes = pendingReturns;
+    pendingLabels = [];
+    pendingReturns = [];
+
+    // Each return contributes one "scope": its top-level properties, or a marker
+    // that this checker cannot see them.
+    const scopes = returnNodes.map((r) => {
+      const e = r.expression;
+      if (!e || !ts.isObjectLiteralExpression(e)) return { opaque: 'not an object literal' };
+      const props = new Map();
+      let spread = false;
+      for (const p of e.properties) {
+        if (ts.isSpreadAssignment(p)) {
+          spread = true;
+          continue;
+        }
+        if (ts.isShorthandPropertyAssignment(p)) {
+          props.set(p.name.text, { shorthand: true });
+          continue;
+        }
+        if (ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name))) {
+          props.set(p.name.text, { expr: p.initializer });
+        }
+      }
+      return { props, spread };
+    });
+
     for (const label of labels) {
       const fields = new Set();
       for (const field of REF_FIELDS) {
-        // One expression per return path — and a path that does NOT name the
-        // field is a hole, not something to drop (Codex round-6 P2).
-        //
-        // `.filter(Boolean)` used to discard any returned object without an
-        // explicit `loanId:`, so a fallback of the form `{ ...fallback }` (with
-        // `fallback.loanId = null`) vanished from the check and the event still
-        // counted as mapped while that path wrote NULL. A spread cannot be
-        // resolved by reading text, so it is reported rather than assumed benign.
-        const perScope = scopes.map((s) => {
-          const h = s.match(new RegExp(`\\b${field}\\s*:\\s*([^,\\n]+)`));
-          return h ? h[1].trim() : null;
-        });
-        const exprs = perScope.filter((e) => e !== null);
-        if (exprs.length === 0) continue; // field never named on any path
-        // Deliberately unmapped: every path that names it says null, and no path
-        // leaves it unexplained.
-        if (exprs.every((e) => /^null\b/.test(e)) && exprs.length === perScope.length) continue;
-        const opaqueScopes = perScope.length - exprs.length;
-
         const accepted = aliasNames.get(label)?.get(field);
+
+        const named = scopes.filter((s) => s.props?.has(field));
+        if (named.length === 0) continue; // this field is never returned here
+
+        // Deliberately unmapped on every path that names it, with nothing opaque.
+        const allNull = named.every((s) => isNullLiteral(s.props.get(field).expr));
+        const anyOpaque = scopes.some((s) => s.opaque || s.spread || !s.props?.has(field));
+        if (allNull && !anyOpaque) continue;
+
+        // The event carries no alias for this field, yet something non-null is
+        // filed under it — always a defect, whatever argument it reads
+        // (Codex round-8 P2). Checking only that the path EXISTS accepted
+        // `loanId: Number(args.interestPaid as bigint)`, persisting an interest
+        // amount as a loan id.
         if (!accepted || accepted.size === 0) {
-          // The event carries no such reference — but the code still files one, so
-          // check whether the arguments it reads exist at all (Codex round-7 P2).
-          // Skipping outright let a stale mapping survive an ABI rename invisibly:
-          // rename `LoanRepaid.loanId` to `debtId` and the event leaves the
-          // enforced set, so nothing looked at `Number(args.loanId as bigint)`
-          // still sitting in the indexer, which would evaluate `Number(undefined)`
-          // and persist NaN. Only events present in the Diamond ABI are judged;
-          // one absent from it cannot be decoded at all, which
-          // `check-event-coverage.mjs` is the checker for.
-          const known = eventInputs.get(label);
-          if (known) {
-            for (const e of exprs) {
-              if (/^null\b/.test(e)) continue;
-              for (const [, path] of e.matchAll(/\bargs\.([A-Za-z0-9_.]+)/g)) {
-                if (known.has(path)) continue;
-                suspectMappings.push({
-                  event: label,
-                  field,
-                  expr: e,
-                  why: `reads args.${path}, which this event does not carry — the ABI changed under a stale mapping`,
-                });
-              }
-            }
+          for (const s of named) {
+            const e = s.props.get(field).expr;
+            if (isNullLiteral(e)) continue;
+            suspectMappings.push({
+              event: label,
+              field,
+              expr: e ? e.getText(sourceFile) : '<shorthand>',
+              why: `this event carries no ${field} reference in its ABI, so nothing here can be a valid source for it`,
+            });
           }
           continue;
         }
 
-        // Accept only the exact shape every live mapping already uses:
-        //   Number(args.<accepted alias> as bigint)
-        //
-        // A POSITIVE shape rule, not a blacklist (Codex round-4 P2). Round 3
-        // rejected a leading literal `null`; round 4 slipped
-        // `args.offerID == null ? (null) : Number(args.lenderOfferId as bigint)`
-        // past it — the accepted alias appears, and the parenthesised `null`
-        // dodged the pattern, so a misspelled condition wrote NULL to every row
-        // while the check read green. Each round I widened the blacklist and
-        // each round a new decoration walked through it, which is the argument
-        // for enumerating what is ALLOWED instead: a shape cannot be satisfied
-        // by wrapping, and "unconditionally reads a decoded argument" is
-        // precisely what this shape expresses.
-        //
-        // Deliberately narrow. A future mapping needing a different form (an
-        // offset event picking one of two aliases still fits; something genuinely
-        // computed does not) is REPORTED, not silently dropped, and widening it
-        // is then a conscious edit here rather than an accident.
-        //
-        // Applied to EVERY return path (round 5): the weakest path decides, so a
-        // guarded happy path plus a null fallback is not an unconditional read.
-        const badExpr = exprs.find((e) => {
-          const shapeOk = [...accepted].some((alias) =>
-            // Fully escaped, not just the dots (CodeQL "incomplete string
-            // escaping"): escaping `.` alone leaves every other metacharacter —
-            // and a backslash — able to change what the pattern means. Escaping
-            // the dot matters on its own account too, so `fields.newLoanId`
-            // cannot be satisfied by `fieldsXnewLoanId`.
-            new RegExp(`^Number\\(\\s*args\\.${escapeRe(alias)}(\\s+as\\s+bigint)?\\s*\\)$`).test(e),
-          );
-          // Belt and braces: `null` anywhere in a mapping expression means the
-          // column can end up empty, whatever the surrounding syntax.
-          return !shapeOk || /\bnull\b/.test(e);
-        });
-        const expr = badExpr ?? exprs[0];
-        const mentionsNull = badExpr !== undefined && /\bnull\b/.test(badExpr);
+        let bad = null;
+        for (const s of named) {
+          const entry = s.props.get(field);
+          if (entry.shorthand) {
+            bad = { text: `${field} (shorthand)`, why: 'shorthand property — the source cannot be resolved here' };
+            break;
+          }
+          if (isNullLiteral(entry.expr)) {
+            bad = { text: entry.expr.getText(sourceFile), why: 'one return path files nothing' };
+            break;
+          }
+          const path = readsArgPath(entry.expr);
+          if (path === null) {
+            bad = {
+              text: entry.expr.getText(sourceFile),
+              why: 'not a direct Number(args.…) read of a decoded argument',
+            };
+            break;
+          }
+          if (!accepted.has(path)) {
+            bad = {
+              text: entry.expr.getText(sourceFile),
+              why: `reads args.${path}, which is not a ${field} reference on this event (${[...accepted].join(' / ')})`,
+            };
+            break;
+          }
+        }
+        if (!bad && anyOpaque) {
+          bad = {
+            text: '<some return path>',
+            why: 'a return path supplies this field by spread, shorthand, or a non-literal return — it cannot be resolved here',
+          };
+        }
 
-        if (badExpr === undefined && unparsedReturns === 0 && opaqueScopes === 0) {
-          fields.add(field);
+        if (bad) {
+          suspectMappings.push({ event: label, field, expr: bad.text, why: bad.why });
         } else {
-          suspectMappings.push({
-            event: label,
-            field,
-            expr,
-            why: mentionsNull
-              ? 'can resolve to null'
-              : badExpr !== undefined
-                ? `not an unconditional read of an accepted alias (${[...accepted].join(' / ')})`
-                : opaqueScopes > 0
-                  ? `${opaqueScopes} return path(s) do not name this field explicitly (a spread cannot be resolved from text)`
-                  : `${unparsedReturns} return path(s) in this case could not be read as an object literal`,
-          });
+          fields.add(field);
         }
       }
       mapped.set(label, fields);
     }
-    labels.length = 0;
   }
 }
-
 // ── 2b. Dual-carrying events must be exempted per field ────────────────
 // Codex round-1 P2. An event-wide key exempts BOTH references, and the stale
 // check below only fires when EVERY carried field is mapped. So for an event
@@ -731,7 +746,30 @@ for (const key of Object.keys(DELIBERATELY_NOT_SCOPED)) {
   }
 }
 
-if (gaps.length || dead.length || suspectMappings.length) {
+// Only conflicts on events this checker actually reasons about. The live ABI has
+// one genuine overload — `StuckERC20Recovered`, an ops recovery event carrying no
+// loan or offer reference and mapped nowhere — and failing the run on that would
+// be reporting a problem this check does not have. It becomes a failure the moment
+// such an event carries a reference or is mapped.
+const relevantAbiConflicts = abiConflicts.filter(
+  (c) => carries.has(c.event) || mapped.has(c.event),
+);
+
+if (
+  gaps.length ||
+  dead.length ||
+  suspectMappings.length ||
+  structural.length ||
+  relevantAbiConflicts.length
+) {
+  if (relevantAbiConflicts.length) {
+    console.error('\n✖ activity-refs coverage: ABI problems this checker cannot reason around:\n');
+    for (const c of relevantAbiConflicts) console.error(`    ${c.message}`);
+  }
+  if (structural.length) {
+    console.error('\n✖ activity-refs coverage: problems in the switch itself:\n');
+    for (const s of structural) console.error(`    ${s}`);
+  }
   if (suspectMappings.length) {
     console.error(
       `\n✖ activity-refs coverage: ${suspectMappings.length} mapping(s) look present but do not\n` +
