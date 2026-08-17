@@ -224,14 +224,25 @@ The last two are covered in more detail in "Frontend ABI sync" **below**.
   accepts), and compares the refresh's **selector set** against the Diamond the
   deploy script actually builds — so a same-count *swap* of one facet for
   another cannot pass either.
-- **`DeployDiamond`'s `writeFacet` omission is invisible to
+- **`DeployDiamond`'s `writeFacet` omission used to be invisible to
   `predeploy-check`.** Step 4b validates that every key *written* to the
   deployment artifact is typed on `Deployment`; it is structurally blind to a
-  key never written, so the gate reports success. Still unguarded — tracked in
-  #1793. The consequence is an inconvenience rather than a lost address: the
-  implementation is still recoverable on-chain via
-  `DiamondLoupeFacet.facetAddress(bytes4)` / `facetAddresses()` from any known
-  selector, as well as from broadcast logs.
+  key never written, so the gate reported success. **Step 4c now closes this**
+  (#1793): it pairs `_buildCut(address(v), _get<X>Selectors())` against
+  `writeFacet("k", address(v))` on the shared facet VARIABLE and hard-fails on
+  any cut facet with no write. Building it found **thirteen** facets in that
+  state, not the one the issue assumed — all already typed on `Deployment`,
+  because `RefreshAllFacetsInPlace` writes all 73 keys through `items[i].key`,
+  so only a never-refreshed chain was missing them. Step 4c also checks the
+  refresh script's key for each facet against the deploy script's, pairing on
+  the shared `_get<X>Selectors()` name — the identity check
+  `RefreshScriptFacetParityTest` documents as out of its scope. Neither pairing
+  bridges contract names to camelCase keys, deliberately: that mapping breaks
+  on acronym-initial names like `VPFITokenFacet`, and a naming heuristic inside
+  a drift guard is just a new drift surface. The consequence of the historical
+  omission was an inconvenience rather than a lost address — the implementation
+  stays recoverable on-chain via `DiamondLoupeFacet.facetAddress(bytes4)` /
+  `facetAddresses()` from any known selector, and from broadcast logs.
 
 **When you add a function to a facet**: add its selector to the matching
 `_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —

@@ -906,6 +906,30 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("riskPreviewFacet",        address(riskPreviewFacet));
         Deployments.writeFacet("multicallFacet",          address(multicallFacet));
         Deployments.writeFacet("feeEntitlementFacet",     address(feeEntitlementFacet));
+        // #1793 — these thirteen were CUT into the Diamond above but never
+        // recorded here, so a fresh deploy left their addresses out of
+        // addresses.json entirely. Every one of them is already a typed field on
+        // the TS `Deployment` type, because `RefreshAllFacetsInPlace` writes all
+        // 73 keys through `items[i].key` — so consumers of
+        // `@vaipakam/contracts/deployments` expect these keys, and only a
+        // never-refreshed chain was missing them. The addresses were always
+        // recoverable (loupe `facetAddress(bytes4)`, broadcast logs), which is
+        // why this was an inconvenience rather than a lost deploy — but the
+        // artifact is supposed to be the record. Predeploy step [4c] now fails
+        // if a cut facet has no write here, so this cannot silently regrow.
+        Deployments.writeFacet("aggregatorAdapterFactoryFacet", address(aggregatorAdapterFactoryFacet));
+        Deployments.writeFacet("backstopFacet",           address(backstopFacet));
+        Deployments.writeFacet("consolidationFacet",      address(consolidationFacet));
+        Deployments.writeFacet("intentConfigFacet",       address(intentConfigFacet));
+        Deployments.writeFacet("intentDispatchFacet",     address(intentDispatchFacet));
+        Deployments.writeFacet("nftPrepayAutoListFacet",  address(nftPrepayAutoListFacet));
+        Deployments.writeFacet("nftPrepayDutchListingFacet", address(nftPrepayDutchListingFacet));
+        Deployments.writeFacet("nftPrepayListingAtomicFacet", address(nftPrepayListingAtomicFacet));
+        Deployments.writeFacet("nftPrepayListingFacet",   address(nftPrepayListingFacet));
+        Deployments.writeFacet("offerPreviewFacet",       address(offerPreviewFacet));
+        Deployments.writeFacet("receiverFacet",           address(receiverFacet));
+        Deployments.writeFacet("signedOfferFacet",        address(signedOfferFacet));
+        Deployments.writeFacet("swapToRepayIntentFacet",  address(swapToRepayIntentFacet));
 
         console.log(
             "Wrote addresses to deployments/",

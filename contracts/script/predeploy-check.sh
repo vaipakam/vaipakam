@@ -567,6 +567,93 @@ else
   fi
 fi
 
+# ── [4c] facet registry parity (#1793) ───────────────────────────────
+# Two checks the Solidity deploy-sanity suite structurally CANNOT do, so
+# they live here where both script sources are readable as text:
+#
+#   1. cut ⇒ writeFacet. Step [4b] validates that every key a script
+#      WRITES is typed on `Deployment`; it is blind to a key never written
+#      at all, so it reports success for a facet missing from the artifact.
+#      That is how thirteen cut facets came to be absent (#1793).
+#   2. Refresh key identity. `RefreshScriptFacetParityTest` proves the
+#      in-place refresh cuts the same selectors, from the same runtime
+#      code, as a real deploy — but says nothing about the artifact KEY
+#      each item carries. A typo'd or swapped key passes every assertion
+#      there and then mislabels the artifact.
+#
+# Both pair the two scripts WITHOUT any name-casing heuristic, which is
+# what makes them sound: `_buildCut(address(v), _getXSelectors())` and
+# `writeFacet("k", address(v))` share the facet VARIABLE, and both scripts
+# name the same `_get<X>Selectors()` getter. Bridging contract names to
+# camelCase keys instead would break on acronym-initial names like
+# `VPFITokenFacet` — a naming heuristic inside a drift guard is just a new
+# drift surface.
+echo
+echo "[predeploy 4c] facet registry parity (cut ⇒ writeFacet, refresh key identity)"
+DEPLOY_SOL="$SCRIPT_DIR/DeployDiamond.s.sol"
+REFRESH_SOL="$SCRIPT_DIR/RefreshAllFacetsInPlace.s.sol"
+if [ ! -f "$DEPLOY_SOL" ] || [ ! -f "$REFRESH_SOL" ]; then
+  echo "  · deploy or refresh script not present, skipping"
+else
+  # Flattened before matching: both scripts wrap these calls across lines
+  # (a single-line grep silently omits those, the same trap [4b] hit).
+  DEPLOY_FLAT="$(tr '\n' ' ' < "$DEPLOY_SOL")"
+  REFRESH_FLAT="$(tr '\n' ' ' < "$REFRESH_SOL")"
+
+  CUT_GETTER_VAR="$(printf '%s' "$DEPLOY_FLAT" \
+    | grep -oE '_buildCut\([[:space:]]*address\([A-Za-z0-9_]+\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors\(\)' \
+    | sed -E 's/.*address\(([A-Za-z0-9_]+)\)[[:space:]]*,[[:space:]]*(_get[A-Za-z0-9]+Selectors)\(\)/\2 \1/' \
+    | sort -u)"
+  WROTE_VAR_KEY="$(printf '%s' "$DEPLOY_FLAT" \
+    | grep -oE 'writeFacet\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address\([A-Za-z0-9_]+\)' \
+    | sed -E 's/.*"([A-Za-z0-9]+)"[[:space:]]*,[[:space:]]*address\(([A-Za-z0-9_]+)\)/\2 \1/' \
+    | sort -u)"
+  REFRESH_GETTER_KEY="$(printf '%s' "$REFRESH_FLAT" \
+    | grep -oE 'Item\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address\(new[[:space:]]+[A-Za-z0-9_]+\(\)\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors\(\)' \
+    | sed -E 's/Item\([[:space:]]*"([A-Za-z0-9]+)".*[[:space:]](_get[A-Za-z0-9]+Selectors)\(\)/\2 \1/' \
+    | sort -u)"
+
+  # Refuse to pass vacuously: a refactor that changes any of these call
+  # shapes must break the check loudly, not empty it. Bounds are minimums,
+  # not exact counts, so adding a facet does not require editing this file.
+  if [ "$(printf '%s\n' "$CUT_GETTER_VAR" | grep -c .)" -lt 50 ] \
+    || [ "$(printf '%s\n' "$WROTE_VAR_KEY" | grep -c .)" -lt 50 ] \
+    || [ "$(printf '%s\n' "$REFRESH_GETTER_KEY" | grep -c .)" -lt 50 ]; then
+    echo "  ✗ harvested implausibly few facet registrations — a call shape this" >&2
+    echo "    check greps for has probably changed. Fix this check; do not delete it." >&2
+    FAIL=1
+  else
+    # 1. every cut facet is recorded in the artifact
+    UNRECORDED="$(comm -23 \
+      <(printf '%s\n' "$CUT_GETTER_VAR" | awk '{print $2}' | sort -u) \
+      <(printf '%s\n' "$WROTE_VAR_KEY"  | awk '{print $1}' | sort -u) || true)"
+    if [ -n "$UNRECORDED" ]; then
+      echo "  ✗ facets CUT into the Diamond but never written to addresses.json:" >&2
+      printf '      %s\n' $UNRECORDED >&2
+      echo "    add a Deployments.writeFacet(\"<key>\", address(<var>)) for each in" >&2
+      echo "    DeployDiamond.s.sol — step [4b] cannot see a key that is never written." >&2
+      FAIL=1
+    else
+      echo "  ✓ every cut facet is written to the deployment artifact"
+    fi
+
+    # 2. the refresh script labels each facet with the deploy's own key
+    DEPLOY_GETTER_KEY="$(awk 'NR==FNR{k[$1]=$2;next} ($2 in k){print $1, k[$2]}' \
+      <(printf '%s\n' "$WROTE_VAR_KEY") <(printf '%s\n' "$CUT_GETTER_VAR") | sort -u)"
+    KEY_DRIFT="$(awk 'NR==FNR{d[$1]=$2;next} ($1 in d) && d[$1]!=$2 {print $1" deploy="d[$1]" refresh="$2}' \
+      <(printf '%s\n' "$DEPLOY_GETTER_KEY") <(printf '%s\n' "$REFRESH_GETTER_KEY") || true)"
+    if [ -n "$KEY_DRIFT" ]; then
+      echo "  ✗ refresh-script facet keys disagree with the deploy script's:" >&2
+      printf '      %s\n' "$KEY_DRIFT" >&2
+      echo "    the refresh writes its key through items[i].key, so a mismatch" >&2
+      echo "    relabels the artifact and consumers report a live facet missing." >&2
+      FAIL=1
+    else
+      echo "  ✓ refresh-script facet keys match the deploy script's"
+    fi
+  fi
+fi
+
 # ── Verdict ───────────────────────────────────────────────────────────
 echo
 if [ "$FAIL" -ne 0 ]; then
