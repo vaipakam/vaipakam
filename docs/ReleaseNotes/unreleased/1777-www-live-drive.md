@@ -32,7 +32,23 @@ the wrong reason after any legitimate rate change.
 
 Where an exact value genuinely is the point, the check is skipped rather than
 failed when the live rates differ from the ones shipped with the site, and the
-live rates are printed so a skip can be read rather than guessed at.
+live rates are printed so a skip can be read rather than guessed at. Skipped
+checks are counted in the closing tally too, so a partly-run check cannot
+report itself as a complete pass.
+
+### Why a fallback reading must not count as success
+
+Each figure on these pages has a value bundled with the site, kept deliberately
+in step with the protocol's own settings, for the moments when the published
+configuration cannot be reached. That makes a page served entirely from
+fallbacks look right — every number on it is correct — and distinguishable only
+by the marker each figure carries saying where it came from.
+
+That is exactly what a failed fetch produces. A check that accepts it would
+report success without ever having seen the published configuration it exists to
+confirm, so on the live site the drive now insists the figures be published ones,
+and only relaxes that when deliberately pointed somewhere without a
+configuration service behind it.
 
 ### One thing it cannot currently do
 
