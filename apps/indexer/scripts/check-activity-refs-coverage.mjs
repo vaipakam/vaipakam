@@ -84,10 +84,23 @@ const DELIBERATELY_NOT_SCOPED = {
     'TODO(#1794) — refinance; needs a decision on old-vs-new loan for the single loan_id column',
   LoanSold: 'TODO(#1794) — direct lender sale; plainly loan-timeline material',
   LoanSaleCompleted: 'TODO(#1794) — listed lender sale completion; plainly loan-timeline material',
-  LoanSaleOfferLinked: 'TODO(#1794) — sale listing bound to a loan',
-  LoanSaleListingTornDown: 'TODO(#1794) — sale listing withdrawn',
+  'LoanSaleOfferLinked.loanId': 'TODO(#1794) — sale listing bound to a loan',
+  'LoanSaleOfferLinked.offerId': 'TODO(#1794) — the same binding, sale-offer side (saleOfferId)',
+  'LoanSaleListingTornDown.loanId': 'TODO(#1794) — sale listing withdrawn',
+  'LoanSaleListingTornDown.offerId': 'TODO(#1794) — listing withdrawn, sale-offer side (saleOfferId)',
   LoanPreclosedDirect: 'TODO(#1794) — borrower early close-out',
   LoanObligationTransferred: 'TODO(#1794) — obligation handover to a replacement borrower',
+  // The offset route. Both entered scope with the round-3 shape derivation: they
+  // name their references `originalLoanId` / `newOfferId`, so the earlier
+  // enumerated alias table could not see either event at all. `chainIndexer.ts`
+  // already handles both for STATE (terminalising the loan, flagging the offset
+  // vehicle) and `flipLoanStatus` even carries a `loanIdOverride` parameter
+  // documented for `OffsetCompleted.originalLoanId` — so the indexer knew about
+  // this naming before the guardrail did.
+  'OffsetCompleted.loanId': 'TODO(#1794) — offset route completed; terminalises the original loan',
+  'OffsetCompleted.offerId': 'TODO(#1794) — offset completion, vehicle-offer side (newOfferId)',
+  'OffsetOfferCreated.loanId': 'TODO(#1794) — offset vehicle offer created against the original loan',
+  'OffsetOfferCreated.offerId': 'TODO(#1794) — the offset vehicle offer itself (newOfferId)',
   CollateralAdded: 'TODO(#1794) — borrower collateral top-up',
   PartialCollateralWithdrawn: 'TODO(#1794) — surplus collateral release',
   CollateralConsolidated: 'TODO(#1794) — collateral consolidation to the NFT holder',
@@ -110,10 +123,14 @@ const DELIBERATELY_NOT_SCOPED = {
   SanctionedProceedsLocked: 'TODO(#1794) — proceeds withheld from a flagged party',
   'OfferSaleProceedsSplit.loanId': 'TODO(#1794) — proceeds split, loan side',
   'OfferSaleProceedsSplit.offerId': 'TODO(#1794) — proceeds split, offer side',
-  IntentMatched: 'TODO(#1794) — standing-intent match',
+  'IntentMatched.loanId': 'TODO(#1794) — standing-intent match',
+  'IntentMatched.offerId':
+    'TODO(#1794) — standing-intent match, offer side; carries sliceOfferId AND counterpartyOfferId, so the slice must pick one and say why',
   'SignedOfferFilled.loanId': 'TODO(#1794) — gasless signed offer filled, loan side',
   'SignedOfferFilled.offerId': 'TODO(#1794) — gasless signed offer filled, offer side',
-  SignedOfferMatched: 'TODO(#1794) — gasless signed offer matched',
+  'SignedOfferMatched.loanId': 'TODO(#1794) — gasless signed offer matched',
+  'SignedOfferMatched.offerId':
+    'TODO(#1794) — signed-offer match, offer side; same sliceOfferId / counterpartyOfferId choice as IntentMatched',
   AutoDailyDeducted: 'TODO(#1794) — NFT-rental daily deduction',
   AutoExtendBorrowerCapsChanged: 'TODO(#1794) — borrower auto-extend caps',
   AutoExtendLenderCapsChanged: 'TODO(#1794) — lender auto-extend caps',
@@ -168,33 +185,74 @@ const DELIBERATELY_NOT_SCOPED = {
 const REF_FIELDS = ['loanId', 'offerId'];
 
 /**
- * ABI input names that populate each reference COLUMN (Codex round-2 P2).
+ * Which ABI input names populate each reference COLUMN — DERIVED by shape, not
+ * enumerated (Codex rounds 2 and 3).
  *
- * Keying the enforced set on inputs named exactly `loanId` / `offerId` made the
- * scope an ABI naming coincidence rather than a statement about what the ledger
- * references. Two consequences, both real in this tree:
+ * Round 2 established the scope was wrong: keying the enforced set on inputs
+ * named exactly `loanId` / `offerId` made it an ABI naming coincidence rather
+ * than a statement about what the ledger references. `OfferMatched` populates
+ * `offer_id` from `args.lenderOfferId` and has no input called `offerId`, so
+ * that mapping was never enforced; `LoanRefinanced` carries `oldLoanId` /
+ * `newLoanId` and no exact `loanId`, so a whole event sat outside the guardrail.
  *
- *   - `OfferMatched` populates `offer_id` from `args.lenderOfferId`
- *     (chainIndexer.ts, the #600 comment explains why the LENDER offer is the
- *     right denormalisation). Its ABI has no input called `offerId`, so that
- *     mapping was never enforced — replacing it with `offerId: null` passed.
- *   - `LoanRefinanced` carries `oldLoanId` / `newLoanId` and no exact `loanId`,
- *     so an entire event with two loan references sat outside the guardrail.
+ * The round-2 fix was a hand-written six-name table, and round 3 found the
+ * second batch of names missing from it — `loanIdA/B/C` on
+ * `InternalMatchExecuted` (a live, deliberate mapping that was unguarded),
+ * `originalLoanId` / `newOfferId` on both offset events, plus `saleOfferId`,
+ * `sliceOfferId`, `counterpartyOfferId`. That is the same defect as round 2 with
+ * a shorter list: an enumerated allowlist of reference names cannot be complete
+ * by construction, so its completeness is exactly as unverified as the naming
+ * assumption it replaced.
  *
- * So a column is "carried" when the event has ANY of its alias inputs. Add an
- * alias here when a new event names a reference differently; the alternative is
- * that its mapping is silently unguarded.
+ * So membership is derived from the input NAME SHAPE instead: an optional
+ * qualifier, the column name, and an optional leg suffix. `oldLoanId`,
+ * `originalLoanId`, `loanIdA` and `newOfferId` all resolve; a new event naming a
+ * reference in any of these ways enters scope automatically. The failure mode
+ * inverts — instead of silent under-coverage, a new name shows up as a visible
+ * gap someone must map or allowlist with a reason.
+ *
+ * What this does NOT catch, stated because it is now the boundary worth
+ * reviewing: a reference named without the column in it at all (`positionId`,
+ * `matchRef`). No derivation from names can, and the same is true of a table. If
+ * one appears, it needs an explicit entry in `REF_EXTRA_ALIASES` below — the
+ * escape hatch exists so an unnameable case is recorded rather than invisible.
+ *
+ * Several ids may target one column (`loanIdA/B/C` → `loan_id`; the offset
+ * events' original loan and new offer). Policy: the event CARRIES the column if
+ * it has any alias, and the mapping must derive from one of them, with the
+ * choice of leg documented at the mapping — `chainIndexer.ts` already does this
+ * for leg A.
  */
-const REF_ALIASES = {
-  loanId: ['loanId', 'oldLoanId', 'newLoanId'],
-  offerId: ['offerId', 'lenderOfferId', 'borrowerOfferId'],
+const REF_SHAPE = {
+  loanId: /^[A-Za-z0-9]*loanId(?:[A-C]|[0-9]+)?$/i,
+  offerId: /^[A-Za-z0-9]*offerId(?:[A-C]|[0-9]+)?$/i,
 };
+
+/**
+ * Escape hatch for a reference whose ABI name does not contain its column name,
+ * so the shape rules above cannot see it. Empty today — every reference in the
+ * compiled bundle is shape-derivable. Add here with a reason rather than
+ * widening the regexes, which would start matching unrelated inputs.
+ */
+const REF_EXTRA_ALIASES = {
+  loanId: [],
+  offerId: [],
+};
+
+/** Does this ABI input name populate `field`? */
+const isAliasOf = (field, name) =>
+  typeof name === 'string' &&
+  (REF_SHAPE[field].test(name) || REF_EXTRA_ALIASES[field].includes(name));
 
 const barrelSrc = readFileSync(join(ABI_DIR, 'index.ts'), 'utf8');
 
-/** `import FooABI from './Foo.json'` → identifier -> filename */
+/**
+ * `import FooABI from './Foo.json'` → identifier -> filename. Either quote
+ * style: a member whose import this cannot read becomes an unresolved spread,
+ * which is now a hard failure rather than a silent omission.
+ */
 const importedFile = new Map();
-for (const m of barrelSrc.matchAll(/import\s+([A-Za-z0-9_]+)\s+from\s+'\.\/([^']+\.json)'/g)) {
+for (const m of barrelSrc.matchAll(/import\s+([A-Za-z0-9_]+)\s+from\s+['"]\.\/([^'"]+\.json)['"]/g)) {
   importedFile.set(m[1], m[2]);
 }
 
@@ -206,10 +264,35 @@ if (!diamondBlock) {
   );
   process.exit(1);
 }
+/**
+ * Every spread must resolve to a file (Codex round-3 P2).
+ *
+ * Skipping an unresolvable member and only guarding `length === 0` means losing
+ * ONE facet leaves the check green while every reference-bearing event in it
+ * drops out of coverage. The realistic trigger is a member this script's import
+ * regex cannot read — a locally constructed ABI constant, or (before the quote
+ * class below) an import written with double quotes. A vacuity guard has to be
+ * per-item, not per-run.
+ */
 const memberFiles = [];
+const unresolvedMembers = [];
 for (const m of diamondBlock[1].matchAll(/\.\.\.([A-Za-z0-9_]+)/g)) {
   const file = importedFile.get(m[1]);
   if (file) memberFiles.push(file);
+  else unresolvedMembers.push(m[1]);
+}
+if (unresolvedMembers.length) {
+  console.error(
+    `\n✖ activity-refs coverage: ${unresolvedMembers.length} DIAMOND_ABI member(s) could not be\n` +
+      '  resolved to an ABI file, so their events would silently leave coverage:\n',
+  );
+  for (const id of unresolvedMembers) console.error(`    ...${id}`);
+  console.error(
+    '\n  Each must be a `import X from \'./X.json\'` this script can follow. If the barrel\n' +
+      '  now builds an ABI in TypeScript, teach this script to resolve it — do not let the\n' +
+      '  member drop.\n',
+  );
+  process.exit(1);
 }
 if (memberFiles.length === 0) {
   console.error(
@@ -220,6 +303,8 @@ if (memberFiles.length === 0) {
 
 /** eventName -> Set<field> */
 const carries = new Map();
+/** eventName -> Map<field, Set<ABI input name that can populate it>> */
+const aliasNames = new Map();
 for (const file of memberFiles) {
   let parsed;
   try {
@@ -233,9 +318,14 @@ for (const file of memberFiles) {
     if (item?.type !== 'event' || !Array.isArray(item.inputs)) continue;
     const names = item.inputs.map((i) => i?.name);
     for (const field of REF_FIELDS) {
-      if (!REF_ALIASES[field].some((alias) => names.includes(alias))) continue;
+      const aliases = names.filter((n) => isAliasOf(field, n));
+      if (aliases.length === 0) continue;
       if (!carries.has(item.name)) carries.set(item.name, new Set());
       carries.get(item.name).add(field);
+      // Kept per event+field for the mapping check below, which must confirm the
+      // returned expression reads one of THESE inputs (Codex round-3 P2).
+      if (!aliasNames.has(item.name)) aliasNames.set(item.name, new Map());
+      aliasNames.get(item.name).set(field, new Set(aliases));
     }
   }
 }
@@ -258,6 +348,8 @@ const body = fnMatch[0];
  */
 /** eventName -> Set<field it returns non-null> */
 const mapped = new Map();
+/** Mappings that look present but do not unconditionally read a real alias. */
+const suspectMappings = [];
 {
   const CASE_RE = /case\s+'([A-Za-z0-9_]+)'\s*:/g;
   const labels = [];
@@ -286,13 +378,59 @@ const mapped = new Map();
     const ret = code.match(/return\s*\{([\s\S]*?)\}\s*;/);
     const scope = ret ? ret[1] : code;
 
-    const fields = new Set();
-    for (const field of REF_FIELDS) {
-      // `loanId: Number(args.loanId as bigint)` counts; `loanId: null` does not.
-      const hit = scope.match(new RegExp(`\\b${field}\\s*:\\s*([^,\\n]+)`));
-      if (hit && !/^null\b/.test(hit[1].trim())) fields.add(field);
+    /**
+     * A mapping counts only if it UNCONDITIONALLY reads one of the event's own
+     * ABI aliases (Codex round-3 P2).
+     *
+     * Accepting anything but a literal leading `null` let a nullable or
+     * misspelled expression stand in for a real mapping:
+     *
+     *     offerId: args.offerID == null ? null : Number(args.offerID as bigint)
+     *
+     * `offerID` is not in the decoded args, so every row gets `offer_id = NULL`
+     * — exactly the state this guardrail exists to detect — while TypeScript and
+     * the old check both stayed green. A field-name typo is the realistic
+     * version. So two conditions now: the expression must name an accepted alias
+     * for THIS event, and must not be able to resolve to null.
+     *
+     * Reported per case rather than silently un-counted: a mapping that looks
+     * present but fails these tests is a likelier bug than an absent one.
+     */
+    // Per label, not shared: consecutive `case 'A': case 'B':` labels share one
+    // return statement but are different events, so they can accept different
+    // aliases — one may legitimately map from the shared expression while the
+    // other does not carry that reference at all.
+    for (const label of labels) {
+      const fields = new Set();
+      for (const field of REF_FIELDS) {
+        const hit = scope.match(new RegExp(`\\b${field}\\s*:\\s*([^,\\n]+)`));
+        if (!hit) continue;
+        const expr = hit[1].trim();
+        if (/^null\b/.test(expr)) continue; // deliberately unmapped
+
+        const accepted = aliasNames.get(label)?.get(field);
+        if (!accepted || accepted.size === 0) continue; // event carries no such ref
+
+        const readsAlias = [...accepted].some((alias) =>
+          new RegExp(`\\bargs\\.${alias}\\b`).test(expr),
+        );
+        const nullable = /(\?\?|\?|:)\s*null\b/.test(expr);
+
+        if (readsAlias && !nullable) {
+          fields.add(field);
+        } else {
+          suspectMappings.push({
+            event: label,
+            field,
+            expr,
+            why: !readsAlias
+              ? `reads no accepted alias (${[...accepted].join(' / ')})`
+              : 'can resolve to null',
+          });
+        }
+      }
+      mapped.set(label, fields);
     }
-    for (const label of labels) mapped.set(label, fields);
     labels.length = 0;
   }
 }
@@ -365,7 +503,17 @@ for (const key of Object.keys(DELIBERATELY_NOT_SCOPED)) {
   }
 }
 
-if (gaps.length || dead.length) {
+if (gaps.length || dead.length || suspectMappings.length) {
+  if (suspectMappings.length) {
+    console.error(
+      `\n✖ activity-refs coverage: ${suspectMappings.length} mapping(s) look present but do not\n` +
+        '  unconditionally read one of the event\'s decoded arguments, so the column would be\n' +
+        '  NULL at runtime while the code reads as mapped:\n',
+    );
+    for (const s of suspectMappings) {
+      console.error(`    ${s.event}.${s.field} — ${s.why}\n      ${s.expr}`);
+    }
+  }
   if (gaps.length) {
     console.error(
       `\n✖ activity-refs coverage: ${gaps.length} event/field pair(s) carry a reference the ledger drops.\n` +
@@ -383,6 +531,18 @@ if (gaps.length || dead.length) {
 }
 
 const todo = Object.values(DELIBERATELY_NOT_SCOPED).filter((r) => r.startsWith('TODO(#1794)')).length;
+
+// Print what the shape rules actually resolved. Derivation replaced a
+// hand-written alias table precisely because a list's completeness cannot be
+// verified by reading it; the derived set is only reviewable if it is visible,
+// so a new reference name shows up here rather than being taken on trust.
+for (const field of REF_FIELDS) {
+  const found = new Set();
+  for (const perField of aliasNames.values()) {
+    for (const alias of perField.get(field) ?? []) found.add(alias);
+  }
+  console.log(`  ${field} ← ${[...found].sort().join(', ')}`);
+}
 console.log(
   `✓ activity-refs coverage OK — ${carries.size} event(s) carry a reference; ` +
     `${mappedFields} field(s) mapped, ${allowlisted} allowlisted (${todo} of those are TODO(#1794) gaps awaiting mapping).`,
