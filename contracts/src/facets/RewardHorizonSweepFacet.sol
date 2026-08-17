@@ -72,6 +72,16 @@ contract RewardHorizonSweepFacet is
      * @param  entryIds Entries to advance/expire (keeper batches).
      * @return expiredTotal VPFI wei expired into the bucket by this call.
      */
+    /// @dev Batch loop accumulators. A LOCAL memory struct, never an ABI
+    ///      type — it exists to hold the loop's running totals behind a
+    ///      single stack slot (see the viaIR note at its use site).
+    struct SweepTotals {
+        uint256 fresh;
+        uint256 recycled;
+        uint256 armedFresh;
+        uint256 armedFreshPaid;
+    }
+
     function sweepExpiredInteractionRewards(uint256[] calldata entryIds)
         external
         nonReentrant
@@ -91,8 +101,13 @@ contract RewardHorizonSweepFacet is
         // against one remaining-capacity sliver — at most one bounded
         // boundary entry is partially credited, then the rest defer.
         uint256 paidOut = s.interactionPoolPaidOut;
+        uint256 headroom;
+        bool freshRecoverable;
+        {
+        // Block-scoped so `reserved` and `backingRoom` die before the loop —
+        // the loop frame sits exactly at the viaIR stack ceiling.
         uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
-        uint256 headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+        headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;
         // The fresh credit also grows the recycle bucket, so it must stay
@@ -113,11 +128,29 @@ contract RewardHorizonSweepFacet is
         // case cannot reach the helper's own revert — this function's
         // {VPFITokenNotSet} guard has already rejected it.
         (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
+        // Pre-merge adversarial review (2026-08-17) P1 — remember WHICH bound
+        // is binding, because the two have opposite recovery semantics. The
+        // pool-cap room is MONOTONE (only ever shrinks; waiting on it
+        // livelocks), but the backing room is a HELD-BALANCE constraint that
+        // recovers with any custody inflow — the recycled-bucket shape, not
+        // the 69M shape. Folding both into one number made the settlement
+        // attribute a transient backing dip to `freshShortfall`, the quantity
+        // the post-removal rule truncates PERMANENTLY: a keeper (or griefer)
+        // timing a sweep to a momentary balance dip destroyed value that one
+        // block of patience recovered in full. The min still caps what a
+        // chunk may CREDIT (a `credit` past backing would revert and poison
+        // the batch); `freshRecoverable` tells the settlement to DEFER, not
+        // terminate, when the binding bound is the one that refills.
+        // Depletion keeps the comparison exact: both candidate ceilings
+        // shrink by the same `freshCredited`, so the batch-start minimum
+        // stays the minimum throughout the loop.
+        freshRecoverable = backingRoom < headroom;
         if (backingRoom < headroom) headroom = backingRoom;
-        uint256 freshTotal;
-        uint256 recycledTotal;
-        uint256 armedFreshTotal;
-        uint256 armedFreshPaid;
+        }
+        // Loop accumulators packed into ONE stack slot (a memory pointer) —
+        // the sweep loop frame sits exactly at the viaIR stack ceiling, and
+        // four scalar totals held live across the loop tipped it over.
+        SweepTotals memory t;
         // Codex #1699 r2 P1 — the delivered allowance is threaded and depleted
         // per entry, exactly as `headroom` above it. `sweepExpiredEntry` used
         // to read the storage figure itself, which is stale for every entry
@@ -135,7 +168,7 @@ contract RewardHorizonSweepFacet is
                 uint256 freshCredited,
                 uint256 armedDelivered
             ) = LibInteractionRewards.sweepExpiredEntry(
-                entryIds[i], headroom, allowance
+                entryIds[i], headroom, allowance, freshRecoverable
             );
             headroom -= freshCredited;
             // All-or-nothing per entry, so a credited entry consumed exactly
@@ -149,9 +182,9 @@ contract RewardHorizonSweepFacet is
                     ? allowance - armedDelivered
                     : 0;
             }
-            freshTotal += freshCredited;
-            recycledTotal += ex.recycled;
-            armedFreshTotal += ex.armedFresh;
+            t.fresh += freshCredited;
+            t.recycled += ex.recycled;
+            t.armedFresh += ex.armedFresh;
             // #1434 — charge the mirror's delivered-fresh bound with the ARMED
             // portion actually credited.
             //
@@ -169,7 +202,7 @@ contract RewardHorizonSweepFacet is
             // includes the truncated remainder that moved no tokens. Charging
             // it would shrink the bound for value never paid out of a
             // delivery — the defect `interactionPoolPaidOut` was rejected for.
-            if (freshCredited != 0) armedFreshPaid += armedDelivered;
+            if (freshCredited != 0) t.armedFreshPaid += armedDelivered;
             unchecked { ++i; }
         }
         // Codex #1699 r10 P1 — a CAPPED-ONLY terminal chunk still has a
@@ -187,38 +220,38 @@ contract RewardHorizonSweepFacet is
         // The comment below already promised this retirement happens "even
         // when the pool cap truncated the creditable fresh". This is the
         // guard that was contradicting it.
-        if (freshTotal + recycledTotal == 0 && armedFreshTotal == 0) return 0;
+        if (t.fresh + t.recycled == 0 && t.armedFresh == 0) return 0;
 
         // Fresh share: consumes the 69M pool (tokens leave the fresh
         // budget) exactly like a forfeit — already per-entry capped above.
-        s.interactionPoolPaidOut = paidOut + freshTotal;
+        s.interactionPoolPaidOut = paidOut + t.fresh;
         // Every swept entry is terminally `processed`, so its ENTIRE armed
         // fresh commitment retires here even when the pool cap truncated the
         // creditable fresh — otherwise the truncated remainder would sit
         // in the outstanding-commitment sum forever (same rule as the claim
         // and forfeit paths).
-        LibInteractionRewards.consumeArmedFresh(armedFreshTotal);
+        LibInteractionRewards.consumeArmedFresh(t.armedFresh);
         // #1434 P1-b — mirror-only: Base funds its armed days from the 69M cap
         // directly and receives no remittances, so it has no delivered bound
         // to charge (and charging one would read zero and brick it).
-        if (armedFreshPaid != 0 && LibVaipakam.isMirrorRewardChain(s)) {
-            s.rewardBudgetArmedFreshPaid += armedFreshPaid;
+        if (t.armedFreshPaid != 0 && LibVaipakam.isMirrorRewardChain(s)) {
+            s.rewardBudgetArmedFreshPaid += t.armedFreshPaid;
         }
 
-        if (freshTotal > 0) {
+        if (t.fresh > 0) {
             LibVpfiRecycle.credit(
                 LibVpfiRecycle.RecycleSource.ExpiredReward,
                 0,
-                freshTotal
+                t.fresh
             );
         }
-        if (recycledTotal > 0) {
+        if (t.recycled > 0) {
             LibVpfiRecycle.releaseCommitment(
                 LibVpfiRecycle.RecycleSource.ExpiredReward,
                 0,
-                recycledTotal
+                t.recycled
             );
         }
-        expiredTotal = freshTotal + recycledTotal;
+        expiredTotal = t.fresh + t.recycled;
     }
 }

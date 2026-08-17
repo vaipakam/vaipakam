@@ -180,6 +180,71 @@ it to a claim — one bound, one place.
   by the first cut and were DECIDED on the merits rather than relaxed to
   match new behaviour.
 
+## Pre-merge adversarial review (2026-08-17) — four findings, all interactions
+
+Per the big-PR review discipline, an independent adversarial pass over the
+whole diff ran before convergence. Every finding is once again an
+interaction between individually-correct pieces:
+
+1. **P1 — the post-removal terminal rule conflated two shortfall causes.**
+   The sweep's fresh ceiling is `min(pool-cap room, backing room)`, and any
+   trim against it lands in `freshShortfall` — the quantity the removal
+   sequencing treats as monotone. Only the pool cap is; backing refills
+   with any inflow. A permissionless sweep timed to a momentary balance
+   dip therefore PERMANENTLY discarded a removed entry's remainder that
+   one block of patience recovered. The claim walk never had this defect —
+   it budgets on `poolRemaining()` alone. Fix: the facet passes
+   `freshRecoverable` (backing was the binding min), and a removed entry's
+   shortfall defers while it is set — the per-source rule (#1351 slice
+   2d-0) applied to the third source. Termination now requires the
+   monotone cause.
+
+2. **P2 — removal fired on the first chunk that ADVANCED, not the first
+   that CREDITED.** A chunk advancing past a day whose D1 ceiling a
+   sibling's claim consumed (or a worthless day, or a zero-value legacy
+   leg) moved nothing irreversible, yet closed the owner's claim and
+   flipped the entry into truncate mode — defeating the r9 defer's purpose
+   with zero value moved. The event and storage docs had promised
+   "credits" all along; the code now matches them: `_beginExpiry` runs
+   only when the chunk moved value.
+
+3. **P2 — the role predicate has two inputs and r9 guarded one.**
+   `isMirrorRewardChain` is `!canonical && baseChainId != 0`;
+   `setBaseChainId(0)` detached a mirror into the unbounded "neither"
+   state with the delivered residual intact, and re-attaching re-offered
+   it. The spec (§"retired whenever its role changes") was already right —
+   the code diverged. Fix: one shared helper keyed on the EFFECTIVE
+   predicate, called by both setters, so a third role input inherits it by
+   construction.
+
+4. **P3 — the claim-executable aggregate and the pending preview still
+   counted removed entries.** The claim skips them, so the aggregates
+   overstated by value no claim can draw — freezing sibling entries'
+   expiry clocks behind an unsatisfiable funding need. Both entry-path
+   filters now exclude `expiryBegun` (the walk leg already did). The
+   mutation pass then MEASURED an asymmetry the finding overstated: the
+   aggregate filter is load-bearing (`_entryPriceCore` prices a removed
+   entry's remaining window regardless of its cursor), but the preview
+   filter is defence-in-depth — a removed entry always has `processed` or
+   a stamped cursor, and `_previewEntryLeg` already prices a
+   stamped-cursor entry at zero. Its reversion-mutant survives for that
+   reason and is recorded proven-equivalent; the filter is kept so both
+   sites state the same invariant.
+
+A security-lens pass over the same diff ran in parallel: no surviving
+fund-safety findings; its one observability note (a forfeit-terminalized
+removed entry emits no terminal `RewardEntryExpired`) is deferred as
+issue #1789.
+
+Codex round 11 landed while this pass was underway and independently
+found #3 (its P1 — same defect, same remedy), plus one new P2 the
+internal pass missed: `rewardEntryExpiry` cleared the countdown only at
+`processed`, so a removed entry mid-chunks kept showing a claimant-facing
+deadline for the whole life of a deferred tail. Removal is now terminal
+for the countdown too — past the removal point what remains is
+settlement progress, signalled by `RewardEntryExpiryBegun`, never a
+claimant deadline.
+
 ## Testing
 
 The expiry fixture is unusually easy to make vacuous: **five distinct

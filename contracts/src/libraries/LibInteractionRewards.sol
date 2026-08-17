@@ -2173,6 +2173,16 @@ library LibInteractionRewards {
                 !e.processed
                 && !e.forfeited
                 && !_entryTerminalForfeit(s, e)
+                // Pre-merge adversarial review (2026-08-17) P3 — a REMOVED
+                // entry is skipped by `_processEntry` and the worklist, so
+                // the claim pays nothing for it; counting it here inflated
+                // the aggregate by value the claim can never draw, and a
+                // removed entry parked mid-chunks froze every SIBLING
+                // entry's executability (and their expiry clocks) behind a
+                // funding need no balance could satisfy. The removed entry's
+                // own settlement never consults this gate — post-removal
+                // chunks bypass it.
+                && !e.expiryBegun
                 && _entryClaimable(s, e)
             ) {
                 (
@@ -2225,6 +2235,17 @@ library LibInteractionRewards {
                 !e.processed
                 && !e.forfeited
                 && !_entryTerminalForfeit(s, e)
+                // Pre-merge adversarial review (2026-08-17) P3 — the claim
+                // skips a REMOVED entry, so the preview skips it too. Here
+                // this is DEFENCE-IN-DEPTH by measurement: a removed entry
+                // has either `processed` or a stamped cursor (removal takes
+                // a crediting chunk), and {_previewEntryLeg} prices a
+                // stamped-cursor entry at 0 while the walk leg's worklist
+                // excludes `expiryBegun`. The AGGREGATE filter above is the
+                // load-bearing one — {_entryPriceCore} does not zero out on
+                // a stamped cursor. Kept so the two filters state the same
+                // invariant.
+                && !e.expiryBegun
                 && _entryClaimable(s, e)
             ) {
                 // #1008 (S13) — cap is baked into cumMin; no feed read here.
@@ -2588,10 +2609,20 @@ library LibInteractionRewards {
     ///        per entry let several entries in one batch each measure against
     ///        the same untouched allowance and collectively over-credit.
     ///        `type(uint256).max` off-mirror, where the bound does not apply.
+    /// @param freshRecoverable True when `freshHeadroom` is bound by the
+    ///        recycle bucket's BACKING room rather than the 69M pool cap.
+    ///        The two recover oppositely: the pool cap is monotone (a
+    ///        shortfall against it can never be funded later, so a removed
+    ///        entry truncates-and-terminates), while backing refills with any
+    ///        custody inflow (so the same shortfall DEFERS — even after
+    ///        removal — exactly as a recycled-bucket shortfall does under the
+    ///        #1351 slice 2d-0 per-source rule). Without this bit a transient
+    ///        balance dip was terminal.
     function sweepExpiredEntry(
         uint256 id,
         uint256 freshHeadroom,
-        uint256 deliveredAllowance
+        uint256 deliveredAllowance,
+        bool freshRecoverable
     )
         internal
         returns (
@@ -2915,7 +2946,17 @@ library LibInteractionRewards {
                 s.rewardEntryObsBlocked[id] = true;
                 return (expired, 0, 0);
             }
-            _beginExpiry(s, id, e);
+            // Pre-merge adversarial review (2026-08-17) P2 — removal begins
+            // on the first chunk that CREDITS, and a zero-value legacy leg
+            // credits nothing. The removal point's whole rationale is
+            // irreversibility (value already in the bucket); beginning it
+            // here on a worthless leg closed the owner's claim with nothing
+            // moved AND flipped the entry into post-removal truncate mode,
+            // where the next shortfall discards value the pre-removal defer
+            // exists to preserve. The cursor still stamps — the leg is
+            // settled either way — but the entry stays claimable until a
+            // chunk moves value.
+            if (legacyFresh != 0) _beginExpiry(s, id, e);
             s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
             s.rewardEntryExpiredAccum[id] += legacyFresh;
             expired.total = legacyFresh;
@@ -3027,7 +3068,24 @@ library LibInteractionRewards {
         // must TERMINATE. So the day truncates and advances exactly as a claim
         // does against the same monotone budget, with `cappedOff` carrying the
         // remainder's commitment for retirement.
-        if (charge.freshShortfall != 0 && !e.expiryBegun) {
+        // Pre-merge adversarial review (2026-08-17) P1 — terminate ONLY on
+        // the shortfall that is genuinely monotone. `charge.freshShortfall`
+        // conflates two causes when the caller's fresh ceiling was bound by
+        // the recycle bucket's backing room instead of the 69M cap: the cap
+        // can never refund a shortfall (truncating is right), but backing
+        // refills with any custody inflow — the recycled-bucket recovery
+        // shape, which the ratified per-source rule (#1351 slice 2d-0)
+        // DEFERS. Truncating on it let a permissionless sweep timed to a
+        // momentary balance dip destroy a removed entry's remainder that one
+        // block of patience recovered in full. So a removed entry truncates
+        // only when the pool cap alone is binding (`!freshRecoverable`);
+        // while backing binds, the day defers and retries — the entry stays
+        // removed (its claim closed at the removal point), only the
+        // settlement waits.
+        if (
+            charge.freshShortfall != 0
+                && (!e.expiryBegun || freshRecoverable)
+        ) {
             s.rewardEntryObsBlocked[id] = true;
             return (expired, 0, 0);
         }
@@ -3035,7 +3093,17 @@ library LibInteractionRewards {
         // long entry reaps ACROSS SWEEPS instead of terminalising on a
         // 30-day chunk and discarding the rest. All-or-nothing is now
         // per-priced-chunk, which is what removes that value loss.
-        _beginExpiry(s, id, e);
+        //
+        // Pre-merge adversarial review (2026-08-17) P2 — removal begins on
+        // the first chunk that CREDITS, which is what the event and storage
+        // docs have promised all along. A chunk can ADVANCE while crediting
+        // zero (a day whose D1 ceiling a sibling entry's claim already
+        // consumed, or a zero-contribution day); nothing irreversible has
+        // happened on such a chunk, so closing the owner's claim there — and
+        // flipping the entry into post-removal truncate mode — removed a
+        // claimant on the strength of value that never moved. The cursor
+        // still advances past the worthless day; removal waits for value.
+        if (charge.toTreasury.total != 0) _beginExpiry(s, id, e);
         _persistDay(s, e.user, e.side, d, set, slices);
 
         // A recycle settlement routes through the TREASURY leg (that is what
@@ -3108,7 +3176,16 @@ library LibInteractionRewards {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         // A processed entry (claimed or already expired) can never be swept,
         // so it has no live countdown (Codex #1317 r11).
-        if (e.processed) return (firstClaimableAt, 0);
+        //
+        // Codex #1699 r11 P2 — a REMOVED entry is terminal for the countdown
+        // too. Past the removal point the owner's claim is closed, so an
+        // "expires at" deadline is a promise the claimant can no longer act
+        // on: with the chunked reap, the Claim Center would keep showing an
+        // imminent or live removal for the whole duration of a deferred tail.
+        // What remains after removal is settlement PROGRESS, not a claimant
+        // deadline — and the removal signal (`RewardEntryExpiryBegun`) is the
+        // event surface for that.
+        if (e.processed || e.expiryBegun) return (firstClaimableAt, 0);
 
         uint256 hSec = uint256(horizonDays) * 1 days;
         uint256 elapsed = s.rewardEntryExecElapsed[id];

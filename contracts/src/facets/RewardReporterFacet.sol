@@ -1045,13 +1045,43 @@ contract RewardReporterFacet is
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint32 old = s.baseChainId;
+        bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
         s.baseChainId = chainId;
+        // Pre-merge adversarial review (2026-08-17) P2 — mirror-ness has TWO
+        // inputs (`!isCanonicalRewardChain && baseChainId != 0`), and the r9
+        // residual retirement guarded only the canonical knob. Detaching a
+        // mirror the natural way — `setBaseChainId(0)` — flipped it into the
+        // unbounded "neither" state with the residual intact: armed pricing
+        // kept running off persisted stamps with no delivered bound and no
+        // paid-ledger writes, and re-attaching re-offered the same residual
+        // whose backing was already spent. One helper, called on the
+        // EFFECTIVE role predicate, so a third role input can never repeat
+        // this by construction.
+        _retireDeliveredResidualOnRoleChange(s, wasMirror);
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("baseChainId"),
             bytes32(uint256(old)),
             bytes32(uint256(chainId))
         );
+    }
+
+    /// @dev Retire the delivered-fresh residual (`received - paid`) whenever
+    ///      the EFFECTIVE mirror role — `LibVaipakam.isMirrorRewardChain`,
+    ///      not any single knob — changed across a config write. Levelling
+    ///      `paid` up to `received` errs safe: the chain resumes with no
+    ///      delivered headroom and earns it back from the next remittance.
+    ///      Shared by every setter that feeds the role predicate, so the
+    ///      check IS the operation and a new role input inherits it.
+    function _retireDeliveredResidualOnRoleChange(
+        LibVaipakam.Storage storage s,
+        bool wasMirror
+    ) private {
+        if (wasMirror == LibVaipakam.isMirrorRewardChain(s)) return;
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        if (s.rewardBudgetArmedFreshPaid < received) {
+            s.rewardBudgetArmedFreshPaid = received;
+        }
     }
 
     /// @notice Flip this Diamond's canonical-reward-chain flag.
@@ -1062,6 +1092,7 @@ contract RewardReporterFacet is
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bool old = s.isCanonicalRewardChain;
+        bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
         s.isCanonicalRewardChain = on;
         // #1662 r9 — a FRESH canonical deployment uses per-receipt
         // attribution from inception, so mark it armed at watermark ZERO
@@ -1092,14 +1123,14 @@ contract RewardReporterFacet is
         // without falsifying either total's era meaning, and it is the safe
         // direction: a chain resumes with NO delivered headroom and earns it
         // back from the next remittance. Erring the other way would hand it
-        // free allowance. Only on an ACTUAL transition, so a redundant
-        // same-value call changes nothing.
-        if (old != on) {
-            uint256 received = s.rewardBudgetArmedFreshReceived;
-            if (s.rewardBudgetArmedFreshPaid < received) {
-                s.rewardBudgetArmedFreshPaid = received;
-            }
-        }
+        // free allowance.
+        //
+        // Pre-merge adversarial review (2026-08-17) P2 — the retirement now
+        // keys on the EFFECTIVE role predicate through the shared helper,
+        // because mirror-ness has two inputs and `setBaseChainId` mutates
+        // the other one. Guarding each knob's own delta re-created the
+        // one-fix-two-sites defect r2 already catalogued.
+        _retireDeliveredResidualOnRoleChange(s, wasMirror);
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("isCanonicalRewardChain"),

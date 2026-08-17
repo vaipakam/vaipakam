@@ -60,6 +60,47 @@ one. The practical consequences:
   — loses the same value AND leaves the reward stuck, with no signal that
   anything happened.
 
+- **Only a genuinely permanent shortfall triggers that trade.** The
+  emissions budget is not the only thing that can come up short at
+  settlement: the platform also refuses to credit more than its own
+  balance currently backs, and that constraint is temporary — it clears
+  with the next inflow. A removed reward that hits a momentary backing
+  dip now waits for it to pass, rather than settling short and discarding
+  the difference. Discarding is reserved for the one budget that can
+  never refill.
+
+- **Removal happens when value first moves, not merely when the sweep
+  first advances.** A sweep pass can step past days that turn out to be
+  worth nothing — for example a day whose shared allowance an earlier
+  claim already used up. Such a pass now leaves the reward exactly as
+  claimable as before; the owner's claim closes only on the first pass
+  that actually credits value, which is what the platform's announcements
+  have always described.
+
+- **Detaching a chain from the cross-chain mesh is now a full role change.**
+  A chain's delivered-funding position was already retired when its
+  canonical/mirror role flag flipped; the same retirement now also applies
+  when the chain is detached or re-attached by clearing or setting its
+  home-chain reference — the second way its effective role can change.
+  Previously a detach-and-reattach round trip could re-offer funding
+  headroom whose backing had already been spent.
+
+- **A removed reward shows no countdown either.** The Claim Center's
+  removal countdown is a deadline for the owner to act on; once removal
+  has begun that deadline has passed, and continuing to show it — possibly
+  for a long settlement tail — would invite a claim that can no longer
+  succeed. The countdown now clears at the removal announcement, exactly
+  as it does for a claimed or fully expired reward.
+
+- **A removed reward no longer counts toward what its owner could claim.**
+  The internal check that asks "could this user's whole claim be paid
+  right now?" excludes removed rewards — the claim itself already skips
+  them. Previously a removed reward still mid-settlement inflated that
+  figure, which could stall the expiry clocks of the same user's other
+  rewards indefinitely. (The user-facing pending preview was measured to
+  be unaffected — it already read zero for such rewards through a
+  different mechanism — and now states the exclusion explicitly as well.)
+
 The claim-horizon sweep also moves onto its own internal component. It now
 shares the settlement engine, and no existing component had room for it
 within the per-component size limit that the platform's upgrade mechanism

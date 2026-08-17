@@ -940,6 +940,197 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Pre-merge review 2026-08-17 P1 — a fresh shortfall caused by the
+    ///      recycle bucket's BACKING room (a held-balance constraint that
+    ///      recovers with any inflow) must DEFER a removed entry's chunk, not
+    ///      truncate it. Only the 69M pool cap is monotone; treating a
+    ///      transient balance dip as terminal let a permissionless sweep
+    ///      timed to the dip destroy value one block of patience recovered.
+    function testP1bRemovedEntryDefersOnABackingDip() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        // Fresh-only armed day, as in the terminal test: a recycled share
+        // moves regardless of the pool and would mask the deferral.
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+        assertEq(recycled5, 0, "LIVE: and NO recycled share");
+
+        uint256 id = _seedEntry(alice, 98, 4, 6); // legacy day 4 + armed day 5
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        uint256 first = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertGt(first, 0, "LIVE: the first chunk credited");
+        assertTrue(
+            _mut().getRewardEntryExpiryBegunRaw(id),
+            "LIVE: and removal has begun"
+        );
+
+        // The DIP: bucket levelled up to the whole balance -> backing room 0,
+        // while the 69M pool still has its full headroom (paidOut is 0). The
+        // shortfall the chunk now hits is entirely backing-caused.
+        uint256 bucketBefore = _mut().getRecycleBucketRaw();
+        _mut().setRecycleBucketRaw(vpfi.balanceOf(address(diamond)));
+        uint256 dip = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertEq(dip, 0, "LIVE: nothing credits during the dip");
+        assertFalse(
+            _mut().getRewardEntryProcessedRaw(id),
+            "a backing dip DEFERS a removed entry - it never truncates"
+        );
+
+        // Backing recovers -> the deferred remainder settles IN FULL.
+        _mut().setRecycleBucketRaw(bucketBefore);
+        uint256 last = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertGt(last, 0, "the deferred remainder credits once backing recovers");
+        assertTrue(
+            _mut().getRewardEntryProcessedRaw(id),
+            "and the entry then terminalises normally"
+        );
+    }
+
+    /// @dev Pre-merge review 2026-08-17 P2 — removal begins on the first
+    ///      chunk that CREDITS, exactly as the event/storage docs promise. A
+    ///      chunk that merely ADVANCES (a day whose D1 ceiling a sibling's
+    ///      claim already consumed) moves nothing irreversible, so it must
+    ///      not close the owner's claim nor flip the entry into
+    ///      post-removal truncate mode.
+    function testP1bZeroCreditChunkDoesNotRemove() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, ) = _armAndFinalize(5, 0);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+        // Second armed day so a pending tail exists after the zero chunk.
+        _mut().setRecycledCreditedByDayRaw(6, 0);
+        _finalize(6);
+        _mut().setDayUserSideCapRaw(6, type(uint256).max);
+
+        uint256 id = _seedEntry(alice, 99, 5, 7); // wholly armed: days 5, 6
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        // Day 5's D1 ceiling is already fully consumed (as a sibling entry's
+        // earlier claim would leave it): the chunk ADVANCES, credits zero.
+        _mut().setDayUserSideCapRaw(5, 1 ether);
+        _mut().setUserSideDayPaidRaw(
+            alice, uint8(LibVaipakam.RewardSide.Lender), 5, 1 ether
+        );
+        uint256 zero = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertEq(zero, 0, "LIVE: the chunk credited nothing");
+        assertEq(
+            _mut().getRewardEntryClaimNextDayRaw(id),
+            6,
+            "LIVE: yet it advanced past the consumed day"
+        );
+        assertFalse(
+            _mut().getRewardEntryExpiryBegunRaw(id),
+            "a zero-credit chunk never removes - the claim stays open"
+        );
+
+        // The first chunk that actually CREDITS is the removal point.
+        uint256 credited = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertGt(credited, 0, "LIVE: day 6 credits");
+        assertTrue(
+            _mut().getRewardEntryExpiryBegunRaw(id),
+            "and removal begins exactly there"
+        );
+    }
+
+    /// @dev Pre-merge review 2026-08-17 P2 — mirror-ness has TWO inputs
+    ///      (`!isCanonicalRewardChain && baseChainId != 0`), and the r9
+    ///      residual retirement guarded only the canonical knob. Detaching
+    ///      via `setBaseChainId(0)` and re-attaching must retire the
+    ///      delivered residual the same way a canonical round trip does.
+    function testP1bBaseChainDetachRetiresTheDeliveredResidual() public {
+        _rep().setIsCanonicalRewardChain(false); // mirror (baseChainId set)
+        _mut().setArmedFreshLedgerRaw(10 ether, 4 ether);
+        (, uint256 residual) = RewardRemittanceLensFacet(address(diamond))
+            .getDeliveredFreshBound();
+        assertEq(residual, 6 ether, "LIVE: the mirror holds a 6 residual");
+
+        _rep().setBaseChainId(0); // detach: mirror -> neither
+        _rep().setBaseChainId(uint32(CHAIN_BASE)); // re-attach
+        (, uint256 afterRoundTrip) = RewardRemittanceLensFacet(
+            address(diamond)
+        ).getDeliveredFreshBound();
+        assertEq(
+            afterRoundTrip,
+            0,
+            "a detach round trip retires the residual, never re-offers it"
+        );
+    }
+
+    /// @dev Pre-merge review 2026-08-17 P3 — a REMOVED entry is skipped by
+    ///      the claim, so the pending preview and the claim-executable
+    ///      aggregate must skip it too. Counting it overstated the user's
+    ///      pending figure and froze SIBLING entries' expiry clocks behind a
+    ///      funding need no balance could satisfy.
+    function testP1bRemovedEntryLeavesThePendingAggregates() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+        assertEq(recycled5, 0, "LIVE: and NO recycled share");
+
+        uint256 id = _seedEntry(alice, 100, 4, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        uint256 pendingBefore = _mut().getUserClaimPendingUncappedRaw(alice);
+        assertGt(pendingBefore, 0, "LIVE: the entry counts while claimable");
+        (uint256 previewBefore, , ) = _lens().previewInteractionRewards(alice);
+        assertGt(previewBefore, 0, "LIVE: and previews while claimable");
+        (, uint64 expiresBefore) = _lens().getRewardEntryExpiry(id);
+        assertGt(
+            uint256(expiresBefore),
+            0,
+            "LIVE: and carries a live countdown while claimable"
+        );
+
+        // Remove it (first crediting chunk), then PARK it mid-chunks on a
+        // backing dip so it stays unprocessed.
+        uint256 first = _sweeper().sweepExpiredInteractionRewards(ids);
+        assertGt(first, 0, "LIVE: the first chunk credited");
+        assertTrue(
+            _mut().getRewardEntryExpiryBegunRaw(id),
+            "LIVE: removal has begun"
+        );
+        _mut().setRecycleBucketRaw(vpfi.balanceOf(address(diamond)));
+        _sweeper().sweepExpiredInteractionRewards(ids);
+        assertFalse(
+            _mut().getRewardEntryProcessedRaw(id),
+            "LIVE: parked - removed but not terminal"
+        );
+
+        assertEq(
+            _mut().getUserClaimPendingUncappedRaw(alice),
+            0,
+            "a removed entry no longer inflates the executable aggregate"
+        );
+        (uint256 previewAfter, , ) = _lens().previewInteractionRewards(alice);
+        assertEq(previewAfter, 0, "nor the user's pending preview");
+        // Codex #1699 r11 P2 — removal is terminal for the countdown too: a
+        // deadline the owner can no longer act on must not keep ticking in
+        // the Claim Center for the whole life of a deferred tail.
+        (, uint64 expiresAfter) = _lens().getRewardEntryExpiry(id);
+        assertEq(
+            uint256(expiresAfter),
+            0,
+            "and a removed entry shows no claimant countdown"
+        );
+    }
+
     function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);

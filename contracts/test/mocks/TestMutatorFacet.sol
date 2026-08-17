@@ -1896,6 +1896,19 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().rewardEntries[id].expiryBegun;
     }
 
+    /// @notice Pre-merge review 2026-08-17 test-only — the aggregate uncapped
+    ///         pending the claim-executable gates measure, so a test can
+    ///         assert a REMOVED entry no longer inflates it.
+    function getUserClaimPendingUncappedRaw(address user)
+        external
+        view
+        returns (uint256)
+    {
+        return LibInteractionRewards.userClaimPendingUncapped(
+            LibVaipakam.storageSlot(), user
+        );
+    }
+
     /// @notice #1434 test-only — whether the entry is terminalised.
     function getRewardEntryProcessedRaw(uint256 id)
         external
