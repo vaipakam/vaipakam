@@ -595,10 +595,39 @@ REFRESH_SOL="$SCRIPT_DIR/RefreshAllFacetsInPlace.s.sol"
 if [ ! -f "$DEPLOY_SOL" ] || [ ! -f "$REFRESH_SOL" ]; then
   echo "  · deploy or refresh script not present, skipping"
 else
-  # Flattened before matching: both scripts wrap these calls across lines
-  # (a single-line grep silently omits those, the same trap [4b] hit).
-  DEPLOY_FLAT="$(tr '\n' ' ' < "$DEPLOY_SOL")"
-  REFRESH_FLAT="$(tr '\n' ' ' < "$REFRESH_SOL")"
+  # Comments stripped, THEN flattened. Both steps are load-bearing:
+  #
+  #   · flattened, because both scripts wrap these calls across lines and a
+  #     single-line grep silently omits those (the trap [4b] hit).
+  #   · comments stripped, because otherwise a write disabled the natural way —
+  #     `// Deployments.writeFacet("backstopFacet", ...)` — still counts as a
+  #     write and check 1 passes on a facet that is no longer recorded. The
+  #     mirror image is worse in the other direction: a `_buildCut(...)` inside
+  #     an explanatory comment invents a facet that must be written. Stripping
+  #     must come FIRST, since flattening destroys the line ends that terminate
+  #     `//` comments.
+  #
+  # Awk state machine rather than perl/python, to add no dependency. It does not
+  # model string literals, which is safe here: no key or import path in either
+  # script contains `//` or `/*`.
+  strip_sol_comments() {
+    awk '
+      BEGIN { inblk = 0 }
+      {
+        line = $0; out = ""; i = 1
+        while (i <= length(line)) {
+          two = substr(line, i, 2)
+          if (inblk) { if (two == "*/") { inblk = 0; i += 2 } else { i++ }; continue }
+          if (two == "/*") { inblk = 1; i += 2; continue }
+          if (two == "//") { break }
+          out = out substr(line, i, 1); i++
+        }
+        print out
+      }
+    ' "$1" | tr '\n' ' '
+  }
+  DEPLOY_FLAT="$(strip_sol_comments "$DEPLOY_SOL")"
+  REFRESH_FLAT="$(strip_sol_comments "$REFRESH_SOL")"
 
   CUT_GETTER_VAR="$(printf '%s' "$DEPLOY_FLAT" \
     | grep -oE '_buildCut\([[:space:]]*address\([A-Za-z0-9_]+\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors\(\)' \
