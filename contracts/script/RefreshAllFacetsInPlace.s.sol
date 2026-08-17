@@ -784,7 +784,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///         `addresses.json` key and inherited selector list. The facet set,
     ///         order, types, and getters mirror `DeployDiamond`'s `cuts[0..62]`
     ///         exactly — keep this in lockstep when a facet is added there.
-    function _deployItems() private returns (Item[] memory items) {
+    /// @dev `internal` rather than `private` so `RefreshScriptFacetParityTest`
+    ///      can drive it through a probe subclass and assert every slot is
+    ///      POPULATED — not merely allocated. Codex #1795 P1: the array is sized
+    ///      `new Item[](EXPECTED_FACETS)`, so a forgotten `items[N] = Item(...)`
+    ///      leaves a zero-valued slot while every length check — the `require` in
+    ///      `refresh()` and a count-only test alike — still passes, and the live
+    ///      refresh then skips that facet. Only reading the contents catches it.
+    function _deployItems() internal returns (Item[] memory items) {
         items = new Item[](EXPECTED_FACETS);
         items[0] = Item("diamondLoupeFacet", address(new DiamondLoupeFacet()), _getLoupeSelectors());
         items[1] = Item("ownershipFacet", address(new OwnershipFacet()), _getOwnershipSelectors());

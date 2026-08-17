@@ -197,11 +197,17 @@ are where #1780's new facet actually went missing, and two of them fail
 | 6 | `test/HelperTest.sol` | the test-side Diamond build |
 | 7 | `test/SetupTest.t.sol` | shared test setup |
 
-Outside `contracts/`: the `FACETS=(...)` array in
-`script/exportFrontendAbis.sh` and the `packages/contracts/src/abis/index.ts`
-barrel (both covered in "Frontend ABI sync" above), plus a field on the
-`Deployment` type in `packages/contracts/src/deployments.ts` whenever #1
-writes a new key.
+Three more, all paths repo-root-relative. The first is still under
+`contracts/`; the other two are not:
+
+- `contracts/script/exportFrontendAbis.sh` — add the facet to its
+  `FACETS=(...)` array.
+- `packages/contracts/src/abis/index.ts` — the re-export barrel, which that
+  script does **not** touch.
+- `packages/contracts/src/deployments.ts` — a field on the `Deployment` type,
+  whenever #1 writes a new key. Documented nowhere else.
+
+The first two are covered in more detail in "Frontend ABI sync" **below**.
 
 **Two of the seven do not fail loudly, so do not rely on a red check:**
 

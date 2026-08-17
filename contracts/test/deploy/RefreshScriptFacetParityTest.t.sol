@@ -52,6 +52,16 @@ import {DiamondFacetNames} from "./DiamondFacetNames.sol";
  *         `predeploy-check.sh`, comparing written keys against this same list.
  *         Tracked in #1793.
  */
+/// @dev Exposes the script's internal item builder so the test can inspect what
+///      it actually produced. A subclass is needed because `_deployItems()` must
+///      stay non-public on the script itself — it DEPLOYS all 73 facets, so it is
+///      not something an operator should be able to invoke by accident.
+contract RefreshItemsProbe is RefreshAllFacetsInPlace {
+    function deployItemsForTest() external returns (Item[] memory) {
+        return _deployItems();
+    }
+}
+
 contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
     function test_RefreshScript_FacetCount_MatchesDiamond() public {
         uint256 refreshExpects = new RefreshAllFacetsInPlace().EXPECTED_FACETS();
@@ -67,5 +77,72 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
             "cannot catch this (it compares that constant against itself) - "
             "see #1793."
         );
+    }
+
+    /// @notice Every slot `_deployItems()` allocates must actually be FILLED.
+    ///
+    /// @dev    Codex #1795 P1, and the case the count assertion above cannot
+    ///         reach. `_deployItems()` opens with
+    ///         `items = new Item[](EXPECTED_FACETS)`, so the array's LENGTH comes
+    ///         from the constant and not from the assignments below it. A
+    ///         developer who adds a facet, bumps `cutFacetNames()` and
+    ///         `EXPECTED_FACETS`, and forgets `items[N] = Item(...)` leaves a
+    ///         zero-valued slot: empty key, `address(0)` implementation, no
+    ///         selectors. Both length checks — `refresh()`'s `require` and the
+    ///         count test above — still pass, and the live refresh silently skips
+    ///         that facet, which is the precise failure this file exists to stop.
+    ///
+    ///         So the contents are read, not just the size. Reading them also
+    ///         catches the adjacent slip: a copy-pasted line that overwrites an
+    ///         existing index instead of filling the new one leaves the array
+    ///         full-length with a DUPLICATE key and a hole elsewhere, which the
+    ///         per-slot check alone would miss on the duplicated side.
+    function test_RefreshScript_EverySlotIsPopulated() public {
+        RefreshAllFacetsInPlace.Item[] memory items = new RefreshItemsProbe().deployItemsForTest();
+
+        assertEq(
+            items.length,
+            cutFacetNames().length,
+            "_deployItems() produced a different number of items than the Diamond has facets"
+        );
+
+        for (uint256 i; i < items.length; ++i) {
+            string memory where = string.concat("items[", vm.toString(i), "]");
+            assertGt(
+                bytes(items[i].key).length,
+                0,
+                string.concat(
+                    where,
+                    " has no addresses.json key - a slot was allocated but never assigned in _deployItems()"
+                )
+            );
+            assertTrue(
+                items[i].impl != address(0),
+                string.concat(where, " has a zero implementation address - slot allocated but never assigned")
+            );
+            assertGt(
+                items[i].selectors.length,
+                0,
+                string.concat(where, " routes no selectors - slot allocated but never assigned")
+            );
+        }
+
+        // Duplicate keys mean one index was written twice and another left empty.
+        for (uint256 i; i < items.length; ++i) {
+            for (uint256 j = i + 1; j < items.length; ++j) {
+                assertTrue(
+                    keccak256(bytes(items[i].key)) != keccak256(bytes(items[j].key)),
+                    string.concat(
+                        "duplicate facet key '",
+                        items[i].key,
+                        "' at items[",
+                        vm.toString(i),
+                        "] and items[",
+                        vm.toString(j),
+                        "] - an assignment overwrote an existing index instead of filling a new one"
+                    )
+                );
+            }
+        }
     }
 }
