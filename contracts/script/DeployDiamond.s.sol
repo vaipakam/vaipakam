@@ -869,6 +869,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
         Deployments.writeFacet("payrollFacet",            address(payrollFacet));
         Deployments.writeFacet("earlyWithdrawalFacet",    address(earlyWithdrawalFacet));
+        Deployments.writeFacet("earlyWithdrawalDirectFacet", address(earlyWithdrawalDirectFacet));
         Deployments.writeFacet("partialWithdrawalFacet",  address(partialWithdrawalFacet));
         Deployments.writeFacet("precloseFacet",           address(precloseFacet));
         Deployments.writeFacet("prepayListingFacet",      address(prepayListingFacet));

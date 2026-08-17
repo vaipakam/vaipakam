@@ -28,6 +28,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
@@ -174,7 +175,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
     // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
     // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 72;
+    uint256 internal constant EXPECTED_FACETS = 73;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -791,6 +792,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[15] = Item("addCollateralFacet", address(new AddCollateralFacet()), _getAddCollateralSelectors());
         items[16] = Item("treasuryFacet", address(new TreasuryFacet()), _getTreasurySelectors());
         items[17] = Item("earlyWithdrawalFacet", address(new EarlyWithdrawalFacet()), _getEarlyWithdrawalSelectors());
+        // #1780 — the direct lender-exit route. Must be refreshed WITH the listed
+        // route: they were one facet, so refreshing only the listed one leaves
+        // `sellLoanViaBuyOffer` on pre-refresh bytecode while everything around
+        // it moves, which is exactly the full-refresh invariant this script
+        // exists to hold.
+        items[72] = Item("earlyWithdrawalDirectFacet", address(new EarlyWithdrawalDirectFacet()), _getEarlyWithdrawalDirectSelectors());
         items[18] = Item(
             "partialWithdrawalFacet",
             address(new PartialWithdrawalFacet()),
