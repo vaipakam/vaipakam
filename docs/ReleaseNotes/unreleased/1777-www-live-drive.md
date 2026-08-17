@@ -50,6 +50,14 @@ confirm, so on the live site the drive now insists the figures be published ones
 and only relaxes that when deliberately pointed somewhere without a
 configuration service behind it.
 
+Establishing this for every page the drive visits needed one small change to
+the site itself: each page now states, in a machine-readable marker, whether it
+accepted a published configuration or fell back to its bundled values — the
+same conclusion the page already reaches internally, exposed rather than
+guessed at. Review showed why nothing less suffices: two successive attempts to
+infer it from the outside each re-implemented part of the page's own acceptance
+rules and each got a case wrong. The page knows; the check now asks it.
+
 ### One thing it cannot currently do
 
 The drive cannot be run from the automated agent environment at all: the browser

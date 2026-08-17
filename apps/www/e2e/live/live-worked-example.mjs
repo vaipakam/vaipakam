@@ -129,63 +129,31 @@ page.on('console', (m) => {
 });
 
 /**
- * Did THIS document receive a config snapshot the page would ACCEPT?
+ * Did THIS document accept a published config snapshot?
  *
- * The provenance assertion below reads the Overview document's spans, but
- * the search page is a SEPARATE document with its own fetch. If that one
- * fails while the live rates equal the bundled defaults, its fallback
- * index still contains the figure and the search check passes without a
- * published snapshot ever arriving — no rebuild, nothing exercised
- * (Codex #1778 r3 P2). So the fetch is observed directly per document.
+ * Read from `data-protocol-config` on <html>, which the store sets to
+ * `pending` / `published` / `bundled` as ITS OWN conclusion — full
+ * acceptance conditions included (status, `available`, freshness, the
+ * complete field-level decode). Each document fetches independently, so
+ * this is read per document.
  *
- * Observed with the PAGE'S OWN acceptance conditions, not HTTP status.
- * `GET /config/:chainId` deliberately answers 200 with
- * `{ available: false }` when it has no row, and `useProtocolConfig`
- * additionally refuses stale and undecodable payloads — so a
- * status-only probe marks "published" exactly when the page falls back
- * to bundled defaults (Codex #1778 r4 P2). Mirrored here:
- * `available === true`, `updatedAt` within the same 24 h window with
- * the same 5-minute clock-skew refusal of future-dated rows, and the
- * bundle passing `decodeMarketingConfig`'s first gate (array, ≥9
- * entries). The full field-level decode is deliberately NOT duplicated
- * — that would be a drifting second copy of the store's logic; a
- * subtly undecodable bundle is instead caught by the Overview's span
- * provenance, which reads what the page itself concluded.
+ * History, because this took three rounds to get right (Codex #1778
+ * r3-r5): a status-200 probe marked "published" when the endpoint
+ * answers 200 with `{available:false}`; a payload-mirroring probe then
+ * re-implemented most of the acceptance conditions but not the
+ * field-level decode, leaving a bundle malformed only for the search
+ * document to slip through. Any external re-implementation of the
+ * store's acceptance is a drifting second copy — the fix is the page
+ * stating its conclusion, and the drive reading it.
  */
-const FRESH_WINDOW_SECONDS = 24 * 3600;
-const CLOCK_SKEW_TOLERANCE_SECONDS = 5 * 60;
-let configOk = false;
-const pendingConfigReads = [];
-page.on('response', (res) => {
-  const u = new URL(res.url());
-  if (!/\/config\/\d+$/.test(u.pathname)) return;
-  pendingConfigReads.push(
-    (async () => {
-      if (res.status() !== 200) return;
-      let body;
-      try {
-        body = await res.json();
-      } catch {
-        return; // undecodable — the page rejects it, so must we
-      }
-      if (body?.available !== true) return;
-      const age = Date.now() / 1000 - body.updatedAt;
-      if (typeof body.updatedAt !== 'number' || !Number.isFinite(body.updatedAt)) return;
-      if (age < -CLOCK_SKEW_TOLERANCE_SECONDS || age > FRESH_WINDOW_SECONDS) return;
-      if (!Array.isArray(body.bundle) || body.bundle.length < 9) return;
-      configOk = true;
-    })(),
-  );
-});
+const documentConfigSource = () =>
+  page.evaluate(() => document.documentElement.dataset.protocolConfig ?? 'absent');
+
 const gotoFresh = async (url) => {
-  configOk = false;
-  pendingConfigReads.length = 0;
   await page.goto(url, { waitUntil: 'networkidle', timeout: 60_000 });
   // The snapshot is fetched after first paint; give it room so a slow
-  // fetch reads as slow rather than as "not live" — then settle the
-  // async payload inspections before anything reads `configOk`.
+  // fetch reads as slow rather than as "not live".
   await page.waitForTimeout(3_000);
-  await Promise.all(pendingConfigReads);
 };
 
 console.log(`Target: ${BASE}  (published snapshot ${REQUIRE_PUBLISHED ? 'REQUIRED' : 'optional'})\n`);
@@ -340,8 +308,9 @@ try {
       // The search document is a SEPARATE fetch from the Overview's. If
       // it failed, the fallback index still contains the figure whenever
       // live equals bundled, so the check below would pass without a
-      // published snapshot ever arriving (Codex #1778 r3 P2).
-      const searchDocPublished = configOk;
+      // published snapshot ever arriving (Codex #1778 r3 P2). Read what
+      // THIS document concluded, not what the Overview did.
+      const searchDocPublished = (await documentConfigSource()) === 'published';
 
       // Look inside an actual Overview RESULT, not the whole body.
       // `HelpSearch` interpolates the query into its result-count line and
