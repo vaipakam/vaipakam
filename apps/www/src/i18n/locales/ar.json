@@ -358,22 +358,7 @@
       "howTitle": "كيف يعمل",
       "analyticsHint": "تبحث عن إحصاءات البروتوكول العامة والمعروض المتداول؟ راجع",
       "analyticsLink": "صفحة التحليلات"
-    },
-    "connectTitle": "اربط محفظتك",
-    "unsupportedNetwork": "شبكة غير مدعومة",
-    "buy": "شراء VPFI",
-    "buying": "جارٍ الشراء…",
-    "approving": "جارٍ الاعتماد…",
-    "approvingVpfi": "جارٍ اعتماد VPFI…",
-    "depositToVault": "إيداع في Vault",
-    "depositing": "جارٍ الإيداع…",
-    "unstakeToWallet": "سحب إلى المحفظة",
-    "unstaking": "جارٍ السحب…",
-    "buyFailed": "فشل الشراء",
-    "depositFailed": "فشل الإيداع",
-    "unstakeFailed": "فشل السحب",
-    "buyTimedOut": "انتهت مهلة الشراء — تمت إعادة الأموال",
-    "vaultBalanceZero": "رصيد VPFI في Vault الخاص بك هو 0 — أودع VPFI أولاً."
+    }
   },
   "claimCenter": {
     "connectTitle": "اربط محفظتك",
@@ -1395,8 +1380,6 @@
     "errorSuffix": ". لا تتأثر معاملة السلسلة — يُرجى المتابعة بحذر.",
     "expectedStateChanges": "تغييرات الحالة المتوقعة",
     "plusMore": "… بالإضافة إلى {{count}} أخرى",
-    "titleMalicious": "وضع Blockaid علامة على هذه المعاملة كخبيثة. يُرجى عدم المتابعة.",
-    "titleWarning": "أبدى Blockaid تحذيرات — يُرجى مراجعة تغييرات الحالة قبل التوقيع.",
     "titlePreview": "معاينة المعاملة"
   },
   "consent": {

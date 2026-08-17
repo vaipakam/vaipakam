@@ -88,7 +88,12 @@ export function NotificationBell() {
   // new wallet's feed as an already-open panel and clear its badge without
   // the user ever opening that inbox.
   const [lastSeen, setLastSeen] = useState<SeenCursor | null>(null);
+  // Pulls read-state IN from localStorage on an identity change — the
+  // subscribe half of the rule's own remit, not derived render output.
+  // A `key` on the parent would express the reset but would also unmount
+  // the open panel and the feed query on every chain switch.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLastSeen(address ? loadLastSeen(readChain.chainId, address) : null);
     setOpen(false);
     seenAtOpen.current = null;
@@ -132,7 +137,12 @@ export function NotificationBell() {
   // While the panel is open, mark everything currently loaded as read —
   // re-running when the rows resolve or a later page/refetch brings more,
   // so the badge stays cleared even if the feed arrived after the open.
+  // `markAllRead` PERSISTS the cursor (`storeLastSeen` → localStorage) and
+  // mirrors it into state so the badge repaints. Pushing state out to an
+  // external system is the rule's first sanctioned use; the setState is the
+  // mirror, not the point.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (open) markAllRead();
   }, [open, markAllRead]);
 

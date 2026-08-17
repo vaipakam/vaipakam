@@ -36,7 +36,11 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import { visit } from 'unist-util-visit';
 import type { InlineCode } from 'mdast';
-import { KNOB_DEFAULTS, formatKnob, LIVE_VALUE_TOKEN_RE, type KnobName } from '../src/lib/liveValueKnobs';
+import {
+  formatKnob,
+  resolveLiveValue,
+  LIVE_VALUE_TOKEN_RE,
+} from '../src/lib/liveValueKnobs';
 
 export function substituteLiveValuesInMarkdown(markdown: string, locale: string): string {
   const tree = unified().use(remarkParse).parse(markdown);
@@ -47,17 +51,20 @@ export function substituteLiveValuesInMarkdown(markdown: string, locale: string)
     const match = LIVE_VALUE_TOKEN_RE.exec(node.value);
     if (!match) return;
 
-    const spec = KNOB_DEFAULTS[match[1] as KnobName];
-    // An unregistered knob is left exactly as written — same rule the
+    // Build-time: no config snapshot exists, so `null` resolves every
+    // token from compile-time defaults and marks nothing live. That is
+    // the honest answer for an artifact written before any fetch.
+    const r = resolveLiveValue(match[1], null);
+    // An unregistered token is left exactly as written — same rule the
     // rendered pages follow, so an authoring typo stays visible on the
     // page instead of becoming a confidently wrong number.
-    if (!spec) return;
+    if (!r) return;
 
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if (start === undefined || end === undefined) return;
 
-    edits.push({ start, end, text: formatKnob(spec.defaultValue, spec.format, locale) });
+    edits.push({ start, end, text: formatKnob(r.value, r.format, locale) });
   });
 
   // Descending, so each splice leaves earlier offsets valid.

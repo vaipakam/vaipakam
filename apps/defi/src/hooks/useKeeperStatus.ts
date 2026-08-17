@@ -28,30 +28,41 @@ export function useKeeperStatus(
   borrowerHolder: string | null | undefined,
 ) {
   const diamond = useReadyDiamond();
-  const [lenderStatus, setLenderStatus] = useState<SideKeeperStatus | null>(null);
-  const [borrowerStatus, setBorrowerStatus] = useState<SideKeeperStatus | null>(null);
-  // Global delegated-keeper pause (`AdminFacet.keepersPaused`). When governance
-  // flips this ON, `LibAuth.requireKeeperFor` rejects EVERY keeper-driven call
-  // regardless of any user's opt-in, so it's a third inertness gate the UI must
-  // surface. `null` until read.
-  const [keepersPaused, setKeepersPaused] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // #811 r5 — stale-resolve guard. `LoanDetails` is reused across `/loans/:id`
+  // #811 r5 — stale-resolve guard, now the RESULT'S OWN TAG rather than a ref
+  // plus a clearing effect. `LoanDetails` is reused across `/loans/:id`
   // navigations, so a slow read for the PREVIOUS loan's holders can resolve
-  // after the new loan has loaded; without this, that late response would
-  // overwrite state with a different address's keeper status and the caller
-  // would render an inert-cap warning keyed on the wrong wallet. We stamp the
-  // request key (holders) and drop any response whose key no longer matches.
+  // after the new loan has loaded; without a guard that late response would
+  // overwrite state with a different address's keeper status, and the caller
+  // would render an inert-cap warning keyed on the wrong wallet.
+  //
+  // The ref stays — it is what stops a superseded read COMMITTING — but the
+  // clearing effect it was paired with is gone. That effect existed to "drop
+  // any prior loan's status the moment the holders change", which is right,
+  // except that an effect runs AFTER the paint it was meant to prevent: the
+  // previous loan's keeper state was on screen for exactly one frame under the
+  // new loan's heading. Deriving the answer from the tag removes the frame
+  // instead of shortening it. Same half-fix, and the same correction, as
+  // `useOfferChildLoans` and `useLoan`.
+  const reqKey =
+    lenderHolder && borrowerHolder && diamond
+      ? `${lenderHolder.toLowerCase()}:${borrowerHolder.toLowerCase()}`
+      : null;
+  const [result, setResult] = useState<{
+    key: string;
+    lenderStatus: SideKeeperStatus | null;
+    borrowerStatus: SideKeeperStatus | null;
+    keepersPaused: boolean | null;
+    error: string | null;
+  } | null>(null);
+  const [refreshingKey, setRefreshingKey] = useState<string | null>(null);
   const reqKeyRef = useRef('');
 
   const load = useCallback(async () => {
     if (!lenderHolder || !borrowerHolder) return;
-    if (!diamond) return;  // chain has no Diamond — bail before zero-address read
-    const reqKey = `${lenderHolder}:${borrowerHolder}`;
-    reqKeyRef.current = reqKey;
-    setLoading(true);
-    setError(null);
+    if (!diamond) return; // chain has no Diamond — bail before zero-address read
+    const key = `${lenderHolder.toLowerCase()}:${borrowerHolder.toLowerCase()}`;
+    reqKeyRef.current = key;
+    setRefreshingKey(key);
     try {
       const [lOpt, bOpt, lList, bList, paused] = await Promise.all([
         diamond.getKeeperAccess(lenderHolder) as Promise<boolean>,
@@ -61,31 +72,41 @@ export function useKeeperStatus(
         (diamond as unknown as { keepersPaused: () => Promise<boolean> })
           .keepersPaused() as Promise<boolean>,
       ]);
-      if (reqKeyRef.current !== reqKey) return; // a newer read superseded this one
-      setLenderStatus({ profileOptIn: lOpt, approvedCount: lList.length });
-      setBorrowerStatus({ profileOptIn: bOpt, approvedCount: bList.length });
-      setKeepersPaused(Boolean(paused));
+      if (reqKeyRef.current !== key) return; // a newer read superseded this one
+      setResult({
+        key,
+        lenderStatus: { profileOptIn: lOpt, approvedCount: lList.length },
+        borrowerStatus: { profileOptIn: bOpt, approvedCount: bList.length },
+        keepersPaused: Boolean(paused),
+        error: null,
+      });
     } catch (err) {
-      if (reqKeyRef.current !== reqKey) return;
-      setError(err instanceof Error ? err.message : 'Keeper status read failed');
-      setLenderStatus(null);
-      setBorrowerStatus(null);
-      setKeepersPaused(null);
+      if (reqKeyRef.current !== key) return;
+      setResult({
+        key,
+        lenderStatus: null,
+        borrowerStatus: null,
+        keepersPaused: null,
+        error: err instanceof Error ? err.message : 'Keeper status read failed',
+      });
     } finally {
-      if (reqKeyRef.current === reqKey) setLoading(false);
+      setRefreshingKey((k) => (k === key ? null : k));
     }
   }, [lenderHolder, borrowerHolder, diamond]);
 
-  // Drop any prior loan's status the moment the holders change, so a consumer
-  // never reads the previous loan's keeper state during the gap before the new
-  // read lands (#811 r5).
   useEffect(() => {
-    setLenderStatus(null);
-    setBorrowerStatus(null);
-    setKeepersPaused(null);
-  }, [lenderHolder, borrowerHolder]);
+    void load();
+  }, [load]);
 
-  useEffect(() => { load(); }, [load]);
-
-  return { lenderStatus, borrowerStatus, keepersPaused, loading, error, reload: load };
+  const matched = result?.key === reqKey;
+  return {
+    lenderStatus: matched ? result.lenderStatus : null,
+    borrowerStatus: matched ? result.borrowerStatus : null,
+    keepersPaused: matched ? result.keepersPaused : null,
+    // An explicit `reload()` reports loading even though the question has not
+    // changed; it is called from handlers, never from an effect.
+    loading: reqKey !== null && (refreshingKey === reqKey || !matched),
+    error: matched ? result.error : null,
+    reload: load,
+  };
 }

@@ -58,6 +58,7 @@ import { InterestModeBadge } from "../components/app/InterestModeBadge";
 import { SwapToRepayIntentPanel } from "../components/loanDetails/SwapToRepayIntentPanel";
 import { useNFTPrepayListing } from "../hooks/useNFTPrepayListing";
 import "./LoanDetails.css";
+import { useNowSeconds } from '../hooks/useNowSeconds';
 
 export default function LoanDetails() {
   const { t } = useTranslation();
@@ -239,12 +240,16 @@ export default function LoanDetails() {
     !!loan && Number(loan.status) === LoanStatus.FallbackPending;
   // Borrower may still cure via full repay or collateral top-up while
   // FallbackPending (until the lender finalizes the claim).
+  // One clock for BOTH deadline gates in this file. The grace surface
+  // below used to keep its own ticker while the overdue gate here read
+  // `Date.now()` directly and froze at mount — same page, two answers.
+  const nowSec = useNowSeconds();
   const canAct = isActive || isFallbackPending;
 
   const endTime = loan
     ? Number(loan.startTime) + Number(loan.durationDays) * 86400
     : 0;
-  const now = Math.floor(Date.now() / 1000);
+  const now = nowSec;
   const isOverdue = now > endTime && isActive;
   const daysRemaining = isActive
     ? Math.max(0, Math.ceil((endTime - now) / 86400))
@@ -352,11 +357,6 @@ export default function LoanDetails() {
   // page opened pre-grace would keep showing the action surface
   // forever even after `now >= endTime + gracePeriod`. Codex P3 fix
   // round 3 on PR #308.
-  const [nowSec, setNowSec] = useState(Math.floor(Date.now() / 1000));
-  useEffect(() => {
-    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 60_000);
-    return () => clearInterval(id);
-  }, []);
   // When the live grace read fails, collapse to the `isOverdue`
   // fallback so the child receives the same conservative gate the
   // availability context uses. Without this, an overdue loan with no

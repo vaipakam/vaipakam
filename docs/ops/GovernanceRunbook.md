@@ -392,7 +392,7 @@ every PR; well-formed JSONs land green, hand-edited / pretty-
 table outputs fail loud.
 
 Full protocol behind this surface is documented in
-[`CLAUDE.md`](../CLAUDE.md) → "Keeper-bot ABI sync" and
+[`CLAUDE.md`](../../CLAUDE.md) → "Keeper-bot ABI sync" and
 `docs/ReleaseNotes-2026-04-25.md` → Phase 9.A "Sync mechanism".
 
 ### Incident response — pause

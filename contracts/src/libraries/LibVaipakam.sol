@@ -3079,7 +3079,23 @@ library LibVaipakam {
         ///      stability; never read or written.
         uint32 localEidLegacyDoNotUse;
         /// @dev EVM chain id of the canonical (Base) reward chain.
-        ///      Mirrors send chain reports here; zero on Base itself.
+        ///      Mirrors send chain reports here, and
+        ///      {MirrorTierReceiverFacet} rejects any inbound push whose
+        ///      source chain is not this value.
+        ///
+        ///      Set to Base's chain id on EVERY chain, canonical
+        ///      included — `deploy-mainnet.sh` exports `BASE_CHAIN_ID`
+        ///      unconditionally and `ConfigureRewardReporter` writes it,
+        ///      so a configuration audit should expect 8453 (84532 on
+        ///      testnet) here even on Base. It used to say "zero on Base
+        ///      itself", which made a correct deployment read as drift
+        ///      (#1641). The canonical MARKER is `isCanonicalRewardChain`,
+        ///      set explicitly — but this field is not inert:
+        ///      {isMirrorRewardChain} is
+        ///      `!isCanonicalRewardChain && baseChainId != 0`, so a
+        ///      non-canonical deployment that leaves this at zero is not
+        ///      classified as a mirror and gets canonical / single-chain
+        ///      semantics instead (Codex #1653 r2 P2).
         uint32 baseChainId;
         /// @dev Authorized cross-chain messenger address on this chain
         ///      (`VaipakamRewardMessenger`, CCIP-backed post-T-068). Only
@@ -3156,10 +3172,11 @@ library LibVaipakam {
         ///      with zero global interest" from "day `D` not yet
         ///      broadcast here".
         mapping(uint256 => bool) knownGlobalSet;
-        // ─── Bridged Fixed-Rate VPFI Buy (spec §: Early Fixed-Rate ──────
-        // Purchase Program, cross-chain extension) ─────────────────────────
-        // Base is the SOLE seller of the fixed-rate VPFI. Non-Base chains
-        // get a "bridged buy" UX via VPFIBuyAdapter: user pays native ETH
+        // #687-A: a "Bridged Fixed-Rate VPFI Buy" section header stood
+        // here, describing non-Base chains getting a bridged-buy UX via
+        // VPFIBuyAdapter. Its FIELDS were removed with the excision; only
+        // the header survived, so it labelled the sequencer-uptime slots
+        // below it. Removed — there is no protocol VPFI purchase surface.
         // ─── l2 Sequencer Uptime Circuit Breaker ────────────────────────
         // On L2s (Base/Arb/OP/etc.) we must not consume Chainlink prices
         // while the sequencer has been down — users can't submit txs, so
@@ -4233,13 +4250,71 @@ library LibVaipakam {
         // `srcChainId == s.baseChainId` (NOT the CCIP selector; the
         // messenger already translates per Codex round-9 P1 #4).
         //
-        // Mirror-side authenticated business peer — the Base
-        // diamond / messenger contract address whose `TierUpdated`
-        // payloads we accept. Validated via the messenger's
-        // existing `channelPeer` mapping (Codex round-4 P1 #4 +
-        // round-9 P1 #4 — `Any2EVMMessage.sender` is always the
-        // local CCIP adapter, never the business peer).
-        address baseAuthorizedMessenger;
+        // The `sourceChainId == s.baseChainId` check is DEFENCE IN DEPTH,
+        // not the sole source-chain constraint. The adapter constrains it
+        // too, via configuration: `_ccipReceive` resolves
+        // `channelPeerOf[channelId][sourceChainId]` and rejects a zero
+        // entry, and `ConfigureCcip.s.sol` wires a mirror's reward-channel
+        // peer for `baseChainId` only — so under the supported
+        // configuration a message from another mirror fails at the adapter
+        // before reaching here. This check is what still holds if an extra
+        // peer entry is ever added for a chain that should not be pushing
+        // tier updates (Codex #1771 r1 P2 #3 — an earlier version of this
+        // comment claimed the adapter was chain-agnostic, which is wrong).
+        //
+        // ── RETIRED SLOT: `address baseAuthorizedMessenger` (#1770) ─────
+        //
+        // REMOVED, not merely unused. It sat here, between
+        // `currentTierTableVersion` and `buybackAllowedToken`, and was
+        // read and written by nothing for its entire life.
+        //
+        // Removing it is layout-neutral, which is why it could go. It
+        // packed into the same slot as `currentTierTableVersion`
+        // (uint16 + address = 22 bytes), and the field after it is a
+        // mapping, which always starts a fresh slot. Verified rather than
+        // reasoned about: a `forge inspect ... storageLayout` diff over
+        // the whole struct before and after shows 493 → 492 fields, one
+        // removed, and ZERO fields moved. An earlier revision of this
+        // change kept the field on the stated grounds that removing it
+        // would shift everything below — that was simply wrong
+        // (Codex #1771 r1 P2 #1).
+        //
+        // What it was for. The Diamond-side half of the check
+        // `CrossChainRewardSystem.md` ("Sender authentication") specified:
+        // the messenger validates the business peer, forwards
+        // `(payload, srcChainId, businessPeer)`, and the Diamond then
+        // checks `srcChainId == s.baseChainId` AND
+        // `businessPeer == s.baseAuthorizedMessenger`. The messenger half
+        // is built; this half never was. Its comment used to claim it was
+        // "validated via the messenger's existing `channelPeer` mapping",
+        // false in both halves at the time (#1631, corrected in #1653).
+        //
+        // Why retired rather than completed. #1650 put the originator on
+        // the wire (envelope v2) and made `CcipMessenger._ccipReceive`
+        // reject a mismatch against `channelPeerOf`
+        // (`UnauthorizedChannelPeer`). A Diamond-side allowlist cannot
+        // catch a mispointed peer, because a mispointed peer fails CLOSED
+        // rather than open: `sendMessage` stamps `channelId` from
+        // `channelOf[msg.sender]`, so only the registered handler of a
+        // channel can send on it, and `registerChannel` keeps
+        // `handlerOf`/`channelOf` one-to-one under clear-before-repoint.
+        // A message therefore only carries the reward channelId if its
+        // originator IS Base's registered reward handler — so a mirror
+        // whose peer is mispointed rejects the legitimate sender rather
+        // than accepting a wrong one. A second stored copy would add a
+        // way for the two records to disagree, and disagreement stops a
+        // live lane with neither record saying which is stale (Codex
+        // #1771 r1 P2 #2, refuted with the send-path binding above).
+        //
+        // What authenticates a mirror `TierUpdated` today, in order:
+        // the CCIP router's `Any2EVMMessage.sender ==
+        // remoteMessengerOf[srcChain]`; the envelope originator ==
+        // `channelPeerOf[channelId][srcChain]`; then, in
+        // {MirrorTierReceiverFacet}, `msg.sender == s.rewardMessenger`,
+        // `sourceChainId == s.baseChainId`, and nonce monotonicity.
+        //
+        // Do NOT re-add the field to close a "gap" — there is no gap;
+        // the layout is byte-identical either way.
         // ── Cross-chain buyback custody (Base) ──────────────────────────
         //
         // Set of remittance-token addresses per chain that the

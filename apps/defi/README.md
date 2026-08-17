@@ -15,7 +15,7 @@ Architecturally:
 - Wallet via wagmi v2 + ConnectKit (`injected({ target: "metaMask" })` + `coinbaseWallet()` + `walletConnect()` + `safe()`).
 - Chain reads via the Vaipakam Diamond + per-facet ABIs from `@vaipakam/contracts`.
 - Indexer / analytics reads via `apps/indexer` at `VITE_INDEXER_ORIGIN`.
-- Operator services (aggregator quote proxies, Blockaid scan, settings endpoints) via `apps/agent` at `VITE_AGENT_ORIGIN`.
+- Operator services (aggregator quote proxies, settings endpoints) via `apps/agent` at `VITE_AGENT_ORIGIN`. (#1651: a "Blockaid scan" was listed here; ET-001 dropped it — the pre-sign transaction preview is a frontend-only `eth_call` simulation, and `apps/agent` has no scan proxy.)
 
 **Non-goals:** no signing-key handling (every tx flows through the user's connected wallet); no chain-event indexing (delegated to `apps/indexer`); no autonomous on-chain submissions (delegated to `apps/keeper`); no notification dispatch (delegated to `apps/agent`). This Worker is the **interactive surface**; other Workers are the autonomous + read-API surfaces.
 
@@ -67,7 +67,7 @@ No signing keys here — the connected wallet is the signer for every action.
 
 - `apps/www` — marketing site at `vaipakam.com`; this is the connected app at `defi.vaipakam.com`. Shares marketing-content base; this Worker overlays wallet + chain reads.
 - `apps/indexer` — chain → D1 indexer + public read-API; this app's primary data source for offer / loan listings.
-- `apps/agent` — proactive-notifications + operator-services Worker; this app's source for aggregator quotes, Blockaid scans, settings endpoints.
+- `apps/agent` — proactive-notifications + operator-services Worker; this app's source for aggregator quotes and settings endpoints. (#1651: "Blockaid scans" was listed here; no such proxy exists — see `apps/agent/src/index.ts`.)
 - `apps/keeper` — autonomous Worker; not user-facing but works in concert (liquidations affect loans this app displays).
 - `packages/contracts` — ABI / deployment data; consumed at `@vaipakam/contracts/abis`.
 - `packages/lib` — framework-agnostic utilities (multicall, decodeContractError, cross-domain prefs).

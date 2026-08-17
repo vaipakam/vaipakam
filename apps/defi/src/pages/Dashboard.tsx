@@ -422,7 +422,6 @@ export default function Dashboard() {
                 // failure here is rare in practice (the only typed
                 // revert is OfferAlreadyAccepted, which races a
                 // concurrent acceptOffer — uncommon).
-                // eslint-disable-next-line no-console
                 console.error('cancelOffer failed:', err);
               } finally {
                 setCancellingOfferId(null);

@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import {
@@ -11,7 +17,7 @@ import { useOfferStats } from './useOfferStats';
 import { fetchOfferById } from '../lib/indexerClient';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
-import { useDataFreshness } from '../context/DataFreshnessContext';
+import { useDataFreshness } from '../context/dataFreshnessStore';
 
 type LoanInitiatedForToken = {
   loanId: string;
@@ -85,6 +91,14 @@ export function useLogIndex() {
   // (which on a slow public RPC like Sepolia's default stalled the page
   // for tens of seconds even when the cache was fully populated).
   const initial = peekLoanIndex(chainId, diamondAddress);
+  // The chain the arrays below currently describe. Consumers that key derived
+  // state on the ACTIVE chain must compare against this and withhold while they
+  // disagree: `load()` runs from an effect, so between a chain switch and that
+  // effect the arrays still hold the PREVIOUS chain's events while every other
+  // chain-derived value has already moved. Tagging is synchronous by
+  // construction — this only changes where the arrays change — so no effect is
+  // needed to keep it honest.
+  const [indexChainId, setIndexChainId] = useState<number | null>(chainId);
   const [loans, setLoans] = useState<LoanIndexEntry[]>(initial?.loans ?? []);
   const [offerIds, setOfferIds] = useState<bigint[]>(initial?.offerIds ?? []);
   const [openOfferIds, setOpenOfferIds] = useState<bigint[]>(initial?.openOfferIds ?? []);
@@ -119,11 +133,73 @@ export function useLogIndex() {
   // hook until a new offer or loan is created. See
   // `DataFreshnessContext` for the trigger logic.
   const { report, fallbackVersion } = useDataFreshness();
+  // Monotonic scan generation. `load()` is re-created (and re-invoked by the
+  // effect below) on every chain change, but the effect neither cancels nor
+  // sequences the previous run — so a slow scan for the OLD chain can settle
+  // AFTER a fast scan for the new one and overwrite it. That was survivable
+  // while a stale array was merely stale; with `indexChainId` it is not,
+  // because the late writer also stamps the OLD chain and consumers that gate
+  // on the tag then withhold everything until the next watermark tick or
+  // manual rescan. A superseded scan must commit nothing at all.
+  //
+  // Round 4 correction: a BARE sequence was too blunt. It discarded every
+  // superseded scan including same-chain ones, so a scan slower than the warm
+  // watermark interval on a busy chain was outrun by the next tick every time
+  // and NOTHING ever committed — scans completing forever while the hook
+  // served stale arrays. The thing that must invalidate a result is the chain
+  // changing under it, not merely another scan having started.
+  //
+  // So the commit predicate is two parts, and both are needed:
+  //   · the scan's chain is still the chain we are reading  (cross-chain)
+  //   · no LATER scan has already committed                 (ordering)
+  // A same-chain scan that finishes while another is in flight now commits
+  // normally; only a result for a chain we have left, or one overtaken by a
+  // fresher commit, is dropped.
+  const scanSeq = useRef(0);
+  const committedSeq = useRef(0);
+  const activeChainRef = useRef(chainId);
+  // Commit-phase, not a render-phase write — writing a ref while rendering is
+  // unsafe under concurrent rendering, and it is the same rule #1747 is
+  // clearing elsewhere in this app. A layout effect runs only for renders that
+  // COMMIT and before anything can observe them; the reader here is an
+  // `await`-settled callback, long after either.
+  useLayoutEffect(() => {
+    activeChainRef.current = chainId;
+  }, [chainId]);
 
   const load = useCallback(async () => {
+    const seq = ++scanSeq.current;
+    const forChain = chainId;
+    // Two predicates, deliberately NOT one. `chainStillCurrent` is the whole
+    // test for the synchronous peek below: it hydrates from storage for the
+    // chain this invocation was created for, and there is no ordering question
+    // because peeks run in call order.
+    //
+    // `isCurrent` adds the ordering test and belongs ONLY to the async result.
+    // Round 4 used it for both and marked the peek as a commit, which made
+    // `seq > committedSeq.current` false for the SAME invocation from that
+    // point on — so its own result, its error path and its `finally` could
+    // never apply. Since the peek hits on every run after the first successful
+    // scan, that meant every later rescan wrote storage and left React serving
+    // the previous snapshot, with the freshness reporter stuck loading.
+    // `committedSeq` orders COMPLETED SCANS; hydration is not one.
+    const chainStillCurrent = () => forChain === activeChainRef.current;
+    const isCurrent = () =>
+      chainStillCurrent() && seq > committedSeq.current;
+    // Set when THIS invocation commits. `isCurrent()` goes false the instant
+    // `committedSeq` advances — including for the invocation that advanced it —
+    // so the `finally` below cannot use it alone to decide whether it owns the
+    // loading flag. Round 5 fixed exactly this shape in the peek branch and I
+    // left it standing in the success path, one branch over.
+    let committedHere = false;
     report('logIndex', { loading: true });
     const peeked = peekLoanIndex(chainId, diamondAddress);
+    if (!chainStillCurrent()) return;
     if (peeked === null) {
+      // No cached index for this (chain, diamond). The arrays still hold
+      // whatever the PREVIOUS chain left, so mark the tag unknown rather than
+      // letting a consumer read them as belonging to the new chain.
+      setIndexChainId(null);
       setLoading(true);
     } else {
       // Apply the peek even if it matches initial state — chainId /
@@ -138,6 +214,7 @@ export function useLogIndex() {
       setGetOwner(() => peeked.getOwner);
       setGetLastOwner(() => peeked.getLastOwner);
       setGetLoanInitiatedForToken(() => peeked.getLoanInitiatedForToken);
+      setIndexChainId(chainId);
       setLoading(false);
     }
     setError(null);
@@ -166,6 +243,11 @@ export function useLogIndex() {
           }
         },
       );
+      // Superseded mid-scan: a newer `load()` (new chain, or a newer tick) has
+      // started, so this result is not what anyone is asking for. Drop it
+      // whole — committing the arrays or the tag here is what would strand a
+      // gated consumer on the previous chain.
+      if (!isCurrent()) return;
       setLoans(result.loans);
       setOfferIds(result.offerIds);
       setOpenOfferIds(result.openOfferIds);
@@ -178,6 +260,9 @@ export function useLogIndex() {
       setGetOwner(() => result.getOwner);
       setGetLastOwner(() => result.getLastOwner);
       setGetLoanInitiatedForToken(() => result.getLoanInitiatedForToken);
+      setIndexChainId(chainId);
+      committedSeq.current = seq;
+      committedHere = true;
       // Report the scanned-through block as a freshness frontier. The
       // legacy log scan IS an RPC tail-scan ([indexerTail+1, safeHead]),
       // and useLogIndex is mounted on most data pages — so this is what
@@ -187,11 +272,17 @@ export function useLogIndex() {
       report('logIndex', { frontier: result.lastBlock });
       step.success({ note: `${result.loans.length} loans indexed` });
     } catch (e) {
-      setError(e as Error);
       step.failure(e);
+      if (!isCurrent()) return;
+      setError(e as Error);
     } finally {
-      setLoading(false);
-      report('logIndex', { loading: false });
+      // The scan that COMMITTED owns the flag, and so does a still-live one
+      // that failed — a superseded run owns nothing, since clearing the shared
+      // flag would announce "done" while the live scan is still out.
+      if (committedHere || isCurrent()) {
+        setLoading(false);
+        report('logIndex', { loading: false });
+      }
     }
   }, [rpcUrl, diamondAddress, chain.deployBlock, chainId, indexerLastBlock, report]);
 
@@ -215,6 +306,9 @@ export function useLogIndex() {
   }, [load, statsResolved, watermarkVersion, fallbackVersion]);
 
   return {
+    /** Chain the arrays in this result describe; `null` while a scan for a new
+     *  chain is in flight and the arrays still hold the previous chain's. */
+    indexChainId,
     loans,
     offerIds,
     openOfferIds,

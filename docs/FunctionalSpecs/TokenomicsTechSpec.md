@@ -926,6 +926,17 @@ Intended behaviour, in the terms that are observable:
   a separate, deliberate action — consistent with the rule below that on retail,
   disposing of a bucket surplus is a deliberate treasury action and never
   automatic protocol behaviour.
+- **Only the canonical deployment answers the question at all.** The reading is
+  computed from ledgers only the canonical deployment maintains, so a mirror
+  asked the same question should refuse rather than answer from its own empty
+  copy. This is a separate requirement from refusing to report on the chain
+  being asked *about*: one concerns which deployment is answering, the other
+  which chain is the subject, and neither implies the other. A deployment that
+  cannot know should say so, because a well-formed zero is indistinguishable
+  from a genuine finding of no surplus and whatever reads it will act on the
+  answer either way. The general principle: where a reading is derived from
+  state that only one deployment holds, availability of that reading should be
+  scoped to that deployment rather than left to the caller to police.
 - **It is off until an administrator configures a multiple**, and while off
   nothing is ever flagged. No threshold suits every deployment, and a warning
   that fires before anyone has chosen its meaning is one people stop reading.

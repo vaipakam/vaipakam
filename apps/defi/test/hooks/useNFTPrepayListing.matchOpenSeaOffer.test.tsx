@@ -23,7 +23,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
-const DIAMOND_ADDR = '0x77A16D1807F43A12C1DBde0b06064058cb6FC4BD';
 const VAULT_ADDR = '0xABCDABCDABCDABCDABCDABCDABCDABCDABCDABCD';
 const BORROWER = '0x1111111111111111111111111111111111111111';
 const COLLATERAL = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';

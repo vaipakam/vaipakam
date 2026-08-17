@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Address } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
@@ -53,6 +53,9 @@ interface UseAssetBreakdownResult {
  * Analytics page falls back to `useProtocolStats.assetBreakdown` in
  * that case.
  */
+/** Shared empty result so the no-assets answer keeps a stable identity. */
+const EMPTY_ROWS: AssetBreakdownRow[] = [];
+
 export function useAssetBreakdown(): UseAssetBreakdownResult {
   const publicClient = useDiamondPublicClient();
   const chain = useReadChain();
@@ -60,35 +63,43 @@ export function useAssetBreakdown(): UseAssetBreakdownResult {
   const diamondAddress = (chain.diamondAddress ??
     DEFAULT_CHAIN.diamondAddress) as Address;
   const { stats: loanStats, loading: statsLoading } = useLoanStats();
-  const [rows, setRows] = useState<AssetBreakdownRow[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Tagged with chain + Diamond + the exact asset set the rows describe. The
+  // rows carry per-asset USD volume and a percentage SHARE of the total, so a
+  // set computed for one chain rendered against another is not stale
+  // decoration — the shares are a breakdown of a different total.
+  //
+  // `loanStats` is itself an async read (and keyed on chain since #1759), so
+  // the two resolve at different times; without a tag, the analytics page
+  // showed the previous chain's breakdown beside the new chain's totals.
+  // Defensive shape filter — drop any malformed-address keys (`"0x"` etc.)
+  // before the price multicall encodes them. The server already filters at
+  // write time but old rows can still surface bad-shape keys; viem's
+  // `getAssetPrice` encoder throws `InvalidAddressError` if a non-20-byte hex
+  // slips in, poisoning the whole batch. Cheap belt-and-braces guard.
+  //
+  // Computed at RENDER, not inside the effect, because the empty case is an
+  // ANSWER — no assets means no rows — and answers are derived here rather
+  // than written from an effect. That was the last synchronous write left.
+  const assets = useMemo(
+    () =>
+      Object.keys(loanStats?.volumeByAsset ?? {}).filter(
+        (a) => typeof a === 'string' && a.length === 42 && a.startsWith('0x'),
+      ),
+    [loanStats],
+  );
+
+  const reqKey =
+    statsLoading || !loanStats
+      ? null
+      : `${chainId}|${diamondAddress.toLowerCase()}|${[...assets].sort().join(',')}`;
+  const [result, setResult] = useState<{ key: string; rows: AssetBreakdownRow[] | null } | null>(
+    null,
+  );
 
   useEffect(() => {
-    if (statsLoading) return;
-    if (!loanStats) {
-      setRows(null);
-      setLoading(false);
-      return;
-    }
-    // Defensive shape filter — drop any malformed-address keys
-    // (`"0x"` etc.) before the price multicall encodes them. The
-    // server already filters at write time but old rows can still
-    // surface bad-shape keys; viem's `getAssetPrice` encoder
-    // throws `InvalidAddressError` if a non-20-byte hex slips in,
-    // poisoning the whole batch. Cheap belt-and-braces guard.
-    const assets = Object.keys(loanStats.volumeByAsset).filter(
-      (a) =>
-        typeof a === 'string' &&
-        a.length === 42 &&
-        a.startsWith('0x'),
-    );
-    if (assets.length === 0) {
-      setRows([]);
-      setLoading(false);
-      return;
-    }
+    if (!reqKey || !loanStats) return;
+    if (assets.length === 0) return;
     let cancelled = false;
-    setLoading(true);
     (async () => {
       try {
         // Chain reads scale with the UNIQUE asset set. That set is
@@ -156,22 +167,31 @@ export function useAssetBreakdown(): UseAssetBreakdownResult {
         // legacy `useProtocolStats.assetBreakdown` used.
         work.sort((a, b) => b.volumeUsd - a.volumeUsd);
         if (!cancelled) {
-          setRows(
-            work.map(({ volumeUsdRaw: _drop, ...rest }) => rest),
-          );
-          setLoading(false);
+          setResult({
+            key: reqKey,
+            rows: work.map(({ volumeUsdRaw: _drop, ...rest }) => rest),
+          });
         }
       } catch {
-        if (!cancelled) {
-          setRows(null);
-          setLoading(false);
-        }
+        if (!cancelled) setResult({ key: reqKey, rows: null });
       }
     })();
     return () => {
       cancelled = true;
+      // Dropped on the way out so a chain returned to after a switch re-reads
+      // rather than showing shares computed against the other chain's total.
+      setResult(null);
     };
-  }, [loanStats, statsLoading, publicClient, diamondAddress, chainId]);
+  }, [loanStats, statsLoading, publicClient, diamondAddress, chainId, reqKey, assets]);
 
-  return { rows, loading };
+  const matched = result?.key === reqKey;
+  return {
+    rows: reqKey !== null && assets.length === 0 ? EMPTY_ROWS : matched ? result.rows : null,
+    // Still loading while the upstream stats are loading, and while this read
+    // has not answered the current question. `loanStats === null` is a SETTLED
+    // "indexer offline" answer, not a pending one — the page shows its own
+    // placeholder for that and must not be pinned in a spinner.
+    loading:
+      statsLoading || (reqKey !== null && assets.length > 0 && !matched),
+  };
 }

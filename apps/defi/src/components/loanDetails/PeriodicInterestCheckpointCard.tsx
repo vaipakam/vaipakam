@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNowSeconds } from '../../hooks/useNowSeconds';
 import { useTranslation } from 'react-i18next';
 import { useDiamondRead } from '../../contracts/useDiamond';
 import { TokenAmount } from '../app/TokenAmount';
@@ -49,6 +50,8 @@ export function PeriodicInterestCheckpointCard({
   const { t } = useTranslation();
   const diamond = useDiamondRead();
   const [view, setView] = useState<PeriodicSettleView | null>(null);
+  // Above the early returns below: a hook after them runs conditionally.
+  const nowSec = useNowSeconds();
 
   useEffect(() => {
     let cancelled = false;
@@ -84,7 +87,7 @@ export function PeriodicInterestCheckpointCard({
   if (!view) return null;
   if (view.cadence === 0) return null; // None cadence — card hidden entirely
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = nowSec;
   const periodEnd = Number(view.periodEndAt);
   const graceEnd = Number(view.graceEndsAt);
   const daysToBoundary = Math.max(0, Math.ceil((periodEnd - now) / 86400));

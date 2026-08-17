@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useDiamondRead } from '../contracts/useDiamond';
+import { useDiamondRead, useReadChain } from '../contracts/useDiamond';
 import { useAssetTier } from './useAssetTier';
 import { useProtocolConfig } from './useProtocolConfig';
 
@@ -101,6 +101,7 @@ export function useMarketRateMinCollateral({
   lendingAmount: string;
 }): MarketRateCollateralResult {
   const diamondRead = useDiamondRead();
+  const chainId = useReadChain().chainId;
   const { config } = useProtocolConfig();
   const tierStatus = useAssetTier(collateralAsset);
   const depthTieredLtvEnabled = !!config?.depthTieredLtvEnabled;
@@ -120,7 +121,15 @@ export function useMarketRateMinCollateral({
     ADDR_RE.test(lendingAsset) &&
     ADDR_RE.test(collateralAsset);
 
-  const [data, setData] = useState<{
+  // Prices and the risk profile are per-chain, per-asset-pair. `data` carried
+  // no identity at all, so a chain switch or a pair change showed the previous
+  // pair's oracle prices and LTV cap until the reads landed — and those drive
+  // the minimum-collateral figure the create-offer form puts in front of the
+  // user. `loading` and the disabled empty answer are DERIVED from the key.
+  const reqKey = haveAddrs
+    ? `${chainId}|${(lendingAsset as string).toLowerCase()}|${(collateralAsset as string).toLowerCase()}`
+    : null;
+  const [result, setResult] = useState<{ key: string; data: {
     lendingPrice: PriceSnapshot;
     collateralPrice: PriceSnapshot;
     /** Per-asset hard LTV cap from `getAssetRiskProfile`. Always
@@ -130,19 +139,11 @@ export function useMarketRateMinCollateral({
     maxLtvBps: number;
     liqThresholdBps: number;
     isSupported: boolean;
-  } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  } | null; error: string | null } | null>(null);
 
   useEffect(() => {
-    if (!haveAddrs) {
-      setData(null);
-      setError(null);
-      setLoading(false);
-      return;
-    }
+    if (!reqKey || !haveAddrs) return;
     let cancelled = false;
-    setLoading(true);
     (async () => {
       try {
         const [lp, cp, rp] = await Promise.all([
@@ -180,7 +181,7 @@ export function useMarketRateMinCollateral({
               liqThresholdBps: bigint | number;
             });
         if (cancelled) return;
-        setData({
+        setResult({ key: reqKey, error: null, data: {
           lendingPrice: decode(lp),
           collateralPrice: decode(cp),
           maxLtvBps: Number(
@@ -192,24 +193,29 @@ export function useMarketRateMinCollateral({
           isSupported: Boolean(
             (profile as { isSupported: boolean }).isSupported,
           ),
-        });
-        setError(null);
+        } });
       } catch (err) {
         if (cancelled) return;
-        setData(null);
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Oracle / risk-profile unavailable.',
-        );
-      } finally {
-        if (!cancelled) setLoading(false);
+        setResult({
+          key: reqKey,
+          data: null,
+          error:
+            err instanceof Error ? err.message : 'Oracle / risk-profile unavailable.',
+        });
       }
     })();
     return () => {
       cancelled = true;
+      // Dropped on the way out so a pair re-selected after a gap re-prices
+      // rather than reusing quotes taken before it.
+      setResult(null);
     };
-  }, [haveAddrs, diamondRead, lendingAsset, collateralAsset]);
+  }, [haveAddrs, diamondRead, lendingAsset, collateralAsset, reqKey]);
+
+  const matched = result?.key === reqKey;
+  const data = matched ? result.data : null;
+  const loading = reqKey !== null && !matched;
+  const error = matched ? result.error : null;
 
   // Resolve the effective LTV cap (BPS). Under the tier regime
   // it's `min(maxLtvBps, tierMaxInitLtvBps[effectiveTier])`; under

@@ -58,6 +58,7 @@ import { readAllowance, useAllowanceForPlan } from '../../lib/submitProgress';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { AssetType } from '../../lib/types';
 import { captureTxError, isPlainDecimal } from '../../lib/errors';
+import { armedCeilingOf, shouldWarnCeilingBelowQuote } from './armedCeiling';
 import { WindowedRowList } from '../../lib/visibleWindow';
 import { percentToBps, MAX_INTEREST_BPS } from '../../lib/offerSchema';
 import {
@@ -636,6 +637,7 @@ function FullTariffArmForm({
       })) as Record<string, unknown>;
       const amount = BigInt((o.amount as bigint) ?? 0n);
       const amountMax = BigInt((o.amountMax as bigint) ?? 0n);
+      const amountFilled = BigInt((o.amountFilled as bigint) ?? 0n);
       return {
         creatorFull: Boolean(o.creatorFull),
         creatorMaxCStar: BigInt((o.creatorMaxCStar as bigint) ?? 0n),
@@ -643,7 +645,18 @@ function FullTariffArmForm({
         // Codex #1412 r2 — the LIVE principal ceiling (an amend on
         // another device / a lagging indexer row must not misprice
         // the suggested maxCStar).
-        principalCeiling: amountMax > amount ? amountMax : amount,
+        //
+        // MINUS what is already filled (Codex #1703 r2): `LibOfferMatch` caps
+        // the next match at `amountMax - amountFilled`, so on a partially
+        // filled offer the original size is not a fill anyone can still get.
+        // Quoting it would price a hypothetical, warn about a ceiling that no
+        // reachable fill would breach, and push the creator to authorize more
+        // VPFI than any remaining fill can consume. Every consumer here wants
+        // the same thing — the largest fill STILL POSSIBLE.
+        principalCeiling: (() => {
+          const size = amountMax > amount ? amountMax : amount;
+          return size > amountFilled ? size - amountFilled : 0n;
+        })(),
       };
     },
   });
@@ -698,6 +711,28 @@ function FullTariffArmForm({
     ceiling: string;
     allowDowngrade: boolean;
   } | null>(null);
+
+  // #1702 — the SAME failure as `makerBalanceShort`, from the other input: a
+  // strict Full armed with a ceiling the live quote already exceeds makes every
+  // later fill revert (`FeeEntitlementTariffAboveAuth`) with nothing the taker
+  // can see or fix. Worse than the acceptance-side case #1700 fixed, because
+  // the creator commits FIRST and is not present when the fills fail.
+  //
+  // WARNING-tier, for the reason stated on `makerBalanceShort` directly above
+  // and NOT as a fresh judgement of mine: what the chain judges is the quote at
+  // FILL time, and the quote may fall back — so the app says so and leaves the
+  // decision, exactly as it does for an under-funded vault. Saving is
+  // reversible here; an acceptance is not, which is why that side blocks and
+  // this one does not.
+  // Extracted to `armedCeiling.ts` so it can be unit-asserted (#1703 follow-up):
+  // the desk carries no test ids, so the only in-component tier would be a
+  // text-located UI drive, and a flaky spec is worse than the documented gap.
+  const armedCeiling = armedCeilingOf(fields);
+  const ceilingBelowQuote = shouldWarnCeilingBelowQuote({
+    armAllowed,
+    quoted,
+    armedCeiling,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -853,6 +888,18 @@ function FullTariffArmForm({
           {copy.tariff.balanceShort(
             formatTokenAmount(chargeable.data, VPFI_DECIMALS),
             formatTokenAmount(quoted, VPFI_DECIMALS),
+          )}
+        </p>
+      ) : null}
+      {ceilingBelowQuote && quoted !== undefined && armedCeiling !== undefined ? (
+        <p
+          className="muted"
+          role="alert"
+          style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--danger)' }}
+        >
+          {copy.tariff.armedCeilingBelowQuote(
+            exactAmountString(quoted, VPFI_DECIMALS),
+            exactAmountString(armedCeiling, VPFI_DECIMALS),
           )}
         </p>
       ) : null}

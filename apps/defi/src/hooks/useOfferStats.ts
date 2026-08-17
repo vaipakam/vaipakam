@@ -22,7 +22,7 @@ import { useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
-import { useDataFreshness } from '../context/DataFreshnessContext';
+import { useDataFreshness } from '../context/dataFreshnessStore';
 
 interface UseOfferStatsResult {
   stats: OfferStats | null;

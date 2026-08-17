@@ -131,3 +131,40 @@ jobs:
           set -euo pipefail
           node .github/scripts/check-docs-paths.mjs
           echo "Docs path gate OK." >> "$GITHUB_STEP_SUMMARY"
+
+      # Release-note assembler tests. The assembler decides which pending
+      # fragments belong to the day being assembled, and gets that decision
+      # from git history — both halves fail SILENTLY when wrong, producing a
+      # plausible-looking notes file rather than an error. Two such failures
+      # have already shipped (#1769, #1783), so the cases are asserted rather
+      # than eyeballed.
+      #
+      # Blocking, and unconditional rather than path-filtered: the suite runs
+      # in about two seconds against throwaway repositories it builds itself,
+      # and it depends on git behaviour (`--diff-filter=A`, shallow-boundary
+      # attribution) that can change underneath an untouched script.
+      - name: Release-note assembler tests
+        run: |
+          set -euo pipefail
+          bash docs/ReleaseNotes/assemble.test.sh
+          echo "Release-note assembler tests OK." >> "$GITHUB_STEP_SUMMARY"
+
+      # Excision ratchet (#1651). Same shape and the same reason as the gate
+      # above — a removed thing keeps being described as live, and prose has
+      # no compiler. This one pins a COUNT per file rather than banning a
+      # name, because the retraction notes doing the cleanup necessarily name
+      # what they retract; a ban would fight its own remediation.
+      #
+      # Blocking, deliberately. #687-A removed that surface for legal
+      # reasons, so new text presenting it as live is not a style nit.
+      - name: Excision residue gate (#687-A VPFI buy surface)
+        run: |
+          set -euo pipefail
+          # Regression fixtures FIRST. Scanning the committed suite as ordinary
+          # pinned text does not execute it, so without this line a later change
+          # could re-break a markup / JSON / PDF case and still pass here,
+          # provided the current tree happened not to contain that construct.
+          # A suite that never runs is decoration.
+          node .github/scripts/check-excision-residue.selftest.mjs
+          node .github/scripts/check-excision-residue.mjs
+          echo "Excision residue gate + selftest OK." >> "$GITHUB_STEP_SUMMARY"

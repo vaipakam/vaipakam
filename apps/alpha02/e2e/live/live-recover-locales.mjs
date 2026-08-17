@@ -96,11 +96,20 @@ const langMatches = (lang, code) => {
  * it ties the two layers together. The `copy.match.riskGate*` pair is
  * what #1560's follow-up ADDED — without them a build predating this
  * change would satisfy every other assertion here.
+ *
+ * `copy.offset.figuresMoved` is #1697's addition, and it is here for the
+ * same reason: it pins THIS revision. The key is not on `/recover` at all,
+ * which is fine and is already how the `riskGate*` pair works — the
+ * RESOURCE layer asserts what the locale CHUNK carries, and one chunk per
+ * language serves the whole app. Anything a change adds to the catalogs
+ * belongs in this list; that is cheaper and stronger than a second driver
+ * per feature, which is what #1698 nearly shipped before finding this one.
  */
 const ASSERTED_KEYS = [
   'copy.recover.title',
   'copy.match.riskGateCreatorBlocked',
   'copy.match.riskGateTierTooLow',
+  'copy.offset.figuresMoved',
 ];
 
 const leafAt = (obj, dotted) =>

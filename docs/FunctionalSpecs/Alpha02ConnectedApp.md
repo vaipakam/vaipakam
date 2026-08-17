@@ -361,6 +361,53 @@ Thin-market honesty rules apply.
   whole acceptance if the tariff cannot complete, or open the loan without
   Full (and without any tariff charge) in that case. The consequence of the
   current choice is stated next to it.
+- **On an acceptance or fill review**, the quote is live and keeps moving while
+  the review is open, so it can rise above the ceiling the user authorized
+  without anyone touching anything. When it does, the app says so plainly,
+  naming both the current quote and the authorized ceiling, and offers a single
+  action to raise the ceiling — stating the figure that action would authorize.
+  The ceiling is never raised on the user's behalf; the choice stays theirs.
+  The standing-offer creator's arm form carries the paired warning: arming a
+  ceiling the live quote already exceeds is called out, with both figures and
+  the consequence stated as it actually is — a fill above the ceiling cannot
+  charge the tariff, so it is rejected, or opened without Full where that
+  fallback was chosen. The quote shown is for the largest fill the offer
+  can still receive — what is already filled is excluded, so the figure is one
+  a taker could actually reach — and the warning says so, because a smaller
+  partial fill can price under the same ceiling. It
+  appears only while arming is actually available. It warns rather than refuses — what the
+  protocol judges is the quote when a fill actually happens, and it may fall
+  back before then; saving an offer is reversible in a way an acceptance is
+  not. That matches how the same form already treats a vault balance below the
+  quote.
+- Whether that warning also HOLDS signing follows the failure posture the user
+  already chose. Under the reject posture the app refuses to send an acceptance
+  it can see would be rejected. Under the open-without-Full posture it does not
+  refuse: that choice says to proceed in exactly this situation, so the warning
+  is there to make proceeding an informed decision rather than a surprise.
+- **Under the reject posture**, the app attempts a fresh read of the quote at
+  each point it is about to ask for a signature or send a transaction —
+  including before each additional wallet prompt the flow needs, whether a
+  separate permit signature or a token approval — and before EACH approval
+  prompt where a token needs its allowance reset to zero first, since that
+  path prompts twice with a mined transaction between them. This holds on the
+  signed-fill path as well as the direct accept. Those steps are paced by the
+  user and can take arbitrarily long, and a signature collected for an
+  acceptance about to be refused is exactly the waste these checks exist to
+  prevent. The attempt is BEST-EFFORT: if the read itself fails (an unreachable
+  node, a selector the deployment does not have), the app proceeds rather than
+  refusing. Its purpose is to spare the user a doomed signature, not to be a
+  second enforcement layer — the protocol enforces regardless, and a preflight
+  that failed closed on its own transport trouble would block acceptances the
+  chain would have allowed.
+- **Under the open-without-Full posture** no such re-read is required, and the
+  displayed warning may lag: the re-read exists to stop a signature that is
+  already doomed, and under that posture none is — the loan opens either way,
+  which is what the user asked for.
+- Even under the reject posture this narrows the window in which the price can
+  move unnoticed; it cannot close it. The protocol has the final word on the
+  price at the moment a transaction lands, and an acceptance can still be
+  refused there.
 - The copy is dual-fee honest: the tariff never replaces or waives the loan's
   asset fees — it adds a deeper discount on the payer's own side's fees, up to
   the overall cap — and it is non-refundable, priced on the loan's full term

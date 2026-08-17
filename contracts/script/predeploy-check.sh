@@ -122,7 +122,12 @@ if [ "$MODE_FULL" -eq 1 ]; then
   fi
 else
   echo "[predeploy 2/4] deploy-sanity forge suite (test/deploy/*)"
-  if forge test --match-path "test/deploy/*"; then
+  # `-vv` so PASSING tests print their logs. `FacetSizeLimitTest`'s headroom
+  # report (#1780) always passes by design — it reports facets running out of
+  # EIP-170 room rather than failing them — and Foundry hides logs from passing
+  # tests below `-vv`. Without this the report is invisible in exactly the
+  # green run it exists to inform, which is the whole point of it.
+  if forge test --match-path "test/deploy/*" -vv; then
     echo "  ✓ FacetSizeLimitTest + SelectorCoverageTest pass"
   else
     echo "  ✗ deploy-sanity suite failed — a facet is over EIP-170, a" >&2

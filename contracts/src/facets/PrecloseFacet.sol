@@ -166,6 +166,12 @@ contract PrecloseFacet is
     /// flows would race and leave one vehicle stale. Symmetric to
     /// `EarlyWithdrawalFacet.OffsetActiveOnLoan`.
     error SaleListingActiveOnLoan();
+    /// @notice The standing borrower offer being consumed as the obligation's
+    ///         new home is past its GTT deadline. Mirrors
+    ///         `OfferAcceptFacet.OfferExpired` (same name + same args ⇒ same
+    ///         EVM selector), so a caller decodes identical revert data
+    ///         whichever path refused to bind the offer.
+    error OfferExpired(uint256 offerId, uint64 expiresAt);
 
     /// @dev Pass-2 A1/D5 (#1189) — shared maturity/grace gate for the early-close
     ///      paths (`precloseDirect`, offset completion), matching
@@ -692,6 +698,23 @@ contract PrecloseFacet is
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (offer.offerType != LibVaipakam.OfferType.Borrower || offer.accepted)
             revert InvalidOfferTerms();
+        // #1773 — GTT expiry. This path reads the incoming borrower's standing
+        // offer straight from storage rather than hopping through
+        // `OfferAcceptFacet._acceptOffer`, so it inherits none of that entry's
+        // gates and was never consulting the deadline. An offer past
+        // `expiresAt` and not yet permissionlessly cancelled therefore stayed
+        // consumable, letting the EXITING borrower hand a live obligation to an
+        // author whose consent window had already closed.
+        //
+        // Same class as #1503 item 8 on the lender-sale side: the deadline is
+        // the author's consent to the TIMING, and this path spends it on their
+        // behalf. Refuse before any state change — the collateral top-up, the
+        // borrower rewrite and the position-NFT work all follow below.
+        // Routes through `LibVaipakam.isOfferExpired` so the GTC sentinel
+        // (`expiresAt == 0`, never expires) keeps living in one place.
+        if (LibVaipakam.isOfferExpired(offer)) {
+            revert OfferExpired(borrowerOfferId, offer.expiresAt);
+        }
         // #576 — a refinance-tagged offer is SINGLE-PURPOSE: it may only be
         // consumed by the direct accept-and-refinance path. Consuming it for an
         // UNRELATED obligation transfer is invalid: on a carry-over offer the

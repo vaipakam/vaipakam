@@ -27,7 +27,7 @@ import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { useLiveWatermark } from './useLiveWatermark';
 import { watermarkPolicy } from './watermarkPolicy';
-import { useDataFreshness } from '../context/DataFreshnessContext';
+import { useDataFreshness } from '../context/dataFreshnessStore';
 import {
   chunkedGetLogs,
   decodeLoanDelta,
@@ -83,8 +83,16 @@ export function useIndexedActiveLoans(): UseIndexedLoansResult {
   // refire this effect every probe (the snapshot's `safeBlock`
   // changes every block even when the create counters didn't move).
   // Refetches now fire only on actual `version` advance.
+  // Synced in an effect rather than during render: writing a ref while
+  // rendering is not safe under concurrent rendering. `useRef(snapshot)` seeds
+  // the mount value, and the only reader below runs after an `await` on a
+  // network fetch, so it sees a flushed value; a read that somehow landed
+  // between commit and effect flush would use the previous safe block, which
+  // merely shortens one catch-up window that the next tick re-covers.
   const snapshotRef = useRef(snapshot);
-  snapshotRef.current = snapshot;
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
 
   useEffect(() => {
     let cancelled = false;

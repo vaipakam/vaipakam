@@ -457,7 +457,18 @@ export default function VaultAssets() {
     return () => {
       cancelled = true;
     };
-  }, [vault, publicClient, tokens, reloadCounter]);
+    // `address` and `diamondAddress` are read inside and are now declared.
+    //
+    // Declaring `address` is only safe because `useUserVaultAddress` tags its
+    // answer with the wallet it resolved for. This effect mixes the two keys —
+    // `balanceOf` is keyed by `vault`, `getProtocolTrackedVaultBalance` and
+    // `getEncumbered` by `userAddr` — so re-running on a wallet change while
+    // the vault lookup was still in flight would have produced
+    // `min(balanceOf(oldVault), tracked(newUser))`: a figure combined from two
+    // accounts, indistinguishable on screen from a real one. With the tag in
+    // place, `vault` reads `null` for that moment and the guard above holds
+    // the effect until both keys name the same wallet.
+  }, [vault, publicClient, tokens, reloadCounter, address, diamondAddress]);
 
   // Pre-warm the symbol/decimals cache for every discovered token so
   // the symbol-sort comparator (`peekTokenMeta`) hits warm entries

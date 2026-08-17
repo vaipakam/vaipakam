@@ -61,64 +61,16 @@
  *
  * Client-side only — not a Worker / indexer concern.
  */
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useReadChain } from '../contracts/useDiamond';
-import { useWatermarkContext } from './WatermarkContext';
+import { useWatermarkContext } from './watermarkStore';
+import {
+  DataFreshnessContext,
+  type DataFreshnessContextValue,
+  type FreshnessSource,
+  type SourceSlice,
+} from './dataFreshnessStore';
 
-/** Stable keys for the known reporters. Add one here when wiring a new
- *  data hook into the registry. */
-export type FreshnessSource =
-  | 'offerStats' // useOfferStats — reports the central indexer's lastBlock + loading
-  | 'activeOffers' // useIndexedActiveOffers — RPC tail-scan frontier + loading
-  | 'activeLoans' // useIndexedActiveLoans — RPC tail-scan frontier + loading
-  | 'roleLoans' // useIndexedRoleLoans (lender/borrower) — RPC tail-scan frontier + loading
-  | 'userLoans' // useUserLoans — on-chain view + multicall; loading only (reads at latest)
-  | 'logIndex'; // useLogIndex — legacy log scan; loading only
-
-interface SourceSlice {
-  /** Highest block this source confirmed it scanned through. Undefined
-   *  for sources that read point-in-time (`latest`) and don't track a
-   *  scanned range. */
-  frontier?: number;
-  /** Whether this source currently has a fetch in flight. */
-  loading?: boolean;
-  /** Unix-seconds at which `frontier` last *advanced*. Used by the
-   *  indexer-fallback trigger to distinguish "indexer is healthy and
-   *  steady" from "indexer is dead but its last value is still in the
-   *  cache". Only updated when frontier moves forward; constant when
-   *  the source merely re-reports the same value. */
-  frontierAt?: number;
-}
-
-interface DataFreshnessContextValue {
-  /** Max `frontier` over all sources that report one, or `null` if
-   *  none has reported a frontier yet on this chain. */
-  maxFrontier: number | null;
-  /** OR of every source's `loading` flag — true while any registered
-   *  data fetch is in flight. */
-  anyLoading: boolean;
-  /** Per-source breakdown — drives the badge popover's detail rows. */
-  bySource: Readonly<Record<string, SourceSlice>>;
-  /** Counter that bumps when the indexer-fallback trigger fires (see
-   *  file-level doc). Tail-scan hooks include this in their effect dep
-   *  array to refetch when the indexer can't keep them fresh. */
-  fallbackVersion: number;
-  /** A source updates its slice. Pass only the fields that changed.
-   *  `frontier` is clamped monotonic-forward within a chain; `loading`
-   *  is set/cleared freely. */
-  report: (source: FreshnessSource, patch: SourceSlice) => void;
-}
-
-const DataFreshnessContext = createContext<DataFreshnessContextValue | null>(null);
 
 /** RPC tail-scan source keys — anything reporting a `frontier` that
  *  represents a chunked-getLogs catch-up (as opposed to the central
@@ -274,18 +226,3 @@ export function DataFreshnessProvider({ children }: { children: ReactNode }) {
     <DataFreshnessContext.Provider value={value}>{children}</DataFreshnessContext.Provider>
   );
 }
-
-/** Read the registry. Returns inert defaults + a no-op `report` when
- *  used outside the provider, so the reporting hooks are safe to mount
- *  in tests / storybook without the provider wrapper. */
-export function useDataFreshness(): DataFreshnessContextValue {
-  return useContext(DataFreshnessContext) ?? NO_PROVIDER_FALLBACK;
-}
-
-const NO_PROVIDER_FALLBACK: DataFreshnessContextValue = {
-  maxFrontier: null,
-  anyLoading: false,
-  bySource: {},
-  fallbackVersion: 0,
-  report: () => {},
-};

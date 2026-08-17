@@ -33,6 +33,13 @@ export type KnobName =
   | 'tier3DiscountBps'
   | 'tier4DiscountBps';
 
+/**
+ * `percent`: BPS in, a bare figure out. `count`: whole tokens, grouped.
+ * `currency2` / `currency6`: a money amount at fixed precision — used by
+ * the derived worked-example figures, which are USDC rather than BPS.
+ */
+export type KnobFormat = 'percent' | 'count' | 'currency2' | 'currency6';
+
 export interface KnobDefault {
   /** Compile-time default, mirroring the on-chain library constant. */
   defaultValue: number;
@@ -43,7 +50,7 @@ export interface KnobDefault {
    *
    * `count`: whole tokens, grouped.
    */
-  format: 'percent' | 'count';
+  format: KnobFormat;
 }
 
 export const KNOB_DEFAULTS: Record<KnobName, KnobDefault> = {
@@ -62,17 +69,261 @@ export const KNOB_DEFAULTS: Record<KnobName, KnobDefault> = {
 };
 
 /**
+ * The worked example's own numbers (#1664 item 1).
+ *
+ * These are NARRATIVE, not configuration — the Overview walks through a
+ * 1,000 USDC loan at 8% for 30 days, and those three are the story's
+ * choice, not something governance can retune. They live here so the
+ * figures derived from them sit next to the arithmetic that uses them
+ * rather than being restated in prose in ten locales.
+ */
+export const EXAMPLE = {
+  principal: 1_000,
+  /** In BPS, matching how the contract carries a rate. */
+  aprBps: 800,
+  days: 30,
+} as const;
+
+/**
+ * USDC base units (micro-USDC). The example is computed in INTEGERS at
+ * this scale, not in floating point, because the protocol is.
+ */
+const USDC = 1_000_000;
+const BPS = 10_000;
+const DAYS_PER_YEAR = 365;
+
+/**
+ * The example's interest, in micro-USDC — mirroring the contract's
+ * `LibEntitlement.proRataInterest`:
+ *
+ *   (principal * rateBps * elapsedDays) / (DAYS_PER_YEAR * BASIS_POINTS)
+ *
+ * Solidity integer division FLOORS, and the docs call the resulting
+ * figure "exact" and say settlement uses it — so the arithmetic here has
+ * to match the chain's, not merely approximate it (Codex #1751 r1 P2).
+ * Depends on no knob.
+ */
+const exampleInterestMicro = () =>
+  Math.floor(
+    (EXAMPLE.principal * USDC * EXAMPLE.aprBps * EXAMPLE.days) /
+      (DAYS_PER_YEAR * BPS)
+  );
+
+export type DerivedName =
+  | 'exampleBorrowerReceives'
+  | 'exampleLenderNet'
+  | 'exampleTreasuryYieldFee'
+  | 'exampleTreasuryYieldFeeExact';
+
+export interface DerivedFigure {
+  /**
+   * Knobs this figure is computed from. Load-bearing for PROVENANCE, not
+   * decoration: a derived figure may only claim `published` when EVERY
+   * input was read live. One knob falling back to its bundled default
+   * makes the whole result bundled, and a badge saying otherwise would
+   * be the same over-claim the tooltip rules exist to prevent.
+   */
+  dependsOn: readonly KnobName[];
+  /** Pure function of the resolved knob values (live-or-default). */
+  compute: (k: Record<KnobName, number>) => number;
+  format: KnobFormat;
+}
+
+/**
+ * Figures the docs state as arithmetic, derived from the same config the
+ * rates beside them come from.
+ *
+ * Why this exists: `Overview.en.md` printed `998`, `1,006.44` and `0.13`
+ * as literals next to `{liveValue:loanInitiationFeeBps}` and
+ * `{liveValue:treasuryFeeBps}`. All correct at 0.2% / 2% — and all
+ * wrong the moment either is retuned, while the live half beside them
+ * moves AND carries a `published` badge, so the contradiction reads as
+ * authoritative rather than stale. That is the #1613 defect class
+ * ("the rate says 2% and the arithmetic beneath says 1%") rebuilt on a
+ * timer. Deriving them makes it unrepeatable rather than swept again.
+ */
+export const DERIVED_FIGURES: Record<DerivedName, DerivedFigure> = {
+  // Principal minus the initiation fee — what actually reaches the
+  // borrower.
+  exampleBorrowerReceives: {
+    dependsOn: ['loanInitiationFeeBps'],
+    compute: (k) => {
+      const principal = EXAMPLE.principal * USDC;
+      const fee = Math.floor((principal * k.loanInitiationFeeBps) / BPS);
+      return (principal - fee) / USDC;
+    },
+    format: 'currency2',
+  },
+  // Principal + interest, less the treasury's cut of the INTEREST only.
+  exampleLenderNet: {
+    dependsOn: ['treasuryFeeBps'],
+    compute: (k) => {
+      const interest = exampleInterestMicro();
+      // `splitTreasury` floors the treasury share and gives the lender
+      // the REMAINDER, so the lender absorbs the truncation rather than
+      // both sides rounding independently.
+      const treasury = Math.floor((interest * k.treasuryFeeBps) / BPS);
+      return (EXAMPLE.principal * USDC + interest - treasury) / USDC;
+    },
+    format: 'currency2',
+  },
+  exampleTreasuryYieldFee: {
+    dependsOn: ['treasuryFeeBps'],
+    compute: (k) =>
+      Math.floor((exampleInterestMicro() * k.treasuryFeeBps) / BPS) / USDC,
+    format: 'currency2',
+  },
+  // The same figure unrounded. The page shows both, and the point of
+  // the passage is that subtracting one ROUNDED number from another
+  // leaves you a cent off — which only reads correctly if the rounded
+  // and unrounded figures come from one computation.
+  exampleTreasuryYieldFeeExact: {
+    dependsOn: ['treasuryFeeBps'],
+    compute: (k) =>
+      Math.floor((exampleInterestMicro() * k.treasuryFeeBps) / BPS) / USDC,
+    format: 'currency6',
+  },
+};
+
+/** Every token name the `{liveValue:...}` namespace resolves. */
+export type LiveValueName = KnobName | DerivedName;
+
+export function isDerived(name: string): name is DerivedName {
+  return name in DERIVED_FIGURES;
+}
+
+/**
+ * Resolve a derived figure from the knob values a caller has already
+ * resolved, returning the value and whether every input was live.
+ *
+ * Callers pass the resolved map rather than the raw config so the three
+ * consumers (React, search index, markdown export) share one definition
+ * of live-or-default per knob instead of each re-deriving it.
+ */
+export function resolveDerived(
+  name: DerivedName,
+  knobValues: Record<KnobName, number>,
+  liveKnobs: ReadonlySet<KnobName>
+): { value: number; isLive: boolean; format: KnobFormat } {
+  const fig = DERIVED_FIGURES[name];
+  return {
+    value: fig.compute(knobValues),
+    isLive: fig.dependsOn.every((k) => liveKnobs.has(k)),
+    format: fig.format,
+  };
+}
+
+/**
  * Format a knob value for a given document locale.
  *
  * Locale-aware on purpose. Hard-coding `en-US` was invisible while
  * nothing rendered and actively misleading once substitution worked: in
  * German `1,000` denotes one-point-zero, so an en-US-grouped VPFI
  * threshold reads on a German page as a threshold of ONE token.
+ *
+ * The two `currency*` formats pin BOTH bounds so a trailing zero is not
+ * dropped — `998` where the surrounding prose says `998.00` reads as a
+ * different kind of number, and the six-decimal form exists precisely to
+ * show the digits the rounded one hides.
  */
-export function formatKnob(value: number, format: 'percent' | 'count', locale: string): string {
-  return format === 'percent'
-    ? new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value / 100)
-    : new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(value);
+export function formatKnob(value: number, format: KnobFormat, locale: string): string {
+  switch (format) {
+    case 'percent':
+      return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value / 100);
+    case 'currency2':
+      return new Intl.NumberFormat(locale, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(value);
+    case 'currency6':
+      return new Intl.NumberFormat(locale, {
+        minimumFractionDigits: 6,
+        maximumFractionDigits: 6,
+      }).format(value);
+    case 'count':
+    default:
+      return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(value);
+  }
+}
+
+/**
+ * Shape this registry needs from a protocol-config snapshot. Declared
+ * structurally rather than importing `MarketingProtocolConfig` so this
+ * module stays free of any dependency on the hook that fetches it — the
+ * build script imports this file too.
+ */
+export interface KnobConfigSource {
+  treasuryFeeBps: number;
+  loanInitiationFeeBps: number;
+  tierThresholdsTokens: readonly number[];
+  tierDiscountBps: readonly number[];
+}
+
+/**
+ * How each knob is read from a config snapshot.
+ *
+ * This lived in `LiveValue.tsx` until #1664 item 2, which was the wrong
+ * home: the search index needs the same mapping, and a second copy of
+ * "which config field backs which token" is exactly the drift this
+ * registry exists to prevent. It is React-free, so it belongs here with
+ * the names, defaults and formats it describes.
+ */
+const KNOB_READS: Record<
+  KnobName,
+  (c: KnobConfigSource | null) => number | null
+> = {
+  treasuryFeeBps: (c) => (c ? c.treasuryFeeBps : null),
+  loanInitiationFeeBps: (c) => (c ? c.loanInitiationFeeBps : null),
+  tier1Min: (c) => (c ? c.tierThresholdsTokens[0] : null),
+  tier2Min: (c) => (c ? c.tierThresholdsTokens[1] : null),
+  tier3Min: (c) => (c ? c.tierThresholdsTokens[2] : null),
+  tier4Min: (c) => (c ? c.tierThresholdsTokens[3] : null),
+  tier1DiscountBps: (c) => (c ? c.tierDiscountBps[0] : null),
+  tier2DiscountBps: (c) => (c ? c.tierDiscountBps[1] : null),
+  tier3DiscountBps: (c) => (c ? c.tierDiscountBps[2] : null),
+  tier4DiscountBps: (c) => (c ? c.tierDiscountBps[3] : null),
+};
+
+/**
+ * Resolve every knob against a config snapshot, returning the values to
+ * display and the set that were actually read live.
+ *
+ * `null` — a build script, a failed fetch, a page that makes no read —
+ * yields all defaults and an empty live-set, which is the honest answer
+ * rather than a special case.
+ */
+export function resolveKnobs(config: KnobConfigSource | null): {
+  values: Record<KnobName, number>;
+  live: ReadonlySet<KnobName>;
+} {
+  const values = {} as Record<KnobName, number>;
+  const live = new Set<KnobName>();
+  for (const name of Object.keys(KNOB_DEFAULTS) as KnobName[]) {
+    const read = KNOB_READS[name](config);
+    values[name] = read ?? KNOB_DEFAULTS[name].defaultValue;
+    if (read !== null) live.add(name);
+  }
+  return { values, live };
+}
+
+/**
+ * Resolve ANY `{liveValue:...}` name — knob or derived — against a
+ * config snapshot. One entry point, so the three consumers cannot
+ * disagree about what a token means or where its value came from.
+ */
+export function resolveLiveValue(
+  name: string,
+  config: KnobConfigSource | null
+): { value: number; isLive: boolean; format: KnobFormat } | null {
+  const { values, live } = resolveKnobs(config);
+  if (isDerived(name)) return resolveDerived(name, values, live);
+  const spec = KNOB_DEFAULTS[name as KnobName];
+  if (!spec) return null;
+  return {
+    value: values[name as KnobName],
+    isLive: live.has(name as KnobName),
+    format: spec.format,
+  };
 }
 
 /** Matches a whole inline-code token: `{liveValue:knobName}`. */

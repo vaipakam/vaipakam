@@ -23,6 +23,7 @@
  */
 
 import { useState } from 'react';
+import { useNowSeconds } from '../../hooks/useNowSeconds';
 import { Clock, Info, Settings2 } from 'lucide-react';
 import {
   classifyValue,
@@ -34,7 +35,7 @@ import {
   type RawValue,
 } from '../../lib/protocolConsoleKnobFormat';
 import type { KnobReadResult } from '../../hooks/useAdminKnobValues';
-import type { PendingChange } from '../../hooks/useTimelockPendingChanges';
+import { isTimelockReady, type PendingChange } from '../../hooks/useTimelockPendingChanges';
 import { KnobZoneBar } from './KnobZoneBar';
 import { ProposeChangeModal } from './ProposeChangeModal';
 
@@ -244,6 +245,7 @@ export type { KnobZone };
  * detail.
  */
 function PendingChangeBanner({ pending }: { pending: PendingChange[] }) {
+  const nowSec = useNowSeconds();
   // Pick the soonest-executing pending change to drive the time
   // hint. Already-ready proposals sort first.
   const sorted = [...pending].sort((a, b) => {
@@ -252,8 +254,19 @@ function PendingChangeBanner({ pending }: { pending: PendingChange[] }) {
   });
   const lead = sorted[0];
   const count = pending.length;
-  const ready = lead.ready;
-  const now = Math.floor(Date.now() / 1000);
+  const now = nowSec;
+  // Readiness is the chain's verdict, never the local clock's — `executesAt`
+  // is an on-chain timestamp, and an administrator whose machine runs fast
+  // would otherwise be shown an "execute" affordance that reverts on submit.
+  //
+  // The cost is that `lead.ready` is a snapshot from when
+  // `useTimelockPendingChanges` last ran, and that hook has no periodic
+  // refresh, so a dashboard left open can reach "executes in 0m" and stay
+  // amber until it is reloaded. Deliberate: an attempt to refresh at the
+  // boundary was withdrawn because it could delete a live proposal. Do not
+  // reintroduce a `nowSec >= lead.executesAt` comparison here — see the
+  // helper's own comment for the full reasoning.
+  const ready = isTimelockReady(lead);
   const seconds = Math.max(0, lead.executesAt - now);
   const timeText = ready
     ? 'ready to execute'

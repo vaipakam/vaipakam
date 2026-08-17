@@ -1,7 +1,8 @@
 import { useEffect, type ReactNode } from 'react';
 import { Outlet, useParams } from 'react-router-dom';
 import i18n from 'i18next';
-import { SUPPORTED_LOCALES, type SupportedLocale } from '../i18n/glossary';
+import { type SupportedLocale } from '../i18n/glossary';
+import { isSupportedLocale } from '../i18n/localePath';
 
 /**
  * Route-tree wrapper that synchronises i18n with the URL's locale
@@ -35,10 +36,6 @@ interface LocaleResolverProps {
   children?: ReactNode;
 }
 
-export function isSupportedLocale(s: string | undefined): s is SupportedLocale {
-  return !!s && (SUPPORTED_LOCALES as readonly string[]).includes(s);
-}
-
 export function LocaleResolver({ locale, children }: LocaleResolverProps) {
   const params = useParams<{ locale?: string }>();
   const fromParam = params.locale;
@@ -52,32 +49,4 @@ export function LocaleResolver({ locale, children }: LocaleResolverProps) {
   }, [target]);
 
   return <>{children ?? <Outlet />}</>;
-}
-
-/**
- * Strip the leading locale prefix from a pathname, if any. Returns the
- * pathname unchanged when the first segment isn't a supported locale.
- * Used by the LanguagePicker (and any callsite that needs the bare
- * route to compose a different prefix).
- */
-export function stripLocalePrefix(pathname: string): string {
-  const m = pathname.match(/^\/([a-z]{2})(\/.*|$)/);
-  if (!m) return pathname;
-  if (!isSupportedLocale(m[1])) return pathname;
-  return m[2] || '/';
-}
-
-/**
- * Compose a path with the given locale prefix. English (the default)
- * stays at the unprefixed root; every other supported locale gets a
- * `/<locale>` prefix. Pass already-stripped paths in.
- */
-export function withLocalePrefix(
-  path: string,
-  locale: SupportedLocale,
-): string {
-  if (locale === 'en') return path.startsWith('/') ? path : `/${path}`;
-  const clean = path.startsWith('/') ? path : `/${path}`;
-  if (clean === '/') return `/${locale}`;
-  return `/${locale}${clean}`;
 }

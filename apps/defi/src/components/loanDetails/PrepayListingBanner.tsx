@@ -1,5 +1,6 @@
 import { Tag, Clock, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useNowSeconds } from '../../hooks/useNowSeconds';
 import { TokenAmount } from '../app/TokenAmount';
 import { AddressDisplay } from '../app/AddressDisplay';
 import { openSeaAssetUrl } from '@vaipakam/lib/prepayOrderShape';
@@ -42,7 +43,7 @@ export function PrepayListingBanner({
   collateralTokenId,
 }: Props) {
   const { t } = useTranslation();
-  const now = Math.floor(Date.now() / 1000);
+  const now = useNowSeconds();
   // Strict `>` to match `CollateralListingExecutor`'s boundary
   // (`block.timestamp > pctx.graceEnd` rejects fills). The exact
   // `endTime + grace` tick is still fillable on-chain. Codex

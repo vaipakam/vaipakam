@@ -22,7 +22,8 @@
  */
 
 import type { ReactNode } from 'react';
-import { LiveValue, type KnobName } from '../components/docs/LiveValue';
+import { LiveValue } from '../components/docs/LiveValue';
+import type { LiveValueName } from './liveValueKnobs';
 
 import { slugify } from './slugify';
 // Re-exported so the several pages that already import it from here keep
@@ -275,10 +276,13 @@ function buildMarkdownComponents(docLocale: string) {
       // about the thing we actually want.
       const match = LIVE_VALUE_TOKEN_RE.exec(nodeToText(children));
       if (match) {
-        // An unregistered knob name falls through inside `<LiveValue>`,
-        // which renders the raw token so the typo is visible in the page
-        // rather than silently resolving to something misleading.
-        return <LiveValue knob={match[1] as KnobName} locale={docLocale} />;
+        // An unregistered name falls through inside `<LiveValue>`, which
+        // renders the raw token so the typo is visible in the page rather
+        // than silently resolving to something misleading. The cast is
+        // to `LiveValueName` (knobs AND derived figures) because the
+        // token syntax does not distinguish them and neither does the
+        // resolver.
+        return <LiveValue knob={match[1] as LiveValueName} locale={docLocale} />;
       }
       // Default — preserve native ReactMarkdown behaviour for every
       // other code span and every fenced block. `node` is dropped on

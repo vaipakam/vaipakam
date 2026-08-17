@@ -129,6 +129,11 @@ interface Hook {
  *  bounds the `eth_getLogs` call so public RPCs accept it. */
 const LOOKBACK_BLOCKS = 50_000n;
 
+/** Stable identities for the two derived answers, so consumers holding the
+ *  result in a dependency array do not re-run on every render. */
+const EMPTY_PENDING: Hook = { byKnob: {}, all: [], loading: false };
+const LOADING_PENDING: Hook = { byKnob: {}, all: [], loading: true };
+
 export function useTimelockPendingChanges(): Hook {
   const client = useDiamondPublicClient();
   const chain = useReadChain();
@@ -138,20 +143,38 @@ export function useTimelockPendingChanges(): Hook {
     return (dep?.timelock as Address | undefined) ?? null;
   }, [chain.chainId]);
 
+  // Stable identities so a derived answer does not churn consumer memos.
+  // (declared at module scope below)
   // Pre-compute selector → knob.id map for fast calldata matching.
   const selectorMap = useMemo(() => buildSelectorMap(), []);
 
-  const [state, setState] = useState<Hook>({
-    byKnob: {},
-    all: [],
-    loading: true,
-  });
+  // Tagged with chain + Diamond + timelock. A pending governance change is
+  // scoped to one deployment, so a list read from one chain shown against
+  // another is a claim that operations are queued which are not — on an admin
+  // panel whose whole purpose is telling an operator what is about to execute.
+  //
+  // `loading` and the no-timelock empty answer are DERIVED. Note this hook
+  // deliberately does NOT re-read on a timer (see below), so the stale window
+  // was not a frame but lasted until the next remount or chain switch.
+  const reqKey =
+    timelockAddr && chain.diamondAddress
+      ? `${chain.chainId}|${chain.diamondAddress.toLowerCase()}|${timelockAddr.toLowerCase()}`
+      : null;
+  const [result, setResult] = useState<{ key: string; value: Hook } | null>(null);
 
+  // NO local-clock-driven re-read. A boundary-retry timer stood here across
+  // rounds 4-5 and was WITHDRAWN, not patched: rediscovering operations through
+  // the `LOOKBACK_BLOCKS` event window means a scheduling event older than that
+  // window resolves to an empty list, so the re-read would DELETE a live
+  // proposal at precisely the moment it turned executable (a 48h delay on a
+  // 2s-block chain sits ~86,400 blocks back — outside the window). A transient
+  // RPC failure had the same effect, and the retry then terminated for good.
+  // Withdrawn in favour of leaving the panel cosmetically stale until the next
+  // remount or chain switch: staleness is recoverable, a vanished proposal is
+  // not. A real fix reads the active operation IDs directly rather than
+  // rediscovering them — tracked as a follow-up.
   useEffect(() => {
-    if (!timelockAddr || !chain.diamondAddress) {
-      setState({ byKnob: {}, all: [], loading: false });
-      return;
-    }
+    if (!reqKey || !timelockAddr || !chain.diamondAddress) return;
     let cancelled = false;
     (async () => {
       try {
@@ -230,23 +253,33 @@ export function useTimelockPendingChanges(): Hook {
           if (!byKnob[c.knobId]) byKnob[c.knobId] = [];
           byKnob[c.knobId].push(c);
         }
-        setState({ byKnob, all, loading: false });
+        setResult({ key: reqKey, value: { byKnob, all, loading: false } });
       } catch (err) {
         if (cancelled) return;
-        setState({
-          byKnob: {},
-          all: [],
-          loading: false,
-          error: err instanceof Error ? err.message.slice(0, 160) : String(err),
+        setResult({
+          key: reqKey,
+          value: {
+            byKnob: {},
+            all: [],
+            loading: false,
+            error: err instanceof Error ? err.message.slice(0, 160) : String(err),
+          },
         });
       }
     })();
     return () => {
       cancelled = true;
+      // Dropped on the way out. This is the one hook in the series where that
+      // matters beyond a frame: with no timer re-read, a list kept across a
+      // chain switch would persist until the next remount.
+      setResult(null);
     };
-  }, [client, chain.diamondAddress, chain.chainId, timelockAddr, selectorMap]);
+  }, [client, chain.diamondAddress, chain.chainId, timelockAddr, selectorMap, reqKey]);
 
-  return state;
+  // No timelock on this chain is a SETTLED answer — there is nothing to queue
+  // changes against — not a pending one.
+  if (reqKey === null) return EMPTY_PENDING;
+  return result?.key === reqKey ? result.value : LOADING_PENDING;
 }
 
 /** Build a `{selector → knobId}` map by walking the knob catalogue
@@ -256,11 +289,9 @@ export function useTimelockPendingChanges(): Hook {
 function buildSelectorMap(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const knob of ADMIN_KNOBS) {
-    // Skip VPFIBuyReceiver knobs — those target the standalone
-    // contract, not the diamond, so the timelock won't see them
-    // unless they're also routed through the timelock (which
-    // they aren't on the standalone receiver path).
-    if (knob.setter.facet === 'VPFIBuyReceiver') continue;
+    // #1651 — a `VPFIBuyReceiver` skip stood here. Every knob now targets
+    // the diamond: #687-A removed the standalone receiver, and no entry in
+    // `ADMIN_KNOBS` has named it since, so the guard could never fire.
     const selector = computeSelector(knob.setter.fn, DIAMOND_ABI_VIEM);
     if (selector) out[selector] = knob.id;
   }
@@ -306,4 +337,30 @@ function tryDecodeCalldata(
   } catch {
     return null;
   }
+}
+
+/**
+ * Is this queued change executable *now*?
+ *
+ * Chain truth only, and nothing else. An earlier version OR'd in
+ * `nowSec >= executesAt` so a dashboard left open would stop saying "still
+ * waiting" — but the local clock is not the chain's, and an administrator
+ * running fast was then told an operation was executable while
+ * `getOperationState` still reported Waiting, where submitting reverts.
+ *
+ * A boundary re-read was then tried as the way to keep the display current
+ * without trusting the local clock; it was WITHDRAWN (see the note above the
+ * fetch effect). So a dashboard left open across `executesAt` does still sit
+ * at "executes in 0m" until it is reloaded or the chain switched. That is a
+ * known, accepted gap, not an oversight — the accurate refresh is tracked
+ * separately.
+ *
+ * Being one helper is the other half of the point: the knob card and the page
+ * summary disagreed once, one saying "ready to execute" while the other said
+ * "All still in delay window". Both read this.
+ */
+export function isTimelockReady(
+  change: Pick<PendingChange, 'ready'>,
+): boolean {
+  return change.ready;
 }

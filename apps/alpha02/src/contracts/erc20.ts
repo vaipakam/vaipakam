@@ -207,6 +207,14 @@ export async function ensureAllowance(opts: {
    *  twice on the zero-first reset path) — drives the "step x of y"
    *  submit-progress label (#1037). */
   onPrompt?: () => void;
+  /** AWAITED before each approve prompt, and may THROW to abort (Codex
+   *  #1703 r3). Distinct from `onPrompt`, which is a progress label and
+   *  cannot gate: the zero-first path prompts TWICE, and the gap between
+   *  them is a user-held wallet confirmation plus a mined transaction — so
+   *  a caller with a live precondition (a tariff quote that can cross a
+   *  signed ceiling) needs a re-check before the SECOND prompt too, not
+   *  only before the helper is entered. */
+  beforeEachApprove?: () => Promise<void>;
   /** Called as soon as EACH approve is SUBMITTED, with the value it
    *  sets — deliberately before the receipt, not after.
    *
@@ -255,7 +263,7 @@ export async function ensureAllowance(opts: {
 }): Promise<`0x${string}` | null> {
   const {
     publicClient, walletClient, token, owner, spender, amount,
-    onPrompt, onWrote, onObserved, onConfirmed,
+    onPrompt, beforeEachApprove, onWrote, onObserved, onConfirmed,
   } = opts;
   const current = await publicClient.readContract({
     address: token,
@@ -271,6 +279,9 @@ export async function ensureAllowance(opts: {
   let confirmed: { value: bigint; hash: `0x${string}` } | null = null;
 
   const approve = async (value: bigint): Promise<`0x${string}`> => {
+    // Before the prompt, and before EVERY prompt — including the second one
+    // on the zero-first path (Codex #1703 r3). May throw to abort.
+    await beforeEachApprove?.();
     onPrompt?.();
     const hash = await walletClient.writeContract({
       address: token,

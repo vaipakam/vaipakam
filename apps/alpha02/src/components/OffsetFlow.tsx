@@ -17,7 +17,7 @@
  * OffsetPendingCard (driven by useOffsetPending) — a live offset must
  * outlive this card's mount gates.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseEventLogs, parseUnits } from 'viem';
@@ -192,9 +192,32 @@ export function OffsetFlow({
   // The consent rule covers the FIGURES too — the live-loan prop
   // refreshes in the background, and a tick given against old numbers
   // must not survive.
-  useEffect(() => {
+  //
+  // Done as a render-phase adjustment, NOT an effect, and the difference is
+  // load-bearing rather than stylistic (#1520). A passive effect clears the tick
+  // only AFTER the commit that already painted the new figures, so one painted
+  // frame shows refreshed numbers with the box still ticked. A click in that
+  // frame sends `consent: true` for figures the user never reviewed — and the
+  // submit-time guard below does NOT catch it, because that guard compares the
+  // freshly read bound against `completionBound`, which by then is ALSO the new
+  // value, so it passes. Adjusting during render makes React re-render before
+  // committing, so no frame is ever painted with new figures and a stale tick.
+  const figuresKey = `${principalStr}|${completionStr}`;
+  const [consentFigures, setConsentFigures] = useState(figuresKey);
+  // Clearing SILENTLY reads as a glitch — the box the user just ticked
+  // unticks itself with no stated cause, and the figures refresh on a timer,
+  // so it can happen repeatedly while they read. `EarlyExitFlow` hit the same
+  // thing on its drifting payout review and settled it the same way ("Closing
+  // silently reads as a glitch, so a visible notice explains it"); this
+  // follows that precedent rather than inventing a second answer. Latched only
+  // when consent was actually ticked, so an untouched card stays quiet, and
+  // cleared the moment the user re-ticks against the current figures.
+  const [figuresMoved, setFiguresMoved] = useState(false);
+  if (consentFigures !== figuresKey) {
+    setConsentFigures(figuresKey);
+    if (consent) setFiguresMoved(true);
     setConsent(false);
-  }, [principalStr, completionStr]);
+  }
 
   async function submit() {
     // The offset IS a createOffer — same kill switch as the direct
@@ -401,6 +424,7 @@ export function OffsetFlow({
       if (offerId !== undefined) onPosted(offerId.toString());
       setDone(copy.offset.done);
       setConsent(false);
+      setFiguresMoved(false);
       onCloseConfirm();
       void queryClient.invalidateQueries({ queryKey: ['offsetPending'] });
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
@@ -523,11 +547,19 @@ export function OffsetFlow({
               type="checkbox"
               checked={consent}
               disabled={busy}
-              onChange={(e) => setConsent(e.target.checked)}
+              onChange={(e) => {
+                setConsent(e.target.checked);
+                if (e.target.checked) setFiguresMoved(false);
+              }}
               style={{ marginTop: 4 }}
             />
             <span>{copy.offset.consentLabel}</span>
           </label>
+          {figuresMoved ? (
+            <div className="banner banner-info" role="status" style={{ marginBottom: 12 }}>
+              <span className="banner-body">{copy.offset.figuresMoved}</span>
+            </div>
+          ) : null}
           <ConfirmReceipt
             busy={busy}
             confirmLabel={copy.offset.confirm}

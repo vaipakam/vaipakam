@@ -2,7 +2,7 @@
 
 This is the single source of truth for the three new on-chain test
 scripts that exercise every flow documented in
-[`frontend/src/content/userguide/Advanced.en.md`](../../frontend/src/content/userguide/Advanced.en.md):
+[`apps/www/src/content/userguide/Advanced.en.md`](../../apps/www/src/content/userguide/Advanced.en.md):
 
 - `contracts/script/AnvilNewPositiveFlows.s.sol` — happy paths
 - `contracts/script/AnvilNewPartialFlows.s.sol` — UI-testable midpoint states (chain stays at end-state for manual UI checks)

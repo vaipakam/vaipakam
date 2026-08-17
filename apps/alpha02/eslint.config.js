@@ -72,6 +72,18 @@ const BLOCKING_HOOKS = {
   // helper that was a fresh function each pass. Both are now stable, so the
   // dependency each effect really has is written down.
   'react-hooks/exhaustive-deps': 'error',
+  // Promoted on reaching zero (#1520), and the last of the four. Unlike the
+  // others, NONE of its nine sites was a defect: three close a page-owned
+  // confirm slot when a refetch invalidated the open review, two reload
+  // local state on an identity change a `key` cannot express, one seeds a
+  // field the user owns immediately after, one persists a read-cursor to
+  // localStorage, and one resolves a deep link. Each carries a disable
+  // naming which of those it is. The ninth is `Rent`'s consent clear, whose
+  // suppression is meant to be temporary — #1696 decides whether it becomes
+  // a render-phase clear, and it is the ONLY one that should ever come back.
+  // Erroring is what makes that distinction hold: a new violation is now a
+  // deliberate, argued exception rather than one more warning in a list.
+  'react-hooks/set-state-in-effect': 'error',
   // Promoted on reaching zero (#1520). All nine sites were `Date.now()`
   // read during render, which froze every value derived from it until an
   // unrelated re-render; they now read a ticking clock through state
@@ -82,6 +94,33 @@ const BLOCKING_HOOKS = {
 
 export default defineConfig([
   globalIgnores(['dist', 'node_modules', '.wrangler', 'playwright-report']),
+  {
+    // Promoted on reaching zero (#1520), same rule as every entry in
+    // BLOCKING_HOOKS above. ESLint 9 defaults this to `warn`; at that
+    // severity nothing holds the count down.
+    //
+    // It matters here specifically BECAUSE of the promotions above.
+    // Driving those five rules to zero left ~15 deliberate
+    // `eslint-disable-next-line` comments in `src/`, each one an argued
+    // exception with a reason written beside it. That is the intended
+    // end state, not debt — but it means the suppression surface is now
+    // large enough that a stale entry is easy to miss.
+    //
+    // The failure mode is a disable that outlives the violation it was
+    // written for: the code gets refactored, the rule stops firing, the
+    // comment stays. It is silent and harmless right up until the same
+    // file regresses, at which point the leftover comment suppresses the
+    // NEW violation and the rule that was promoted to catch it never
+    // fires. A stale suppression is a pre-authorised future bug.
+    //
+    // Note this is not what catches a MISPLACED disable — one attached
+    // to the wrong line leaves the real violation unsuppressed, so the
+    // promoted rule errors on its own. This is strictly about
+    // suppressions that have outlived their cause.
+    linterOptions: {
+      reportUnusedDisableDirectives: 'error',
+    },
+  },
   {
     files: ['src/**/*.{ts,tsx}', 'e2e/**/*.ts'],
     extends: [js.configs.recommended, tseslint.configs.recommended],

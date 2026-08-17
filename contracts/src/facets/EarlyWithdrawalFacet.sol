@@ -148,6 +148,11 @@ contract EarlyWithdrawalFacet is
     ///         the timestamp at which listing re-opens so the frontend can say
     ///         when instead of just "no".
     error SaleRelistCooldownActive(uint64 availableAt);
+    /// @notice The buy offer being consumed as a sale vehicle is past its GTT
+    ///         deadline. Mirrors `OfferAcceptFacet.OfferExpired` (same name +
+    ///         same args ⇒ same EVM selector), so a caller decodes identical
+    ///         revert data whichever path refused the fill.
+    error OfferExpired(uint256 offerId, uint64 expiresAt);
     // NOTE (#1503 PR-A, Codex #1505 r1): the live-maturity gate for a sale
     // fill lives in `OfferAcceptFacet` (`SaleLoanPastMaturity`), enforced at
     // ACCEPT time — before any buyer value moves. `_completeLoanSaleImpl`
@@ -239,6 +244,23 @@ contract EarlyWithdrawalFacet is
             buyOffer.offerType != LibVaipakam.OfferType.Lender ||
             buyOffer.accepted
         ) revert InvalidSaleOffer();
+        // #1503 (design item 8) — GTT expiry. This path checked the offer's
+        // TYPE and `accepted` flag but never its deadline, so a lender offer
+        // past `expiresAt` and not yet permissionlessly cancelled stayed
+        // consumable: the seller could withdraw the creator's still-vaulted
+        // principal and mark the offer accepted AFTER the window that creator
+        // consented to had closed. Every fill / match path enforces this
+        // lazily (the storage row outlives `expiresAt` — there is no keeper
+        // sweep), and this one was the gap.
+        //
+        // Placed before the offset-vehicle check and every lien release or
+        // vault movement below, so an expired offer costs the caller a cheap
+        // revert and moves nothing. Routes through `LibVaipakam.isOfferExpired`
+        // so the GTC sentinel (`expiresAt == 0`, never expires) keeps living in
+        // one place rather than being re-derived here.
+        if (LibVaipakam.isOfferExpired(buyOffer)) {
+            revert OfferExpired(buyOfferId, buyOffer.expiresAt);
+        }
         // #1001 (S3, Codex #1070 r5 P2) — a linked Preclose Option-3 offset offer
         // is a Lender offer, so it would otherwise pass the shape check above and
         // be consumable here. Consuming it via the direct swap-in marks it

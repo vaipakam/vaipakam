@@ -38,16 +38,7 @@
  *   - tab visibility return-to-focus
  *   - user activity event after a paused-tier idle
  */
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { type Address } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import {
@@ -57,64 +48,12 @@ import {
   type WatermarkStatus,
 } from '../hooks/watermarkInternals';
 import { pushBackedInterval } from '../hooks/watermarkPolicy';
+import {
+  WatermarkContext,
+  type WatermarkContextValue,
+  type WatermarkDiagnostics,
+} from './watermarkStore';
 
-/**
- * #843 delta 2 — realtime-poll diagnostics, exposed via a STABLE ref so reads
- * don't churn the hot context value (every watermark subscriber reads it). The
- * provider mutates `.current` imperatively each schedule / push-driven probe;
- * the diagnostics drawer polls it on a tick while open.
- */
-export interface WatermarkDiagnostics {
-  /** The cadence (ms) the next probe is armed at, after the push-backed floor;
-   *  `null` when no timer is armed (no subscribers / all paused / tab hidden). */
-  effectivePollIntervalMs: number | null;
-  /** Whether the push-backed floor is currently relaxing the cadence. */
-  pushBacked: boolean;
-  /** Duration (ms) of the most recent push-nudge-driven probe (event→refetch
-   *  settle), or `null` if no push-driven probe has run. */
-  lastNudgeLatencyMs: number | null;
-}
-
-interface WatermarkContextValue {
-  /** Bumps every time either lifetime counter advances. */
-  version: number;
-  /** Latest probe result, or `null` until first successful probe. */
-  snapshot: WatermarkSnapshot | null;
-  /** Probe health. */
-  status: WatermarkStatus;
-  /** Subscriber registration. Returns an id used by `unregister`. */
-  register: (opts: UseLiveWatermarkOptions) => number;
-  /** Subscriber deregistration. */
-  unregister: (id: number) => void;
-  /**
-   * #843 delta 1 — the realtime push provider calls this when its transport
-   * flips. While push is healthy (`true`) the poll cadence relaxes to the
-   * push-backed floor (`pushBackedInterval`); `false` restores the tier cadence
-   * immediately (an in-flight timer is rescheduled). Stable identity.
-   */
-  setPushHealthy: (healthy: boolean) => void;
-  /** #843 delta 2 — stable ref of realtime-poll diagnostics (see type). */
-  diagnosticsRef: { readonly current: WatermarkDiagnostics };
-  /**
-   * #757 Phase B — fire an immediate probe and FORCE a `version` bump, even
-   * when the lifetime counters didn't move. The realtime WS push calls this
-   * when the indexer signals a state change: status-only mutations (repay,
-   * default, cancel, transfer) don't advance `getGlobalCounts`, so the normal
-   * advance-gated bump would miss them — `nudge()` guarantees subscribers
-   * refetch. Also refreshes `snapshot.safeBlock` first so the refetch's RPC
-   * catch-up window includes the just-confirmed block. Coalesce bursts at the
-   * call site (the WS client debounces).
-   *
-   * #845 Codex P3 — `eventAt` (UNIX-ms of the invalidation frame that triggered
-   * the nudge) lets the diagnostics drawer report "Push→refetch latency" from
-   * the frame's ARRIVAL rather than the probe's start, so the debounce window
-   * and any wait behind an in-flight probe are included. Omitted (push-agnostic
-   * callers) → the probe is measured from its own start, as before.
-   */
-  nudge: (eventAt?: number) => void;
-}
-
-const WatermarkContext = createContext<WatermarkContextValue | null>(null);
 
 // Process-global subscriber id sequence. Provider remount on chain switch
 // keeps growing the sequence; collisions are impossible.
@@ -256,6 +195,12 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // probe's latency to (the earliest pending frame; worst-case-honest). `null`
     // when the pending force has no frame time (e.g. a non-push force).
     let pendingForceAt: number | null = null;
+    // True while polling is stopped for want of demand (no subscribers, or all
+    // of them past `pausedAfterMs`). Read by `schedule()` to tell "resuming
+    // after a stop" from "arming the next routine tick", because the former
+    // owes an immediate probe: the status is `idle` and no timer will restore
+    // it. Starts false so the mount probe isn't doubled.
+    let idleForLackOfDemand = false;
 
     // Pick the next cadence by taking the min over all subscribers'
     // currently-effective active interval. Activity gating is per-
@@ -381,6 +326,10 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         return;
       }
       probeInFlight = true;
+      // Any probe — from here, the visibility handler, an activity resume or a
+      // push nudge — discharges the "resume owes a probe" debt below, so the
+      // trailing `schedule()` doesn't fire a second one.
+      idleForLackOfDemand = false;
       // #843 delta 2 / #845 Codex P3 — measure event→refetch latency for a
       // push-nudge-driven probe. Anchor it to the invalidation-frame time when
       // the push provider supplied one (so the debounce + any wait behind a
@@ -419,18 +368,74 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       if (document.hidden) {
         diagnosticsRef.current.effectivePollIntervalMs = null; // timer paused
+        setStatus('idle'); // same reason as the paused branch below
         return;
       }
       const interval = chooseInterval();
       diagnosticsRef.current.effectivePollIntervalMs = interval; // #843 delta 2
-      if (interval === null) return; // no subscribers / all paused
+      if (interval === null) {
+        // No subscribers, or every subscriber walked away past `pausedAfterMs`.
+        // Status must stop saying `live`: consumers read it as "the last probe
+        // succeeded", and leaving it set kept a health badge green indefinitely
+        // on a page nobody was probing for.
+        setStatus('idle');
+        idleForLackOfDemand = true;
+        return;
+      }
       if (timer) {
         clearTimeout(timer); // never stack timers
         timer = null;
       }
-      timer = setTimeout(() => {
+      if (idleForLackOfDemand) {
+        // Demand just came back — a subscriber registered where there were
+        // none. Probe NOW rather than arming a timer: the status is `idle`
+        // from the branch above, and consumers treat that as "RPC not
+        // confirmed reachable", so waiting out a cool-tier interval would
+        // report a degraded chain for up to 180 s on a page whose retained
+        // snapshot is perfectly healthy. Navigating from a route with no
+        // watermark subscribers to a quiet one hits this every time.
+        //
+        // `runProbe` clears the flag on entry, so its trailing `schedule()`
+        // takes the normal timer path — one probe, then the usual cadence.
+        // The visibility and activity resumes already probe directly; this
+        // covers the subscriber-count resume they don't.
+        idleForLackOfDemand = false;
         void runProbe(false);
-      }, interval);
+        return;
+      }
+      // Never sleep past the moment demand STOPS. `chooseInterval` drops a
+      // subscriber once `pausedAfterMs` has elapsed, but that is only evaluated
+      // when something calls `schedule()` — so an interval armed just before
+      // the boundary (the idle tier is 600 s against a 900 s pause) carries the
+      // status as `live` well past the point where nothing is probing. Worse,
+      // `onActivity` requires `!timer` to fire its resume probe, so a user
+      // returning inside that window is skipped too and the next probe waits
+      // out the whole oversized timer — up to ten minutes of "healthy" with no
+      // probe behind it.
+      //
+      // Clamp to the earliest pause boundary and treat that wake as a
+      // RE-EVALUATION rather than a due probe: `schedule()` then takes the
+      // `interval === null` branch and sets the status honestly. Only the pause
+      // boundary is clamped, not `idleAfterMs` — crossing into the idle tier
+      // changes the cadence but not the truth of the status, and rescheduling
+      // there would stretch every tier's cadence for no gain.
+      const idleMs = Date.now() - lastActivityAt;
+      let msToPause = Infinity;
+      for (const s of subscribersRef.current.values()) {
+        if (s.pollIntervalMs == null || s.pausedAfterMs == null) continue;
+        if (s.pausedAfterMs > idleMs) {
+          msToPause = Math.min(msToPause, s.pausedAfterMs - idleMs);
+        }
+      }
+      const armed = Math.min(interval, msToPause);
+      const isBoundaryWake = armed < interval;
+      timer = setTimeout(() => {
+        if (isBoundaryWake) {
+          schedule(); // re-evaluate demand; do not spend a probe on this wake
+          return;
+        }
+        void runProbe(false);
+      }, armed);
     }
 
     // Imperative restart: rebuild the timer against the now-current subscriber
@@ -454,6 +459,12 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
           clearTimeout(timer);
           timer = null;
         }
+        // Directly, not via `schedule()` — this path RETURNS without calling
+        // it, so the hidden-branch clear added there never ran here. Status
+        // would stay `live` for the whole hidden period and still read green
+        // when the tab came back, until the restore probe completed, or
+        // forever if that probe hung.
+        setStatus('idle');
         return;
       }
       // Re-focused — count as fresh activity and fire an immediate probe.
@@ -472,7 +483,14 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         (s) => s.pausedAfterMs != null && now - lastActivityAt >= s.pausedAfterMs,
       );
       lastActivityAt = now;
-      if (wasPaused && !cancelled && !document.hidden && !timer) {
+      // No `!timer` condition. It was there to avoid doubling up on an armed
+      // tick, but when `wasPaused` is true any armed timer is a STALE one that
+      // outlived the pause boundary — the exact case the clamp above now
+      // prevents from being created, and one a long-lived tab can still hold
+      // from before this fix. Skipping the resume probe because of it left the
+      // page reporting healthy on a probe that could be ten minutes old.
+      // `runProbe` clears the pending timer on entry, so this cannot stack.
+      if (wasPaused && !cancelled && !document.hidden) {
         void runProbe(false);
       }
     }
@@ -514,15 +532,4 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
   );
 
   return <WatermarkContext.Provider value={value}>{children}</WatermarkContext.Provider>;
-}
-
-export function useWatermarkContext(): WatermarkContextValue {
-  const ctx = useContext(WatermarkContext);
-  if (!ctx) {
-    throw new Error(
-      'useWatermarkContext must be used inside <WatermarkProvider>. ' +
-        'Wrap the app in WatermarkProvider in main.tsx.',
-    );
-  }
-  return ctx;
 }

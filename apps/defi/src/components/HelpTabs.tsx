@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Search } from 'lucide-react';
 import { useMode } from '../context/ModeContext';
-import { isSupportedLocale, withLocalePrefix } from './LocaleResolver';
+import { isSupportedLocale, withLocalePrefix } from '../i18n/localePath';
 import { marketingUrl } from '../lib/marketingUrl';
 import type { SupportedLocale } from '../i18n/glossary';
 

@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react';
-// eslint-disable-next-line no-restricted-imports -- caller-parameterised
-// chainId, not bound to the app-selected ChainContext. The lint rule
-// guards against bare app-chain reads sneaking off to the wallet
-// chain; this hook's contract is "quote against THIS chainId", so the
-// scoped wagmi form is exactly right.
+// Caller-parameterised chainId, not bound to the app-selected ChainContext.
+// The lint rule guards against bare app-chain reads sneaking off to the wallet
+// chain; this hook's contract is "quote against THIS chainId" and it calls
+// `usePublicClient({ chainId })` with the caller's value, so the scoped wagmi
+// form is exactly right.
+//
+// Keep the directive on the line directly above the import. It used to sit
+// above this explanation, and `eslint-disable-next-line` suppresses only the
+// line that follows it — so as soon as the note grew past one line the
+// suppression landed on a comment and stopped covering the import. The rule
+// then fired unsuppressed and defi's lint carried it as a real error, hidden
+// among the unused-directive warnings it also produced.
+// eslint-disable-next-line no-restricted-imports
 import { usePublicClient } from 'wagmi';
 import type { Address } from 'viem';
 import {
@@ -61,29 +69,32 @@ export function useLiquidationQuotes({
   workerOrigin,
 }: UseLiquidationQuotesInput): UseLiquidationQuotesResult {
   const publicClient = usePublicClient({ chainId });
-  const [status, setStatus] = useState<Status>('idle');
-  const [quotes, setQuotes] = useState<OrchestratedQuotes | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  // Tagged with the whole quote request. A quote is a price for a specific
+  // loan on a specific chain for a specific size — the previous loan's ranked
+  // venues shown against a new one is not stale decoration, it is a number a
+  // liquidator would act on. `idle`, `loading` and the no-client error are all
+  // DERIVED, so none of them is written a paint after the frame that showed
+  // the wrong quote. `nonce` is in the key because `refresh()` exists to get a
+  // NEW quote; satisfying it from the old one would defeat the call.
+  const reqKey =
+    loanId == null
+      ? null
+      : [chainId, loanId, sellToken, buyToken, String(sellAmount), taker, nonce].join('|');
+  const [result, setResult] = useState<{
+    key: string;
+    status: Status;
+    quotes: OrchestratedQuotes | null;
+    errorMessage: string | null;
+  } | null>(null);
 
   useEffect(() => {
-    if (loanId == null) {
-      setStatus('idle');
-      setQuotes(null);
-      return;
-    }
-    if (!publicClient) {
-      setStatus('error');
-      setErrorMessage('Public client unavailable — can’t quote UniV3 on-chain.');
-      setQuotes(null);
-      return;
-    }
-    setStatus('loading');
-    setErrorMessage(null);
+    if (!reqKey || loanId == null || !publicClient) return;
     let cancelled = false;
     (async () => {
+      let next: { status: Status; quotes: OrchestratedQuotes | null; errorMessage: string | null };
       try {
-        const result = await orchestrateQuotes({
+        const quotes = await orchestrateQuotes({
           chainId,
           sellToken,
           buyToken,
@@ -92,24 +103,29 @@ export function useLiquidationQuotes({
           workerOrigin,
           publicClient,
         });
-        if (cancelled) return;
-        setQuotes(result);
-        if (result.ranked.length === 0) {
-          setStatus('empty');
-        } else {
-          setStatus('ready');
-        }
+        next = {
+          status: quotes.ranked.length === 0 ? 'empty' : 'ready',
+          quotes,
+          errorMessage: null,
+        };
       } catch (err) {
-        if (cancelled) return;
-        setStatus('error');
-        setErrorMessage(err instanceof Error ? err.message : 'Unknown error');
-        setQuotes(null);
+        next = {
+          status: 'error',
+          quotes: null,
+          errorMessage: err instanceof Error ? err.message : 'Unknown error',
+        };
       }
+      if (cancelled) return;
+      setResult({ key: reqKey, ...next });
     })();
     return () => {
       cancelled = true;
+      // Dropped on the way out, so a re-opened panel re-quotes rather than
+      // showing a price fetched before it was closed.
+      setResult(null);
     };
   }, [
+    reqKey,
     loanId,
     chainId,
     sellToken,
@@ -118,13 +134,29 @@ export function useLiquidationQuotes({
     taker,
     workerOrigin,
     publicClient,
-    nonce,
   ]);
+
+  const matched = result?.key === reqKey;
+  // A missing public client is a SETTLED answer, not a pending one — there is
+  // nothing in flight and nothing will arrive.
+  const status: Status =
+    reqKey === null
+      ? 'idle'
+      : !publicClient
+        ? 'error'
+        : matched
+          ? result.status
+          : 'loading';
 
   return {
     status,
-    quotes,
-    errorMessage,
+    quotes: matched ? result.quotes : null,
+    errorMessage:
+      reqKey !== null && !publicClient
+        ? 'Public client unavailable — can\u2019t quote UniV3 on-chain.'
+        : matched
+          ? result.errorMessage
+          : null,
     refresh: () => setNonce((n) => n + 1),
   };
 }

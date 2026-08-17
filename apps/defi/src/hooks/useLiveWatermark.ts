@@ -23,7 +23,7 @@
  * `WatermarkContext.tsx` for the gating rules.
  */
 import { useEffect } from 'react';
-import { useWatermarkContext } from '../context/WatermarkContext';
+import { useWatermarkContext } from '../context/watermarkStore';
 import {
   TICK_MS,
   type UseLiveWatermarkOptions,

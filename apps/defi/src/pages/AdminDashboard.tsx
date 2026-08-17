@@ -42,7 +42,10 @@ import { useIsProtocolAdmin } from '../lib/useIsProtocolAdmin';
 import { useTheme } from '../context/ThemeContext';
 import { useReadChain } from '../contracts/useDiamond';
 import { useAdminKnobValues } from '../hooks/useAdminKnobValues';
-import { useTimelockPendingChanges } from '../hooks/useTimelockPendingChanges';
+import {
+  useTimelockPendingChanges,
+  isTimelockReady,
+} from '../hooks/useTimelockPendingChanges';
 import { KnobCard } from '../components/admin/KnobCard';
 import { GraceBucketsCard } from '../components/admin/GraceBucketsCard';
 import { AdminThemeToggle } from '../components/admin/AdminThemeToggle';
@@ -102,6 +105,10 @@ function AdminDashboardInner({ inApp }: { inApp: boolean }) {
   const location = useLocation();
   const readChain = useReadChain();
   const pendingChanges = useTimelockPendingChanges();
+  // Same live comparison the knob cards use, via the shared helper — the two
+  // surfaces read the same `ready` snapshot and previously drew opposite
+  // conclusions once a card started ticking past `executesAt`.
+  const readyNowCount = pendingChanges.all.filter(isTimelockReady).length;
 
   // Theme resolution: URL > localStorage > admin-wallet-auto > default.
   const [themeMode, setThemeMode] = useState<ProtocolConsoleThemeMode>(() => {
@@ -252,8 +259,8 @@ function AdminDashboardInner({ inApp }: { inApp: boolean }) {
             }}
           >
             <strong>{pendingChanges.all.length} governance change{pendingChanges.all.length === 1 ? '' : 's'} queued in the timelock.</strong>{' '}
-            {pendingChanges.all.filter((p) => p.ready).length > 0
-              ? `${pendingChanges.all.filter((p) => p.ready).length} ready to execute now.`
+            {readyNowCount > 0
+              ? `${readyNowCount} ready to execute now.`
               : 'All still in delay window.'}
             {' '}Affected parameters carry a "PENDING" badge below.
           </div>
@@ -280,17 +287,14 @@ function AdminDashboardInner({ inApp }: { inApp: boolean }) {
         )}
 
         {KNOB_CATEGORY_ORDER.map((cat) => {
-          // VPFIBuyReceiver knobs only have a target on canonical-VPFI
-          // chains (Base / Base Sepolia). On every mirror chain the
-          // receiver address is null and the read would fail with
-          // `no-target` — hide those cards instead of surfacing the
-          // confusing error to users who can't act on it from here
-          // anyway (the receiver lives on a different chain).
-          const knobs = (grouped[cat] ?? []).filter(
-            (k) =>
-              k.getter.facet !== 'VPFIBuyReceiver' ||
-              readChain.isCanonicalVPFI === true,
-          );
+          // #1651 — a chain-scoped filter stood here, hiding
+          // `VPFIBuyReceiver` knobs on mirror chains where the receiver
+          // address was null. #687-A removed that contract and no knob has
+          // named it since, so the predicate was always true and the filter
+          // returned every knob unchanged. Dropped rather than kept as a
+          // no-op: it implied this surface still has chain-scoped knobs to
+          // hide, and it was the last reader of `isCanonicalVPFI` here.
+          const knobs = grouped[cat] ?? [];
           if (knobs.length === 0) return null;
           return (
             <section key={cat} style={{ marginBottom: 32 }}>

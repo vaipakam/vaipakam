@@ -358,22 +358,7 @@
       "howTitle": "यह कैसे काम करता है",
       "analyticsHint": "Protocol-wide stats और circulating supply खोज रहे हैं? देखें",
       "analyticsLink": "Analytics page"
-    },
-    "connectTitle": "अपना वॉलेट कनेक्ट करें",
-    "unsupportedNetwork": "असमर्थित नेटवर्क",
-    "buy": "VPFI खरीदें",
-    "buying": "खरीद रहे हैं…",
-    "approving": "अप्रूव हो रहा है…",
-    "approvingVpfi": "VPFI अप्रूव हो रहा है…",
-    "depositToVault": "Vault में जमा करें",
-    "depositing": "जमा हो रहा है…",
-    "unstakeToWallet": "वॉलेट में निकालें",
-    "unstaking": "निकाल रहे हैं…",
-    "buyFailed": "खरीद विफल",
-    "depositFailed": "जमा विफल",
-    "unstakeFailed": "निकासी विफल",
-    "buyTimedOut": "खरीद का समय समाप्त — फंड वापस किए गए",
-    "vaultBalanceZero": "आपका Vault VPFI शेष 0 है — पहले VPFI जमा करें।"
+    }
   },
   "claimCenter": {
     "connectTitle": "अपना वॉलेट कनेक्ट करें",
@@ -1395,8 +1380,6 @@
     "errorSuffix": "। ऑन-चेन tx प्रभावित नहीं है — सावधानी से आगे बढ़ें।",
     "expectedStateChanges": "अपेक्षित स्थिति परिवर्तन",
     "plusMore": "… और {{count}} अधिक",
-    "titleMalicious": "Blockaid ने इस लेनदेन को दुर्भावनापूर्ण के रूप में चिह्नित किया। आगे न बढ़ें।",
-    "titleWarning": "Blockaid ने चेतावनियाँ दिखाईं — साइन करने से पहले स्थिति परिवर्तनों की समीक्षा करें।",
     "titlePreview": "लेनदेन पूर्वावलोकन"
   },
   "consent": {

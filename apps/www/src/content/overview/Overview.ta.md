@@ -75,7 +75,7 @@ accept ஆகிறது.
 - Loan clock தொடங்குகிறது
 
 Loaned amount-லிருந்து சிறிய **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)** எடுக்கப்பட்டு protocol
-treasury-க்கு செல்கிறது. அதனால் borrower 1,000 அல்ல, 998 USDC பெறுகிறார். (நீங்கள்
+treasury-க்கு செல்கிறது. அதனால் borrower 1,000 அல்ல, `{liveValue:exampleBorrowerReceives}` USDC பெறுகிறார். (நீங்கள்
 fee-ஐ **VPFI**-யில் செலுத்தினால் borrower முழு 1,000 பெறலாம் - VPFI பற்றி கீழே
 பார்க்கலாம்.)
 
@@ -90,17 +90,17 @@ Interest = 1,000 USDC × 8% × (30 / 365) = ~6.58 USDC
 அவர் **Repay** click செய்து transaction sign செய்கிறார்; 1,006.58 USDC loan
 settlement-க்கு நகர்கிறது. அதிலிருந்து:
 
-- நீங்கள் **1,006.44 USDC** பெறுகிறீர்கள் (principal + interest, ஆனால் interest
+- நீங்கள் **`{liveValue:exampleLenderNet}` USDC** பெறுகிறீர்கள் (principal + interest, ஆனால் interest
   portion-ல் மட்டும் `{liveValue:treasuryFeeBps}`% Yield Fee கழித்த பின்)
-- Treasury **0.13 USDC**-ஐ Yield Fee-ஆக பெறுகிறது
+- Treasury **`{liveValue:exampleTreasuryYieldFee}` USDC**-ஐ Yield Fee-ஆக பெறுகிறது
 - Borrower-ன் WETH unlock ஆகிறது
 
 இந்த எண்கள் cent வரை round செய்யப்பட்டவை. சரியான interest 6.575342 USDC,
-சரியான Yield Fee 0.131506 USDC. எனவே round செய்த ஒரு எண்ணிலிருந்து
+சரியான Yield Fee `{liveValue:exampleTreasuryYieldFeeExact}` USDC. எனவே round செய்த ஒரு எண்ணிலிருந்து
 இன்னொன்றைக் கழித்தால் ஒரு cent வித்தியாசம் வரும் — protocol round
 செய்யாத தொகைகளில் settle செய்கிறது.
 
-உங்கள் dashboard-ல் **Claim** button தெரியும். அதை click செய்தால் 1,006.44 USDC
+உங்கள் dashboard-ல் **Claim** button தெரியும். அதை click செய்தால் `{liveValue:exampleLenderNet}` USDC
 settlement-லிருந்து உங்கள் wallet-க்கு நகர்கிறது. Borrower claim செய்தால் WETH
 அவரது wallet-க்கு திரும்பும். Loan close ஆகிறது.
 

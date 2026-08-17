@@ -9,6 +9,7 @@ import {
   RISK_TIER_LABEL,
   type RiskTier,
 } from "../hooks/useRiskAccess";
+import { useNowSeconds } from "../hooks/useNowSeconds";
 
 /**
  * #671 progressive risk access — self-sovereign settings (#728 PR-2e).
@@ -44,6 +45,7 @@ export default function RiskAccessSettings() {
   const { address } = useWallet();
   const diamondRw = useDiamondContract();
   const risk = useRiskAccess();
+  const nowSec = useNowSeconds();
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -401,8 +403,7 @@ export default function RiskAccessSettings() {
               "couldn't read" note instead of silently showing nothing. */}
           {!risk.strictMode &&
             (risk.strictModeUntilKnown ? (
-              risk.strictModeUntil >
-              BigInt(Math.floor(Date.now() / 1000)) ? (
+              risk.strictModeUntil > BigInt(nowSec) ? (
                 <p
                   style={{ fontSize: "0.8rem", opacity: 0.75, marginTop: "0.4rem" }}
                 >
