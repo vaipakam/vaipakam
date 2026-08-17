@@ -2346,6 +2346,34 @@ export async function processLoanLogs(
   // idempotent correlated UPDATE.
   const initiatedPairs: Array<{ loanId: number; offerId: number }> = [];
 
+  // #1782 — safety-net status edges, DEFERRED to after the log loop.
+  //
+  // Applying them inline was a P1 (Codex round 1). `LibLifecycle.transition`
+  // emits `LoanStatusChanged` from inside `EncumbranceMutateFacet.terminalize*`,
+  // so on an internal match it carries a LOWER log index than the outer
+  // `InternalMatchExecuted` and is therefore processed FIRST. Its guarded
+  // UPDATE and `applyMatch`'s share the same `status IN
+  // ('active','fallback_pending')` predicate, so writing here first consumed
+  // the guard and `applyMatch`'s write — the one that also refreshes the
+  // absolute `principal`/`collateral_amount` from a block-pinned read — matched
+  // zero rows and silently did nothing.
+  //
+  // Deferring makes this what a safety net is by definition: it acts only where
+  // no specific handler did. Every specific handler runs first, and the guard
+  // below then no-ops on any row they already terminalized.
+  //
+  // LAST edge per loan wins, which is load-bearing rather than incidental. For
+  // a claim-time match settling in one block (Active → InternalMatched →
+  // Settled) the last edge is `settled`, which is the chain's end-of-block
+  // truth and matches what `applyMatch`'s block-pinned read projects. Taking
+  // the FIRST edge would strand the row at `internal_matched`, since
+  // `LoanSettled` only promotes an already-terminal row and would not correct
+  // it — that is the #762 / #766 behaviour this must not regress.
+  const deferredStatusEdges = new Map<
+    number,
+    { terminal: string; blockNumber: bigint }
+  >();
+
   for (const log of logs) {
     const a = log.args;
     if (log.eventName === 'LoanInitiated') {
@@ -3208,27 +3236,20 @@ export async function processLoanLogs(
       // Reuses LOAN_STATUS_TO_INDEXER_TERMINAL, so Active(0), FallbackPending(4)
       // and any future enum value map to `undefined` and are skipped — a
       // FallbackPending cure back to Active must NOT overwrite a status, and we
-      // never write a guessed one. Guarded to ('active','fallback_pending') for
-      // the same reason the #762 read is: idempotent on re-scan, and a
-      // fallback_pending row is still promotable. It deliberately does NOT
-      // promote an already-terminal row (Repaid→Settled lands on a 'repaid'
-      // row and is skipped) — that edge belongs to the claim handlers, which
-      // know whether both sides have claimed.
+      // never write a guessed one. It deliberately does NOT promote an
+      // already-terminal row (Repaid→Settled lands on a 'repaid' row and is
+      // skipped) — that edge belongs to the claim handlers, which know whether
+      // both sides have claimed.
+      //
+      // NOTHING IS WRITTEN HERE. The edge is recorded and applied after the log
+      // loop; see `deferredStatusEdges` for why inline application was a P1.
       const to = Number(a.to as number | bigint);
       const terminal = LOAN_STATUS_TO_INDEXER_TERMINAL[to];
       if (terminal !== undefined) {
-        const loanId = Number(a.loanId as bigint);
-        const now = Math.floor(Date.now() / 1000);
-        const r = await env.DB.prepare(
-          `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
-           WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
-        )
-          .bind(terminal, Number(log.blockNumber), now, now, chainId, loanId)
-          .run();
-        if ((r.meta?.changes ?? 0) > 0) {
-          statusUpdates++;
-          await _deletePrepayListing(env, chainId, loanId);
-        }
+        deferredStatusEdges.set(Number(a.loanId as bigint), {
+          terminal,
+          blockNumber: log.blockNumber,
+        });
       }
     } else if (log.eventName === 'LoanLiquidated') {
       const r = await flipLoanStatus(env, chainId, a, log, 'liquidated');
@@ -3968,6 +3989,25 @@ export async function processLoanLogs(
     }
   }
 
+  // #1782 — apply the deferred safety-net status edges, now that every specific
+  // handler in the loop above has had its turn. The guard is what makes this
+  // safe to run unconditionally: a row a specific handler already terminalized
+  // no longer matches `status IN ('active','fallback_pending')`, so this is a
+  // no-op there and only fills a genuine gap. Same predicate as before, moved;
+  // see `deferredStatusEdges` for why the move was required.
+  for (const [loanId, { terminal, blockNumber }] of deferredStatusEdges) {
+    const r = await env.DB.prepare(
+      `UPDATE loans SET status = ?, terminal_block = ?, terminal_at = ?, updated_at = ?
+       WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
+    )
+      .bind(terminal, Number(blockNumber), now, now, chainId, loanId)
+      .run();
+    if ((r.meta?.changes ?? 0) > 0) {
+      statusUpdates++;
+      await _deletePrepayListing(env, chainId, loanId);
+    }
+  }
+
   // Rate Desk (#1129) — propagate the sale-vehicle flag from the initiating
   // offer onto the freshly-inserted loan row. The temp bookkeeping loan a
   // lender-sale vehicle initiates must never print on the desk's tape/candles
@@ -4290,7 +4330,12 @@ async function _deletePrepayListing(
     .run();
 }
 
-function pluckActivityRefs(
+/// Exported for `activityRefs.test.ts` only — it is not imported by any other
+/// module. A pure total function over (eventName, args) is the exact unit the
+/// #1782 round-1 P2 was about (an unmapped event silently gets `loan_id =
+/// NULL`), and asserting it directly beats driving the whole indexer with RPC
+/// mocks to observe one column.
+export function pluckActivityRefs(
   eventName: string,
   args: Record<string, unknown>,
 ): { actor: string | null; loanId: number | null; offerId: number | null } {
@@ -4370,6 +4415,20 @@ function pluckActivityRefs(
     case 'LoanRepaid':
       return {
         actor: (args.repayer as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // #1782 — index the safety-net status event under its loan. Without this
+    // case it falls to `default:` and every row lands with `loan_id = NULL`,
+    // so `/activity?loanId=N` and `LoanTimeline` exclude it (Codex round-1 P2).
+    // That is worst exactly where the event matters most: the sale-vehicle temp
+    // loan's transition is named by NO other event, so the loan-scoped view had
+    // no evidence of it at all. No `actor` — a status edge is a consequence of
+    // whatever call produced it, and the event carries no address; the calling
+    // event's own row holds the actor.
+    case 'LoanStatusChanged':
+      return {
+        actor: null,
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };

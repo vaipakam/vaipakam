@@ -62,3 +62,33 @@ The automated check demanded a handler the moment the new announcement appeared,
 which is the whole point: the announcement enrolled itself in the guardrail, so
 the gap closes for every future status change and not just for the one that was
 found.
+
+Two corrections landed after review, and the first changes when the net acts
+rather than what it does. The net's update and one of the existing handlers'
+updates both apply only to a loan still showing as running — that condition is
+what makes each of them safe to repeat. Because the platform announces the
+status change from inside the very operation the specific handler is watching
+for, the announcement is seen first, and the net was therefore claiming that
+condition before the specific handler could use it. The specific handler's
+update then matched nothing, which mattered because that is the update which
+also refreshes the loan's outstanding amount and collateral from a reading taken
+against the exact moment of the change. The figures stayed stale, and a counter
+reported a write that had not happened.
+
+The net now waits until every specific handler has run, and only then fills a
+gap none of them filled. That is what a safety net should be, and stating it as
+ordering rather than as a special case means it holds for every handler, not
+just the one that was found. It also repairs a second, sharper case for free:
+where a loan is matched and then fully wound up within the same block, the net
+now takes the last of those steps rather than the first, which is what the
+platform's own end-of-block reading reports. Taking the first left such a loan
+showing as matched forever, since nothing later corrects it — behaviour two
+earlier fixes had specifically established, and which this change had been
+quietly undoing.
+
+The second correction is smaller and about reach rather than correctness. The
+new announcement was being filed without the loan it belongs to attached, so the
+per-loan history view could not find it. That is worst exactly where the
+announcement is most needed: the temporary bookkeeping loan a lender sale
+creates is named by no other announcement, so its history had no record of the
+change at all. It is now filed under its loan.

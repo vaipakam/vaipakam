@@ -235,3 +235,99 @@ describe('processLoanLogs — LoanStatusChanged safety net (#1782)', () => {
     expect(statusOf(h, 25)).toBe('repaid');
   });
 });
+
+/**
+ * #1782 round-1 P1 — the safety net must not pre-empt a specific handler.
+ *
+ * `LoanStatusChanged` is emitted by `LibLifecycle.transition` from INSIDE
+ * `EncumbranceMutateFacet.terminalize*`, so on an internal match it carries a
+ * lower log index than the outer `InternalMatchExecuted` and is seen first.
+ * Both writes are guarded on `status IN ('active','fallback_pending')`, so a
+ * safety-net write applied inline consumed the guard and `applyMatch`'s
+ * write — the one that also refreshes `principal`/`collateral_amount` from a
+ * block-pinned read — matched zero rows.
+ *
+ * These two cases are the reason the safety net is deferred to after the log
+ * loop. Both FAIL against the inline version, which is what makes them worth
+ * having: the first leaves principal stale at its seeded value, the second
+ * strands the row at `internal_matched`.
+ */
+describe('processLoanLogs — safety net defers to specific handlers (#1782)', () => {
+  const detailsClient = (principal: bigint, collateral: bigint, status: number) =>
+    ({
+      readContract: async () => ({
+        principal,
+        collateralAmount: collateral,
+        status,
+      }),
+    }) as never;
+
+  const rowOf = (h: SqliteD1, loanId: number) =>
+    h.db
+      .prepare(
+        'SELECT status, principal, collateral_amount FROM loans WHERE chain_id = ? AND loan_id = ?',
+      )
+      .get(CHAIN, loanId) as {
+      status: string;
+      principal: string;
+      collateral_amount: string;
+    };
+
+  it('lets InternalMatchExecuted refresh principal/collateral despite an earlier status edge', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 30); // seeded principal '100', collateral '200'
+
+    const res = await processLoanLogs(
+      [
+        // Emitted inside terminalize* — lower log index, seen first.
+        statusChangedLog(30, 0, 5, 100, 0),
+        {
+          eventName: 'InternalMatchExecuted',
+          args: { loanIdA: 30n, loanIdB: 0n, loanIdC: 0n },
+          blockNumber: 100n,
+          transactionHash: `0x${'ef'.repeat(32)}`,
+          logIndex: 1,
+        },
+      ] as never,
+      { DB: h.d1 } as unknown as Env,
+      CHAIN,
+      new Map([[100n, 500]]),
+      // Chain's block-pinned post-image: fully matched, so principal and
+      // collateral are cleared and the status is InternalMatched(5).
+      detailsClient(0n, 0n, 5),
+      DIAMOND,
+    );
+
+    const row = rowOf(h, 30);
+    expect(row.status).toBe('internal_matched');
+    // THE discriminating assertion. Inline application left these at the
+    // seeded '100'/'200' because applyMatch's guarded UPDATE matched no rows.
+    expect(row.principal).toBe('0');
+    expect(row.collateral_amount).toBe('0');
+    expect(res.statusUpdates).toBeGreaterThanOrEqual(1);
+  });
+
+  it('takes the LAST edge, so a same-block claim-time settle lands on settled', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    seedActiveLoan(h, 32);
+
+    const res = await processLoanLogs(
+      [
+        statusChangedLog(32, 0, 5, 100, 0), // Active -> InternalMatched
+        statusChangedLog(32, 5, 3, 100, 1), // InternalMatched -> Settled
+      ] as never,
+      { DB: h.d1 } as unknown as Env,
+      CHAIN,
+      new Map([[100n, 500]]),
+      stubClient,
+      DIAMOND,
+    );
+
+    // Inline application wrote `internal_matched` on the first edge and then
+    // no-opped on the second, stranding the row — and `LoanSettled` only
+    // promotes an already-terminal row, so nothing later corrected it. That is
+    // the #762 / #766 behaviour this must not regress.
+    expect(statusOf(h, 32)).toBe('settled');
+    expect(res.statusUpdates).toBe(1);
+  });
+});
