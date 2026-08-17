@@ -181,6 +181,15 @@ async function snapshot(context, route, locale) {
       // Un-pin the prerender machine's theme; the inline bootstrap
       // re-derives it per visitor before first paint.
       document.documentElement.removeAttribute('data-theme');
+      // And the BUILD machine's config conclusion. `useProtocolConfig`
+      // stamps `data-protocol-config` with what THIS document concluded
+      // about the published snapshot; serialized, that bakes the build
+      // machine's verdict into every visitor's HTML, where it would
+      // outlive a live document whose store never ran — exactly the
+      // regression the live drive reads the marker to catch (Codex
+      // #1778 r6 P2). Shipped HTML carries no marker; only a store that
+      // actually ran in the visitor's document writes one.
+      document.documentElement.removeAttribute('data-protocol-config');
       return '<!doctype html>\n' + document.documentElement.outerHTML;
     });
 
