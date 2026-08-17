@@ -14,7 +14,7 @@ that particular event under that particular loan.
 This was found the hard way: a review caught one such event, the announcement
 added last week specifically so that a status change could be observed — filed
 with no loan attached, and therefore invisible in exactly the place it was
-introduced to be visible. Measuring the rest turned up **fifty** more
+introduced to be visible. Measuring the rest turned up **fifty-one** more
 event-and-reference pairs in the same state, several of them things a user would
 plainly expect on a loan's history: a lender selling their position, a borrower
 closing early, collateral added or released, a health-factor liquidation, an
@@ -30,15 +30,15 @@ drop the other. It also flags entries in that list that have gone stale — an
 event since fixed, or one that no longer exists — since a list that quietly
 outlives its subject re-opens the hole it documented.
 
-The fifty known gaps are listed rather than fixed here, and they are marked
+The fifty-one known gaps are listed rather than fixed here, and they are marked
 as gaps rather than as decisions. That distinction is the point: writing "this
-is deliberate" next to fifty real omissions would bury them behind the word
+is deliberate" next to fifty-one real omissions would bury them behind the word
 and satisfy the check forever. Each is tagged so the whole backlog can be listed
 with a single search, and closing them means moving entries out of that list a
-few at a time, each with the behaviour change and its own review. Only four
-entries are genuine decisions — companion records whose primary event already
-carries the reference, and two internal accounting breadcrumbs — and those are
-stated as such.
+few at a time, each with the behaviour change and its own review. Only six
+entries are genuine decisions — three companion records whose primary event
+already carries the reference, and three internal accounting breadcrumbs — and
+those are stated as such.
 
 Worth noting what this check is not. There is an existing check asking whether
 an event updates the tables the platform projects. This asks whether an event
@@ -62,3 +62,19 @@ before the test, and the test looks only at what the lookup actually returns.
 Both were verified by reproducing the failure first: the commented-out case is
 now correctly reported as a gap, and the phantom entries are now correctly
 reported as stale.
+
+A third refinement, and the one that widened the check's reach. Its scope had been
+defined by whether an announcement happened to name its references with the exact
+same words the ledger's columns use. Where an announcement used a different name —
+one naming a lender's offer specifically, another naming the loan before and after
+a refinance — the reference was either unguarded despite being filed correctly, or
+the announcement sat outside the check altogether. Both are now covered by an
+explicit list of the alternative names each column accepts. That immediately
+brought one correct mapping under protection and revealed one announcement, the
+refinance, that had never been in scope at all.
+
+That last one is left as a gap rather than closed here, for a reason worth
+recording: a refinance leaves two loans — the one being left and the one taken on
+— and the ledger has a single column for the loan. Filing it against either is
+defensible, so the choice belongs to whoever makes it deliberately, not to a
+mechanical fix made in passing.

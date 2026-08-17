@@ -71,6 +71,17 @@ const DELIBERATELY_NOT_SCOPED = {
   // ── TODO(#1794): real gaps, awaiting per-slice mapping ─────────────────
   // Grep `TODO(#1794)` for the live backlog. Ordered roughly by how clearly
   // user-facing they are, since that is the order the slices should take.
+  // Surfaced by the alias table (Codex round-2 P2) — it carries `oldLoanId` /
+  // `newLoanId` and no exact `loanId`, so it had been outside the guardrail
+  // entirely. Left as a TODO rather than mapped here because the choice is
+  // genuinely ambiguous and deserves a deliberate decision: a refinance leaves
+  // TWO loan records (the old one terminalized Repaid, a new one created), and
+  // `activity_events` has one `loan_id` column. Mapping it to the old loan makes
+  // the row appear on the position the user is leaving; mapping it to the new
+  // one makes it appear on the position they end up with. Both are defensible
+  // and the slice that maps it should say which and why.
+  'LoanRefinanced.loanId':
+    'TODO(#1794) — refinance; needs a decision on old-vs-new loan for the single loan_id column',
   LoanSold: 'TODO(#1794) — direct lender sale; plainly loan-timeline material',
   LoanSaleCompleted: 'TODO(#1794) — listed lender sale completion; plainly loan-timeline material',
   LoanSaleOfferLinked: 'TODO(#1794) — sale listing bound to a loan',
@@ -155,6 +166,30 @@ const DELIBERATELY_NOT_SCOPED = {
 // from `DIAMOND_ABI_VIEM`, so enforcing them manufactures phantom backlog that
 // would grow with every future standalone contract. Enforced set == decodable set.
 const REF_FIELDS = ['loanId', 'offerId'];
+
+/**
+ * ABI input names that populate each reference COLUMN (Codex round-2 P2).
+ *
+ * Keying the enforced set on inputs named exactly `loanId` / `offerId` made the
+ * scope an ABI naming coincidence rather than a statement about what the ledger
+ * references. Two consequences, both real in this tree:
+ *
+ *   - `OfferMatched` populates `offer_id` from `args.lenderOfferId`
+ *     (chainIndexer.ts, the #600 comment explains why the LENDER offer is the
+ *     right denormalisation). Its ABI has no input called `offerId`, so that
+ *     mapping was never enforced — replacing it with `offerId: null` passed.
+ *   - `LoanRefinanced` carries `oldLoanId` / `newLoanId` and no exact `loanId`,
+ *     so an entire event with two loan references sat outside the guardrail.
+ *
+ * So a column is "carried" when the event has ANY of its alias inputs. Add an
+ * alias here when a new event names a reference differently; the alternative is
+ * that its mapping is silently unguarded.
+ */
+const REF_ALIASES = {
+  loanId: ['loanId', 'oldLoanId', 'newLoanId'],
+  offerId: ['offerId', 'lenderOfferId', 'borrowerOfferId'],
+};
+
 const barrelSrc = readFileSync(join(ABI_DIR, 'index.ts'), 'utf8');
 
 /** `import FooABI from './Foo.json'` → identifier -> filename */
@@ -198,7 +233,7 @@ for (const file of memberFiles) {
     if (item?.type !== 'event' || !Array.isArray(item.inputs)) continue;
     const names = item.inputs.map((i) => i?.name);
     for (const field of REF_FIELDS) {
-      if (!names.includes(field)) continue;
+      if (!REF_ALIASES[field].some((alias) => names.includes(alias))) continue;
       if (!carries.has(item.name)) carries.set(item.name, new Set());
       carries.get(item.name).add(field);
     }
