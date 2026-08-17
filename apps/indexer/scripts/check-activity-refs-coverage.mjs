@@ -520,7 +520,11 @@ const alwaysExits = (stmt) => {
  */
 const alwaysReturns = (stmt) => {
   if (!stmt) return false;
-  if (ts.isReturnStatement(stmt) || ts.isThrowStatement(stmt)) return true;
+  // A `throw` is NOT a successful return (Codex round-11 P2). It aborts
+  // `recordActivityEvents` before the row is inserted, so the reference is not
+  // "mapped" on that path — it is a path with no row at all. Only `return`
+  // establishes coverage.
+  if (ts.isReturnStatement(stmt)) return true;
   if (ts.isBlock(stmt)) return alwaysReturns(stmt.statements[stmt.statements.length - 1]);
   if (ts.isIfStatement(stmt)) {
     return (
@@ -531,14 +535,22 @@ const alwaysReturns = (stmt) => {
 };
 
 /** Every `return` in a clause, not descending into nested functions. */
+const isFunctionLike = (node) =>
+  ts.isFunctionDeclaration(node) ||
+  ts.isFunctionExpression(node) ||
+  ts.isArrowFunction(node) ||
+  ts.isMethodDeclaration(node) ||
+  ts.isGetAccessorDeclaration(node) ||
+  ts.isSetAccessorDeclaration(node) ||
+  ts.isConstructorDeclaration(node) ||
+  ts.isClassDeclaration(node) ||
+  ts.isClassExpression(node);
+
 const collectReturns = (node, out) => {
-  if (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node)
-  ) {
-    return;
-  }
+  // EVERY function-like boundary, not just the three plain forms (Codex round-11
+  // P2): a `return` inside an object method or accessor belongs to that method,
+  // and counting it let a case "map" a field it never returns.
+  if (isFunctionLike(node)) return;
   if (ts.isReturnStatement(node)) out.push(node);
   ts.forEachChild(node, (c) => collectReturns(c, out));
 };
@@ -591,8 +603,37 @@ const isNullLiteral = (expr) =>
   let pendingReturns = [];
   const seenLabels = new Set();
 
+  /**
+   * Labels still pending when the case list ends — because the last non-default
+   * clause can fall through — are flushed against the default continuation
+   * (Codex round-11 P2).
+   *
+   * Skipping `default` outright left them unprocessed, so a final clause with a
+   * conditional return kept its allowlist entry and its false branch (which
+   * reaches the all-null default) was never examined. Falling into `default` is
+   * exactly the state this whole guardrail exists to detect, so it must not be the
+   * one path that escapes examination.
+   */
+  const flushPending = (reason) => {
+    if (pendingLabels.length === 0) return;
+    for (const label of pendingLabels) {
+      for (const field of REF_FIELDS) {
+        if (!aliasNames.get(label)?.get(field)) continue;
+        suspectMappings.push({ event: label, field, expr: '<falls through>', why: reason });
+      }
+      mapped.set(label, new Set());
+    }
+    pendingLabels = [];
+    pendingReturns = [];
+  };
+
   for (const clause of switchNode.caseBlock.clauses) {
-    if (ts.isDefaultClause(clause)) continue; // the NULL fallback, by design
+    if (ts.isDefaultClause(clause)) {
+      // The NULL fallback itself is by design; what matters is anything that fell
+      // INTO it.
+      flushPending('this case can fall through into the all-null default clause');
+      continue;
+    }
     const label = ts.isStringLiteralLike(clause.expression) ? clause.expression.text : null;
     if (label === null) {
       structural.push(
@@ -636,7 +677,12 @@ const isNullLiteral = (expr) =>
           ts.isForInStatement(n) ||
           ts.isWhileStatement(n) ||
           ts.isDoStatement(n) ||
-          ts.isSwitchStatement(n)
+          ts.isSwitchStatement(n) ||
+          // A labeled block owns the breaks that target it (Codex round-11 P3).
+          // `local: { break local; }` never leaves the switch, and flagging it
+          // rejected a perfectly good mapping — a false positive, which is worse
+          // than the exotic false negatives above: it blocks correct code.
+          ts.isLabeledStatement(n)
         ) {
           return;
         }
@@ -677,7 +723,10 @@ const isNullLiteral = (expr) =>
       return { props, spread };
     });
     if (escapesWithoutReturning) {
-      scopes.push({ opaque: 'a path leaves the switch via break/continue and falls to the all-null default' });
+      scopes.push({
+        opaque:
+          'a path leaves this case without returning a mapped object — a break/continue, or a throw — so the row is either filed from the all-null default or never written',
+      });
     }
 
     // A local `args` shadows the function parameter, so `args.loanId` in this
@@ -693,6 +742,15 @@ const isNullLiteral = (expr) =>
         // Binding NAMES recursively (Codex round-10 P2): `const { args } = …` puts
         // the binding inside an ObjectBindingPattern, which an identifier-only
         // test walks straight past.
+        // A declaration of ANY kind named `args` shadows the parameter (Codex
+        // round-11 P2) — `class args { static loanId = 0n }` binds the name just
+        // as a `const` does.
+        if (
+          (ts.isClassDeclaration(n) || ts.isFunctionDeclaration(n) || ts.isEnumDeclaration(n)) &&
+          n.name?.text === 'args'
+        ) {
+          found = true;
+        }
         if (ts.isVariableDeclaration(n) || ts.isParameter(n)) {
           const bindsArgs = (name) => {
             if (!name) return false;
@@ -799,6 +857,9 @@ const isNullLiteral = (expr) =>
       mapped.set(label, fields);
     }
   }
+  // No default clause, or pending labels after the last one: same situation —
+  // control leaves the switch without a mapped return.
+  flushPending('this case can fall out of the switch without returning a mapped object');
 }
 // ── 2b. Dual-carrying events must be exempted per field ────────────────
 // Codex round-1 P2. An event-wide key exempts BOTH references, and the stale
