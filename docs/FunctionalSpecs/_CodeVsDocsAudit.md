@@ -50,6 +50,7 @@ copying what the code does.
 | 2026-07-03 | `VaipakamNFTFacet` (no mint-counter / existence view) vs WebsiteReadme "the Vaipakam NFT verifier must distinguish between a valid live NFT, a burned NFT, and a token ID that was never minted" | WebsiteReadme Key UX Requirements | `ownerOf` reverts identically for burned and never-minted ids and `nftStatuses` is deleted on burn, so no on-chain read distinguishes the two; alpha02's verifier (PR pending) states both possibilities honestly instead. Full three-way distinction needs a contract view (e.g. expose `s.nextTokenId`). | pending triage |
 | 2026-07-02 | `apps/defi` Create Offer NFT-rental daily fee (`offerSchema.toCreateOfferPayload` non-ERC20 amount path) | WebsiteReadme "Key UX Requirements" (amounts in human token units) | The form hint says the daily rental fee is entered "in whole tokens", but the NFT-leg payload passes the typed number through UNSCALED — a user typing "10" lists a daily fee of 10 wei of the prepay asset, mispricing every rental created through the form. apps/alpha02 scales by the payment asset's decimals instead (PR #887); the two live apps now diverge and defi's behaviour looks like the bug. | pending triage |
 | 2026-07-15 | `LibVPFIDiscount.settleBorrowerLifProper` — consent-off zeros an already-prepaid borrower LIF rebate (forfeits `vpfiHeld` to treasury), reachable on mirrors via the `(0,0)` tier broadcast | TokenomicsTechSpec §6a | **Pass-2 E2 — RE-OPENED.** Originally triaged "UPDATE SPEC — carve out the prepaid rebate", but the code confiscates it (instantaneous effective-discount read at settlement, T-087). Needs owner re-decision: FIX CODE (snapshot/floor the prepaid rebate basis) OR ACCEPT + describe the confiscation. | #1255 |
+| 2026-08-17 | `EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer` (pre-#1780: `EarlyWithdrawalFacet.sellLoanViaBuyOffer`) — a fund-moving external entry point that the canonical spec does not describe AT ALL. The name appears zero times in `ProjectDetailsREADME.md`; the keeper taxonomy lists its sibling `createLoanSaleOffer` and the completion entries but not it | `ProjectDetailsREADME.md` — absent; the lender-exit material describes only the listed route | The direct one-transaction lender exit has no written intended behaviour, so it has no test oracle. That is not a cosmetic gap: it is the mechanism by which the route keeps acquiring guards its listing sibling already had (#1503 items 8, 17, 21, and 24 on both) — each found by reading the code side by side rather than by comparing either to a spec. The #1780 split documented the FACET; the ROUTE's behaviour is still unwritten | **OPEN — needs an owner intent-decision, not a transcription.** Writing this section from the code would defeat the purpose (see the sourcing rule in `README.md`): the questions are what the exiting lender is *entitled* to, what the incoming lender must match, and which of the listed route's protections are *meant* to apply here. PR-G (#1503) is scoped to replace this route with a bid instrument, so one legitimate resolution is to spec the replacement and record this route as deliberately unspecified pending removal — but that must be a decision, not a default | #1780; behaviour → #1503 |
 
 
 ## Resolved findings
@@ -366,3 +367,41 @@ assert a deployment property the deploy scripts contradict.
 
 Found while repairing genuinely broken relative links in the live doc bands
 (#1785), where all three resolved to nothing.
+
+
+## The direct lender-exit route has never been in the canonical spec (#1780)
+
+Found while deciding where to cut `EarlyWithdrawalFacet` for the EIP-170 split.
+The split needed to know which seam the documents already sanctioned, so the
+canonical spec was searched for both lender-exit routes. The listed route is
+there — its sale offer is named in the position-NFT locking rules, and its two
+stages are classified in the keeper taxonomy (`createLoanSaleOffer` as
+keeper-initiation, `completeLoanSale` as keeper-optional). The direct route is
+not there at all. `sellLoanViaBuyOffer` appears **zero** times in
+`ProjectDetailsREADME.md`.
+
+This is worth recording as a divergence rather than a documentation chore
+because of what it predicts. A route with no written intended behaviour has no
+test oracle, so nothing can be *checked* against intent — only against its
+sibling. That is exactly how its defects have been found. Four of the #1503
+audit items are the direct route lacking a protection the listed route has:
+the standing offer's deadline (item 8), and three more (17, 21, and 24, which
+lands on both). None was caught by comparing the route to a specification;
+each was caught by reading the two routes next to each other and noticing an
+asymmetry. That method finds a defect only when someone happens to look.
+
+What the #1780 split fixed is adjacent but different. The spec now states the
+rule for where a deployability seam goes, and names the direct facet as the
+place the direct route lives. That is the *structure*. The route's
+*behaviour* — what the exiting lender is entitled to keep and what they
+forfeit, what an incoming lender's offer must match, and which of the listed
+route's protections are meant to apply — remains unwritten.
+
+Deliberately NOT closed by writing that section now. The spec is sourced from
+intent, never transcribed from the contract code; a section derived from the
+current implementation would assert that whatever the code does is what was
+meant, which would convert the four known asymmetries from candidate bugs into
+documented design. Given that PR-G is scoped to replace this route with a bid
+instrument, recording it as deliberately unspecified pending removal is a
+legitimate resolution — but it is a decision to be taken and written down, not
+the state of affairs by default, which is what it has been until now.

@@ -132,6 +132,7 @@ FACETS=(
   "DefaultedFacet"
   "DiamondLoupeFacet"
   "EarlyWithdrawalFacet"
+  "EarlyWithdrawalDirectFacet"
   "VaultFactoryFacet"
   "InteractionRewardsFacet"
   "RewardClaimFacet"

@@ -29,6 +29,7 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {LibSaleSolvency} from "../src/libraries/LibSaleSolvency.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
@@ -1943,7 +1944,7 @@ contract AnvilNewPositiveFlows is Script {
 
         // Step 3: liam sells the position to bob.
         vm.startBroadcast(newLenderKey);
-        EarlyWithdrawalFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId);
         vm.stopBroadcast();
         LibVaipakam.Loan memory loanAfterSale = LoanFacet(diamond).getLoanDetails(loanId);
         require(
@@ -2048,7 +2049,7 @@ contract AnvilNewPositiveFlows is Script {
         vm.prank(newLender);
         (bool ok, bytes memory ret) = diamond.call(
             abi.encodeWithSelector(
-                EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector, loanId, buyOfferId
+                EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector, loanId, buyOfferId
             )
         );
         require(!ok, "N25: a sub-floor position must NOT be sellable");
@@ -2065,7 +2066,7 @@ contract AnvilNewPositiveFlows is Script {
         vm.stopBroadcast();
 
         vm.startBroadcast(newLenderKey);
-        EarlyWithdrawalFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId, buyOfferId);
         vm.stopBroadcast();
         require(
             LoanFacet(diamond).getLoanDetails(loanId).lender == lender,

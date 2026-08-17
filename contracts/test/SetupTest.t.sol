@@ -159,6 +159,7 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 // the cuts can only add reachable surface — it can't break anything.
 // The remaining 9-facet production gap is tracked as #229.
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
@@ -294,6 +295,7 @@ contract SetupTest is Test {
     // #168 Track A — Phase-2 facet quartet routed to close the
     // test-vs-prod drift. Imports + cut entries below.
     EarlyWithdrawalFacet earlyWithdrawalFacet;
+    EarlyWithdrawalDirectFacet earlyWithdrawalDirectFacet;
     PartialWithdrawalFacet partialWithdrawalFacet;
     PrecloseFacet precloseFacet;
     PrepayListingFacet prepayListingFacet;
@@ -408,6 +410,8 @@ contract SetupTest is Test {
         numeraireConfigFacet = new NumeraireConfigFacet();
         // #168 Track A — Phase-2 facet quartet construction (cut below).
         earlyWithdrawalFacet = new EarlyWithdrawalFacet();
+        // #1780 — the direct lender-exit route, split off for EIP-170.
+        earlyWithdrawalDirectFacet = new EarlyWithdrawalDirectFacet();
         partialWithdrawalFacet = new PartialWithdrawalFacet();
         precloseFacet = new PrecloseFacet();
         prepayListingFacet = new PrepayListingFacet();
@@ -463,7 +467,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](73);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](74);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -653,6 +657,12 @@ contract SetupTest is Test {
             facetAddress: address(earlyWithdrawalFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()
+        });
+        // #1780 — the direct lender-exit route's own facet.
+        cuts[73] = IDiamondCut.FacetCut({
+            facetAddress: address(earlyWithdrawalDirectFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEarlyWithdrawalDirectFacetSelectors()
         });
         cuts[27] = IDiamondCut.FacetCut({
             facetAddress: address(partialWithdrawalFacet),

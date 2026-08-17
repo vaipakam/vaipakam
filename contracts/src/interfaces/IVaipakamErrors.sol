@@ -964,4 +964,26 @@ interface IVaipakamErrors {
     ///         remit batch — a day funds at most once (a RELEASED
     ///         reservation re-opens its days).
     error RemitDayAlreadyClosed(uint256 dayId, uint32 chainId);
+
+    /// @notice #1780 — the lender-sale errors are shared by BOTH early-
+    ///         withdrawal routes. The direct route ({EarlyWithdrawalDirectFacet})
+    ///         and the listed route ({EarlyWithdrawalFacet}) were one facet
+    ///         until the EIP-170 split, and each of these three is raised on
+    ///         both sides; they live here so the split does not duplicate a
+    ///         declaration, which is exactly what this interface exists to
+    ///         prevent.
+    /// @notice The buy offer or sale offer cannot serve as a sale vehicle for
+    ///         this loan — wrong asset, wrong term, already spoken for, or not
+    ///         in a fillable state.
+    error InvalidSaleOffer();
+    /// @notice The rate difference between the live loan and the sale vehicle
+    ///         would cost the exiting lender more than the principal itself.
+    error RateShortfallTooHigh();
+    /// @notice #951 (Codex #959) — a loan already has a live sale listing. Only
+    ///         one listing per loan at a time: `loanToSaleOfferId` is cleared on
+    ///         cancel (OfferCancelFacet) and on completion, so a re-list after
+    ///         either is allowed; a second concurrent listing would overwrite the
+    ///         forward link and strand the reverse link, splitting accept/cancel
+    ///         authority across two offers.
+    error SaleOfferAlreadyExists();
 }
