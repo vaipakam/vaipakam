@@ -50,6 +50,7 @@ copying what the code does.
 | 2026-07-03 | `VaipakamNFTFacet` (no mint-counter / existence view) vs WebsiteReadme "the Vaipakam NFT verifier must distinguish between a valid live NFT, a burned NFT, and a token ID that was never minted" | WebsiteReadme Key UX Requirements | `ownerOf` reverts identically for burned and never-minted ids and `nftStatuses` is deleted on burn, so no on-chain read distinguishes the two; alpha02's verifier (PR pending) states both possibilities honestly instead. Full three-way distinction needs a contract view (e.g. expose `s.nextTokenId`). | pending triage |
 | 2026-07-02 | `apps/defi` Create Offer NFT-rental daily fee (`offerSchema.toCreateOfferPayload` non-ERC20 amount path) | WebsiteReadme "Key UX Requirements" (amounts in human token units) | The form hint says the daily rental fee is entered "in whole tokens", but the NFT-leg payload passes the typed number through UNSCALED — a user typing "10" lists a daily fee of 10 wei of the prepay asset, mispricing every rental created through the form. apps/alpha02 scales by the payment asset's decimals instead (PR #887); the two live apps now diverge and defi's behaviour looks like the bug. | pending triage |
 | 2026-07-15 | `LibVPFIDiscount.settleBorrowerLifProper` — consent-off zeros an already-prepaid borrower LIF rebate (forfeits `vpfiHeld` to treasury), reachable on mirrors via the `(0,0)` tier broadcast | TokenomicsTechSpec §6a | **Pass-2 E2 — RE-OPENED.** Originally triaged "UPDATE SPEC — carve out the prepaid rebate", but the code confiscates it (instantaneous effective-discount read at settlement, T-087). Needs owner re-decision: FIX CODE (snapshot/floor the prepaid rebate basis) OR ACCEPT + describe the confiscation. | #1255 |
+| 2026-08-17 | §9 lender-exit hardening DEPTH — the cross-cutting rules built out for Option 2 (the listed sale) were written into **that option's** section rather than the `### General Rules for All Lender Early Withdrawal Options` section that already exists for shared rules | `ProjectDetailsREADME.md` §9 | Option 1 (the direct instant-exit sale) is fully specified — participants, preconditions, accrued-interest forfeiture, principal recovery, rate-shortfall handling, frontend warning, ordered contract actions, borrower impact — and is referenced by name-in-words from Option 2's own rules. What it never received is the hardening Option 2 accumulated through #1503: offer-deadline, party-owing-itself, maturity-entry and one-live-route-per-position were each stated under Option 2 only, so an Option-1 reader never met them. That asymmetry, not any absence, is the mechanism behind #1503 items 8, 17, 21 and 24 | **RESOLVED (2026-08-17)** — the four genuinely cross-cutting rules are lifted into §9's General Rules, phrased route-neutrally and as intent, with the reasoning stated in the spec itself. Genuinely listing-specific rules (finite window, signed floor, teardown, quiet period) stay under Option 2. **Supersedes a WRONG entry** that claimed the route was absent from the spec — see the detail section | #1780; behaviour → #1503 |
 
 
 ## Resolved findings
@@ -366,3 +367,58 @@ assert a deployment property the deploy scripts contradict.
 
 Found while repairing genuinely broken relative links in the live doc bands
 (#1785), where all three resolved to nothing.
+
+
+## §9's lender-exit hardening lives under one option instead of the shared section (#1780)
+
+**This entry replaces a WRONG finding, and how it was wrong is the useful part.**
+The original claimed the direct lender-exit route "has never been in the canonical
+spec", on the evidence that `sellLoanViaBuyOffer` appears zero times in
+`ProjectDetailsREADME.md`. That evidence was worthless. The functional spec is
+**deliberately code-free** — no Solidity, no ABIs, no function names — so a
+function name is absent from it *by convention*, not by omission. Searching a
+code-free document for an identifier and concluding the behaviour is unspecified
+is a category error, and I built a chain on top of it — no spec, therefore no test
+oracle, therefore that is why the route keeps missing guards — that was wrong at
+step one.
+
+What §9 actually contains for Option 1: participants, purpose, preconditions,
+economic treatment (accrued-interest forfeiture, principal recovery, and the
+rate-difference/shortfall rule with a worked example), the frontend net-proceeds
+warning, the ordered smart-contract actions, and borrower impact. It is also
+referenced from Option 2's rules in words — "the direct instant-exit path (the
+lender-swap-in sale)" — and one Option 2 rule already states it applies to both
+routes. The route is specified and cross-referenced. The keeper claim was wrong
+the same way: §9's General Rules already say initiation is party-only absent an
+explicit per-action grant, which covers every route without enumerating them.
+
+The real divergence is **depth, not presence**. Option 2's section grew a large
+body of hardening as #1503 built it out — finite listing windows, the buyer's
+signed collateral floor, permissionless teardown, the relist quiet period,
+borrower-cannot-buy, non-matchable previews, no fresh origination fee. Several are
+genuinely specific to a listing. Four are not: an offer past its deadline is
+unfillable, a party must not end up owing itself, a buyer must not enter at or
+after maturity, and one position must not be sold through two routes at once. Each
+was written under Option 2 because that is what was being built at the time, so an
+Option-1 reader never met them — and those four are exactly the shape of #1503
+items 8, 17, 21 and 24.
+
+§9 already had a `### General Rules for All Lender Early Withdrawal Options`
+section, which is where a shared rule belongs. The four are lifted there, phrased
+route-neutrally and as intent rather than transcribed from either route's
+implementation, with the reasoning stated in the spec itself: a shared rule kept
+under one option is a rule the other option's reader will not see. Same principle
+as the deployability-split rule — state the rule once, not once per instance.
+
+Resolved rather than left open, because the fix is structural and needs no intent
+decision about *whether* those four bind both routes: three describe a state the
+protocol cannot coherently be in at all (a filled expired offer, a party owing
+itself, one position sold twice), and the fourth is already stated in Option 2 as
+applying to the direct route.
+
+What this does NOT settle: whether the direct route survives. PR-G is scoped to
+replace it with a position-sale bid instrument. If it does, the General Rules are
+where its successor inherits these invariants; if it is removed, they stay correct
+for whatever remains. Either way they now live in the place that does not need
+rewriting when the route list changes — which is the point of putting them there
+rather than duplicating them into Option 1.

@@ -16,6 +16,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -98,6 +99,7 @@ contract WorkflowComplianceAndRejection is Test {
     ClaimFacet claimFacet;
     AddCollateralFacet addCollateralFacet;
     EarlyWithdrawalFacet earlyFacet;
+    EarlyWithdrawalDirectFacet earlyFacetDirect;
     PrecloseFacet precloseFacet;
     RefinanceFacet refinanceFacet;
     AccessControlFacet accessControlFacet;
@@ -166,13 +168,14 @@ contract WorkflowComplianceAndRejection is Test {
         claimFacet = new ClaimFacet();
         addCollateralFacet = new AddCollateralFacet();
         earlyFacet = new EarlyWithdrawalFacet();
+        earlyFacetDirect = new EarlyWithdrawalDirectFacet();
         precloseFacet = new PrecloseFacet();
         refinanceFacet = new RefinanceFacet();
         accessControlFacet = new AccessControlFacet();
         TestMutatorFacet testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[19] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -191,6 +194,8 @@ contract WorkflowComplianceAndRejection is Test {
         cuts[10] = IDiamondCut.FacetCut({facetAddress: address(claimFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getClaimFacetSelectors()});
         cuts[11] = IDiamondCut.FacetCut({facetAddress: address(addCollateralFacet),  action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAddCollateralFacetSelectors()});
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(earlyFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()});
+        // #1780 — the direct lender-exit route lives in its own facet now.
+        cuts[21] = IDiamondCut.FacetCut({facetAddress: address(earlyFacetDirect), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalDirectFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(precloseFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getPrecloseFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(refinanceFacet),      action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRefinanceFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet),  action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
@@ -532,7 +537,7 @@ contract WorkflowComplianceAndRejection is Test {
         // Lender (US) tries to sell to sanctionedUser (IR) -> CountriesNotCompatible
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sanctionedOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sanctionedOfferId);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -695,15 +700,15 @@ contract WorkflowComplianceAndRejection is Test {
 
         // Lender tries to sell NFT rental loan -> InvalidSaleOffer (assetType != ERC20)
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(nftLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(nftLoanId, buyOfferId);
     }
 
     /// @notice NFT rental loan: createLoanSaleOffer reverts InvalidSaleOffer
     function test_EarlyWithdrawal_RejectsNFTRental_Option2() public {
         // Lender tries to create a sale offer for NFT rental loan -> InvalidSaleOffer
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(nftLoanId, 500, true, 7 days);
     }
 

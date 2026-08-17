@@ -1774,6 +1774,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidSaleOffer",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "KYCRequired",
     "inputs": []
   },
@@ -2294,6 +2299,11 @@
   },
   {
     "type": "error",
+    "name": "RateShortfallTooHigh",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReceivedRemitNotFound",
     "inputs": [
       {
@@ -2690,6 +2700,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SaleOfferAlreadyExists",
+    "inputs": []
   },
   {
     "type": "error",

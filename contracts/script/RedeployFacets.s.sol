@@ -11,6 +11,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -96,6 +97,14 @@ contract RedeployFacets is Script {
         LoanFacet loanFacet = new LoanFacet();
         PrecloseFacet precloseFacet = new PrecloseFacet();
         EarlyWithdrawalFacet earlyWithdrawalFacet = new EarlyWithdrawalFacet();
+        // #1780 — the direct lender-exit route now lives in its own facet. It
+        // must be refreshed WITH the listed route, not instead of it: the two
+        // were one contract, so a curated redeploy that carried only
+        // EarlyWithdrawalFacet would leave `sellLoanViaBuyOffer` pointing at
+        // the pre-split bytecode while the listed route moved on — the exact
+        // half-applied-family failure #1649 documents for the sale classifier.
+        EarlyWithdrawalDirectFacet earlyWithdrawalDirectFacet =
+            new EarlyWithdrawalDirectFacet();
         // #658 PR-B2 — refinance gained the lender-side eager-consolidation hook
         // (cross-calls ConsolidationFacet, like precloseDirect). Refresh it
         // alongside Preclose so a curated redeploy doesn't leave refinance on
@@ -146,6 +155,7 @@ contract RedeployFacets is Script {
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
+        console.log("EarlyWithdrawalDirect:", address(earlyWithdrawalDirectFacet));
         console.log("RefinanceFacet:       ", address(refinanceFacet));
         console.log("ClaimFacet:           ", address(claimFacet));
         console.log("RiskMatchLiquidation: ", address(riskMatchFacet));
@@ -222,7 +232,7 @@ contract RedeployFacets is Script {
             (rpToAdd.length > 0 ? 1 : 0) + (rpToReplace.length > 0 ? 1 : 0) +
             (profToRemove.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](8 + nExtra);
+            new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
@@ -241,9 +251,17 @@ contract RedeployFacets is Script {
         // attemptInternalMatchAutoDispatch), so a plain Replace repoints them to
         // the consolidation-aware bytecode.
         cuts[7] = _replace(address(riskMatchFacet), _riskMatchSelectors());
+        // #1780 — `sellLoanViaBuyOffer` is already routed on every existing
+        // diamond (it was part of EarlyWithdrawalFacet's surface), so moving it
+        // to its own facet is a plain Replace that repoints the selector to the
+        // new address. No Add/Remove partition is needed.
+        cuts[8] = _replace(
+            address(earlyWithdrawalDirectFacet),
+            _earlyWithdrawalDirectSelectors()
+        );
         // ProfileFacet + ClaimFacet are partitioned below (not fixed Replaces)
         // because each gained new-and-possibly-unrouted selectors.
-        uint256 idx = 8;
+        uint256 idx = 9;
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
         }
@@ -468,10 +486,9 @@ contract RedeployFacets is Script {
     }
 
     function _earlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
-        s[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
-        s[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
-        s[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
+        s = new bytes4[](3);
+        s[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
+        s[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #1123 (Codex #1126 r4 P1) — `completeLoanSaleInternal` (the
         // address(this)-gated auto-complete entry OfferAcceptFacet drives) MUST be
         // carried here too. #1123 wires the fail-closed sale-move gate inside
@@ -488,8 +505,16 @@ contract RedeployFacets is Script {
         // facet (`DeployDiamond._getEarlyWithdrawalSelectors` s[3]) and
         // `acceptOffer` already calls it, so a plain Replace simply repoints it to
         // the #1123-gated bytecode with no staleness. A Replace cut must carry the
-        // facet's WHOLE routed surface (#778/#779), which is these 4 selectors.
-        s[3] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        // facet's WHOLE routed surface (#778/#779) — which, since the #1780
+        // split moved `sellLoanViaBuyOffer` to its own facet, is these 3.
+        s[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+    }
+
+    /// @dev #1780 — the direct lender-exit route's whole routed surface.
+    ///      Mirrors `DeployDiamond._getEarlyWithdrawalDirectSelectors`.
+    function _earlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
     }
 
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors

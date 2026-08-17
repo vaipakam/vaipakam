@@ -48,8 +48,12 @@ abstract contract DiamondFacetNames {
     ///      ProfileFacet and within EIP-170);
     ///      60 → 61 in #1104 with `RiskPreviewFacet` (the read-only preview
     ///      cluster + the two cross-facet gate asserts split off
-    ///      `RiskAccessFacet` for EIP-170 header room).)
-    function cutFacetNames() internal pure returns (string[72] memory) {
+    ///      `RiskAccessFacet` for EIP-170 header room);
+    ///      72 → 73 in #1780 with `EarlyWithdrawalDirectFacet` (the direct
+    ///      lender-exit route split off `EarlyWithdrawalFacet`, which had 30
+    ///      bytes of EIP-170 headroom left — less than one cross-facet
+    ///      call).)
+    function cutFacetNames() internal pure returns (string[73] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -60,6 +64,7 @@ abstract contract DiamondFacetNames {
             "DefaultedFacet",
             "DiamondLoupeFacet",
             "EarlyWithdrawalFacet",
+            "EarlyWithdrawalDirectFacet",
             "VaultFactoryFacet",
             "IntentConfigFacet",
             "InteractionRewardsFacet",

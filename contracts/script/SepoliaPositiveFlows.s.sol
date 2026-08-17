@@ -21,6 +21,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
@@ -472,7 +473,7 @@ contract SepoliaPositiveFlows is Script {
 
         // newLender sells position via the buy offer
         vm.startBroadcast(newLenderKey);
-        EarlyWithdrawalFacet(diamond).sellLoanViaBuyOffer(loanId8, buyOfferId);
+        EarlyWithdrawalDirectFacet(diamond).sellLoanViaBuyOffer(loanId8, buyOfferId);
         vm.stopBroadcast();
         console.log("Lender sold position to new lender");
 

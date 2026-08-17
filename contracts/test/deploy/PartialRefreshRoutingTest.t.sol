@@ -14,13 +14,24 @@ import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
 /**
  * @title  PartialRefreshRoutingTest
  * @notice #1649 guardrail. The two CURATED partial-refresh scripts each
- *         reinstall a facet whose sale path, since #1503, cross-calls
+ *         reinstall facets whose sale paths, since #1503, cross-call
  *         `RiskPreviewFacet.saleAdmission`:
  *
  *           - `RedeployFacets`      → `EarlyWithdrawalFacet`
- *             (`sellLoanViaBuyOffer`, `createLoanSaleOffer`)
+ *             (`createLoanSaleOffer`, `completeLoanSale`)
+ *           - `RedeployFacets`      → `EarlyWithdrawalDirectFacet`
+ *             (`sellLoanViaBuyOffer`)
  *           - `ReplaceStaleFacets`  → `OfferAcceptFacet`
  *             (the binding check on the resting-listing accept branch)
+ *
+ *         THREE hosts, not two, since #1780 split the direct lender-exit route
+ *         into its own facet. The cross-call is inside `LibSaleSolvency`, which
+ *         inlines into each caller, so the host set is "whoever calls that
+ *         library" — nothing a compile enumerates. `RedeployFacets` reinstalls
+ *         both early-withdrawal halves and routes `saleAdmission` once, so the
+ *         cases below still cover the pair; the enumeration is what tells the
+ *         author of a FUTURE curated script that the direct facet is a sale
+ *         host too.
  *
  *         Run either against an EXISTING Diamond that predates #1503 and, until
  *         this issue was fixed, you got the worst possible outcome: the new
@@ -152,8 +163,11 @@ contract PartialRefreshRoutingTest is Test {
 
     // ─── 2. RedeployFacets routes the classifier ──────────────────────
 
-    /// @notice `RedeployFacets` reinstalls `EarlyWithdrawalFacet`, so it must
-    ///         also route the selector that facet's sale paths call.
+    /// @notice `RedeployFacets` reinstalls both early-withdrawal facets
+    ///         (`EarlyWithdrawalFacet` and, since #1780,
+    ///         `EarlyWithdrawalDirectFacet`), so it must also route the selector
+    ///         their sale paths call. One assertion covers both: the routing is
+    ///         a property of the Diamond after the script runs, not per-host.
     function test_RedeployFacets_RoutesSaleAdmission_OnPre1503Diamond() public {
         _unrouteSaleAdmission();
 
