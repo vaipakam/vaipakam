@@ -49,11 +49,31 @@ import {DiamondFacetNames} from "./DiamondFacetNames.sol";
  *         compiled facet ABIs. So this test inherits that list's correctness
  *         rather than introducing a third hand-maintained count.
  *
- *         NOT covered here, and deliberately: whether every cut facet also gets
- *         a `Deployments.writeFacet(...)` call (#1791 F2). Solidity cannot see
- *         whether a call exists in a script's body; that check belongs in
- *         `predeploy-check.sh`, comparing written keys against this same list.
- *         Tracked in #1793.
+ *         NOT covered here, and deliberately — two gaps, both for the same
+ *         reason and both tracked in #1793:
+ *
+ *         1. Whether every cut facet also gets a `Deployments.writeFacet(...)`
+ *            call (#1791 F2). Solidity cannot see whether a call exists in a
+ *            script's body.
+ *
+ *         2. Whether each `Item.key` string matches the deployment-artifact key
+ *            `DeployDiamond` writes for that facet. This test proves the refresh
+ *            covers the right CODE — selector set and per-selector codehash both
+ *            match the built Diamond — but says nothing about the LABELS. A
+ *            typo'd or swapped key still passes every assertion below, and a
+ *            refresh that writes the wrong key mislabels the artifact consumers
+ *            read. Unreachable from Solidity for three separate reasons: the
+ *            canonical keys exist only as string literals inside `writeFacet`
+ *            calls, with no enumerable list to compare against; the on-disk
+ *            artifact is a RECORD of past deploys rather than a spec of the
+ *            current facet set, so it cannot serve as ground truth (base-sepolia
+ *            legitimately carries 70 facet keys and no `earlyWithdrawalDirectFacet`,
+ *            anvil 61); and `Deployments.path()` derives its path from
+ *            `block.chainid` with no override (`script/lib/Deployments.sol:202`),
+ *            so a test cannot emit keys to a scratch location to diff them.
+ *
+ *         Both belong in `predeploy-check.sh`, which reads the script sources as
+ *         text and can compare all three lists against each other.
  */
 /// @dev Exposes the script's internal item builder so the test can inspect what
 ///      it actually produced. A subclass is needed because `_deployItems()` must
