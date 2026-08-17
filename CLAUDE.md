@@ -235,9 +235,15 @@ The last two are covered in more detail in "Frontend ABI sync" **below**.
 
 **When you add a function to a facet**: add its selector to the matching
 `_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —
-`SelectorCoverageTest` fails otherwise. A deeper deploy-*integration* test
-(runs `DeployDiamond` and loupe-asserts the built Diamond) is tracked as
-Issue #72.
+`SelectorCoverageTest` fails otherwise.
+
+The deploy-*integration* test that Issue #72 asked for **already exists** and
+runs in the deploy-sanity suite:
+`contracts/test/deploy/DeployDiamondIntegrationTest.t.sol` invokes the real
+`DeployDiamond.runWith(...)` and loupe-asserts the built Diamond, including
+per-selector ownership. This note previously said it was "tracked as Issue #72",
+which presented a shipped CI guard as a coverage gap and pointed contributors at
+duplicate work.
 
 ## Conventions
 
