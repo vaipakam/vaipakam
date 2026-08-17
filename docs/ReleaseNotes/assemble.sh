@@ -77,7 +77,14 @@ if [ "${#frags[@]}" -eq 0 ]; then
 fi
 
 # Deterministic order — task-id-prefixed filenames sort sensibly.
-IFS=$'\n' frags=($(printf '%s\n' "${frags[@]}" | sort)); unset IFS
+#
+# `mapfile`, not `frags=($(...))`. An unquoted command substitution is both
+# word-split AND pathname-expanded, and `nullglob` is on a few lines above — so
+# a fragment whose name contains a glob metacharacter expands to nothing and
+# VANISHES from the list. It is then neither assembled nor removed, while the
+# run still reports success and a count that silently excludes it. `mapfile`
+# does neither expansion.
+mapfile -t frags < <(printf '%s\n' "${frags[@]}" | sort)
 
 # ── UTC-day selection ────────────────────────────────────────────────────────
 # A fragment belongs to the day its PR merged, measured in UTC — the same clock

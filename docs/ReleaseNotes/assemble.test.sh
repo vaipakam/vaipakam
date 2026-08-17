@@ -252,6 +252,21 @@ check "named with its own day"        "$(says "$msg" '2026-08-16 UTC')"         
 check "only 08-17's own is folded"    "$(sections "$ROOT/t10b-real/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "1"
 check "and it survives on disk"       "$([ -f "$ROOT/t10b-real/docs/ReleaseNotes/unreleased/0001-a.md" ] && echo yes || echo no)" "yes"
 
+# ── A glob metacharacter in a name must not make the fragment vanish ────────
+# Collecting then sorting through an unquoted command substitution both
+# word-splits and pathname-expands, and `nullglob` is on — so such a name
+# expands to nothing and drops out of the list silently. The fragment is then
+# neither assembled nor removed, while the run reports success and a count that
+# excludes it.
+echo "T10c: a glob metacharacter in a fragment name is not dropped"
+W="$ROOT/t10c"; build "$W"
+printf '## bracketed\n' > "$W/docs/ReleaseNotes/unreleased/0004-a[1]-b.md"   # untracked, so this day
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
+check "the run succeeds"           "$?"                                                            "0"
+check "it is folded in, not lost"  "$(sections "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "2"
+check "the count includes it"      "$(says "$msg" 'Assembled 2 fragment')"                         "1"
+check "and it is consumed on disk" "$([ -f "$W/docs/ReleaseNotes/unreleased/0004-a[1]-b.md" ] && echo yes || echo no)" "no"
+
 # ── Argument handling ────────────────────────────────────────────────────────
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
