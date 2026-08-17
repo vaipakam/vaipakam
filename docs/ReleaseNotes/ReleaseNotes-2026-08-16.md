@@ -8,17 +8,26 @@ obligation to a replacement borrower. Both consult an offer whose expiry had
 gone unchecked on that particular route, so a deadline a counterparty relied on
 was enforced everywhere except where it mattered most. Both now refuse.
 
-**Two published claims had drifted from what the system does.** The Overview's
-worked example printed its money amounts as fixed numbers beside two fee rates
-read live from the published configuration — correct today, and set up to
-contradict themselves the first time either fee is retuned, with the wrong half
-carrying the marker that says it is current. Those amounts are now computed from
-the same configuration, and the site search was fixed alongside them, because it
-had been building its index from bundled defaults before the live values
-arrived. Separately, a storage field reserved for a cross-chain identity check
-that was specified, shipped, and never built is now removed outright — the check
-it was for is done a layer down, and a second copy of it would have compared a
-deployment against itself rather than checking anything about the message.
+**Two places where what is published and what the system does were kept in
+step** — one already out of step, the other arranged to go that way on a
+schedule nobody controls.
+
+The one that had already gone wrong: a design document described a cross-chain
+identity check as something the receiving side performs on arrival. Nothing
+ever performed it, and the storage field reserved for it was never read or
+written. That field is now removed outright, because the check it was for is
+done a layer down, and a second copy would have compared a deployment against
+itself rather than checking anything about the message.
+
+The other has not gone wrong yet, and the work is to stop it rather than to
+correct it. The Overview's worked example printed its money amounts as fixed
+numbers beside two fee rates read live from the published configuration. Those
+agree today. They stop agreeing the first time either fee is retuned — and the
+half that is then wrong is the half carrying the marker saying it is current,
+which is what makes it worth doing early rather than after. The amounts are now
+computed from the same configuration, and the site search was fixed alongside
+them, because it had been building its index from bundled defaults before the
+live values arrived.
 
 **Two are residue from the securities excisions**, on user-facing surfaces
 rather than in contract code. The tokenomics "Learn more" links had been serving
