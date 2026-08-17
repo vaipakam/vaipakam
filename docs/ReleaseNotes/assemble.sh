@@ -24,7 +24,14 @@
 
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `pwd -P`, not `pwd`. Every path comparison below is against
+# `git rev-parse --show-toplevel`, which is always PHYSICAL. A logical `pwd`
+# through a symlinked checkout returns the symlink path instead, the repo-root
+# prefix then fails to strip, and every fragment's `HEAD:<rel>` lookup misses —
+# so each one reads as newly written and the whole selection pass silently
+# becomes a no-op. Not an edge case when it happens: it disables the guard
+# entirely, for every fragment, while looking like an ordinary successful run.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 UNREL="$DIR/unreleased"
 
 DATE=""

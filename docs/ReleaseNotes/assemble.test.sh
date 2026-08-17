@@ -236,6 +236,22 @@ check "it announces the ambiguity"    "$(says "$msg" 'staged deletion')"      "1
 check "naming the added fragment"     "$(says "$msg" '0001-a-rewritten.md')"  "1"
 check "and the deleted one"           "$(says "$msg" '0001-a.md')"            "1"
 
+# ── Reached through a symlink, the guard must still work ────────────────────
+# Every path comparison is against `git rev-parse --show-toplevel`, which is
+# PHYSICAL. A logical `pwd` through a symlinked checkout yields the symlink
+# path, the repo-root prefix fails to strip, every `HEAD:<rel>` lookup misses,
+# and each fragment reads as newly written — disabling the whole selection pass
+# silently, for every fragment, on a run that otherwise looks ordinary.
+echo "T10b: a symlinked checkout does not disable the guard"
+build "$ROOT/t10b-real"
+ln -s "$ROOT/t10b-real" "$ROOT/t10b-link"
+msg="$(bash "$ROOT/t10b-link/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
+check "the 08-17 run succeeds"        "$?"                                                       "0"
+check "the 08-16 fragment is held"    "$(says "$msg" '0001-a.md')"                               "1"
+check "named with its own day"        "$(says "$msg" '2026-08-16 UTC')"                          "1"
+check "only 08-17's own is folded"    "$(sections "$ROOT/t10b-real/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "1"
+check "and it survives on disk"       "$([ -f "$ROOT/t10b-real/docs/ReleaseNotes/unreleased/0001-a.md" ] && echo yes || echo no)" "yes"
+
 # ── Argument handling ────────────────────────────────────────────────────────
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
