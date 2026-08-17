@@ -57,6 +57,14 @@ const CHAIN_INDEXER = join(REPO_ROOT, 'apps', 'indexer', 'src', 'chainIndexer.ts
  * Keyed `EventName` for both fields, or `EventName.loanId` / `.offerId` to
  * exempt a single field of an event that is mapped for the other.
  */
+/**
+ * Validated below: every entry must carry a NON-EMPTY reason.
+ *
+ * Membership-only checks accepted `''` (Codex round-12 P2), which silently turns
+ * "deliberately unscoped, and here is why" into "unscoped" — the exact thing the
+ * TODO marker exists to prevent, achieved by deleting the text rather than
+ * omitting the entry.
+ */
 const DELIBERATELY_NOT_SCOPED = {
   // ── genuinely not loan/offer-scoped ────────────────────────────────────
   LoanInitiatedDetails:
@@ -426,6 +434,24 @@ for (const file of memberFiles) {
   }
 }
 
+// Every allowlist entry must state a reason (Codex round-12 P2).
+{
+  const blank = Object.entries(DELIBERATELY_NOT_SCOPED)
+    .filter(([, reason]) => typeof reason !== 'string' || reason.trim() === '')
+    .map(([key]) => key);
+  if (blank.length) {
+    console.error(
+      '\n✖ activity-refs coverage: allowlist entries with no stated reason:\n',
+    );
+    for (const k of blank) console.error(`    ${k}`);
+    console.error(
+      '\n  An exemption without a reason is an undocumented gap wearing the word\n' +
+        '  "deliberately". Give it a reason, or a TODO(#1794) marker if it is a gap.\n',
+    );
+    process.exit(1);
+  }
+}
+
 // ── 2. What pluckActivityRefs actually maps, per field ──────────────────
 /**
  * Parsed with the TypeScript compiler, not with regexes.
@@ -666,30 +692,40 @@ const isNullLiteral = (expr) =>
     // into — a `break` inside them binds to them, not to this clause.
     const hasAbruptExit = (nodes) => {
       let found = false;
-      const walk = (n) => {
+      // Labels in scope, so a `break local;` can be told from a bare `break`
+      // (Codex round-12 P2). Round 11 skipped the whole labeled subtree to stop a
+      // false positive, which then hid an UNLABELED break inside it — and that
+      // one does target the switch. Precision both ways: ignore only the breaks
+      // that name an enclosing label.
+      const walk = (n, labels) => {
         if (found) return;
         if (
-          ts.isFunctionDeclaration(n) ||
-          ts.isFunctionExpression(n) ||
-          ts.isArrowFunction(n) ||
+          isFunctionLike(n) ||
           ts.isForStatement(n) ||
           ts.isForOfStatement(n) ||
           ts.isForInStatement(n) ||
           ts.isWhileStatement(n) ||
           ts.isDoStatement(n) ||
-          ts.isSwitchStatement(n) ||
-          // A labeled block owns the breaks that target it (Codex round-11 P3).
-          // `local: { break local; }` never leaves the switch, and flagging it
-          // rejected a perfectly good mapping — a false positive, which is worse
-          // than the exotic false negatives above: it blocks correct code.
-          ts.isLabeledStatement(n)
+          ts.isSwitchStatement(n)
         ) {
           return;
         }
-        if (ts.isBreakStatement(n) || ts.isContinueStatement(n)) found = true;
-        ts.forEachChild(n, walk);
+        if (ts.isLabeledStatement(n)) {
+          const inner = new Set(labels);
+          inner.add(n.label.text);
+          ts.forEachChild(n, (c) => walk(c, inner));
+          return;
+        }
+        if (ts.isBreakStatement(n) || ts.isContinueStatement(n)) {
+          if (!n.label || !labels.has(n.label.text)) found = true;
+        }
+        // A `throw` anywhere in the clause is an abrupt path too (Codex round-12
+        // P2): it aborts before the row is written, so it is no more "mapped"
+        // than a break. Round 11 fixed only the throw in terminal position.
+        if (ts.isThrowStatement(n)) found = true;
+        ts.forEachChild(n, (c) => walk(c, labels));
       };
-      for (const n of nodes) walk(n);
+      for (const n of nodes) walk(n, new Set());
       return found;
     };
     const escapesWithoutReturning =
@@ -716,8 +752,18 @@ const isNullLiteral = (expr) =>
           props.set(p.name.text, { shorthand: true });
           continue;
         }
-        if (ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name))) {
-          props.set(p.name.text, { expr: p.initializer });
+        if (ts.isPropertyAssignment(p)) {
+          // `['loanId']: …` is a ComputedPropertyName wrapping a string literal —
+          // statically resolvable, and valid TypeScript, so ignoring it let a real
+          // mapping go uncounted and its exemption stay falsely live (Codex
+          // round-12 P2).
+          let key = null;
+          if (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) key = p.name.text;
+          else if (ts.isComputedPropertyName(p.name) && ts.isStringLiteralLike(p.name.expression)) {
+            key = p.name.expression.text;
+          }
+          if (key !== null) props.set(key, { expr: p.initializer });
+          else spread = true; // an unresolvable key could be this field
         }
       }
       return { props, spread };
@@ -734,27 +780,35 @@ const isNullLiteral = (expr) =>
     // properly needs a type checker and a full Program; refusing to reason about
     // a shadowed name is the sound alternative, and the shape rule below would
     // otherwise accept a hand-built object as if it were the wire data.
+    // `Number` as well as `args` (Codex round-12 P2): a local
+    // `const Number = () => 0` makes the accepted call shape a call to something
+    // else entirely, and every row lands with loan id zero. Same reasoning as the
+    // `args` shadow — resolving callees symbolically needs a full Program, and
+    // refusing to reason about a shadowed name is the sound cheap answer.
+    const SHADOWABLE = new Set(['args', 'Number']);
     const shadowsArgs = (() => {
       let found = false;
       const walk = (n) => {
         if (found) return;
-        if (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n)) return;
+        // Name FIRST, then decline to traverse (Codex round-12 P2). Returning on
+        // every function declaration made the name test below dead code, so a
+        // block-local `function args() {}` shadowed the parameter unnoticed —
+        // a bug I introduced in the round-11 fix for exactly this class.
+        if (
+          (ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n) || ts.isEnumDeclaration(n)) &&
+          SHADOWABLE.has(n.name?.text)
+        ) {
+          found = true;
+          return;
+        }
+        if (isFunctionLike(n)) return;
         // Binding NAMES recursively (Codex round-10 P2): `const { args } = …` puts
         // the binding inside an ObjectBindingPattern, which an identifier-only
         // test walks straight past.
-        // A declaration of ANY kind named `args` shadows the parameter (Codex
-        // round-11 P2) — `class args { static loanId = 0n }` binds the name just
-        // as a `const` does.
-        if (
-          (ts.isClassDeclaration(n) || ts.isFunctionDeclaration(n) || ts.isEnumDeclaration(n)) &&
-          n.name?.text === 'args'
-        ) {
-          found = true;
-        }
         if (ts.isVariableDeclaration(n) || ts.isParameter(n)) {
           const bindsArgs = (name) => {
             if (!name) return false;
-            if (ts.isIdentifier(name)) return name.text === 'args';
+            if (ts.isIdentifier(name)) return SHADOWABLE.has(name.text);
             if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
               return name.elements.some((el) => ts.isBindingElement(el) && bindsArgs(el.name));
             }
@@ -769,7 +823,7 @@ const isNullLiteral = (expr) =>
     })();
     if (shadowsArgs) {
       structural.push(
-        `case '${label}' declares a local named 'args', shadowing the decoded event arguments — this checker cannot tell the two apart`,
+        `case '${label}' declares a local named 'args' or 'Number', shadowing what the accepted mapping shape relies on — this checker cannot tell the two apart`,
       );
     }
 
