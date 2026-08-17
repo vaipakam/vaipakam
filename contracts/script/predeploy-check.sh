@@ -630,16 +630,16 @@ else
   REFRESH_FLAT="$(strip_sol_comments "$REFRESH_SOL")"
 
   CUT_GETTER_VAR="$(printf '%s' "$DEPLOY_FLAT" \
-    | grep -oE '_buildCut\([[:space:]]*address\([A-Za-z0-9_]+\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors\(\)' \
-    | sed -E 's/.*address\(([A-Za-z0-9_]+)\)[[:space:]]*,[[:space:]]*(_get[A-Za-z0-9]+Selectors)\(\)/\2 \1/' \
+    | grep -oE '_buildCut[[:space:]]*\([[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors[[:space:]]*\(\)' \
+    | sed -E 's/.*address[[:space:]]*\(([A-Za-z0-9_]+)\)[[:space:]]*,[[:space:]]*(_get[A-Za-z0-9]+Selectors)[[:space:]]*\(\)/\2 \1/' \
     | sort -u)"
   WROTE_VAR_KEY="$(printf '%s' "$DEPLOY_FLAT" \
-    | grep -oE 'writeFacet\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address\([A-Za-z0-9_]+\)' \
-    | sed -E 's/.*"([A-Za-z0-9]+)"[[:space:]]*,[[:space:]]*address\(([A-Za-z0-9_]+)\)/\2 \1/' \
+    | grep -oE 'writeFacet[[:space:]]*\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)' \
+    | sed -E 's/.*"([A-Za-z0-9]+)"[[:space:]]*,[[:space:]]*address[[:space:]]*\(([A-Za-z0-9_]+)\)/\2 \1/' \
     | sort -u)"
   REFRESH_GETTER_KEY="$(printf '%s' "$REFRESH_FLAT" \
-    | grep -oE 'Item\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address\(new[[:space:]]+[A-Za-z0-9_]+\(\)\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors\(\)' \
-    | sed -E 's/Item\([[:space:]]*"([A-Za-z0-9]+)".*[[:space:]](_get[A-Za-z0-9]+Selectors)\(\)/\2 \1/' \
+    | grep -oE 'Item[[:space:]]*\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address[[:space:]]*\([[:space:]]*new[[:space:]]+[A-Za-z0-9_]+[[:space:]]*\([[:space:]]*\)[[:space:]]*\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors[[:space:]]*\(\)' \
+    | sed -E 's/Item[[:space:]]*\([[:space:]]*"([A-Za-z0-9]+)".*[[:space:]](_get[A-Za-z0-9]+Selectors)[[:space:]]*\(\)/\2 \1/' \
     | sort -u)"
 
   # EXACT coverage of what is there, not a floor (Codex #1798 r1 P1).
@@ -659,8 +659,8 @@ else
   # are subtracted rather than the pattern being narrowed, so the count stays
   # correct however the call sites are written.
   count_calls() { # <flattened source> <name>
-    _all=$(printf '%s' "$1" | grep -oE "[^A-Za-z0-9_]$2\(" | grep -c . || true)
-    _def=$(printf '%s' "$1" | grep -oE "function[[:space:]]+$2\(" | grep -c . || true)
+    _all=$(printf '%s' "$1" | grep -oE "[^A-Za-z0-9_]$2[[:space:]]*\(" | grep -c . || true)
+    _def=$(printf '%s' "$1" | grep -oE "function[[:space:]]+$2[[:space:]]*\(" | grep -c . || true)
     echo $((_all - _def))
   }
   N_CUT_CALLS=$(count_calls "$DEPLOY_FLAT" '_buildCut')
