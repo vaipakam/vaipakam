@@ -97,9 +97,15 @@ const DELIBERATELY_NOT_SCOPED = {
   // vehicle) and `flipLoanStatus` even carries a `loanIdOverride` parameter
   // documented for `OffsetCompleted.originalLoanId` — so the indexer knew about
   // this naming before the guardrail did.
-  'OffsetCompleted.loanId': 'TODO(#1794) — offset route completed; terminalises the original loan',
+  // The two loan-side entries carry the SAME open choice as the refinance: an
+  // offset leaves the original loan and the position that replaces it, against one
+  // loan_id column. The two offer-side entries do not — `newOfferId` is
+  // unambiguously the vehicle offer — so they are ordinary TODOs.
+  'OffsetCompleted.loanId':
+    'TODO(#1794) — offset completed; needs the same original-vs-replacement decision as the refinance for the single loan_id column',
   'OffsetCompleted.offerId': 'TODO(#1794) — offset completion, vehicle-offer side (newOfferId)',
-  'OffsetOfferCreated.loanId': 'TODO(#1794) — offset vehicle offer created against the original loan',
+  'OffsetOfferCreated.loanId':
+    'TODO(#1794) — offset vehicle offer created; same original-vs-replacement decision as above',
   'OffsetOfferCreated.offerId': 'TODO(#1794) — the offset vehicle offer itself (newOfferId)',
   CollateralAdded: 'TODO(#1794) — borrower collateral top-up',
   PartialCollateralWithdrawn: 'TODO(#1794) — surplus collateral release',
@@ -248,6 +254,9 @@ const REF_EXTRA_ALIASES = {
   offerId: [],
 };
 
+/** Escape every regex metacharacter, so a name can only match itself. */
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /** Does this ABI input name populate `field`? */
 const isAliasOf = (field, name) =>
   typeof name === 'string' &&
@@ -329,6 +338,14 @@ if (memberFiles.length === 0) {
 const carries = new Map();
 /** eventName -> Map<field, Set<ABI input name that can populate it>> */
 const aliasNames = new Map();
+/**
+ * eventName -> Set<every decoded argument path the event has.
+ *
+ * Not just the reference-shaped ones: this is what lets a mapping reading an
+ * argument the event NO LONGER HAS be reported (Codex round-7 P2), rather than
+ * skipped because the event dropped out of the reference-carrying set entirely.
+ */
+const eventInputs = new Map();
 for (const file of memberFiles) {
   let parsed;
   try {
@@ -357,6 +374,7 @@ for (const file of memberFiles) {
       }
     };
     collect(item.inputs, '');
+    eventInputs.set(item.name, new Set(names));
     for (const field of REF_FIELDS) {
       // Shape-matching applies to the LAST path segment: `fields.newLoanId` is a
       // loan reference for the same reason `newLoanId` is.
@@ -451,7 +469,20 @@ const suspectMappings = [];
       else if (ch === '}') depth--;
       else if (depth === 0) top += ch;
     }
-    return /(?:\breturn\b[^;]*;|\bthrow\b[^;]*;|\bbreak\b\s*;|\bcontinue\b\s*;)\s*$/.test(top.trim());
+    // Statement by statement, because an UNBRACED guard keeps its return at depth
+    // zero (Codex round-7 P2): `if (args.loanId != null) return { … };` ends the
+    // chunk with a depth-0 `return`, and a suffix test reads that as
+    // unconditional. Splitting on `;` puts the guard and its return in ONE
+    // statement, which then does not start with `return`, so the case is
+    // correctly treated as able to fall through.
+    //
+    // `else`-led statements are not counted either. That is conservative — an
+    // if/else where both arms return does terminate — and conservative is the safe
+    // direction here: it only makes the next case's returns bind too, never fewer.
+    return top
+      .split(';')
+      .map((s) => s.trim())
+      .some((s) => /^(?:return|throw|break|continue)\b/.test(s));
   };
 
   for (let i = 0; i < positions.length; i++) {
@@ -544,7 +575,33 @@ const suspectMappings = [];
         const opaqueScopes = perScope.length - exprs.length;
 
         const accepted = aliasNames.get(label)?.get(field);
-        if (!accepted || accepted.size === 0) continue; // event carries no such ref
+        if (!accepted || accepted.size === 0) {
+          // The event carries no such reference — but the code still files one, so
+          // check whether the arguments it reads exist at all (Codex round-7 P2).
+          // Skipping outright let a stale mapping survive an ABI rename invisibly:
+          // rename `LoanRepaid.loanId` to `debtId` and the event leaves the
+          // enforced set, so nothing looked at `Number(args.loanId as bigint)`
+          // still sitting in the indexer, which would evaluate `Number(undefined)`
+          // and persist NaN. Only events present in the Diamond ABI are judged;
+          // one absent from it cannot be decoded at all, which
+          // `check-event-coverage.mjs` is the checker for.
+          const known = eventInputs.get(label);
+          if (known) {
+            for (const e of exprs) {
+              if (/^null\b/.test(e)) continue;
+              for (const [, path] of e.matchAll(/\bargs\.([A-Za-z0-9_.]+)/g)) {
+                if (known.has(path)) continue;
+                suspectMappings.push({
+                  event: label,
+                  field,
+                  expr: e,
+                  why: `reads args.${path}, which this event does not carry — the ABI changed under a stale mapping`,
+                });
+              }
+            }
+          }
+          continue;
+        }
 
         // Accept only the exact shape every live mapping already uses:
         //   Number(args.<accepted alias> as bigint)
@@ -569,11 +626,12 @@ const suspectMappings = [];
         // guarded happy path plus a null fallback is not an unconditional read.
         const badExpr = exprs.find((e) => {
           const shapeOk = [...accepted].some((alias) =>
-            // Dots in a tuple access path are escaped, so `fields.newLoanId`
+            // Fully escaped, not just the dots (CodeQL "incomplete string
+            // escaping"): escaping `.` alone leaves every other metacharacter —
+            // and a backslash — able to change what the pattern means. Escaping
+            // the dot matters on its own account too, so `fields.newLoanId`
             // cannot be satisfied by `fieldsXnewLoanId`.
-            new RegExp(
-              `^Number\\(\\s*args\\.${alias.replace(/\./g, '\\.')}(\\s+as\\s+bigint)?\\s*\\)$`,
-            ).test(e),
+            new RegExp(`^Number\\(\\s*args\\.${escapeRe(alias)}(\\s+as\\s+bigint)?\\s*\\)$`).test(e),
           );
           // Belt and braces: `null` anywhere in a mapping expression means the
           // column can end up empty, whatever the surrounding syntax.

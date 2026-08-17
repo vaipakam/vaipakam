@@ -30,8 +30,11 @@ replacement borrower. Those are recorded as tagged gaps rather than as decisions
 so the whole backlog is listable with one search and each closes with its own
 behaviour change and review — writing "this is deliberate" beside sixty real
 omissions would satisfy the check forever. Only six entries are genuine decisions.
-Three gaps are left deliberately unresolved because they are product questions, not
-mechanical fixes: a refinance and the two halves of the offset route each involve
-two loans against a single column, and an offer's refinance-target loan may or may
-not belong on that loan's timeline. The tracking issue **#1794** stays open for the
-sixty mappings; this change is the guardrail that stops the list growing silently.
+Four of the sixty pairs, one on each of four events, are left deliberately
+unresolved because they raise product questions rather than needing a mechanical
+fix: a refinance and both halves of the offset route each involve two loans against
+a single column, so which one the row belongs to is a choice; and an offer's
+refinance-target loan may or may not belong on that loan's timeline at all. Each of
+those four says so in its own entry, so the reason travels with the gap. The
+tracking issue **#1794** stays open for the sixty mappings; this change is the
+guardrail that stops the list growing silently.
