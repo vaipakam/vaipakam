@@ -360,6 +360,49 @@ check "aborts"           "$?"                              "1"
 check "says why"         "$(says "$msg" 'cannot read HEAD')" "1"
 check "nothing consumed" "$(pending "$W")"                  "2"
 
+# ── Round 9 (Codex) — three more "a failed probe read as a benign answer" ────
+echo "T10h: a FAILING shallow probe aborts instead of reading as non-shallow"
+W="$ROOT/t10h"; build "$W"
+mkdir -p "$ROOT/fakebin4"
+cat > "$ROOT/fakebin4/git" <<EOF4
+#!/bin/sh
+# Fail ONLY the shallow probe. Everything else must still work, or the run would
+# abort on a different check and this case would pass for the wrong reason.
+prev=""
+for a in "\$@"; do
+  [ "\$a" = "--is-shallow-repository" ] && exit 128
+  prev="\$a"
+done
+exec "$REAL_GIT2" "\$@"
+EOF4
+chmod +x "$ROOT/fakebin4/git"
+msg="$(PATH="$ROOT/fakebin4:$PATH" bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-16 2>&1)"
+check "aborts"            "$?"                                        "1"
+check "names the probe"   "$(says "$msg" 'whether this repository is shallow')" "1"
+check "nothing consumed"  "$(pending "$W")"                           "2"
+
+echo "T10i: a DANGLING .git symlink is damage, not an export"
+W="$ROOT/t10i"; build "$W"
+rm -rf "$W/.git"
+ln -s "$W/.git-gone-missing" "$W/.git"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-16 2>&1)"
+check "aborts"            "$?"                                    "1"
+check "says damaged"      "$(says "$msg" 'cannot read this work tree')" "1"
+check "did NOT call it an export" "$(says "$msg" 'not a git work tree')" "0"
+check "nothing consumed"  "$(pending "$W")"                       "2"
+
+echo "T10j: Bash 3 is refused up front, by name"
+W="$ROOT/t10j"; build "$W"
+# Can't run under a real Bash 3 here, so assert the GUARD exists and fires on the
+# version test itself rather than faking an old shell.
+check "guard present" \
+  "$(grep -c 'BASH_VERSINFO\[0\] < 4' "$W/docs/ReleaseNotes/assemble.sh")" "1"
+check "guard is before the first mapfile" \
+  "$(awk '/BASH_VERSINFO\[0\] < 4/{g=NR} /^[^#]*mapfile/{if(!m)m=NR} END{print (g && m && g < m) ? 1 : 0}' \
+     "$W/docs/ReleaseNotes/assemble.sh")" "1"
+check "guard names bash 4" \
+  "$(grep -c 'requires Bash 4 or newer' "$W/docs/ReleaseNotes/assemble.sh")" "1"
+
 # ── Argument handling ────────────────────────────────────────────────────────
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

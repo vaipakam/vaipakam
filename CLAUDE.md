@@ -1018,8 +1018,11 @@ work and never lag behind a merge.
   belonging to its day and names the ones it held back; clear a
   multi-day backlog by running it once per day. `--allow-mixed-dates`
   takes everything when folding is deliberate, an uncommitted fragment
-  is always taken (it has no day yet), and a shallow clone is refused
-  because its dates are fabricated. `docs/ReleaseNotes/assemble.test.sh`
+  is always taken (it has no day yet), and in a shallow clone only the
+  fragments whose add-commit resolves to the boundary itself are refused,
+  by name — one added after the boundary has a real add-commit and is
+  dated normally, so CI's shallow checkouts are fine and the override is
+  not the answer to them. The script needs Bash 4+. `docs/ReleaseNotes/assemble.test.sh`
   covers all of it — run it after touching the assembler.
 - A non-blocking CI check (`.github/workflows/release-notes-drift.yml`)
   warns in the Actions tab if a merge to `main` changed `contracts/src/`

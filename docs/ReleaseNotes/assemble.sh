@@ -31,6 +31,28 @@ set -euo pipefail
 # so each one reads as newly written and the whole selection pass silently
 # becomes a no-op. Not an edge case when it happens: it disables the guard
 # entirely, for every fragment, while looking like an ordinary successful run.
+# Bash 4+ REQUIRED, and checked here so the failure is one clear line at the
+# top rather than a `mapfile: command not found` partway through a run. Stock
+# macOS ships Bash 3.2, where `mapfile` and `declare -A` do not exist.
+#
+# Declared rather than worked around. Both are load-bearing: `mapfile` is what
+# keeps a fragment whose name holds a glob metacharacter from silently vanishing
+# from the list, and `declare -A` keys the staged-rename map and the shallow
+# boundary set by arbitrary path strings, which Bash 3 can only fake by encoding
+# paths into variable names. Two sibling scripts in this repo already require
+# Bash 4 the same way (`run-regression.sh` uses `mapfile` + `declare -A`,
+# `deploy-chain.sh` uses `declare -A`), and `run-regression.sh` additionally
+# needs GNU `find -printf`. The baseline was already Bash 4; what was missing
+# was saying so. `brew install bash` on macOS.
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "Error: this script requires Bash 4 or newer (found ${BASH_VERSION})." >&2
+  echo "" >&2
+  echo "It uses mapfile and associative arrays, both absent from the Bash 3.2" >&2
+  echo "that stock macOS ships. Install a newer bash (e.g. 'brew install bash')" >&2
+  echo "and run it with that, e.g. '/opt/homebrew/bin/bash ${BASH_SOURCE[0]}'." >&2
+  exit 1
+fi
+
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 UNREL="$DIR/unreleased"
 
@@ -124,7 +146,14 @@ elif ! git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   _damaged=0
   _probe_dir="$DIR"
   while :; do
-    if [ -e "$_probe_dir/.git" ]; then _damaged=1; break; fi
+    # `-L` as well as `-e`: `-e` FOLLOWS symlinks, so a `.git` that is a
+    # DANGLING link is invisible to it. Git cannot read such a checkout either,
+    # but the entry plainly exists — treating it as a git-less export would
+    # assemble every pending fragment under the requested date and delete them.
+    # Test the directory entry itself, not what it resolves to.
+    if [ -e "$_probe_dir/.git" ] || [ -L "$_probe_dir/.git" ]; then
+      _damaged=1; break
+    fi
     [ "$_probe_dir" = "/" ] && break
     _probe_dir="$(dirname "$_probe_dir")"
   done
@@ -153,7 +182,26 @@ else
   git_root="$(git -C "$DIR" rev-parse --show-toplevel)"
 
   declare -A SHALLOW_BOUNDARY=()
-  if [ "$(git -C "$DIR" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+  # The probe's STATUS is checked, not just its output. `$(...)` of a failed
+  # `rev-parse` is the empty string, which is not "true", so a probe that FAILS
+  # inside a genuinely shallow checkout reads as "not shallow" — the boundary set
+  # stays empty, the per-fragment boundary check never runs, and a fragment whose
+  # add-commit IS the boundary is accepted and deleted under the boundary's
+  # fabricated date. Same fault as the six in `e53a0f952`: a failure that is
+  # indistinguishable from a benign answer.
+  _shallow_status=0
+  _is_shallow="$(git -C "$DIR" rev-parse --is-shallow-repository 2>/dev/null)" \
+    || _shallow_status=$?
+  if (( _shallow_status != 0 )); then
+    echo "Error: could not determine whether this repository is shallow" >&2
+    echo "(git rev-parse --is-shallow-repository exited $_shallow_status)." >&2
+    echo "" >&2
+    echo "A shallow checkout dates a truncated fragment to the boundary commit" >&2
+    echo "rather than to itself, so without this answer a fragment could be" >&2
+    echo "filed under a fabricated date and then deleted. Refusing instead." >&2
+    exit 1
+  fi
+  if [ "$_is_shallow" = "true" ]; then
     # `--git-common-dir` answers RELATIVE TO THE DIRECTORY GIT RAN IN, which is
     # `$DIR`, not the repo root — resolving it against the root instead walks
     # out of the repository and the file is simply never found, leaving the

@@ -604,8 +604,11 @@ only its own day, names the fragments it held back and the day each
 belongs to, and leaves them for their own run. Clear a multi-day backlog
 by running the script once per day.
 
-Three behaviours to know:
+Behaviours to know:
 
+- **Bash 4+ is required** — the script refuses on line one otherwise, naming
+  the version it found. Stock macOS ships Bash 3.2, which lacks `mapfile` and
+  associative arrays; `brew install bash` and invoke that binary.
 - `--allow-mixed-dates` takes every pending fragment regardless of day,
   for when folding them together is deliberate.
 - A fragment that has never been committed is always taken — it was

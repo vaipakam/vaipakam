@@ -117,6 +117,12 @@ Worth knowing:
   keyed by path, so an assembled-and-deleted `123-task.md` keeps its
   add-commit forever. A new fragment reusing that name is dated as new.
 
+- **Bash 4 or newer is required**, and the script says so on line one rather
+  than failing partway through. Stock macOS ships Bash 3.2, which has neither
+  `mapfile` nor associative arrays — both load-bearing here. `brew install bash`
+  and run it with that. Two other scripts in the repo already need Bash 4 the
+  same way; what was missing was anyone saying so.
+
 [`assemble.test.sh`](../assemble.test.sh) covers all of this against
 throwaway repositories with fragments committed at chosen UTC timestamps;
 run it after any change to the assembler.

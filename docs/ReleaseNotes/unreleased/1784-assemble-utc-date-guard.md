@@ -66,7 +66,15 @@ second would have filed the fragment under an unverified date and then deleted
 it.
 
 Underneath all of that sits one rule: when git cannot answer the question, the
-run stops rather than guessing. An unreadable index, an unreadable HEAD, an
+run stops rather than guessing. The rule has to cover the QUESTIONS as well as
+the answers, which took two passes to get right: asking whether the repository
+is shallow can itself fail, and a failed ask returns nothing, which is not the
+word "true" and so reads as "not shallow" — the truncation check then never runs
+at all. The same shape one level down: a checkout whose git metadata is a broken
+link is unreadable to git, yet the ordinary test for "does this exist" follows
+the link to the missing target and reports nothing there, so a damaged
+repository was classified as a clean export and every fragment consumed. Both
+now abort and name what could not be established. An unreadable index, an unreadable HEAD, an
 unreadable history and a damaged checkout each used to produce a plausible
 wrong answer — no renames staged, fragment not committed, fragment newly
 written, this is an export — and each of those answers led to a fragment being
