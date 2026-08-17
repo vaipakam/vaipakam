@@ -38,11 +38,15 @@ for when folding them together is deliberate. A fragment that has never been
 committed is always taken, since that is one written and assembled inside the
 same pull request and has no day of its own yet.
 
-Three ways of reading the wrong day back out of git are closed off. A shallow
-clone is refused outright: a fragment older than the shallow boundary reports
-the boundary commit's date instead of its own, which looks entirely ordinary
-and is wrong — worse under selection than under a refusal, because it would
-quietly pull the wrong fragments into a day. A renamed fragment is followed
+Several ways of reading the wrong day back out of git are closed off. Shallow
+history is the subtlest: a fragment older than the shallow boundary reports the
+boundary commit's date instead of its own, which looks entirely ordinary and is
+wrong. Only that fragment is refused, and by name — one added after the boundary
+has a real add-commit and is dated normally. Refusing every shallow clone was
+the first attempt and proved too broad to be useful, because continuous-
+integration checkouts are routinely shallow: the realistic outcome was an
+operator reaching for the override on every run, and an override that turns the
+dating off protects nothing. A renamed fragment is followed
 back to where it was written rather than dated to the rename, which matters
 because fragments are routinely renamed to match their pull-request number
 once that number is known, often on the following day — including a rename

@@ -109,20 +109,56 @@ check "succeeds"            "$?"                                                
 check "both days folded in" "$(sections "$W/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")"  "2"
 check "nothing left"        "$(pending "$W")"                                                "0"
 
-# ── Shallow history reports a fabricated add date ────────────────────────────
-# A fragment older than the shallow boundary is attributed to the boundary
-# commit — a date that looks ordinary and is simply wrong. Refuse rather than
-# select on it.
-echo "T4: a shallow repository is refused"
+# ── Shallow history: refuse only the fragments it actually fabricates ───────
+# A fragment older than the shallow boundary is attributed to the BOUNDARY
+# commit — an ordinary-looking date that is simply wrong. But a fragment added
+# after the boundary has a genuine add-commit and reads correctly, so a blanket
+# refusal of every shallow clone is over-broad. It also made the tool unusable
+# in the environment it runs in: this repository's own checkout is shallow, and
+# the only escape offered was the flag that disables dating altogether.
+echo "T4: a shallow clone whose fragments predate the boundary is refused"
 build "$ROOT/t4src"
 git -C "$ROOT/t4src" branch -M main
 git clone -q --depth 1 "file://$ROOT/t4src" "$ROOT/t4" 2>/dev/null
 check "clone really is shallow" "$(git -C "$ROOT/t4" rev-parse --is-shallow-repository)" "true"
-bash "$ROOT/t4/docs/ReleaseNotes/assemble.sh" 2026-08-17 >/dev/null 2>&1
-check "refused"          "$?"                 "1"
-check "nothing consumed" "$(pending "$ROOT/t4")" "2"
+msg="$(bash "$ROOT/t4/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
+check "refused"              "$?"                                        "1"
+check "names the fragment"   "$(says "$msg" 'dates to the shallow boundary')" "1"
+check "nothing consumed"     "$(pending "$ROOT/t4")"                     "2"
 bash "$ROOT/t4/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
 check "override still works in a shallow clone" "$?" "0"
+
+echo "T4b: a shallow clone whose fragments POST-date the boundary proceeds"
+# `build()` puts its fragments immediately after the base commit, so ANY shallow
+# clone of it has a fragment commit at the boundary. This case needs older
+# history underneath instead, so the boundary lands on a commit that is not a
+# fragment's — which is the ordinary situation in a real CI checkout.
+S="$ROOT/t4bsrc"
+mkdir -p "$S/docs/ReleaseNotes/unreleased"
+cp "$SRC" "$S/docs/ReleaseNotes/assemble.sh"
+printf '# unreleased\n' > "$S/docs/ReleaseNotes/unreleased/README.md"
+printf '## template\n'  > "$S/docs/ReleaseNotes/unreleased/_TEMPLATE.md"
+git -C "$S" init -q
+git -C "$S" config user.email test@example.com
+git -C "$S" config user.name test
+git -C "$S" add -A
+GIT_AUTHOR_DATE='2026-08-10T00:00:00Z' GIT_COMMITTER_DATE='2026-08-10T00:00:00Z' \
+  git -C "$S" commit -q -m base
+printf 'filler\n' > "$S/filler.txt"; git -C "$S" add -A
+GIT_AUTHOR_DATE='2026-08-12T00:00:00Z' GIT_COMMITTER_DATE='2026-08-12T00:00:00Z' \
+  git -C "$S" commit -q -m filler
+_frag "$S" 0001-a '2026-08-16T23:00:00Z'
+_frag "$S" 0002-b '2026-08-17T10:00:00Z'
+git -C "$S" branch -M main
+# depth 3 keeps [0002-b, 0001-a, filler]; the boundary is `filler`, so neither
+# fragment's add-commit is fabricated.
+git clone -q --depth 3 "file://$S" "$ROOT/t4b" 2>/dev/null
+check "clone really is shallow" "$(git -C "$ROOT/t4b" rev-parse --is-shallow-repository)" "true"
+msg="$(bash "$ROOT/t4b/docs/ReleaseNotes/assemble.sh" 2026-08-17 2>&1)"
+check "succeeds rather than refusing" "$?"                                                              "0"
+check "and dates the fragment truly"  "$(sections "$ROOT/t4b/docs/ReleaseNotes/ReleaseNotes-2026-08-17.md")" "1"
+check "holding the other day back"    "$(pending "$ROOT/t4b")"                                          "1"
+check "named with its own true day"   "$(says "$msg" '2026-08-16 UTC')"                                 "1"
 
 # ── A fragment written by the assembling PR has no day of its own ────────────
 echo "T5: an untracked fragment is taken, not held back"

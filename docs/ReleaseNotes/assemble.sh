@@ -115,20 +115,37 @@ elif ! git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   # No git — an export or tarball. Dating is impossible, so say the guard is
   # off rather than let it look like it ran and found nothing.
   echo "note: not a git work tree — cannot date fragments, assembling all pending." >&2
-elif [ "$(git -C "$DIR" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
-  # A fragment older than the shallow boundary has no add-commit in the
-  # truncated history, so `git log` attributes it to the boundary commit — a
-  # date that looks completely ordinary and is simply wrong. Under selection
-  # that is worse than under a refusal: it silently pulls the wrong fragments
-  # into a day, or holds back the right ones, and nothing downstream can tell.
-  echo "Error: shallow repository — fragment dates cannot be trusted here." >&2
-  echo "A fragment added before the shallow boundary reports the boundary" >&2
-  echo "commit's date instead of its own, so selection would be wrong." >&2
-  echo "" >&2
-  echo "Run 'git fetch --unshallow' (or clone at full depth) and retry, or" >&2
-  echo "pass --allow-mixed-dates to assemble everything without dating." >&2
-  exit 1
 else
+  # A shallow repository does NOT get a blanket refusal, though an earlier
+  # revision gave it one. The refusal was correct about the danger and wrong
+  # about its reach: only a fragment whose add-commit falls AT the shallow
+  # boundary has a fabricated date — one added after the boundary has a genuine
+  # add-commit and reads correctly. Refusing every shallow clone made the tool
+  # unusable in the environment it actually runs in (this repository's own
+  # checkout is shallow), and the only escape offered was --allow-mixed-dates,
+  # which turns the dating off entirely. A guard whose realistic outcome is
+  # "operator reaches for the override every time" protects nothing.
+  #
+  # So load the boundary commits instead and check each fragment against them.
+  # `git rev-parse --git-common-dir`, not --git-dir: in a linked worktree the
+  # shallow file lives in the common dir.
+  git_root="$(git -C "$DIR" rev-parse --show-toplevel)"
+
+  declare -A SHALLOW_BOUNDARY=()
+  if [ "$(git -C "$DIR" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+    # `--git-common-dir` answers RELATIVE TO THE DIRECTORY GIT RAN IN, which is
+    # `$DIR`, not the repo root — resolving it against the root instead walks
+    # out of the repository and the file is simply never found, leaving the
+    # boundary set empty and this whole check silently inert. Resolve it where
+    # git actually meant it, and make it absolute and physical while here.
+    common_dir="$(cd "$DIR" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+    if [ -r "$common_dir/shallow" ]; then
+      while IFS= read -r boundary_sha; do
+        [ -n "$boundary_sha" ] && SHALLOW_BOUNDARY["$boundary_sha"]=1
+      done < "$common_dir/shallow"
+    fi
+  fi
+
   # An UNCOMMITTED rename defeats `--follow`: no commit connects the new name to
   # the old one, so the history query comes back empty and the fragment reads as
   # newly written — assembled under whatever day was asked, then deleted. The
@@ -147,7 +164,6 @@ else
   declare -A RENAMED_FROM=()
   staged_adds=()
   staged_dels=()
-  git_root="$(git -C "$DIR" rev-parse --show-toplevel)"
   while IFS= read -r -d '' entry; do
     xy="${entry:0:2}"
     newpath="${entry:3}"
@@ -222,15 +238,31 @@ else
 
     status=0
     added=""
+    added_sha=""
     if [ -n "$probe" ]; then
-      added="$(TZ=UTC git -C "$DIR" log --follow --diff-filter=A \
-        --format='%cd' --date=format-local:'%Y-%m-%d' -1 -- "$probe")" || status=$?
+      raw="$(TZ=UTC git -C "$DIR" log --follow --diff-filter=A \
+        --format='%H %cd' --date=format-local:'%Y-%m-%d' -1 -- "$probe")" || status=$?
+      added_sha="${raw%% *}"
+      added="${raw#* }"
+      [ "$added" = "$raw" ] && added=""   # empty result: no add-commit at all
     fi
     if (( status != 0 )); then
       echo "" >&2
       echo "Error: cannot read git history for $(basename "$f") (git exited $status)." >&2
       echo "Fragment dates are unavailable, and assembling would consume the" >&2
       echo "fragment under a date nothing verified. Repair the repository, or" >&2
+      echo "pass --allow-mixed-dates to assemble without dating." >&2
+      exit 1
+    fi
+    # An add-commit that IS a shallow boundary is not this fragment's commit —
+    # it is where the truncated history stops, wearing an ordinary-looking date.
+    if [ -n "$added_sha" ] && [ -n "${SHALLOW_BOUNDARY[$added_sha]:-}" ]; then
+      echo "" >&2
+      echo "Error: $(basename "$f") dates to the shallow boundary, not to its own" >&2
+      echo "add-commit — the history that would answer was truncated away, and" >&2
+      echo "$added is the boundary's date rather than this fragment's." >&2
+      echo "" >&2
+      echo "Run 'git fetch --unshallow' (or clone at full depth) and retry, or" >&2
       echo "pass --allow-mixed-dates to assemble without dating." >&2
       exit 1
     fi

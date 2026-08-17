@@ -90,13 +90,18 @@ Three things worth knowing:
 - **A fragment with no add-commit is always taken.** That is one written
   and assembled inside the same PR — it has no day of its own yet, so it
   belongs to the run creating it.
-- **A shallow clone is refused.** A fragment older than the shallow
-  boundary reports the boundary commit's date rather than its own, which
-  looks entirely ordinary and is wrong. Run `git fetch --unshallow` first.
-  A repository whose history cannot be read at all stops the run for the
-  same reason. **A committed rename is safe** — it is followed back to
-  where the fragment was written, so retitling one to match its PR number
-  does not re-date it.
+- **A shallow clone works, unless it actually truncated the answer.** A
+  fragment added *after* the shallow boundary has a genuine add-commit and
+  is dated normally; only one whose add-commit resolves to the boundary
+  itself is refused, by name, since that date is the boundary's rather
+  than the fragment's. Run `git fetch --unshallow` and retry. (CI
+  checkouts are routinely shallow, so refusing them wholesale would have
+  meant reaching for the override every time — which turns the dating
+  off.) A repository whose history cannot be read at all stops the run
+  for the same reason.
+- **A committed rename is safe** — it is followed back to where the
+  fragment was written, so retitling one to match its PR number does not
+  re-date it.
 - **An uncommitted rename is only recoverable if git can pair the two
   names.** `git mv` (or staging the rename) lets it: a plain `mv` left
   unstaged reads as a brand-new fragment, since pairing needs the index.

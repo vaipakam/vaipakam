@@ -610,9 +610,15 @@ Three behaviours to know:
   for when folding them together is deliberate.
 - A fragment that has never been committed is always taken — it was
   written in the PR doing the assembling, so it has no day of its own.
-- A shallow clone, or any repository whose history cannot be read, is
-  **refused**: the dates it reports are fabricated rather than missing.
-  Run `git fetch --unshallow` first.
+- A **shallow clone** is fine as long as it did not truncate the answer.
+  A fragment added after the shallow boundary has a genuine add-commit
+  and is dated normally; only one whose add-commit resolves to the
+  boundary itself is **refused, by name**, since that date belongs to the
+  boundary rather than to the fragment. Run `git fetch --unshallow` and
+  retry when that happens. CI checkouts are routinely shallow — refusing
+  them wholesale would have meant reaching for `--allow-mixed-dates`
+  every time, which turns the dating off entirely. A repository whose
+  history cannot be read at all still stops the run outright.
 - A **committed** rename is safe — it is followed back to where the
   fragment was written. An **uncommitted** one is recoverable only when
   git can pair the two names: use `git mv` rather than a plain `mv`, and
