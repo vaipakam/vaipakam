@@ -129,7 +129,7 @@ page.on('console', (m) => {
 });
 
 /**
- * Did THIS document receive a published config snapshot?
+ * Did THIS document receive a config snapshot the page would ACCEPT?
  *
  * The provenance assertion below reads the Overview document's spans, but
  * the search page is a SEPARATE document with its own fetch. If that one
@@ -137,19 +137,55 @@ page.on('console', (m) => {
  * index still contains the figure and the search check passes without a
  * published snapshot ever arriving — no rebuild, nothing exercised
  * (Codex #1778 r3 P2). So the fetch is observed directly per document.
+ *
+ * Observed with the PAGE'S OWN acceptance conditions, not HTTP status.
+ * `GET /config/:chainId` deliberately answers 200 with
+ * `{ available: false }` when it has no row, and `useProtocolConfig`
+ * additionally refuses stale and undecodable payloads — so a
+ * status-only probe marks "published" exactly when the page falls back
+ * to bundled defaults (Codex #1778 r4 P2). Mirrored here:
+ * `available === true`, `updatedAt` within the same 24 h window with
+ * the same 5-minute clock-skew refusal of future-dated rows, and the
+ * bundle passing `decodeMarketingConfig`'s first gate (array, ≥9
+ * entries). The full field-level decode is deliberately NOT duplicated
+ * — that would be a drifting second copy of the store's logic; a
+ * subtly undecodable bundle is instead caught by the Overview's span
+ * provenance, which reads what the page itself concluded.
  */
+const FRESH_WINDOW_SECONDS = 24 * 3600;
+const CLOCK_SKEW_TOLERANCE_SECONDS = 5 * 60;
 let configOk = false;
+const pendingConfigReads = [];
 page.on('response', (res) => {
-  if (/\/config\/\d+(\?|$)/.test(new URL(res.url()).pathname + new URL(res.url()).search)) {
-    if (res.status() === 200) configOk = true;
-  }
+  const u = new URL(res.url());
+  if (!/\/config\/\d+$/.test(u.pathname)) return;
+  pendingConfigReads.push(
+    (async () => {
+      if (res.status() !== 200) return;
+      let body;
+      try {
+        body = await res.json();
+      } catch {
+        return; // undecodable — the page rejects it, so must we
+      }
+      if (body?.available !== true) return;
+      const age = Date.now() / 1000 - body.updatedAt;
+      if (typeof body.updatedAt !== 'number' || !Number.isFinite(body.updatedAt)) return;
+      if (age < -CLOCK_SKEW_TOLERANCE_SECONDS || age > FRESH_WINDOW_SECONDS) return;
+      if (!Array.isArray(body.bundle) || body.bundle.length < 9) return;
+      configOk = true;
+    })(),
+  );
 });
 const gotoFresh = async (url) => {
   configOk = false;
+  pendingConfigReads.length = 0;
   await page.goto(url, { waitUntil: 'networkidle', timeout: 60_000 });
   // The snapshot is fetched after first paint; give it room so a slow
-  // fetch reads as slow rather than as "not live".
+  // fetch reads as slow rather than as "not live" — then settle the
+  // async payload inspections before anything reads `configOk`.
   await page.waitForTimeout(3_000);
+  await Promise.all(pendingConfigReads);
 };
 
 console.log(`Target: ${BASE}  (published snapshot ${REQUIRE_PUBLISHED ? 'REQUIRED' : 'optional'})\n`);
