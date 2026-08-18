@@ -554,6 +554,25 @@ than a growing list of patches on generic-offer consumption.
    > this reasoning in the implementing PR so it can be challenged —
    > silently shipping two of three parts and calling it item 4 is exactly
    > the "disclosure as resolution" move this item warns against.
+   >
+   > **How the two live bounds are derived (decided 2026-08-18).** The floor
+   > cannot be the number the seller sees on screen: accrued interest grows
+   > across the listing window, so their net shrinks, and a floor at the
+   > displayed value would make the listing unfillable almost immediately.
+   > The enforceable floor is the WORST CASE they are accepting — the same
+   > settlement arithmetic evaluated at the listing's own expiry. "If this
+   > fills at any time before it expires, you receive at least X" is both a
+   > true statement to show them and a bound the contract can check. It is
+   > computable only because item 1 made that expiry mandatory and finite,
+   > which is the second place that lifecycle change turns out to be
+   > load-bearing for this item.
+   >
+   > The ceiling takes the opposite shape, because the held balance does not
+   > grow with time. It grows only when a partial or internal settlement
+   > parks more into it between listing and acceptance — precisely the drift
+   > this item exists to refuse. So the ceiling is the balance as it stands
+   > at listing, and any new park fails the sale rather than silently
+   > enlarging what transfers to the buyer.
 
 5. **The direct sale admits on the stored borrower, not the current
    one.** That path passes the loan's stored borrower to the

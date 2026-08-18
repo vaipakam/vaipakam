@@ -204,6 +204,46 @@ export function sellerEconomics(
   };
 }
 
+/**
+ * #1503 item 4 — the two bounds a seller authorizes when they LIST.
+ *
+ * A listing binds the buyer's rate but nothing about the seller's economics:
+ * completion recomputes the forfeiture and re-reads the held balance at the
+ * ACCEPTANCE block, which can be days after the seller reviewed a figure. So
+ * the contract stores a floor and a ceiling and refuses outside them.
+ *
+ * The floor cannot be the number on screen. Accrued interest GROWS across the
+ * listing window, so the seller's net SHRINKS — a floor at the displayed value
+ * would make the listing unfillable almost immediately. The right floor is the
+ * WORST CASE the seller is accepting: the same arithmetic evaluated at the
+ * listing's own expiry. "If this fills at any time before it expires, you
+ * receive at least X" is both a true statement and an enforceable one — and it
+ * is computable precisely because #1503 item 1 made that expiry mandatory and
+ * finite.
+ *
+ * The ceiling takes the opposite shape. The held balance does not grow with
+ * time; it grows only when a partial or internal settlement parks MORE into it
+ * between listing and acceptance — which is exactly the drift item 4 exists to
+ * refuse. So the ceiling is the balance as it stands, and any new park fails
+ * the sale rather than silently enlarging what transfers to the buyer.
+ *
+ * @param live      The live loan being listed.
+ * @param rateBps   The sale rate the seller is asking.
+ * @param expiresAt The listing's own expiry, already clamped at maturity.
+ * @param heldNow   `heldForLender` for this loan as it stands at listing time.
+ */
+export function saleListingBound(
+  live: LoanLive,
+  rateBps: bigint,
+  expiresAt: bigint,
+  heldNow: bigint,
+): { minNetSettlement: bigint; maxHeldTransferred: bigint } {
+  return {
+    minNetSettlement: sellerEconomics(live, rateBps, expiresAt).toSeller,
+    maxHeldTransferred: heldNow,
+  };
+}
+
 /** What the BUYER of a sale-listed lender position stands to earn if
  *  the borrower repays at maturity: the sale rate applied to the
  *  remaining interest-window seconds — the exact `saleRemainingInterest`
