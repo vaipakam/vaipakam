@@ -2986,11 +2986,27 @@ if (!fnNode) {
      * be a `.DB` property — the Workers D1 binding convention this ledger uses —
      * is cheap and ties the checks to the real database.
      */
+    //
+    // ...and the object carrying `.DB` must be one the ledger was HANDED
+    // (Codex round-50 P2). Checking only that the receiver ends in `.DB` left
+    // `fake.DB.prepare(...)` passing — a local wrapper whose `run()` can report
+    // changes without persisting. The host is resolved to a parameter of the
+    // ledger, which is where a real binding can only come from. Which
+    // parameter is not named, so reordering or renaming the signature is not a
+    // false failure; what is refused is a locally constructed stand-in.
+    const ledgerParamNames = new Set(
+      (ledgerNode.parameters ?? [])
+        .map((prm) => prm.name)
+        .filter((nm) => nm && ts.isIdentifier(nm))
+        .map((nm) => nm.text),
+    );
     const preparedOnD1 = (call) => {
       const recv = unwrapAssertions(call.expression);
       if (!ts.isPropertyAccessExpression(recv) && !ts.isElementAccessExpression(recv)) return false;
       const host = unwrapAssertions(recv.expression);
-      return memberNameOf(host) === 'DB';
+      if (memberNameOf(host) !== 'DB') return false;
+      const carrier = unwrapAssertions(host.expression);
+      return ts.isIdentifier(carrier) && ledgerParamNames.has(carrier.text);
     };
     let nonD1Prepare = null;
     const staticSqlOf = (receiver) => {
@@ -3109,30 +3125,36 @@ if (!fnNode) {
           // swallowing every real failure. What matters is whether the handler
           // can COMPLETE — if it can, the ledger returns normally and the
           // cursor advances past the lost row.
-          const alwaysExitsBlock = (node) => {
+          // PROPAGATES, which is not the same as exits (Codex round-50 P2).
+          // My round-49 fix counted `return` alongside `throw` under the phrase
+          // "every completing path exits" — but `catch { return 0; }` exits the
+          // FUNCTION while resolving it normally, so the caller advances the
+          // cursor exactly as it would on success. What has to be true is that
+          // the failure reaches the caller, and only a throw does that.
+          const alwaysThrows = (node) => {
             if (!node) return false;
-            if (ts.isThrowStatement(node) || ts.isReturnStatement(node)) return true;
+            if (ts.isThrowStatement(node)) return true;
             if (ts.isBlock(node)) {
               const last = node.statements[node.statements.length - 1];
-              return alwaysExitsBlock(last);
+              return alwaysThrows(last);
             }
             if (ts.isIfStatement(node)) {
               return (
                 Boolean(node.elseStatement) &&
-                alwaysExitsBlock(node.thenStatement) &&
-                alwaysExitsBlock(node.elseStatement)
+                alwaysThrows(node.thenStatement) &&
+                alwaysThrows(node.elseStatement)
               );
             }
             if (ts.isTryStatement(node)) {
-              // Completes unless both the try and its handler exit.
+              // Propagates only if the try body does AND its own handler does.
               return (
-                alwaysExitsBlock(node.tryBlock) &&
-                (!node.catchClause || alwaysExitsBlock(node.catchClause.block))
+                alwaysThrows(node.tryBlock) &&
+                (!node.catchClause || alwaysThrows(node.catchClause.block))
               );
             }
             return false;
           };
-          if (!alwaysExitsBlock(p.catchClause.block)) return true;
+          if (!alwaysThrows(p.catchClause.block)) return true;
         }
       }
       return false;
