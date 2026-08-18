@@ -1328,6 +1328,13 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      warps nowhere, and is exactly what the seller asked for — reverted
     ///      `SaleBelowSellerFloor`. The bound refusing the sale it exists to
     ///      protect is the failure this pins.
+    ///
+    ///      Evaluating both ends is necessary and NOT sufficient (Codex #1812
+    ///      round 3): the shortfall leg is a difference of separately truncated
+    ///      figures, so it can peak between the endpoints, and the projection
+    ///      carries two units of slack for that. This case would still pass
+    ///      without the slack — its gap is far wider than two units — so the
+    ///      slack is covered by the derivation in `LibSaleListing`, not here.
     function test_saleListing_immediateFillAtAHigherRateIsNotBelowTheFloor() public {
         _stageAcceptedSaleListingAtRate(1500);
         // No warp: the buyer fills at once, which is the costliest moment here.
@@ -1383,9 +1390,13 @@ contract EarlyWithdrawalFacetTest is Test {
         _relaxBuyOfferForWarp(20);
         vm.warp(block.timestamp + 10 days);
         // A lender paid through NOW, so the listing's projected cost covers only
-        // the seven-day window and its floor is correspondingly high.
-        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
-            activeLoanId, block.timestamp
+        // the seven-day window and its floor is correspondingly high. The mark
+        // is stamped WITH the live principal, which is what a real settlement
+        // records and what the disqualifier below then contradicts.
+        uint256 principalAtMark =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal;
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, block.timestamp, principalAtMark
         );
         _stageAcceptedSaleListing();
 
@@ -1393,7 +1404,17 @@ contract EarlyWithdrawalFacetTest is Test {
         // forfeiture window re-opens at the accrual origin, far earlier than
         // the projection assumed, and the seller's net drops below the floor
         // they recorded.
-        TestMutatorFacet(address(diamond)).setLenderMarkVoidedRaw(activeLoanId, true);
+        //
+        // Staged as a genuine PRINCIPAL MISMATCH (Codex #1812 round-4 P2). This
+        // test previously called `setLenderMarkVoidedRaw`, which trips the
+        // independent freeze/park disqualifier — so despite its name and its
+        // comment it never exercised the principal-change predicate at all, and
+        // would have passed with that predicate deleted. Leaving the mark's
+        // recorded principal behind the loan's live one is what a partial
+        // repayment actually does.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, block.timestamp, principalAtMark + 1
+        );
         vm.warp(block.timestamp + 3 days);
         _mockSaleSideEffects();
         vm.prank(lender);

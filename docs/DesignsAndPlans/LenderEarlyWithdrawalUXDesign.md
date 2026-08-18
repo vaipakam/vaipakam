@@ -661,9 +661,29 @@ than a growing list of patches on generic-offer consumption.
    > forfeited accrual grows across the window while the buyer's rate
    > compensation shrinks with the remaining term, so the worst moment is
    > an endpoint but not always the last one. The shipped projection
-   > evaluates BOTH ends and takes the worse. Two evaluations are exactly
-   > tight — for an increasing f and a decreasing g, max(f, g) peaks at
-   > max(f(end), g(start)) — so no interior sampling is needed.
+   > evaluates BOTH ends and takes the worse.
+   >
+   > **Corrected again after round 3 (2026-08-18).** This paragraph said two
+   > evaluations are "exactly tight — for an increasing f and a decreasing
+   > g, max(f, g) peaks at max(f(end), g(start))". That holds over the
+   > REALS and not in the arithmetic this contract has. The shortfall leg
+   > is a difference of two SEPARATELY TRUNCATED figures, so it is not
+   > monotonic even when the continuous difference is: it can sit a unit
+   > above the continuous value at an interior second and a unit below it
+   > at the endpoint meant to bound the window, and both endpoints can read
+   > the same figure while a second between them costs one more.
+   >
+   > The projection therefore adds two units of slack, bounded rather than
+   > guessed: with f = trunc(A) − trunc(B) and g = A − B decreasing,
+   > f(t) ≤ g(t) + 1 ≤ g(start) + 1 ≤ f(start) + 2. Slack LOWERS the
+   > recorded floor, which is the direction that cannot refuse a fill the
+   > seller's own projection allowed.
+   >
+   > Recorded as a third correction rather than an edit because the pattern
+   > is the lesson: this model has now been fixed in the code, then in two
+   > prose documents, then in four contract comments, and each sweep missed
+   > a site. The one that survived longest was this one — the round-3 sweep
+   > grepped for the word "expiry" and this paragraph says "exactly tight".
 
 5. **The direct sale admits on the stored borrower, not the current
    one.** That path passes the loan's stored borrower to the
