@@ -56,7 +56,12 @@
  * two copies of "what does this token mean" would drift. This file owns
  * only the live read, which is the part the build script cannot do —
  * the published markdown has no runtime, so it substitutes the bundled
- * default and is current as of its build.
+ * default. NOT "current as of its build": the defaults are pinned to
+ * the protocol's compiled starting rates, and a governance retune moves
+ * live configuration rather than those rates, so the exports do not
+ * follow a retune even across rebuilds (#1664 item 3 — whether they
+ * should fetch the snapshot at build time is a deliberate open
+ * decision).
  */
 
 import { DOCS_CHAIN_LABEL, useProtocolConfig } from '../../hooks/useProtocolConfig';

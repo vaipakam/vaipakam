@@ -124,11 +124,22 @@ Public-navigation requirements:
   figure must not inherit a confidence none of its parts had, and the
   marker defers to the least certain input rather than the most
 - the machine-readable copies are the one surface with no runtime, so
-  they resolve every reference at build time and are current as of their
-  build. That is a property of the artefact, not a gap to close: a
-  static file cannot follow a retune, and pretending otherwise by
-  leaving the reference unresolved would serve a crawler a token instead
-  of a number
+  they resolve every reference when they are produced — a crawler must
+  receive a number, never the embedding syntax. What they resolve to
+  today is the value set shipped with the site, which is pinned to the
+  protocol's compiled starting rates: a governance retune moves the live
+  configuration, not those starting rates, so these artefacts do not
+  follow a retune even across rebuilds, while the rendered pages that
+  successfully accept the published snapshot do — a page whose own read
+  fails renders the same shipped values these artefacts carry.
+  "Current as of its build" is therefore NOT a property these artefacts
+  have, and nothing may claim it for them. Whether they should instead
+  fetch the published configuration when they are produced — making
+  publication depend on a network read, with everything that implies for
+  a build the configuration service cannot answer — is a deliberate,
+  still-open decision; until it is made, the honest description above is
+  the specified behaviour, and any surface describing these artefacts
+  must say what they carry rather than imply currency
 - the exception is a page documenting a governance knob's DEFAULT, which
   states a plain number rather than a reference. The two look identical
   on the page and are different claims: "the fee is X%" describes what
@@ -676,7 +687,7 @@ Governance-configuration visibility:
 - raw wei-denominated config values such as VPFI tier thresholds should be converted through shared display helpers before reaching cards, tooltips, translated strings, or tier tables
 - long-form doc pages (overview, whitepaper, user guide, parameter reference) should be able to embed a governance-tunable value inline in their prose, so each figure is maintained in one place rather than retyped into every sentence and every translation that mentions it
 - an embedded value should always resolve to a number for the reader, so a page never displays its own placeholder syntax or an empty gap
-- on the public marketing surface the resolved number is the value bundled at build time: those pages intentionally do not read the chain, so a governance change does not reach them without a rebuild, and the figures should not be described to readers or operators as live
+- the public marketing surface stays wallet-free and carries no chain client, but its embedded values follow the protocol's published configuration snapshot: a governance change reaches the rendered pages on next load, without a redeploy. The value bundled at build time remains the fallback for every failure path — before the snapshot resolves, and whenever it cannot be accepted — so a page always renders a figure. (An earlier version of this requirement said these pages resolve only bundled values and must not be described as live; that predates the published-configuration read and is superseded by the provenance requirements above.)
 - where a surface does have a chain client, the same embedded value should prefer the live protocol read and fall back to the bundled value, and a reader should be able to tell which one they are looking at
 - a reader should be able to tell an embedded value from surrounding prose, and confirm on hover where the figure came from
 - an embedded value whose name is not recognised should render visibly as inline code rather than silently disappearing, so an authoring typo is obvious on the page instead of producing a confidently wrong number
@@ -685,7 +696,7 @@ Governance-configuration visibility:
 - pages that always present English content, whatever locale prefix the reader arrived through, should format their embedded values as English, so a figure never uses another language's conventions or digits inside an English sentence
 - a page that falls back to English because a translation is missing should likewise format its embedded values as English
 - the documentation search index should hold the same rendered figures the reader sees, formatted for the same document, so searching for a value visible on a page finds that page
-- the machine-readable copies of the docs that the site publishes for automated consumers should carry the same resolved values as the human-facing pages, formatted for the same language, and should never expose the embedding syntax
+- the machine-readable copies of the docs that the site publishes for automated consumers should carry resolved values formatted for the document's language and never expose the embedding syntax. They carry the value set shipped with the site rather than the live configuration the rendered pages follow, so they match the human-facing pages exactly while the published configuration equals the shipped values, and after a retune they lag the pages that successfully loaded the published configuration — a page whose own read fails renders the same shipped values, and the two surfaces coincide again. The divergence is specified and stated, not a defect, unless and until the open decision above changes what the copies resolve against
 
 Foundational frontend migration requirements:
 
