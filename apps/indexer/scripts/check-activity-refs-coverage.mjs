@@ -468,6 +468,24 @@ const guardedReason = (node, stopAt) => {
     const p = cur.parent;
     if (!p) break;
     if (isFunctionLike(p)) return 'inside a nested function, which nothing here calls';
+    // A statement is unreachable if an EARLIER SIBLING exits unconditionally
+    // (Codex round-47 P2). This walk only ever looked at ancestors — at what
+    // encloses the statement — so an unconditional `throw` placed immediately
+    // above the ledger call left every ancestor innocent and the call dead.
+    // Guarding and preceding-exit are two different ways to not run, and only
+    // the first had a case here.
+    if (ts.isBlock(p) || ts.isSourceFile(p) || ts.isCaseClause(p) || ts.isDefaultClause(p)) {
+      const stmts = p.statements;
+      const idx = stmts.indexOf(cur);
+      for (let i = 0; i < idx; i += 1) {
+        const s = stmts[i];
+        if (ts.isThrowStatement(s)) return 'after an unconditional `throw`, so it is never reached';
+        if (ts.isReturnStatement(s)) return 'after an unconditional `return`, so it is never reached';
+        if (ts.isBreakStatement(s) || ts.isContinueStatement(s)) {
+          return 'after an unconditional loop exit, so it is never reached';
+        }
+      }
+    }
     if (
       (ts.isForOfStatement(p) || ts.isForInStatement(p)) &&
       cur === p.statement &&
@@ -1802,6 +1820,35 @@ if (!fnNode) {
      * that happens later, or inside a branch that may not run, is not evidence
      * about what the call received.
      */
+    /**
+     * Insertion-only twin of {everFilled}, for following an aliased assignment.
+     *
+     * Deliberately does NOT consider reassignments, which is what keeps it from
+     * recursing back into the caller: the question it answers is the narrow one
+     * — "does anything ever put an element into this binding" — which is enough
+     * to tell a live accumulator from a decoy that is only ever declared empty.
+     */
+    const everFilledShallow = (name, decl, beforePos) => {
+      let hit = false;
+      const walk = (n) => {
+        if (hit) return;
+        if (n.getStart(sourceFile) >= beforePos) return;
+        if (ts.isCallExpression(n) && insertsInto(n, name)) {
+          const recv = unwrapAssertions(n.expression.expression);
+          if (
+            ts.isIdentifier(recv) &&
+            recv.text === name &&
+            nearestDeclIn(n, name, sourceFile) === decl
+          ) {
+            hit = true;
+            return;
+          }
+        }
+        ts.forEachChild(n, walk);
+      };
+      walk(sourceFile);
+      return hit;
+    };
     const everFilled = (name, decl, beforePos) => {
       let hit = false;
       // ...and the addition must be REACHABLE (Codex round-46 P2). Round 45
@@ -1843,10 +1890,31 @@ if (!fnNode) {
             unwrapAssertions(n.left).text === name
               ? unwrapAssertions(n.right)
               : null;
-          const assignsEmpty =
-            assigned &&
-            ts.isArrayLiteralExpression(assigned) &&
-            assigned.elements.length === 0;
+          // ...and the assigned VALUE is followed, not just its syntax (Codex
+          // round-47 P2). Round 46 tested the immediate right-hand side only,
+          // so `noLogs = stillNoLogs` — another binding declared `[]` and never
+          // filled — read as evidence of filling. Being empty survives a
+          // rename, exactly as being pinned did for the context arguments two
+          // rounds earlier; this is the same lesson in the adjacent check.
+          const assignsEmpty = (() => {
+            const seenNames = new Set();
+            const isEmptyValue = (node, from, depth = 0) => {
+              if (!node || depth > 8) return false;
+              const e = unwrapAssertions(node);
+              if (ts.isArrayLiteralExpression(e)) return e.elements.length === 0;
+              if (ts.isIdentifier(e)) {
+                if (seenNames.has(e.text)) return false; // cyclic alias chain
+                seenNames.add(e.text);
+                const d = nearestDeclIn(from, e.text, sourceFile);
+                if (!d || d === OPAQUE_BINDING) return false;
+                // A binding something else fills is not an empty value.
+                if (everFilledShallow(e.text, d, from.getStart(sourceFile))) return false;
+                return isEmptyValue(d.initializer, d, depth + 1);
+              }
+              return false;
+            };
+            return assigned ? isEmptyValue(assigned, n) : false;
+          })();
           if (!assignsEmpty) {
             hit = true;
             return;
@@ -1944,16 +2012,40 @@ if (!fnNode) {
           p.right === cur &&
           ts.isIdentifier(unwrapAssertions(p.left))
         ) {
-          // An assignment target is a read of an existing binding elsewhere by
-          // construction, so it cannot be the dangling case.
-          return null;
+          // An assignment target gets the SAME read check (Codex round-47 P2).
+          // Round 46 waved it through on the reasoning that assigning to an
+          // existing binding implies that binding is read elsewhere. It does
+          // not: `let ignoredActivityEvents: number;` declared and then only
+          // assigned is dangling in exactly the way the initializer form is,
+          // and it slipped past the check written for it one round earlier.
+          bound = unwrapAssertions(p.left);
         }
         break;
       }
       if (!bound) return null;
+      // A READ, not merely an occurrence. The binding's own declaration name and
+      // any assignment TARGET are writes — counting them made every assignment
+      // form self-justifying, which is how the round-46 check would have been
+      // satisfied by the very shape round 47 demonstrated.
       let reads = 0;
+      const isWriteOccurrence = (n) => {
+        const p = n.parent;
+        if (!p) return false;
+        if (ts.isVariableDeclaration(p) && p.name === n) return true;
+        if (ts.isParameter(p) && p.name === n) return true;
+        if (
+          ts.isBinaryExpression(p) &&
+          p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          unwrapAssertions(p.left) === n
+        ) {
+          return true;
+        }
+        return false;
+      };
       const countReads = (n) => {
-        if (ts.isIdentifier(n) && n.text === bound.text && n !== bound) reads += 1;
+        if (ts.isIdentifier(n) && n.text === bound.text && n !== bound && !isWriteOccurrence(n)) {
+          reads += 1;
+        }
         ts.forEachChild(n, countReads);
       };
       countReads(sourceFile);
@@ -2249,9 +2341,10 @@ if (!fnNode) {
      * the real outer binding — a false positive that blocks `typecheck`. Third
      * site in this file where "same name" was standing in for "same binding".
      */
-    const writesTo = (name, declOfInterest) => {
+    const writesTo = (name, declOfInterest, beforePos = Infinity) => {
       const found = [];
       const walk = (n) => {
+        if (n.getStart(sourceFile) >= beforePos) return;
         if (writesName(n, name) && nearestDecl(n, name) === declOfInterest) found.push(n);
         ts.forEachChild(n, walk);
       };
@@ -2382,7 +2475,7 @@ if (!fnNode) {
      * of `args` a few hundred lines up; the alias chain deserves the same
      * question, or renaming the binding is enough to escape the check.
      */
-    const mutatedInPlace = (name, declOfInterest) => {
+    const mutatedInPlace = (name, declOfInterest, beforePos = Infinity) => {
       let found = false;
       const rootOf = (e) => {
         let cur = unwrapAssertions(e);
@@ -2393,6 +2486,7 @@ if (!fnNode) {
       };
       const walk = (n) => {
         if (found) return;
+        if (n.getStart(sourceFile) >= beforePos) return;
         // A mutating CALL is a mutation too (Codex round-34 P2). This scan knew
         // only the syntactic forms — assignment, ++/--, `delete` — so
         // `Object.assign(args, { loanId: logs[0]!.args.loanId })` overwrote the
@@ -2539,9 +2633,16 @@ if (!fnNode) {
       // chain: the declaration no longer proves what the value is. So does a
       // mutation of the object it points at, which leaves the binding intact
       // and the VALUE wrong.
+      // Bounded at `from` (Codex round-47 P2). This function answers "what does
+      // this name resolve to HERE", so only writes that can run before `here`
+      // bear on the answer — and scanning the whole loop body meant ordinary
+      // cleanup after the awaited INSERT, which cannot change a value the mapper
+      // already copied out, broke the resolution and failed the build. The
+      // question was always positional; the scan was not.
+      const at = from.getStart(sourceFile);
       const decl = nearestDecl(from, name);
-      if (writesTo(name, decl).some((w) => !preservesSelf(w, name))) return null;
-      if (mutatedInPlace(name, decl)) return null;
+      if (writesTo(name, decl, at).some((w) => !preservesSelf(w, name))) return null;
+      if (mutatedInPlace(name, decl, at)) return null;
       // A binder this script cannot read through shadows whatever is further
       // out, so the honest answer is "unknown", not the outer declaration.
       if (decl === OPAQUE_BINDING) return null;
@@ -2614,8 +2715,13 @@ if (!fnNode) {
     }
     // ...and nothing in the loop may mutate the object behind that argument,
     // under ANY of its names (Codex round-33 P2).
+    // Bounded to writes that can run BEFORE the mapper call (Codex round-47 P2).
+    // This check's own message says "before handing them to pluckActivityRefs",
+    // and the scan did not enforce it — so ordinary cleanup after the awaited
+    // INSERT, which cannot affect values the mapper already copied out, failed
+    // the build. The intent was right and the implementation was unbounded.
     const mutatedAlias = [...aliasesOfArg(init.arguments[1])].find(([n, d]) =>
-      mutatedInPlace(n, d),
+      mutatedInPlace(n, d, init.getStart(sourceFile)),
     );
     if (mutatedAlias) {
       console.error(
@@ -3883,6 +3989,18 @@ const isNullLiteral = (expr) =>
         ) {
           found = 'declares a local named';
           return;
+        }
+        // ...unless the function is IMMEDIATELY INVOKED (Codex round-47 P2).
+        // Stopping at every function-like node is right for a helper nothing
+        // calls, and wrong for `(() => { args.loanId = 999n; })()` sitting in a
+        // case body: it runs before the return, and the accepted
+        // `Number(args.loanId)` then reads 999. The parameter-default walk
+        // learned this in rounds 44 and 46; this scan, asking the same question
+        // about the same names, had not.
+        const invokedHere = invokedFunctionBodyOf(n);
+        if (invokedHere) {
+          walk(invokedHere);
+          if (found) return;
         }
         if (isFunctionLike(n)) return;
         // Binding NAMES recursively (Codex round-10 P2): `const { args } = …` puts
