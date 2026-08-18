@@ -2092,11 +2092,14 @@ library LibInteractionRewards {
         // permanently pausing the expiry clock once Base has remitted the
         // capped liability. Delivered stays `max` (measuring the need
         // against the allowance it is compared to would be circular).
+        // r15 P2 — BOTH destinations reserve: a forfeited entry's legacy
+        // slice spends the pool on its way to treasury.
+        (uint256 uL, uint256 tL) = previewForUserEntriesLegacyOnly(s, user);
         (, armed) = _dryRunShareOfPoolDays(
             s,
             user,
             type(uint256).max,
-            _userWalkFreshBudget(s, user, previewForUserEntriesLegacyOnly(s, user))
+            _userWalkFreshBudget(s, user, uL + tL)
         );
     }
 
@@ -2233,7 +2236,9 @@ library LibInteractionRewards {
         returns (uint256 userTotal)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        userTotal = previewForUserEntriesLegacyOnly(s, user);
+        // Codex #1699 r15 P2 — display the USER legs; reserve BOTH halves.
+        uint256 treasuryLegs;
+        (userTotal, treasuryLegs) = previewForUserEntriesLegacyOnly(s, user);
         // Codex #1699 r14 P2 — the walk leg's fresh budget reserves the
         // PRECEDING legs, exactly as the live claim threads it: the facet
         // subtracts the window reward before `claimForUserEntries`, which
@@ -2245,7 +2250,7 @@ library LibInteractionRewards {
             s,
             user,
             deliveredFreshBound(s),
-            _userWalkFreshBudget(s, user, userTotal)
+            _userWalkFreshBudget(s, user, userTotal + treasuryLegs)
         );
         userTotal += dryTotal;
     }
@@ -2268,14 +2273,25 @@ library LibInteractionRewards {
         budget = budget > legacyLegs ? budget - legacyLegs : 0;
     }
 
-    /// @dev The ENTRY-PATH legacy legs' total — the loop
+    /// @dev The ENTRY-PATH legacy legs, split by DESTINATION — the loop
     ///      {previewForUserEntries} always ran, extracted so the armed-need
     ///      aggregate can reserve the same figure without duplicating the
     ///      eligibility predicate (one implementation, two readers).
+    ///
+    ///      Codex #1699 r15 P2 — the split exists because the two consumers
+    ///      want DIFFERENT sums. The displayed preview shows `userLegs`
+    ///      alone (a forfeited entry pays the claimant nothing), but the
+    ///      walk's fresh-budget reservation needs `userLegs + treasuryLegs`:
+    ///      the live claim's `legacyFreshReserved` is
+    ///      `(toUser − recycled) + (toTreasury − recycled)`, because a
+    ///      forfeited entry's legacy slice still spends the same 69M pool on
+    ///      its way to the treasury channel. Reserving only the user half
+    ///      handed the armed walk headroom the forfeit leg had already
+    ///      spoken for.
     function previewForUserEntriesLegacyOnly(
         LibVaipakam.Storage storage s,
         address user
-    ) internal view returns (uint256 userTotal) {
+    ) internal view returns (uint256 userLegs, uint256 treasuryLegs) {
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
         uint256 armedFrom = s.governorCommitArmedFromDay;
@@ -2283,28 +2299,32 @@ library LibInteractionRewards {
         for (uint256 i = 0; i < len; ) {
             uint256 id = ids[i];
             LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-            // #1002 (S4) / #1061 P2 — only claimable (closed or loan-terminal),
-            // non-forfeited (explicit OR terminal-derived) entries preview to the
-            // user (was the dead `endDay != 0`).
-            if (
-                !e.processed
-                && !e.forfeited
-                && !_entryTerminalForfeit(s, e)
-                // Pre-merge adversarial review (2026-08-17) P3 — the claim
-                // skips a REMOVED entry, so the preview skips it too. Here
-                // this is DEFENCE-IN-DEPTH by measurement: a removed entry
-                // has either `processed` or a stamped cursor (removal takes
-                // a crediting chunk), and {_previewEntryLeg} prices a
-                // stamped-cursor entry at 0 while the walk leg's worklist
-                // excludes `expiryBegun`. The AGGREGATE filter above is the
-                // load-bearing one — {_entryPriceCore} does not zero out on
-                // a stamped cursor. Kept so the two filters state the same
-                // invariant.
-                && !e.expiryBegun
-                && _entryClaimable(s, e)
-            ) {
+            // Pre-merge adversarial review (2026-08-17) P3 — the claim
+            // skips a REMOVED entry (and a processed one) outright, so
+            // both destinations skip it here. DEFENCE-IN-DEPTH by
+            // measurement for the preview half: a removed entry has either
+            // `processed` or a stamped cursor, which {_previewEntryLeg}
+            // already prices at 0; the AGGREGATE filter is the
+            // load-bearing one.
+            if (e.processed || e.expiryBegun) {
+                unchecked { ++i; }
+                continue;
+            }
+            // #1002 (S4) / #1061 P2 — a forfeited (explicit OR
+            // terminal-derived) entry routes to TREASURY; a claimable one
+            // routes to the user (was the dead `endDay != 0`).
+            if (e.forfeited || _entryTerminalForfeit(s, e)) {
+                // Priced from the FORFEIT split, fresh-only —
+                // {_previewEntryLeg} prices the USER destination, which is
+                // zero for a forfeited entry, and the live reservation is
+                // `toTreasury.total − toTreasury.recycled` (a forfeited
+                // entry settles its whole remaining window O(1) at claim,
+                // so there is no walk-owned remainder to exclude).
+                (, EntrySplit memory tSplit, , ) = _entryPriceCore(s, id, e);
+                treasuryLegs += tSplit.total - tSplit.recycled;
+            } else if (_entryClaimable(s, e)) {
                 // #1008 (S13) — cap is baked into cumMin; no feed read here.
-                userTotal += _previewEntryLeg(s, id, e, armedFrom);
+                userLegs += _previewEntryLeg(s, id, e, armedFrom);
             }
             unchecked { ++i; }
         }

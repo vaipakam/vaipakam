@@ -278,6 +278,16 @@ parameter — the same computed-once-and-threaded rule the claim facet
 states for its own three legs — and the dry-run day loop now depletes
 fresh exactly as it already depleted recycled and delivered.
 
+Round 15 added the final quarter-turn, P2: **a predecessor leg reserves
+by SPEND, not by DESTINATION.** The live claim's `legacyFreshReserved`
+is `(toUser − recycled) + (toTreasury − recycled)` — a forfeited entry's
+legacy slice spends the same 69M pool on its way to the treasury
+channel — but the r14 reservation reused the user-facing preview loop,
+which rightly excludes forfeited entries from what the CLAIMANT sees.
+The legacy-legs helper now returns the two destinations separately: the
+displayed preview shows the user half alone, and the walk's reservation
+sums both.
+
 ## Testing
 
 The expiry fixture is unusually easy to make vacuous: **five distinct

@@ -102,7 +102,12 @@ one. The practical consequences:
   was measured against the full remaining headroom), and it accounts for
   the parts of the same claim that are paid before the daily walk — the
   legacy window and each reward's pre-cutover slice — so an estimate can
-  never promise the same headroom to two legs of one claim.
+  never promise the same headroom to two legs of one claim. That
+  accounting reserves by what a leg SPENDS, not by who receives it: a
+  forfeited reward's pre-cutover slice goes to the treasury channel
+  rather than the claimant, but it draws on the same schedule, so it
+  reserves headroom too — while remaining excluded from the pending
+  figure shown to the user, who receives nothing from it.
 
 - **A removed reward shows no countdown either.** The Claim Center's
   removal countdown is a deadline for the owner to act on; once removal

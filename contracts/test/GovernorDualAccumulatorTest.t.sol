@@ -1280,6 +1280,64 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1699 r15 P2 — a FORFEITED entry's legacy slice spends the
+    ///      same 69M pool on its way to treasury, and the live claim's
+    ///      `legacyFreshReserved` includes it. The dry run's reservation
+    ///      must too — while the displayed user preview keeps excluding it
+    ///      (a forfeited entry pays the claimant nothing).
+    function testP1bDryRunReservesTheForfeitLegToo() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+        assertEq(recycled5, 0, "LIVE: and NO recycled share");
+
+        uint256 idX = _seedEntry(alice, 104, 4, 6); // legacy day 4 + armed day 5
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = idX;
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 30 days);
+
+        uint256 armedN = _lens().getUserArmedFreshNeed(alice);
+        assertGt(armedN, 0, "LIVE: an armed demand exists");
+        (uint256 previewX, , ) = _lens().previewInteractionRewards(alice);
+        uint256 legacyL = previewX - armedN;
+        assertGt(legacyL, 0, "LIVE: and a legacy leg exists");
+
+        // A second, IDENTICALLY-SHAPED wholly-legacy entry, then FORFEIT it:
+        // its value equals X's legacy leg (same day, same perDay), and it
+        // routes to treasury at claim.
+        uint256 idY = _seedEntry(alice, 105, 4, 5);
+        _mut().setRewardEntryForfeitedRaw(idY);
+        (uint256 previewAfterForfeit, , ) =
+            _lens().previewInteractionRewards(alice);
+        assertEq(
+            previewAfterForfeit,
+            previewX,
+            "LIVE: the forfeited entry shows the claimant NOTHING"
+        );
+
+        // Near-ceiling: headroom covers BOTH legacy legs plus half the armed
+        // leg. The claim settles X's leg to the user and Y's leg to treasury
+        // before the walk; the walk owns only armedN / 2.
+        uint256 headroom = legacyL * 2 + armedN / 2;
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
+        );
+        assertEq(
+            _lens().getUserArmedFreshNeed(alice),
+            armedN / 2,
+            "the armed need reserves the TREASURY leg alongside the user leg"
+        );
+        (uint256 preview, , ) = _lens().previewInteractionRewards(alice);
+        assertEq(
+            preview,
+            headroom - legacyL,
+            "and the preview shows user legs + walk remainder, never the treasury leg"
+        );
+    }
+
     function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
