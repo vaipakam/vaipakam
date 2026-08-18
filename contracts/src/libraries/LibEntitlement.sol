@@ -275,7 +275,24 @@ library LibEntitlement {
         // The two clocks answer different questions. "When did the borrower's
         // obligation restart" is not "when was this lender last paid", and only
         // the second bounds a forfeiture.
-        if (paidThrough == 0) return accrualStart;
+        // The window can never open before THIS lender's tenure did (Codex
+        // #1801 r13, two P1s that are one missing idea). Everything below picks
+        // between two points, and neither is anchored to the party being
+        // charged: a first-ever payment that freezes leaves no recorded
+        // delivery to fall back to, and a buyer's fallback is the loan's
+        // original clock, which predates them. Both are the window escaping the
+        // tenure it belongs to.
+        uint256 tenureFrom = s.lenderTenureStart[loanId];
+        if (paidThrough == 0) {
+            // Never paid. The clock is the only evidence — but a freeze may
+            // have voided the mark and re-based that clock in the same
+            // transaction, so the tenure floor is what keeps the unpaid stretch
+            // inside the window.
+            if (s.lenderMarkVoided[loanId] && tenureFrom > 0 && tenureFrom < accrualStart) {
+                return tenureFrom;
+            }
+            return accrualStart;
+        }
         // ...but a scalar mark can only be honoured while it still DESCRIBES the
         // position (Codex #1801 r5/r6, five P1s). Those findings are one finding:
         // a timestamp carries no amount, so it cannot price a window whose
@@ -314,7 +331,13 @@ library LibEntitlement {
             s.lenderMarkVoided[loanId] ||
             s.lenderMarkPrincipalAt[loanId] != s.loans[loanId].principal
         ) {
-            return paidThrough < accrualStart ? paidThrough : accrualStart;
+            uint256 from = paidThrough < accrualStart ? paidThrough : accrualStart;
+            // ...but never before this lender bought in. The accrual clock can
+            // predate a BUYER by the whole of the seller's tenure, and that
+            // stretch was already settled by the sale that handed them the
+            // position — charging it again would consume the resale proceeds
+            // for interest this lender neither received nor owed.
+            return from < tenureFrom ? tenureFrom : from;
         }
         return paidThrough;
     }
@@ -428,6 +451,8 @@ library LibEntitlement {
     ) internal {
         s.lenderMarkPrincipalAt[loanId] = s.loans[loanId].principal;
         s.lenderMarkHeldAt[loanId] = s.heldForLender[loanId];
+        // The originating lender's tenure starts here (Codex #1801 r13).
+        s.lenderTenureStart[loanId] = block.timestamp;
     }
 
     /// @notice Opens a FRESH mark for an incoming lender on a completed sale.
@@ -460,6 +485,11 @@ library LibEntitlement {
         s.lenderMarkPrincipalAt[loanId] = s.loans[loanId].principal;
         s.lenderMarkHeldAt[loanId] = s.heldForLender[loanId];
         s.lenderMarkVoided[loanId] = false;
+        // The BUYER's tenure starts at the sale (Codex #1801 r13 P1). Without
+        // it, a later disqualification would fall back to the loan's original
+        // accrual clock and charge them for the seller's whole tenure — which
+        // this very sale settled.
+        s.lenderTenureStart[loanId] = at;
     }
 
     /// @notice Permanently disqualifies this loan's mark, because a lender share

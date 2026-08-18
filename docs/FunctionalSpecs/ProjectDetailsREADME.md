@@ -1941,6 +1941,17 @@ This option allows Liam to recover principal early by selling his lender positio
   recorded payment nor the borrower's obligation restart can be later than the
   moment he was genuinely paid through.
 
+  Under all of it sits a floor: the moment Liam's own involvement began, which
+  is the loan opening if he lent originally, or the purchase if he bought the
+  position. It is what keeps the window inside the tenure it belongs to, in both
+  directions. If the very first payment due to Liam is the one held back there
+  is no earlier payment to fall back to, and only the floor keeps that unpaid
+  stretch in his charge. And if Liam BOUGHT the position and is later
+  disqualified, without the floor he would fall back to the loan's original
+  clock — charging him for the previous lender's entire stretch, which the sale
+  he bought through already settled. Positions that predate this change record
+  no such moment, so nothing is assumed about them.
+
   A sale clears all three: Noah's period opens at the purchase, at the principal
   on the loan then, and carries nothing from Liam's tenure. The conditions are read
   from the loan's own recorded state rather than reported by whatever caused

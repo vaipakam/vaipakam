@@ -135,6 +135,18 @@ used as the earliest of the two, which is the honest answer — neither the last
 recorded payment nor the obligation restart can be later than the moment this
 lender was genuinely paid through.
 
+There is a floor under all of it: the moment this lender's own involvement
+began, which is either the loan opening or the sale that handed them the
+position. Without it the window can escape the tenure it belongs to, in both
+directions. A loan whose very first payment is the one held back has no earlier
+payment to fall back to, so only the floor keeps that unpaid stretch inside the
+charge. And a buyer who is later disqualified would otherwise fall back to the
+loan's original clock, which predates them entirely — charging them for the
+seller's whole stretch, which the sale they bought through had already settled.
+The platform records when each lender's tenure starts and never opens a window
+before it. Positions that predate this change record nothing, so nothing is
+assumed about them.
+
 Both conditions are read from the loan's own recorded state rather than reported
 by whatever caused them. That distinction is the point: principal is reduced at
 eight places across five parts of the protocol, and a rule those places have to

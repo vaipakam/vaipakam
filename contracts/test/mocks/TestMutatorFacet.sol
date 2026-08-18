@@ -431,6 +431,15 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().lenderMarkVoided[loanId] = voided;
     }
 
+    /// @notice Seed this lender's tenure floor directly (#1801 r13).
+    /// @dev    The real setters are loan origination and a completed position
+    ///         sale. Staging a real sale inside this suite's scaffolded
+    ///         completions is what the escrow setter exists for; seeding the
+    ///         floor alone isolates what the DISQUALIFIED path reads.
+    function setLenderTenureStartRaw(uint256 loanId, uint256 at) external {
+        LibVaipakam.storageSlot().lenderTenureStart[loanId] = at;
+    }
+
     /// @notice Re-base a loan's interest-accrual clock directly (#1801 r12).
     /// @dev    The real setter is `repayPartial` / swap-to-repay, which re-base
     ///         the borrower's obligation while paying the lender nothing when

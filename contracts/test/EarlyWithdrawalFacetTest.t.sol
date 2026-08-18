@@ -842,6 +842,52 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev DIRECT route, a BUYER disqualified after purchase (Codex #1801 r13
+    ///      P1). A sale opens the incoming lender's window at the purchase, but
+    ///      the loan's accrual clock still predates them by the whole of the
+    ///      seller's tenure. Once the round-12 rule made a disqualified mark
+    ///      fall back to the EARLIER of mark and clock, that older clock became
+    ///      reachable for the buyer — charging them for a stretch the first sale
+    ///      had already settled, and which they never received.
+    ///
+    ///      Seeded as a buyer's position: the tenure floor at the purchase, the
+    ///      mark there too, then a freeze that voids it.
+    function test_sellLoanViaBuyOffer_buyerNotChargedForSellerTenure() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 purchase = block.timestamp - 3 days;
+        uint256 snap = vm.snapshotState();
+
+        // Control: the buyer's window opens at the purchase and is honoured.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, purchase);
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidHonoured = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // The same buyer, now disqualified by a freeze. Without a tenure floor
+        // the window would re-open at the loan's original accrual clock.
+        TestMutatorFacet(address(diamond)).setLenderTenureStartRaw(activeLoanId, purchase);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, purchase);
+        TestMutatorFacet(address(diamond)).setLenderMarkVoidedRaw(activeLoanId, true);
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidDisqualified = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidHonoured, 0, "control run must actually pay the seller");
+        assertEq(
+            paidDisqualified,
+            paidHonoured,
+            "a disqualified buyer must not be charged for the seller's pre-purchase tenure"
+        );
+    }
+
     /// @dev DIRECT route, a void whose accrual clock ALSO moved (Codex #1801
     ///      r12 P1). A partial repayment whose lender share is frozen does two
     ///      things at once: it parks the share, disqualifying the mark, and it

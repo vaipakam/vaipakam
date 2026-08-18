@@ -6763,6 +6763,33 @@ library LibVaipakam {
         ///         never decremented during a lender's tenure — so a difference
         ///         is proof of a park and nothing else.
         mapping(uint256 => uint256) lenderMarkHeldAt;
+
+        /// @notice #1503 item 28 — the moment THIS lender's tenure began: loan
+        ///         origination, or the sale that handed them the position.
+        ///
+        /// @dev    Codex #1801 r13, two P1s that turned out to be one missing
+        ///         idea. A disqualified mark falls back to the earlier of the
+        ///         recorded delivery and the accrual clock, and neither of those
+        ///         is anchored to the party being charged:
+        ///
+        ///         - a loan whose FIRST lender payment is the one that freezes
+        ///           has no recorded delivery at all, so the fallback was the
+        ///           clock — which that same repayment had just re-based, giving
+        ///           a window of roughly zero over a genuinely unpaid stretch;
+        ///         - a BUYER disqualified after purchase fell back to the loan's
+        ///           original accrual clock, which predates them, charging them
+        ///           for the seller's whole pre-purchase tenure — a stretch the
+        ///           first sale already settled.
+        ///
+        ///         One bound fixes both, because both are the window escaping
+        ///         the tenure it belongs to. The window may open no earlier than
+        ///         here and, when nothing is disqualified, no earlier than the
+        ///         recorded delivery either.
+        ///
+        ///         Zero for loans that predate this change: nothing is known
+        ///         about when their lender's tenure started, so no clamp is
+        ///         applied and they keep the behaviour they already had.
+        mapping(uint256 => uint256) lenderTenureStart;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
