@@ -199,6 +199,7 @@ library LibSaleListing {
             loan.principal > cost ? loan.principal - cost : 0;
         s.saleListingMaxHeldTransfer[loanId] = s.heldForLender[loanId];
         s.saleListingBoundsRecorded[loanId] = true;
+        s.saleListingBoundsExpiry[loanId] = expiresAt;
     }
 
     /// @notice #1503 item 4 — what a sale would cost the exiting lender if it
@@ -246,5 +247,6 @@ library LibSaleListing {
         delete s.saleListingMinSellerNet[loanId];
         delete s.saleListingMaxHeldTransfer[loanId];
         delete s.saleListingBoundsRecorded[loanId];
+        delete s.saleListingBoundsExpiry[loanId];
     }
 }

@@ -6834,6 +6834,21 @@ library LibVaipakam {
         /// @dev    Distinguishes a listing that recorded a zero ceiling from one
         ///         made before the bounds existed. Cleared with the listing.
         mapping(uint256 => bool) saleListingBoundsRecorded;
+
+        /// @notice #1503 item 4 — the expiry the FLOOR was projected to.
+        /// @dev    Stored with the bounds rather than read back off the sale
+        ///         offer, so the seller's authorisation is one self-contained
+        ///         record. The offer is a different lifecycle — cancel and
+        ///         teardown clear it — and a bound that depends on a record
+        ///         someone else may remove is a bound with a hole in it.
+        ///
+        ///         The floor bounds every fill INSIDE the window and says
+        ///         nothing about one after it: `completeLoanSale` stays callable
+        ///         past the window on purpose, and the seller invoking it
+        ///         themselves is fresh authorisation rather than a race, so
+        ///         enforcing a stale projection there would refuse their own
+        ///         deliberate act.
+        mapping(uint256 => uint256) saleListingBoundsExpiry;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

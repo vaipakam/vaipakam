@@ -1299,6 +1299,113 @@ contract EarlyWithdrawalFacetTest is Test {
         TestMutatorFacet(address(diamond)).setSaleProceedsEscrowRaw(activeLoanId, PRINCIPAL);
     }
 
+    // ─── #1503 item 4: the seller's two economic bounds ──────────────────────
+
+    /// @dev The FLOOR is derived at the listing's EXPIRY, so ordinary accrual
+    ///      across the whole window sits inside it. This is the property that
+    ///      makes the bound usable at all: a floor at the figure the seller saw
+    ///      would make their own listing unfillable within minutes.
+    function test_saleListing_ordinaryAccrualDoesNotTripTheFloor() public {
+        _stageAcceptedSaleListing();
+        // Most of the seller-chosen window elapses before the buyer fills.
+        vm.warp(block.timestamp + 6 days);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "the sale completed and the position stayed live for the buyer"
+        );
+    }
+
+    /// @dev A PRINCIPAL change is the case only the floor can see: it
+    ///      disqualifies the paid-through mark — re-opening the forfeiture
+    ///      window earlier than the projection assumed — while parking nothing,
+    ///      so the held ceiling is untouched.
+    ///
+    ///      ORDER MATTERS, and getting it wrong is what a first draft of this
+    ///      test did: the mark must exist BEFORE the listing, so the seller's
+    ///      projection is computed against a short window. Setting it
+    ///      afterwards and voiding it proves nothing — the projection already
+    ///      assumed the accrual origin, so the void returns the window to
+    ///      exactly where the floor expected it and nothing trips. That is the
+    ///      floor being correctly insensitive to a change that does not worsen
+    ///      the seller's position.
+    function test_saleListing_principalChangeTripsTheFloor() public {
+        // The loan must have RUN before the listing, or voiding the mark barely
+        // widens the window: with the accrual origin at listing time the two
+        // starting points nearly coincide and the projected cost is already the
+        // larger one. Thirty days of history is what makes the disqualification
+        // a step rather than a rounding difference.
+        // Ten days, not thirty: the listing window is clamped at the loan's own
+        // maturity, so too much history makes `createLoanSaleOffer` refuse the
+        // listing outright and the test would pass on the wrong revert. The
+        // trip needs only history + fill-delay to exceed the seven-day window.
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        // A lender paid through NOW, so the listing's projected cost covers only
+        // the seven-day window and its floor is correspondingly high.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp
+        );
+        _stageAcceptedSaleListing();
+
+        // Then a partial repayment moves principal, disqualifying the mark. The
+        // forfeiture window re-opens at the accrual origin, far earlier than
+        // the projection assumed, and the seller's net drops below the floor
+        // they recorded.
+        TestMutatorFacet(address(diamond)).setLenderMarkVoidedRaw(activeLoanId, true);
+        vm.warp(block.timestamp + 3 days);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        // The SELECTOR, not a bare expectRevert: an earlier draft of this test
+        // was tripping `InvalidSaleOffer` at listing time — too much warped
+        // history for the window — and a bare expectRevert passed on it,
+        // reporting a green test that never reached the bound at all.
+        vm.expectPartialRevert(IVaipakamErrors.SaleBelowSellerFloor.selector);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev A PARK between listing and acceptance enlarges what transfers to the
+    ///      buyer. Unlike the forfeiture it does not grow with time, so the
+    ///      ceiling is simply the balance at listing.
+    function test_saleListing_newParkTripsTheHeldCeiling() public {
+        _stageAcceptedSaleListing();
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SaleAboveHeldCeiling.selector,
+                0,
+                1e6
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev A listing made before the bounds existed records none, and must keep
+    ///      completing exactly as it did. The recorded-flag is what makes this
+    ///      distinguishable from a listing whose ceiling is legitimately zero.
+    function test_saleListing_legacyListingWithoutBoundsStillCompletes() public {
+        _stageAcceptedSaleListing();
+        TestMutatorFacet(address(diamond)).clearSaleListingBoundsRaw(activeLoanId);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "a pre-bounds listing is not retro-bound by a ceiling it never recorded"
+        );
+    }
+
     // ─── createLoanSaleOffer reverts ─────────────────────────────────────────
 
     function testCreateSaleOfferRevertsNotNFTOwner() public {

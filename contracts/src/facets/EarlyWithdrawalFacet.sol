@@ -647,7 +647,22 @@ contract EarlyWithdrawalFacet is
             // movement or a park disqualifying the paid-through mark, which
             // re-opens the forfeiture window earlier than the projection
             // assumed. Refusing is the point; the remedy is to relist.
-            if (s.saleListingBoundsRecorded[loanId]) {
+            // ...but only while the seller's projection still DESCRIBES the
+            // fill. The floor is derived at the listing's expiry, so it bounds
+            // every fill inside the window and says nothing about one after it.
+            // `completeLoanSale` is lender-side-gated and deliberately remains
+            // callable past the window — the seller invoking it themselves is
+            // fresh authorisation, not a race — and enforcing a stale
+            // projection there would refuse the seller's own deliberate act.
+            //
+            // Caught by an EXISTING #1801 test rather than by a new one: the
+            // targeted run of the four new cases was green, and only the full
+            // suite showed `forfeitsOnlyTheUnpaidStretch` completing past the
+            // window and tripping a bound that was never meant to reach it.
+            if (
+                s.saleListingBoundsRecorded[loanId] &&
+                block.timestamp <= s.saleListingBoundsExpiry[loanId]
+            ) {
                 uint256 sellerNet = proceeds > liamCost ? proceeds - liamCost : 0;
                 uint256 floorNet = s.saleListingMinSellerNet[loanId];
                 if (sellerNet < floorNet) {
