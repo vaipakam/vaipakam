@@ -205,6 +205,92 @@ const DELIBERATELY_NOT_SCOPED = {
 // never reach `pluckActivityRefs`, because the indexer's `EVENT_ABI` is derived
 // from `DIAMOND_ABI_VIEM`, so enforcing them manufactures phantom backlog that
 // would grow with every future standalone contract. Enforced set == decodable set.
+/**
+ * Reads an object literal the way JavaScript does: later definitions win, and a
+ * spread (or a key/getter this parser cannot read) shadows everything defined
+ * before it. Returns the fields that SURVIVE, so a caller never has to re-derive
+ * the ordering rules.
+ *
+ * Shared by the case-return scan and the default clause (Codex round-26 P2). The
+ * default had its own simpler reader that took the first matching property and
+ * ignored what came after, so appending `...({ loanId: 999 })` to the all-null
+ * fallback left the run green while attaching every unmapped and allowlisted
+ * event to loan 999. Two readers of the same shape is one reader too many.
+ */
+const objectLiteralView = (e) => {
+    const props = new Map();
+    // Spread POSITION matters, not just presence (Codex round-19 P2). An
+    // explicit property AFTER a spread overrides it — that is a language
+    // guarantee — so `{ ...whatever, loanId: Number(args.loanId) }` is a
+    // perfectly resolvable mapping, and marking the whole scope opaque
+    // rejected a valid one. This is the first finding in the false-POSITIVE
+    // direction, and it is worth separating from the rest: every other round
+    // has been about the checker accepting too much, where the cost is a
+    // silent hole. Here the cost is a correct mapping the author cannot get
+    // past the gate, which is how a guardrail earns a reputation for being
+    // wrong and starts getting worked around.
+    //
+    // So each field records WHERE it was last defined, a spread records where
+    // it sat, and a field survives when its definition is the later of the two.
+    let lastSpreadIdx = -1;
+    const definedAt = new Map();
+    let idx = -1;
+    for (const p of e.properties) {
+      idx += 1;
+      if (ts.isSpreadAssignment(p)) {
+        lastSpreadIdx = idx;
+        continue;
+      }
+      if (ts.isShorthandPropertyAssignment(p)) {
+        props.set(p.name.text, { shorthand: true });
+        definedAt.set(p.name.text, idx);
+        continue;
+      }
+      if (ts.isPropertyAssignment(p)) {
+        // `['loanId']: …` is a ComputedPropertyName wrapping a string literal —
+        // statically resolvable, and valid TypeScript, so ignoring it let a real
+        // mapping go uncounted and its exemption stay falsely live (Codex
+        // round-12 P2).
+        let key = null;
+        if (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) key = p.name.text;
+        else if (ts.isComputedPropertyName(p.name) && ts.isStringLiteralLike(p.name.expression)) {
+          key = p.name.expression.text;
+        }
+        if (key !== null) {
+          props.set(key, { expr: p.initializer });
+          definedAt.set(key, idx);
+        } else {
+          // An unresolvable key could BE this field, and it could sit after
+          // any explicit definition — so it shadows like a spread does.
+          lastSpreadIdx = idx;
+        }
+        continue;
+      }
+      // A GETTER, SETTER or METHOD is an explicit property this parser cannot
+      // read (Codex round-22 P2). `get loanId() { return 999; }` defines the
+      // field as surely as `loanId: 999` does, and falling through to the end
+      // of the loop recorded nothing at all — so the field read as "never
+      // returned here" and the case was skipped, with the ledger attaching
+      // every such event to whatever the getter returns.
+      //
+      // Treated as shadowing rather than parsed: what a getter returns is a
+      // function body, not an expression, and the honest answer for a shape
+      // this checker cannot read is that it cannot read it.
+      if (
+        ts.isGetAccessorDeclaration(p) ||
+        ts.isSetAccessorDeclaration(p) ||
+        ts.isMethodDeclaration(p)
+      ) {
+        lastSpreadIdx = idx;
+      }
+    }
+    // Drop anything the spread (or an unresolvable key) defines LAST.
+    for (const [key, at] of definedAt) {
+      if (at < lastSpreadIdx) props.delete(key);
+    }
+  return { props, spread: lastSpreadIdx >= 0 };
+};
+
 const REF_FIELDS = ['loanId', 'offerId'];
 
 /**
@@ -989,9 +1075,31 @@ if (!fnNode) {
   // is, and whether it holds every decoded log, is dataflow this script does not
   // do; refusing the literal closes the way the disconnection is actually
   // written.
+  //
+  // ...and the call must be one whose RESULT IS USED (Codex round-26 P2). A walk
+  // that accepts any syntactic call accepts one that cannot execute:
+  // `const activityEvents = 0` beside `if (false) await
+  // recordActivityEvents(allLogs, …)` left this green at the usual tally while
+  // the scan wrote no rows at all. Reachability in general is not decidable
+  // here, but it does not have to be — the scan USES the ledger's return as its
+  // `activityEvents` count, so anchoring on calls that initialise a binding
+  // both ignores a discarded decoy and describes what the real call is for.
+  // Requiring exactly one is the same argument the one-destructuring rule below
+  // makes: with no second candidate there is nothing for a decoy to hide behind.
   {
     const insideLedger = (n) => {
       for (let p = n.parent; p; p = p.parent) if (p === ledgerNode) return true;
+      return false;
+    };
+    // Is this call the initialiser of a variable declaration — i.e. is its
+    // result kept? `await` and assertions sit between the two, so peel them.
+    const resultIsBound = (call) => {
+      let cur = call;
+      for (let p = cur.parent; p; cur = p, p = p.parent) {
+        if (ts.isAwaitExpression(p) || ts.isParenthesizedExpression(p) ||
+            ts.isAsExpression(p) || ts.isNonNullExpression(p)) continue;
+        return ts.isVariableDeclaration(p) && p.initializer === cur;
+      }
       return false;
     };
     const callSites = [];
@@ -1001,7 +1109,8 @@ if (!fnNode) {
       if (
         ts.isCallExpression(n) &&
         bareIdentifierOf(n.expression) === LEDGER_FN &&
-        !insideLedger(n)
+        !insideLedger(n) &&
+        resultIsBound(n)
       ) {
         callSites.push(n);
       }
@@ -1012,15 +1121,28 @@ if (!fnNode) {
       const first = c.arguments[0] && unwrapAssertions(c.arguments[0]);
       return !first || !ts.isIdentifier(first);
     });
+    if (callSites.length > 1) {
+      console.error(
+        `[check-activity-refs-coverage] ${LEDGER_FN}() result is bound in ${callSites.length}\n` +
+          '  places. This script cannot tell which one the scan actually runs, and a second\n' +
+          '  one is how a decoy hides a disconnected live call. Keep one, or update this\n' +
+          '  script — do not delete the check.',
+      );
+      process.exit(1);
+    }
     if (callSites.length === 0 || disconnected.length) {
       console.error(
         `[check-activity-refs-coverage] ${LEDGER_FN}() is ${
-          callSites.length === 0 ? 'never called' : 'called with a literal first argument'
+          callSites.length === 0
+            ? 'never called in a way that keeps its result'
+            : 'called with a literal first argument'
         }.\n` +
           '  Every other check here reads that function\'s body, which says nothing about the\n' +
           '  rows unless the scan hands it the logs it decoded — passing `[]` writes no\n' +
-          '  activity rows at all while leaving every count in this script identical. Pass\n' +
-          '  the decoded-log binding, or update this script — do not delete the check.',
+          '  activity rows at all while leaving every count in this script identical, and a\n' +
+          '  call whose result is discarded (an `if (false)` decoy) is not the scan running\n' +
+          '  it. Bind the result and pass the decoded-log binding, or update this script —\n' +
+          '  do not delete the check.',
       );
       process.exit(1);
     }
@@ -1198,58 +1320,116 @@ if (!fnNode) {
     // — it reads `log.args` into `args` and then enriches it — while keeping the
     // receiver anchored to the loop item.
     //
-    // Deliberately NOT write-checked. The live enrichment reassigns
-    // `args = { ...args, creator }`, which is the same log's arguments plus a
-    // looked-up field; forbidding writes here would reject the code this
-    // guardrail was built around. The declaration is the anchor.
-    const loopLocals = new Map();
-    {
-      const aliases = []; // `const decoded = args` — resolved after the direct pass
-      const collect = (n) => {
-        if (isFunctionLike(n)) return; // a nested closure's locals are not these
-        if (ts.isVariableDeclaration(n) && n.initializer) {
-          const rhs = unwrapAssertions(n.initializer);
-          if (ts.isIdentifier(n.name) && ts.isPropertyAccessExpression(rhs)) {
-            const recv = unwrapAssertions(rhs.expression);
-            if (ts.isIdentifier(recv) && recv.text === loopVar.name) {
-              loopLocals.set(n.name.text, rhs.name.text);
-            }
-          } else if (ts.isIdentifier(n.name) && ts.isIdentifier(rhs)) {
-            aliases.push([n.name.text, rhs.text]);
-          } else if (ts.isObjectBindingPattern(n.name) && ts.isIdentifier(rhs) && rhs.text === loopVar.name) {
-            for (const el of n.name.elements) {
-              if (!ts.isBindingElement(el) || !ts.isIdentifier(el.name)) continue;
-              const key = el.propertyName ?? el.name;
-              if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) {
-                loopLocals.set(el.name.text, key.text);
+    // Writes to these locals ARE checked, but not banned outright (Codex
+    // round-26 P2). Round 25 left them unchecked on the grounds that the live
+    // enrichment reassigns `args = { ...args, creator }` and a ban would reject
+    // the code this guardrail was built around. That reasoning was right about
+    // the enrichment and wrong about everything else: adding
+    // `args = logs[0].args` on the next line passed, and every row after the
+    // first then read the first log's ids — the exact corruption this round
+    // exists to prevent, reached by one extra statement.
+    //
+    // The enrichment has a shape, so require it. A write is accepted only when
+    // its right-hand side is an object literal that SPREADS THE SAME BINDING —
+    // `{ ...args, creator }` — which preserves this log's arguments by
+    // construction and cannot smuggle another log's in. Every other write
+    // disqualifies the local.
+    //
+    // Resolution is LEXICAL, from the call site outward (Codex round-26 P2). A
+    // map keyed by identifier text and filled from the whole loop body answers
+    // for a name that is not the one the call uses: a sibling block containing
+    // `const pinnedEventName = log.eventName` validated an OUTER
+    // `pinnedEventName = logs[0].eventName` passed to the mapper, and every row
+    // after the first dispatched under the first event. Names are not unique
+    // across scopes, so the only sound question is which DECLARATION this
+    // identifier refers to — walk out from the call through enclosing blocks and
+    // take the nearest, stopping at the loop body so an outer binding is never
+    // accepted.
+    /** The nearest declaration of `name` visible at `from`, within the loop. */
+    const nearestDecl = (from, name) => {
+      for (let scope = from; scope; scope = scope.parent) {
+        const stmts =
+          ts.isBlock(scope) || ts.isCaseClause(scope) || ts.isDefaultClause(scope)
+            ? scope.statements
+            : null;
+        if (stmts) {
+          for (const st of stmts) {
+            if (!ts.isVariableStatement(st)) continue;
+            for (const d of st.declarationList.declarations) {
+              if (ts.isIdentifier(d.name) && d.name.text === name) return d;
+              if (ts.isObjectBindingPattern(d.name)) {
+                for (const el of d.name.elements) {
+                  if (ts.isBindingElement(el) && ts.isIdentifier(el.name) && el.name.text === name) {
+                    return d;
+                  }
+                }
               }
             }
           }
         }
-        ts.forEachChild(n, collect);
-      };
-      collect(loopVar.body);
-      // A rename of a loop-local is still the loop item's property, and refusing
-      // `const decoded = args` would make the check reject ordinary code rather
-      // than the disconnection it is aimed at. Resolve to a fixpoint so a chain
-      // of renames behaves the same as one.
-      for (let changed = true; changed; ) {
-        changed = false;
-        for (const [local, from] of aliases) {
-          if (!loopLocals.has(local) && loopLocals.has(from)) {
-            loopLocals.set(local, loopLocals.get(from));
-            changed = true;
-          }
-        }
+        if (scope === loopVar.body) break;
       }
-    }
+      return null;
+    };
+    /** Every write to `name` anywhere in the loop, nested closures included. */
+    const writesTo = (name) => {
+      const found = [];
+      const walk = (n) => {
+        if (writesName(n, name)) found.push(n);
+        ts.forEachChild(n, walk);
+      };
+      walk(loopVar.body);
+      return found;
+    };
+    /** Does a write PRESERVE the binding — `args = { ...args, creator }`? */
+    const preservesSelf = (n, name) => {
+      if (!ts.isBinaryExpression(n) || n.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+        return false;
+      }
+      const rhs = unwrapAssertions(n.right);
+      if (!ts.isObjectLiteralExpression(rhs)) return false;
+      return rhs.properties.some(
+        (p) =>
+          ts.isSpreadAssignment(p) &&
+          ts.isIdentifier(unwrapAssertions(p.expression)) &&
+          unwrapAssertions(p.expression).text === name,
+      );
+    };
+    /** Which loop-item property `name` resolves to here, or null. */
+    const resolvesTo = (from, name, depth = 0) => {
+      if (depth > 8) return null; // a rename chain this long is not real code
+      // A write that does not demonstrably preserve the binding breaks the
+      // chain: the declaration no longer proves what the value is.
+      if (writesTo(name).some((w) => !preservesSelf(w, name))) return null;
+      const decl = nearestDecl(from, name);
+      if (!decl || !decl.initializer) return null;
+      const rhs = unwrapAssertions(decl.initializer);
+      if (ts.isObjectBindingPattern(decl.name)) {
+        if (!ts.isIdentifier(rhs) || rhs.text !== loopVar.name) return null;
+        for (const el of decl.name.elements) {
+          if (!ts.isBindingElement(el) || !ts.isIdentifier(el.name)) continue;
+          if (el.name.text !== name) continue;
+          const key = el.propertyName ?? el.name;
+          if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) return key.text;
+        }
+        return null;
+      }
+      if (ts.isPropertyAccessExpression(rhs)) {
+        const recv = unwrapAssertions(rhs.expression);
+        return ts.isIdentifier(recv) && recv.text === loopVar.name ? rhs.name.text : null;
+      }
+      // A rename of a loop-local is still the loop item's property; resolve it
+      // from the DECLARATION's position so shadowing is respected at each hop.
+      if (ts.isIdentifier(rhs)) return resolvesTo(decl, rhs.text, depth + 1);
+      return null;
+    };
     const readsLoopItem = (a, prop) => {
       const cur = unwrapAssertions(a);
       if (ts.isPropertyAccessExpression(cur)) {
         const recv = unwrapAssertions(cur.expression);
         return cur.name.text === prop && ts.isIdentifier(recv) && recv.text === loopVar.name;
       }
-      if (ts.isIdentifier(cur)) return loopLocals.get(cur.text) === prop;
+      if (ts.isIdentifier(cur)) return resolvesTo(init, cur.text) === prop;
       return false;
     };
     if (
@@ -1283,12 +1463,18 @@ if (!fnNode) {
   // names out of the SQL, find where `loan_id` / `offer_id` sit, and require the
   // bind argument at each of those positions to be the identifier destructured
   // for it.
+  //
+  // Take EVERY such INSERT, not the first (Codex round-26 P2). Stopping at the
+  // first textual match let an unreachable decoy answer for the real one: an
+  // `if (false)` insert naming the columns in the expected order, placed above a
+  // live insert whose binds were swapped, left this green at the usual tally
+  // while every reference persisted into the other reference's column. Which of
+  // two inserts executes is not a question this script can answer, so it refuses
+  // to be asked — one activity_events insert in the ledger, or a loud message.
   {
     const COLUMN_OF = { loanId: 'loan_id', offerId: 'offer_id' };
-    let insertSql = null;
-    let bindArgs = null;
+    const inserts = [];
     const findInsert = (n) => {
-      if (bindArgs) return;
       if (
         ts.isCallExpression(n) &&
         ts.isPropertyAccessExpression(n.expression) &&
@@ -1296,14 +1482,24 @@ if (!fnNode) {
       ) {
         const text = n.expression.expression.getText(sourceFile);
         if (/INSERT\s+(OR\s+\w+\s+)?INTO\s+activity_events/i.test(text)) {
-          insertSql = text;
-          bindArgs = n.arguments;
-          return;
+          inserts.push({ sql: text, args: n.arguments });
         }
       }
       ts.forEachChild(n, findInsert);
     };
     if (ledgerNode.body) findInsert(ledgerNode.body);
+    if (inserts.length > 1) {
+      console.error(
+        `[check-activity-refs-coverage] ${LEDGER_FN}() contains ${inserts.length} activity_events\n` +
+          '  INSERTs. This script lines the column list up against the bind list positionally,\n' +
+          '  which says nothing about the row if a second insert is the one that runs — and a\n' +
+          '  decoy with the columns in the right order is exactly how a swapped live bind\n' +
+          '  hides. Keep one, or update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
+    const insertSql = inserts[0]?.sql ?? null;
+    const bindArgs = inserts[0]?.args ?? null;
     if (!bindArgs) {
       console.error(
         `[check-activity-refs-coverage] could not find the activity_events INSERT's\n` +
@@ -1805,16 +2001,20 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
           );
           continue;
         }
+        // Read with the SAME rules as a case return (Codex round-26 P2). Taking
+        // the first matching property ignored what came after it, so appending
+        // `...({ loanId: 999 } as {})` to the all-null fallback left this green
+        // while attaching every unmapped and allowlisted event to loan 999 —
+        // the widest version of the bug, through the one clause that had its own
+        // weaker reader.
+        const view = objectLiteralView(e);
         for (const field of REF_FIELDS) {
-          const prop = e.properties.find(
-            (pr) =>
-              ts.isPropertyAssignment(pr) &&
-              (ts.isIdentifier(pr.name) || ts.isStringLiteralLike(pr.name)) &&
-              pr.name.text === field,
-          );
-          if (!prop || !isNullLiteral(prop.initializer)) {
+          const prop = view.props.get(field);
+          if (!prop || prop.shorthand || !prop.expr || !isNullLiteral(prop.expr)) {
             structural.push(
-              `the default clause does not return a null ${field} — every event without a case, and every allowlisted one, would be filed under whatever it returns instead`,
+              `the default clause does not return a null ${field} — every event without a case, and every allowlisted one, would be filed under whatever it returns instead${
+                view.spread && !prop ? ' (a spread after it decides the value here)' : ''
+              }`,
             );
           }
         }
@@ -1918,77 +2118,7 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     const scopes = returnNodes.map((r) => {
       const e = r.expression;
       if (!e || !ts.isObjectLiteralExpression(e)) return { opaque: 'not an object literal' };
-      const props = new Map();
-      // Spread POSITION matters, not just presence (Codex round-19 P2). An
-      // explicit property AFTER a spread overrides it — that is a language
-      // guarantee — so `{ ...whatever, loanId: Number(args.loanId) }` is a
-      // perfectly resolvable mapping, and marking the whole scope opaque
-      // rejected a valid one. This is the first finding in the false-POSITIVE
-      // direction, and it is worth separating from the rest: every other round
-      // has been about the checker accepting too much, where the cost is a
-      // silent hole. Here the cost is a correct mapping the author cannot get
-      // past the gate, which is how a guardrail earns a reputation for being
-      // wrong and starts getting worked around.
-      //
-      // So each field records WHERE it was last defined, a spread records where
-      // it sat, and a field survives when its definition is the later of the two.
-      let lastSpreadIdx = -1;
-      const definedAt = new Map();
-      let idx = -1;
-      for (const p of e.properties) {
-        idx += 1;
-        if (ts.isSpreadAssignment(p)) {
-          lastSpreadIdx = idx;
-          continue;
-        }
-        if (ts.isShorthandPropertyAssignment(p)) {
-          props.set(p.name.text, { shorthand: true });
-          definedAt.set(p.name.text, idx);
-          continue;
-        }
-        if (ts.isPropertyAssignment(p)) {
-          // `['loanId']: …` is a ComputedPropertyName wrapping a string literal —
-          // statically resolvable, and valid TypeScript, so ignoring it let a real
-          // mapping go uncounted and its exemption stay falsely live (Codex
-          // round-12 P2).
-          let key = null;
-          if (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) key = p.name.text;
-          else if (ts.isComputedPropertyName(p.name) && ts.isStringLiteralLike(p.name.expression)) {
-            key = p.name.expression.text;
-          }
-          if (key !== null) {
-            props.set(key, { expr: p.initializer });
-            definedAt.set(key, idx);
-          } else {
-            // An unresolvable key could BE this field, and it could sit after
-            // any explicit definition — so it shadows like a spread does.
-            lastSpreadIdx = idx;
-          }
-          continue;
-        }
-        // A GETTER, SETTER or METHOD is an explicit property this parser cannot
-        // read (Codex round-22 P2). `get loanId() { return 999; }` defines the
-        // field as surely as `loanId: 999` does, and falling through to the end
-        // of the loop recorded nothing at all — so the field read as "never
-        // returned here" and the case was skipped, with the ledger attaching
-        // every such event to whatever the getter returns.
-        //
-        // Treated as shadowing rather than parsed: what a getter returns is a
-        // function body, not an expression, and the honest answer for a shape
-        // this checker cannot read is that it cannot read it.
-        if (
-          ts.isGetAccessorDeclaration(p) ||
-          ts.isSetAccessorDeclaration(p) ||
-          ts.isMethodDeclaration(p)
-        ) {
-          lastSpreadIdx = idx;
-        }
-      }
-      // Drop anything the spread (or an unresolvable key) defines LAST.
-      for (const [key, at] of definedAt) {
-        if (at < lastSpreadIdx) props.delete(key);
-      }
-      return { props, spread: lastSpreadIdx >= 0 };
+      return objectLiteralView(e);
     });
     if (escapesWithoutReturning) {
       scopes.push({
