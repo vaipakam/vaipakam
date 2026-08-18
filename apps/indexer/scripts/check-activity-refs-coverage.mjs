@@ -334,6 +334,18 @@ const writesName = (n, wanted) => {
   ) {
     return targets(n.operand);
   }
+  // `for (eventName of […])` writes the parameter on every iteration (Codex
+  // round-22 P2). The initializer is a bare expression rather than a declaration
+  // list, so neither the declaration scan nor the assignment scan sees it, and a
+  // one-element loop before the switch pins the discriminant just as an
+  // assignment does.
+  if (
+    (ts.isForOfStatement?.(n) || ts.isForInStatement?.(n)) &&
+    n.initializer &&
+    !ts.isVariableDeclarationList(n.initializer)
+  ) {
+    return targets(n.initializer);
+  }
   return false;
 };
 
@@ -689,6 +701,38 @@ for (const file of memberFiles) {
                   .join(', ')}) are not reachable by a property path, so a reference inside cannot be mapped or seen by this check`,
               });
             }
+          } else if (i.indexed) {
+            // An INDEXED tuple is a HASH on the wire (Codex round-22 P2). The
+            // topic carries `keccak(abi.encode(tuple))`, so viem hands the mapper
+            // a hex string, not a component object — `args.fields.loanId` reads a
+            // property off a string and `Number(undefined)` is NaN. The dotted
+            // path this walk would derive is syntactically fine and semantically
+            // impossible, which is the shape most worth refusing.
+            if (hidesReference(i.components)) {
+              abiConflicts.push({
+                kind: 'indexed-tuple',
+                event: item.name,
+                message: `${item.name} — \`${path}\` is an INDEXED tuple, so the log carries only its hash and viem decodes it as a hex string; a reference inside (${i.components
+                  .filter((c) => c?.name)
+                  .map((c) => c.name)
+                  .join(', ')}) cannot be read by any property path`,
+              });
+            }
+          } else if (i.components.some((c) => !c?.name)) {
+            // MIXED named and unnamed components (Codex round-22 P2). viem
+            // decodes a tuple with any unnamed member as an ARRAY, so the whole
+            // tuple loses its property access — `args.fields.loanId` is
+            // `undefined` even though `loanId` is right there and named. Skipping
+            // just the unnamed child, as this walk used to, recorded
+            // `fields.loanId` as a valid path and accepted a mapping that
+            // persists NaN.
+            if (hidesReference(i.components)) {
+              abiConflicts.push({
+                kind: 'mixed-tuple',
+                event: item.name,
+                message: `${item.name} — \`${path}\` mixes named and unnamed components, so viem decodes the whole tuple as an ARRAY and no dotted path into it resolves; name every component, or map it positionally outside this checker`,
+              });
+            }
           } else {
             collect(i.components, path);
           }
@@ -898,35 +942,44 @@ if (!fnNode) {
     process.exit(1);
   }
   // The call must SUPPLY THE ROW's references, not merely appear (Codex round-21
-  // P2). Any syntactic call satisfied the first version of this check, including
-  // an `if (false) pluckActivityRefs(…)` left beside a hand-rolled all-null
-  // object — which is the same substitution the check was added to stop, with a
-  // decoy left behind. So the anchor is the destructuring that names the
-  // reference fields, and what is required is that ITS INITIALIZER is the call.
-  let boundFrom = null;
-  let sawBinding = false;
+  // P2), and it must be the ONLY such binding (Codex round-22 P2). Round 21
+  // anchored on the destructuring that names the reference fields but stopped at
+  // the first one it found, so an earlier decoy binding — `const { loanId } =
+  // pluckActivityRefs(…)` above the real one — satisfied it while the row was
+  // filled from a hand-rolled all-null object.
+  //
+  // Deciding WHICH binding reaches the INSERT is dataflow this script does not
+  // do. Requiring there to be exactly one is the same guarantee for a fraction
+  // of the machinery: a second binding of these names inside the ledger is
+  // refused outright, so there is nothing for a decoy to hide behind and a
+  // genuine refactor that needs two gets a loud message instead of a silent
+  // pass.
+  const bindings = [];
   const findBinding = (n) => {
-    if (sawBinding) return;
     if (
       ts.isVariableDeclaration(n) &&
       n.name &&
       ts.isObjectBindingPattern(n.name) &&
-      n.name.elements.some(
-        (el) =>
-          ts.isBindingElement(el) &&
-          ts.isIdentifier(el.name) &&
-          REF_FIELDS.includes(el.name.text),
-      )
+      n.name.elements.some((el) => {
+        if (!ts.isBindingElement(el)) return false;
+        // The PROPERTY taken, not the local alias: `const { loanId: x } = …`
+        // reads the reference field just as `const { loanId } = …` does, and
+        // keying on the alias let a renamed decoy binding slip past the
+        // one-binding rule entirely.
+        const key = el.propertyName ?? el.name;
+        return (
+          (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) &&
+          REF_FIELDS.includes(key.text)
+        );
+      })
     ) {
-      sawBinding = true;
-      const init = n.initializer && unwrapAssertions(n.initializer);
-      if (init && ts.isCallExpression(init)) boundFrom = bareIdentifierOf(init.expression);
+      bindings.push(n);
       return;
     }
     ts.forEachChild(n, findBinding);
   };
   if (ledgerNode.body) findBinding(ledgerNode.body);
-  if (!sawBinding) {
+  if (bindings.length === 0) {
     console.error(
       `[check-activity-refs-coverage] ${LEDGER_FN}() no longer destructures\n` +
         `  ${REF_FIELDS.join(' / ')} from anything, so this script cannot tell where the row's\n` +
@@ -934,6 +987,48 @@ if (!fnNode) {
         '  delete the check.',
     );
     process.exit(1);
+  }
+  if (bindings.length > 1) {
+    console.error(
+      `[check-activity-refs-coverage] ${LEDGER_FN}() destructures\n` +
+        `  ${REF_FIELDS.join(' / ')} in ${bindings.length} places. This script cannot tell which one\n` +
+        '  reaches the activity_events insert, and a second binding is exactly how a\n' +
+        '  decoy hides a row filled from somewhere else. Keep one, or update this\n' +
+        '  script — do not delete the check.',
+    );
+    process.exit(1);
+  }
+  const init = bindings[0].initializer && unwrapAssertions(bindings[0].initializer);
+  const boundFrom = init && ts.isCallExpression(init) ? bareIdentifierOf(init.expression) : null;
+  // ...and it must be handed THIS log's event name and decoded arguments (Codex
+  // round-22 P2). `pluckActivityRefs('LoanRepaid', {})` is the checked function,
+  // called from the right place, binding the right names — and it dispatches
+  // every log through one case with `Number(undefined)` for the id. Validating
+  // the callee's spelling says nothing about what it was asked.
+  //
+  // Shape, not identity: each argument must be a plain read (an identifier or a
+  // property path), not a literal or a constructed object. That is what
+  // separates the live call from a pinned one, and it is checkable without
+  // resolving bindings.
+  if (init && ts.isCallExpression(init)) {
+    const isPlainRead = (a) => {
+      let cur = unwrapAssertions(a);
+      while (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+        cur = unwrapAssertions(cur.expression);
+      }
+      return ts.isIdentifier(cur);
+    };
+    if (init.arguments.length !== 2 || !init.arguments.every(isPlainRead)) {
+      console.error(
+        `[check-activity-refs-coverage] ${LEDGER_FN}() calls pluckActivityRefs with\n` +
+          '  arguments that are not plain reads of the current log. A pinned event name or a\n' +
+          '  constructed argument bag dispatches every row through one case and stores\n' +
+          '  Number(undefined) for its id, while every count here stays identical. Pass the\n' +
+          "  log's event name and decoded args, or update this script — do not delete the\n" +
+          '  check.',
+      );
+      process.exit(1);
+    }
   }
   if (boundFrom !== 'pluckActivityRefs') {
     console.error(
@@ -1350,8 +1445,38 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
 
   for (const clause of switchNode.caseBlock.clauses) {
     if (ts.isDefaultClause(clause)) {
-      // The NULL fallback itself is by design; what matters is anything that fell
-      // INTO it.
+      // The all-null fallback is by design — but it is an ASSUMPTION until read
+      // (Codex round-22 P2). Every event without an explicit case lands here,
+      // including all 66 allowlisted ones, whose exemptions all say "this event
+      // files no reference". A default returning `loanId: 999` attaches every one
+      // of them to loan 999 with the tally unmoved, which is the widest possible
+      // version of the bug this checker exists to catch — and it was the one
+      // clause never looked at.
+      const defaultReturns = [];
+      for (const st of clause.statements) collectReturns(st, defaultReturns);
+      for (const r of defaultReturns) {
+        const e = r.expression;
+        if (!e || !ts.isObjectLiteralExpression(e)) {
+          structural.push(
+            'the default clause returns something this checker cannot read as an object literal — every unmapped and allowlisted event is filed from here',
+          );
+          continue;
+        }
+        for (const field of REF_FIELDS) {
+          const prop = e.properties.find(
+            (pr) =>
+              ts.isPropertyAssignment(pr) &&
+              (ts.isIdentifier(pr.name) || ts.isStringLiteralLike(pr.name)) &&
+              pr.name.text === field,
+          );
+          if (!prop || !isNullLiteral(prop.initializer)) {
+            structural.push(
+              `the default clause does not return a null ${field} — every event without a case, and every allowlisted one, would be filed under whatever it returns instead`,
+            );
+          }
+        }
+      }
+      // ...and what matters beyond that is anything that fell INTO it.
       flushPending('this case can fall through into the all-null default clause');
       continue;
     }
@@ -1496,6 +1621,24 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
             // any explicit definition — so it shadows like a spread does.
             lastSpreadIdx = idx;
           }
+          continue;
+        }
+        // A GETTER, SETTER or METHOD is an explicit property this parser cannot
+        // read (Codex round-22 P2). `get loanId() { return 999; }` defines the
+        // field as surely as `loanId: 999` does, and falling through to the end
+        // of the loop recorded nothing at all — so the field read as "never
+        // returned here" and the case was skipped, with the ledger attaching
+        // every such event to whatever the getter returns.
+        //
+        // Treated as shadowing rather than parsed: what a getter returns is a
+        // function body, not an expression, and the honest answer for a shape
+        // this checker cannot read is that it cannot read it.
+        if (
+          ts.isGetAccessorDeclaration(p) ||
+          ts.isSetAccessorDeclaration(p) ||
+          ts.isMethodDeclaration(p)
+        ) {
+          lastSpreadIdx = idx;
         }
       }
       // Drop anything the spread (or an unresolvable key) defines LAST.
