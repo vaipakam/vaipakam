@@ -441,9 +441,15 @@ function needsRevalidation(): boolean {
  *  past the cutoff — the exact indefinite hold the spec forbids
  *  (Codex #1809 r1 P2). This is not polling: it fires once, at the
  *  expiry the acceptance already computed, and is re-armed only by a
- *  new acceptance. Background tabs may throttle it; the
- *  `visibilitychange` path covers those on return, and the timer
- *  covers the visible-idle case timers are reliable for. */
+ *  new acceptance — or by its own firing discovering the deadline has
+ *  not actually arrived. `setTimeout` counts monotonic time while
+ *  `snapshotFresh` reads the wall clock, so a backward clock correction
+ *  larger than the cushion makes the timer fire while the snapshot is
+ *  still fresh; dropping the deadline there would silently reintroduce
+ *  the indefinite hold (Codex #1809 r2 P2), so the callback re-arms for
+ *  the recomputed remaining time instead. Background tabs may throttle
+ *  it; the `visibilitychange` path covers those on return, and the
+ *  timer covers the visible-idle case timers are reliable for. */
 let expiryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function armExpiryTimer(): void {
@@ -459,7 +465,17 @@ function armExpiryTimer(): void {
   const delay = Math.max(0, expiresAtMs - Date.now()) + 1_000;
   expiryTimer = setTimeout(() => {
     expiryTimer = null;
-    if (needsRevalidation()) void load();
+    if (needsRevalidation()) {
+      void load();
+    } else if (!loading) {
+      // Fired, yet the snapshot still reads fresh: the wall clock moved
+      // backward past the cushion since this deadline was computed.
+      // Re-arm for the recomputed remaining time — the delay is always
+      // ≥1s, so repeated corrections cost one re-arm each, not a spin.
+      // (If a load is in flight instead, its conclusion re-arms; arming
+      // here off the pre-load state would tick uselessly until it ends.)
+      armExpiryTimer();
+    }
   }, delay);
 }
 
