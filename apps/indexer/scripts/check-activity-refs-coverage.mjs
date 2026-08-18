@@ -2377,23 +2377,71 @@ if (!fnNode) {
         // `.slice(0, 1)` is contrived; `logs.filter(…)` is an ordinary refactor
         // with the same consequence, which is why this is fixed rather than
         // deferred. The iterable has to be the parameter itself.
-        const iterated = unwrapAssertions(p.expression);
         const batchParamName = (() => {
           const prm = ledgerNode.parameters?.[0]?.name;
           return prm && ts.isIdentifier(prm) ? prm.text : null;
         })();
-        if (
-          !ts.isIdentifier(iterated) ||
-          (batchParamName !== null && iterated.text !== batchParamName)
-        ) {
+        // ...through unchanged ALIASES of it (Codex round-53 P2). Round 52
+        // compared the iterable's spelling against the parameter's, so
+        // `const activityLogs = logs;` followed by `for (const log of
+        // activityLogs)` — a rename that copies the batch verbatim, keeps
+        // `typecheck` green and walks every decoded log — failed a guardrail
+        // whose whole subject is whether every decoded log is walked. A `const`
+        // initialised to a bare identifier IS that value; a slice, a filter, or
+        // a `let` something may rewrite is not, and still fails.
+        const namesTheBatch = (expr) => {
+          const seen = new Set();
+          let cur = unwrapAssertions(expr);
+          for (let hops = 0; hops < 8; hops += 1) {
+            if (!ts.isIdentifier(cur)) return false;
+            if (seen.has(cur.text)) return false; // a rename cycle resolves to nothing
+            seen.add(cur.text);
+            const bound = resolveNameInScopes(p, cur.text, {
+              stopAt: ledgerNode,
+              shadowSentinel: OPAQUE_BINDING,
+              // the parameter is the DESTINATION of this walk, not a shadow of it
+              notAShadow: (scope) => scope === ledgerNode,
+            });
+            if (bound === null) return cur.text === batchParamName;
+            if (bound === OPAQUE_BINDING) return false;
+            const list = bound.parent;
+            const rebindable =
+              !ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.Const) === 0;
+            if (rebindable || !bound.initializer) return false;
+            cur = unwrapAssertions(bound.initializer);
+          }
+          return false;
+        };
+        // An alias is only worth as much as what it copies. `const` settles the
+        // aliases themselves; the parameter has to be asked, since
+        // `logs = logs.slice(0, 1)` ahead of the loop diminishes the batch under
+        // every spelling of it at once.
+        const batchReassigned = (() => {
+          if (batchParamName === null || !ledgerNode.body) return false;
+          let hit = false;
+          const walk = (n) => {
+            if (hit) return;
+            // a nested binder of the same name is a different `logs` entirely
+            if (n !== ledgerNode.body && bindsNameLexically(n, batchParamName)) return;
+            if (writesName(n, batchParamName)) {
+              hit = true;
+              return;
+            }
+            ts.forEachChild(n, walk);
+          };
+          walk(ledgerNode.body);
+          return hit;
+        })();
+        if (batchParamName !== null && (!namesTheBatch(p.expression) || batchReassigned)) {
           console.error(
             `[check-activity-refs-coverage] ${LEDGER_FN}()'s batch loop iterates\n` +
-              `  \`${p.expression.getText(sourceFile)}\`, not the batch it was handed.\n` +
+              `  \`${p.expression.getText(sourceFile)}\`, which does not resolve to the batch it\n` +
+              `  was handed${batchReassigned ? ` (\`${batchParamName}\` is reassigned first)` : ''}.\n` +
               '  Everything below reads that loop as "once per decoded log". A slice, a\n' +
               '  filter, or any other derived collection silently drops rows while the scan\n' +
               '  still advances `indexer_cursor` past the whole batch — and every count in\n' +
-              '  this script stays identical. Iterate the parameter, or update this script —\n' +
-              '  do not delete the check.',
+              '  this script stays identical. Iterate the parameter (a `const` alias of it is\n' +
+              '  fine), or update this script — do not delete the check.',
           );
           process.exit(1);
         }
@@ -3167,23 +3215,55 @@ if (!fnNode) {
           // FUNCTION while resolving it normally, so the caller advances the
           // cursor exactly as it would on success. What has to be true is that
           // the failure reaches the caller, and only a throw does that.
-          /** Can this block finish by `return` / `break` / `continue`? */
+          /**
+           * Can this block finish by `return` / `break` / `continue`?
+           *
+           * Only by one that LEAVES IT (Codex round-53 P2). Every nested
+           * `break` counted, so a handler that inspects diagnostics —
+           * `catch (err) { for (const d of ds) { if (d.fatal) break; } throw err; }`
+           * — read as swallowing, though that `break` exits its own loop and
+           * the D1 failure always reaches the caller. A jump belongs to the
+           * nearest enclosing target, and one declared INSIDE the region keeps
+           * it inside; this is `findEscape`'s rule, applied to the same
+           * question one level down.
+           */
+          const isLoopStatement = (m) =>
+            ts.isForStatement(m) ||
+            ts.isForOfStatement(m) ||
+            ts.isForInStatement(m) ||
+            ts.isWhileStatement(m) ||
+            ts.isDoStatement(m);
           const completesAbruptly = (node) => {
             let hit = false;
-            const seek = (m) => {
+            const seek = (m, own) => {
               if (hit) return;
-              if (
-                ts.isReturnStatement(m) ||
-                ts.isBreakStatement(m) ||
-                ts.isContinueStatement(m)
-              ) {
-                hit = true;
+              if (isFunctionLike(m)) return; // a nested function's return is its own
+              if (ts.isReturnStatement(m)) {
+                hit = true; // nothing inside a block can own a `return`
                 return;
               }
-              if (isFunctionLike(m)) return; // a nested function's return is its own
-              ts.forEachChild(m, seek);
+              if (ts.isBreakStatement(m) || ts.isContinueStatement(m)) {
+                const label = m.label?.text;
+                if (label !== undefined) {
+                  if (!own.labels.has(label)) hit = true;
+                } else if (ts.isContinueStatement(m)) {
+                  if (!own.inLoop) hit = true; // `continue` binds to a loop only
+                } else if (!own.inLoop && !own.inSwitch) {
+                  hit = true;
+                }
+                return;
+              }
+              let next = own;
+              if (ts.isLabeledStatement(m)) {
+                next = { ...next, labels: new Set(next.labels).add(m.label.text) };
+              }
+              // A loop takes ownership of both forms; a switch takes `break`
+              // alone, and leaves any enclosing loop owning `continue`.
+              if (isLoopStatement(m)) next = { ...next, inLoop: true, inSwitch: false };
+              else if (ts.isSwitchStatement(m)) next = { ...next, inSwitch: true };
+              ts.forEachChild(m, (c) => seek(c, next));
             };
-            if (node) seek(node);
+            if (node) seek(node, { inLoop: false, inSwitch: false, labels: new Set() });
             return hit;
           };
           const alwaysThrows = (node) => {
