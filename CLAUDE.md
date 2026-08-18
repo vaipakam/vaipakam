@@ -205,7 +205,7 @@ registering these can be correct:
 | Place | Condition |
 | --- | --- |
 | `contracts/script/RedeployFacets.s.sol` | only if the facet belongs to one of that script's curated refresh families — it is a *curated* partial refresh, not an all-facets one |
-| `contracts/script/lib/FacetSelectors.sol` **+ a matching case in `contracts/test/deploy/RedeploySelectorParityTest.t.sol`** | only for the facets the curated redeploy scripts cut — the library's own getters are the list. These are ONE step, not a step and its guard: the parity test enumerates each facet BY HAND, so adding a getter without adding its case compiles happily and leaves that selector list entirely unpinned. The same list must also be updated when one of those facets gains or loses an external FUNCTION — see "When you add a function to a facet" below |
+| `contracts/script/lib/FacetSelectors.sol` **+ a matching case in `contracts/test/deploy/RedeploySelectorParityTest.t.sol`** | only when the facet ALREADY HAS a getter in `FacetSelectors` — that is the condition, not "the curated scripts cut it", which is true of far more facets than the library covers (`ReplaceStaleFacets` cuts `ConfigFacet`, `OfferAcceptFacet` and others through `DeployDiamond`'s inherited getters, and those need nothing here). A brand-new facet needs a getter only if you are adding it to a curated script's set. These are ONE step, not a step and its guard: the parity test enumerates each facet BY HAND, so adding a getter without adding its case compiles happily and leaves that selector list entirely unpinned. The same list must also be updated when a covered facet gains, loses or renames an external FUNCTION — see "When you add a function to a facet" below |
 | `contracts/script/exportFrontendAbis.sh` (`FACETS=(...)`) | only if an app actually consumes the facet's ABI. Internal facets are deliberately excluded — `ReceiverFacet` is not in that array and should not be |
 | `packages/contracts/src/abis/index.ts` | only alongside the entry above — the export script does **not** touch this barrel |
 
@@ -247,6 +247,15 @@ its selector there too. `RedeploySelectorParityTest` pins each list to the
 compiled ABI's `methodIdentifiers` **exactly** — same size, nothing missing,
 nothing extra — so the omission fails the deploy-sanity suite rather than
 passing silently. Facets outside that set need nothing here.
+
+**Deleting or renaming a function needs more than deleting the line.** Dropping
+a selector from the library turns the parity test green and simultaneously makes
+the curated script blind to that selector — so its OLD route stays live on the
+stale implementation, which is the split Diamond again by the opposite door. A
+retired selector needs an explicit `FacetCutAction.Remove` leg, the way
+`RedeployFacets` handles the retired `uint8` keeper signatures via
+`_legacyProfileRemovedSelectors()`. The library update is necessary and not
+sufficient.
 
 **`RiskPreviewFacet` has a FOURTH copy of its surface**, and it is a shell
 array: `contracts/script/rehearse-partial-refresh.sh` hard-codes
