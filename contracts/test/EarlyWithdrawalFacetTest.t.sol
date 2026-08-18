@@ -563,6 +563,209 @@ contract EarlyWithdrawalFacetTest is Test {
         assertEq(loan.lender, newLender);
     }
 
+    // ─── #1503 item 28: settled interest nets out of the forfeiture ──────────
+    //
+    // Periodic auto-liquidation forwards interest to the lender through
+    // `loan.interestSettled` WITHOUT resetting the accrual clock, so the raw
+    // accrual still spans periods the borrower has already paid for. Both sale
+    // routes used to charge the seller that raw figure — billing them for
+    // interest they had already received.
+    //
+    // The netting tests are DIFFERENTIAL on purpose: the same sale is run twice
+    // from one snapshot, once with a settled credit and once without, and only
+    // the difference is asserted. Recomputing the accrual formula in the test
+    // would just restate the implementation, and would pass even if both runs
+    // were wrong by the same amount.
+
+    /// @dev Seeds the cross-facet stubs the sale routes need. Re-applied after a
+    ///      state revert, since a snapshot restores EVM state and says nothing
+    ///      about cheatcode mocks.
+    function _mockSaleSideEffects() internal {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+    }
+
+    /// @dev Two things the DIRECT route checks before it ever reaches the
+    ///      netting, both of which a warp trips: the buy offer carries a finite
+    ///      expiry stamped at creation, and its term must not exceed the loan's
+    ///      REMAINING term. Neither is what these tests are about, so the offer
+    ///      is made GTC and its term trimmed to what is left.
+    function _relaxBuyOfferForWarp(uint16 remainingDays) internal {
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.expiresAt = 0;
+        o.durationDays = remainingDays;
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+    }
+
+    function _seedSettledInterest(uint256 loanId, uint256 amount) internal {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        l.interestSettled = uint128(amount);
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+    }
+
+    /// @dev DIRECT route. The buy offer carries the loan's own rate, so there is
+    ///      no shortfall and the seller's whole cost is the forfeited accrual —
+    ///      which makes the payout move one-for-one with the credit.
+    function test_sellLoanViaBuyOffer_netsSettledInterestOutOfForfeiture() public {
+        _relaxBuyOfferForWarp(20); // 30-day loan, 10 days in
+        vm.warp(block.timestamp + 10 days); // let interest accrue (~1.37e18)
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithoutCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        uint256 credit = 1 ether; // < accrued, so the netting saturates nowhere
+        _seedSettledInterest(activeLoanId, credit);
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithoutCredit, 0, "control run must actually pay the seller");
+        assertEq(
+            paidWithCredit - paidWithoutCredit,
+            credit,
+            "seller keeps exactly the interest the borrower had already settled"
+        );
+    }
+
+    /// @dev DIRECT route, EXCESS credit. `creditSettledInterest` saturates at
+    ///      zero, so netting alone would leave the forfeiture correctly nil while
+    ///      the leftover silently reduced what the incoming lender is owed. The
+    ///      sale refuses instead, and names the residual it refused over.
+    ///      No time is warped, so the accrual is zero and the reported residual
+    ///      is exactly the seeded credit — an exact assertion that does not
+    ///      restate the accrual formula. The warped case below then shows the
+    ///      guard still fires once interest has accrued.
+    function test_sellLoanViaBuyOffer_revertsWhilePrepaidCreditRemains() public {
+        _mockSaleSideEffects();
+
+        uint256 credit = 500 ether;
+        _seedSettledInterest(activeLoanId, credit);
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SaleBlockedByPrepaidInterest.selector,
+                activeLoanId,
+                credit // accrued == 0, so the residual is the whole credit
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev DIRECT route, excess credit against a NON-zero accrual. Only the
+    ///      selector is pinned here; the residual's exact value is covered by the
+    ///      zero-accrual case above, and recomputing it here would duplicate the
+    ///      implementation rather than check it.
+    function test_sellLoanViaBuyOffer_revertsOnExcessCreditAfterAccrual() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        _mockSaleSideEffects();
+
+        // Far above anything 10 days at 5% on 1000 could accrue.
+        _seedSettledInterest(activeLoanId, 500 ether);
+
+        vm.prank(lender);
+        vm.expectPartialRevert(IVaipakamErrors.SaleBlockedByPrepaidInterest.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev LISTED route. Same claim on the completion path, driven through the
+    ///      escrowed-proceeds fan-out — which needed a seeded escrow to reach at
+    ///      all, since the scaffolded completions here never run a real accept.
+    function test_completeLoanSale_netsSettledInterestOutOfForfeiture() public {
+        _stageAcceptedSaleListing();
+        vm.warp(block.timestamp + 5 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        uint256 paidWithoutCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // Below five days' accrual (~6.85e17), so the netting saturates nowhere.
+        uint256 credit = 0.1 ether;
+        _seedSettledInterest(activeLoanId, credit);
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        uint256 paidWithCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithoutCredit, 0, "control run must actually pay the seller");
+        assertEq(
+            paidWithCredit - paidWithoutCredit,
+            credit,
+            "seller keeps exactly the interest the borrower had already settled"
+        );
+    }
+
+    /// @dev LISTED route, EXCESS credit — the refusal sits above the netting on
+    ///      this route too, so the two exits cannot diverge.
+    function test_completeLoanSale_revertsWhilePrepaidCreditRemains() public {
+        _stageAcceptedSaleListing();
+        _mockSaleSideEffects();
+
+        uint256 credit = 500 ether;
+        _seedSettledInterest(activeLoanId, credit);
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SaleBlockedByPrepaidInterest.selector,
+                activeLoanId,
+                credit // accrued == 0, so the residual is the whole credit
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev LISTED route, excess credit against a NON-zero accrual — the warped
+    ///      twin of the case above, selector-only for the same reason.
+    function test_completeLoanSale_revertsOnExcessCreditAfterAccrual() public {
+        _stageAcceptedSaleListing();
+        vm.warp(block.timestamp + 5 days);
+        _mockSaleSideEffects();
+
+        _seedSettledInterest(activeLoanId, 500 ether);
+
+        vm.prank(lender);
+        vm.expectPartialRevert(IVaipakamErrors.SaleBlockedByPrepaidInterest.selector);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Post a listing, mark its vehicle offer accepted at the loan's own
+    ///      rate (no shortfall), and escrow the buyer's principal so the net
+    ///      settlement actually runs.
+    function _stageAcceptedSaleListing() internal {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        vm.clearMockedCalls();
+
+        _setOfferAcceptedAndRate(50, 500);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
+        _setupTempLoan(2);
+        TestMutatorFacet(address(diamond)).setSaleProceedsEscrowRaw(activeLoanId, PRINCIPAL);
+    }
+
     // ─── createLoanSaleOffer reverts ─────────────────────────────────────────
 
     function testCreateSaleOfferRevertsNotNFTOwner() public {

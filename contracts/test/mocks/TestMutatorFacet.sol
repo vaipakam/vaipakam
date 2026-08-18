@@ -373,6 +373,16 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().heldForLender[loanId] = amount;
     }
 
+    /// @notice Write `s.saleProceedsEscrow[loanId] = amount` directly.
+    /// @dev #1503 item 28 — the listed sale route's net settlement only runs when
+    ///      the buyer's principal is escrowed, which happens on a real listing
+    ///      accept. Tests that scaffold a completion from `_setupTempLoan` never
+    ///      reach that, so the whole payout fan-out was unreachable and no test
+    ///      could observe what the seller is actually charged.
+    function setSaleProceedsEscrowRaw(uint256 loanId, uint256 amount) external {
+        LibVaipakam.storageSlot().saleProceedsEscrow[loanId] = amount;
+    }
+
     /// #594 test — append a loanId to a user's loan index directly (to set up
     /// the already-indexed dup-protection case).
     function pushUserLoanIdRaw(address user, uint256 loanId) external {
