@@ -149,7 +149,7 @@ contract PauseGatingTest is SetupTest {
 
     function test_pause_createLoanSaleOffer() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(0, 0, false, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(0, 0, false, 7 days, 0, type(uint128).max);
     }
 
     function test_pause_completeLoanSale() public {

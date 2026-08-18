@@ -2388,6 +2388,26 @@ library LibVaipakam {
      *      treasury at claim time (per-user directive: defaulted borrower
      *      rewards and early-withdrawal initiator rewards go to treasury).
      */
+    /**
+     * @notice #1503 item 4 — what the seller of a lender position authorized,
+     *         stored with the listing and enforced when the sale completes.
+     * @dev    The listing binds the buyer's rate; these bind the seller's side.
+     *         Completion recomputes the forfeiture and re-reads the held
+     *         balance at the acceptance block, so without these a buyer can
+     *         race a cancellation and take the drift. Packed into one slot.
+     */
+    struct SaleListingBound {
+        /// @dev Minimum the seller must receive from the net settlement, in the
+        ///      loan's PRINCIPAL asset. Kept separate from the held ceiling
+        ///      below because the two are not necessarily the same asset.
+        uint128 minNetSettlement;
+        /// @dev Maximum held-for-lender balance that may transfer to the buyer.
+        ///      A partial or internal settlement can park a NEW held amount
+        ///      between listing and acceptance, and completion hands it over —
+        ///      a loss the net figure deliberately excludes and so cannot catch.
+        uint128 maxHeldTransferred;
+    }
+
     struct RewardEntry {
         address user;
         uint64 loanId;
@@ -6643,6 +6663,25 @@ library LibVaipakam {
         //   discarded portion would read as still-in-transit forever,
         //   restoring the exact phantom allowance this counter removes.
         uint256 recycleReleasedRemitResolvedCumulative;
+        // ─── #1503 item 4 — the seller's economic bound on a sale listing ────
+        // APPENDED AT THE STRUCT TAIL — never insert mid-struct.
+        //
+        // A listing binds the buyer's rate but, before this, nothing about the
+        // SELLER's economics: they confirm a figure at listing time while
+        // completion recomputes the forfeiture and re-reads the held balance at
+        // the acceptance block. The gap is not disclosure-shaped — a buyer can
+        // race a cancellation and take exactly the drift — so the bound is
+        // stored with the listing and enforced at completion.
+        //
+        // Two values, not one total: the settlement is paid in the loan's
+        // principal asset and the held balance can be a different asset
+        // entirely, so summing them would compare quantities that are not
+        // commensurable. Both are literal — there is no "0 means unbounded"
+        // sentinel, because an absent bound is the condition this exists to
+        // remove. A seller who genuinely accepts any outcome passes 0 and
+        // `type(uint128).max`, which is an authorization rather than an
+        // omission.
+        mapping(uint256 => SaleListingBound) saleListingBound;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

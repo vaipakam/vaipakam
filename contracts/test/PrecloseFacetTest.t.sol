@@ -1497,7 +1497,7 @@ contract PrecloseFacetTest is Test {
 
         vm.expectRevert(EarlyWithdrawalFacet.OffsetActiveOnLoan.selector);
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days, 0, type(uint128).max);
     }
 
     /// @dev #1001 (S3, Codex #1070) — a linked offset offer is immutable: its

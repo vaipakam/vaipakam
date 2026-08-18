@@ -2120,7 +2120,13 @@ contract AnvilNewPositiveFlows is Script {
         // -while-collateral-falls case the accept-time check exists for.
         vm.recordLogs();
         vm.startBroadcast(newLenderKey);
-        EarlyWithdrawalFacet(diamond).createLoanSaleOffer(loanId, 500, true, 7 days);
+        // #1503 item 4 — the permissive bound (accept any net, allow any held
+        // transfer). This flow is rehearsing the happy path, so it authorizes
+        // whatever completion computes; the refusal directions are driven by
+        // the unit suite rather than here.
+        EarlyWithdrawalFacet(diamond).createLoanSaleOffer(
+            loanId, 500, true, 7 days, 0, type(uint128).max
+        );
         vm.stopBroadcast();
         uint256 saleOfferId;
         {

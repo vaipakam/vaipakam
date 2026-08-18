@@ -1005,4 +1005,34 @@ interface IVaipakamErrors {
     /// @param loanId          The loan whose sale was refused.
     /// @param residualCredit  `interestSettled` minus the interest accrued since.
     error SaleBlockedByPrepaidInterest(uint256 loanId, uint256 residualCredit);
+
+    /// @notice #1503 item 4 — the sale would pay the seller less from the net
+    ///         settlement than the listing authorized.
+    /// @dev    A listing binds the buyer's rate, not the seller's economics:
+    ///         the seller confirms a figure when they list, and completion
+    ///         recomputes the forfeiture at the ACCEPTANCE block. The gap is
+    ///         not merely a disclosure problem — a buyer can race the seller's
+    ///         cancellation and capture exactly the drift — so the seller's
+    ///         floor is stored with the listing and checked here. Refusing
+    ///         costs the buyer a reverted accept; the alternative costs the
+    ///         seller value they never agreed to give up.
+    /// @param loanId The loan whose sale was refused.
+    /// @param actual The net settlement the seller would have received.
+    /// @param bound  The minimum they authorized at listing time.
+    error SaleNetBelowSellerBound(uint256 loanId, uint256 actual, uint256 bound);
+
+    /// @notice #1503 item 4 — the sale would hand the buyer more held-for-lender
+    ///         balance than the listing authorized.
+    /// @dev    Deliberately NOT folded into the net bound above. A partial or
+    ///         internal settlement can park a NEW held amount between listing
+    ///         and acceptance, and completion transfers it to the buyer — so the
+    ///         seller can end up materially worse off with the net floor still
+    ///         satisfied, because the held balance is the one line the net
+    ///         figure excludes by design. It is also not necessarily the same
+    ///         asset as the settlement, so a single summed total would compare
+    ///         quantities that are not commensurable.
+    /// @param loanId The loan whose sale was refused.
+    /// @param actual The held balance that would have transferred.
+    /// @param bound  The maximum the seller authorized at listing time.
+    error SaleHeldTransferAboveSellerBound(uint256 loanId, uint256 actual, uint256 bound);
 }

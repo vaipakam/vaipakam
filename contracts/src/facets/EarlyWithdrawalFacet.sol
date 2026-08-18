@@ -160,12 +160,29 @@ contract EarlyWithdrawalFacet is
      * @param listingSeconds Seller-chosen listing window in seconds; bounded
      *        to [MIN_SALE_LISTING_SECONDS, MAX_SALE_LISTING_SECONDS] and
      *        clamped at the loan's maturity.
+     * @param minNetSettlement Item 4 — the least the seller will accept from
+     *        the net settlement, in the loan's principal asset. Completion
+     *        recomputes the forfeiture at the ACCEPTANCE block, so without a
+     *        stored floor the seller's reviewed figure is disclosure rather
+     *        than consent, and a buyer can race a cancellation for the drift.
+     * @param maxHeldTransferred Item 4 — the most held-for-lender balance the
+     *        seller will let transfer to the buyer. Separate from the floor
+     *        above because a partial or internal settlement can park a NEW held
+     *        amount between listing and acceptance: that is the one line the
+     *        net figure excludes by design, so a net-only bound cannot see it.
+     *        The two are also not necessarily the same asset.
+     *
+     *        Neither value has an "unbounded" sentinel. A seller who accepts
+     *        any outcome passes `0` and `type(uint128).max`, which is an
+     *        authorization; an absent bound is the condition item 4 removes.
      */
     function createLoanSaleOffer(
         uint256 loanId,
         uint256 interestRateBps,
         bool creatorRiskAndTermsConsent,
-        uint64 listingSeconds
+        uint64 listingSeconds,
+        uint128 minNetSettlement,
+        uint128 maxHeldTransferred
     ) external nonReentrant whenNotPaused {
         // Tier-1 sanctions gate — creating a sale offer is a state-
         // creating action by msg.sender; sanctioned wallet blocked.
@@ -268,6 +285,16 @@ contract EarlyWithdrawalFacet is
         // Design item 1 — mandatory finite expiry, clamped at the loan's own
         // maturity. Validated in its own frame (viaIR stack ceiling).
         uint64 listingExpiresAt = _boundListingExpiry(loan, listingSeconds);
+
+        // Item 4 — record what the seller authorized BEFORE anything can be
+        // accepted against this listing. Stored under the loan id rather than
+        // the sale-offer id because completion resolves from the loan, and a
+        // stale bound from an earlier listing must not survive: the relist path
+        // reaches here every time, so this assignment always overwrites.
+        s.saleListingBound[loanId] = LibVaipakam.SaleListingBound({
+            minNetSettlement: minNetSettlement,
+            maxHeldTransferred: maxHeldTransferred
+        });
 
         // #951 (Codex #959) — native-lock the lender position NFT BEFORE the
         // cross-facet create hop, not after. Otherwise, if the seller is a
@@ -563,6 +590,21 @@ contract EarlyWithdrawalFacet is
         // Snapshot pre-existing heldForLender before any new shortfall deposits
         uint256 priorHeldSale = s.heldForLender[loanId];
 
+        // Item 4, held half — enforced HERE, on the snapshot, and not after the
+        // migration: this is the amount that will move to the buyer, and the
+        // point of the bound is to refuse before any of it does. A partial or
+        // internal settlement can park a new held balance between listing and
+        // acceptance, so this figure is not the one the seller reviewed unless
+        // it is checked against what they authorized.
+        LibVaipakam.SaleListingBound storage sellerBound = s.saleListingBound[loanId];
+        if (priorHeldSale > uint256(sellerBound.maxHeldTransferred)) {
+            revert SaleHeldTransferAboveSellerBound(
+                loanId,
+                priorHeldSale,
+                uint256(sellerBound.maxHeldTransferred)
+            );
+        }
+
         // ── Accrued interest & shortfall ────────────────────────────────────
         // "Forfeited accrued" means liam absorbs the cost — the borrower has
         // not paid this interest yet.  liam must fund every token that gets
@@ -625,6 +667,18 @@ contract EarlyWithdrawalFacet is
         // `ERC20InsufficientAllowance` for any seller without a standing
         // allowance, masked only because the pull is skipped when `accrued == 0`.
         uint256 proceeds = s.saleProceedsEscrow[loanId];
+        // The floor has to bind on the legacy no-escrow shape below too, and
+        // there it binds trivially: those branches pay the seller nothing from
+        // the settlement — they collect FROM the seller — so their net receipt
+        // is zero. Checking here rather than inside each branch keeps the one
+        // rule in one place, and refuses before any transfer.
+        if (proceeds == 0 && sellerBound.minNetSettlement > 0) {
+            revert SaleNetBelowSellerBound(
+                loanId,
+                0,
+                uint256(sellerBound.minNetSettlement)
+            );
+        }
         if (proceeds > 0) {
             delete s.saleProceedsEscrow[loanId];
             uint256 saleShortfall = saleRemainingInterest >
@@ -646,6 +700,18 @@ contract EarlyWithdrawalFacet is
             if (liamCost > proceeds) revert RateShortfallTooHigh();
 
             uint256 toLiam = proceeds - liamCost;
+            // Item 4, settlement half — the seller's floor, checked before any
+            // of the fan-out moves. `toLiam` is exactly the figure the listing
+            // UI shows them, recomputed at the acceptance block; refusing costs
+            // the buyer a reverted accept, while proceeding costs the seller
+            // value they never agreed to give up.
+            if (toLiam < uint256(sellerBound.minNetSettlement)) {
+                revert SaleNetBelowSellerBound(
+                    loanId,
+                    toLiam,
+                    uint256(sellerBound.minNetSettlement)
+                );
+            }
             if (toLiam > 0) {
                 IERC20(loan.principalAsset).safeTransfer(
                     originalLender,
