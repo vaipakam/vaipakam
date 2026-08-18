@@ -617,21 +617,29 @@ else
     awk '
       BEGIN { inblk = 0 }
       {
-        line = $0; out = ""; i = 1; instr = 0; q = ""; buf = ""
+        line = $0; out = ""; i = 1; instr = 0; q = ""; buf = ""; esc = 0
         while (i <= length(line)) {
           ch = substr(line, i, 1); two = substr(line, i, 2)
           if (inblk) { if (two == "*/") { inblk = 0; i += 2 } else { i++ }; continue }
           # Inside a string literal: buffer the contents and decide at the close.
           # Comment markers in here are just characters.
           if (instr) {
-            if (ch == "\\") { buf = buf substr(line, i + 1, 1); i += 2; continue }
+            # An escape makes the literal UNREADABLE to this stripper, so the
+            # whole string is dropped rather than guessed at (Codex #1798 r5 P2).
+            # Removing just the backslash turns `"backstop\x2dFacet"` into the
+            # plausible key `backstopx2dFacet`, while the artifact would actually
+            # receive `backstop-Facet`; parse and count agree on the wrong answer
+            # and the gate goes green on a key no consumer knows. Dropping it
+            # leaves `writeFacet("", …)`, which matches no registration shape, so
+            # the exact-coverage guard reports it as unparsed.
+            if (ch == "\\") { esc = 1; i += 2; continue }
             if (ch == q) {
               # Keep the contents ONLY if they could be a facet key. Anything
               # else — a URL, a diagnostic, a whole registration quoted inside
               # another string — is dropped, so no string can contribute either a
               # counted call or a parsed pair.
-              if (buf ~ /^[A-Za-z0-9]+$/) { out = out buf }
-              out = out ch; instr = 0; buf = ""; i++
+              if (!esc && buf ~ /^[A-Za-z0-9]+$/) { out = out buf }
+              out = out ch; instr = 0; buf = ""; esc = 0; i++
               continue
             }
             buf = buf ch; i++
@@ -644,7 +652,70 @@ else
         }
         print out
       }
-    ' "$1" | tr '\n' ' '
+    ' "$1"
+  }
+
+  # Only code the deploy actually RUNS (Codex #1798 r5 P1).
+  #
+  # Harvesting the whole file counts a registration that no longer executes.
+  # Move `writeFacet("backstopFacet", …)` into a private `_recordBackstop(...)`
+  # and forget to call it: every count still agrees, every comparison stays
+  # empty, and a fresh deploy silently stops recording the facet — the exact
+  # class of bug this step exists to catch, reintroduced one refactor later.
+  #
+  # So the harvest is restricted to functions reachable from the script's own
+  # entry points. `external`/`public` functions are the seeds, because an
+  # operator or a test can invoke any of them; everything internal must be
+  # called, transitively, from one of those to count. That is what makes an
+  # orphaned helper's registrations disappear from the harvest — which turns
+  # the silent pass into a loud `UNRECORDED` report, since the facet's cut is
+  # still on the live path.
+  #
+  # Bodies are split by brace depth on the comment-stripped text, so a `{` in a
+  # string cannot unbalance it: the stripper has already reduced every string to
+  # either a bare key or nothing.
+  reachable_bodies() { # <entry-point seeds are derived, not passed>
+    awk '
+      function nchar(s, c,   n, i) {
+        n = 0
+        for (i = 1; i <= length(s); i++) if (substr(s, i, 1) == c) n++
+        return n
+      }
+      {
+        if (cur == "") {
+          if (match($0, /function[ \t]+[A-Za-z0-9_]+[ \t]*\(/)) {
+            name = substr($0, RSTART, RLENGTH)
+            sub(/function[ \t]+/, "", name); sub(/[ \t]*\(.*/, "", name)
+            cur = name; buf = ""; depth = 0; started = 0; sig = ""
+          } else next
+        }
+        buf = buf " " $0
+        if (!started) {
+          sig = sig " " $0
+          if (index($0, "{") > 0) started = 1
+        }
+        depth += nchar($0, "{") - nchar($0, "}")
+        if (started && depth <= 0) {
+          body[cur] = body[cur] " " buf
+          # A multi-line signature puts the visibility keyword on any of its
+          # lines, so the whole header up to the opening brace is examined.
+          if (sig ~ /(^|[^A-Za-z0-9_])(external|public)([^A-Za-z0-9_]|$)/) seed[cur] = 1
+          cur = ""
+        }
+      }
+      END {
+        for (n in seed) if (n in body) { live[n] = 1; queue[++qn] = n }
+        for (qi = 1; qi <= qn; qi++) {
+          text = body[queue[qi]]
+          for (n in body) {
+            if (n in live) continue
+            if (text ~ ("(^|[^A-Za-z0-9_])" n "[ \t]*\\(")) { live[n] = 1; queue[++qn] = n }
+          }
+        }
+        for (n in live) printf "%s ", body[n]
+        printf "\n"
+      }
+    '
   }
   # ONE view for counting and parsing alike (Codex #1798 r5). Rounds 3-5 walked a
   # false-positive ladder created by treating strings differently in the two
@@ -659,8 +730,8 @@ else
   # (`[A-Za-z0-9]+`), which is the only thing either half needs to read out of a
   # string. Everything else in quotes — URLs, log text, a registration-shaped
   # string — is dropped before either half sees it.
-  DEPLOY_FLAT="$(strip_sol_comments "$DEPLOY_SOL")"
-  REFRESH_FLAT="$(strip_sol_comments "$REFRESH_SOL")"
+  DEPLOY_FLAT="$(strip_sol_comments "$DEPLOY_SOL" | reachable_bodies)"
+  REFRESH_FLAT="$(strip_sol_comments "$REFRESH_SOL" | reachable_bodies)"
 
   CUT_GETTER_VAR="$(printf '%s' "$DEPLOY_FLAT" \
     | grep -oE '_buildCut[[:space:]]*\([[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors[[:space:]]*\(\)' \
@@ -785,6 +856,33 @@ else
     # 3. the refresh script labels each facet with the deploy's own key
     DEPLOY_GETTER_KEY="$(awk 'NR==FNR{k[$1]=$2;next} ($2 in k){print $1, k[$2]}' \
       <(printf '%s\n' "$WROTE_VAR_KEY") <(printf '%s\n' "$CUT_GETTER_VAR") | sort -u)"
+
+    # The two scripts must name the SAME set of selector getters before their
+    # keys can be compared (Codex #1798 r5 P2). The comparison below joins on the
+    # getter, so an `Item` whose getter the deploy script does not name is simply
+    # skipped — and a mistyped key on exactly that item then passes every count,
+    # never enters KEY_DRIFT, and relabels the artifact. `RefreshScriptFacetParity`
+    # cannot cover this either: an alias getter returning the same selector array
+    # keeps that test green. Both directions are reported, since a getter only the
+    # deploy names is a facet the refresh silently stops refreshing.
+    GETTER_DRIFT=""
+    _dg="$(printf '%s\n' "$DEPLOY_GETTER_KEY" | awk 'NF{print $1}' | sort -u)"
+    _rg="$(printf '%s\n' "$REFRESH_GETTER_KEY" | awk 'NF{print $1}' | sort -u)"
+    _only_deploy="$(comm -23 <(printf '%s\n' "$_dg") <(printf '%s\n' "$_rg") || true)"
+    _only_refresh="$(comm -13 <(printf '%s\n' "$_dg") <(printf '%s\n' "$_rg") || true)"
+    if [ -n "$_only_deploy" ] || [ -n "$_only_refresh" ]; then
+      echo "  ✗ the deploy and refresh scripts do not name the same selector getters," >&2
+      echo "    so their keys cannot be compared facet-for-facet:" >&2
+      [ -z "$_only_deploy" ] || { echo "      only in DeployDiamond.s.sol:" >&2
+                                  printf '        %s\n' $_only_deploy >&2; }
+      [ -z "$_only_refresh" ] || { echo "      only in RefreshAllFacetsInPlace.s.sol:" >&2
+                                   printf '        %s\n' $_only_refresh >&2; }
+      echo "    Use the same _get<Facet>Selectors() name in both — an alias satisfies" >&2
+      echo "    RefreshScriptFacetParityTest while hiding its key from this check." >&2
+      FAIL=1
+      GETTER_DRIFT=1
+    fi
+
     KEY_DRIFT="$(awk 'NR==FNR{d[$1]=$2;next} ($1 in d) && d[$1]!=$2 {print $1" deploy="d[$1]" refresh="$2}' \
       <(printf '%s\n' "$DEPLOY_GETTER_KEY") <(printf '%s\n' "$REFRESH_GETTER_KEY") || true)"
     if [ -n "$KEY_DRIFT" ]; then
@@ -793,7 +891,7 @@ else
       echo "    the refresh writes its key through items[i].key, so a mismatch" >&2
       echo "    relabels the artifact and consumers report a live facet missing." >&2
       FAIL=1
-    else
+    elif [ -z "$GETTER_DRIFT" ]; then
       echo "  ✓ refresh-script facet keys match the deploy script's"
     fi
   fi
