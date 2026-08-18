@@ -2978,7 +2978,21 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     // every mapping untouched. The per-case scan has stopped at function
     // boundaries since round 11; this one, written for the same question one
     // level out, never learned it.
-    if (isFunctionLike(n)) return;
+    //
+    // ...but a function DECLARATION's own name binds in the ENCLOSING scope and
+    // is hoisted, so it shadows out here even though its body does not (Codex
+    // round-41 P2). Returning before the declaration check below meant
+    // `function Number(_v: unknown) { return 999; }` inside the mapper was
+    // waved through, and every mapped reference becomes 999. The boundary stop
+    // was right; placing it above the check that inspects the boundary's own
+    // name was not. A function EXPRESSION or arrow is genuinely invisible here,
+    // since its name — where it has one — binds only inside itself.
+    if (isFunctionLike(n)) {
+      if (ts.isFunctionDeclaration(n) && n.name && bindsShadowable(n.name)) {
+        outerShadow = n.name.text;
+      }
+      return;
+    }
     // Declarations (including DESTRUCTURED ones) and WRITES alike — the enclosing
     // body needs the same treatment the per-case scan gets (Codex round-14 P2):
     // `const { Number } = …` and `args.loanId = 0n` sitting just above the switch
