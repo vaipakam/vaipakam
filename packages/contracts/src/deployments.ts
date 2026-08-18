@@ -55,6 +55,9 @@ export interface DeploymentFacets {
   /** #1351 slice 2c — the claim entry points split out of
    *  `interactionRewardsFacet` for EIP-170 headroom. */
   rewardClaimFacet?: HexAddress;
+  /** #1434 — the permissionless claim-horizon sweep on its own facet
+   *  (EIP-170: sharing the day engine costs ~12.8 KB wherever it lives). */
+  rewardHorizonSweepFacet?: HexAddress;
   feeEntitlementFacet?: HexAddress;
   legalFacet?: HexAddress;
   loanFacet?: HexAddress;
