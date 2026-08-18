@@ -614,21 +614,27 @@ else
   # the exact-coverage guard could not see the loss. No such string exists in
   # either script today; the guard is for the one someone adds later.
   strip_sol_comments() {
-    awk -v blank="${2:-0}" '
+    awk '
       BEGIN { inblk = 0 }
       {
-        line = $0; out = ""; i = 1; instr = 0; q = ""
+        line = $0; out = ""; i = 1; instr = 0; q = ""; buf = ""
         while (i <= length(line)) {
           ch = substr(line, i, 1); two = substr(line, i, 2)
           if (inblk) { if (two == "*/") { inblk = 0; i += 2 } else { i++ }; continue }
-          # Inside a string literal, comment markers are just characters.
+          # Inside a string literal: buffer the contents and decide at the close.
+          # Comment markers in here are just characters.
           if (instr) {
-            # blank=1 drops the CONTENTS (keeping the quotes) so a call name
-            # written inside a diagnostic string is not counted as a call.
-            if (blank != 1 || ch == q) { out = out ch }
-            if (ch == "\\") { if (blank != 1) { out = out substr(line, i + 1, 1) }; i += 2; continue }
-            if (ch == q) { instr = 0 }
-            i++
+            if (ch == "\\") { buf = buf substr(line, i + 1, 1); i += 2; continue }
+            if (ch == q) {
+              # Keep the contents ONLY if they could be a facet key. Anything
+              # else — a URL, a diagnostic, a whole registration quoted inside
+              # another string — is dropped, so no string can contribute either a
+              # counted call or a parsed pair.
+              if (buf ~ /^[A-Za-z0-9]+$/) { out = out buf }
+              out = out ch; instr = 0; buf = ""; i++
+              continue
+            }
+            buf = buf ch; i++
             continue
           }
           if (ch == "\"" || ch == "'"'"'") { instr = 1; q = ch; out = out ch; i++; continue }
@@ -640,17 +646,21 @@ else
       }
     ' "$1" | tr '\n' ' '
   }
+  # ONE view for counting and parsing alike (Codex #1798 r5). Rounds 3-5 walked a
+  # false-positive ladder created by treating strings differently in the two
+  # halves: round 3 made the stripper string-aware so a `//` in a string could not
+  # delete real code; round 4 then blanked strings for COUNTING so a diagnostic
+  # could not be counted as a call; and round 5 showed the remaining asymmetry
+  # from the other side — a whole registration quoted inside a string was still
+  # PARSED, yielding a phantom pair and, again, a blocked deploy.
+  #
+  # The root cause was two views disagreeing about what is code. Now there is one:
+  # a string's contents survive only when they could be a facet key
+  # (`[A-Za-z0-9]+`), which is the only thing either half needs to read out of a
+  # string. Everything else in quotes — URLs, log text, a registration-shaped
+  # string — is dropped before either half sees it.
   DEPLOY_FLAT="$(strip_sol_comments "$DEPLOY_SOL")"
   REFRESH_FLAT="$(strip_sol_comments "$REFRESH_SOL")"
-  # A second view with string CONTENTS blanked, used ONLY for counting call sites
-  # (Codex #1798 r3/r4). Making the stripper string-aware was right for parsing —
-  # a `//` in a string must not delete real code — but it also meant a call name
-  # written inside a diagnostic (`console.log("_buildCut(")`) counted as a call
-  # while remaining unparseable, so the exact-coverage guard would FAIL a deploy
-  # over log text. Counting outside strings and parsing inside them is what both
-  # halves actually need.
-  DEPLOY_COUNT="$(strip_sol_comments "$DEPLOY_SOL" 1)"
-  REFRESH_COUNT="$(strip_sol_comments "$REFRESH_SOL" 1)"
 
   CUT_GETTER_VAR="$(printf '%s' "$DEPLOY_FLAT" \
     | grep -oE '_buildCut[[:space:]]*\([[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors[[:space:]]*\(\)' \
@@ -686,9 +696,9 @@ else
     _def=$(printf '%s' "$1" | grep -oE "function[[:space:]]+$2[[:space:]]*\(" | grep -c . || true)
     echo $((_all - _def))
   }
-  N_CUT_CALLS=$(count_calls "$DEPLOY_COUNT" '_buildCut')
-  N_WRITE_CALLS=$(count_calls "$DEPLOY_COUNT" 'writeFacet')
-  N_ITEM_CALLS=$(count_calls "$REFRESH_COUNT" 'Item')
+  N_CUT_CALLS=$(count_calls "$DEPLOY_FLAT" '_buildCut')
+  N_WRITE_CALLS=$(count_calls "$DEPLOY_FLAT" 'writeFacet')
+  N_ITEM_CALLS=$(count_calls "$REFRESH_FLAT" 'Item')
   N_CUT_PAIRS=$(printf '%s\n' "$CUT_GETTER_VAR" | grep -c . || true)
   N_WRITE_PAIRS=$(printf '%s\n' "$WROTE_VAR_KEY" | grep -c . || true)
   N_ITEM_PAIRS=$(printf '%s\n' "$REFRESH_GETTER_KEY" | grep -c . || true)
