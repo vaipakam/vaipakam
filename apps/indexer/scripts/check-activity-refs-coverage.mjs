@@ -280,6 +280,16 @@ const REF_EXTRA_ALIASES = {
  */
 const SHADOWABLE_NAMES = new Set(['args', 'Number']);
 
+/** Does a binding name — plain or destructured — bind `wanted`? */
+const bindsName = (name, wanted) => {
+  if (!name) return false;
+  if (ts.isIdentifier(name)) return name.text === wanted;
+  if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+    return name.elements.some((el) => ts.isBindingElement(el) && bindsName(el.name, wanted));
+  }
+  return false;
+};
+
 /** Does a binding name — plain or destructured — bind one of those names? */
 const bindsShadowable = (name) => {
   if (!name) return false;
@@ -411,6 +421,40 @@ for (const m of diamondBlock[1].matchAll(/\.\.\.([A-Za-z0-9_]+)/g)) {
   const file = importedFile.get(m[1]);
   if (file) memberFiles.push(file);
   else unresolvedMembers.push(m[1]);
+}
+/**
+ * And the array may contain NOTHING BUT spreads (Codex round-15 P2).
+ *
+ * The loop above only looks for `...X`, so a direct element — an event object
+ * written inline, or an identifier without a spread — is neither resolved nor
+ * rejected. `EVENT_ABI` still decodes it at runtime, so the enforced set ends up
+ * smaller than the decoded set: exactly the "silently outside coverage" shape
+ * the per-item guard above exists to prevent, arriving through the other door.
+ * Removing every spread must leave only separators behind.
+ */
+const abiResidue = diamondBlock[1].replace(/\.\.\.[A-Za-z0-9_]+/g, '').trim();
+if (/[^\s,]/.test(abiResidue)) {
+  console.error(
+    '\n✖ activity-refs coverage: DIAMOND_ABI contains entries that are not spreads of an\n' +
+      '  imported ABI file, so this script cannot tell what events they carry while\n' +
+      '  EVENT_ABI still decodes them:\n\n' +
+      // Printed verbatim rather than split on commas: the residue is whatever
+      // is left once the spreads are removed, and an object literal's own
+      // commas would chop it into fragments that read like separate entries.
+      // Printed verbatim rather than split on commas: the residue is whatever is
+      // left once the spreads are removed, and an object literal's own commas
+      // would chop it into fragments that read like separate entries. The
+      // separator-only lines each removed spread leaves behind are dropped.
+      abiResidue
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => /[^\s,]/.test(l))
+        .map((l) => `    ${l.length > 160 ? `${l.slice(0, 157)}…` : l}`)
+        .join('\n') +
+      '\n\n  Move the entry into an ABI JSON and spread it, or teach this script to read it —\n' +
+      '  do not let an event into the decoded set that coverage cannot see.\n',
+  );
+  process.exit(1);
 }
 if (unresolvedMembers.length) {
   console.error(
@@ -629,6 +673,45 @@ const bareIdentifierOf = (expr) => {
   }
   return t && ts.isIdentifier(t) ? t.text : null;
 };
+/**
+ * The name must still MEAN the parameter (Codex round-16 P2).
+ *
+ * A comparison by name alone accepts `const eventName = String(args.kind)`
+ * declared in a nested block and switched on there — the identifier matches, the
+ * binding does not, and every decoded event falls past the cases. Resolving
+ * bindings properly needs a type checker; refusing on any redeclaration of the
+ * name inside the mapper costs nothing real, because shadowing the very
+ * parameter this function dispatches on has no legitimate use.
+ */
+let shadowsDiscriminant = false;
+if (discriminantName && fnNode.body) {
+  const findShadow = (n) => {
+    if (shadowsDiscriminant) return;
+    if (isFunctionLike(n)) return; // a nested function's own scope cannot reach here
+    if (
+      (ts.isVariableDeclaration(n) ||
+        ts.isFunctionDeclaration(n) ||
+        ts.isClassDeclaration(n) ||
+        ts.isParameter(n)) &&
+      bindsName(n.name, discriminantName)
+    ) {
+      shadowsDiscriminant = true;
+      return;
+    }
+    ts.forEachChild(n, findShadow);
+  };
+  ts.forEachChild(fnNode.body, findShadow);
+}
+if (shadowsDiscriminant) {
+  console.error(
+    `[check-activity-refs-coverage] pluckActivityRefs() redeclares \`${discriminantName}\` inside\n` +
+      '  its own body, so a switch on that name need not be switching on the decoded\n' +
+      '  event name at all. Every case label here is read as an EVENT NAME, so this\n' +
+      '  checker cannot tell the two apart. Rename the local — do not delete the check.',
+  );
+  process.exit(1);
+}
+
 let switchNode = null;
 let sawOtherSwitch = null;
 const findSwitch = (node) => {
@@ -651,7 +734,32 @@ const findSwitch = (node) => {
   }
   ts.forEachChild(node, findSwitch);
 };
-if (fnNode.body) ts.forEachChild(fnNode.body, findSwitch);
+/**
+ * ...and the switch must be REACHABLE (Codex round-16 P2).
+ *
+ * Round 14 stopped a switch in an uncalled helper from standing in for the live
+ * path. The same substitution works one level up: a `return { …all null }` placed
+ * immediately above the live switch leaves it syntactically present and never
+ * executed, and every count stays identical. Statement order at the top level is
+ * enough to see it — an unconditional exit before the switch means nothing after
+ * it runs. Conditional exits are fine and common, so only a bare `return`/`throw`
+ * statement counts.
+ */
+if (fnNode.body) {
+  for (const st of fnNode.body.statements) {
+    if (!switchNode) findSwitch(st);
+    if (switchNode) break;
+    if (ts.isReturnStatement(st) || ts.isThrowStatement(st)) {
+      console.error(
+        '[check-activity-refs-coverage] pluckActivityRefs() leaves unconditionally before\n' +
+          '  its event switch, so the switch never runs and every event would be stored with\n' +
+          '  all references NULL — while this check reads the cases and reports them mapped.\n' +
+          '  Remove the early exit, or update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
+  }
+}
 if (!switchNode) {
   console.error(
     sawOtherSwitch
