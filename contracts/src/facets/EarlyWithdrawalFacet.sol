@@ -27,6 +27,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 
 /**
  * @title EarlyWithdrawalFacet
@@ -573,6 +574,26 @@ contract EarlyWithdrawalFacet is
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
         uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        // #1503 item 28 — NET already-settled periodic interest out of the
+        // forfeiture. The clock above still spans periods the borrower has
+        // already paid the lender for (periodic auto-liquidation forwards
+        // interest via `loan.interestSettled` WITHOUT resetting the accrual
+        // clock), so charging the seller the raw figure bills them for interest
+        // they have already received. Every other settlement path — repay,
+        // preclose, swap-to-repay, default, fallback — routes its gross interest
+        // through this helper; the two sale routes were the only ones that did
+        // not.
+        //
+        // The refusal above the netting, not below it: `creditSettledInterest`
+        // saturates at zero, so an EXCESS credit (an overdelivered periodic
+        // liquidation, or a partial repay that deliberately preserves surplus
+        // against future accrual) would leave the seller's forfeiture correctly
+        // nil while the leftover silently reduces what the incoming lender is
+        // owed. See {IVaipakamErrors.SaleBlockedByPrepaidInterest}.
+        if (uint256(loan.interestSettled) > accrued) {
+            revert SaleBlockedByPrepaidInterest(loanId, uint256(loan.interestSettled) - accrued);
+        }
+        accrued = LibEntitlement.creditSettledInterest(loan, accrued);
         uint256 originalRemainingInterest = (loan.principal *
             loan.interestRateBps *
             remainingSecs) /

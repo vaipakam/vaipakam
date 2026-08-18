@@ -22,6 +22,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 
 /**
  * @title EarlyWithdrawalDirectFacet
@@ -301,6 +302,17 @@ contract EarlyWithdrawalDirectFacet is
 
         uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        // #1503 item 28 — NET already-settled periodic interest, and refuse while
+        // a residual prepaid credit exists. Identical treatment to the listed
+        // route in `EarlyWithdrawalFacet`: the accrual clock still spans periods
+        // the borrower has already paid for, so the raw figure bills the seller
+        // for interest they have already received, and the netting helper
+        // saturates at zero so an EXCESS credit would pass to the buyer unseen.
+        // Both routes must cap the same costs or the asymmetry is arbitrary.
+        if (uint256(loan.interestSettled) > accrued) {
+            revert SaleBlockedByPrepaidInterest(loanId, uint256(loan.interestSettled) - accrued);
+        }
+        accrued = LibEntitlement.creditSettledInterest(loan, accrued);
         uint256 originalRemainingInterest = (loan.principal *
             loan.interestRateBps *
             remainingSecs) /
