@@ -568,8 +568,9 @@ contract RiskPreviewFacet {
      *
      * @param loanId The loan whose lender position would be sold.
      * @return forfeitFrom    Timestamp the forfeiture window opens at — the
-     *                        later of the interest-accrual origin and the point
-     *                        the current lender has been paid through.
+     *                        point the current lender has been paid through, or
+     *                        the interest-accrual origin when they have never been
+     *                        paid.
      * @return forfeitAccrued Interest accrued across that window as of this
      *                        block, at the LOAN's own rate. This is the figure
      *                        the seller absorbs, before the rate shortfall.

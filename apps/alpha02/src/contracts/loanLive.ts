@@ -338,18 +338,28 @@ export async function readLoanLive(
   // are exactly the ones that rewrite reverts into generic gas errors — the
   // #1521-era failure mode. The mandatory read still rejects normally, so a
   // genuine outage is not hidden.
+  // Both reads are PINNED TO ONE BLOCK (Codex #1801 r6 P2). Two independent
+  // `eth_call`s can resolve against different latest blocks when a mutation is
+  // mined between them, and the pair they return is then a state that never
+  // existed — `getLoanDetails` at the pre-partial principal beside a
+  // post-partial mark, say. `sellerEconomics` combines exactly these two, so a
+  // torn pair does not merely go stale, it produces a figure no block ever
+  // supported.
+  const at = await publicClient.getBlockNumber();
   const [rawResult, windowResult] = await Promise.allSettled([
     publicClient.readContract({
       address: diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'getLoanDetails',
       args: [BigInt(loanId)],
+      blockNumber: at,
     }) as Promise<LoanLive>,
     publicClient.readContract({
       address: diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'sellerForfeitureWindow',
       args: [BigInt(loanId)],
+      blockNumber: at,
     }) as Promise<readonly [bigint, bigint]>,
   ]);
   if (rawResult.status === 'rejected') throw rawResult.reason;

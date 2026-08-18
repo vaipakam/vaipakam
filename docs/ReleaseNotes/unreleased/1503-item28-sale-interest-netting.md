@@ -35,8 +35,8 @@ swap-to-repay — restart that stretch. A running total of interest delivered ov
 the loan's whole life is therefore not comparable with it: immediately after a
 restart the total describes a window the forfeiture no longer covers, and once
 the same amount accrues again it gets deducted a second time. A point in time
-composes with a restart by construction, because the later of two marks is still
-a valid start. It also removes a refusal the amount-based version needed: a
+composes with a restart, because a mark that records actual payment is unaffected
+by a restart that paid nobody. It also removes a refusal the amount-based version needed: a
 window cannot over-subtract, so there is no leftover credit to strand, and a
 lender who is fully paid up simply forfeits nothing and completes the sale
 normally. An earlier revision of this change blocked that sale outright.

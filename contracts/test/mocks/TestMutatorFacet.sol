@@ -388,7 +388,8 @@ contract TestMutatorFacet {
     ///      auto-liquidates — and, for the frozen case, one against a
     ///      registry-flagged lender, which the unit harness has no oracle for.
     ///      Seeding the mark exercises exactly what the sale routes read: the
-    ///      forfeiture window opens at the LATER of this and the accrual origin.
+    ///      forfeiture window opens at this mark once it is non-zero, and at the
+    ///      accrual origin only while it is zero.
     ///      Frozen interest is represented by leaving the mark where it was (the
     ///      freeze branch never advances it); a previous lender's tenure by
     ///      setting the mark to when their tenure ended.

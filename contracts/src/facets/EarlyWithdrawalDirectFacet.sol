@@ -301,8 +301,10 @@ contract EarlyWithdrawalDirectFacet is
         uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
 
-        // #1503 item 28 — the FORFEITURE clock starts at whichever is later, the
-        // accrual origin or the point this lender has already been PAID through.
+        // #1503 item 28 — the FORFEITURE clock starts at the point this lender
+        // has already been PAID through, falling back to the accrual origin only
+        // for a lender who has never been paid at all. NOT the later of the two:
+        // the obligation clock re-bases on events that pay nobody (Codex r4 P1).
         // Identical treatment to the listed route in `EarlyWithdrawalFacet`: the
         // accrual clock still spans periods the borrower has already paid for, so
         // charging from it bills the seller for interest they have received. Both

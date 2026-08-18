@@ -123,7 +123,8 @@ describe('refinanceApprovalOf', () => {
  * #1503 item 28 — the seller's forfeiture measures the stretch the lender has
  * NOT been paid for. These pin the mirror against
  * `EarlyWithdrawalDirectFacet` / `EarlyWithdrawalFacet`, whose forfeiture runs
- * from the later of the interest-accrual origin and the paid-through mark.
+ * from the paid-through mark, falling back to the interest-accrual origin only
+ * for a lender who has never been paid.
  */
 describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
   /** A 30-day 10% loan on 1,000e18, accrual clock starting at t=1000. */

@@ -221,8 +221,8 @@ library LibEntitlement {
     }
 
     /// @notice When the seller's forfeitable interest starts accruing — the
-    ///         later of the loan's interest-accrual origin and the point through
-    ///         which this lender has already been PAID.
+    ///         point through which this lender has already been PAID (or the
+    ///         loan's interest-accrual origin, for a lender never paid at all).
     /// @dev    #1503 item 28. Only the lender-position SALE routes want this.
     ///
     ///         A sale forfeits the interest accrued during the seller's tenure,
@@ -236,15 +236,13 @@ library LibEntitlement {
     ///         forfeiture figure is scoped to the current accrual SEGMENT, and
     ///         `repayPartial` / `swapToRepay` restart that segment; a lifetime
     ///         amount would then be measuring a different window than the one it
-    ///         is deducted from (Codex #1801 r3 P1). Taking the later of the two
-    ///         marks composes with a reset by construction — a reset past the
-    ///         paid-through mark simply wins — and there is no over-subtraction
-    ///         to refuse, because the window cannot go negative.
+    ///         is deducted from (Codex #1801 r3 P1).
     ///
-    ///         Only the auto-liquidation path needs a mark at all. Every other
-    ///         way interest reaches the lender (`repayPartial`, `swapToRepay`)
-    ///         resets the accrual clock in the same transaction, so the clock
-    ///         itself is already the correct answer there.
+    ///         Round 3 took the LATER of the two marks; round 4 showed that is
+    ///         wrong, because the obligation clock re-bases on events that pay
+    ///         nobody — a partial repayment whose lender share is frozen being
+    ///         the case that matters. Only actual payment may move the mark, so
+    ///         every path that genuinely pays the lender must advance it.
     /// @param loanId       The loan being sold. The mark is keyed per loan rather
     ///                     than held on the struct, because it is appended
     ///                     storage.
