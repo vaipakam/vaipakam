@@ -108,7 +108,7 @@ export function LoanSalePendingCard({
       // Verify the listing still stands before re-granting the
       // settlement approval — a completed/cancelled listing must not
       // get a fresh dangling authorization.
-      const [lock, liveLoan, latestBlock] = await Promise.all([
+      const [lock, liveLoan] = await Promise.all([
         publicClient.readContract({
           address: walletChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
@@ -116,7 +116,6 @@ export function LoanSalePendingCard({
           args: [BigInt(lenderTokenId)],
         }) as Promise<number | bigint>,
         readLoanLive(publicClient, walletChain.diamondAddress, loanId),
-        publicClient.getBlock({ blockTag: 'latest' }),
       ]);
       if (Number(lock) !== LOCK_EARLY_WITHDRAWAL_SALE) {
         setError(copy.loanSale.restoreAborted);
@@ -128,8 +127,8 @@ export function LoanSalePendingCard({
       // live requirement plus fresh growth margin, or the red banner
       // returns on the next tick behind a false success message.
       const rate = state.saleRateBps ?? liveLoan.interestRateBps;
-      const bound = saleSettlementBound(liveLoan, rate, latestBlock.timestamp);
-      const liveNow = sellerEconomics(liveLoan, rate, latestBlock.timestamp).cost;
+      const bound = saleSettlementBound(liveLoan, rate);
+      const liveNow = sellerEconomics(liveLoan, rate).cost;
       const growthMargin =
         (liveLoan.principal * liveLoan.interestRateBps * 30n * 86_400n) /
         (SECONDS_PER_YEAR * BASIS_POINTS);

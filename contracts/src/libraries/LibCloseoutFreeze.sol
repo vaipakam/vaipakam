@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibSanctionedLock} from "./LibSanctionedLock.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
+import {LibEntitlement} from "./LibEntitlement.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -207,6 +208,14 @@ library LibCloseoutFreeze {
         uint256 amount
     ) private {
         s.heldForLender[loanId] += amount;
+        // #1801 — this share was FROZEN, not delivered, so the loan's
+        // paid-through mark stops describing reality and can never be trusted
+        // again for this lender: delivery on this position is now
+        // non-contiguous, and one timestamp cannot say "paid for the later
+        // period, not the earlier one". Voided here rather than at each caller
+        // because every Active-loan park funnels through this helper, which makes
+        // the coverage a property of the code shape instead of a checklist.
+        LibEntitlement.voidInterestDeliveredMark(s, loanId);
         LibSanctionedLock.recordFrozenClaimant(s, loanId, true, frozenHolder);
         // #998 S10 Class B — reserve through the DEDICATED active-held ledger, NOT
         // the single-terminal `encumberLenderProceeds` ledger. That ledger records
@@ -237,7 +246,8 @@ library LibCloseoutFreeze {
         uint256 loanId,
         LibVaipakam.Loan storage loan,
         address asset,
-        uint256 amount
+        uint256 amount,
+        uint256 deliveredThroughAt
     ) internal {
         if (amount == 0) return;
         // Resolve the CURRENT lender-position holder here (the loan is Active, so
@@ -247,6 +257,18 @@ library LibCloseoutFreeze {
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             IERC20(asset).safeTransfer(lenderRecipient, amount);
+            // #1503 item 28 — the lender is now PAID THROUGH the boundary of the
+            // period this payout settles, so a later sale must not forfeit that
+            // stretch a second time. Advanced on THIS branch only: the freeze
+            // branch below parks the tokens in `heldForLender`, which migrates to
+            // the BUYER on a sale, so treating a frozen payout as delivered would
+            // pay the seller for tokens they never held and do not keep.
+            //
+            // Monotone: a caller settling an older boundary after a newer one can
+            // never walk the mark backwards and re-open a window already paid.
+            if (deliveredThroughAt > s.lenderInterestDeliveredThroughAt[loanId]) {
+                LibEntitlement.stampInterestDelivered(s, loanId, deliveredThroughAt);
+            }
             return;
         }
         LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
@@ -272,6 +294,22 @@ library LibCloseoutFreeze {
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             // slither-disable-next-line arbitrary-send-erc20
             IERC20(asset).safeTransferFrom(payer, lenderRecipient, amount);
+            // #1503 item 28 (Codex #1801 r4 P1) — DELIVERED, so the seller is
+            // paid through NOW. Unlike the resident-payout helper this one needs
+            // no boundary parameter: every caller pays interest accrued to the
+            // present and resets the accrual clock in the same transaction, so
+            // `block.timestamp` IS the correct mark.
+            //
+            // The freeze branch below deliberately does not stamp, and that is
+            // the whole point of doing this here at all: a frozen partial
+            // repayment parks the interest in `heldForLender` — which migrates
+            // to the BUYER on a sale — while the caller still resets the accrual
+            // clock. With the clock as the fallback the reset would act as the
+            // credit and close the seller's window over interest they never
+            // received. The mark stays put, so the window stays open.
+            if (block.timestamp > s.lenderInterestDeliveredThroughAt[loanId]) {
+                LibEntitlement.stampInterestDelivered(s, loanId, block.timestamp);
+            }
             return;
         }
         LibSanctionedLock.depositLockedFrom(s, payer, loan.lender, loanId, asset, amount);
@@ -301,6 +339,12 @@ library LibCloseoutFreeze {
             LibSanctionedLock.vaultWithdrawERC20MoveOut(
                 s, fromUser, asset, lenderRecipient, amount
             );
+            // #1503 item 28 — DELIVERED, paid through now. Same reasoning as the
+            // from-payer helper above, including why the freeze branch below does
+            // not stamp.
+            if (block.timestamp > s.lenderInterestDeliveredThroughAt[loanId]) {
+                LibEntitlement.stampInterestDelivered(s, loanId, block.timestamp);
+            }
             return;
         }
         LibSanctionedLock.depositLockedFromVault(

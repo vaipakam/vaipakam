@@ -519,6 +519,42 @@ than a growing list of patches on generic-offer consumption.
    the line "unbounded" is disclosure, not authorization, and this section
    already treats disclosure as insufficient for an uncapped wallet debit
    or reward loss.
+
+   > **Scoping note, verified against the code (2026-08-18).** The three
+   > parts are not in the same state, so implementing item 4 should not
+   > treat them as one job.
+   >
+   > Parts one and two — the settlement forfeiture and the transferring
+   > held balance — are genuinely unbounded today. `createLoanSaleOffer`
+   > takes a loan id, a rate, a consent flag and a listing window; it
+   > stores no economic bound of any kind, and completion recomputes both
+   > figures at the acceptance block. These need the stored bound this
+   > item asks for.
+   >
+   > Part three is **already bounded in the form this item itself
+   > permits** — "a maximum cutoff day". The listing carries a MANDATORY
+   > finite expiry, seller-chosen within one hour to thirty days and
+   > additionally clamped at the loan's own maturity, and `acceptOffer`
+   > refuses an expired listing. On the ordinary route, completion runs
+   > inside that accept, so the reward drift between what the seller
+   > reviewed and what acceptance forfeits cannot exceed the window the
+   > seller picked. The manual `completeLoanSale` entry is
+   > lender-side-gated, so the seller invoking it later is fresh
+   > authorization rather than a race.
+   >
+   > One residual, and it is narrow but real: an **approved keeper**
+   > holding the `CompleteLoanSale` bit can sit on an accepted sale and
+   > complete it after the window, inflating the forfeiture past what the
+   > seller reviewed. That is the same keeper-authority concern this
+   > document raises separately, and it argues for a completion deadline
+   > on the manual path rather than for a reward-denominated bound.
+   >
+   > The practical consequence: a reward-forfeiture *figure* stored on the
+   > listing would duplicate a cap that already exists and binds. State
+   > this reasoning in the implementing PR so it can be challenged —
+   > silently shipping two of three parts and calling it item 4 is exactly
+   > the "disclosure as resolution" move this item warns against.
+
 5. **The direct sale admits on the stored borrower, not the current
    one.** That path passes the loan's stored borrower to the
    compliance check and never compares the buy-offer creator against

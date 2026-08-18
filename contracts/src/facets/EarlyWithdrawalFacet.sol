@@ -27,6 +27,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 
 /**
  * @title EarlyWithdrawalFacet
@@ -568,10 +569,25 @@ contract EarlyWithdrawalFacet is
         // routed to treasury or Noah.
         // #641 — accrued/remaining split reads the interest clock (post-partial
         // origin + remaining term), not the immutable term tuple.
-        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
+        uint256 elapsed = block.timestamp - accrualStart;
         uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
-        uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
+        // #1503 item 28 — the FORFEITURE clock is not the accrual clock. The
+        // seller forfeits accrued interest because the borrower has not paid it;
+        // on a periodic loan the borrower has paid part of it, since periodic
+        // auto-liquidation forwards interest to the lender WITHOUT moving the
+        // accrual clock. Charging from the accrual origin bills the seller for
+        // interest already in their hands.
+        //
+        // Narrowing the WINDOW rather than subtracting an amount — see
+        // {LibEntitlement.forfeitureAccrualStart}. `elapsed` above is unchanged
+        // and still measures the loan's own progress, which is what
+        // `remainingSecs` needs; only the forfeiture figure uses the later start.
+        uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
+        uint256 forfeitSecs =
+            block.timestamp > forfeitFrom ? block.timestamp - forfeitFrom : 0;
+        uint256 accrued = (loan.principal * loan.interestRateBps * forfeitSecs) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
         uint256 originalRemainingInterest = (loan.principal *
             loan.interestRateBps *

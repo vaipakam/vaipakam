@@ -1857,6 +1857,133 @@ This option allows Liam to recover principal early by selling his lender positio
 
 - Any interest accrued up to the time of sale is forfeited by Liam and routed to treasury, subject to the platform’s sale rules.
 - This avoids complex retroactive splitting of interest across multiple lenders.
+- **Only interest Liam has not already been paid is forfeitable.** On a loan with
+  periodic interest servicing, Alice pays interest to the lender during the term,
+  and those payments do not stop the accrual measure from advancing. What Liam
+  forfeits is therefore the interest accrued over the stretch he has **not** been
+  paid for — measured from the point he was last paid through — never the raw
+  accrual, which would bill him a second
+  time for interest already in his hands on a route where he is exiting rather
+  than being made whole.
+- **Being paid is what moves that point, not the loan's own interest clock.**
+  The loan's clock restarts whenever Alice's obligation is re-based, which is a
+  different event from Liam being paid. They come apart in a case that matters:
+  when a payment is due to a lender the sanctions registry has flagged, the money
+  is held rather than delivered while the obligation still re-bases. Reading the
+  obligation clock as evidence of payment would close Liam's forfeiture over money
+  that never reached him — and that held balance goes to Noah on the sale. Where a
+  lender has never been paid at all, the loan's clock is the starting point; after
+  that, only actual payment moves it. A payment the platform failed to account for
+  therefore over-charges Liam slightly rather than quietly paying him twice.
+- **A period counts as paid only when it is paid in FULL.** A partial settlement
+  leaves the remainder in Alice's obligation, so treating the period as settled
+  would let Liam collect that remainder through his sale price while Noah can
+  still collect it later when Alice repays — the same interest, paid twice, and
+  the effect is largest exactly where collateral is nearly exhausted and the
+  payment smallest.
+- **The measure is a period of time, not a running total.** The forfeiture belongs
+  to the loan's current accrual stretch, and ordinary events — a partial
+  repayment, a swap-to-repay — restart that stretch. A lifetime total of interest
+  paid would not be comparable with it: right after a restart the total describes
+  a period the forfeiture no longer covers, and once the same interest accrued
+  again it would be deducted twice. A fully paid-up lender simply forfeits
+  nothing and completes the sale, rather than being blocked by a leftover the
+  platform has nowhere to put.
+- **The paid-through point is only honoured while it still describes the
+  position.** A point in time carries no amount, so it can only stand in for
+  "interest already received" when nothing has happened since that would change
+  what that stretch is worth or break it into pieces. Two things do, and either
+  one discards the credit in favour of charging Liam the full accrual:
+  - **The principal has moved.** The unpaid stretch is priced at the principal it
+    accrued on. A partial repayment inside that stretch means part of it accrued
+    on a larger balance than the one now on the loan, so a single figure would
+    bill it at the wrong size.
+  - **A payment to Liam was held rather than delivered.** Once that happens his
+    delivery is no longer one continuous run — some earlier period is unpaid
+    while a later one is settled — and a single point in time cannot say which.
+    Reading it as "paid through the later one" would credit him for the held
+    period as well. This disqualification lasts for the rest of Liam's tenure,
+    because no later payment restores the missing one.
+
+    Sanctions are not the only reason interest gets held back, and the others
+    count identically. Handing the borrower's obligation to a replacement
+    borrower settles Liam's accrued share into the same holding account on a
+    loan that carries on running: Liam has not been paid it, and it goes to
+    whoever buys his position next. The platform therefore asks whether anything
+    is being held for Liam that was not being held when his mark was last
+    recorded — a question about the loan's own state, not a rule each holding
+    site has to remember.
+
+  Neither refusal lifts on its own. A later clean payment cannot repair a period
+  that is already broken, so once either has happened Liam is charged the full
+  accrual for the rest of his tenure. The sequence that makes this matter looks
+  entirely routine: a balance change followed by an ordinary successful payment
+  would otherwise make the record look sound again while excluding the stretch
+  charged at the larger balance.
+
+  For the same reason a loan needs a starting balance recorded when it opens, so
+  the first payment has something to compare against. A loan already running when
+  this takes effect has none, and no later event supplies one: the stretch
+  between the loan opening and the first payment is never reconciled, so a record
+  installed after it excludes whatever happened in there just as surely. Such a
+  position therefore earns no credit for the rest of Liam's tenure — it keeps the
+  charge it already had. Recording a starting balance at the first payment would
+  make the SECOND payment look trustworthy while its window still began inside
+  the unreconciled stretch.
+
+  Refusing the credit must not RESET the window, and that distinction is
+  load-bearing. Falling back to the loan's own interest clock reads as the
+  obvious answer and is wrong for the same reason the clock is not evidence of
+  payment: it moves. A partial repayment that holds Liam's interest back also
+  re-bases the clock to that moment, so a fallback to the clock would open his
+  window at the reset and skip precisely the held stretch. The recorded point is
+  therefore kept and the EARLIER of the two is used — neither Liam's last
+  recorded payment nor the borrower's obligation restart can be later than the
+  moment he was genuinely paid through.
+
+  Under all of it sits a floor: the moment Liam's own involvement began, which
+  is the loan opening if he lent originally, or the purchase if he bought the
+  position. It is what keeps the window inside the tenure it belongs to, in both
+  directions. If the very first payment due to Liam is the one held back there
+  is no earlier payment to fall back to, and only the floor keeps that unpaid
+  stretch in his charge. And if Liam BOUGHT the position and is later
+  disqualified, without the floor he would fall back to the loan's original
+  clock — charging him for the previous lender's entire stretch, which the sale
+  he bought through already settled. Positions that predate this change record
+  no such moment, so nothing is assumed about them.
+
+  A sale clears all three: Noah's period opens at the purchase, at the principal
+  on the loan then, and carries nothing from Liam's tenure. The conditions are read
+  from the loan's own recorded state rather than reported by whatever caused
+  them, so a path nobody thought to update cannot leave a stale credit standing.
+  Where the credit is refused, Liam is charged interest he may genuinely have
+  received — the platform errs toward over-charging the exiting lender and never
+  toward paying the same interest twice. Because a larger forfeiture is a larger
+  cost, and a sale that would leave the position below its solvency floor is
+  refused, this can also mean Liam is unable to sell at a moment when a credited
+  window would have let him. That is the platform declining to fund a credit it
+  cannot size correctly.
+- **Only interest Liam has actually RECEIVED counts as already paid.** Interest
+  the platform recorded as settled to the lender side is not always interest the
+  lender got: when a periodic payment is made to a lender whose wallet is
+  sanctions-flagged, the money is held rather than delivered, while the record
+  still shows it as settled — correctly, because the borrower paid it and their
+  obligation must reduce by it either way. But a sale hands that held balance to
+  the buyer, so it is money the seller never received and does not keep. It
+  therefore does not move the point Liam is paid through; crediting it as well
+  would pay him for it a second time, out of the platform's share.
+- **A completed sale moves the paid-through point forward; a plain transfer does
+  not.** A sale settles the outstanding forfeiture — to the platform, or into the
+  buyer's rate compensation — so the position the buyer receives is clean and
+  their own forfeiture period opens at the sale. Without that, the same stretch
+  would be forfeited again on every resale, at the seller's expense once per hop.
+  A transfer settles nothing, so the outstanding forfeiture travels with the
+  position exactly as the unpaid interest it represents does. Treating a transfer
+  like a sale would let Liam zero his own forfeiture by sending the position to a
+  second wallet — or to himself — and selling from there.
+- **These rules bind both sale routes identically.** A rule that applied to the
+  direct sale and not to the listed sale's completion would let the same position
+  be sold on different economics depending on which door it left by.
 
 ##### Principal Recovery
 

@@ -20,6 +20,8 @@ import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 
@@ -148,6 +150,18 @@ contract RedeployFacets is Script {
         // classifier's host alongside and cut its selectors (partitioned by
         // routing below), exactly as #658 does for ConsolidationFacet.
         RiskPreviewFacet riskPreviewFacet = new RiskPreviewFacet();
+        // #1503 item 28 (Codex #1801 r4 P1) — the same dependency, one step
+        // further out. The refreshed sale routes READ the seller's paid-through
+        // mark; these two facets are what WRITE it — `RepayPeriodicFacet` passes
+        // the settled period boundary down, and `EncumbranceMutateFacet` records
+        // it on the clean payout branch. Refresh the readers without the writers
+        // and the mark is never written on the upgraded Diamond, so every
+        // periodic payment re-opens the seller's forfeiture over interest the
+        // borrower already paid: the exact bug item 28 fixes, reintroduced by
+        // the upgrade meant to deliver it. Silent, and only visible as sellers
+        // being over-charged.
+        RepayPeriodicFacet repayPeriodicFacet = new RepayPeriodicFacet();
+        EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
@@ -162,6 +176,8 @@ contract RedeployFacets is Script {
         console.log("ProfileFacet:         ", address(profileFacet));
         console.log("ConsolidationFacet:   ", address(consolidationFacet));
         console.log("RiskPreviewFacet:     ", address(riskPreviewFacet));
+        console.log("RepayPeriodicFacet:   ", address(repayPeriodicFacet));
+        console.log("EncumbranceMutate:    ", address(encumbranceMutateFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -222,6 +238,21 @@ contract RedeployFacets is Script {
         (bytes4[] memory rpToAdd, bytes4[] memory rpToReplace) =
             _partitionByRouting(diamond, FacetSelectors.riskPreview());
 
+        // #1503 item 28 — the mark's WRITERS. `RepayPeriodicFacet`'s surface is
+        // unchanged (plain Replace); `EncumbranceMutateFacet`'s is not — the
+        // resident-payout entry gained the paid-through boundary, so its 4-arg
+        // selector is an Add on a pre-item-28 Diamond and the retired 3-arg one
+        // must be Removed, or a live entry point survives whose callers pass one
+        // argument too few.
+        (bytes4[] memory rpsToAdd, bytes4[] memory rpsToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.repayPeriodic());
+        (bytes4[] memory encToAdd, bytes4[] memory encToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.encumbranceMutate());
+        bytes4[] memory retiredResident = new bytes4[](1);
+        retiredResident[0] = FacetSelectors.retiredResidentPayoutSelector();
+        (, bytes4[] memory encToRemove) =
+            _partitionByRouting(diamond, retiredResident);
+
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
@@ -230,6 +261,9 @@ contract RedeployFacets is Script {
             (nftToAdd.length > 0 ? 1 : 0) + (nftToReplace.length > 0 ? 1 : 0) +
             (vfToAdd.length > 0 ? 1 : 0) + (vfToReplace.length > 0 ? 1 : 0) +
             (rpToAdd.length > 0 ? 1 : 0) + (rpToReplace.length > 0 ? 1 : 0) +
+            (rpsToAdd.length > 0 ? 1 : 0) + (rpsToReplace.length > 0 ? 1 : 0) +
+            (encToAdd.length > 0 ? 1 : 0) + (encToReplace.length > 0 ? 1 : 0) +
+            (encToRemove.length > 0 ? 1 : 0) +
             (profToRemove.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
@@ -318,6 +352,23 @@ contract RedeployFacets is Script {
         if (rpToAdd.length > 0) {
             cuts[idx++] = _add(address(riskPreviewFacet), rpToAdd);
         }
+        // #1503 item 28 — the writers. The Remove runs BEFORE the Add so a
+        // pre-item-28 Diamond never holds both resident-payout arities at once.
+        if (encToRemove.length > 0) {
+            cuts[idx++] = _remove(encToRemove);
+        }
+        if (encToReplace.length > 0) {
+            cuts[idx++] = _replace(address(encumbranceMutateFacet), encToReplace);
+        }
+        if (encToAdd.length > 0) {
+            cuts[idx++] = _add(address(encumbranceMutateFacet), encToAdd);
+        }
+        if (rpsToReplace.length > 0) {
+            cuts[idx++] = _replace(address(repayPeriodicFacet), rpsToReplace);
+        }
+        if (rpsToAdd.length > 0) {
+            cuts[idx++] = _add(address(repayPeriodicFacet), rpsToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
@@ -333,6 +384,10 @@ contract RedeployFacets is Script {
         console.log("  Legacy uint8 keeper selectors removed:", profToRemove.length);
         console.log("  RiskPreview selectors added: ", rpToAdd.length);
         console.log("  RiskPreview selectors repl.: ", rpToReplace.length);
+        console.log("  RepayPeriodic selectors repl.:", rpsToReplace.length);
+        console.log("  EncumbranceMutate repl.:      ", encToReplace.length);
+        console.log("  EncumbranceMutate added:      ", encToAdd.length);
+        console.log("  Retired resident-payout removed:", encToRemove.length);
     }
 
     function _replace(address facet, bytes4[] memory selectors)

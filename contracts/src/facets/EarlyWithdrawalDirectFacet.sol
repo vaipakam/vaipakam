@@ -22,6 +22,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 
 /**
  * @title EarlyWithdrawalDirectFacet
@@ -295,11 +296,25 @@ contract EarlyWithdrawalDirectFacet is
         // is symmetric across the two sides of the net settlement.
         // #641 — accrued/remaining split reads the interest clock (post-partial
         // origin + remaining term), not the immutable term tuple.
-        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
+        uint256 elapsed = block.timestamp - accrualStart;
         uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
 
-        uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
+        // #1503 item 28 — the FORFEITURE clock starts at the point this lender
+        // has already been PAID through, falling back to the accrual origin only
+        // for a lender who has never been paid at all. NOT the later of the two:
+        // the obligation clock re-bases on events that pay nobody (Codex r4 P1).
+        // Identical treatment to the listed route in `EarlyWithdrawalFacet`: the
+        // accrual clock still spans periods the borrower has already paid for, so
+        // charging from it bills the seller for interest they have received. Both
+        // routes must price the same forfeiture or the asymmetry is arbitrary.
+        // See {LibEntitlement.forfeitureAccrualStart} for why this is a window
+        // and not an amount.
+        uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
+        uint256 forfeitSecs =
+            block.timestamp > forfeitFrom ? block.timestamp - forfeitFrom : 0;
+        uint256 accrued = (loan.principal * loan.interestRateBps * forfeitSecs) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
         uint256 originalRemainingInterest = (loan.principal *
             loan.interestRateBps *
