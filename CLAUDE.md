@@ -205,6 +205,7 @@ registering these can be correct:
 | Place | Condition |
 | --- | --- |
 | `contracts/script/RedeployFacets.s.sol` | only if the facet belongs to one of that script's curated refresh families — it is a *curated* partial refresh, not an all-facets one |
+| `contracts/script/lib/FacetSelectors.sol` | only for the six facets the curated scripts cut (`oracle`, `vaultFactory`, `profile`, `vaipakamNFT`, `riskPreview`, `offerPreview`). Guarded exactly by `RedeploySelectorParityTest`, and the same list must be updated when one of those facets gains or loses an external FUNCTION — see "When you add a function to a facet" below |
 | `contracts/script/exportFrontendAbis.sh` (`FACETS=(...)`) | only if an app actually consumes the facet's ABI. Internal facets are deliberately excluded — `ReceiverFacet` is not in that array and should not be |
 | `packages/contracts/src/abis/index.ts` | only alongside the entry above — the export script does **not** touch this barrel |
 
@@ -236,6 +237,27 @@ The last two are covered in more detail in "Frontend ABI sync" **below**.
 **When you add a function to a facet**: add its selector to the matching
 `_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —
 `SelectorCoverageTest` fails otherwise.
+
+There is a **third** registration site, and only for six facets, which is why
+it is easy to miss: `contracts/script/lib/FacetSelectors.sol` carries the FULL
+external surface of the facets the curated redeploy scripts cut — currently
+`oracle`, `vaultFactory`, `profile`, `vaipakamNFT`, `riskPreview` and
+`offerPreview`. Adding an external function to any of those six means adding
+its selector there too. `RedeploySelectorParityTest` pins each list to the
+compiled ABI's `methodIdentifiers` **exactly** — same size, nothing missing,
+nothing extra — so the omission fails the deploy-sanity suite rather than
+passing silently. Facets outside that six need nothing here.
+
+(One exception, and it is in the test rather than the rule: `vaipakamNFT` is
+pinned to the facet's ROUTED surface, which is its compiled ABI minus
+`supportsInterface(bytes4)` — that selector is compiled into the facet but cut
+to `DiamondLoupeFacet` instead.)
+
+Why the list exists at all (findings #778 / #779): a `Replace` diamondCut must
+carry a facet's WHOLE routed surface, because any selector left out of the cut
+stays pointed at the OLD implementation — a split Diamond running two versions
+of one facet. The curated scripts used to hand-list partial subsets and drift;
+they now all read this one library.
 
 The deploy-*integration* test that Issue #72 asked for **already exists** and
 runs in the deploy-sanity suite:
