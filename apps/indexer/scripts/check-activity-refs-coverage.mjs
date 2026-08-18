@@ -478,8 +478,13 @@ const guardedReason = (node, stopAt) => {
     ) {
       return 'inside a loop over an empty literal, so its body never runs at all';
     }
+    // NOT do-while (Codex round-45 P2, a regression round 44 introduced). A
+    // `do { … } while (false)` body runs exactly once — the condition is tested
+    // AFTER it — so grouping it with the other constant-false loops reported
+    // that a guaranteed statement never runs. `do { } while (false)` is a real
+    // idiom for a breakable block, and this would have failed it.
     if (
-      (ts.isWhileStatement(p) || ts.isDoStatement(p) || ts.isForStatement(p)) &&
+      (ts.isWhileStatement(p) || ts.isForStatement(p)) &&
       cur === p.statement &&
       p.expression &&
       unwrapAssertions(p.expression).kind === ts.SyntaxKind.FalseKeyword
@@ -536,33 +541,49 @@ const OPAQUE_BINDING = Symbol('opaque binding');
  * @returns the `VariableDeclaration`, `OPAQUE_BINDING` for a binder this script
  *          cannot follow, or null when nothing up to `stopAt` binds the name.
  */
-const nearestDeclIn = (from, name, stopAt) => {
+/**
+ * THE scope walk. Every binding resolver in this file is this function with a
+ * different sentinel and stop node.
+ *
+ * There were three copies, and the review record is the argument for there
+ * being one (Codex rounds 43, 44, 45). The rule that a FUNCTION or CLASS
+ * declaration binds its hoisted name in the enclosing block had to be added to
+ * each of them in three consecutive rounds — module-level in 43, the loop-item
+ * twin in 44, the SQL-bind resolver in 45 — because each copy was written for
+ * its own question and learned nothing from the others. That is not three
+ * findings; it is one missing abstraction found three times. A fourth copy would
+ * have needed it in round 46.
+ *
+ * @param shadowSentinel returned for a binder whose value this script cannot
+ *        follow — the caller's own "something nearer binds this" marker.
+ * @param notAShadow optional: a binder the CALLER considers legitimate rather
+ *        than shadowing (the batch loop's own item, for its resolver), resolving
+ *        to null instead of the sentinel.
+ * @returns a `VariableDeclaration`, `shadowSentinel`, or null when nothing up to
+ *          `stopAt` binds the name.
+ */
+const resolveNameInScopes = (from, name, { stopAt, shadowSentinel, notAShadow }) => {
   for (let scope = from; scope; scope = scope.parent) {
     // A binder ON THE WAY OUT shadows anything further out, even when this
     // script cannot say what it holds. Looking past it is the bug.
-    if (bindsNameLexically(scope, name)) return OPAQUE_BINDING;
+    if (bindsNameLexically(scope, name)) {
+      if (notAShadow && notAShadow(scope, name)) return null;
+      return shadowSentinel;
+    }
     const stmts =
       ts.isBlock(scope) || ts.isCaseClause(scope) || ts.isDefaultClause(scope)
         ? scope.statements
         : null;
     if (stmts) {
       for (const st of stmts) {
-        // A FUNCTION or CLASS declaration binds its name in the enclosing block
-        // too (Codex round-43 P2, chasing the same hoisting rule round 41 found
-        // one level out). Scanning only variable statements made a block-local
-        // `function pluckActivityRefs() { … }` invisible to every consumer of
-        // this resolver, so a same-named local could stand in for a
-        // module-level function and resolve as "nothing nearer binds it".
-        //
-        // OPAQUE_BINDING rather than the node: it binds the name, and what it
-        // binds is not a value this script can follow — which is precisely what
-        // that sentinel means, and what every consumer already handles.
+        // Hoisting: a function or class declaration binds its name in the
+        // enclosing block, so it shadows there even though its body does not.
         if (
           (ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) &&
           st.name &&
           declaresName(st.name, name)
         ) {
-          return OPAQUE_BINDING;
+          return shadowSentinel;
         }
         if (!ts.isVariableStatement(st)) continue;
         for (const d of st.declarationList.declarations) {
@@ -574,6 +595,10 @@ const nearestDeclIn = (from, name, stopAt) => {
   }
   return null;
 };
+
+const nearestDeclIn = (from, name, stopAt) =>
+  resolveNameInScopes(from, name, { stopAt, shadowSentinel: OPAQUE_BINDING });
+
 
 const REF_FIELDS = ['loanId', 'offerId'];
 
@@ -736,7 +761,17 @@ const isTransparentWrapper = (n) =>
 const invokedFunctionBodyOf = (expr) => {
   const e = unwrapForInvocation(expr);
   if (!e || !ts.isCallExpression(e)) return null;
-  const callee = unwrapForInvocation(e.expression);
+  let callee = unwrapForInvocation(e.expression);
+  // ...through `.call` / `.apply` too (Codex round-45 P2). Round 44 accepted
+  // only a function in callee position, so `(() => { … }).call(null)` ran
+  // synchronously before the body and was invisible. The escape analysis has
+  // matched both forms since round 36; this helper, written for the same
+  // question, was matching one.
+  if (callee && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))) {
+    const via = memberNameOf(callee);
+    if (via === 'call' || via === 'apply') callee = unwrapForInvocation(callee.expression);
+    else return null;
+  }
   if (!callee || !isFunctionLike(callee) || !callee.body) return null;
   if (callee.asteriskToken) return null;
   return callee.body;
@@ -1530,10 +1565,23 @@ if (!fnNode) {
     };
     // Is this call the initialiser of a variable declaration — i.e. is its
     // result kept? `await` and assertions sit between the two, so peel them.
+    //
+    // ...and the call must be AWAITED (Codex round-45 P2). `await` was skipped
+    // as an optional wrapper, so `recordActivityEvents(…) as unknown as number`
+    // satisfied this: the scan keeps a PROMISE, advances its cursor, and returns
+    // a count that is really a pending thenable, with the ledger's completion
+    // and its failures alike unobserved. The INSERT execution check learned this
+    // one round earlier; the same question about the call one level up had not.
     const resultIsBound = (call) => {
       let cur = call;
+      let awaited = false;
       for (let p = cur.parent; p; cur = p, p = p.parent) {
-        if (ts.isAwaitExpression(p) || isTransparentWrapper(p)) continue;
+        if (ts.isAwaitExpression(p) && p.expression === cur) {
+          awaited = true;
+          continue;
+        }
+        if (isTransparentWrapper(p)) continue;
+        if (!awaited) return false;
         if (ts.isVariableDeclaration(p) && p.initializer === cur) return true;
         // ...or ASSIGNED to a binding declared earlier (Codex round-29 P2).
         // `let activityEvents: number; activityEvents = await …` is the ordinary
@@ -1704,11 +1752,22 @@ if (!fnNode) {
       if (member === 'splice') return call.arguments.length > 2;
       return false;
     };
-    /** Does anything mutate — or reassign — the binding `name` declared at `decl`? */
-    const everFilled = (name, decl) => {
+    /**
+     * Does anything add to — or reassign — the binding `name` declared at `decl`,
+     * BEFORE `beforePos` and on a path that actually runs?
+     *
+     * Ordering and reachability are both required (Codex round-45 P2). Round 44
+     * walked the whole file and asked only "does an insertion exist anywhere",
+     * so `noLogs.push(...allLogs)` placed AFTER the awaited ledger call counted
+     * as filling the batch the ledger had already been handed empty. A write
+     * that happens later, or inside a branch that may not run, is not evidence
+     * about what the call received.
+     */
+    const everFilled = (name, decl, beforePos) => {
       let hit = false;
       const walk = (n) => {
         if (hit) return;
+        if (n.getStart(sourceFile) >= beforePos) return;
         const receiver =
           ts.isCallExpression(n) && insertsInto(n, name)
             ? unwrapAssertions(n.expression.expression)
@@ -1741,7 +1800,7 @@ if (!fnNode) {
       if (!decl || decl === OPAQUE_BINDING || !decl.initializer) return false;
       const declInit = unwrapAssertions(decl.initializer);
       if (!ts.isArrayLiteralExpression(declInit)) return false;
-      return !everFilled(arg.text, decl);
+      return !everFilled(arg.text, decl, callSites[0].getStart(sourceFile));
     })();
     if (pinnedArg >= 0) {
       console.error(
@@ -2050,41 +2109,15 @@ if (!fnNode) {
     // {nearestDeclIn}, with the one thing that resolver cannot know: the
     // enclosing loop's OWN binding is not a shadow here — it is the log this
     // whole scan is about — so it resolves to null rather than OPAQUE_BINDING.
-    const nearestDecl = (from, name) => {
-      for (let scope = from; scope; scope = scope.parent) {
-        if (bindsNameLexically(scope, name)) {
-          if (scope === loopVar.node && name === loopVar.name) return null;
-          return OPAQUE_BINDING;
-        }
-        const stmts =
-          ts.isBlock(scope) || ts.isCaseClause(scope) || ts.isDefaultClause(scope)
-            ? scope.statements
-            : null;
-        if (stmts) {
-          for (const st of stmts) {
-            // The same hoisting rule `nearestDeclIn` learned (Codex round-44
-            // P2). Round 43 taught it to the shared resolver and left this
-            // loop-local twin scanning variable statements only — so a block
-            // `class log { static eventName = … }` was mistaken for the
-            // for-of item this whole scan is about, and every iteration
-            // mapped and stored the first log instead of its own.
-            if (
-              (ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) &&
-              st.name &&
-              declaresName(st.name, name)
-            ) {
-              return OPAQUE_BINDING;
-            }
-            if (!ts.isVariableStatement(st)) continue;
-            for (const d of st.declarationList.declarations) {
-              if (declaresName(d.name, name)) return d;
-            }
-          }
-        }
-        if (scope === loopVar.body) break;
-      }
-      return null;
-    };
+    // The shared walk, plus the ONE thing it cannot know: the enclosing loop's
+    // own binding is not a shadow here — it is the log this whole scan is about
+    // — so it resolves to null rather than to the sentinel.
+    const nearestDecl = (from, name) =>
+      resolveNameInScopes(from, name, {
+        stopAt: loopVar.body,
+        shadowSentinel: OPAQUE_BINDING,
+        notAShadow: (scope, n) => scope === loopVar.node && n === loopVar.name,
+      });
     /**
      * Every write to `name` that targets THIS binding, nested closures included.
      *
@@ -2509,25 +2542,16 @@ if (!fnNode) {
      * declaration, so an unreadable shadow fails closed.
      */
     const SHADOWED = Symbol('shadowed by an unreadable binder');
-    const bindingOfIdentifier = (from, name) => {
-      for (let scope = from; scope; scope = scope.parent) {
-        if (bindsNameLexically(scope, name)) return SHADOWED;
-        const stmts =
-          ts.isBlock(scope) || ts.isCaseClause(scope) || ts.isDefaultClause(scope)
-            ? scope.statements
-            : null;
-        if (stmts) {
-          for (const st of stmts) {
-            if (!ts.isVariableStatement(st)) continue;
-            for (const d of st.declarationList.declarations) {
-              if (declaresName(d.name, name)) return d;
-            }
-          }
-        }
-        if (scope === ledgerNode.body) break;
-      }
-      return null;
-    };
+    // The shared walk with this resolver's own sentinel (Codex round-45 P2).
+    // This was the THIRD hand-written copy, and it still lacked the hoisting
+    // rule the other two had each been taught in the two previous rounds — so a
+    // nested `class loanId {}` beside the INSERT resolved as the value
+    // destructured from the mapper. Delegating is what retires that family.
+    const bindingOfIdentifier = (from, name) =>
+      resolveNameInScopes(from, name, {
+        stopAt: ledgerNode.body,
+        shadowSentinel: SHADOWED,
+      });
     /**
      * Why this INSERT might not run on the ledger's own path (Codex round-36
      * P2), or null when nothing between it and the ledger body can skip it.
@@ -3235,7 +3259,14 @@ const collectReturns = (node, out) => {
  * Read `Number(args.<path> as bigint)` — as a SHAPE in the tree, not as text.
  * Returns the argument path, or null when the expression is anything else.
  */
-const readsArgPath = (expr) => {
+const readsArgPath = (rawExpr) => {
+  // The OUTSIDE is unwrapped too (Codex round-45 P2). Round 10 taught this
+  // function to unwrap at every step INSIDE the call, and left its own entry
+  // condition testing the raw node — so wrapping the conversion itself,
+  // `(Number(args.offerId as bigint))`, was rejected as not-a-call and the
+  // mapping reported as missing. Runtime-identical to the accepted form, and it
+  // failed the indexer typecheck.
+  const expr = rawExpr ? unwrapForInvocation(rawExpr) : rawExpr;
   if (!expr || !ts.isCallExpression(expr)) return null;
   if (!ts.isIdentifier(expr.expression) || expr.expression.text !== 'Number') return null;
   if (expr.arguments.length !== 1) return null;
@@ -3433,6 +3464,26 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
         declaresName(st.name, name)
       ) {
         return true;
+      }
+      // An IMPORT binds at module scope too (Codex round-45 P2). Importing a
+      // callable AS `Number` — typed `NumberConstructor`-compatibly and always
+      // returning 999 — passed while every accepted conversion used it. A
+      // declaration is not the only way a module-scope name arrives, and an
+      // import is the one form that carries no initializer to inspect.
+      if (ts.isImportDeclaration(st) && st.importClause) {
+        const { name: defaultName, namedBindings } = st.importClause;
+        if (defaultName && declaresName(defaultName, name)) return true;
+        if (namedBindings) {
+          if (ts.isNamespaceImport(namedBindings) && declaresName(namedBindings.name, name)) {
+            return true;
+          }
+          if (ts.isNamedImports(namedBindings)) {
+            // The LOCAL name is what shadows — `{ evil as Number }` binds Number.
+            for (const el of namedBindings.elements) {
+              if (declaresName(el.name, name)) return true;
+            }
+          }
+        }
       }
       if (!ts.isVariableStatement(st)) continue;
       for (const d of st.declarationList.declarations) {
