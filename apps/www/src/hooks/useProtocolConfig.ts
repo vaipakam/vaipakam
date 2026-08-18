@@ -417,6 +417,11 @@ async function load() {
     clearTimeout(timer);
     loading = false;
     hasConcluded = true;
+    // Re-arm (or clear) the expiry deadline for whatever this load
+    // concluded: a fresh acceptance schedules its own aging-out; a
+    // demotion or failure leaves no timer, because there is nothing
+    // held whose expiry could need acting on.
+    armExpiryTimer();
     publish();
   }
 }
@@ -427,6 +432,35 @@ async function load() {
  *  triggers nothing — navigation must not turn into request traffic. */
 function needsRevalidation(): boolean {
   return !loading && (config === null || !snapshotFresh(acceptedUpdatedAt));
+}
+
+/** One DEADLINE timer, armed at acceptance for the moment the held
+ *  snapshot crosses the freshness window. Without it, a tab that stays
+ *  visible with no navigation never re-evaluates `snapshotFresh` after
+ *  acceptance, and the displayed values keep `published` provenance
+ *  past the cutoff — the exact indefinite hold the spec forbids
+ *  (Codex #1809 r1 P2). This is not polling: it fires once, at the
+ *  expiry the acceptance already computed, and is re-armed only by a
+ *  new acceptance. Background tabs may throttle it; the
+ *  `visibilitychange` path covers those on return, and the timer
+ *  covers the visible-idle case timers are reliable for. */
+let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function armExpiryTimer(): void {
+  if (typeof window === 'undefined') return;
+  if (expiryTimer !== null) {
+    clearTimeout(expiryTimer);
+    expiryTimer = null;
+  }
+  if (config === null || acceptedUpdatedAt === null) return;
+  const expiresAtMs = (acceptedUpdatedAt + FRESH_WINDOW_SECONDS) * 1000;
+  // +1s so the check runs just AFTER the boundary — firing on the exact
+  // millisecond would race `snapshotFresh`'s own comparison.
+  const delay = Math.max(0, expiresAtMs - Date.now()) + 1_000;
+  expiryTimer = setTimeout(() => {
+    expiryTimer = null;
+    if (needsRevalidation()) void load();
+  }, delay);
 }
 
 /** Registered once: returning to a long-lived tab is the other natural
