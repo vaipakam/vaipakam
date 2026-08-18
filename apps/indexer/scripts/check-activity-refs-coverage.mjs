@@ -267,11 +267,18 @@ const REF_SHAPE = {
   // with no mapping and no exemption — the same enumerated-range mistake round
   // 13 fixed, one character wider.
   //
-  // The suffix must still START uppercase, which is the whole reason a PLURAL is
+  // The tail follows an optional NUMERIC leg as well (Codex round-25 P2). Round
+  // 24 widened the uppercase branch to a whole tail but left the digits branch
+  // as an alternative that ended at the last digit, so `loanId2Primary` and
+  // `offerId2Replacement` — ordinary names combining both legs — matched
+  // neither. Same enumerated-shape mistake a third time: the two legs are
+  // independent and optional, not a choice between them.
+  //
+  // The tail must still START uppercase, which is the whole reason a PLURAL is
   // excluded: `loanIds` continues after `loanId` in lower case, so it is an
   // array rather than a single reference and must not be treated as one.
-  loanId: /^[A-Za-z0-9_]*[Ll]oanId(?:[A-Z][A-Za-z0-9_]*|[0-9]+)?$/,
-  offerId: /^[A-Za-z0-9_]*[Oo]fferId(?:[A-Z][A-Za-z0-9_]*|[0-9]+)?$/,
+  loanId: /^[A-Za-z0-9_]*[Ll]oanId(?:[0-9]+)?(?:[A-Z][A-Za-z0-9_]*)?$/,
+  offerId: /^[A-Za-z0-9_]*[Oo]fferId(?:[0-9]+)?(?:[A-Z][A-Za-z0-9_]*)?$/,
 };
 
 /**
@@ -918,6 +925,8 @@ const bareIdentifierOf = (expr) => {
 const LEDGER_FN = 'recordActivityEvents';
 /** The property the ledger reads the event name from on each decoded log. */
 const DISCRIMINANT_PROP = 'eventName';
+/** The decoded-argument bag on a log — the mapper's second parameter. */
+const ARGS_PROP = 'args';
 
 const src = readFileSync(CHAIN_INDEXER, 'utf8');
 const sourceFile = ts.createSourceFile(CHAIN_INDEXER, src, ts.ScriptTarget.Latest, true);
@@ -966,6 +975,55 @@ if (!fnNode) {
         '  script — do not delete the check.',
     );
     process.exit(1);
+  }
+  // ...and the SCAN must still feed it (Codex round-25 P2). Everything from here
+  // down reads the ledger's own body. That is evidence about the rows only if
+  // the ledger is invoked on the batch the scan decoded — and
+  // `recordActivityEvents([], env, chainId, blockTimestamps)` typechecks, leaves
+  // every check below satisfied, keeps the tally at its usual numbers, and
+  // records nothing at all. Same shape as the round-20 finding one level up: a
+  // fully verified writer, disconnected from its input.
+  //
+  // Shape, not identity: the first argument must be a bare identifier — some
+  // binding built earlier — rather than a literal collection. Which binding it
+  // is, and whether it holds every decoded log, is dataflow this script does not
+  // do; refusing the literal closes the way the disconnection is actually
+  // written.
+  {
+    const insideLedger = (n) => {
+      for (let p = n.parent; p; p = p.parent) if (p === ledgerNode) return true;
+      return false;
+    };
+    const callSites = [];
+    const findCalls = (n) => {
+      // A self-recursive call is not the scan feeding the ledger, so it cannot
+      // stand in for one.
+      if (
+        ts.isCallExpression(n) &&
+        bareIdentifierOf(n.expression) === LEDGER_FN &&
+        !insideLedger(n)
+      ) {
+        callSites.push(n);
+      }
+      ts.forEachChild(n, findCalls);
+    };
+    ts.forEachChild(sourceFile, findCalls);
+    const disconnected = callSites.filter((c) => {
+      const first = c.arguments[0] && unwrapAssertions(c.arguments[0]);
+      return !first || !ts.isIdentifier(first);
+    });
+    if (callSites.length === 0 || disconnected.length) {
+      console.error(
+        `[check-activity-refs-coverage] ${LEDGER_FN}() is ${
+          callSites.length === 0 ? 'never called' : 'called with a literal first argument'
+        }.\n` +
+          '  Every other check here reads that function\'s body, which says nothing about the\n' +
+          '  rows unless the scan hands it the logs it decoded — passing `[]` writes no\n' +
+          '  activity rows at all while leaving every count in this script identical. Pass\n' +
+          '  the decoded-log binding, or update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
   }
   // The call must SUPPLY THE ROW's references, not merely appear (Codex round-21
   // P2), and it must be the ONLY such binding (Codex round-22 P2). Round 21
@@ -1042,6 +1100,45 @@ if (!fnNode) {
       localOf.set(key.text, el.name.text);
     }
   }
+  // ...and nothing may WRITE those locals afterwards (Codex round-25 P2).
+  // Everything downstream reasons about where the bind argument's identifier was
+  // declared; it never asks whether the value still is what was declared. Change
+  // the binding to `let` and add `loanId = 999`, and the destructuring is still
+  // unique, still from the mapper, still lined up with `loan_id` — and every row
+  // is filed under loan 999. One assignment defeats the entire chain, so refuse
+  // any write to these names inside the ledger.
+  //
+  // Blunt on purpose: a legitimate reason to reassign a reference between the
+  // mapper and the INSERT is hard to imagine, and if one appears the message
+  // says so rather than the guarantee quietly weakening.
+  {
+    const writtenAnywhere = (root, name) => {
+      let found = false;
+      const walk = (n) => {
+        if (found) return;
+        if (writesName(n, name)) {
+          found = true;
+          return;
+        }
+        ts.forEachChild(n, walk);
+      };
+      if (root) walk(root);
+      return found;
+    };
+    const rebound = [...localOf.values()].filter((local) =>
+      writtenAnywhere(ledgerNode.body, local),
+    );
+    if (rebound.length) {
+      console.error(
+        `[check-activity-refs-coverage] ${LEDGER_FN}() writes to ${rebound.join(' / ')} after\n` +
+          '  destructuring it from pluckActivityRefs. Every check below this point matches\n' +
+          '  the bind argument by NAME, so a reassignment keeps all of them green while the\n' +
+          '  rows carry whatever was assigned. Leave the mapper\'s values alone, or update\n' +
+          '  this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
+  }
   const init = bindings[0].initializer && unwrapAssertions(bindings[0].initializer);
   const boundFrom = init && ts.isCallExpression(init) ? bareIdentifierOf(init.expression) : null;
   // ...and it must be handed THIS log's event name and decoded arguments (Codex
@@ -1055,44 +1152,121 @@ if (!fnNode) {
   // separates the live call from a pinned one, and it is checkable without
   // resolving bindings.
   if (init && ts.isCallExpression(init)) {
-    const isPlainRead = (a) => {
-      let cur = unwrapAssertions(a);
-      while (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
-        cur = unwrapAssertions(cur.expression);
-      }
-      return ts.isIdentifier(cur);
-    };
     // A plain read is not necessarily the EVENT NAME (Codex round-23 P2).
     // `pluckActivityRefs(log.transactionHash, args)` is a plain read, type-
     // correct, and misses every case — so the row takes the all-null fallback
     // while the tally is untouched. The first argument must name the event.
-    // ...and it must come from the CURRENT loop item, not any object with an
-    // `eventName` (Codex round-24 P2). `pluckActivityRefs(logs[0].eventName,
-    // args)` names the right property on the wrong object, so every row after
-    // the first is dispatched under the first log's event name. The receiver has
-    // to be a bare identifier — `log.eventName`, not `logs[0].eventName` — which
-    // is what an element access into the collection gives itself away as.
-    const namesTheEvent = (a) => {
+    //
+    // ...and BOTH arguments must come from the CURRENT loop item (Codex rounds
+    // 24 and 25 P2). Round 24 required a bare-identifier receiver, which
+    // `logs[0].eventName` fails but `const firstLog = logs[0]` passes; and it
+    // left the second argument as any plain read, which `logs[0].args` passes
+    // outright. Either way every row after the first is dispatched under the
+    // first log's name and reads the first log's ids — a per-row corruption
+    // that leaves the tally identical.
+    //
+    // "Bare identifier" was always the wrong question. The right one is whether
+    // the expression resolves to THE ITEM THIS ITERATION IS PROCESSING, so
+    // anchor on the enclosing `for...of` and require both arguments to read the
+    // loop's own binding.
+    let loopVar = null;
+    for (let p = bindings[0].parent; p; p = p.parent) {
+      if (isFunctionLike(p)) break; // never cross out of the ledger
+      if (
+        ts.isForOfStatement(p) &&
+        ts.isVariableDeclarationList(p.initializer) &&
+        p.initializer.declarations.length === 1 &&
+        ts.isIdentifier(p.initializer.declarations[0].name)
+      ) {
+        loopVar = { name: p.initializer.declarations[0].name.text, body: p.statement };
+        break;
+      }
+    }
+    if (!loopVar) {
+      console.error(
+        `[check-activity-refs-coverage] the pluckActivityRefs binding in ${LEDGER_FN}()\n` +
+          '  is not inside a `for (const log of logs)` loop over a single binding, so this\n' +
+          '  script cannot tell which log each row is built from — and "the current item"\n' +
+          '  is the whole question rounds 24/25 turned on. If the ledger changed shape,\n' +
+          '  update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
+    // Locals declared INSIDE the loop body that read a property off the loop
+    // binding: `let args = log.args` maps args → 'args'; `const { eventName } =
+    // log` maps eventName → 'eventName'. This is what lets the live ledger pass
+    // — it reads `log.args` into `args` and then enriches it — while keeping the
+    // receiver anchored to the loop item.
+    //
+    // Deliberately NOT write-checked. The live enrichment reassigns
+    // `args = { ...args, creator }`, which is the same log's arguments plus a
+    // looked-up field; forbidding writes here would reject the code this
+    // guardrail was built around. The declaration is the anchor.
+    const loopLocals = new Map();
+    {
+      const aliases = []; // `const decoded = args` — resolved after the direct pass
+      const collect = (n) => {
+        if (isFunctionLike(n)) return; // a nested closure's locals are not these
+        if (ts.isVariableDeclaration(n) && n.initializer) {
+          const rhs = unwrapAssertions(n.initializer);
+          if (ts.isIdentifier(n.name) && ts.isPropertyAccessExpression(rhs)) {
+            const recv = unwrapAssertions(rhs.expression);
+            if (ts.isIdentifier(recv) && recv.text === loopVar.name) {
+              loopLocals.set(n.name.text, rhs.name.text);
+            }
+          } else if (ts.isIdentifier(n.name) && ts.isIdentifier(rhs)) {
+            aliases.push([n.name.text, rhs.text]);
+          } else if (ts.isObjectBindingPattern(n.name) && ts.isIdentifier(rhs) && rhs.text === loopVar.name) {
+            for (const el of n.name.elements) {
+              if (!ts.isBindingElement(el) || !ts.isIdentifier(el.name)) continue;
+              const key = el.propertyName ?? el.name;
+              if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) {
+                loopLocals.set(el.name.text, key.text);
+              }
+            }
+          }
+        }
+        ts.forEachChild(n, collect);
+      };
+      collect(loopVar.body);
+      // A rename of a loop-local is still the loop item's property, and refusing
+      // `const decoded = args` would make the check reject ordinary code rather
+      // than the disconnection it is aimed at. Resolve to a fixpoint so a chain
+      // of renames behaves the same as one.
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const [local, from] of aliases) {
+          if (!loopLocals.has(local) && loopLocals.has(from)) {
+            loopLocals.set(local, loopLocals.get(from));
+            changed = true;
+          }
+        }
+      }
+    }
+    const readsLoopItem = (a, prop) => {
       const cur = unwrapAssertions(a);
       if (ts.isPropertyAccessExpression(cur)) {
-        if (cur.name.text !== DISCRIMINANT_PROP) return false;
-        return ts.isIdentifier(unwrapAssertions(cur.expression));
+        const recv = unwrapAssertions(cur.expression);
+        return cur.name.text === prop && ts.isIdentifier(recv) && recv.text === loopVar.name;
       }
-      return ts.isIdentifier(cur) && cur.text === DISCRIMINANT_PROP;
+      if (ts.isIdentifier(cur)) return loopLocals.get(cur.text) === prop;
+      return false;
     };
     if (
       init.arguments.length !== 2 ||
-      !init.arguments.every(isPlainRead) ||
-      !namesTheEvent(init.arguments[0])
+      !readsLoopItem(init.arguments[0], DISCRIMINANT_PROP) ||
+      !readsLoopItem(init.arguments[1], ARGS_PROP)
     ) {
       console.error(
-        `[check-activity-refs-coverage] ${LEDGER_FN}() calls pluckActivityRefs with\n` +
-          `  arguments that are not plain reads of the current log's \`${DISCRIMINANT_PROP}\`\n` +
-          '  and decoded args. A pinned event name, a constructed bag, or the wrong property\n' +
-          '  constructed argument bag dispatches every row through one case and stores\n' +
-          '  Number(undefined) for its id, while every count here stays identical. Pass the\n' +
-          "  log's event name and decoded args, or update this script — do not delete the\n" +
-          '  check.',
+        `[check-activity-refs-coverage] ${LEDGER_FN}() must call pluckActivityRefs with\n` +
+          `  the current log's \`${DISCRIMINANT_PROP}\` and \`${ARGS_PROP}\` — read off \`${loopVar.name}\`, the\n` +
+          '  binding the enclosing loop is on, or off a local declared inside that loop\n' +
+          '  from it.\n' +
+          '  A pinned event name, a constructed bag, or a read off a DIFFERENT log\n' +
+          `  (\`${loopVar.name}s[0].${DISCRIMINANT_PROP}\`, a hoisted \`firstLog\`) dispatches every row\n` +
+          '  through one case and stores that log\'s ids on every other row, while every\n' +
+          '  count here stays identical. Fix the call, or update this script — do not\n' +
+          '  delete the check.',
       );
       process.exit(1);
     }
