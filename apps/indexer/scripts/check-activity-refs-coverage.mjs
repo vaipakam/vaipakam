@@ -445,14 +445,47 @@ const memberNameOf = (node) => {
  * it, because `if (false) { const dead = await recordActivityEvents(…) }` binds
  * a result too. Same question, same answer, so the same code.
  *
- * Blocks and loops are fine — the ledger's own `for (const log of logs)` is one.
- * What is refused is anything that can decide NOT to reach the statement.
+ * Blocks and ordinary loops are fine — the ledger's own `for (const log of
+ * logs)` is one, and so is a nested loop over a real collection. What is
+ * refused is anything that can decide NOT to reach the statement, INCLUDING a
+ * loop that provably never iterates.
+ *
+ * Loops used to be waved through as a class (Codex round-44 P2): a body runs
+ * zero times when the thing it walks is empty, so `for (const _never of [] as
+ * number[])` around the INSERT is `if (false)` wearing a different hat, and
+ * this walk exists to refuse `if (false)`.
+ *
+ * The rule here is NARROWER than "refuse loops whose execution cannot be
+ * proved", and deliberately so — that version cannot be proved for a nested
+ * loop over any real collection either, and it broke the round-31 case for a
+ * for-of binder shadowing at the INSERT: the generic loop message subsumed a
+ * check with a precise diagnosis, which is the round-38 mistake repeated. So
+ * what is refused is an EMPTY LITERAL iterable and a constant-false condition —
+ * the shapes nothing writes by accident — and an ordinary loop still passes.
  */
 const guardedReason = (node, stopAt) => {
   for (let cur = node; cur && cur !== stopAt; cur = cur.parent) {
     const p = cur.parent;
     if (!p) break;
     if (isFunctionLike(p)) return 'inside a nested function, which nothing here calls';
+    if (
+      (ts.isForOfStatement(p) || ts.isForInStatement(p)) &&
+      cur === p.statement &&
+      (() => {
+        const it = unwrapAssertions(p.expression);
+        return ts.isArrayLiteralExpression(it) && it.elements.length === 0;
+      })()
+    ) {
+      return 'inside a loop over an empty literal, so its body never runs at all';
+    }
+    if (
+      (ts.isWhileStatement(p) || ts.isDoStatement(p) || ts.isForStatement(p)) &&
+      cur === p.statement &&
+      p.expression &&
+      unwrapAssertions(p.expression).kind === ts.SyntaxKind.FalseKeyword
+    ) {
+      return 'inside a loop whose condition is constantly false, so its body never runs';
+    }
     if (ts.isConditionalExpression(p) && cur !== p.condition) {
       return 'inside a conditional expression, so it runs only on one branch';
     }
@@ -688,6 +721,33 @@ const isTransparentWrapper = (n) =>
   ts.isNonNullExpression(n) ||
   Boolean(ts.isSatisfiesExpression?.(n)) ||
   Boolean(ts.isTypeAssertionExpression?.(n));
+
+/**
+ * The body of a function this expression IMMEDIATELY INVOKES, or null.
+ *
+ * For the MUTATION question, which is not the same as the throw question the
+ * escape analysis asks (Codex round-44 P2). There, a non-awaited `async` IIFE is
+ * skipped because its throw becomes a rejected promise that never reaches the
+ * frame. Here it must NOT be skipped: an async body still runs synchronously up
+ * to its first `await`, so `(async () => { args.loanId = 999 })()` mutates
+ * before anything else happens. A GENERATOR is the real exemption — calling one
+ * returns an iterator and runs no body at all.
+ */
+const invokedFunctionBodyOf = (expr) => {
+  const e = unwrapForInvocation(expr);
+  if (!e || !ts.isCallExpression(e)) return null;
+  const callee = unwrapForInvocation(e.expression);
+  if (!callee || !isFunctionLike(callee) || !callee.body) return null;
+  if (callee.asteriskToken) return null;
+  return callee.body;
+};
+
+/** `unwrapAssertions`, usable before it is defined below. */
+const unwrapForInvocation = (t) => {
+  let cur = t;
+  while (cur && isTransparentWrapper(cur)) cur = cur.expression;
+  return cur;
+};
 
 const unwrapAssertions = (t) => {
   while (
@@ -1629,14 +1689,28 @@ if (!fnNode) {
     // and FILLED, so its initializer says nothing about what it holds at the
     // call. What separates it from the decoy is not its initializer but
     // whether anything ever puts logs in it.
-    const BATCH_MUTATORS = ['push', 'unshift', 'splice', 'fill', 'copyWithin'];
+    // Only mutators that can ADD an element count (Codex round-44 P2). Round 43
+    // took "mutates the array" as the property, and three of the names it
+    // listed cannot lengthen an empty one: `fill` and `copyWithin` write over
+    // existing slots and leave the length alone, so `noLogs.copyWithin(0, 0)`
+    // read as a filled batch while the ledger received nothing. `splice`
+    // belongs only in its insertion form — `splice(i, n)` removes, and
+    // `splice()` does nothing at all.
+    const BATCH_ADDERS = ['push', 'unshift'];
+    const insertsInto = (call, name) => {
+      const member = memberNameOf(call.expression);
+      if (BATCH_ADDERS.includes(member)) return call.arguments.length > 0;
+      // splice(start, deleteCount, ...items) — an insertion needs the items.
+      if (member === 'splice') return call.arguments.length > 2;
+      return false;
+    };
     /** Does anything mutate — or reassign — the binding `name` declared at `decl`? */
     const everFilled = (name, decl) => {
       let hit = false;
       const walk = (n) => {
         if (hit) return;
         const receiver =
-          ts.isCallExpression(n) && BATCH_MUTATORS.includes(memberNameOf(n.expression) ?? '')
+          ts.isCallExpression(n) && insertsInto(n, name)
             ? unwrapAssertions(n.expression.expression)
             : null;
         if (
@@ -1988,6 +2062,19 @@ if (!fnNode) {
             : null;
         if (stmts) {
           for (const st of stmts) {
+            // The same hoisting rule `nearestDeclIn` learned (Codex round-44
+            // P2). Round 43 taught it to the shared resolver and left this
+            // loop-local twin scanning variable statements only — so a block
+            // `class log { static eventName = … }` was mistaken for the
+            // for-of item this whole scan is about, and every iteration
+            // mapped and stored the first log instead of its own.
+            if (
+              (ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) &&
+              st.name &&
+              declaresName(st.name, name)
+            ) {
+              return OPAQUE_BINDING;
+            }
             if (!ts.isVariableStatement(st)) continue;
             for (const d of st.declarationList.declarations) {
               if (declaresName(d.name, name)) return d;
@@ -2524,9 +2611,16 @@ if (!fnNode) {
     // that executes exactly as the dotted form does. `memberNameOf` already
     // reads both, and returns null for anything that is not a member access —
     // which is also the guard that makes `p.expression` safe to compare.
+    //
+    // ...and that call must be AWAITED (Codex round-44 P2). Requiring the
+    // executor to be the callee still accepted `void …bind(…).run()`: D1 is
+    // handed the statement, but the ledger returns without observing whether it
+    // completed or failed, and a Worker cancelled mid-flight loses the pending
+    // write. "The statement was executed" and "the scan waited for the row" are
+    // different claims, and this script's whole subject is the second one.
     const executedFrom = (bindCall) => {
       for (let cur = bindCall, p = cur.parent; p; cur = p, p = p.parent) {
-        if (isTransparentWrapper(p) || ts.isAwaitExpression(p)) continue;
+        if (isTransparentWrapper(p)) continue;
         const member = memberNameOf(p);
         if (
           member !== null &&
@@ -2536,7 +2630,14 @@ if (!fnNode) {
           ts.isCallExpression(p.parent) &&
           p.parent.expression === p
         ) {
-          return true;
+          // Walk out past wrappers to the first node that decides the call's
+          // completion. An `await` anywhere above it — directly, or through
+          // parentheses / assertions — is what makes the row observed.
+          for (let q = p.parent.parent, child = p.parent; q; child = q, q = q.parent) {
+            if (isTransparentWrapper(q)) continue;
+            return ts.isAwaitExpression(q) && q.expression === child;
+          }
+          return false;
         }
         return false;
       }
@@ -3279,6 +3380,16 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     }
     if (param.initializer) {
       walkOuter(param.initializer);
+      // ...and INTO a function the default immediately invokes (Codex round-44
+      // P2). `walkOuter` stops at every function-like node, which is right for
+      // an ordinary helper — nothing here calls it — and wrong for
+      // `(() => { args.loanId = 999 })()`, which runs before the body on every
+      // existing call. The escape analysis has understood invoked IIFEs since
+      // round 34; this walk, added one round ago for the same question, had not.
+      if (!outerShadow) {
+        const invoked = invokedFunctionBodyOf(param.initializer);
+        if (invoked) walkOuter(invoked);
+      }
       if (outerShadow) {
         outerShadow = `${outerShadow} (in a parameter default)`;
         break;
@@ -3290,6 +3401,52 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     structural.push(
       `pluckActivityRefs declares '${outerShadow}' in its own body, shadowing what the accepted mapping shape relies on for EVERY case — this checker cannot tell the two apart`,
     );
+  }
+  // MODULE scope shadows the mapper too (Codex round-44 P2). Every check above
+  // searches the mapper's parameters and body, on the reasoning that a shadow
+  // has to be somewhere the mapper can see — which is true, and the module is
+  // one of those places. A file-level `const Number = …` returning 999 is
+  // visible to every case, typechecks when given `NumberConstructor`'s shape,
+  // and turns every mapped reference into 999.
+  //
+  // `Number` and `args` are GLOBALS or parameters in the honest file, so nothing
+  // binds them at module scope and the resolver returns null. A non-null answer
+  // means something does.
+  //
+  // A DEDICATED module-scope lookup, deliberately not `nearestDeclIn`. That
+  // resolver walks `scope.parent` and only reads statements out of a `Block` /
+  // case clause, so it never sees module scope at all — and the ledger-call
+  // check DEPENDS on that: it reads `nearestDeclIn(…, LEDGER_FN, …) === null` as
+  // "the module-level writer is what this name reaches". Teaching the shared
+  // resolver about module scope would make the module-level `recordActivityEvents`
+  // resolve to a binding and fail the live file. So the module question gets its
+  // own answer rather than a widened resolver.
+  //
+  // The mapper's own `args` parameter is not module scope, so it is out of range
+  // here by construction — which is the boundary the `.slice(2)` loop above has
+  // to draw by hand.
+  const moduleBindsName = (name) => {
+    for (const st of sourceFile.statements) {
+      if (
+        (ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) &&
+        st.name &&
+        declaresName(st.name, name)
+      ) {
+        return true;
+      }
+      if (!ts.isVariableStatement(st)) continue;
+      for (const d of st.declarationList.declarations) {
+        if (declaresName(d.name, name)) return true;
+      }
+    }
+    return false;
+  };
+  for (const shadowable of ['Number', 'args']) {
+    if (moduleBindsName(shadowable)) {
+      structural.push(
+        `'${shadowable}' is bound outside pluckActivityRefs, shadowing the global the accepted mapping shape relies on for EVERY case — this checker cannot tell the two apart`,
+      );
+    }
   }
 }
 
