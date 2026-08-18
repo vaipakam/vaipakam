@@ -554,6 +554,66 @@ than a growing list of patches on generic-offer consumption.
    > this reasoning in the implementing PR so it can be challenged —
    > silently shipping two of three parts and calling it item 4 is exactly
    > the "disclosure as resolution" move this item warns against.
+   >
+   > **How the two live bounds are derived (decided 2026-08-18).** The
+   > floor cannot be the figure the seller sees on screen. Accrued
+   > interest grows across the listing window, so their net shrinks, and a
+   > floor set at the displayed value would make the listing unfillable
+   > almost immediately. The enforceable floor is the WORST CASE they are
+   > accepting: the same settlement arithmetic evaluated at the listing's
+   > own expiry. "If this fills at any time before it expires, you receive
+   > at least X" is both a true sentence to show them and a bound the
+   > contract can check. It is computable only because the mandatory
+   > finite expiry exists, which is the second place that lifecycle change
+   > turns out to be load-bearing here.
+   >
+   > The ceiling takes the opposite shape, because the held balance does
+   > not grow with time. It grows only when a partial or internal
+   > settlement parks more into it between listing and acceptance —
+   > precisely the drift this item exists to refuse. So the ceiling is the
+   > balance as it stands at listing, and any new park fails the sale
+   > rather than silently enlarging what transfers to the buyer.
+   >
+   > **Revised after the item-28 forfeiture rework landed (2026-08-18,
+   > post-#1801).** The paragraph above assumed the settlement cost drifts
+   > only by CONTINUOUS accrual, so that evaluating it at the expiry is a
+   > true upper bound. That is no longer the whole picture, and the change
+   > makes item 4 stronger rather than harder.
+   >
+   > The forfeiture is now measured over a WINDOW that opens at the
+   > lender's recorded paid-through mark, and that mark is disqualified —
+   > wholesale, for the rest of the lender's tenure — by a principal
+   > change, by interest parked rather than delivered, or by a missing
+   > origination baseline. When a disqualifier fires, the window's opening
+   > point jumps EARLIER. So between listing and acceptance the settlement
+   > cost can move in two unrelated ways: it grows continuously with
+   > accrual, and it can step up discretely if the position is
+   > disqualified.
+   >
+   > The floor should NOT be widened to absorb that step. Deriving it from
+   > the worst reachable opening point (the tenure floor) would price every
+   > listing as though it had already been disqualified, which is a large,
+   > permanent overcharge to cover an event that usually does not happen.
+   > The correct behaviour is the one the floor already produces: a
+   > disqualification between listing and acceptance breaks the bound and
+   > the sale fails. That is not a defect to design around — it is exactly
+   > what the seller did not authorize, refused for the same reason a new
+   > park is refused.
+   >
+   > Stated that way the two bounds turn out to be complementary rather
+   > than overlapping, and it is worth checking that neither is redundant:
+   > a PARK both enlarges the held balance (caught by the ceiling) and
+   > voids the mark (caught by the floor), but a PRINCIPAL CHANGE voids the
+   > mark while parking nothing, so the floor catches a case the ceiling
+   > cannot see. Both are needed.
+   >
+   > One consequence to carry into the implementing PR: the floor is now
+   > sensitive to events that have nothing to do with the sale, so a
+   > listing can become unfillable through ordinary borrower activity — a
+   > partial repayment is enough. That is the right outcome, but it must be
+   > SURFACED. The seller's own listing card should say why a live listing
+   > can no longer complete, and the remedy is to cancel and relist at the
+   > new economics rather than to loosen the bound.
 
 5. **The direct sale admits on the stored borrower, not the current
    one.** That path passes the loan's stored borrower to the
