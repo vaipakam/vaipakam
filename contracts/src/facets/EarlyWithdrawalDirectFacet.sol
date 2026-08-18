@@ -231,13 +231,18 @@ contract EarlyWithdrawalDirectFacet is
         // (`loanToOffsetOfferId[loanId]`). Same mapping family, opposite subject;
         // the first reads like the second at a glance.
         //
-        // The listing sibling has refused this since #1001 (S3, Codex #1070) with
-        // the same rationale, which applies at least as sharply here: the offset
-        // pays the CURRENT lender at completion, so letting the position change
-        // hands mid-offset entangles two concurrent close-outs of one loan. The
-        // direct sale is the sharper case because it migrates the lender inside a
-        // single transaction — there is no listing window during which anyone
-        // could notice the offset and cancel.
+        // The listing sibling has refused this since #1001 (S3, Codex #1070) for
+        // the same reason, which applies at least as sharply here: a sale is a
+        // second SETTLEMENT of a loan that already has one in flight, and the two
+        // would race. Note what this is NOT — a bare transfer of the lender NFT
+        // stays allowed on purpose, because the offset locks only the borrower
+        // position and `_completeOffsetImpl` re-anchors to whoever holds the
+        // lender side when it settles. Ownership changing is fine; a second
+        // settlement is not.
+        //
+        // The direct sale is the sharper case because it settles inside a single
+        // transaction — there is no listing window during which anyone could
+        // notice the offset and cancel.
         //
         // Every other mutator of this class already guards it: `PrecloseFacet`
         // (a second offset), `PrepayListingFacet`, and `createLoanSaleOffer`. This

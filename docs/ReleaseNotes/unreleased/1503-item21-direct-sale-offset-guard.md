@@ -1,13 +1,18 @@
 ## Lender sale — the instant route now refuses a loan with a live offset (PR #TBD)
 
 A borrower who has started a Preclose Option-3 offset has a close-out in
-flight that pays whoever holds the lender position when it completes. Since
-2026 the listing route has refused to put that position up for sale while such
-an offset is outstanding, because letting the position change hands mid-offset
-leaves two close-outs of the same loan running against each other. The instant
-route — selling straight into a standing lender offer — never had that refusal,
-so the same loan could be sold out from under a live offset in a single
-transaction.
+flight that pays whoever holds the lender position when it completes. The
+listing route has long refused to put that position up for sale while such an
+offset is outstanding, because a sale is a *second settlement* of a loan that
+already has one running, and the two would race. The instant route — selling
+straight into a standing lender offer — never had that refusal, so the same
+loan could be sold out from under a live offset in a single transaction.
+
+Worth being precise about what is and is not restricted, because it is easy to
+state too broadly. A lender who simply transfers their position NFT to another
+wallet is unaffected: the offset holds only the borrower's position, and
+completion pays whoever holds the lender side at that moment. Ownership moving
+is safe. What is refused is starting a second settlement while one is pending.
 
 It now refuses, with the same error the listing route uses, so a caller sees
 identical revert data whichever route turned them away. The remedy is unchanged

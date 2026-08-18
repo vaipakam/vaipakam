@@ -215,10 +215,18 @@ contract EarlyWithdrawalFacet is
         // genuine re-list is still allowed.
         if (s.loanToSaleOfferId[loanId] != 0) revert SaleOfferAlreadyExists();
         // #1001 (S3, Codex #1070) — refuse to list the lender position for sale
-        // while a Preclose Option-3 offset offer is live on this loan. The offset
-        // pays the CURRENT lender at completion; letting the position change hands
-        // mid-offset entangles two concurrent close-outs of the same loan. The
-        // offset must be cancelled or completed first (it is short-lived).
+        // while a Preclose Option-3 offset offer is live on this loan. A sale is a
+        // second SETTLEMENT of a loan that already has one in flight, and the two
+        // would race. The offset must be cancelled or completed first (it is
+        // short-lived).
+        //
+        // Corrected wording (#1503 item 21): this comment used to say the conflict
+        // was the position "changing hands", which is not what makes it unsafe —
+        // the offset locks only the BORROWER NFT, and `_completeOffsetImpl`
+        // deliberately re-anchors to a lender NFT transferred while it was live.
+        // A bare transfer is supported; a second settlement is not. The old
+        // phrasing was copied verbatim into the direct route's new guard before
+        // review caught it, which is why it is fixed at the source too.
         if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetActiveOnLoan();
         // #1503 PR-E (design item 11) — fail fast rather than publish a
         // listing that could not lawfully be filled. The BINDING check is
