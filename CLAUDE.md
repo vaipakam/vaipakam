@@ -205,7 +205,7 @@ registering these can be correct:
 | Place | Condition |
 | --- | --- |
 | `contracts/script/RedeployFacets.s.sol` | only if the facet belongs to one of that script's curated refresh families — it is a *curated* partial refresh, not an all-facets one |
-| `contracts/script/lib/FacetSelectors.sol` | only for the six facets the curated scripts cut (`oracle`, `vaultFactory`, `profile`, `vaipakamNFT`, `riskPreview`, `offerPreview`). Guarded exactly by `RedeploySelectorParityTest`, and the same list must be updated when one of those facets gains or loses an external FUNCTION — see "When you add a function to a facet" below |
+| `contracts/script/lib/FacetSelectors.sol` **+ a matching case in `contracts/test/deploy/RedeploySelectorParityTest.t.sol`** | only for the facets the curated redeploy scripts cut — the library's own getters are the list. These are ONE step, not a step and its guard: the parity test enumerates each facet BY HAND, so adding a getter without adding its case compiles happily and leaves that selector list entirely unpinned. The same list must also be updated when one of those facets gains or loses an external FUNCTION — see "When you add a function to a facet" below |
 | `contracts/script/exportFrontendAbis.sh` (`FACETS=(...)`) | only if an app actually consumes the facet's ABI. Internal facets are deliberately excluded — `ReceiverFacet` is not in that array and should not be |
 | `packages/contracts/src/abis/index.ts` | only alongside the entry above — the export script does **not** touch this barrel |
 
@@ -238,15 +238,15 @@ The last two are covered in more detail in "Frontend ABI sync" **below**.
 `_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —
 `SelectorCoverageTest` fails otherwise.
 
-There is a **third** registration site, and only for six facets, which is why
+There is a **third** registration site, and only for some facets, which is why
 it is easy to miss: `contracts/script/lib/FacetSelectors.sol` carries the FULL
-external surface of the facets the curated redeploy scripts cut — currently
-`oracle`, `vaultFactory`, `profile`, `vaipakamNFT`, `riskPreview` and
-`offerPreview`. Adding an external function to any of those six means adding
+external surface of the facets the curated redeploy scripts cut — the library's
+getters are the list, so read them there rather than trusting a copy here.
+Adding an external function to any of those facets means adding
 its selector there too. `RedeploySelectorParityTest` pins each list to the
 compiled ABI's `methodIdentifiers` **exactly** — same size, nothing missing,
 nothing extra — so the omission fails the deploy-sanity suite rather than
-passing silently. Facets outside that six need nothing here.
+passing silently. Facets outside that set need nothing here.
 
 (One exception, and it is in the test rather than the rule: `vaipakamNFT` is
 pinned to the facet's ROUTED surface, which is its compiled ABI minus
@@ -256,8 +256,20 @@ to `DiamondLoupeFacet` instead.)
 Why the list exists at all (findings #778 / #779): a `Replace` diamondCut must
 carry a facet's WHOLE routed surface, because any selector left out of the cut
 stays pointed at the OLD implementation — a split Diamond running two versions
-of one facet. The curated scripts used to hand-list partial subsets and drift;
-they now all read this one library.
+of one facet. The curated scripts used to hand-list partial subsets and drift.
+
+**Which script reads which list is uneven, and worth knowing before trusting a
+green parity test.** `RedeployFacets.s.sol` reads most of them;
+`UpgradeOracleFacet.s.sol` reads `oracle`. But `offerPreview` has **no script
+consumer at all** — it is read only by tests — and `ReplaceStaleFacets.s.sol`
+does not import this library: its RiskPreview and OfferPreview cuts use
+`_getRiskPreviewFacetSelectors()` / `_getOfferPreviewSelectors()` inherited from
+`DeployDiamond`. For those two facets, updating `FacetSelectors` satisfies the
+parity test while the production cut is still driven by `DeployDiamond`, so
+update both and do not read a green parity test as proof that a
+`ReplaceStaleFacets` cut is complete. `grep` for the getter to see who actually
+consumes it rather than assuming the library is the single source everywhere —
+it is for most of these facets and not yet for all.
 
 The deploy-*integration* test that Issue #72 asked for **already exists** and
 runs in the deploy-sanity suite:
