@@ -513,7 +513,26 @@ for (const file of memberFiles) {
     const typeOf = new Map();
     const collect = (inputs, prefix) => {
       for (const i of inputs ?? []) {
-        if (!i?.name) continue;
+        if (!i?.name) {
+          // An UNNAMED input carrying named components is reported, not skipped
+          // (Codex round-17 P2). Skipping it dropped every reference underneath
+          // — a `uint256 loanId` inside an unnamed tuple left the event in the
+          // decoded set and outside coverage, with the tally unchanged. There is
+          // no access path this checker can name for it (the indexer would have
+          // to read it positionally), so the honest answer is that this shape is
+          // unsupported rather than that the event carries nothing.
+          if (Array.isArray(i?.components) && i.components.some((c) => c?.name)) {
+            abiConflicts.push({
+              kind: 'unnamed-tuple',
+              event: item.name,
+              message: `${item.name} — an unnamed input carries named components (${i.components
+                .filter((c) => c?.name)
+                .map((c) => c.name)
+                .join(', ')}); this checker cannot name an access path for them, so any reference inside would silently leave coverage`,
+            });
+          }
+          continue;
+        }
         const path = prefix ? `${prefix}.${i.name}` : i.name;
         names.push(path);
         typeOf.set(path, i.type ?? '');
@@ -687,7 +706,13 @@ let shadowsDiscriminant = false;
 if (discriminantName && fnNode.body) {
   const findShadow = (n) => {
     if (shadowsDiscriminant) return;
-    if (isFunctionLike(n)) return; // a nested function's own scope cannot reach here
+    // The declaration's OWN NAME is tested BEFORE declining to walk its body
+    // (Codex round-17 P2). `isFunctionLike` covers function and class
+    // declarations, so an early return placed above this test made it
+    // unreachable for exactly the two kinds that declare a name in the
+    // enclosing scope — `function eventName() {}` shadows just as a `const`
+    // does, and skipping it because it is "a nested function" reads the wrong
+    // scope. Same mistake this file made in round 11, in a different walk.
     if (
       (ts.isVariableDeclaration(n) ||
         ts.isFunctionDeclaration(n) ||
@@ -698,6 +723,7 @@ if (discriminantName && fnNode.body) {
       shadowsDiscriminant = true;
       return;
     }
+    if (isFunctionLike(n)) return; // a nested function's own scope cannot reach here
     ts.forEachChild(n, findShadow);
   };
   ts.forEachChild(fnNode.body, findShadow);
@@ -745,11 +771,34 @@ const findSwitch = (node) => {
  * it runs. Conditional exits are fine and common, so only a bare `return`/`throw`
  * statement counts.
  */
+/**
+ * Does control definitely leave the function at this statement? Followed THROUGH
+ * blocks and if/else (Codex round-17 P2): a bare `{ return { …null }; }` placed
+ * before the switch exits just as surely as a top-level return, and a node-kind
+ * test on the statement itself sees a Block and moves on. Same shape as
+ * `alwaysExits` further down, declared here because this walk runs first.
+ */
+const exitsFunction = (st) => {
+  if (!st) return false;
+  if (ts.isReturnStatement(st) || ts.isThrowStatement(st)) return true;
+  if (ts.isBlock(st)) return st.statements.some(exitsFunction);
+  if (ts.isLabeledStatement(st)) return exitsFunction(st.statement);
+  if (ts.isIfStatement(st)) {
+    return (
+      Boolean(st.elseStatement) && exitsFunction(st.thenStatement) && exitsFunction(st.elseStatement)
+    );
+  }
+  if (ts.isTryStatement(st)) {
+    // The finally block runs whatever happens, so an exit there is unconditional.
+    return Boolean(st.finallyBlock) && exitsFunction(st.finallyBlock);
+  }
+  return false;
+};
 if (fnNode.body) {
   for (const st of fnNode.body.statements) {
     if (!switchNode) findSwitch(st);
     if (switchNode) break;
-    if (ts.isReturnStatement(st) || ts.isThrowStatement(st)) {
+    if (exitsFunction(st)) {
       console.error(
         '[check-activity-refs-coverage] pluckActivityRefs() leaves unconditionally before\n' +
           '  its event switch, so the switch never runs and every event would be stored with\n' +
@@ -924,6 +973,15 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
   /** Labels accumulate across fall-through clauses, along with their returns. */
   let pendingLabels = [];
   let pendingReturns = [];
+  /**
+   * Statements accumulate across fall-through clauses too (Codex round-17 P2).
+   * Labels and returns already did; the mutation / abrupt-exit scans read only
+   * the TERMINAL clause's statements, so `args.loanId = 0n` written under a
+   * clause that falls through to a shared return was never looked at, and every
+   * row for that event was filed under loan zero. Whatever binds a group of
+   * labels has to be examined for the whole group.
+   */
+  let pendingStatements = [];
   const seenLabels = new Set();
 
   /**
@@ -948,6 +1006,7 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     }
     pendingLabels = [];
     pendingReturns = [];
+    pendingStatements = [];
   };
 
   for (const clause of switchNode.caseBlock.clauses) {
@@ -976,6 +1035,7 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     const returns = [];
     for (const stmt of clause.statements) collectReturns(stmt, returns);
     pendingReturns.push(...returns);
+    pendingStatements.push(...clause.statements);
 
     const last = clause.statements[clause.statements.length - 1];
     if (!alwaysExits(last)) continue; // falls through: bind the next clause too
@@ -1036,13 +1096,15 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
       for (const n of nodes) walk(n, new Set());
       return found;
     };
+    const groupStatements = pendingStatements;
     const escapesWithoutReturning =
-      !alwaysReturns(last) || hasAbruptExit(clause.statements);
+      !alwaysReturns(last) || hasAbruptExit(groupStatements);
 
     const labels = pendingLabels;
     const returnNodes = pendingReturns;
     pendingLabels = [];
     pendingReturns = [];
+    pendingStatements = [];
 
     // Each return contributes one "scope": its top-level properties, or a marker
     // that this checker cannot see them.
@@ -1121,7 +1183,7 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
         }
         ts.forEachChild(n, walk);
       };
-      for (const st of clause.statements) walk(st);
+      for (const st of groupStatements) walk(st);
       return found;
     })();
     if (shadowsArgs) {
