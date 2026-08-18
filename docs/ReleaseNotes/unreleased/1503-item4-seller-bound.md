@@ -48,16 +48,28 @@ live listing can become unfillable through ordinary borrower activity, since a
 partial repayment is enough to disqualify the paid-through record.
 
 What this release ships is the rule and the figures behind it: the platform now
-records the bounds, refuses a sale that breaks them, and answers the question
-"what is the least I would receive if I listed at this rate until this date?" —
-so the number a seller is shown at listing is the one they are actually held to.
-The app's own copy — showing that floor on the listing form, and telling a seller
-whose live listing has become unfillable that relisting at the new economics is
-the way forward — follows separately, because the platform has to be able to
-answer the question before an app can ask it. Until then a seller whose listing
-has stopped filling sees a refused sale without the explanation, which is a worse
-experience than the one this describes and a better one than silently receiving
-less than they agreed to.
+records the bounds when a listing is made, refuses a sale that breaks them, and
+can answer the question "what is the least I would receive if I listed at this
+rate until this date?"
+
+Two things follow from that scope and are worth stating plainly rather than
+leaving to be discovered. The app's own copy — showing that floor on the listing
+form, and telling a seller whose live listing has become unfillable that
+relisting is the way forward — follows separately, because the platform has to be
+able to answer the question before an app can ask it. And what is bound here is
+the stretch from listing to sale: the figures recorded when the listing was
+posted are what the fill is held to. Binding the figures a seller *reviewed*
+to the listing they then submit is a second, narrower promise — the two can
+differ if the borrower repays in the moments between — and it lands with the
+surface that actually shows them a quote, since there is nothing to bind against
+until something does.
+
+One consequence of the floor's shape is visible to sellers and is not a fault.
+A listing priced well above the loan's own rate is most expensive for the seller
+to exit *immediately*, not at the end of its window: the interest they forfeit
+grows over the window, but the compensation owed to the buyer is calculated over
+the remaining term and therefore shrinks. The floor accounts for both ends, so
+such a listing is quoted against its instant cost rather than its expiry cost.
 
 The bounds apply only while the seller's projection still describes the sale.
 Completing a listing is deliberately still possible after its window has run

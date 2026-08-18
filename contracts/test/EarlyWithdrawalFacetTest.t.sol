@@ -1288,12 +1288,21 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      rate (no shortfall), and escrow the buyer's principal so the net
     ///      settlement actually runs.
     function _stageAcceptedSaleListing() internal {
+        // The loan's OWN rate, so the rate-shortfall leg is zero throughout.
+        _stageAcceptedSaleListingAtRate(500);
+    }
+
+    /// @dev A listing at `rateBps` rather than the loan's 500. Above it, the
+    ///      shortfall leg is non-zero and — unlike the forfeited accrual — it
+    ///      SHRINKS as the window elapses, which is what makes the two ends of
+    ///      the window disagree about which is worst.
+    function _stageAcceptedSaleListingAtRate(uint256 rateBps) internal {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, rateBps, true, 7 days);
         vm.clearMockedCalls();
 
-        _setOfferAcceptedAndRate(50, 500);
+        _setOfferAcceptedAndRate(50, rateBps);
         TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
         _setupTempLoan(2);
         TestMutatorFacet(address(diamond)).setSaleProceedsEscrowRaw(activeLoanId, PRINCIPAL);
@@ -1305,6 +1314,34 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      across the whole window sits inside it. This is the property that
     ///      makes the bound usable at all: a floor at the figure the seller saw
     ///      would make their own listing unfillable within minutes.
+    /// @dev Codex #1812 P1 — the worst moment to fill is not always the LAST
+    ///      moment, so the floor cannot be projected at the expiry alone.
+    ///
+    ///      The cost is `max(forfeited accrual, rate shortfall)` and the two
+    ///      legs move in opposite directions: accrual grows across the window,
+    ///      while the shortfall is owed over the REMAINING term and so shrinks.
+    ///      Listed well above the loan's own rate, the shortfall dominates and
+    ///      the sale is costliest to the seller IMMEDIATELY.
+    ///
+    ///      Projecting only at the expiry therefore recorded a floor ABOVE the
+    ///      seller's own instant net, and this fill — which disturbs nothing,
+    ///      warps nowhere, and is exactly what the seller asked for — reverted
+    ///      `SaleBelowSellerFloor`. The bound refusing the sale it exists to
+    ///      protect is the failure this pins.
+    function test_saleListing_immediateFillAtAHigherRateIsNotBelowTheFloor() public {
+        _stageAcceptedSaleListingAtRate(1500);
+        // No warp: the buyer fills at once, which is the costliest moment here.
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "an immediate fill on an above-rate listing is inside the seller's own floor"
+        );
+    }
+
     function test_saleListing_ordinaryAccrualDoesNotTripTheFloor() public {
         _stageAcceptedSaleListing();
         // Most of the seller-chosen window elapses before the buyer fills.

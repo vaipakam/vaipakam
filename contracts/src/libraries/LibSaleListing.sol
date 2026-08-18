@@ -217,7 +217,24 @@ library LibSaleListing {
         uint256 expiresAt
     ) internal view returns (uint256 minSellerNet, uint256 maxHeld) {
         uint256 principal = s.loans[loanId].principal;
-        uint256 cost = worstCaseSellerCost(s, loanId, saleRateBps, expiresAt);
+        // BOTH ends of the window, not just expiry (Codex #1812 P1). The cost is
+        // `max(forfeited accrual, rate shortfall)`, and those two move in
+        // OPPOSITE directions: accrual grows as the listing stands, while the
+        // shortfall shrinks because it is owed over the REMAINING term. So the
+        // maximum of the two is reached at an endpoint but not always the same
+        // one — a loan listed at a materially higher rate than its own is
+        // costliest to sell IMMEDIATELY, and evaluating only at expiry recorded
+        // a floor above the seller's own instant net. An early fill nothing had
+        // disturbed then reverted `SaleBelowSellerFloor`, refusing the sale the
+        // bound exists to protect.
+        //
+        // Two evaluations are exactly tight, not a safety margin: for an
+        // increasing f and a decreasing g, `max(f, g)` over the window peaks at
+        // `max(f(end), g(start))`, which is what taking the larger of the two
+        // endpoint costs computes.
+        uint256 costAtExpiry = worstCaseSellerCost(s, loanId, saleRateBps, expiresAt);
+        uint256 costNow = worstCaseSellerCost(s, loanId, saleRateBps, block.timestamp);
+        uint256 cost = costAtExpiry > costNow ? costAtExpiry : costNow;
         // The buyer's escrowed proceeds are bound to the live principal by the
         // accept-time term bind, so the seller's net is principal minus cost.
         // A cost at or above principal is refused at completion by the existing
