@@ -2102,6 +2102,46 @@ if (!fnNode) {
       }
       return null;
     };
+    /**
+     * Why this INSERT might not run on the ledger's own path (Codex round-36
+     * P2), or null when nothing between it and the ledger body can skip it.
+     *
+     * The walk that finds the INSERT is an unrestricted descendant scan, so it
+     * happily accepted one that cannot execute: `const result = false
+     * ? await env.DB.prepare(…).bind(…).run() : { meta: { changes: 0 } }`
+     * typechecks, matches every positional check here, and writes no rows at
+     * all. "There is exactly one INSERT and its binds line up" says nothing if
+     * the INSERT is dead — round 26 already learned this for a SECOND, decoy
+     * insert and the single-insert case was left open.
+     *
+     * Blocks and loops are fine (the ledger's own `for (const log of logs)` is
+     * one). What is refused is anything that can decide NOT to reach it:
+     * a nested function, a conditional expression, a short-circuit operand, or
+     * an `if` branch.
+     */
+    const unreachableReason = (node) => {
+      for (let cur = node; cur && cur !== ledgerNode.body; cur = cur.parent) {
+        const p = cur.parent;
+        if (!p) break;
+        if (isFunctionLike(p)) return 'inside a nested function, which nothing here calls';
+        if (ts.isConditionalExpression(p) && cur !== p.condition) {
+          return 'inside a conditional expression, so it runs only on one branch';
+        }
+        if (
+          ts.isBinaryExpression(p) &&
+          (p.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+            p.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+            p.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) &&
+          cur === p.right
+        ) {
+          return 'behind a short-circuit operator, so it runs only when the left side allows it';
+        }
+        if (ts.isIfStatement(p) && cur !== p.expression) {
+          return 'inside an `if` branch, so it runs only on some rows';
+        }
+      }
+      return null;
+    };
     const inserts = [];
     const findInsert = (n) => {
       if (
@@ -2111,12 +2151,25 @@ if (!fnNode) {
       ) {
         const text = n.expression.expression.getText(sourceFile);
         if (/INSERT\s+(OR\s+\w+\s+)?INTO\s+activity_events/i.test(text)) {
-          inserts.push({ sql: text, args: n.arguments });
+          inserts.push({ sql: text, args: n.arguments, node: n });
         }
       }
       ts.forEachChild(n, findInsert);
     };
     if (ledgerNode.body) findInsert(ledgerNode.body);
+    const skippable = inserts.length === 1 && unreachableReason(inserts[0].node);
+    if (skippable) {
+      console.error(
+        `[check-activity-refs-coverage] the activity_events INSERT in ${LEDGER_FN}() sits\n` +
+          `  ${skippable}.\n` +
+          '  Everything this script checks about that write — the column order, the bind\n' +
+          '  positions, the mapper it draws from — is worth nothing if the write does not\n' +
+          '  run, and a skipped INSERT looks identical to a healthy one from here: the\n' +
+          '  tally does not move and no row is written. Put the INSERT on the loop body\'s\n' +
+          '  own path, or update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
     if (inserts.length > 1) {
       console.error(
         `[check-activity-refs-coverage] ${LEDGER_FN}() contains ${inserts.length} activity_events\n` +
@@ -2142,6 +2195,35 @@ if (!fnNode) {
       .split(',')
       .map((c) => c.trim())
       .filter(Boolean);
+    // A column's index is its bind index ONLY when every column is filled by
+    // one bare `?` (Codex round-36 P2). The alignment below indexes `bindArgs`
+    // by the column's position in the list, which silently stops meaning
+    // anything the moment a VALUES entry is a literal or an expression:
+    // `VALUES (1, ?, ?, …, ? + ?)` shifts every placeholder by one, so SQLite
+    // receives `eventName` in `loan_id` while this script reports the binds
+    // correct. Rather than parse SQL expressions, require the simple shape the
+    // alignment assumes and say so when it is gone.
+    const valuesList = insertSql.match(/VALUES\s*\(([^()]*)\)/is)?.[1] ?? null;
+    const placeholders = valuesList === null
+      ? null
+      : valuesList.split(',').map((v) => v.trim()).filter(Boolean);
+    if (
+      placeholders === null ||
+      placeholders.length !== cols.length ||
+      placeholders.some((v) => v !== '?')
+    ) {
+      console.error(
+        '[check-activity-refs-coverage] the activity_events INSERT\'s VALUES list is no\n' +
+          '  longer one bare `?` per named column.\n' +
+          '  This script finds `loan_id` / `offer_id` by their position in the COLUMN list\n' +
+          '  and reads `.bind(...)` at that same index, which is only the same position\n' +
+          '  while every column is filled by its own placeholder — one literal or\n' +
+          '  expression in VALUES shifts the rest and files each reference under a\n' +
+          '  neighbouring column, with every count here unchanged. Keep the one-to-one\n' +
+          '  shape, or update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
     for (const field of REF_FIELDS) {
       const at = cols.indexOf(COLUMN_OF[field]);
       if (at === -1) {
@@ -2372,7 +2454,19 @@ const findEscape = (nodes, { countReturns = false } = {}) => {
     // `break`/`continue` belong to the callee and cannot, so the body is walked
     // with returns off and breaks owned.
     if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
-      const callee = unwrapAssertions(n.expression);
+      let callee = unwrapAssertions(n.expression);
+      // `.call(…)` / `.apply(…)` invoke just as directly (Codex round-36 P2).
+      // Round 34 matched only a function node in callee position, so
+      // `(() => { throw e }).call(null)` presented as a property access and the
+      // body was skipped as an ordinary nested function. `.bind(…)` is
+      // deliberately NOT here — it returns a function without running it.
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        (callee.name.text === 'call' || callee.name.text === 'apply') &&
+        isFunctionLike(unwrapAssertions(callee.expression))
+      ) {
+        callee = unwrapAssertions(callee.expression);
+      }
       if (isFunctionLike(callee) && callee.body) {
         // ...but only when its throws leave SYNCHRONOUSLY (Codex round-35 P2).
         // An async function's throw becomes a rejected promise, so
