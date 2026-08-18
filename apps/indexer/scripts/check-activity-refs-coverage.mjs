@@ -474,6 +474,14 @@ const guardedReason = (node, stopAt) => {
     if (ts.isCaseClause(p) || ts.isDefaultClause(p)) {
       return 'inside a switch clause, so it runs only when that case matches';
     }
+    // A CATCH body runs only when the try block throws (Codex round-38 P2).
+    // `try { /* nothing that throws */ } catch { …call… }` is the same dead
+    // placement as `if (false)`, and the round-37 list — written for the ways
+    // an author guards a statement deliberately — did not have it. The try
+    // block and the finally block are NOT conditional and stay accepted.
+    if (ts.isCatchClause(p)) {
+      return 'inside a catch block, so it runs only if the try block throws';
+    }
   }
   return null;
 };
@@ -1440,6 +1448,38 @@ if (!fnNode) {
       const first = c.arguments[0] && unwrapAssertions(c.arguments[0]);
       return !first || !ts.isIdentifier(first);
     });
+    // ...and so must EVERY other argument (Codex round-38 P2). This check has
+    // only ever looked at the logs argument, on the reasoning that the logs are
+    // what the coverage claim is about. The rest of the call is what the rows
+    // are FILED UNDER: `recordActivityEvents(allLogs, env, 999, blockTimestamps)`
+    // typechecks, satisfies every check here, and writes every row under chain
+    // 999 — where the chain-scoped history queries will never find them. The
+    // tally is identical either way, which is this script's whole failure mode.
+    //
+    // A bare identifier is required rather than a specific binding: naming
+    // which local is "the chain id" would hard-code the ledger's parameter
+    // order, and the demonstrated hole is a PINNED VALUE, which an identifier
+    // cannot be.
+    //
+    // Scoped to the arguments AFTER the logs: argument 1 already has a check
+    // with a better message (an empty literal batch is a distinct mistake with
+    // a distinct explanation), and subsuming it into a generic one would lose
+    // that.
+    const pinnedArg = callSites.length === 1
+      ? callSites[0].arguments
+          .findIndex((a, i) => i > 0 && !ts.isIdentifier(unwrapAssertions(a)))
+      : -1;
+    if (pinnedArg >= 0) {
+      console.error(
+        `[check-activity-refs-coverage] ${LEDGER_FN}() is called with a pinned value in\n` +
+          `  argument ${pinnedArg + 1} (\`${callSites[0].arguments[pinnedArg].getText(sourceFile)}\`).\n` +
+          '  Only the LOGS argument used to be checked, but the other arguments decide what\n' +
+          '  every row is filed under — a literal chain id stores the whole batch under a\n' +
+          '  chain nobody queries, while every count in this script stays identical. Pass the\n' +
+          '  scan\'s own bindings, or update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
     // Binding the result does not prove the scan MAKES the call (Codex round-37
     // P2). `resultIsBound` was added so a fire-and-forget decoy could not stand
     // in for the live invocation, and it checks the shape of the call site, not
