@@ -238,6 +238,26 @@ const objectLiteralView = (e) => {
     for (const p of e.properties) {
       idx += 1;
       if (ts.isSpreadAssignment(p)) {
+        // A spread of an object literal carrying an ACCESSOR is not inert
+        // (Codex round-27 P2). Spreading reads every own enumerable property, so
+        // a getter in there RUNS during the spread — before any later field is
+        // computed — and `get poisoned() { args.loanId = 0n; return true; }`
+        // therefore corrupts the decoded arguments the next property reads,
+        // while the mutation walk skips getter bodies and sees nothing.
+        //
+        // Consistent with how round 22 already treats a getter as a property
+        // this parser cannot read: unreadable, so opaque. Here that means the
+        // whole literal, because the side effect lands on values defined AFTER
+        // the spread rather than on the spread's own keys.
+        const src = unwrapAssertions(p.expression);
+        if (
+          ts.isObjectLiteralExpression(src) &&
+          src.properties.some(
+            (q) => ts.isGetAccessorDeclaration(q) || ts.isSetAccessorDeclaration(q),
+          )
+        ) {
+          return { opaque: 'a spread of an object literal with a getter/setter, which runs during the spread and can mutate the decoded arguments before the later fields are computed' };
+        }
         lastSpreadIdx = idx;
         continue;
       }
@@ -1300,7 +1320,7 @@ if (!fnNode) {
         p.initializer.declarations.length === 1 &&
         ts.isIdentifier(p.initializer.declarations[0].name)
       ) {
-        loopVar = { name: p.initializer.declarations[0].name.text, body: p.statement };
+        loopVar = { name: p.initializer.declarations[0].name.text, body: p.statement, node: p };
         break;
       }
     }
@@ -1345,9 +1365,57 @@ if (!fnNode) {
     // identifier refers to — walk out from the call through enclosing blocks and
     // take the nearest, stopping at the loop body so an outer binding is never
     // accepted.
-    /** The nearest declaration of `name` visible at `from`, within the loop. */
+    /**
+     * The nearest declaration of `name` visible at `from`, within the loop —
+     * or the sentinel `OPAQUE_BINDING` when the nearest binder is one this
+     * script cannot read through.
+     *
+     * "A variable statement" is not what a binding is (Codex round-27 P2).
+     * Ignoring every other binder made `catch (args)` invisible, so an
+     * identifier bound to a caught value resolved to an outer
+     * `let args = log.args` and the mapper was validated against a binding it
+     * does not use. The fix is not a catch-clause special case: the resolver has
+     * to know that OTHER binding forms exist and refuse the ones it cannot
+     * follow, rather than looking past them to a declaration further out.
+     */
+    const OPAQUE_BINDING = Symbol('opaque binding');
+    /** Does this binding name (identifier or destructuring pattern) bind `name`? */
+    const declaresName = (bindingName, name) => {
+      if (ts.isIdentifier(bindingName)) return bindingName.text === name;
+      if (ts.isObjectBindingPattern(bindingName) || ts.isArrayBindingPattern(bindingName)) {
+        return bindingName.elements.some(
+          (el) => ts.isBindingElement(el) && declaresName(el.name, name),
+        );
+      }
+      return false;
+    };
+    const bindsName = (node, name) => {
+      // Catch clauses, function parameters and for-of/for-in initialisers all
+      // bind. None is followable to a loop-item property, so each is opaque.
+      if (ts.isCatchClause(node) && node.variableDeclaration) {
+        return declaresName(node.variableDeclaration.name, name);
+      }
+      if (isFunctionLike(node)) {
+        return (node.parameters ?? []).some((p) => declaresName(p.name, name));
+      }
+      if (
+        (ts.isForOfStatement(node) || ts.isForInStatement(node) || ts.isForStatement(node)) &&
+        node.initializer &&
+        ts.isVariableDeclarationList(node.initializer)
+      ) {
+        return node.initializer.declarations.some((d) => declaresName(d.name, name));
+      }
+      return false;
+    };
     const nearestDecl = (from, name) => {
       for (let scope = from; scope; scope = scope.parent) {
+        // A binder ON THE WAY OUT shadows anything further out, even when this
+        // script cannot say what it holds. Looking past it is the bug.
+        if (bindsName(scope, name)) {
+          // The loop's own binding is the one legitimate case — `log` itself.
+          if (scope === loopVar.node && name === loopVar.name) return null;
+          return OPAQUE_BINDING;
+        }
         const stmts =
           ts.isBlock(scope) || ts.isCaseClause(scope) || ts.isDefaultClause(scope)
             ? scope.statements
@@ -1356,14 +1424,7 @@ if (!fnNode) {
           for (const st of stmts) {
             if (!ts.isVariableStatement(st)) continue;
             for (const d of st.declarationList.declarations) {
-              if (ts.isIdentifier(d.name) && d.name.text === name) return d;
-              if (ts.isObjectBindingPattern(d.name)) {
-                for (const el of d.name.elements) {
-                  if (ts.isBindingElement(el) && ts.isIdentifier(el.name) && el.name.text === name) {
-                    return d;
-                  }
-                }
-              }
+              if (declaresName(d.name, name)) return d;
             }
           }
         }
@@ -1381,27 +1442,106 @@ if (!fnNode) {
       walk(loopVar.body);
       return found;
     };
-    /** Does a write PRESERVE the binding — `args = { ...args, creator }`? */
+    /**
+     * Does a write PRESERVE the binding — `args = { ...args, creator }`?
+     *
+     * "Contains a self-spread" is not enough (Codex round-27 P2). Later
+     * definitions win, so `args = { ...args, ...logs[0].args, creator }` spreads
+     * self and then overwrites this log's reference fields with the first log's.
+     * That is the SAME ordering rule {objectLiteralView} exists for, and not
+     * applying it here was an inconsistency inside one file rather than a new
+     * question — so ask it the same way: the self-spread must survive as the
+     * last thing defining the reference fields.
+     */
     const preservesSelf = (n, name) => {
       if (!ts.isBinaryExpression(n) || n.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
         return false;
       }
       const rhs = unwrapAssertions(n.right);
       if (!ts.isObjectLiteralExpression(rhs)) return false;
-      return rhs.properties.some(
-        (p) =>
-          ts.isSpreadAssignment(p) &&
-          ts.isIdentifier(unwrapAssertions(p.expression)) &&
-          unwrapAssertions(p.expression).text === name,
-      );
+      let selfSpreadAt = -1;
+      let idx = -1;
+      let overriddenAfter = false;
+      for (const p of rhs.properties) {
+        idx += 1;
+        if (ts.isSpreadAssignment(p)) {
+          const src = unwrapAssertions(p.expression);
+          if (ts.isIdentifier(src) && src.text === name) selfSpreadAt = idx;
+          else if (selfSpreadAt >= 0) overriddenAfter = true; // another bag wins
+          continue;
+        }
+        // An explicit key after the self-spread is fine UNLESS it is one of the
+        // reference fields — `creator` is the live enrichment and harmless.
+        const key =
+          ts.isPropertyAssignment(p) &&
+          (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name))
+            ? p.name.text
+            : ts.isShorthandPropertyAssignment(p)
+              ? p.name.text
+              : null;
+        if (selfSpreadAt >= 0 && (key === null || REF_FIELDS.includes(key))) {
+          overriddenAfter = true; // a ref field, or a key this parser cannot read
+        }
+      }
+      return selfSpreadAt >= 0 && !overriddenAfter;
+    };
+    /**
+     * Is the OBJECT behind `name` mutated in place — `decoded.loanId = …`?
+     *
+     * Following reassignment of the identifier and not mutation of what it
+     * points at left `const decoded = args; decoded.loanId = logs[0].args.loanId`
+     * fully accepted (Codex round-27 P2). `mutatesShadowable` already asks this
+     * of `args` a few hundred lines up; the alias chain deserves the same
+     * question, or renaming the binding is enough to escape the check.
+     */
+    const mutatedInPlace = (name) => {
+      let found = false;
+      const rootOf = (e) => {
+        let cur = unwrapAssertions(e);
+        while (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+          cur = unwrapAssertions(cur.expression);
+        }
+        return cur;
+      };
+      const walk = (n) => {
+        if (found) return;
+        const target =
+          ts.isBinaryExpression(n) && ts.isAssignmentOperator?.(n.operatorToken.kind)
+            ? n.left
+            : (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
+                (n.operator === ts.SyntaxKind.PlusPlusToken ||
+                  n.operator === ts.SyntaxKind.MinusMinusToken)
+              ? n.operand
+              : ts.isDeleteExpression(n)
+                ? n.expression
+                : null;
+        if (target) {
+          const t = unwrapAssertions(target);
+          // Only a PROPERTY write counts here; a plain reassignment is the
+          // `writesTo` question, already asked separately.
+          if (ts.isPropertyAccessExpression(t) || ts.isElementAccessExpression(t)) {
+            const root = rootOf(t);
+            if (ts.isIdentifier(root) && root.text === name) found = true;
+          }
+        }
+        ts.forEachChild(n, walk);
+      };
+      walk(loopVar.body);
+      return found;
     };
     /** Which loop-item property `name` resolves to here, or null. */
     const resolvesTo = (from, name, depth = 0) => {
       if (depth > 8) return null; // a rename chain this long is not real code
       // A write that does not demonstrably preserve the binding breaks the
-      // chain: the declaration no longer proves what the value is.
+      // chain: the declaration no longer proves what the value is. So does a
+      // mutation of the object it points at, which leaves the binding intact
+      // and the VALUE wrong.
       if (writesTo(name).some((w) => !preservesSelf(w, name))) return null;
+      if (mutatedInPlace(name)) return null;
       const decl = nearestDecl(from, name);
+      // A binder this script cannot read through shadows whatever is further
+      // out, so the honest answer is "unknown", not the outer declaration.
+      if (decl === OPAQUE_BINDING) return null;
       if (!decl || !decl.initializer) return null;
       const rhs = unwrapAssertions(decl.initializer);
       if (ts.isObjectBindingPattern(decl.name)) {
