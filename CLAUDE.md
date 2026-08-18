@@ -224,14 +224,33 @@ The last two are covered in more detail in "Frontend ABI sync" **below**.
   accepts), and compares the refresh's **selector set** against the Diamond the
   deploy script actually builds — so a same-count *swap* of one facet for
   another cannot pass either.
-- **`DeployDiamond`'s `writeFacet` omission is invisible to
-  `predeploy-check`.** Step 4b validates that every key *written* to the
-  deployment artifact is typed on `Deployment`; it is structurally blind to a
-  key never written, so the gate reports success. Still unguarded — tracked in
-  #1793. The consequence is an inconvenience rather than a lost address: the
-  implementation is still recoverable on-chain via
+- **`DeployDiamond`'s `writeFacet` omission is invisible to `predeploy-check`.**
+  Step 4b validates that every key *written* to the deployment artifact is typed
+  on `Deployment`; it is structurally blind to a key never written, so the gate
+  reports success. #1793 assumed one facet was in that state; building a check
+  for it found **thirteen** — all already typed on `Deployment`, because
+  `RefreshAllFacetsInPlace` writes all 73 keys through `items[i].key`, so only a
+  never-refreshed chain was missing them. Those thirteen writes are now in the
+  deploy script.
+
+  **There is no automated guard against this recurring yet**, and that is a
+  deliberate, recorded position rather than an oversight. A step-4c that read
+  the deploy scripts as text was written and then withdrawn: review found
+  thirteen distinct ways to get a registration past it, and each fix opened the
+  next. Proving "this registration executes, under this identity, on every
+  chain" is a question about scope, control flow and aliasing, and a shell
+  parser reading lines of Solidity cannot answer it — it was reaching a green
+  verdict it had not earned, which on a pre-deploy gate is worse than no gate.
+  **#1800** replaces it with the assertion that needs no parsing: run the deploy
+  with artifact writing on and require every address `facetAddresses()` reports
+  to appear in the JSON it wrote. The refresh-key-identity check
+  (`RefreshScriptFacetParityTest` documents it as out of its own scope) goes
+  there too.
+
+  Note also that this class of omission is an inconvenience rather than a lost
+  address — the implementation stays recoverable on-chain via
   `DiamondLoupeFacet.facetAddress(bytes4)` / `facetAddresses()` from any known
-  selector, as well as from broadcast logs.
+  selector, and from broadcast logs.
 
 **When you add a function to a facet**: add its selector to the matching
 `_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —

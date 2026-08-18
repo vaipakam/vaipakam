@@ -567,6 +567,35 @@ else
   fi
 fi
 
+# ── [4c] REMOVED — the facet-registry gate moved to #1800 ────────────
+#
+# This step read `DeployDiamond.s.sol` and `RefreshAllFacetsInPlace.s.sol` as
+# TEXT and tried to prove that every cut facet is also recorded in the
+# deployment artifact. Over four review rounds it collected thirteen separate
+# ways to get a registration past it — a conditional and its body on one line, a
+# braceless conditional, a `for` header whose own semicolons split the statement,
+# a registration in a helper (called, uncalled, or overloaded), a member call
+# resolving to a same-named local, a helper parameter shadowing an outer
+# variable, a reassigned facet variable, an escaped key literal, a non-canonical
+# writer with the same method name, and the generic `Deployments.writeAddress`
+# reaching the same `.facets.*` namespace by a different door.
+#
+# Every one was real, and every fix opened the next. That is not a run of bad
+# luck: proving "this registration executes, under this identity, on every
+# chain" is a question about scope, control flow and aliasing, and a shell
+# parser reading lines of Solidity cannot answer it. The gate was reaching a
+# green verdict it had not earned, which on a pre-deploy check is worse than
+# having no check — a red one gets read.
+#
+# What actually settles the question needs no parsing at all: run the deploy with
+# artifact writing enabled and assert that every address `facetAddresses()`
+# reports appears in the JSON it wrote. That does not care how a registration is
+# spelled, which function hosts it, what guards it, or which writer performed it.
+# It is #1800, and it is where the refresh-key-identity check goes too.
+#
+# The thirteen MISSING writes this PR found are fixed in `DeployDiamond.s.sol`
+# regardless — that was the bug. What is deferred is the guard against it
+# recurring, which is honestly stated rather than approximated.
 # ── Verdict ───────────────────────────────────────────────────────────
 echo
 if [ "$FAIL" -ne 0 ]; then
