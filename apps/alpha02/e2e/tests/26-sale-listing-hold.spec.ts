@@ -25,18 +25,34 @@ import { increaseTime } from '../lib/anvil';
 import { accountFor } from '../lib/wallets';
 import { pub, walletFor, DIAMOND, DIAMOND_ABI_VIEM, forkChain } from '../lib/chain';
 
-const BOUNDED_LISTING_SELECTOR = toFunctionSelector(
-  'function createLoanSaleOffer(uint256,uint256,bool,uint64)',
-);
+// #1503 item 4 added two seller-bound arguments to the listing entry, which
+// changes its selector. Both shapes are accepted for the same reason the app's
+// own gate accepts both: either one is evidence the Diamond carries the
+// bounded-listing lifecycle this spec exercises. Pinning only the four-argument
+// form would SKIP this spec silently against a post-item-4 deploy — and a
+// skipped spec reads exactly like a passing one in the summary.
+const BOUNDED_LISTING_SELECTORS = [
+  toFunctionSelector(
+    'function createLoanSaleOffer(uint256,uint256,bool,uint64,uint128,uint128)',
+  ),
+  toFunctionSelector('function createLoanSaleOffer(uint256,uint256,bool,uint64)'),
+] as const;
 
 async function boundedListingCutLive(): Promise<boolean> {
-  const facet = (await pub.readContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'facetAddress',
-    args: [BOUNDED_LISTING_SELECTOR],
-  })) as `0x${string}`;
-  return facet !== '0x0000000000000000000000000000000000000000';
+  const routed = await Promise.all(
+    BOUNDED_LISTING_SELECTORS.map(
+      (selector) =>
+        pub.readContract({
+          address: DIAMOND,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'facetAddress',
+          args: [selector],
+        }) as Promise<`0x${string}`>,
+    ),
+  );
+  return routed.some(
+    (facet) => facet !== '0x0000000000000000000000000000000000000000',
+  );
 }
 
 test('listing holds the borrower options; expiry + cleanup frees them', async ({
@@ -44,7 +60,7 @@ test('listing holds the borrower options; expiry + cleanup frees them', async ({
 }) => {
   test.skip(
     !(await boundedListingCutLive()),
-    'live Base Sepolia Diamond pre-refresh (no 4-arg createLoanSaleOffer) — spec arms itself once RefreshAllFacetsInPlace runs',
+    'live Base Sepolia Diamond pre-refresh (routes no createLoanSaleOffer in either shape) — spec arms itself once RefreshAllFacetsInPlace runs',
   );
 
   // Active loan between the fixture wallets.
@@ -69,7 +85,10 @@ test('listing holds the borrower options; expiry + cleanup frees them', async ({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'createLoanSaleOffer',
-    args: [loanId, 800n, true, 3600n],
+    // #1503 item 4 — the permissive bound (accept any net, allow any held
+    // transfer). This spec is about what the BORROWER sees while a listing
+    // holds their options; the seller-bound refusals have their own coverage.
+    args: [loanId, 800n, true, 3600n, 0n, (1n << 128n) - 1n],
     account: accountFor('lender'),
     chain: forkChain,
   });

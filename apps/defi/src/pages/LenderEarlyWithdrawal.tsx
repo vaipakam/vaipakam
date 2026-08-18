@@ -77,11 +77,20 @@ export default function LenderEarlyWithdrawal() {
       // Mandatory finite listing window (LenderEarlyWithdrawalUXDesign item
       // 1): the contract requires a bounded expiry; this legacy surface pins
       // the 7-day default (the alpha02 flow exposes the seller's choice).
+      // #1503 item 4 — the listing stores the seller's economic bound. This
+      // legacy surface has no place to review one, so it authorizes the
+      // permissive pair (accept any net, allow any held transfer) EXPLICITLY
+      // rather than by omission: the contract has no unbounded sentinel, and
+      // a surface that cannot show the seller a bound should say which one it
+      // is sending. The alpha02 flow derives a real bound from the figures it
+      // actually displays.
       const tx = await diamond.createLoanSaleOffer(
         loan.id,
         BigInt(bps),
         riskAndTermsConsent,
         BigInt(7 * 86400),
+        0n,
+        (1n << 128n) - 1n,
       );
       setTxHash(tx.hash);
       await tx.wait();

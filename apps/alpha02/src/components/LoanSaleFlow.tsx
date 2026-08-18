@@ -35,6 +35,7 @@ export function loanSaleListingEnabled(chainId: number): boolean {
   return LOAN_SALE_LISTING_CHAINS.has(chainId);
 }
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import {
@@ -60,6 +61,7 @@ import {
   type LoanLive,
 } from '../contracts/loanLive';
 import { saleSettlementBound, saleSettlementNow } from '../data/loanSalePending';
+import { saleListingBound } from '../contracts/loanLive';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
@@ -121,6 +123,40 @@ export function LoanSaleFlow({
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
   const rateValid = rateBps !== null && rateBps > 0 && rateBps <= MAX_INTEREST_BPS;
 
+  // #1503 item 4 — the seller's stored bound needs the held-for-lender balance
+  // as it stands at listing. `getClaimable` already exposes it, so this needs no
+  // new contract surface. `undefined` while it loads: the listing is BLOCKED
+  // rather than submitted with a guessed ceiling, because a wrong ceiling is
+  // either an unfillable listing or an unbounded one, and both are worse than
+  // waiting for a read that takes one round-trip.
+  const { data: heldNow } = useQuery({
+    queryKey: ['saleListingHeld', walletChain?.diamondAddress, row.loanId],
+    enabled: Boolean(publicClient && walletChain),
+    queryFn: async (): Promise<bigint> => {
+      const res = (await publicClient!.readContract({
+        address: walletChain!.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getClaimable',
+        args: [BigInt(row.loanId), true],
+      })) as { heldForLender?: bigint } & readonly unknown[];
+      return (res.heldForLender ?? (res[6] as bigint | undefined) ?? 0n);
+    },
+  });
+
+  // The listing's own expiry, computed exactly as `_boundListingExpiry` does —
+  // the seller's window, clamped at the loan's maturity. This is what makes the
+  // floor computable: acceptance cannot happen after it, so the seller's worst
+  // case is the settlement evaluated THERE, not at maturity and not now.
+  const listingExpiresAt = (() => {
+    const maturity = live.startTime + live.durationDays * 86_400n;
+    const requested = chainNow + listingSeconds;
+    return requested < maturity ? requested : maturity;
+  })();
+  const sellerBound =
+    rateBps !== null && heldNow !== undefined
+      ? saleListingBound(live, BigInt(rateBps), listingExpiresAt, heldNow)
+      : null;
+
   // #1028 item 2 — advisory pre-sign dry run of the exact listing
   // calldata. All three args exist pre-sign; built only once consent
   // is ticked (the contract checks it, and previewing consent=false
@@ -132,16 +168,26 @@ export function LoanSaleFlow({
   // accurate for what this signature actually sends.
   const simTx = useMemo((): TxSimInput | null => {
     if (!walletChain || rateBps === null || !rateValid || !consent) return null;
+    // The dry run is only worth anything if it sends what the signature will —
+    // so it waits for the bound rather than previewing a different call.
+    if (!sellerBound) return null;
     return {
       to: walletChain.diamondAddress,
       data: encodeFunctionData({
         abi: DIAMOND_ABI_VIEM,
         functionName: 'createLoanSaleOffer',
-        args: [BigInt(row.loanId), rateBps, consent, listingSeconds],
+        args: [
+          BigInt(row.loanId),
+          rateBps,
+          consent,
+          listingSeconds,
+          sellerBound.minNetSettlement,
+          sellerBound.maxHeldTransferred,
+        ],
       }),
       value: 0n,
     };
-  }, [walletChain, rateBps, rateValid, consent, row.loanId, listingSeconds]);
+  }, [walletChain, rateBps, rateValid, consent, row.loanId, listingSeconds, sellerBound]);
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
@@ -172,6 +218,13 @@ export function LoanSaleFlow({
     }
     if (!address || !walletChain || !walletClient || !publicClient) return;
     if (rateBps === null) return;
+    // #1503 item 4 — never submit a listing without the seller's bound. An
+    // unread held balance means the ceiling is unknown, and a listing stored
+    // with a guessed ceiling is either unfillable or unbounded.
+    if (!sellerBound) {
+      setError(copy.errors.saleListingBoundUnavailable);
+      return;
+    }
     setBusy(true);
     setError(null);
     // Tracks whether THIS attempt granted the settlement approval, so
@@ -243,7 +296,14 @@ export function LoanSaleFlow({
           address: walletChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'createLoanSaleOffer',
-          args: [BigInt(row.loanId), rateBps, consent, listingSeconds],
+          args: [
+            BigInt(row.loanId),
+            rateBps,
+            consent,
+            listingSeconds,
+            sellerBound.minNetSettlement,
+            sellerBound.maxHeldTransferred,
+          ],
           account: address,
         });
       } catch (simErr) {
@@ -329,6 +389,8 @@ export function LoanSaleFlow({
         rateBps,
         consent,
         listingSeconds,
+        sellerBound.minNetSettlement,
+        sellerBound.maxHeldTransferred,
       ]);
       const linked = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,

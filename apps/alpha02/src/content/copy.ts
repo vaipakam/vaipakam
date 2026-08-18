@@ -3194,6 +3194,8 @@ const copySource = {
       'This loan is past its due date and grace window, so it can no longer be refinanced — nothing was sent. The default process applies now.',
     saleListingMatured:
       'This loan is past its due date, so the position can no longer be listed for sale — nothing was sent.',
+    saleListingBoundUnavailable:
+      'Could not read this position\u2019s held balance, which the listing needs to bound what transfers to a buyer. Retry in a moment.',
     saleListingTooCloseToMaturity:
       'This loan is less than an hour from its due date — too close for a listing to stand its minimum window, so it can no longer be listed for sale. Nothing was sent; the normal claim at maturity is unaffected.',
     saleRelistCooldownActive: tmpl(

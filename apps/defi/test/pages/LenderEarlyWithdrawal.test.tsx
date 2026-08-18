@@ -213,6 +213,11 @@ describe('LenderEarlyWithdrawal', () => {
         // PR-A listing lifecycle: this legacy surface pins the 7-day
         // default listing window (7 * 86400 seconds).
         604800n,
+        // #1503 item 4: and the PERMISSIVE seller bound, sent explicitly
+        // because this surface has nowhere to review a real one. Pinned here
+        // so it cannot quietly become a real bound the seller never saw.
+        0n,
+        (1n << 128n) - 1n,
       ),
     );
   });
@@ -234,6 +239,8 @@ describe('LenderEarlyWithdrawal', () => {
         1000n,
         true,
         604800n, // pinned 7-day default window (see above)
+        0n,
+        (1n << 128n) - 1n, // permissive seller bound (see above)
       ),
     );
   });

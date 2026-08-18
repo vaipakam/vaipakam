@@ -60,9 +60,24 @@ const LOCK_EARLY_WITHDRAWAL_SALE = 2;
  *  Diamond that routes the 4-arg `createLoanSaleOffer` carries the
  *  lifecycle this surface describes; anything else stays `unknown`
  *  (render nothing). */
-const BOUNDED_LISTING_SELECTOR = toFunctionSelector(
-  'function createLoanSaleOffer(uint256,uint256,bool,uint64)',
-);
+/** #1503 item 4 — the listing entry gained two seller-bound arguments, which
+ *  CHANGES this selector. A post-item-4 Diamond routes only the six-argument
+ *  form, so a marker pinned to the four-argument one would report every such
+ *  Diamond as pre-lifecycle and blank this whole surface the moment the facet
+ *  refresh landed — a silent regression, since "render nothing" is also what
+ *  the honest unknown case does.
+ *
+ *  Both are accepted because both are evidence of the SAME thing this gate
+ *  actually asks: does the Diamond carry the bounded-listing lifecycle? The
+ *  four-argument form is that lifecycle without the economic bound; the
+ *  six-argument form is that lifecycle with it. Neither is the pre-#1511
+ *  Diamond, which routes no `createLoanSaleOffer` at all. */
+const BOUNDED_LISTING_SELECTORS = [
+  toFunctionSelector(
+    'function createLoanSaleOffer(uint256,uint256,bool,uint64,uint128,uint128)',
+  ),
+  toFunctionSelector('function createLoanSaleOffer(uint256,uint256,bool,uint64)'),
+] as const;
 
 /** Pure classifier for the teardown probe outcome — split from the
  *  hook so the mapping is unit-testable without a chain.
@@ -266,13 +281,18 @@ export function useSaleListingHold(
         ? 600_000
         : 3_600_000,
     queryFn: async (): Promise<boolean> => {
-      const facet = (await readClient!.readContract({
-        address: readChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'facetAddress',
-        args: [BOUNDED_LISTING_SELECTOR],
-      })) as `0x${string}`;
-      return facet !== zeroAddress;
+      const routed = await Promise.all(
+        BOUNDED_LISTING_SELECTORS.map(
+          (selector) =>
+            readClient!.readContract({
+              address: readChain.diamondAddress,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'facetAddress',
+              args: [selector],
+            }) as Promise<`0x${string}`>,
+        ),
+      );
+      return routed.some((facet) => facet !== zeroAddress);
     },
   });
 
