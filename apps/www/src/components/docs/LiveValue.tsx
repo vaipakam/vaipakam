@@ -59,7 +59,7 @@
  * default and is current as of its build.
  */
 
-import { useProtocolConfig } from '../../hooks/useProtocolConfig';
+import { DOCS_CHAIN_LABEL, useProtocolConfig } from '../../hooks/useProtocolConfig';
 import {
   formatKnob,
   resolveLiveValue,
@@ -146,9 +146,15 @@ export function LiveValue({ knob, locale }: LiveValueProps) {
       data-live-value-source={isLive ? 'published' : 'bundled'}
       title={
         isLive
-          ? 'Live value from the published protocol configuration'
+          ? // Named per chain, derived from the configured id (#1664
+            // item 4): every supported network runs an independent
+            // Diamond with independently tunable knobs, so an
+            // unqualified "the published configuration" tells a reader
+            // on any other deployment the wrong figure is theirs the
+            // moment two chains are retuned apart.
+            `Live value from the published ${DOCS_CHAIN_LABEL} configuration`
           : chainReads
-            ? 'Value shipped with this page — published configuration not loaded'
+            ? `Value shipped with this page — published ${DOCS_CHAIN_LABEL} configuration not loaded`
             : // A surface that makes no read at all: neither "not loaded"
               // nor "pending" is true, and saying either describes a
               // failure that never happened (#1612). This branch is not
