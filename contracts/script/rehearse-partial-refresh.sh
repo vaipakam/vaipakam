@@ -89,6 +89,7 @@ RISK_PREVIEW_SELECTORS=(
   0x314efc12  # previewCreatorBlock
   0xa7aaae7f  # previewIntent
   0x2c87c1a3  # saleAdmission
+  0x03530269  # sellerForfeitureWindow  (#1503 item 28)
 )
 
 # KNOWN FAILURE — ReplaceStaleFacets still fails at step 6, and the failure is
