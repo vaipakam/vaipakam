@@ -301,6 +301,16 @@ export function snapshotFresh(updatedAt: unknown): boolean {
 let config: MarketingProtocolConfig | null = null;
 let loading = false;
 let started = false;
+/** `updatedAt` of the snapshot `config` was accepted from — the input to
+ *  the same freshness rule at REVALIDATION time that gated acceptance,
+ *  so a snapshot cannot keep `published` provenance past the window
+ *  just because it was fresh when it arrived (#1664 item 6). */
+let acceptedUpdatedAt: number | null = null;
+/** Whether at least one load has CONCLUDED. Until then the marker may
+ *  honestly say `pending`; after a conclusion, a background revalidation
+ *  keeps the previous conclusion on display rather than flickering to
+ *  `pending` — the store still HAS a conclusion while it re-checks. */
+let hasConcluded = false;
 const listeners = new Set<() => void>();
 
 /** Stable snapshot object: `useSyncExternalStore` compares by identity,
@@ -334,11 +344,9 @@ function publish() {
   // store itself concluded. Guarded: the store is imported during
   // prerender where no document exists.
   if (typeof document !== 'undefined') {
-    document.documentElement.dataset.protocolConfig = loading
-      ? 'pending'
-      : config
-        ? 'published'
-        : 'bundled';
+    const concludedSource = config ? 'published' : 'bundled';
+    document.documentElement.dataset.protocolConfig =
+      loading && !hasConcluded ? 'pending' : concludedSource;
   }
   for (const l of listeners) l();
 }
@@ -385,6 +393,8 @@ async function load() {
         snapshotFresh((body as { updatedAt?: unknown }).updatedAt)
       ) {
         config = decodeMarketingConfig((body as { bundle?: unknown }).bundle);
+        acceptedUpdatedAt =
+          config !== null ? ((body as { updatedAt: number }).updatedAt) : null;
       }
     }
   } catch {
@@ -394,16 +404,57 @@ async function load() {
     // its bundled defaults. Logging here would put a red error in the
     // console of a perfectly working page.
   } finally {
+    // A held snapshot that has aged past the freshness window must not
+    // keep claiming published provenance just because this refresh
+    // failed to replace it. Acceptance requires freshness, so a config
+    // accepted THIS round always survives; only a stale hold is
+    // demoted — to the same bundled fallback a failed first read gets,
+    // which is the honest description of what the page then knows.
+    if (config !== null && !snapshotFresh(acceptedUpdatedAt)) {
+      config = null;
+      acceptedUpdatedAt = null;
+    }
     clearTimeout(timer);
     loading = false;
+    hasConcluded = true;
     publish();
   }
 }
+
+/** A read is worth (re)trying when none is in flight and the store
+ *  either holds nothing (the first read failed) or holds a snapshot
+ *  that has aged past the freshness window. A fresh, accepted snapshot
+ *  triggers nothing — navigation must not turn into request traffic. */
+function needsRevalidation(): boolean {
+  return !loading && (config === null || !snapshotFresh(acceptedUpdatedAt));
+}
+
+/** Registered once: returning to a long-lived tab is the other natural
+ *  moment to re-check (#1664 item 6) — without it, a tab left in the
+ *  background for a day keeps a by-then-stale snapshot on display with
+ *  no navigation to trigger the subscribe-path retry. */
+let visibilityHooked = false;
 
 function subscribe(onChange: () => void): () => void {
   listeners.add(onChange);
   if (!started) {
     started = true;
+    if (typeof document !== 'undefined' && !visibilityHooked) {
+      visibilityHooked = true;
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && needsRevalidation()) {
+          void load();
+        }
+      });
+    }
+    void load();
+  } else if (needsRevalidation()) {
+    // A later subscription — a new page in the same document — retries
+    // a failed first read and refreshes an aged-out snapshot, instead
+    // of the session being pinned forever to its first attempt
+    // (#1664 item 6). The `loading` gate inside `needsRevalidation`
+    // means a page mounting a dozen `<LiveValue>`s still causes at
+    // most one request.
     void load();
   }
   return () => {
