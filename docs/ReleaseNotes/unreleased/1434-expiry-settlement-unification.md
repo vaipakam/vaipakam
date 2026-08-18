@@ -96,7 +96,13 @@ one. The practical consequences:
   readiness check could wait on cross-chain funding for value the
   schedule will never emit — stalling expiry clocks permanently. Both now
   apply the schedule's remaining headroom exactly as the claim does,
-  which is also what the specification always said.
+  which is also what the specification always said. Two refinements
+  complete this: the simulated budget is spent down day by day exactly
+  as a real claim spends it (previously each day of a multi-day estimate
+  was measured against the full remaining headroom), and it accounts for
+  the parts of the same claim that are paid before the daily walk — the
+  legacy window and each reward's pre-cutover slice — so an estimate can
+  never promise the same headroom to two legs of one claim.
 
 - **A removed reward shows no countdown either.** The Claim Center's
   removal countdown is a deadline for the owner to act on; once removal

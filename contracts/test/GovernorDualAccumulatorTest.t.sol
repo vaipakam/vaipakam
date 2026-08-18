@@ -1189,6 +1189,97 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1699 r14 P2(a) — the dry run's fresh budget DEPLETES
+    ///      between days, mirroring the live walk's
+    ///      `ctx.pool.fresh -= freshSpent`. Bound-but-undepleted let every
+    ///      day measure against the original headroom: two d-valued days
+    ///      against 1.5d of headroom dry-ran as 2d while the claim pays
+    ///      d then terminally truncates the second day to 0.5d.
+    function testP1bDryRunDepletesTheFreshBudgetBetweenDays() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+        assertEq(recycled5, 0, "LIVE: and NO recycled share");
+        _mut().setRecycledCreditedByDayRaw(6, 0);
+        _finalize(6);
+        _mut().setDayUserSideCapRaw(6, type(uint256).max);
+
+        uint256 id = _seedEntry(alice, 102, 5, 7); // TWO armed days: 5, 6
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 30 days);
+
+        uint256 needRaw = _lens().getUserArmedFreshNeed(alice);
+        assertGt(needRaw, 0, "LIVE: a two-day armed demand exists");
+
+        // Headroom covers 3/4 of the demand: the first day fits whole, the
+        // second truncates — the live walk's exact behaviour.
+        uint256 headroom = (needRaw * 3) / 4;
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
+        );
+        assertEq(
+            _lens().getUserArmedFreshNeed(alice),
+            headroom,
+            "the two-day need depletes the budget between days"
+        );
+        (uint256 preview, , ) = _lens().previewInteractionRewards(alice);
+        assertEq(
+            preview,
+            headroom,
+            "and the preview quotes day-one whole plus day-two truncated"
+        );
+    }
+
+    /// @dev Codex #1699 r14 P2(b) — the dry run's fresh budget reserves the
+    ///      claim's PRECEDING legs (window, then entry-path legacy slices),
+    ///      exactly as the live path threads `freshBudget` minus
+    ///      `legacyFreshReserved` into the walk. Without the reservation
+    ///      the armed need demanded delivered allowance for headroom the
+    ///      legacy leg consumes first — pausing the expiry clock after Base
+    ///      has remitted the capped liability in full.
+    function testP1bDryRunReservesTheLegacyLegFirst() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+        assertEq(recycled5, 0, "LIVE: and NO recycled share");
+
+        uint256 id = _seedEntry(alice, 103, 4, 6); // legacy day 4 + armed day 5
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 30 days);
+
+        uint256 needAbundant = _lens().getUserArmedFreshNeed(alice);
+        assertGt(needAbundant, 0, "LIVE: an armed demand exists");
+        (uint256 previewAbundant, , ) = _lens().previewInteractionRewards(alice);
+        uint256 legacy = previewAbundant - needAbundant;
+        assertGt(legacy, 0, "LIVE: and a preceding legacy leg exists");
+
+        // Headroom covers the legacy leg plus HALF the armed leg. The claim
+        // settles the legacy leg first; the walk owns only the remainder.
+        uint256 headroom = legacy + needAbundant / 2;
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
+        );
+        assertEq(
+            _lens().getUserArmedFreshNeed(alice),
+            needAbundant / 2,
+            "the armed need is measured AFTER the legacy leg's reservation"
+        );
+        (uint256 preview, , ) = _lens().previewInteractionRewards(alice);
+        assertEq(
+            preview,
+            headroom,
+            "and the preview quotes legacy-whole plus armed-remainder"
+        );
+    }
+
     function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);

@@ -261,6 +261,23 @@ lesson joins the earlier one: two bounds threaded into one settlement
 must be modelled together EVERYWHERE the settlement is simulated,
 because each bound's correctness depends on the other's presence.
 
+Round 14 completed that lesson with the two halves r13's fix still
+missed, both P2: **a bound is a budget, and a budget both DEPLETES and
+has PREDECESSORS.** (a) The dry run bound fresh at batch start but never
+decremented it between days — two d-valued days against 1.5d of headroom
+dry-ran as 2d while the live walk pays d then terminally truncates the
+second day (`ctx.pool.fresh -= freshSpent` was half the walk the dry run
+hadn't mirrored). (b) The live claim threads `poolRemaining() −
+windowReward − legacyFreshReserved` into the walk; the dry run started
+from the full figure, so the armed-need could demand delivered allowance
+for headroom the earlier legs consume — pausing the expiry clock after
+Base has remitted the capped liability in full. The fix makes the walk's
+fresh budget ONE definition (`_userWalkFreshBudget`: pool headroom minus
+window minus legacy legs) supplied to the dry run as a REQUIRED
+parameter — the same computed-once-and-threaded rule the claim facet
+states for its own three legs — and the dry-run day loop now depletes
+fresh exactly as it already depleted recycled and delivered.
+
 ## Testing
 
 The expiry fixture is unusually easy to make vacuous: **five distinct

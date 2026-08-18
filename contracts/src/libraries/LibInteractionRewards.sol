@@ -2085,7 +2085,19 @@ library LibInteractionRewards {
         address user
     ) internal view returns (uint256 armed) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        (, armed) = _dryRunShareOfPoolDays(s, user, type(uint256).max);
+        // Codex #1699 r14 P2 — the armed walk only ever spends what is left
+        // after the window and legacy legs, so the need must be measured
+        // against that same remainder. Measuring against the full headroom
+        // demanded delivered allowance for value the earlier legs consume —
+        // permanently pausing the expiry clock once Base has remitted the
+        // capped liability. Delivered stays `max` (measuring the need
+        // against the allowance it is compared to would be circular).
+        (, armed) = _dryRunShareOfPoolDays(
+            s,
+            user,
+            type(uint256).max,
+            _userWalkFreshBudget(s, user, previewForUserEntriesLegacyOnly(s, user))
+        );
     }
 
     function _userArmedFreshNeed(
@@ -2221,6 +2233,49 @@ library LibInteractionRewards {
         returns (uint256 userTotal)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        userTotal = previewForUserEntriesLegacyOnly(s, user);
+        // Codex #1699 r14 P2 — the walk leg's fresh budget reserves the
+        // PRECEDING legs, exactly as the live claim threads it: the facet
+        // subtracts the window reward before `claimForUserEntries`, which
+        // subtracts the legacy legs before the walk. Starting the dry run
+        // from the full `poolRemaining()` previewed 0.8 for a claim that
+        // pays 0.5, and — worse — let the armed-need figure demand
+        // delivered allowance for headroom the earlier legs consume.
+        (uint256 dryTotal, ) = _dryRunShareOfPoolDays(
+            s,
+            user,
+            deliveredFreshBound(s),
+            _userWalkFreshBudget(s, user, userTotal)
+        );
+        userTotal += dryTotal;
+    }
+
+    /// @dev Codex #1699 r14 P2 — the fresh budget the ARMED walk actually
+    ///      has: the live pool headroom minus the legs the claim settles
+    ///      first (the legacy window, then the entry-path legacy slices —
+    ///      both all-fresh by the regime identity). ONE definition, shared
+    ///      by the preview and the armed-need aggregate, so the two
+    ///      simulations cannot drift from each other or from the claim's
+    ///      own threading order.
+    function _userWalkFreshBudget(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 legacyLegs
+    ) private view returns (uint256 budget) {
+        budget = poolRemaining();
+        uint256 window = _userWindowFreshReserved(s, user);
+        budget = budget > window ? budget - window : 0;
+        budget = budget > legacyLegs ? budget - legacyLegs : 0;
+    }
+
+    /// @dev The ENTRY-PATH legacy legs' total — the loop
+    ///      {previewForUserEntries} always ran, extracted so the armed-need
+    ///      aggregate can reserve the same figure without duplicating the
+    ///      eligibility predicate (one implementation, two readers).
+    function previewForUserEntriesLegacyOnly(
+        LibVaipakam.Storage storage s,
+        address user
+    ) internal view returns (uint256 userTotal) {
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
         uint256 armedFrom = s.governorCommitArmedFromDay;
@@ -2253,9 +2308,27 @@ library LibInteractionRewards {
             }
             unchecked { ++i; }
         }
-        (uint256 dryTotal, ) =
-            _dryRunShareOfPoolDays(s, user, deliveredFreshBound(s));
-        userTotal += dryTotal;
+    }
+
+    /// @dev The legacy-window payout a claim right now would settle BEFORE
+    ///      any entry — the same range derivation {userClaimPendingUncapped}
+    ///      and the lens preview use.
+    function _userWindowFreshReserved(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256) {
+        (uint256 today, bool active) = currentDayOrZero();
+        if (!active || today == 0) return 0;
+        uint256 last = s.interactionLastClaimedDay[user];
+        uint256 lastFinalized = today - 1;
+        if (last >= lastFinalized) return 0;
+        uint256 fromDay = last + 1;
+        uint256 windowLast =
+            fromDay + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1;
+        uint256 toDay = windowLast < lastFinalized ? windowLast : lastFinalized;
+        (uint256 effectiveTo, bool any) = clampToFinalized(fromDay, toDay);
+        if (!any) return 0;
+        return previewForUserWindow(user, fromDay, effectiveTo);
     }
 
     /// @dev The ENTRY-PATH leg of one entry's preview — what {_processEntry}
@@ -2308,7 +2381,8 @@ library LibInteractionRewards {
     function _dryRunShareOfPoolDays(
         LibVaipakam.Storage storage s,
         address user,
-        uint256 deliveredCap
+        uint256 deliveredCap,
+        uint256 freshBudget
     ) private view returns (uint256 userTotal, uint256 armedTotal) {
         if (s.governorCommitArmedFromDay == 0) return (0, 0);
         uint256 daysLeft = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
@@ -2344,8 +2418,16 @@ library LibInteractionRewards {
         // documented axis on which the preview stays an upper bound" — true
         // only while fresh is the SOLE binding constraint, which is exactly
         // the case that stops holding near exhaustion.
+        //
+        // Codex #1699 r14 P2 — the budget is now SUPPLIED by the caller with
+        // the claim's preceding legs (window + legacy) already reserved,
+        // exactly as the live path threads `freshBudget` into the walk. A
+        // required parameter, not an internal read: "computed once and
+        // threaded" is the same rule the claim facet states for its three
+        // legs, and re-reading `poolRemaining()` here is precisely the
+        // two-legs-own-the-same-headroom defect it exists to prevent.
         PoolBudget memory pool = PoolBudget({
-            fresh: poolRemaining(),
+            fresh: freshBudget,
             recycled: s.recycleBucket,
             deliveredFresh: deliveredCap
         });
@@ -2405,17 +2487,24 @@ library LibInteractionRewards {
             pool.recycled -= charge.toUser.recycled;
             // Codex #1699 r1 P1 — mirror the WALK's delivered-bound depletion.
             //
-            // `pool.fresh` is deliberately unbounded here (the 69M truncation
-            // is payment-time behaviour), but `deliveredFresh` is NOT: this
-            // preview binds it so a quote cannot promise what a claim would
-            // defer. A bound that is read once and never depleted would let
+            // A bound that is read once and never depleted would let
             // every day in a multi-day window be measured against the same
             // untouched allowance — the same defect the finding raised
             // against the walk, and quoting it here would re-open the
             // preview-versus-claim divergence this slice already closed.
+            //
+            // Codex #1699 r14 P2 — and the FRESH budget depletes the same
+            // way, mirroring `ctx.pool.fresh -= freshSpent` in the live
+            // walk. r13 bound the budget at batch start but left every
+            // later day measured against the original headroom: two
+            // 0.4-VPFI days against 0.5 of headroom dry-ran as 0.8 while
+            // the live walk pays 0.4 then terminally truncates the second
+            // day to 0.1. Bounding without depleting is half the walk.
+            uint256 spent =
+                charge.toUser.armedFresh + charge.toTreasury.armedFresh;
+            uint256 fb = pool.fresh;
+            pool.fresh = fb > spent ? fb - spent : 0;
             if (_isArmedDay(s, d)) {
-                uint256 spent =
-                    charge.toUser.armedFresh + charge.toTreasury.armedFresh;
                 // The grouped, D1-capped armed figure — the claim's own number.
                 armedTotal += spent;
                 uint256 db = pool.deliveredFresh;
