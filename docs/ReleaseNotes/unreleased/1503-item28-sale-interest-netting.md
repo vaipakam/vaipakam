@@ -157,6 +157,15 @@ Loans that predate this change carry no mark, which resolves to the accrual
 origin — exactly the behaviour they already had. Nothing needs to be
 reconstructed or backfilled for them.
 
+One upgrade note for operators. The internal entry point that pays a lender
+their periodic interest now also records when it did, so it takes one more
+piece of information and its old form is retired. Both upgrade paths — the
+curated partial refresh and the all-facets in-place refresh — now retire the
+old form explicitly. Without that, the old entry point stays reachable on the
+previous code while the refresh reports every part of the platform updated, and
+it pays lenders without recording anything — which is precisely the case that
+makes the next sale over-charge the seller.
+
 Seller-facing surfaces read the same figure the contract charges, through a new
 read-only view that reports both the window's start and what it comes to right
 now. The offer picker, the confirmation receipt, the funding watch and the

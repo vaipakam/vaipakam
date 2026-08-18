@@ -8,6 +8,10 @@ import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./lib/Deployments.sol";
+// #1503 item 28 — for `retiredResidentPayoutSelector()` only. The retired
+// signature is defined once there so this script and `RedeployFacets` cannot
+// drift apart on which selector to Remove.
+import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {DeployDiamond} from "./DeployDiamond.s.sol";
 import {DiamondLoupeFacet} from "../src/facets/DiamondLoupeFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
@@ -745,6 +749,38 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             IDiamondCut(diamond).diamondCut(rmSaleCut, address(0), "");
             console.log(
                 "#1503 PR-A: removed retired 3-arg createLoanSaleOffer selector"
+            );
+        }
+
+        // ─── #1503 item 28 — retire the 3-arg resident-payout selector ──────
+        //
+        // `freezeOrPayActiveLenderResident` gained a fourth argument (the
+        // paid-through boundary the seller's forfeiture window is measured
+        // from), so its selector changed. `_split` Adds the 4-arg one, but this
+        // script never Removes (SCOPE note above), which would leave the retired
+        // 3-arg selector routed to the PREVIOUS `EncumbranceMutateFacet` — a
+        // live entry point on stale bytecode that pays lenders WITHOUT writing
+        // the mark, so the next sale charges the seller again for interest they
+        // already received. The script would report every facet refreshed while
+        // that path stayed on the old implementation. `RedeployFacets` already
+        // carries this Remove; the all-facets refresh needs it for the same
+        // reason. Gated on the old selector still being routed, so it runs
+        // exactly once and a rerun is a no-op.
+        bytes4 oldResidentPayout =
+            FacetSelectors.retiredResidentPayoutSelector();
+        if (loupe.facetAddress(oldResidentPayout) != address(0)) {
+            bytes4[] memory rmResident = new bytes4[](1);
+            rmResident[0] = oldResidentPayout;
+            IDiamondCut.FacetCut[] memory rmResidentCut =
+                new IDiamondCut.FacetCut[](1);
+            rmResidentCut[0] = IDiamondCut.FacetCut({
+                facetAddress: address(0),
+                action: IDiamondCut.FacetCutAction.Remove,
+                functionSelectors: rmResident
+            });
+            IDiamondCut(diamond).diamondCut(rmResidentCut, address(0), "");
+            console.log(
+                "#1503 item 28: removed retired 3-arg freezeOrPayActiveLenderResident selector"
             );
         }
 
