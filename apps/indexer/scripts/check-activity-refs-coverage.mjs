@@ -426,6 +426,17 @@ const bindsNameLexically = (node, name) => {
  * `.apply` matcher was written with it a fourth time in the same review. A
  * shared reader is what stops there being a fifth.
  */
+/**
+ * SQL with its comment spans blanked out.
+ *
+ * Hoisted to module scope (Codex round-54 P2) so the cursor-ordering check and
+ * the activity-INSERT checks read statements the same way. SQLite ignores
+ * `-- line` and block spans, so any check that reads a statement as text has to
+ * strip them first or a commented-out copy satisfies it.
+ */
+const stripSqlComments = (text) =>
+  text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
+
 const memberNameOf = (node) => {
   if (ts.isPropertyAccessExpression(node)) return node.name.text;
   if (ts.isElementAccessExpression(node)) {
@@ -790,6 +801,15 @@ const invokedFunctionBodyOf = (expr) => {
     if (via === 'call' || via === 'apply') callee = unwrapForInvocation(callee.expression);
     else return null;
   }
+  // A NAMED local helper is invoked just as directly (Codex round-54 P2).
+  // Every earlier round matched a function sitting literally in callee position,
+  // so `const mutateArgs = () => { args.loanId = 999n; }; mutateArgs();` inside a
+  // mapped case was read as an ordinary call to something inert and its body was
+  // never scanned. Extracting a mutation into a named helper is an ordinary
+  // refactor, not a contrivance, which is why this is fixed rather than deferred.
+  if (callee && ts.isIdentifier(callee)) {
+    callee = resolveInvokedCallee(callee, e);
+  }
   if (!callee || !isFunctionLike(callee) || !callee.body) return null;
   if (callee.asteriskToken) return null;
   // An ASYNC body runs only to its first `await` (Codex round-48 P2). Round 47
@@ -846,6 +866,50 @@ const unwrapForInvocation = (t) => {
   let cur = t;
   while (cur && isTransparentWrapper(cur)) cur = cur.expression;
   return cur;
+};
+
+/**
+ * The function an identifier callee actually invokes, or null when this script
+ * cannot say (Codex round-54 P2).
+ *
+ * Follows the two shapes a local helper is written in — a hoisted `function f()`
+ * declaration, and a variable initialised to a function expression or arrow.
+ * Anything else resolves to null and the call stays treated as inert, which is
+ * the conservative direction: a helper this walk cannot follow is accepted, not
+ * failed, so an unfollowable refactor never blocks the build.
+ *
+ * Stops at the first binder of the name, so an inner shadow is never mistaken
+ * for an outer helper.
+ */
+const resolveInvokedCallee = (ident, from) => {
+  for (let scope = from; scope; scope = scope.parent) {
+    // a parameter / catch variable holding this name is opaque to this script
+    if (bindsNameLexically(scope, ident.text)) return null;
+    const stmts =
+      ts.isBlock(scope) ||
+      ts.isSourceFile(scope) ||
+      ts.isCaseClause(scope) ||
+      ts.isDefaultClause(scope)
+        ? scope.statements
+        : null;
+    if (!stmts) continue;
+    for (const st of stmts) {
+      if (
+        ts.isFunctionDeclaration(st) &&
+        st.name &&
+        st.name.text === ident.text
+      ) {
+        return st;
+      }
+      if (!ts.isVariableStatement(st)) continue;
+      for (const d of st.declarationList.declarations) {
+        if (!ts.isIdentifier(d.name) || d.name.text !== ident.text) continue;
+        const init = d.initializer ? unwrapForInvocation(d.initializer) : null;
+        return init && isFunctionLike(init) ? init : null;
+      }
+    }
+  }
+  return null;
 };
 
 const unwrapAssertions = (t) => {
@@ -1252,6 +1316,10 @@ for (const file of memberFiles) {
     const names = [];
     /** path -> ABI type, so a reference can be required to be numeric. */
     const typeOf = new Map();
+    // Kept SEPARATE from `typeOf` (Codex round-54 P2) — that map is read by the
+    // numeric-shape checks below, which ask what a field decodes to, not where
+    // it decodes from. Only the overload signature wants the layout.
+    const indexedOf = new Map();
     /** field -> path, for PLURAL reference arrays (`uint256[] loanIds`). */
     const arrayRefs = new Map();
     /**
@@ -1334,6 +1402,7 @@ for (const file of memberFiles) {
         }
         names.push(path);
         typeOf.set(path, i.type ?? '');
+        indexedOf.set(path, i.indexed === true);
         if (Array.isArray(i.components)) {
           // An ARRAY of tuples is not reachable by a dotted path (Codex round-18
           // P2): viem decodes `args.items` as an array, so `args.items.loanId`
@@ -1416,8 +1485,19 @@ for (const file of memberFiles) {
     // mapping read as covering both while the second hands the mapper an array.
     // What makes a name-keyed mapper safe is that the bag is the SAME bag, and
     // the names alone do not establish that.
+    // ...and by INDEXED LAYOUT (Codex round-54 P2). Name and type alone call two
+    // definitions identical when they disagree only on where a field lives, and
+    // that disagreement is exactly what breaks decoding: `indexed` moves a value
+    // out of the data blob into a topic, so the two carry the SAME canonical
+    // topic-0 (`LoanSettled(uint256)`) while laying the log out differently. The
+    // runtime `EVENT_ABI` dedupes them, keeps whichever it saw first, and every
+    // log emitted under the other layout fails to decode and is dropped — with
+    // no mapping error, because the mapper is never reached.
+    //
+    // A dropped log is invisible to every count in this script, which is the
+    // property that makes it worth refusing rather than tolerating.
     const signature = names
-      .map((n) => `${n}:${typeOf.get(n) ?? '?'}`)
+      .map((n) => `${n}:${typeOf.get(n) ?? '?'}${indexedOf.get(n) ? ':indexed' : ''}`)
       .sort()
       .join(',');
     const priorSig = eventInputs.get(item.name);
@@ -1425,7 +1505,7 @@ for (const file of memberFiles) {
       abiConflicts.push({
         kind: 'overload',
         event: item.name,
-        message: `${item.name} — two ABI signatures with different arguments (${priorSig} vs ${signature}); a name-keyed mapper cannot be correct for both`,
+        message: `${item.name} — two ABI definitions that disagree on their argument bag or on which fields are \`indexed\` (${priorSig} vs ${signature}); a name-keyed mapper cannot be correct for both, and an indexed-only difference additionally makes one of the two layouts undecodable at runtime`,
       });
     }
     eventInputs.set(item.name, signature);
@@ -2060,6 +2140,70 @@ if (!fnNode) {
       );
       process.exit(1);
     }
+    // ...and it must run BEFORE the cursor advances (Codex round-54 P2).
+    //
+    // Every check here established that the ledger call happens and that a
+    // failure inside it propagates. Neither says WHEN. Move the awaited call to
+    // just after the cursor's `.run()` and all of them stay green — while the
+    // propagating failure now arrives too late to matter, because the cursor has
+    // already moved past those blocks and the next scan starts after them. The
+    // rows are lost exactly as if the error had been swallowed, which is the
+    // failure this whole section exists to refuse.
+    //
+    // Matched by SOURCE ORDER inside the ledger call's own enclosing function,
+    // which is a real limitation worth stating: it is not a control-flow proof,
+    // and it says nothing about a cursor write that lives in a different
+    // function. It is checked only when a cursor write is found alongside the
+    // call, so a refactor that moves the advance elsewhere is ACCEPTED rather
+    // than failed — a wrong rejection here would block legitimate work, and the
+    // demonstrated hole is the in-place reordering.
+    const cursorAdvanceBeforeLedger = callSites.length === 1
+      ? (() => {
+          let fn = callSites[0].parent;
+          while (fn && !isFunctionLike(fn)) fn = fn.parent;
+          if (!fn || !fn.body) return null;
+          const callAt = callSites[0].getStart(sourceFile);
+          let hit = null;
+          const seek = (n) => {
+            if (hit) return;
+            // don't descend into other functions declared in this body
+            if (n !== fn.body && isFunctionLike(n)) return;
+            if (ts.isCallExpression(n)) {
+              const raw = n.arguments?.[0]
+                ? n.arguments[0].getText(sourceFile)
+                : '';
+              if (
+                memberNameOf(unwrapAssertions(n.expression)) === 'prepare' &&
+                /INSERT\s+(OR\s+\w+\s+)?INTO\s+indexer_cursor/i.test(
+                  stripSqlComments(raw),
+                )
+              ) {
+                const at = n.getStart(sourceFile);
+                if (at < callAt) hit = at;
+                return;
+              }
+            }
+            ts.forEachChild(n, seek);
+          };
+          seek(fn.body);
+          return hit;
+        })()
+      : null;
+    if (cursorAdvanceBeforeLedger !== null) {
+      const line =
+        sourceFile.getLineAndCharacterOfPosition(cursorAdvanceBeforeLedger).line + 1;
+      console.error(
+        `[check-activity-refs-coverage] the scan advances \`indexer_cursor\` (line ${line})\n` +
+          `  BEFORE it calls ${LEDGER_FN}().\n` +
+          '  Awaiting the ledger and letting its failures propagate only protects the rows\n' +
+          '  while the cursor still points at those blocks. Once it has moved, a failed\n' +
+          '  activity INSERT is unrecoverable: the error is raised, the scan is retried, and\n' +
+          '  the retry starts AFTER the blocks whose rows were never written. Record the\n' +
+          '  activity first, advance the cursor last — or update this script; do not delete\n' +
+          '  the check.',
+      );
+      process.exit(1);
+    }
     if (callSites.length > 1) {
       console.error(
         `[check-activity-refs-coverage] ${LEDGER_FN}() result is bound in ${callSites.length}\n` +
@@ -2416,27 +2560,126 @@ if (!fnNode) {
         // aliases themselves; the parameter has to be asked, since
         // `logs = logs.slice(0, 1)` ahead of the loop diminishes the batch under
         // every spelling of it at once.
-        const batchReassigned = (() => {
-          if (batchParamName === null || !ledgerNode.body) return false;
-          let hit = false;
+        // What the batch is worth depends on what happens to it before the loop,
+        // and the question is MEMBERSHIP, not syntax (Codex round-54 P2, two
+        // findings that pull in opposite directions and are right together).
+        //
+        // My round-53 check rejected every write to the parameter. That was too
+        // strict in one direction — `logs = [...logs]`, an ordinary defensive
+        // copy, processes every decoded row and was failed — and too loose in the
+        // other, because `logs.splice(1)` writes no identifier at all and slipped
+        // straight through a `writesName` test. One asks for less rejection and
+        // one for more; both are satisfied by asking whether the rows survive.
+        //
+        // So: a reassignment is accepted only when its right-hand side provably
+        // holds the same rows, and a mutating CALL on the batch is refused
+        // outright. Anything unrecognised is refused, because this check exists
+        // to establish that the loop walks the whole batch — an unprovable
+        // rewrite has not established it.
+        const PRESERVING_COPY = ['from', 'of'];
+        const MEMBERSHIP_MUTATORS = [
+          'splice', 'pop', 'shift', 'push', 'unshift', 'fill', 'copyWithin',
+        ];
+        const preservesRows = (rhs) => {
+          const e = unwrapAssertions(rhs);
+          if (!e) return false;
+          // `logs = logs` — a no-op
+          if (ts.isIdentifier(e)) return e.text === batchParamName;
+          // `logs = [...logs]`
+          if (ts.isArrayLiteralExpression(e)) {
+            return (
+              e.elements.length === 1 &&
+              ts.isSpreadElement(e.elements[0]) &&
+              ts.isIdentifier(unwrapAssertions(e.elements[0].expression)) &&
+              unwrapAssertions(e.elements[0].expression).text === batchParamName
+            );
+          }
+          if (!ts.isCallExpression(e)) return false;
+          const member = memberNameOf(e.expression);
+          const host = ts.isPropertyAccessExpression(e.expression) ||
+            ts.isElementAccessExpression(e.expression)
+            ? unwrapAssertions(e.expression.expression)
+            : null;
+          if (!host || !ts.isIdentifier(host)) return false;
+          // `Array.from(logs)` / `Array.of(...)`
+          if (host.text === 'Array' && PRESERVING_COPY.includes(member)) {
+            const a0 = e.arguments[0] && unwrapAssertions(e.arguments[0]);
+            return Boolean(a0 && ts.isIdentifier(a0) && a0.text === batchParamName);
+          }
+          // `logs.slice()` / `logs.concat()` — full copies ONLY when argumentless;
+          // `slice(0, 1)` is exactly the truncation this refuses.
+          if (
+            host.text === batchParamName &&
+            (member === 'slice' || member === 'concat') &&
+            e.arguments.length === 0
+          ) {
+            return true;
+          }
+          return false;
+        };
+        const batchDisturbed = (() => {
+          if (batchParamName === null || !ledgerNode.body) return null;
+          let why = null;
           const walk = (n) => {
-            if (hit) return;
+            if (why) return;
             // a nested binder of the same name is a different `logs` entirely
             if (n !== ledgerNode.body && bindsNameLexically(n, batchParamName)) return;
-            if (writesName(n, batchParamName)) {
-              hit = true;
+            // a membership-changing method call on the batch
+            if (ts.isCallExpression(n)) {
+              const member = memberNameOf(n.expression);
+              const host =
+                ts.isPropertyAccessExpression(n.expression) ||
+                ts.isElementAccessExpression(n.expression)
+                  ? unwrapAssertions(n.expression.expression)
+                  : null;
+              if (
+                member !== null &&
+                MEMBERSHIP_MUTATORS.includes(member) &&
+                host &&
+                ts.isIdentifier(host) &&
+                host.text === batchParamName
+              ) {
+                why = `\`${batchParamName}.${member}(…)\` changes which rows it holds`;
+                return;
+              }
+            }
+            // `logs.length = n`
+            if (
+              ts.isBinaryExpression(n) &&
+              n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+              memberNameOf(n.left) === 'length'
+            ) {
+              const host = unwrapAssertions(n.left.expression);
+              if (ts.isIdentifier(host) && host.text === batchParamName) {
+                why = `\`${batchParamName}.length\` is assigned, which truncates it`;
+                return;
+              }
+            }
+            // a reassignment of the batch itself
+            if (
+              ts.isBinaryExpression(n) &&
+              n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+              ts.isIdentifier(unwrapAssertions(n.left)) &&
+              unwrapAssertions(n.left).text === batchParamName
+            ) {
+              if (!preservesRows(n.right)) {
+                why =
+                  `\`${batchParamName}\` is reassigned to ` +
+                  `\`${n.right.getText(sourceFile)}\`, which this script cannot show ` +
+                  'holds the same rows';
+              }
               return;
             }
             ts.forEachChild(n, walk);
           };
           walk(ledgerNode.body);
-          return hit;
+          return why;
         })();
-        if (batchParamName !== null && (!namesTheBatch(p.expression) || batchReassigned)) {
+        if (batchParamName !== null && (!namesTheBatch(p.expression) || batchDisturbed)) {
           console.error(
             `[check-activity-refs-coverage] ${LEDGER_FN}()'s batch loop iterates\n` +
               `  \`${p.expression.getText(sourceFile)}\`, which does not resolve to the batch it\n` +
-              `  was handed${batchReassigned ? ` (\`${batchParamName}\` is reassigned first)` : ''}.\n` +
+              `  was handed${batchDisturbed ? ` (${batchDisturbed})` : ''}.\n` +
               '  Everything below reads that loop as "once per decoded log". A slice, a\n' +
               '  filter, or any other derived collection silently drops rows while the scan\n' +
               '  still advances `indexer_cursor` past the whole batch — and every count in\n' +
@@ -3121,8 +3364,6 @@ if (!fnNode) {
      * Requiring a static expression (round 44) closed the "which arm runs"
      * question and left the "is this text even executed" one open.
      */
-    const stripSqlComments = (text) =>
-      text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
     let dynamicSql = null;
     const findInsert = (n) => {
       if (ts.isCallExpression(n) && memberNameOf(n.expression) === 'bind') {
@@ -3167,6 +3408,40 @@ if (!fnNode) {
     // completed or failed, and a Worker cancelled mid-flight loses the pending
     // write. "The statement was executed" and "the scan waited for the row" are
     // different claims, and this script's whole subject is the second one.
+    /**
+     * Is there an awaited `<name>.run()` (or other executor) in the scope that
+     * declared `name`? Used to follow a `const`-bound D1 statement to the place
+     * it is actually executed.
+     */
+    const awaitedExecutorOn = (name, declaration) => {
+      let scope = declaration;
+      while (scope && !isFunctionLike(scope) && !ts.isSourceFile(scope)) {
+        scope = scope.parent;
+      }
+      const body = scope && scope.body ? scope.body : scope;
+      if (!body) return false;
+      let found = false;
+      const seek = (n) => {
+        if (found) return;
+        if (
+          ts.isCallExpression(n) &&
+          memberNameOf(n.expression) !== null &&
+          EXECUTORS.includes(memberNameOf(n.expression)) &&
+          ts.isIdentifier(unwrapAssertions(n.expression.expression)) &&
+          unwrapAssertions(n.expression.expression).text === name
+        ) {
+          for (let q = n.parent, child = n; q; child = q, q = q.parent) {
+            if (isTransparentWrapper(q)) continue;
+            if (ts.isAwaitExpression(q) && q.expression === child) found = true;
+            break;
+          }
+          if (found) return;
+        }
+        ts.forEachChild(n, seek);
+      };
+      seek(body);
+      return found;
+    };
     const executedFrom = (bindCall) => {
       for (let cur = bindCall, p = cur.parent; p; cur = p, p = p.parent) {
         if (isTransparentWrapper(p)) continue;
@@ -3187,6 +3462,25 @@ if (!fnNode) {
             return ts.isAwaitExpression(q) && q.expression === child;
           }
           return false;
+        }
+        // ...or the statement is BOUND first and executed through the binding
+        // (Codex round-54 P2). `const statement = env.DB.prepare(…).bind(…);`
+        // followed by `await statement.run();` is the same awaited write in two
+        // steps, and this walk used to stop at the declaration and report that
+        // the statement was never executed — failing a refactor that changes
+        // nothing about what reaches D1.
+        //
+        // Only a `const` binding is followed: a `let` could hold something else
+        // by the time the executor runs, and the point of this check is to know
+        // WHICH statement was executed.
+        if (
+          ts.isVariableDeclaration(p) &&
+          p.initializer === cur &&
+          ts.isIdentifier(p.name) &&
+          ts.isVariableDeclarationList(p.parent) &&
+          (p.parent.flags & ts.NodeFlags.Const) !== 0
+        ) {
+          return awaitedExecutorOn(p.name.text, p);
         }
         return false;
       }
@@ -3227,6 +3521,25 @@ if (!fnNode) {
            * it inside; this is `findEscape`'s rule, applied to the same
            * question one level down.
            */
+          /**
+           * Does this returned expression keep the ledger's promise REJECTED?
+           *
+           * Only the explicit constructions — `Promise.reject(…)` and an
+           * awaited/returned rejection built from one. Deliberately narrow: a
+           * value this cannot prove rejected is treated as normal completion,
+           * which is the direction that keeps a swallow caught. Being wrong the
+           * other way would accept a handler that resolves.
+           */
+          const returnsARejection = (expr) => {
+            if (!expr) return false;
+            const e = unwrapAssertions(expr);
+            if (ts.isAwaitExpression(e)) return returnsARejection(e.expression);
+            if (!ts.isCallExpression(e)) return false;
+            const member = memberNameOf(e.expression);
+            if (member !== 'reject') return false;
+            const host = unwrapAssertions(e.expression.expression);
+            return ts.isIdentifier(host) && host.text === 'Promise';
+          };
           const isLoopStatement = (m) =>
             ts.isForStatement(m) ||
             ts.isForOfStatement(m) ||
@@ -3239,7 +3552,13 @@ if (!fnNode) {
               if (hit) return;
               if (isFunctionLike(m)) return; // a nested function's return is its own
               if (ts.isReturnStatement(m)) {
-                hit = true; // nothing inside a block can own a `return`
+                // ...unless it hands back a REJECTION (Codex round-54 P2).
+                // `catch (err) { return Promise.reject(err); }` leaves the
+                // ledger's promise rejected, so the caller still never advances
+                // the cursor — the failure reaches it exactly as a rethrow does.
+                // Classifying every `return` as normal completion failed a form
+                // that is genuinely equivalent to the one this check wants.
+                if (!returnsARejection(m.expression)) hit = true;
                 return;
               }
               if (ts.isBreakStatement(m) || ts.isContinueStatement(m)) {
@@ -3269,6 +3588,11 @@ if (!fnNode) {
           const alwaysThrows = (node) => {
             if (!node) return false;
             if (ts.isThrowStatement(node)) return true;
+            // A returned rejection propagates exactly as a throw does — both
+            // leave the ledger's promise rejected, which is what stops the
+            // caller advancing the cursor. Both predicates have to agree on
+            // that or they disagree about the same handler (Codex round-54 P2).
+            if (ts.isReturnStatement(node)) return returnsARejection(node.expression);
             if (ts.isBlock(node)) {
               const last = node.statements[node.statements.length - 1];
               return alwaysThrows(last);
