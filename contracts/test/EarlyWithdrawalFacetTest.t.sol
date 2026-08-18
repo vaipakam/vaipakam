@@ -35,6 +35,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {LibSaleListing} from "../src/libraries/LibSaleListing.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -1309,6 +1310,61 @@ contract EarlyWithdrawalFacetTest is Test {
     }
 
     // ─── #1503 item 4: the seller's two economic bounds ──────────────────────
+
+    /// @dev Codex #1812 round 3/5 — the TRUNCATION SLACK, measured rather than
+    ///      argued. Evaluating both endpoints is exactly tight over the reals
+    ///      and not in integer arithmetic: the shortfall leg is a difference of
+    ///      two SEPARATELY TRUNCATED figures, so it can exceed both endpoint
+    ///      values at a second in between, and a floor recorded without slack
+    ///      then refuses a fill that changed nothing.
+    ///
+    ///      These parameters are not decorative — they are the smallest case I
+    ///      could construct that is REACHABLE here. The counterexample in the
+    ///      review used 7,203 seconds of remaining term, which this contract
+    ///      cannot express: `interestRemainingDaysOf` returns whole days, so
+    ///      the term is always a multiple of 86,400. Searching whole-day terms
+    ///      found this one:
+    ///
+    ///        principal 1e9, loan 2 bps, sale 3 bps, 13-day term, 280,800s
+    ///        window → cost 3,561 at listing, 2,671 at expiry, and 3,562 at
+    ///        t = 46s. Without slack the recorded floor sits ONE unit above the
+    ///        seller's own net at that second.
+    ///
+    ///      The probe is `quoteSellerBounds`, which returns the floor for a
+    ///      window. Quoting a window that begins and ends at the SAME second
+    ///      collapses both endpoint evaluations onto it, so that quote is that
+    ///      second's own cost. The slack is added back to recover the true net,
+    ///      which is why the constant appears in the assertion: the invariant
+    ///      is "the recorded floor never exceeds the seller's real net at any
+    ///      second inside the window", and the probe carries slack of its own.
+    function test_saleListing_floorCoversAnInteriorSecondDespiteTruncation() public {
+        uint256 truncLoanId = 4242;
+        LibVaipakam.Loan memory l;
+        l.id = truncLoanId;
+        l.lender = lender;
+        l.principal = 1_000_000_000;
+        l.interestRateBps = 2;
+        l.interestAccrualStart = uint64(block.timestamp);
+        l.interestRemainingDays = 13;
+        TestMutatorFacet(address(diamond)).setLoan(truncLoanId, l);
+
+        uint256 listedAt = block.timestamp;
+        (uint256 floorAtListing, ) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(truncLoanId, 3, listedAt + 280_800);
+
+        // The interior second whose truncated cost exceeds BOTH endpoints.
+        vm.warp(listedAt + 46);
+        (uint256 floorAtThatSecond, ) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(truncLoanId, 3, block.timestamp);
+        uint256 trueNetAtThatSecond =
+            floorAtThatSecond + LibSaleListing.TRUNCATION_SLACK;
+
+        assertLe(
+            floorAtListing,
+            trueNetAtThatSecond,
+            "the recorded floor must not exceed the seller's net at an interior second"
+        );
+    }
 
     /// @dev The FLOOR is the worst case ACROSS THE WINDOW — both endpoints,
     ///      whichever is worse for the seller, plus truncation slack (see
