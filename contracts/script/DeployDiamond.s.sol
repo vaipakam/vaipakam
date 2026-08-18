@@ -915,8 +915,16 @@ contract DeployDiamond is Script {
         // never-refreshed chain was missing them. The addresses were always
         // recoverable (loupe `facetAddress(bytes4)`, broadcast logs), which is
         // why this was an inconvenience rather than a lost deploy — but the
-        // artifact is supposed to be the record. Predeploy step [4c] now fails
-        // if a cut facet has no write here, so this cannot silently regrow.
+        // artifact is supposed to be the record.
+        //
+        // NOTHING AUTOMATED STOPS THIS FROM REGROWING YET. A predeploy step that
+        // read these scripts as text was written and withdrawn — review found
+        // thirteen ways past it, because proving a registration executes under a
+        // stable identity on every chain is a scope-and-control-flow question a
+        // text parser cannot answer. #1800 replaces it with the assertion that
+        // needs no parsing: run the deploy with artifacts on, then require every
+        // facet the built Diamond routes to appear in the JSON it wrote. Until
+        // that lands, adding a facet means adding its write HERE by hand.
         Deployments.writeFacet("aggregatorAdapterFactoryFacet", address(aggregatorAdapterFactoryFacet));
         Deployments.writeFacet("backstopFacet",           address(backstopFacet));
         Deployments.writeFacet("consolidationFacet",      address(consolidationFacet));
