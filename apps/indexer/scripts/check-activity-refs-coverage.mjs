@@ -415,6 +415,69 @@ const bindsNameLexically = (node, name) => {
   return false;
 };
 
+/**
+ * The statically known member name of a property OR element access — `f.call`
+ * and `f['call']` alike — or null when it cannot be resolved.
+ *
+ * ONE reader for every member lookup in this file (Codex round-37 P2). The
+ * dotted-only assumption has now been fixed three times in three places —
+ * `objectLiteralView`'s keys (round 12), the enrichment key reader (round 34),
+ * the `Object.assign` mutator list (round 35) — and round 36's `.call` /
+ * `.apply` matcher was written with it a fourth time in the same review. A
+ * shared reader is what stops there being a fifth.
+ */
+const memberNameOf = (node) => {
+  if (ts.isPropertyAccessExpression(node)) return node.name.text;
+  if (ts.isElementAccessExpression(node)) {
+    const arg = unwrapAssertions(node.argumentExpression);
+    if (ts.isStringLiteralLike(arg)) return arg.text;
+  }
+  return null;
+};
+
+/**
+ * Why a statement might not run on its enclosing function's own path, or null
+ * when nothing between it and `stopAt` can skip it.
+ *
+ * ONE walk for both reachability questions (Codex round-37 P2). It was written
+ * for the `activity_events` INSERT, and the very next round found the same hole
+ * one level up: binding the LEDGER CALL's result does not prove the scan makes
+ * it, because `if (false) { const dead = await recordActivityEvents(…) }` binds
+ * a result too. Same question, same answer, so the same code.
+ *
+ * Blocks and loops are fine — the ledger's own `for (const log of logs)` is one.
+ * What is refused is anything that can decide NOT to reach the statement.
+ */
+const guardedReason = (node, stopAt) => {
+  for (let cur = node; cur && cur !== stopAt; cur = cur.parent) {
+    const p = cur.parent;
+    if (!p) break;
+    if (isFunctionLike(p)) return 'inside a nested function, which nothing here calls';
+    if (ts.isConditionalExpression(p) && cur !== p.condition) {
+      return 'inside a conditional expression, so it runs only on one branch';
+    }
+    if (
+      ts.isBinaryExpression(p) &&
+      (p.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        p.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        p.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) &&
+      cur === p.right
+    ) {
+      return 'behind a short-circuit operator, so it runs only when the left side allows it';
+    }
+    if (ts.isIfStatement(p) && cur !== p.expression) {
+      return 'inside an `if` branch, so it runs only on some rows';
+    }
+    // A switch clause is an `if` by another name (Codex round-37 P2):
+    // `switch (x) { case -1: { …statement… } }` runs only when the discriminant
+    // matches, and the round-36 list named every OTHER way to guard one.
+    if (ts.isCaseClause(p) || ts.isDefaultClause(p)) {
+      return 'inside a switch clause, so it runs only when that case matches';
+    }
+  }
+  return null;
+};
+
 /** A binder this script cannot follow to a value. It shadows; it is not read. */
 const OPAQUE_BINDING = Symbol('opaque binding');
 
@@ -1377,6 +1440,31 @@ if (!fnNode) {
       const first = c.arguments[0] && unwrapAssertions(c.arguments[0]);
       return !first || !ts.isIdentifier(first);
     });
+    // Binding the result does not prove the scan MAKES the call (Codex round-37
+    // P2). `resultIsBound` was added so a fire-and-forget decoy could not stand
+    // in for the live invocation, and it checks the shape of the call site, not
+    // its position — so `let activityEvents = 0; if (false) { const dead = await
+    // recordActivityEvents(allLogs, …); }` satisfies it while the scan records
+    // nothing. Same question the INSERT's reachability check asks one level
+    // down, so it is the same walk, stopped at the call's own function.
+    const unreachableCall = callSites.length === 1
+      ? (() => {
+          let fn = callSites[0].parent;
+          while (fn && !isFunctionLike(fn)) fn = fn.parent;
+          return guardedReason(callSites[0], fn?.body ?? sourceFile);
+        })()
+      : null;
+    if (unreachableCall) {
+      console.error(
+        `[check-activity-refs-coverage] the only call to ${LEDGER_FN}() sits\n` +
+          `  ${unreachableCall}.\n` +
+          '  Every check below reads that function\'s body, which is evidence about the rows\n' +
+          '  only if the scan actually runs it — and a call that never executes leaves every\n' +
+          '  count in this script identical while no activity row is written. Put the call on\n' +
+          '  the scan\'s own path, or update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
     if (callSites.length > 1) {
       console.error(
         `[check-activity-refs-coverage] ${LEDGER_FN}() result is bound in ${callSites.length}\n` +
@@ -1826,12 +1914,7 @@ if (!fnNode) {
           // Member reads are resolved the same way everywhere else in this file
           // (`objectLiteralView` since round 12, the enrichment key reader since
           // round 34); this was the last member read still assuming dot syntax.
-          const memberName = ts.isPropertyAccessExpression(callee)
-            ? callee.name.text
-            : ts.isElementAccessExpression(callee) &&
-                ts.isStringLiteralLike(unwrapAssertions(callee.argumentExpression))
-              ? unwrapAssertions(callee.argumentExpression).text
-              : null;
+          const memberName = memberNameOf(callee);
           if (memberName !== null) {
             const host = unwrapAssertions(callee.expression);
             const mutators = ts.isIdentifier(host) && host.text === 'Object'
@@ -2119,29 +2202,7 @@ if (!fnNode) {
      * a nested function, a conditional expression, a short-circuit operand, or
      * an `if` branch.
      */
-    const unreachableReason = (node) => {
-      for (let cur = node; cur && cur !== ledgerNode.body; cur = cur.parent) {
-        const p = cur.parent;
-        if (!p) break;
-        if (isFunctionLike(p)) return 'inside a nested function, which nothing here calls';
-        if (ts.isConditionalExpression(p) && cur !== p.condition) {
-          return 'inside a conditional expression, so it runs only on one branch';
-        }
-        if (
-          ts.isBinaryExpression(p) &&
-          (p.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
-            p.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
-            p.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) &&
-          cur === p.right
-        ) {
-          return 'behind a short-circuit operator, so it runs only when the left side allows it';
-        }
-        if (ts.isIfStatement(p) && cur !== p.expression) {
-          return 'inside an `if` branch, so it runs only on some rows';
-        }
-      }
-      return null;
-    };
+    const unreachableReason = (node) => guardedReason(node, ledgerNode.body);
     const inserts = [];
     const findInsert = (n) => {
       if (
@@ -2207,6 +2268,29 @@ if (!fnNode) {
     const placeholders = valuesList === null
       ? null
       : valuesList.split(',').map((v) => v.trim()).filter(Boolean);
+    // A SPREAD in `.bind(...)` breaks the same correspondence from the other
+    // side (Codex round-37 P2). Round 36 pinned the SQL half — one bare `?` per
+    // column — and left the argument half assuming one AST node per runtime
+    // value. `...([chainId, Number(log.blockNumber)] as const)` is one AST
+    // argument carrying two, so every index after it points at the wrong value
+    // and the alignment reports the binds correct while `loan_id` receives
+    // whatever landed there. Both halves have to hold for a positional check to
+    // mean anything.
+    const spreadBind = bindArgs.find((a) => ts.isSpreadElement(a));
+    if (spreadBind || bindArgs.length !== cols.length) {
+      console.error(
+        `[check-activity-refs-coverage] the activity_events INSERT's \`.bind(...)\` ${
+          spreadBind ? 'contains a spread argument' : `passes ${bindArgs.length} arguments for ${cols.length} columns`
+        }.\n` +
+          '  This script finds `loan_id` / `offer_id` by their position in the column list\n' +
+          '  and reads the bind argument at that same index, which only lines up while each\n' +
+          '  column has exactly one argument of its own — a spread carries an unknown number\n' +
+          '  of runtime values, shifting everything after it while every count here stays\n' +
+          '  identical. Pass one argument per column, or update this script — do not delete\n' +
+          '  the check.',
+      );
+      process.exit(1);
+    }
     if (
       placeholders === null ||
       placeholders.length !== cols.length ||
@@ -2460,9 +2544,14 @@ const findEscape = (nodes, { countReturns = false } = {}) => {
       // `(() => { throw e }).call(null)` presented as a property access and the
       // body was skipped as an ordinary nested function. `.bind(…)` is
       // deliberately NOT here — it returns a function without running it.
+      //
+      // Both syntaxes (Codex round-37 P2): `f['call'](…)` is the same
+      // invocation as `f.call(…)`, and matching only the dotted form is the
+      // same gap round 35 fixed for `Object['assign']`. Read through the shared
+      // resolver so the two cannot drift apart again.
+      const invokerName = memberNameOf(callee);
       if (
-        ts.isPropertyAccessExpression(callee) &&
-        (callee.name.text === 'call' || callee.name.text === 'apply') &&
+        (invokerName === 'call' || invokerName === 'apply') &&
         isFunctionLike(unwrapAssertions(callee.expression))
       ) {
         callee = unwrapAssertions(callee.expression);
