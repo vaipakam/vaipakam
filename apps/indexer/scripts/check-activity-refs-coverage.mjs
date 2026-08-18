@@ -655,6 +655,23 @@ const couldBeReference = (key) =>
  */
 const SHADOWABLE_NAMES = new Set(['args', 'Number']);
 
+/**
+ * Is this node a type-level wrapper that changes nothing at runtime?
+ *
+ * The value-side twin of {unwrapAssertions}, which walks DOWN through these;
+ * callers walking UP a parent chain need the same set (Codex round-42 P2).
+ * `resultIsBound` had its own hand-written list and it was missing `satisfies`,
+ * so `const x = (await recordActivityEvents(…)) satisfies number` read as a
+ * discarded result and blocked `typecheck`. Fifth place in this file where a
+ * local copy of a shared rule fell behind it.
+ */
+const isTransparentWrapper = (n) =>
+  ts.isParenthesizedExpression(n) ||
+  ts.isAsExpression(n) ||
+  ts.isNonNullExpression(n) ||
+  Boolean(ts.isSatisfiesExpression?.(n)) ||
+  Boolean(ts.isTypeAssertionExpression?.(n));
+
 const unwrapAssertions = (t) => {
   while (
     ts.isParenthesizedExpression(t) ||
@@ -1439,8 +1456,7 @@ if (!fnNode) {
     const resultIsBound = (call) => {
       let cur = call;
       for (let p = cur.parent; p; cur = p, p = p.parent) {
-        if (ts.isAwaitExpression(p) || ts.isParenthesizedExpression(p) ||
-            ts.isAsExpression(p) || ts.isNonNullExpression(p)) continue;
+        if (ts.isAwaitExpression(p) || isTransparentWrapper(p)) continue;
         if (ts.isVariableDeclaration(p) && p.initializer === cur) return true;
         // ...or ASSIGNED to a binding declared earlier (Codex round-29 P2).
         // `let activityEvents: number; activityEvents = await …` is the ordinary
@@ -1457,6 +1473,25 @@ if (!fnNode) {
       }
       return false;
     };
+    /** A nearer FUNCTION declaration of the ledger name shadows the real one. */
+    const shadowsLedgerName = (node) => {
+      for (let cur = node; cur; cur = cur.parent) {
+        if (ts.isSourceFile(cur)) break;
+        let hit = false;
+        ts.forEachChild(cur, (c) => {
+          if (hit) return;
+          if (
+            (ts.isFunctionDeclaration(c) || ts.isClassDeclaration(c)) &&
+            c.name?.text === LEDGER_FN &&
+            c !== ledgerNode
+          ) {
+            hit = true;
+          }
+        });
+        if (hit) return true;
+      }
+      return false;
+    };
     const callSites = [];
     const findCalls = (n) => {
       // A self-recursive call is not the scan feeding the ledger, so it cannot
@@ -1465,6 +1500,15 @@ if (!fnNode) {
         ts.isCallExpression(n) &&
         bareIdentifierOf(n.expression) === LEDGER_FN &&
         !insideLedger(n) &&
+        // ...and the name must RESOLVE to the function this script inspected
+        // (Codex round-42 P2). Matching the spelling accepted a caller-local
+        // `async function recordActivityEvents() { return 0; }`, which shadows
+        // the real writer at the call site and leaves it never invoked — every
+        // check below reads a body nothing runs. `nearestDeclIn` returns null
+        // when nothing nearer binds the name, which is the module-level
+        // declaration being reachable.
+        nearestDeclIn(n, LEDGER_FN, sourceFile) === null &&
+        !shadowsLedgerName(n) &&
         resultIsBound(n)
       ) {
         callSites.push(n);
@@ -2345,6 +2389,41 @@ if (!fnNode) {
       ts.forEachChild(n, findInsert);
     };
     if (ledgerNode.body) findInsert(ledgerNode.body);
+    // `.bind(...)` PREPARES; it does not execute (Codex round-42 P2). D1's
+    // `bind` returns another prepared statement, so a bound statement that is
+    // never `.run()` writes no row — and every check here, which reads the SQL
+    // and the bind list off that statement, was satisfied by it. Requiring the
+    // matched bind to flow into an awaited execution is the difference between
+    // "this statement is correct" and "this statement happens".
+    const EXECUTORS = ['run', 'all', 'first', 'raw'];
+    const executedFrom = (bindCall) => {
+      for (let cur = bindCall, p = cur.parent; p; cur = p, p = p.parent) {
+        if (isTransparentWrapper(p) || ts.isAwaitExpression(p)) continue;
+        if (
+          ts.isPropertyAccessExpression(p) &&
+          p.expression === cur &&
+          EXECUTORS.includes(p.name.text) &&
+          p.parent &&
+          ts.isCallExpression(p.parent)
+        ) {
+          return true;
+        }
+        return false;
+      }
+      return false;
+    };
+    if (inserts.length === 1 && !executedFrom(inserts[0].node)) {
+      console.error(
+        `[check-activity-refs-coverage] the activity_events statement in ${LEDGER_FN}() is\n` +
+          '  bound but never executed.\n' +
+          '  `.bind(...)` returns another PREPARED statement — it writes nothing until one\n' +
+          `  of ${EXECUTORS.map((e) => '`.' + e + '()`').join(' / ')} runs it. Every check here reads the SQL\n` +
+          '  and the bind list off that statement, so a prepared-and-dropped INSERT passes\n' +
+          '  all of them while no activity row exists. Execute the statement, or update\n' +
+          '  this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
     const skippable = inserts.length === 1 && unreachableReason(inserts[0].node);
     if (skippable) {
       console.error(
@@ -3016,7 +3095,27 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     }
     ts.forEachChild(n, walkOuter);
   };
-  if (fnNode.body) ts.forEachChild(fnNode.body, walkOuter);
+  // The mapper's OWN PARAMETERS shadow too (Codex round-42 P2). This walk
+  // started at the body, so an optional parameter
+  // `Number: (v: unknown) => number = () => 999` left every existing call site
+  // valid, typechecked, and turned every mapped reference into 999. A parameter
+  // is the one binding form that is neither inside the body nor outside the
+  // function.
+  //
+  // From the THIRD parameter on: the mapper is defined to take the event name
+  // and the decoded arguments, so its own `args` is the very binding every
+  // mapping relies on — flagging it would refuse the live code. Anything BEYOND
+  // those two is an addition, and an addition binding `args` or `Number` is a
+  // shadow however innocuous its default looks.
+  for (const param of (fnNode.parameters ?? []).slice(2)) {
+    if (bindsShadowable(param.name)) {
+      outerShadow = ts.isIdentifier(param.name)
+        ? param.name.text
+        : 'args/Number (a destructured parameter)';
+      break;
+    }
+  }
+  if (!outerShadow && fnNode.body) ts.forEachChild(fnNode.body, walkOuter);
   if (outerShadow) {
     structural.push(
       `pluckActivityRefs declares '${outerShadow}' in its own body, shadowing what the accepted mapping shape relies on for EVERY case — this checker cannot tell the two apart`,
