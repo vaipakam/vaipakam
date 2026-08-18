@@ -792,7 +792,53 @@ const invokedFunctionBodyOf = (expr) => {
   }
   if (!callee || !isFunctionLike(callee) || !callee.body) return null;
   if (callee.asteriskToken) return null;
+  // An ASYNC body runs only to its first `await` (Codex round-48 P2). Round 47
+  // fed the whole body to the case-mutation scan, which then failed the build on
+  // `void (async () => { await x; args.loanId = 999n })()` — a mutation in a
+  // continuation that cannot run before the mapper has synchronously copied its
+  // references out. The synchronous prefix is genuinely synchronous and still
+  // counts; what follows the suspension does not.
+  //
+  // Reported as a CUTOFF POSITION rather than a synthesised block: a node built
+  // by `ts.factory` carries no source positions, and several scans here prune by
+  // `getStart`, so handing them a synthetic body would break the very checks
+  // this is meant to feed.
   return callee.body;
+};
+
+/**
+ * Source position after which an invoked function's body no longer runs
+ * synchronously, or `Infinity` when all of it does.
+ *
+ * Companion to {invokedFunctionBodyOf} — see the async reasoning there.
+ */
+const syncCutoffOf = (expr, sourceFile) => {
+  const e = unwrapForInvocation(expr);
+  if (!e || !ts.isCallExpression(e)) return Infinity;
+  let callee = unwrapForInvocation(e.expression);
+  if (callee && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))) {
+    const via = memberNameOf(callee);
+    if (via === 'call' || via === 'apply') callee = unwrapForInvocation(callee.expression);
+    else return Infinity;
+  }
+  if (!callee || !isFunctionLike(callee) || !callee.body || !ts.isBlock(callee.body)) {
+    return Infinity;
+  }
+  const isAsync = (callee.modifiers ?? []).some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
+  if (!isAsync) return Infinity;
+  for (const st of callee.body.statements) {
+    let awaitAt = null;
+    const seek = (m) => {
+      if (awaitAt !== null) return;
+      if (ts.isAwaitExpression(m)) { awaitAt = m.getStart(sourceFile); return; }
+      if (isFunctionLike(m)) return; // a nested function's awaits are its own
+      ts.forEachChild(m, seek);
+    };
+    seek(st);
+    // Everything up to the first `await` runs; the continuation after it does not.
+    if (awaitAt !== null) return awaitAt;
+  }
+  return Infinity;
 };
 
 /** `unwrapAssertions`, usable before it is defined below. */
@@ -1801,6 +1847,18 @@ if (!fnNode) {
     // read as a filled batch while the ledger received nothing. `splice`
     // belongs only in its insertion form — `splice(i, n)` removes, and
     // `splice()` does nothing at all.
+    // ONE reachability test for both batch scans (Codex round-48 P2). Round 47
+    // added alias-following to `everFilledShallow` and left it accepting an
+    // insertion by position alone, so `if (false) stillNoLogs.push(...)` in the
+    // aliased binding read as filling. `everFilled` has asked this since round
+    // 46; the twin written to follow aliases into it had not. Same defect shape
+    // as the resolvers in rounds 27-29 and 33: the rule was right in one place
+    // and kept arriving late in its sibling.
+    const reachableHere = (n) => {
+      let fn = n.parent;
+      while (fn && !isFunctionLike(fn)) fn = fn.parent;
+      return guardedReason(n, fn?.body ?? sourceFile) === null;
+    };
     const BATCH_ADDERS = ['push', 'unshift'];
     const insertsInto = (call, name) => {
       const member = memberNameOf(call.expression);
@@ -1838,7 +1896,8 @@ if (!fnNode) {
           if (
             ts.isIdentifier(recv) &&
             recv.text === name &&
-            nearestDeclIn(n, name, sourceFile) === decl
+            nearestDeclIn(n, name, sourceFile) === decl &&
+            reachableHere(n)
           ) {
             hit = true;
             return;
@@ -1856,11 +1915,7 @@ if (!fnNode) {
       // placed above the call counted: earlier in the file, never executed. The
       // same walk that decides whether the INSERT runs answers this, stopped at
       // the enclosing function rather than at the ledger.
-      const reachable = (n) => {
-        let fn = n.parent;
-        while (fn && !isFunctionLike(fn)) fn = fn.parent;
-        return guardedReason(n, fn?.body ?? sourceFile) === null;
-      };
+      const reachable = reachableHere;
       const walk = (n) => {
         if (hit) return;
         if (n.getStart(sourceFile) >= beforePos) return;
@@ -2042,8 +2097,22 @@ if (!fnNode) {
         }
         return false;
       };
+      // ...and only reads that can happen AFTER the result lands (Codex
+      // round-48 P2). Counting the whole file let a read of the binding's
+      // PREVIOUS value stand in for a read of the ledger's: initialise it to
+      // zero, read that, then assign the awaited result and never touch it
+      // again, and the check was satisfied by a read of a value the ledger had
+      // nothing to do with. The question is whether the RESULT is consumed, so
+      // the window starts where the result arrives.
+      const resultAt = bound.getStart(sourceFile);
       const countReads = (n) => {
-        if (ts.isIdentifier(n) && n.text === bound.text && n !== bound && !isWriteOccurrence(n)) {
+        if (
+          ts.isIdentifier(n) &&
+          n.text === bound.text &&
+          n !== bound &&
+          !isWriteOccurrence(n) &&
+          n.getStart(sourceFile) > resultAt
+        ) {
           reads += 1;
         }
         ts.forEachChild(n, countReads);
@@ -2351,6 +2420,59 @@ if (!fnNode) {
       walk(loopVar.body);
       return found;
     };
+    /** {writesTo} over an arbitrary subtree, with no positional cutoff. */
+    const writesIn = (root, name, declOfInterest) => {
+      const found = [];
+      const walk = (n) => {
+        if (writesName(n, name) && nearestDecl(n, name) === declOfInterest) found.push(n);
+        ts.forEachChild(n, walk);
+      };
+      if (root) walk(root);
+      return found;
+    };
+    /**
+     * Bodies of functions INVOKED before `beforePos` in the loop body.
+     *
+     * A hoisted declaration can sit textually after the call that runs it, so a
+     * positional cutoff alone prunes code that executes first (Codex round-48
+     * P2). Resolving the callee is what makes the cutoff mean "before in
+     * EXECUTION" rather than "before in the file".
+     */
+    const bodiesInvokedBefore = (beforePos) => {
+      /** The nearest hoisted `function name(...)` visible from `at`. */
+      const hoistedFn = (at, wanted) => {
+        for (let scope = at; scope; scope = scope.parent) {
+          const stmts =
+            ts.isBlock(scope) || ts.isSourceFile(scope) || ts.isCaseClause(scope) ||
+            ts.isDefaultClause(scope)
+              ? scope.statements
+              : null;
+          if (stmts) {
+            for (const st of stmts) {
+              if (ts.isFunctionDeclaration(st) && st.name?.text === wanted && st.body) return st;
+            }
+          }
+        }
+        return null;
+      };
+      const bodies = [];
+      const seenDecls = new Set();
+      const walk = (n) => {
+        if (n.getStart(sourceFile) < beforePos && ts.isCallExpression(n)) {
+          const callee = unwrapAssertions(n.expression);
+          if (ts.isIdentifier(callee)) {
+            const fn = hoistedFn(n, callee.text);
+            if (fn && !seenDecls.has(fn)) {
+              seenDecls.add(fn);
+              bodies.push(fn.body);
+            }
+          }
+        }
+        ts.forEachChild(n, walk);
+      };
+      walk(loopVar.body);
+      return bodies;
+    };
     /**
      * Does a write PRESERVE the binding — `args = { ...args, creator }`?
      *
@@ -2475,7 +2597,7 @@ if (!fnNode) {
      * of `args` a few hundred lines up; the alias chain deserves the same
      * question, or renaming the binding is enough to escape the check.
      */
-    const mutatedInPlace = (name, declOfInterest, beforePos = Infinity) => {
+    const mutatedInPlace = (name, declOfInterest, beforePos = Infinity, root = null) => {
       let found = false;
       const rootOf = (e) => {
         let cur = unwrapAssertions(e);
@@ -2557,7 +2679,7 @@ if (!fnNode) {
         }
         ts.forEachChild(n, walk);
       };
-      walk(loopVar.body);
+      walk(root ?? loopVar.body);
       return found;
     };
     /**
@@ -2639,10 +2761,21 @@ if (!fnNode) {
       // cleanup after the awaited INSERT, which cannot change a value the mapper
       // already copied out, broke the resolution and failed the build. The
       // question was always positional; the scan was not.
+      //
+      // ...but source position is not execution order for a HOISTED FUNCTION
+      // (Codex round-48 P2). `mutateArgs()` called just before the mapper, with
+      // `function mutateArgs() { args.loanId = 999n }` declared after the
+      // INSERT, runs first and is pruned by a positional cutoff. Round 47's
+      // bound traded a false positive for this false negative, so the cutoff now
+      // carries the bodies of functions actually invoked before it.
       const at = from.getStart(sourceFile);
       const decl = nearestDecl(from, name);
-      if (writesTo(name, decl, at).some((w) => !preservesSelf(w, name))) return null;
+      const hoistedBodies = bodiesInvokedBefore(at);
+      const writes = writesTo(name, decl, at);
+      for (const body of hoistedBodies) writes.push(...writesIn(body, name, decl));
+      if (writes.some((w) => !preservesSelf(w, name))) return null;
       if (mutatedInPlace(name, decl, at)) return null;
+      if (hoistedBodies.some((b) => mutatedInPlace(name, decl, Infinity, b))) return null;
       // A binder this script cannot read through shadows whatever is further
       // out, so the honest answer is "unknown", not the outer declaration.
       if (decl === OPAQUE_BINDING) return null;
@@ -2911,6 +3044,42 @@ if (!fnNode) {
       }
       return false;
     };
+    // A SWALLOWED failure is not a write (Codex round-48 P2). Requiring an
+    // awaited execution settled that the statement is handed to D1 and waited
+    // for; it said nothing about what happens when D1 rejects. Wrapped in
+    // `try { … } catch {}` the ledger returns normally on any failure, the scan
+    // advances `indexer_cursor`, and the missing activity row is skipped
+    // permanently — the one failure here that cannot be repaired by a re-run.
+    const swallowedInsert = inserts.length === 1 && (() => {
+      for (let cur = inserts[0].node; cur && cur !== ledgerNode.body; cur = cur.parent) {
+        const p = cur.parent;
+        if (!p) break;
+        if (ts.isTryStatement(p) && p.tryBlock === cur && p.catchClause) {
+          let rethrows = false;
+          const seek = (n) => {
+            if (rethrows) return;
+            if (ts.isThrowStatement(n)) { rethrows = true; return; }
+            if (isFunctionLike(n)) return;
+            ts.forEachChild(n, seek);
+          };
+          seek(p.catchClause.block);
+          if (!rethrows) return true;
+        }
+      }
+      return false;
+    })();
+    if (swallowedInsert) {
+      console.error(
+        `[check-activity-refs-coverage] the activity_events INSERT in ${LEDGER_FN}() sits in a\n` +
+          '  `try` whose `catch` does not rethrow.\n' +
+          '  Awaiting the statement proves the scan waits for D1; it does not prove the row\n' +
+          '  survived. A swallowed failure lets the ledger return normally, the scan advance\n' +
+          '  `indexer_cursor` past those blocks, and the activity row be skipped for good —\n' +
+          '  the one failure mode here a re-run cannot repair, and invisible to every count\n' +
+          '  in this script. Rethrow, or update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
     if (dynamicSql) {
       console.error(
         `[check-activity-refs-coverage] the activity_events statement in ${LEDGER_FN}() is\n` +
@@ -3977,8 +4146,10 @@ const isNullLiteral = (expr) =>
     // refusing to reason about a shadowed name is the sound cheap answer.
     const shadowsArgs = (() => {
       let found = null;
+      let syncLimit = Infinity;
       const walk = (n) => {
         if (found) return;
+        if (n.getStart(sourceFile) >= syncLimit) return;
         // Name FIRST, then decline to traverse (Codex round-12 P2). Returning on
         // every function declaration made the name test below dead code, so a
         // block-local `function args() {}` shadowed the parameter unnoticed —
@@ -3999,8 +4170,35 @@ const isNullLiteral = (expr) =>
         // about the same names, had not.
         const invokedHere = invokedFunctionBodyOf(n);
         if (invokedHere) {
+          // Only the SYNCHRONOUS prefix of an async IIFE (Codex round-48 P2) —
+          // its continuation cannot run before the mapper copies out. The limit
+          // is scoped to this descent and restored after, so it constrains the
+          // invoked body without affecting the surrounding case scan.
+          const previousLimit = syncLimit;
+          syncLimit = Math.min(syncLimit, syncCutoffOf(n, sourceFile));
           walk(invokedHere);
+          syncLimit = previousLimit;
           if (found) return;
+        }
+        // A CLASS body is not an inert boundary (Codex round-48 P2). Evaluating
+        // a class declaration runs its static blocks and static field
+        // initializers immediately, so `class H { static { args.loanId = 999n } }`
+        // executes before the case's return while this scan skipped the whole
+        // declaration as "a function-like thing nothing calls". Only the static
+        // parts run at declaration; methods genuinely do not.
+        if (ts.isClassDeclaration(n) || ts.isClassExpression(n)) {
+          for (const member of n.members ?? []) {
+            const isStatic = (member.modifiers ?? []).some(
+              (m) => m.kind === ts.SyntaxKind.StaticKeyword,
+            );
+            if (ts.isClassStaticBlockDeclaration?.(member)) {
+              walk(member.body);
+            } else if (isStatic && ts.isPropertyDeclaration(member) && member.initializer) {
+              walk(member.initializer);
+            }
+            if (found) return;
+          }
+          return; // the rest of the class body does not run at declaration
         }
         if (isFunctionLike(n)) return;
         // Binding NAMES recursively (Codex round-10 P2): `const { args } = …` puts
