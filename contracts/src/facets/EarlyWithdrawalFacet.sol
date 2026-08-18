@@ -642,14 +642,17 @@ contract EarlyWithdrawalFacet is
                 : saleShortfall;
             // #1503 item 4 — the seller's FLOOR. Ordinary accrual across the
             // listing window cannot trip this: the floor was derived at the
-            // listing's own expiry, so the whole window sits inside it. What
+            // listing's BOTH endpoints (plus truncation slack — see
+            // LibSaleListing.projectSellerBounds), so the whole window sits
+            // inside it. What
             // trips it is a step the seller never reviewed — a principal
             // movement or a park disqualifying the paid-through mark, which
             // re-opens the forfeiture window earlier than the projection
             // assumed. Refusing is the point; the remedy is to relist.
             // ...but only while the seller's projection still DESCRIBES the
-            // fill. The floor is derived at the listing's expiry, so it bounds
-            // every fill inside the window and says nothing about one after it.
+            // fill. The floor is derived from the window's own endpoints, so it
+            // bounds every fill inside the window and says nothing about one
+            // after it.
             // `completeLoanSale` is lender-side-gated and deliberately remains
             // callable past the window — the seller invoking it themselves is
             // fresh authorisation, not a race — and enforcing a stale

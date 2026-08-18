@@ -34,6 +34,15 @@ import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
  *      the book). Idempotent and a cheap no-op when the loan carries no listing.
  */
 library LibSaleListing {
+    /// @notice #1503 item 4 — units of slack added to the projected seller cost
+    ///         to absorb integer truncation between the two endpoint
+    ///         evaluations. Derived in {projectSellerBounds}: the shortfall leg
+    ///         is a difference of separately truncated figures, so it can exceed
+    ///         its own endpoint values by at most two units at an interior
+    ///         second. Slack LOWERS the recorded floor, which is the direction
+    ///         that cannot refuse a legitimate fill.
+    uint256 internal constant TRUNCATION_SLACK = 2;
+
     /// @notice A live sale listing was torn down because its loan exited to a
     ///         terminal state before the sale completed. Indexers surface the
     ///         `saleOfferId` as cancelled off the back of this + `offerCancelled`.
@@ -163,10 +172,15 @@ library LibSaleListing {
     ///         The FLOOR is a worst case projected forward. Accrued interest
     ///         grows across the listing window, so a floor at the figure the
     ///         seller saw would make their own listing unfillable within
-    ///         minutes. Evaluating the settlement at the listing's EXPIRY makes
-    ///         the whole window fit inside the bound — "fill any time before
-    ///         this expires and you receive at least X" — and that is only
-    ///         computable because the expiry is mandatory and finite.
+    ///         minutes. It is the settlement evaluated at BOTH ENDS of the
+    ///         window, taking whichever is worse for the seller, plus slack for
+    ///         integer truncation — see {projectSellerBounds}, which derives
+    ///         both. Not the expiry alone: the two legs of the cost move in
+    ///         opposite directions, so an above-rate listing is costliest to
+    ///         fill IMMEDIATELY. Either way the whole window fits inside the
+    ///         bound — "fill any time before this expires and you receive at
+    ///         least X" — and that is only computable because the expiry is
+    ///         mandatory and finite.
     ///
     ///         The CEILING is a snapshot taken now. `heldForLender` does not
     ///         grow with time; it grows only when a settlement parks more into
@@ -228,13 +242,30 @@ library LibSaleListing {
         // disturbed then reverted `SaleBelowSellerFloor`, refusing the sale the
         // bound exists to protect.
         //
-        // Two evaluations are exactly tight, not a safety margin: for an
-        // increasing f and a decreasing g, `max(f, g)` over the window peaks at
-        // `max(f(end), g(start))`, which is what taking the larger of the two
-        // endpoint costs computes.
+        // Two endpoint evaluations would be exactly tight over the REALS: for an
+        // increasing f and a decreasing g, `max(f, g)` peaks at
+        // `max(f(end), g(start))`. That was the original justification here and
+        // it is not sufficient in integer arithmetic (Codex #1812 round-3 P2).
+        //
+        // The shortfall leg is a difference of two SEPARATELY TRUNCATED interest
+        // figures, `trunc(A) - trunc(B)`. Each truncation loses up to one unit,
+        // so the integer difference is not monotonic even though `A - B` is: it
+        // can sit one unit above the continuous value at an interior second and
+        // one unit below it at the endpoint that bounds the window. Both
+        // endpoints can therefore read 1,440 while some second between them
+        // costs 1,441, and the recorded floor then refuses a fill that changed
+        // nothing.
+        //
+        // Bounding it: with `f(t) = trunc(A) - trunc(B)` and `g = A - B`
+        // decreasing, `f(t) <= g(t) + 1 <= g(start) + 1 <= f(start) + 2`. So two
+        // units of slack covers every interior second, and the direction of the
+        // slack is the safe one — it lowers the floor rather than raising it, so
+        // the bound can never reject a fill the seller's own projection allowed.
+        // The cost is at most two base units of the lending asset.
         uint256 costAtExpiry = worstCaseSellerCost(s, loanId, saleRateBps, expiresAt);
         uint256 costNow = worstCaseSellerCost(s, loanId, saleRateBps, block.timestamp);
-        uint256 cost = costAtExpiry > costNow ? costAtExpiry : costNow;
+        uint256 cost =
+            (costAtExpiry > costNow ? costAtExpiry : costNow) + TRUNCATION_SLACK;
         // The buyer's escrowed proceeds are bound to the live principal by the
         // accept-time term bind, so the seller's net is principal minus cost.
         // A cost at or above principal is refused at completion by the existing

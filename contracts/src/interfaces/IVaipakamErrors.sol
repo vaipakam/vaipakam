@@ -983,8 +983,9 @@ interface IVaipakamErrors {
     ///         less than the floor they recorded when they listed.
     /// @dev    Raised when the settlement cost has grown past what the seller
     ///         authorised. Ordinary accrual across the listing window CANNOT
-    ///         trip this: the floor is derived at the listing's own expiry, so
-    ///         the whole window is inside it. What trips it is a step change
+    ///         trip this: the floor is derived at BOTH ends of the listing
+    ///         window — whichever is worse for the seller, plus truncation
+    ///         slack — so the whole window is inside it. What trips it is a step change
     ///         the seller never reviewed — a principal movement, or interest
     ///         parked rather than delivered, either of which disqualifies the
     ///         paid-through mark and re-opens the forfeiture window earlier.

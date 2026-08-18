@@ -6802,9 +6802,14 @@ library LibVaipakam {
         ///         The floor is NOT the figure the seller saw. Accrued interest
         ///         grows across the listing window, so a floor at the displayed
         ///         value would make the listing unfillable almost immediately.
-        ///         It is the worst case they accepted — the same arithmetic
-        ///         evaluated at the listing's own expiry, which is computable
-        ///         only because that expiry is mandatory and finite.
+        ///         It is the worst case they accepted — the same settlement
+        ///         arithmetic evaluated at BOTH ends of the listing window,
+        ///         taking whichever is worse for them, plus slack for integer
+        ///         truncation. Not the expiry alone: the two legs of the cost
+        ///         move in opposite directions, so an above-rate listing is
+        ///         costliest to fill immediately. Computable only because the
+        ///         expiry is mandatory and finite. See
+        ///         `LibSaleListing.projectSellerBounds`.
         ///
         ///         Zero means "no floor recorded", which is every listing made
         ///         before this shipped. Those keep the behaviour they had.
