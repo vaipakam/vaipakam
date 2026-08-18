@@ -2315,16 +2315,11 @@ library LibInteractionRewards {
         // Codex #1410 r2 — the RECYCLED budget is the REAL bucket, shared
         // across both sides and depleted per day exactly as the live walk's
         // ctx.pool is: a recycled shortfall DEFERS a day and stops the side
-        // (walk behaviour the preview must mirror). FRESH stays unbounded on
-        // purpose — the 69M truncation is payment-time behaviour (the facet
-        // scaler / the terminal trim), the one documented axis on which the
-        // preview stays an upper bound.
+        // (walk behaviour the preview must mirror).
         //
-        // #1434 P1-b — the MIRROR delivered-fresh bound is NOT a second such
-        // axis: it is BOUND here, exactly as in the walk. The cap's
-        // truncation only ever shaves a payout the claimant still receives,
-        // which is why overstating it is tolerable. A delivered shortfall
-        // DEFERS instead — the day pays NOTHING and the claim reverts
+        // #1434 P1-b — the MIRROR delivered-fresh bound is NOT a loose axis:
+        // it is BOUND here, exactly as in the walk. A delivered shortfall
+        // DEFERS — the day pays NOTHING and the claim reverts
         // `NoInteractionRewardsToClaim` — so leaving it unbounded would
         // quote a mirror claimant the full amount against a claim that
         // cannot succeed. That is not a loose upper bound, it is a wrong
@@ -2332,8 +2327,25 @@ library LibInteractionRewards {
         // removes: the halt lived inside {_dayPoolHalves}, which this
         // preview also calls, so preview and claim always agreed about an
         // unpayable mirror day. Binding here preserves that agreement.
+        //
+        // Codex #1699 r13 P2 — FRESH is bound to the live pool headroom for
+        // the same reason, and the two bounds must be modelled TOGETHER
+        // because `_attributeLegs` decides which one binds by comparing
+        // them. `fresh: max` made a near-exhausted pool look like a
+        // delivered shortfall: with 0.4 of pool headroom and 0.4 of
+        // delivered allowance against a 1.0 obligation, the live claim
+        // truncates at the CAP (terminal, pays 0.4, advances) while this
+        // dry run attributed the trim to DELIVERED and deferred — a zero
+        // preview for a claim that succeeds, and an armed-need figure that
+        // demanded delivered allowance for value the schedule will never
+        // owe, freezing the expiry clock forever (no remittance funds past
+        // the cap; the spec's own bar is "the fresh share truncated to the
+        // 69M pool cap"). An earlier note here justified `max` as "the one
+        // documented axis on which the preview stays an upper bound" — true
+        // only while fresh is the SOLE binding constraint, which is exactly
+        // the case that stops holding near exhaustion.
         PoolBudget memory pool = PoolBudget({
-            fresh: type(uint256).max,
+            fresh: poolRemaining(),
             recycled: s.recycleBucket,
             deliveredFresh: deliveredCap
         });

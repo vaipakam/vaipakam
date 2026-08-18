@@ -85,6 +85,19 @@ one. The practical consequences:
   Previously a detach-and-reattach round trip could re-offer funding
   headroom whose backing had already been spent.
 
+- **Previews and readiness checks now model the lifetime budget the same
+  way payment does.** Near the end of the emissions schedule, the
+  platform's forward-looking figures — the pending preview and the
+  "could this claim be paid?" check that drives the expiry clock — used
+  to treat the remaining schedule as unlimited while applying the
+  cross-chain funding bound, so they could disagree with the live claim
+  about which limit actually applies. A claim that would succeed (paying
+  exactly the schedule's remainder) could preview as zero, and the
+  readiness check could wait on cross-chain funding for value the
+  schedule will never emit — stalling expiry clocks permanently. Both now
+  apply the schedule's remaining headroom exactly as the claim does,
+  which is also what the specification always said.
+
 - **A removed reward shows no countdown either.** The Claim Center's
   removal countdown is a deadline for the owner to act on; once removal
   has begun that deadline has passed, and continuing to show it — possibly

@@ -1131,6 +1131,64 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1699 r13 P2 — the armed-need aggregate and the pending
+    ///      preview must model the 69M LIFETIME cap alongside the delivered
+    ///      bound, because `_attributeLegs` decides which constraint binds by
+    ///      comparing them. With `fresh: max` in the dry run, a near-exhausted
+    ///      pool read as a DELIVERED shortfall: the preview quoted zero for a
+    ///      claim that succeeds (the live claim truncates at the cap and pays
+    ///      the headroom), and the need demanded delivered allowance for value
+    ///      the schedule will never owe — freezing the expiry clock forever,
+    ///      since no remittance funds past the cap. The spec's bar is "the
+    ///      fresh share truncated to the 69M pool cap" (TokenomicsTechSpec
+    ///      claim-horizon section) — this aligns the dry run with it.
+    function testP1bNeedAndPreviewModelTheLifetimeCap() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        // Fresh-only armed day: a recycled share moves regardless of the
+        // pool and would blur which constraint the assertions measure.
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+        assertEq(recycled5, 0, "LIVE: and NO recycled share");
+        // MIRROR: chain id moved too — per-day funding keys on block.chainid.
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        _mut().setChainDayFundingRaw(5, uint32(CHAIN_ARB), floor5 / 2, 0);
+
+        uint256 id = _seedEntry(alice, 101, 5, 6);
+        assertGt(id, 0, "LIVE: entry seeded");
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 30 days);
+
+        uint256 needRaw = _lens().getUserArmedFreshNeed(alice);
+        assertGt(needRaw, 0, "LIVE: an unconstrained armed demand exists");
+
+        // Near-exhaust the schedule: headroom is HALF the demand, and the
+        // delivered allowance matches it exactly — which is all a remittance
+        // will ever fund, since Base remits the capped liability.
+        uint256 headroom = needRaw / 2;
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
+        );
+        _mut().setArmedFreshLedgerRaw(headroom, 0);
+
+        assertEq(
+            _lens().getUserArmedFreshNeed(alice),
+            headroom,
+            "the need demands only what the schedule can still owe"
+        );
+        (uint256 preview, , ) = _lens().previewInteractionRewards(alice);
+        assertEq(
+            preview,
+            headroom,
+            "and the preview quotes the claim-exact cap truncation, never a spurious delivered deferral"
+        );
+    }
+
     function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);

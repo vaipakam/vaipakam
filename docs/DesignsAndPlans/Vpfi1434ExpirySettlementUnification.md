@@ -245,6 +245,22 @@ for the countdown too — past the removal point what remains is
 settlement progress, signalled by `RewardEntryExpiryBegun`, never a
 claimant deadline.
 
+Round 13 (auto-fired on the merge-from-main push, after round 12 came
+back clean) added one final P2 in the same constraint-attribution family
+as the internal pass's P1: the delivered-funding dry run hardcoded
+`fresh: type(uint256).max` while binding the live delivered allowance,
+and `_attributeLegs` decides which constraint binds by COMPARING them.
+Near 69M exhaustion the live claim truncates at the cap and pays the
+headroom, but the dry run attributed the same trim to DELIVERED and
+deferred — a zero preview for a claim that succeeds, and an armed-need
+figure demanding delivered allowance for value the schedule will never
+owe, freezing the expiry clock forever. The dry run now binds
+`fresh: poolRemaining()` — which is what the spec always said the bar
+was ("the fresh share truncated to the 69M pool cap"). The general
+lesson joins the earlier one: two bounds threaded into one settlement
+must be modelled together EVERYWHERE the settlement is simulated,
+because each bound's correctness depends on the other's presence.
+
 ## Testing
 
 The expiry fixture is unusually easy to make vacuous: **five distinct
