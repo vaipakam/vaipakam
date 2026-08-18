@@ -655,106 +655,89 @@ else
     ' "$1"
   }
 
-  # Only code the deploy actually RUNS (Codex #1798 r5 P1).
+  # Only the ONE function the deploy actually runs (Codex #1798 r5-r7).
   #
-  # Harvesting the whole file counts a registration that no longer executes.
-  # Move `writeFacet("backstopFacet", …)` into a private `_recordBackstop(...)`
-  # and forget to call it: every count still agrees, every comparison stays
-  # empty, and a fresh deploy silently stops recording the facet — the exact
-  # class of bug this step exists to catch, reintroduced one refactor later.
+  # Round 5 answered "does this registration execute?" with a call-graph walk,
+  # and round 7 returned six ways to defeat it: a conditional and its body on one
+  # physical line, conditionality not propagating into a called helper,
+  # `Deployments.writeDiamond(...)` resolving to a local `writeDiamond`, seeding
+  # every public function rather than the deploy's real entry, a bare `writeFacet`
+  # matching a non-canonical writer, and a helper PARAMETER named after an outer
+  # variable aliasing it. Every one of those is the same defect: a line-oriented
+  # shell parser cannot model scope or control flow, and each patch to make it
+  # try adds surface for the next.
   #
-  # So the harvest is restricted to functions reachable from the script's own
-  # entry points. `external`/`public` functions are the seeds, because an
-  # operator or a test can invoke any of them; everything internal must be
-  # called, transitively, from one of those to count. That is what makes an
-  # orphaned helper's registrations disappear from the harvest — which turns
-  # the silent pass into a loud `UNRECORDED` report, since the facet's cut is
-  # still on the live path.
+  # So the walk is gone, replaced by a rule that is both stricter and far smaller:
   #
-  # Bodies are split by brace depth on the comment-stripped text, so a `{` in a
-  # string cannot unbalance it: the stripper has already reduced every string to
-  # either a bare key or nothing.
-  # Two things beyond plain reachability, both from Codex #1798 r6, both
-  # conservative refusals rather than deeper analysis:
+  #   Every registration must be an IMMEDIATE, UNCONDITIONAL statement of the one
+  #   named entry function.
   #
-  #   · OVERLOADS are rejected. Bodies are keyed by bare name, so calling one
-  #     overload would mark every same-named overload live — hiding a write that
-  #     sits in the uncalled one. Solidity's dispatch is by signature; this walk
-  #     is by name, and the honest response to that gap is to refuse rather than
-  #     to guess which overload a call site meant.
-  #   · Only STATEMENT-LEVEL lines are emitted (brace depth ≤ 1 within the
-  #     function). A registration nested any deeper sits inside an `if`, a loop,
-  #     or a scoping block, and its execution is conditional —
-  #     `if (block.chainid == 31337) { writeFacet(...) }` reaches a reachable
-  #     function and still records nothing on every other chain. Dropping those
-  #     lines makes the registration vanish from the harvest, so its still-live
-  #     cut reports the facet as unrecorded. All 147 of today's registrations
-  #     are already at statement level, so this constrains nothing that exists.
+  # No helpers to reach, so a helper's parameter cannot alias an outer variable
+  # and a member call cannot resolve to a local function. No conditional context
+  # to propagate, because a conditional registration is refused outright. No
+  # seeding question, because the entry is named rather than inferred. The
+  # remaining checks then compare like with like: every identifier they harvest
+  # lives in one scope.
   #
-  # Reachability is computed over the FULL body — a helper called from inside an
-  # `if` is genuinely reachable — while only the statement-level lines are
-  # emitted. The two must not share one view.
+  # This is enforced from the OTHER side too — the whole file is scanned, and a
+  # registration found anywhere outside that function's statement list is a
+  # failure rather than an omission. An omission is what makes a gate go quietly
+  # green; a failure is what makes someone read this comment.
   #
-  # What this still does not prove: that the function runs to completion. An
-  # early `return` ahead of a registration leaves it unconditional in the text
-  # and unexecuted in practice. That is the artifact-level check's job (#1800),
-  # not a static parse's.
-  reachable_bodies() { # <entry-point seeds are derived, not passed>
-    awk '
-      function nchar(s, c,   n, i) {
-        n = 0
-        for (i = 1; i <= length(s); i++) if (substr(s, i, 1) == c) n++
-        return n
-      }
-      {
-        if (cur == "") {
-          if (match($0, /function[ \t]+[A-Za-z0-9_]+[ \t]*\(/)) {
-            name = substr($0, RSTART, RLENGTH)
-            sub(/function[ \t]+/, "", name); sub(/[ \t]*\(.*/, "", name)
-            if (name in body) overloaded[name] = 1
-            cur = name; buf = ""; shallow = ""; depth = 0; started = 0; sig = ""
-          } else next
-        }
-        buf = buf " " $0
-        # Depth BEFORE this line decides whether the line is statement-level:
-        # the closing `}` of a nested block belongs to that block, not to the
-        # statement list around it.
-        pre = depth
-        depth += nchar($0, "{") - nchar($0, "}")
-        if (!started) {
-          sig = sig " " $0
-          if (index($0, "{") > 0) started = 1
-          shallow = shallow " " $0
-        } else if (pre <= 1 && depth <= 1) {
-          shallow = shallow " " $0
-        }
-        if (started && depth <= 0) {
-          body[cur] = body[cur] " " buf
-          emit[cur] = emit[cur] " " shallow
-          # A multi-line signature puts the visibility keyword on any of its
-          # lines, so the whole header up to the opening brace is examined.
-          if (sig ~ /(^|[^A-Za-z0-9_])(external|public)([^A-Za-z0-9_]|$)/) seed[cur] = 1
-          cur = ""
-        }
-      }
+  # All 147 of today's registrations already satisfy this, so it constrains
+  # nothing that exists. What it does constrain is the refactor that would break
+  # the gate silently — and that refactor now gets a message naming the file, the
+  # function it expected, and the registration that escaped it.
+  #
+  # Depth is counted per CHARACTER, not per line: `if (c) { writeFacet(...); }`
+  # written on one line returns to depth 1 by the end of the line, which a
+  # per-line comparison reads as statement-level (r7 P1). Statement starts are
+  # then checked for a control keyword, which is what catches the braceless
+  # `if (c) writeFacet(...);` that never leaves depth 1 at all.
+  DEPLOY_ENTRY_FN='runWith'
+  REFRESH_ENTRY_FN='_deployItems'
+  entry_statements() { # <entry function name> — comment-stripped source on stdin
+    awk -v want="$1" '
+      { src = src $0 "\n" }
       END {
-        for (n in overloaded) bad = bad " " n
-        if (bad != "") {
-          print "OVERLOADED_FUNCTIONS" bad > "/dev/stderr"
-          exit 3
-        }
-        for (n in seed) if (n in body) { live[n] = 1; queue[++qn] = n }
-        for (qi = 1; qi <= qn; qi++) {
-          text = body[queue[qi]]
-          for (n in body) {
-            if (n in live) continue
-            if (text ~ ("(^|[^A-Za-z0-9_])" n "[ \t]*\\(")) { live[n] = 1; queue[++qn] = n }
+        # Locate `function <want>(` and the body brace that follows it.
+        pat = "function[ \t\n]+" want "[ \t\n]*\\("
+        if (match(src, pat) == 0) { print "MISSING_ENTRY" > "/dev/stderr"; exit 3 }
+        i = RSTART
+        # Walk to the opening brace of the body, then collect depth-1 text.
+        n = length(src); depth = 0; started = 0; out = ""
+        for (; i <= n; i++) {
+          c = substr(src, i, 1)
+          if (c == "{") {
+            depth++
+            if (!started) { started = 1; continue }
+          } else if (c == "}") {
+            depth--
+            if (started && depth == 0) break
           }
+          if (started && depth == 1 && c != "{" && c != "}") out = out c
         }
-        for (n in live) printf "%s ", emit[n]
-        printf "\n"
+        if (!started) { print "MISSING_ENTRY_BODY" > "/dev/stderr"; exit 3 }
+        gsub(/\n/, " ", out)
+        print out
       }
     '
+  }
+  # A registration must not be guarded. Statements are split on `;`, and any
+  # statement that both performs a registration and mentions a control keyword
+  # before it is refused — that is the braceless single-line conditional, which
+  # never changes brace depth and so is invisible to the scan above.
+  guarded_registrations() { # <depth-1 text>
+    printf '%s' "$1" | tr ';' '\n' \
+      | grep -E '(_buildCut|Deployments\.writeFacet|Item)[[:space:]]*\(' \
+      | grep -E '(^|[^A-Za-z0-9_])(if|else|for|while|do|try|catch)([^A-Za-z0-9_]|$)' || true
+  }
+  # And every registration in the FILE must be inside that statement list. The
+  # helper's own definition is not a registration, so `function _buildCut(` is
+  # excluded; `Deployments.writeFacet` is required with its receiver so a
+  # same-named writer on another library cannot satisfy coverage (r7 P1).
+  count_registrations() { # <text> <regex>
+    printf '%s' "$1" | grep -oE "$2" | grep -c . || true
   }
   # ONE view for counting and parsing alike (Codex #1798 r5). Rounds 3-5 walked a
   # false-positive ladder created by treating strings differently in the two
@@ -769,23 +752,49 @@ else
   # (`[A-Za-z0-9]+`), which is the only thing either half needs to read out of a
   # string. Everything else in quotes — URLs, log text, a registration-shaped
   # string — is dropped before either half sees it.
-  # An overload rejection must STOP this step rather than colour one comparison:
-  # with the harvest unusable, every check below would compare against a set that
-  # is missing whatever the overloads held, and the most likely outcome is a
-  # falsely green one.
+  # A harvest that cannot find its entry function must STOP this step rather than
+  # colour one comparison: every check below would then compare against an empty
+  # set, and the most likely outcome is a falsely green one.
   HARVEST_ERR="$(mktemp)"
   HARVEST_FAILED=""
-  DEPLOY_FLAT="$(strip_sol_comments "$DEPLOY_SOL" | reachable_bodies 2>>"$HARVEST_ERR")" \
-    || HARVEST_FAILED=1
-  REFRESH_FLAT="$(strip_sol_comments "$REFRESH_SOL" | reachable_bodies 2>>"$HARVEST_ERR")" \
-    || HARVEST_FAILED=1
+  DEPLOY_ALL="$(strip_sol_comments "$DEPLOY_SOL" | tr '\n' ' ')"
+  REFRESH_ALL="$(strip_sol_comments "$REFRESH_SOL" | tr '\n' ' ')"
+  DEPLOY_FLAT="$(strip_sol_comments "$DEPLOY_SOL" | entry_statements "$DEPLOY_ENTRY_FN" 2>>"$HARVEST_ERR")" \
+    || HARVEST_FAILED="DeployDiamond.s.sol: no ${DEPLOY_ENTRY_FN}() body this check can read"
+  REFRESH_FLAT="$(strip_sol_comments "$REFRESH_SOL" | entry_statements "$REFRESH_ENTRY_FN" 2>>"$HARVEST_ERR")" \
+    || HARVEST_FAILED="$HARVEST_FAILED
+    RefreshAllFacetsInPlace.s.sol: no ${REFRESH_ENTRY_FN}() body this check can read"
+
+  # Every registration in the file must be inside that statement list. Counting
+  # both sides and comparing is what turns "moved somewhere this check cannot
+  # see" into a failure instead of an omission — conditional, helper-hosted, or
+  # otherwise. `Deployments.writeFacet` is matched WITH its receiver, so a
+  # same-named writer on some other library cannot satisfy coverage (r7 P1).
+  ESCAPED=""
+  compare_escape() { # <display name> <regex-safe name> <whole file> <entry statements>
+    _re="[^A-Za-z0-9_.]$2[[:space:]]*\\("
+    _in_file=$(count_registrations " $3" "$_re")
+    _defs=$(count_registrations "$3" "function[[:space:]]+$2[[:space:]]*\\(")
+    _in_file=$((_in_file - _defs))
+    _in_entry=$(count_registrations " $4" "$_re")
+    [ "$_in_file" -eq "$_in_entry" ] || ESCAPED="$ESCAPED
+    $1: $_in_file in the file, $_in_entry as statements of the entry function"
+  }
+  compare_escape '_buildCut'             '_buildCut'              "$DEPLOY_ALL"  "$DEPLOY_FLAT"
+  compare_escape 'Deployments.writeFacet' 'Deployments\.writeFacet' "$DEPLOY_ALL"  "$DEPLOY_FLAT"
+  compare_escape 'Item'                  'Item'                   "$REFRESH_ALL" "$REFRESH_FLAT"
+
+  # ...and none of the ones inside it may be guarded.
+  GUARDED="$(guarded_registrations "$DEPLOY_FLAT")
+$(guarded_registrations "$REFRESH_FLAT")"
+  GUARDED="$(printf '%s' "$GUARDED" | grep -E '[^[:space:]]' || true)"
 
   CUT_GETTER_VAR="$(printf '%s' "$DEPLOY_FLAT" \
     | grep -oE '_buildCut[[:space:]]*\([[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors[[:space:]]*\(\)' \
     | sed -E 's/.*address[[:space:]]*\(([A-Za-z0-9_]+)\)[[:space:]]*,[[:space:]]*(_get[A-Za-z0-9]+Selectors)[[:space:]]*\(\)/\2 \1/' \
     | sort -u)"
   WROTE_VAR_KEY="$(printf '%s' "$DEPLOY_FLAT" \
-    | grep -oE 'writeFacet[[:space:]]*\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)[[:space:]]*\)' \
+    | grep -oE 'Deployments\.writeFacet[[:space:]]*\([[:space:]]*"[A-Za-z0-9]+"[[:space:]]*,[[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)[[:space:]]*\)' \
     | sed -E 's/.*"([A-Za-z0-9]+)"[[:space:]]*,[[:space:]]*address[[:space:]]*\(([A-Za-z0-9_]+)\)[[:space:]]*\)/\2 \1/' \
     | sort -u)"
   REFRESH_GETTER_KEY="$(printf '%s' "$REFRESH_FLAT" \
@@ -815,7 +824,7 @@ else
     echo $((_all - _def))
   }
   N_CUT_CALLS=$(count_calls "$DEPLOY_FLAT" '_buildCut')
-  N_WRITE_CALLS=$(count_calls "$DEPLOY_FLAT" 'writeFacet')
+  N_WRITE_CALLS=$(count_calls "$DEPLOY_FLAT" 'Deployments\.writeFacet')
   N_ITEM_CALLS=$(count_calls "$REFRESH_FLAT" 'Item')
   N_CUT_PAIRS=$(printf '%s\n' "$CUT_GETTER_VAR" | grep -c . || true)
   N_WRITE_PAIRS=$(printf '%s\n' "$WROTE_VAR_KEY" | grep -c . || true)
@@ -829,11 +838,25 @@ else
     Item: $N_ITEM_CALLS call(s) in RefreshAllFacetsInPlace.s.sol, $N_ITEM_PAIRS parsed"
   if [ -n "$HARVEST_FAILED" ]; then
     echo "  ✗ this check cannot read the deploy scripts:" >&2
-    sed 's/^/      /' "$HARVEST_ERR" >&2
-    echo "    Solidity dispatches overloads by SIGNATURE; this walk resolves calls by" >&2
-    echo "    NAME, so calling one overload marks every same-named one live and hides" >&2
-    echo "    a registration sitting in the uncalled twin. Give them distinct names, or" >&2
-    echo "    teach this walk signatures — do not delete the check." >&2
+    echo "    $HARVEST_FAILED" >&2
+    echo "    It reads the registrations out of ONE named function per script" >&2
+    echo "    (${DEPLOY_ENTRY_FN} / ${REFRESH_ENTRY_FN}). If the entry was renamed, update the" >&2
+    echo "    two names at the top of this step — do not delete the check." >&2
+    FAIL=1
+  elif [ -n "$ESCAPED" ]; then
+    echo "  ✗ some facet registrations sit outside the entry function's own statements," >&2
+    echo "    where this check cannot prove they execute:$ESCAPED" >&2
+    echo "    A registration inside a helper, a conditional, or a loop is not guaranteed" >&2
+    echo "    to run on every chain — which is the failure this step exists to catch, and" >&2
+    echo "    a parser that tried to follow it would be guessing. Move it back to a plain" >&2
+    echo "    statement of the entry function, or assert the artifact a real deploy writes" >&2
+    echo "    (#1800) instead of extending this one." >&2
+    FAIL=1
+  elif [ -n "$GUARDED" ]; then
+    echo "  ✗ these registrations are guarded by a conditional, so they do not run on" >&2
+    echo "    every deployment:" >&2
+    printf '      %s\n' "$GUARDED" >&2
+    echo "    A chain-gated write leaves the artifact incomplete everywhere else." >&2
     FAIL=1
   elif [ -n "$UNPARSED" ]; then
     echo "  ✗ some facet registrations could not be parsed, so they would be" >&2
