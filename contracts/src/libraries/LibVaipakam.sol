@@ -6643,29 +6643,35 @@ library LibVaipakam {
         //   discarded portion would read as still-in-transit forever,
         //   restoring the exact phantom allowance this counter removes.
         uint256 recycleReleasedRemitResolvedCumulative;
-        /// @dev #1503 item 28 — the part of `loan.interestSettled` that was
-        ///      FROZEN rather than delivered.
+        /// @dev #1503 item 28 — interest actually DELIVERED to the lender side
+        ///      over the loan's whole life, and the point in that total at which
+        ///      the current lender's tenure began.
         ///
         ///      APPENDED AT THE STRUCT TAIL — never insert mid-struct.
         ///
-        ///      `RepayPeriodicFacet` credits `interestSettled` by the interest it
-        ///      forwarded, and forwards it through
-        ///      `freezeOrPayActiveLenderResident` — which pays the holder when
-        ///      clean and PARKS into `heldForLender` when they are registry-
-        ///      flagged. The credit is unconditional either way, and rightly so:
-        ///      the borrower paid it, so their obligation nets it whatever
-        ///      happened on the lender side.
+        ///      A lender-position SALE needs one number: how much interest did
+        ///      THIS seller receive? `loan.interestSettled` cannot answer it, for
+        ///      three separate reasons — it counts interest that was FROZEN into
+        ///      `heldForLender` rather than paid; it is loan-wide, so it still
+        ///      counts what a PREVIOUS lender received; and `repayPartial`
+        ///      consumes and re-baselines it, because it is a credit against the
+        ///      BORROWER's obligation, which is a different quantity that
+        ///      legitimately shrinks.
         ///
-        ///      But a lender-position SALE migrates `heldForLender` to the buyer,
-        ///      so a parked amount is one the seller never received and does not
-        ///      keep. Netting it out of their sale forfeiture would credit them
-        ///      for it a second time, at treasury's expense. This counter is what
-        ///      lets the sale routes subtract only interest actually delivered,
-        ///      while every other settlement path keeps using the full figure.
+        ///      So the sale path reads these instead. `interestDeliveredCumulative`
+        ///      rises only where interest genuinely reaches the lender — never on
+        ///      the frozen branch — and is never consumed, so nothing the borrower
+        ///      side does can perturb it. `lenderTenureDeliveredBaseline` is
+        ///      stamped whenever the position changes hands, so a seller is
+        ///      credited for their own tenure and no one else's.
         ///
-        ///      Not decremented on sale: the parked balance moves to the buyer
-        ///      still undelivered, so the same carve-out must apply if THEY sell.
-        mapping(uint256 => uint256) settledInterestParked;
+        ///      Both are zero for a loan that predates this upgrade, which yields
+        ///      a zero credit — the seller forfeits the full raw accrual, exactly
+        ///      as they did before this change. Grandfathered loans keep the old
+        ///      behaviour rather than acquiring a wrong new one, and no
+        ///      backfill of unreconstructable history is needed.
+        mapping(uint256 => uint256) interestDeliveredCumulative;
+        mapping(uint256 => uint256) lenderTenureDeliveredBaseline;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

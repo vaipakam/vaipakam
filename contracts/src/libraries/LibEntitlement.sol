@@ -234,17 +234,18 @@ library LibEntitlement {
     ///         buyer. A parked amount is therefore one the exiting seller neither
     ///         received nor keeps, and crediting it against their forfeiture
     ///         would pay them for it a second time out of the treasury's share.
-    /// @param loan   The loan being sold.
-    /// @param loanId Its id — the parked counter is keyed per loan, not on the
-    ///               struct, because it is appended storage.
-    /// @return realized Interest genuinely delivered to the lender side so far.
+    /// @param loanId The loan being sold. Both counters are keyed per loan
+    ///               rather than held on the struct, because they are appended
+    ///               storage.
+    /// @return realized Interest delivered to the CURRENT lender during their
+    ///                  own tenure.
     function realizedSettledInterest(
-        LibVaipakam.Loan storage loan,
         uint256 loanId
     ) internal view returns (uint256 realized) {
-        uint256 settled = uint256(loan.interestSettled);
-        uint256 parked = LibVaipakam.storageSlot().settledInterestParked[loanId];
-        return settled > parked ? settled - parked : 0;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 delivered = s.interestDeliveredCumulative[loanId];
+        uint256 baseline = s.lenderTenureDeliveredBaseline[loanId];
+        return delivered > baseline ? delivered - baseline : 0;
     }
 
     /// @notice Applies the treasury cut to an interest-like amount, using the

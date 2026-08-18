@@ -26,6 +26,15 @@ library LibLoan {
     ) internal returns (uint256 newTokenId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #1503 item 28 — the incoming lender's tenure starts HERE, so their
+        // realized-interest credit starts from zero. Without this the loan-wide
+        // delivered total would be credited again to every later seller: lender
+        // A receives x and sells, then B resells and has the same x deducted
+        // from their forfeiture though B never received it, at treasury's
+        // expense, once per resale. This helper is the only path a lender
+        // position changes hands by sale, so it is the only place the baseline
+        // needs to move.
+        s.lenderTenureDeliveredBaseline[loanId] = s.interestDeliveredCumulative[loanId];
         // #998 S10 Class B NOTE — the dedicated active-held reservation is NOT
         // migrated here: the sale callers withdraw `priorHeld` from the OLD
         // lender's vault BEFORE calling this helper, so the reservation must be

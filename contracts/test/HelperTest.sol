@@ -237,7 +237,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
         selectors[n++] = TestMutatorFacet.setHeldForLenderRaw.selector;
         selectors[n++] = TestMutatorFacet.setSaleProceedsEscrowRaw.selector;
-        selectors[n++] = TestMutatorFacet.setSettledInterestParkedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setInterestDeliveredRaw.selector;
         // Layout-resilient claim writers used by ClaimFacetTest to
         // exercise the NothingToClaim revert + held-only paths
         // without slot math.

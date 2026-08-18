@@ -315,7 +315,7 @@ contract EarlyWithdrawalDirectFacet is
         // and a sale migrates that parked balance to the BUYER — so netting the
         // raw figure would pay the seller for it a second time, out of treasury's
         // share, for tokens they never held and do not keep.
-        uint256 realizedSettled = LibEntitlement.realizedSettledInterest(loan, loanId);
+        uint256 realizedSettled = LibEntitlement.realizedSettledInterest(loanId);
         if (realizedSettled > accrued) {
             revert SaleBlockedByPrepaidInterest(loanId, realizedSettled - accrued);
         }

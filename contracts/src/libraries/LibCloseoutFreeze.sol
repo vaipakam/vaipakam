@@ -247,17 +247,18 @@ library LibCloseoutFreeze {
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             IERC20(asset).safeTransfer(lenderRecipient, amount);
+            // #1503 item 28 — DELIVERED. This helper's one caller
+            // (`RepayPeriodicFacet`) passes exactly the interest it is about to
+            // credit to `loan.interestSettled`, and credits it either way; only
+            // this branch actually hands it to the lender. A sale later credits
+            // the seller for their share of THIS total, never for the frozen
+            // branch below — that balance migrates to the buyer with
+            // `heldForLender`, so crediting it would pay the seller twice for
+            // tokens they never held.
+            s.interestDeliveredCumulative[loanId] += amount;
             return;
         }
         LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
-        // #1503 item 28 — this helper's ONE caller (`RepayPeriodicFacet`) passes
-        // exactly the interest it is about to credit to `loan.interestSettled`,
-        // and credits it whether or not the payout froze here. Record the frozen
-        // part so a later lender-position sale can tell interest the seller
-        // RECEIVED from interest merely booked against them: the parked balance
-        // migrates to the buyer with `heldForLender`, so netting it out of the
-        // seller's forfeiture would hand them the same amount twice.
-        s.settledInterestParked[loanId] += amount;
         _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
     }
 

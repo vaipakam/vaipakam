@@ -383,13 +383,22 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().saleProceedsEscrow[loanId] = amount;
     }
 
-    /// @notice Write `s.settledInterestParked[loanId] = amount` directly.
-    /// @dev #1503 item 28 — the frozen-payout counter. Reaching it for real needs
-    ///      a periodic servicing run against a registry-flagged lender, which the
-    ///      unit harness has no oracle for; seeding it exercises the carve-out
-    ///      the sale routes apply to it.
-    function setSettledInterestParkedRaw(uint256 loanId, uint256 amount) external {
-        LibVaipakam.storageSlot().settledInterestParked[loanId] = amount;
+    /// @notice Write the #1503 item-28 delivered/tenure pair directly.
+    /// @dev Reaching these for real needs a periodic servicing run — and, for the
+    ///      frozen case, one against a registry-flagged lender, which the unit
+    ///      harness has no oracle for. Seeding them exercises what the sale
+    ///      routes read: `delivered - baseline` is the interest THIS lender
+    ///      received during THIS tenure. Frozen interest is represented by
+    ///      simply not raising `delivered`; a previous lender's share by raising
+    ///      `baseline` to where their tenure ended.
+    function setInterestDeliveredRaw(
+        uint256 loanId,
+        uint256 delivered,
+        uint256 tenureBaseline
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.interestDeliveredCumulative[loanId] = delivered;
+        s.lenderTenureDeliveredBaseline[loanId] = tenureBaseline;
     }
 
     /// #594 test — append a loanId to a user's loan index directly (to set up

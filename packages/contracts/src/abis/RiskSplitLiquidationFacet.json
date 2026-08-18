@@ -1915,6 +1915,22 @@
   },
   {
     "type": "error",
+    "name": "SaleBlockedByPrepaidInterest",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "residualCredit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleOfferAlreadyExists",
     "inputs": []
   },
