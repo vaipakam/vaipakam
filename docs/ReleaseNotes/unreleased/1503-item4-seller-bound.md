@@ -1,0 +1,60 @@
+## Thread — a lender listing their position now says what they will accept (PR TBD)
+
+Listing a lender position for sale recorded no economic bound of any kind. The
+seller reviewed a set of figures, posted the listing, and then the platform
+recomputed everything at the moment a buyer filled it — so what they actually
+received was whatever the arithmetic came to then, not what they agreed to. A
+listing can stand for up to thirty days, and several ordinary events inside that
+window change the answer.
+
+A listing now carries two bounds, and the seller's own figures are what set
+them. Their shapes are deliberately different, which is the part worth
+understanding, because it follows from what each cost actually does over time.
+
+The first is a floor on what the seller receives. It cannot be the number on
+their screen: the interest they forfeit grows for as long as the listing stands,
+so a floor set at the displayed figure would make their own listing unfillable
+within minutes of posting it. The enforceable floor is the worst case they are
+accepting — the same arithmetic evaluated at the moment the listing expires. "If
+this fills at any time before it runs out, you receive at least this much" is
+both a true sentence to show them and a promise the platform can keep. It is
+only computable because a listing must now carry a finite expiry, which is the
+second time that rule has turned out to carry weight it was not introduced for.
+
+The second is a ceiling on money already set aside for the lender, which
+transfers to the buyer along with the position. That quantity does not grow with
+time at all. It grows only when a settlement puts more into it between listing
+and sale — which is exactly the drift the bound exists to refuse — so the
+recorded figure is simply the balance when they listed, and anything parked
+afterwards fails the sale rather than quietly enlarging what they give up.
+
+Neither bound is redundant, and it is worth saying why, because they look like
+two views of one thing. Money being set aside trips both: it enlarges the
+transferring balance AND it disqualifies the record of what the lender has been
+paid, which widens the forfeiture. But a repayment that reduces the loan's
+balance disqualifies that record while setting nothing aside — so the floor
+catches a case the ceiling cannot see at all.
+
+What trips the floor is therefore never the drift the seller accepted. Ordinary
+growth across the whole window sits inside it by construction. What trips it is
+a step they never reviewed, and the remedy is to cancel and list again at the
+new economics rather than to relax the bound: the larger cost is real, and they
+simply have not agreed to it. Both refusals name the figure the seller recorded
+and the figure the sale would produce, so the app can say which bound moved and
+by how much.
+
+One consequence follows and should be expected rather than treated as a fault: a
+live listing can become unfillable through ordinary borrower activity, since a
+partial repayment is enough to disqualify the paid-through record. The seller's
+listing card has to say so, and say that relisting is the way forward.
+
+The bounds apply only while the seller's projection still describes the sale.
+Completing a listing is deliberately still possible after its window has run
+out, because that path is lender-gated — the seller doing it themselves is fresh
+authorisation, not a race — and holding them to a projection made for a window
+that has since passed would refuse their own deliberate act. Listings made
+before this shipped record no bounds and complete exactly as they did; the
+platform can tell that apart from a listing whose ceiling is legitimately zero,
+which is why "nothing was set aside" is recorded rather than inferred.
+
+Part of #1503 (item 4).
