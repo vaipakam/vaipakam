@@ -6,7 +6,9 @@ resolved when the files are produced — and what they resolve to is the value
 set shipped with the site, which is pinned to the protocol's compiled starting
 rates. A governance retune moves the live configuration, not those starting
 rates, so these files do not follow a retune even when the site is rebuilt.
-The rendered pages, since their figures went live, do.
+The rendered pages do, when their own read of the published configuration
+succeeds — a page whose read fails shows the same shipped values these files
+carry, which is its designed fallback.
 
 The specification said these copies were "current as of their build" and
 carried "the same resolved values as the human-facing pages". Both claims are

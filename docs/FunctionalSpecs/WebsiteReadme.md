@@ -129,7 +129,9 @@ Public-navigation requirements:
   today is the value set shipped with the site, which is pinned to the
   protocol's compiled starting rates: a governance retune moves the live
   configuration, not those starting rates, so these artefacts do not
-  follow a retune even across rebuilds, while the rendered pages do.
+  follow a retune even across rebuilds, while the rendered pages that
+  successfully accept the published snapshot do — a page whose own read
+  fails renders the same shipped values these artefacts carry.
   "Current as of its build" is therefore NOT a property these artefacts
   have, and nothing may claim it for them. Whether they should instead
   fetch the published configuration when they are produced — making
