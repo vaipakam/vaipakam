@@ -36,21 +36,3 @@ is of a known kind, which tells it nothing about an address never recorded at
 all. That check cannot be expressed in the contract language and belongs in the
 deploy gate script instead, so it is tracked as its own follow-up rather than
 bolted on here.
-
-The gate reads the deploy scripts as text, so it can only ever approximate the
-question anyone actually cares about — whether a real deploy's record of
-addresses ends up complete. Review found six separate ways to get a registration
-past a version of it that tried to follow the deploy's control flow, each a
-variation on the same theme: a line-oriented reader cannot model scope or
-branching, and every patch to make it try added somewhere else to hide.
-
-So it no longer tries. It requires every registration to be a plain,
-unguarded statement of the one function the deploy runs, and reports anything
-found elsewhere in the file as a failure rather than passing over it. That rule
-is stricter and much smaller than the analysis it replaces, and it costs nothing
-today — every existing registration already satisfies it. What it gives up is
-the ability to accept a future refactor that moves registrations into a helper;
-such a refactor now gets a message naming what escaped, instead of a green gate
-that quietly stopped checking. Asserting the record an actual deployment
-produces, which needs none of this approximation, is tracked separately as
-#1800; this gate stays as the fast pre-check that needs no compile.

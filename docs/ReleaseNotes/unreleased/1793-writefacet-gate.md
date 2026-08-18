@@ -13,9 +13,8 @@ deploy *did* record is of a kind the consumers understand. That question cannot
 notice an address never recorded at all. So the gate was structurally incapable
 of seeing this, and passed every time.
 
-The thirteen are now written, and the gate now asks the missing question: every
-component installed must also be recorded, or the deploy stops. Building that
-check is what found them. The follow-up it came from assumed there was one such
+The thirteen are now written. Building the check that found them is what
+surfaced them: the follow-up this came from assumed there was one such
 component — the one whose omission was caught in review last week. There were
 thirteen, and that one was not among them; it had already been fixed.
 
@@ -34,28 +33,30 @@ inconvenience, not a lost deployment — worth stating plainly, since an earlier
 note about the same gap overstated it, and treating a recoverable record as an
 unrecoverable incident is its own kind of error.
 
-A second check lands alongside it, closing a gap a guardrail added earlier the
-same day explicitly declared out of its scope. That guardrail proves the refresh
-script touches the same components, running the same code, as a real deploy — but
-it says nothing about the *labels* the refresh files them under, and it cannot:
-the labels exist only as text inside the deploy script, with nothing in the
-contract language able to read them. A mislabelled component would pass every
-check there and then land in the record under a name no consumer looks for. The
-new check compares the two scripts' labels for each component and fails on any
-disagreement.
+**The automated guard against this recurring is deliberately not in this
+change.** A version of it was written — it read the two deploy scripts as text
+and tried to prove that everything installed was also recorded — and then
+withdrawn after review found thirteen distinct ways to slip a registration past
+it. A registration hidden in a conditional written on one line, in a loop header
+whose own punctuation split the statement, in a helper that is never called or
+is called only sometimes, under a variable reassigned before the record is
+written, or written by a second, more general writer that reaches the same part
+of the file by another route. Every one of those was real, and every fix opened
+the next.
 
-Both checks pair the two scripts without guessing at names. Each component
-appears in the deploy script twice — once when installed, once when recorded —
-and the two mentions share a variable; both scripts also refer to each
-component's function list by the same name. Those shared references are what the
-checks match on. The tempting alternative, converting a component's type name
-into its record label by lowercasing the first letter, breaks on names beginning
-with an acronym — and a name-guessing rule inside a drift check is just a new
-place for drift to hide.
+That is not a run of bad luck. Proving that a particular line runs, under the
+identity it appears to have, on every chain, is a question about scope and
+control flow — and reading source text line by line cannot answer it. The check
+was reaching a confident verdict it had not earned, which on a gate that stands
+between a change and a deployment is worse than having no gate at all: nobody
+reads a green one.
 
-Each check was confirmed by breaking it on purpose first: removing one
-recording, mislabelling one component in the refresh script, and renaming the
-call the checks look for. The third matters as much as the other two — a check
-whose inputs quietly disappear reports success, which is the failure mode being
-fixed here, so it now refuses to pass when it finds implausibly little to
-inspect and says so.
+What settles the question needs no reading of source at all. Run the deploy,
+then compare the record it produced against what the deployed system reports it
+actually installed. That does not care how a registration is written, where it
+lives, or what guards it. It is tracked as its own follow-up, along with the
+label-comparison check described above, which has the same weakness for the same
+reason.
+
+So this change fixes the thirteen missing entries and states plainly that the
+regression guard is still owed, rather than shipping an approximation of one.
