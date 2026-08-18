@@ -1,4 +1,4 @@
-## Thread — a lender selling out is no longer billed for interest already paid to them (PR #TBD)
+## Thread — a lender selling out is no longer billed for interest already paid to them (PR #1801)
 
 Both lender-exit sale routes charged the seller their forfeited accrued interest
 straight off the accrual clock. On a loan with periodic interest servicing that
