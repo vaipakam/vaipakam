@@ -514,6 +514,23 @@ const nearestDeclIn = (from, name, stopAt) => {
         : null;
     if (stmts) {
       for (const st of stmts) {
+        // A FUNCTION or CLASS declaration binds its name in the enclosing block
+        // too (Codex round-43 P2, chasing the same hoisting rule round 41 found
+        // one level out). Scanning only variable statements made a block-local
+        // `function pluckActivityRefs() { … }` invisible to every consumer of
+        // this resolver, so a same-named local could stand in for a
+        // module-level function and resolve as "nothing nearer binds it".
+        //
+        // OPAQUE_BINDING rather than the node: it binds the name, and what it
+        // binds is not a value this script can follow — which is precisely what
+        // that sentinel means, and what every consumer already handles.
+        if (
+          (ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) &&
+          st.name &&
+          declaresName(st.name, name)
+        ) {
+          return OPAQUE_BINDING;
+        }
         if (!ts.isVariableStatement(st)) continue;
         for (const d of st.declarationList.declarations) {
           if (declaresName(d.name, name)) return d;
@@ -1598,6 +1615,60 @@ if (!fnNode) {
     const pinnedArg = callSites.length === 1
       ? callSites[0].arguments.findIndex((a, i) => i > 0 && isPinned(a, callSites[0]))
       : -1;
+    // The LOGS argument is followed too (Codex round-43 P2). The check above
+    // deliberately starts at argument 1 so the batch keeps its own message —
+    // but "keeps its own message" was implemented as "is tested for being a
+    // literal", and `const noLogs: DecodedLog[] = []` is an identifier holding
+    // exactly the empty batch that test exists to refuse. One binding was the
+    // whole distance between the hole and the check.
+    //
+    // `isPinned` is NOT the test to reuse here, and the reason is the point.
+    // The live batch is `const allLogs: DecodedLog[] = []` — an array literal,
+    // which `isPinned` calls pinned, and correctly so for the forwarded context
+    // it was written for. A batch is different in kind: it is DECLARED empty
+    // and FILLED, so its initializer says nothing about what it holds at the
+    // call. What separates it from the decoy is not its initializer but
+    // whether anything ever puts logs in it.
+    const BATCH_MUTATORS = ['push', 'unshift', 'splice', 'fill', 'copyWithin'];
+    /** Does anything mutate — or reassign — the binding `name` declared at `decl`? */
+    const everFilled = (name, decl) => {
+      let hit = false;
+      const walk = (n) => {
+        if (hit) return;
+        const receiver =
+          ts.isCallExpression(n) && BATCH_MUTATORS.includes(memberNameOf(n.expression) ?? '')
+            ? unwrapAssertions(n.expression.expression)
+            : null;
+        if (
+          receiver &&
+          ts.isIdentifier(receiver) &&
+          receiver.text === name &&
+          nearestDeclIn(n, name, sourceFile) === decl
+        ) {
+          hit = true;
+          return;
+        }
+        if (writesName(n, name) && nearestDeclIn(n, name, sourceFile) === decl) {
+          hit = true;
+          return;
+        }
+        ts.forEachChild(n, walk);
+      };
+      walk(sourceFile);
+      return hit;
+    };
+    const pinnedBatch = (() => {
+      if (callSites.length !== 1 || !callSites[0].arguments[0]) return false;
+      const arg = unwrapAssertions(callSites[0].arguments[0]);
+      if (!ts.isIdentifier(arg)) return false; // the literal case has its own check
+      const decl = nearestDeclIn(callSites[0], arg.text, sourceFile);
+      // Nothing nearer binds it, or the binder is one this script cannot read:
+      // a real binding is exactly what it cannot prove empty, so accept.
+      if (!decl || decl === OPAQUE_BINDING || !decl.initializer) return false;
+      const declInit = unwrapAssertions(decl.initializer);
+      if (!ts.isArrayLiteralExpression(declInit)) return false;
+      return !everFilled(arg.text, decl);
+    })();
     if (pinnedArg >= 0) {
       console.error(
         `[check-activity-refs-coverage] ${LEDGER_FN}() is called with a pinned value in\n` +
@@ -1645,12 +1716,14 @@ if (!fnNode) {
       );
       process.exit(1);
     }
-    if (callSites.length === 0 || disconnected.length) {
+    if (callSites.length === 0 || disconnected.length || pinnedBatch) {
       console.error(
         `[check-activity-refs-coverage] ${LEDGER_FN}() is ${
           callSites.length === 0
             ? 'never called in a way that keeps its result'
-            : 'called with a literal first argument'
+            : disconnected.length
+              ? 'called with a literal first argument'
+              : 'called with a first argument that resolves to a fixed batch'
         }.\n` +
           '  Every other check here reads that function\'s body, which says nothing about the\n' +
           '  rows unless the scan hands it the logs it decoded — passing `[]` writes no\n' +
@@ -1793,6 +1866,18 @@ if (!fnNode) {
   }
   const init = bindings[0].initializer && unwrapAssertions(bindings[0].initializer);
   const boundFrom = init && ts.isCallExpression(init) ? bareIdentifierOf(init.expression) : null;
+  // ...and that name must RESOLVE to the mapper this script inspected (Codex
+  // round-43 P2). Recording the callee's SPELLING validated the module-level
+  // `pluckActivityRefs` while the ledger invoked a same-named local — one
+  // returning `{ actor: null, loanId: 999, offerId: null }` — so every check
+  // below read a body nothing runs and the rows filed under loan 999. The
+  // ledger's own call site has resolved its callee since round 42; this one,
+  // asking the same question about the function it hands the work to, had not.
+  //
+  // `nearestDeclIn` returning null is the module-level declaration being the
+  // nearest binder, which is the honest case.
+  const mapperShadowed =
+    boundFrom === 'pluckActivityRefs' && nearestDeclIn(init, boundFrom, sourceFile) !== null;
   // ...and it must be handed THIS log's event name and decoded arguments (Codex
   // round-22 P2). `pluckActivityRefs('LoanRepaid', {})` is the checked function,
   // called from the right place, binding the right names — and it dispatches
@@ -2375,15 +2460,46 @@ if (!fnNode) {
      */
     const unreachableReason = (node) => guardedReason(node, ledgerNode.body);
     const inserts = [];
+    /**
+     * The SQL `prepare` was handed, but only when it is a STATIC expression
+     * (Codex round-43 P2).
+     *
+     * `getText()` returns the SOURCE of whatever was passed, so a conditional
+     * `cond ? <correct column order> : <loan_id/offer_id swapped>` carries BOTH
+     * arms — and every column-order regex below matches whichever arm appears
+     * first in the file, never the one the runtime selects. The regexes read a
+     * string; a dynamic expression is not one, and refusing it is the honest
+     * outcome rather than validating an arm at random.
+     *
+     * @returns the SQL text, `null` for a dynamic expression, `undefined` when
+     *          no `prepare(...)` call was found at all.
+     */
+    const staticSqlOf = (receiver) => {
+      let found;
+      const seek = (n) => {
+        if (found !== undefined) return;
+        if (ts.isCallExpression(n) && memberNameOf(n.expression) === 'prepare') {
+          const only = n.arguments.length === 1 ? unwrapAssertions(n.arguments[0]) : null;
+          // `isStringLiteralLike` is exactly the right line: it covers a string
+          // literal and a no-substitution template, and excludes a template
+          // WITH substitutions — whose interpolations this script cannot read.
+          found = only && ts.isStringLiteralLike(only) ? only.text : null;
+          return;
+        }
+        ts.forEachChild(n, seek);
+      };
+      seek(receiver);
+      return found;
+    };
+    let dynamicSql = null;
     const findInsert = (n) => {
-      if (
-        ts.isCallExpression(n) &&
-        ts.isPropertyAccessExpression(n.expression) &&
-        n.expression.name.text === 'bind'
-      ) {
-        const text = n.expression.expression.getText(sourceFile);
-        if (/INSERT\s+(OR\s+\w+\s+)?INTO\s+activity_events/i.test(text)) {
-          inserts.push({ sql: text, args: n.arguments, node: n });
+      if (ts.isCallExpression(n) && memberNameOf(n.expression) === 'bind') {
+        const receiver = n.expression.expression;
+        const raw = receiver.getText(sourceFile);
+        if (/INSERT\s+(OR\s+\w+\s+)?INTO\s+activity_events/i.test(raw)) {
+          const sql = staticSqlOf(receiver);
+          if (typeof sql !== 'string') dynamicSql = raw;
+          inserts.push({ sql: typeof sql === 'string' ? sql : raw, args: n.arguments, node: n });
         }
       }
       ts.forEachChild(n, findInsert);
@@ -2396,15 +2512,29 @@ if (!fnNode) {
     // matched bind to flow into an awaited execution is the difference between
     // "this statement is correct" and "this statement happens".
     const EXECUTORS = ['run', 'all', 'first', 'raw'];
+    // The executor must be INVOKED, not merely reached (Codex round-43 P2).
+    // Requiring only that the member sit under some call accepted
+    // `console.log(env.DB.prepare(…).bind(…).run)` — the property is read, the
+    // enclosing call is `console.log`, and no row is written. The member has to
+    // BE the callee, which is `p.parent.expression === p`.
+    //
+    // ...and the member is read the same way everywhere else in this script
+    // (Codex round-43 P2). A `PropertyAccessExpression`-only test rejected the
+    // equivalent `statement['run']()`, blocking the indexer typecheck on code
+    // that executes exactly as the dotted form does. `memberNameOf` already
+    // reads both, and returns null for anything that is not a member access —
+    // which is also the guard that makes `p.expression` safe to compare.
     const executedFrom = (bindCall) => {
       for (let cur = bindCall, p = cur.parent; p; cur = p, p = p.parent) {
         if (isTransparentWrapper(p) || ts.isAwaitExpression(p)) continue;
+        const member = memberNameOf(p);
         if (
-          ts.isPropertyAccessExpression(p) &&
+          member !== null &&
           p.expression === cur &&
-          EXECUTORS.includes(p.name.text) &&
+          EXECUTORS.includes(member) &&
           p.parent &&
-          ts.isCallExpression(p.parent)
+          ts.isCallExpression(p.parent) &&
+          p.parent.expression === p
         ) {
           return true;
         }
@@ -2412,6 +2542,20 @@ if (!fnNode) {
       }
       return false;
     };
+    if (dynamicSql) {
+      console.error(
+        `[check-activity-refs-coverage] the activity_events statement in ${LEDGER_FN}() is\n` +
+          '  built from a dynamic SQL expression:\n' +
+          `    ${dynamicSql.replace(/\s+/g, ' ').slice(0, 160)}\n` +
+          '  Every column-order check below reads the SQL as source text, so an expression\n' +
+          '  carrying more than one candidate statement is validated on whichever appears\n' +
+          '  first in the file — while the runtime picks the other. A conditional whose\n' +
+          '  losing arm has the right column order therefore passes every check here and\n' +
+          '  files each reference in the wrong column. Pass one static string, or update\n' +
+          '  this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
     if (inserts.length === 1 && !executedFrom(inserts[0].node)) {
       console.error(
         `[check-activity-refs-coverage] the activity_events statement in ${LEDGER_FN}() is\n` +
@@ -2548,6 +2692,18 @@ if (!fnNode) {
         process.exit(1);
       }
     }
+  }
+
+  if (mapperShadowed) {
+    console.error(
+      `[check-activity-refs-coverage] ${LEDGER_FN}() calls a LOCAL binding named\n` +
+        '  pluckActivityRefs, not the module-level mapper this script reads.\n' +
+        '  Coverage here is decided entirely by the mapper\'s body, so a same-named local\n' +
+        '  returning fixed references keeps every count identical while the rows carry\n' +
+        '  whatever it returns. Call the module-level mapper, or update this script — do\n' +
+        '  not delete the check.',
+    );
+    process.exit(1);
   }
 
   if (boundFrom !== 'pluckActivityRefs') {
@@ -3107,12 +3263,26 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
   // mapping relies on — flagging it would refuse the live code. Anything BEYOND
   // those two is an addition, and an addition binding `args` or `Number` is a
   // shadow however innocuous its default looks.
+  //
+  // A parameter's DEFAULT is code too (Codex round-43 P2). Round 42 inspected
+  // only the binding NAME, so an added parameter with a harmless name and a
+  // side-effecting default — `_sideEffect = (args.loanId = 999)` — was waved
+  // through while running before the body on every existing two-argument call,
+  // turning every direct mapping into 999. An initializer gets the same walk
+  // the body gets, which already refuses a declaration, an alias, or a write.
   for (const param of (fnNode.parameters ?? []).slice(2)) {
     if (bindsShadowable(param.name)) {
       outerShadow = ts.isIdentifier(param.name)
         ? param.name.text
         : 'args/Number (a destructured parameter)';
       break;
+    }
+    if (param.initializer) {
+      walkOuter(param.initializer);
+      if (outerShadow) {
+        outerShadow = `${outerShadow} (in a parameter default)`;
+        break;
+      }
     }
   }
   if (!outerShadow && fnNode.body) ts.forEachChild(fnNode.body, walkOuter);
