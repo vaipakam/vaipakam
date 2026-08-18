@@ -682,21 +682,27 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
-    /// @dev The mark survives an ACCRUAL-CLOCK RESET (Codex #1801 r3 P1).
-    ///      `repayPartial` and `swapToRepay` restart the accrual segment at the
-    ///      moment they pay the lender. A lifetime amount would then be deducted
-    ///      from a window it was never measured over — reverting immediately
-    ///      after the reset, then double-crediting once the same amount accrued
-    ///      again. The window takes whichever start is LATER, so a reset past the
-    ///      mark simply wins and nothing historical carries into the new segment.
-    function test_sellLoanViaBuyOffer_accrualClockResetWinsOverAnOlderMark()
+    /// @dev An accrual-clock reset that PAID NOBODY must not close the window
+    ///      (Codex #1801 r3 P1, corrected by r4 P1).
+    ///
+    ///      Round 3 made the window `max(accrualStart, mark)`, reasoning that a
+    ///      clock reset should win because the paths that reset it also pay the
+    ///      lender. That holds only when the payment actually LANDS. A partial
+    ///      repayment whose lender share is frozen by the sanctions registry
+    ///      parks the interest in `heldForLender` — which migrates to the BUYER
+    ///      on a sale — while the caller still resets the clock. The max let
+    ///      that reset act as the credit and closed the seller's window over
+    ///      interest they never received.
+    ///
+    ///      So the mark is authoritative and the clock is only the seed. Here
+    ///      the mark is older than the reset clock, and the window still opens
+    ///      at the MARK.
+    function test_sellLoanViaBuyOffer_resetThatPaidNobodyLeavesTheWindowOpen()
         public
     {
         _relaxBuyOfferForWarp(20);
         vm.warp(block.timestamp + 10 days);
 
-        // Paid through six days ago; then a partial repayment restarts the
-        // accrual clock four days ago — AFTER the mark.
         TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
             activeLoanId, block.timestamp - 6 days
         );
@@ -709,11 +715,11 @@ contract EarlyWithdrawalFacetTest is Test {
             .sellerForfeitureWindow(activeLoanId);
         assertEq(
             forfeitFrom,
-            block.timestamp - 4 days,
-            "the newer accrual origin wins over the older paid-through mark"
+            block.timestamp - 6 days,
+            "the mark bounds the forfeiture, not the re-based obligation clock"
         );
 
-        // And the sale completes rather than reverting on a stale residual.
+        // And the sale still completes — nothing here is a refusal.
         _mockSaleSideEffects();
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);

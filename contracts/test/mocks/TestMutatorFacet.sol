@@ -1596,17 +1596,23 @@ contract TestMutatorFacet {
     ///         pay-or-freeze bookkeeping can be asserted in isolation. Runs as a
     ///         facet (msg.sender == diamond), so the `onlyDiamondInternal` host
     ///         accepts the routed self-call.
+    /// @param deliveredThroughAt #1503 item 28 — the paid-through boundary the
+    ///        host records on the CLEAN branch. Exposed on the driver rather than
+    ///        pinned to zero so a test can assert the mark moves on a clean payout
+    ///        and does NOT move on a frozen one, which is the whole distinction.
     function callFreezeOrPayActiveLenderResident(
         uint256 loanId,
         address asset,
-        uint256 amount
+        uint256 amount,
+        uint256 deliveredThroughAt
     ) external {
         _selfCall(
             abi.encodeWithSelector(
                 EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
                 loanId,
                 asset,
-                amount
+                amount,
+                deliveredThroughAt
             )
         );
     }

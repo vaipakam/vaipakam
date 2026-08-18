@@ -285,6 +285,22 @@ library LibCloseoutFreeze {
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             // slither-disable-next-line arbitrary-send-erc20
             IERC20(asset).safeTransferFrom(payer, lenderRecipient, amount);
+            // #1503 item 28 (Codex #1801 r4 P1) — DELIVERED, so the seller is
+            // paid through NOW. Unlike the resident-payout helper this one needs
+            // no boundary parameter: every caller pays interest accrued to the
+            // present and resets the accrual clock in the same transaction, so
+            // `block.timestamp` IS the correct mark.
+            //
+            // The freeze branch below deliberately does not stamp, and that is
+            // the whole point of doing this here at all: a frozen partial
+            // repayment parks the interest in `heldForLender` — which migrates
+            // to the BUYER on a sale — while the caller still resets the accrual
+            // clock. With the clock as the fallback the reset would act as the
+            // credit and close the seller's window over interest they never
+            // received. The mark stays put, so the window stays open.
+            if (block.timestamp > s.lenderInterestDeliveredThroughAt[loanId]) {
+                s.lenderInterestDeliveredThroughAt[loanId] = block.timestamp;
+            }
             return;
         }
         LibSanctionedLock.depositLockedFrom(s, payer, loan.lender, loanId, asset, amount);
@@ -314,6 +330,12 @@ library LibCloseoutFreeze {
             LibSanctionedLock.vaultWithdrawERC20MoveOut(
                 s, fromUser, asset, lenderRecipient, amount
             );
+            // #1503 item 28 — DELIVERED, paid through now. Same reasoning as the
+            // from-payer helper above, including why the freeze branch below does
+            // not stamp.
+            if (block.timestamp > s.lenderInterestDeliveredThroughAt[loanId]) {
+                s.lenderInterestDeliveredThroughAt[loanId] = block.timestamp;
+            }
             return;
         }
         LibSanctionedLock.depositLockedFromVault(

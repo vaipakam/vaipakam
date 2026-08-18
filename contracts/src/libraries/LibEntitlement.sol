@@ -260,7 +260,23 @@ library LibEntitlement {
     ) internal view returns (uint256 from) {
         uint256 paidThrough =
             LibVaipakam.storageSlot().lenderInterestDeliveredThroughAt[loanId];
-        return paidThrough > accrualStart ? paidThrough : accrualStart;
+        // The mark is AUTHORITATIVE once it exists; the accrual clock is only the
+        // seed for a loan that has never paid its lender (Codex #1801 r4 P1).
+        //
+        // An earlier revision took the LATER of the two, which reads as the safe
+        // choice and is not. The accrual clock resets whenever the borrower's
+        // obligation is re-based — and one of those resets happens on a partial
+        // repayment whose lender share was FROZEN rather than delivered. Taking
+        // the max let that reset act as the credit: the seller's window closed
+        // over interest that went into `heldForLender`, migrates to the buyer,
+        // and never reached the seller at all.
+        //
+        // The two clocks answer different questions. "When did the borrower's
+        // obligation restart" is not "when was this lender last paid", and only
+        // the second bounds a forfeiture. Every path that genuinely pays the
+        // lender advances the mark, so a missed one over-charges the seller
+        // rather than leaking to them — the direction to be wrong in.
+        return paidThrough != 0 ? paidThrough : accrualStart;
     }
 
     /// @notice Applies the treasury cut to an interest-like amount, using the

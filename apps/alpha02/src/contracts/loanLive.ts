@@ -199,8 +199,14 @@ export function sellerEconomics(
   // #1503 item 28 — the FORFEITURE clock is not the accrual clock. `elapsed`
   // above still measures the loan's own progress, which `remainingSecs` needs;
   // the forfeiture measures only the stretch the lender has NOT been paid for.
+  // The mark is AUTHORITATIVE once it exists; the accrual clock is only the
+  // seed for a loan that has never paid its lender. Mirrors
+  // LibEntitlement.forfeitureAccrualStart — see there for why taking the LATER
+  // of the two is wrong (a partial repayment whose lender share was frozen
+  // resets the clock without paying anyone, and the max let that reset act as
+  // the credit).
   const paidThroughAt = live.lenderPaidThroughAt ?? 0n;
-  const forfeitFrom = paidThroughAt > start ? paidThroughAt : start;
+  const forfeitFrom = paidThroughAt !== 0n ? paidThroughAt : start;
   const forfeitSecs = chainNow > forfeitFrom ? chainNow - forfeitFrom : 0n;
   const accrued = (live.principal * live.interestRateBps * forfeitSecs) / denom;
   const originalRemaining =
@@ -316,7 +322,23 @@ export async function readLoanLive(
   // Diamond storage with no field on the loan struct, so `getLoanDetails`
   // cannot carry it; without the second read every seller surface would keep
   // quoting the raw accrual and overstate the cost on a periodic loan.
-  const [raw, window] = await Promise.all([
+  //
+  // The second read FAILS SOFT (Codex #1801 r4 P1). A Diamond that has not yet
+  // been refreshed does not route `sellerForfeitureWindow` and reverts, and
+  // because `readLoanLive` backs position details, repay, refinance, offset,
+  // sale and verification alike, letting that rejection propagate would take
+  // every one of those flows down on a staggered per-chain rollout — a far
+  // worse outcome than the stale seller quote it was meant to correct. Absent
+  // mark means "no delivered periodic interest", which is what an unupgraded
+  // Diamond in fact has: the pre-change behaviour, not a wrong new one.
+  //
+  // Deliberately broad: `Promise.allSettled` treats ANY failure of the optional
+  // read as absent. Narrowing to the missing-selector revert would mean
+  // matching on provider-specific error text, and the public Base-Sepolia RPCs
+  // are exactly the ones that rewrite reverts into generic gas errors — the
+  // #1521-era failure mode. The mandatory read still rejects normally, so a
+  // genuine outage is not hidden.
+  const [rawResult, windowResult] = await Promise.allSettled([
     publicClient.readContract({
       address: diamondAddress,
       abi: DIAMOND_ABI_VIEM,
@@ -330,8 +352,11 @@ export async function readLoanLive(
       args: [BigInt(loanId)],
     }) as Promise<readonly [bigint, bigint]>,
   ]);
+  if (rawResult.status === 'rejected') throw rawResult.reason;
+  const raw = rawResult.value;
   return {
-    lenderPaidThroughAt: window[0],
+    lenderPaidThroughAt:
+      windowResult.status === 'fulfilled' ? windowResult.value[0] : 0n,
     status: Number(raw.status),
     lender: raw.lender,
     borrower: raw.borrower,

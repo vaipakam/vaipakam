@@ -165,22 +165,30 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     expect(econ.toSeller).toBe(paid.principal);
   });
 
-  it('lets a later accrual-clock reset win over an older mark', () => {
-    // What a partial repayment leaves behind: the clock restarts AFTER the mark.
+  it('keeps the window open across an accrual-clock reset that paid nobody', () => {
+    // What a FROZEN partial repayment leaves behind: the borrower's obligation
+    // clock restarts, but the lender's share was parked in `heldForLender`
+    // rather than delivered — and that balance migrates to the BUYER on a sale.
+    // An earlier revision took the later of the two marks, which let the reset
+    // act as the credit and closed the window over interest the seller never
+    // received. The mark is authoritative: the window stays open from it.
     const reset = {
       ...saleLive,
       lenderPaidThroughAt: now - 6n * DAY,
       interestAccrualStart: now - 4n * DAY,
     };
     expect(sellerEconomics(reset, reset.interestRateBps, now).accrued).toBe(
-      accrue(4n * DAY),
+      accrue(6n * DAY),
     );
   });
 
-  it('ignores a mark that predates the accrual origin', () => {
-    const stale = { ...saleLive, lenderPaidThroughAt: 500n };
+  it('honours a mark that predates the accrual origin', () => {
+    // Same rule from the other side: an old mark is still the last time this
+    // lender was PAID, so it bounds the forfeiture even when the obligation
+    // clock has since moved past it.
+    const stale = { ...saleLive, lenderPaidThroughAt: now - 20n * DAY };
     expect(sellerEconomics(stale, stale.interestRateBps, now).accrued).toBe(
-      accrue(10n * DAY),
+      accrue(20n * DAY),
     );
   });
 
