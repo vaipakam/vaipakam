@@ -24,3 +24,10 @@ display, and that a re-check cannot replace, reverts to the bundled value
 with its label following — the same honest fallback a failed first read gets.
 Holding a figure the page would refuse to accept, under a label claiming it
 is current, was the one remaining way the provenance marker could overclaim.
+Reader-driven moments alone could not deliver that rule: a tab left open and
+visible sees neither a navigation nor a return, and review caught that it
+would have held its published label indefinitely. So when a snapshot is
+accepted, the page also notes the one moment it will expire and re-checks
+then — once, at that deadline, not on a repeating schedule. Browsing still
+produces at most the requests it always did; an expired snapshot that cannot
+be replaced simply steps down at the moment its acceptance always implied.
