@@ -972,14 +972,42 @@ const abiConflicts = [];
 /** '<Event>.<field>' -> path, where the only reference is an ARRAY of ids. */
 const arrayOnlyRefs = new Map();
 for (const file of memberFiles) {
+  // An UNREADABLE member is reported, never skipped (Codex round-40 P2). This
+  // `continue` recreated per-member exactly the vacuity the surrounding
+  // validation exists to prevent: a BOM-prefixed JSON carrying a new
+  // `uint256 loanId` event makes `JSON.parse` throw, the file drops out
+  // silently, and the run stays green at the usual tally while that event
+  // never had to be mapped or exempted. TypeScript imports the same file
+  // happily, so nothing else notices either.
+  //
+  // The same argument as round 23's empty-default and round 26's decoy insert:
+  // an empty result from a validator is not a pass.
   let parsed;
   try {
     parsed = JSON.parse(readFileSync(join(ABI_DIR, file), 'utf8'));
-  } catch {
+  } catch (e) {
+    abiConflicts.push({
+      kind: 'unreadable-member',
+      event: file,
+      message:
+        `${file} — could not be read as JSON (${e.message}), so this script cannot ` +
+        'tell whether it carries reference-bearing events. An unreadable member is ' +
+        'not an empty one: fix the file, or remove it from the barrel.',
+    });
     continue;
   }
   const items = Array.isArray(parsed) ? parsed : parsed.abi;
-  if (!Array.isArray(items)) continue;
+  if (!Array.isArray(items)) {
+    abiConflicts.push({
+      kind: 'unreadable-member',
+      event: file,
+      message:
+        `${file} — parsed, but neither an ABI array nor an object with an \`abi\` array, ` +
+        'so its events are invisible to this check. Fix the shape, or remove it from ' +
+        'the barrel.',
+    });
+    continue;
+  }
   for (const item of items) {
     if (item?.type !== 'event' || !Array.isArray(item.inputs)) continue;
     // Tuple components too, carrying the decoded ACCESS PATH (Codex round-6 P2).
@@ -1474,6 +1502,20 @@ if (!fnNode) {
     // with a better message (an empty literal batch is a distinct mistake with
     // a distinct explanation), and subsuming it into a generic one would lose
     // that.
+    /** Is `name` written anywhere in the file, resolving to THIS declaration? */
+    const reassignedAfterDeclaration = (name, decl) => {
+      let hit = false;
+      const walk = (n) => {
+        if (hit) return;
+        if (writesName(n, name) && nearestDeclIn(n, name, sourceFile) === decl) {
+          hit = true;
+          return;
+        }
+        ts.forEachChild(n, walk);
+      };
+      walk(sourceFile);
+      return hit;
+    };
     const isPinned = (node, from, depth = 0) => {
       if (depth > 8) return false; // a rename chain this long is not real code
       const e = unwrapAssertions(node);
@@ -1491,7 +1533,20 @@ if (!fnNode) {
       if (ts.isPrefixUnaryExpression(e)) return isPinned(e.operand, from, depth + 1);
       if (ts.isIdentifier(e)) {
         const decl = nearestDeclIn(from, e.text, sourceFile);
-        if (!decl || decl === OPAQUE_BINDING || !decl.initializer) return false;
+        if (!decl || decl === OPAQUE_BINDING) return false;
+        // A later WRITE decides the value, not the initializer (Codex round-40
+        // P2). Following only the declaration made
+        // `let forwardedChainId = chainId; forwardedChainId = 999;` read as the
+        // honest binding it starts out as, while every row lands under 999.
+        //
+        // Any write to the binding is refused, not just a pinned one: this walk
+        // establishes what a value IS, and a name that is reassigned at all has
+        // no single answer for it to find. That is fail-closed in the direction
+        // that costs a message rather than a silent hole — and the arguments
+        // this applies to are forwarded context, which nothing has reason to
+        // reassign between the scan and the call.
+        if (reassignedAfterDeclaration(e.text, decl)) return true;
+        if (!decl.initializer) return false;
         return isPinned(decl.initializer, decl, depth + 1);
       }
       return false;
@@ -2916,6 +2971,14 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
   const walkOuter = (n) => {
     if (outerShadow) return;
     if (n === switchNode) return; // clause bodies are scanned per case
+    // A NESTED function's bindings shadow nothing out here (Codex round-40 P2).
+    // This walk descends into every child, so an ordinary local helper
+    // containing `const Number = () => 7` was reported as shadowing "for EVERY
+    // case" — a false positive that blocks `typecheck` on code that leaves
+    // every mapping untouched. The per-case scan has stopped at function
+    // boundaries since round 11; this one, written for the same question one
+    // level out, never learned it.
+    if (isFunctionLike(n)) return;
     // Declarations (including DESTRUCTURED ones) and WRITES alike — the enclosing
     // body needs the same treatment the per-case scan gets (Codex round-14 P2):
     // `const { Number } = …` and `args.loanId = 0n` sitting just above the switch
