@@ -569,38 +569,26 @@ contract EarlyWithdrawalFacet is
         // routed to treasury or Noah.
         // #641 — accrued/remaining split reads the interest clock (post-partial
         // origin + remaining term), not the immutable term tuple.
-        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
+        uint256 elapsed = block.timestamp - accrualStart;
         uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
-        uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        // #1503 item 28 — NET already-settled periodic interest out of the
-        // forfeiture. The clock above still spans periods the borrower has
-        // already paid the lender for (periodic auto-liquidation forwards
-        // interest via `loan.interestSettled` WITHOUT resetting the accrual
-        // clock), so charging the seller the raw figure bills them for interest
-        // they have already received. Every other settlement path — repay,
-        // preclose, swap-to-repay, default, fallback — routes its gross interest
-        // through this helper; the two sale routes were the only ones that did
-        // not.
+        // #1503 item 28 — the FORFEITURE clock is not the accrual clock. The
+        // seller forfeits accrued interest because the borrower has not paid it;
+        // on a periodic loan the borrower has paid part of it, since periodic
+        // auto-liquidation forwards interest to the lender WITHOUT moving the
+        // accrual clock. Charging from the accrual origin bills the seller for
+        // interest already in their hands.
         //
-        // The refusal above the netting, not below it: `creditSettledInterest`
-        // saturates at zero, so an EXCESS credit (an overdelivered periodic
-        // liquidation, or a partial repay that deliberately preserves surplus
-        // against future accrual) would leave the seller's forfeiture correctly
-        // nil while the leftover silently reduces what the incoming lender is
-        // owed. See {IVaipakamErrors.SaleBlockedByPrepaidInterest}.
-        // Only interest the seller ACTUALLY RECEIVED is theirs to be credited
-        // for (Codex #1801 r1 P1). `interestSettled` is credited whether the
-        // periodic payout reached the lender or was frozen into `heldForLender`,
-        // and a sale migrates that parked balance to the BUYER — so netting the
-        // raw figure would pay the seller for it a second time, out of treasury's
-        // share, for tokens they never held and do not keep.
-        uint256 realizedSettled = LibEntitlement.realizedSettledInterest(loanId);
-        if (realizedSettled > accrued) {
-            revert SaleBlockedByPrepaidInterest(loanId, realizedSettled - accrued);
-        }
-        accrued -= realizedSettled;
+        // Narrowing the WINDOW rather than subtracting an amount — see
+        // {LibEntitlement.forfeitureAccrualStart}. `elapsed` above is unchanged
+        // and still measures the loan's own progress, which is what
+        // `remainingSecs` needs; only the forfeiture figure uses the later start.
+        uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
+        uint256 forfeitSecs =
+            block.timestamp > forfeitFrom ? block.timestamp - forfeitFrom : 0;
+        uint256 accrued = (loan.principal * loan.interestRateBps * forfeitSecs) /
+            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
         uint256 originalRemainingInterest = (loan.principal *
             loan.interestRateBps *
             remainingSecs) /

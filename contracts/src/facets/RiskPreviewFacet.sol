@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -541,6 +542,54 @@ contract RiskPreviewFacet {
      * @return b The figure it is required to meet (0 when code 0, and 0 for
      *         code 6 for the same reason).
      */
+    /**
+     * @notice #1503 item 28 — the window a lender-position sale forfeits
+     *         interest over, and what that comes to right now.
+     *
+     * @dev    The client's seller quote (`sellerEconomics` in the alpha02
+     *         `loanLive` mirror) reproduces the facet's forfeiture algebra from
+     *         public loan data. Since #1801 that algebra depends on the lender's
+     *         paid-through mark, which lives in appended Diamond storage with no
+     *         field on the loan struct — so without this view the mirror cannot
+     *         be corrected from anything the client can read, and every seller
+     *         surface would keep quoting the raw accrual and overstate the cost
+     *         on a periodic loan (Codex #1801 r3 P2).
+     *
+     *         Both halves are returned deliberately. `forfeitFrom` lets a client
+     *         mirror the algebra itself, which the picker needs in order to
+     *         re-derive figures for hypothetical offers; `forfeitAccrued` is the
+     *         contract's own number for the CURRENT block, which a receipt should
+     *         show rather than recompute. They cannot disagree.
+     *
+     *         Reads nothing about a sale — it is a property of the position, so
+     *         it answers for any Active loan whether or not one is listed. On a
+     *         loan with no delivered periodic interest (including every loan
+     *         predating #1801) `forfeitFrom` is simply the accrual origin.
+     *
+     * @param loanId The loan whose lender position would be sold.
+     * @return forfeitFrom    Timestamp the forfeiture window opens at — the
+     *                        later of the interest-accrual origin and the point
+     *                        the current lender has been paid through.
+     * @return forfeitAccrued Interest accrued across that window as of this
+     *                        block, at the LOAN's own rate. This is the figure
+     *                        the seller absorbs, before the rate shortfall.
+     */
+    function sellerForfeitureWindow(uint256 loanId)
+        external
+        view
+        returns (uint256 forfeitFrom, uint256 forfeitAccrued)
+    {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        forfeitFrom = LibEntitlement.forfeitureAccrualStart(
+            loanId,
+            LibVaipakam.interestAccrualStartOf(loan)
+        );
+        uint256 secs =
+            block.timestamp > forfeitFrom ? block.timestamp - forfeitFrom : 0;
+        forfeitAccrued = (loan.principal * loan.interestRateBps * secs) /
+            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+    }
+
     function saleAdmission(uint256 loanId)
         external
         view

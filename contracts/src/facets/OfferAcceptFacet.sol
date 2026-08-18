@@ -1981,14 +1981,7 @@ contract OfferAcceptFacet is
         // Distinct from the floor code so a surface never tells a buyer their
         // health factor is short when it is not, and never quotes a figure for
         // a position that has none. APPENDED — prior values stay stable.
-        SaleAdmissionBlocked,
-        // #1503 item 28 — the linked loan carries MORE interest already
-        // delivered to the lender side than has accrued, so the atomic
-        // completion would revert `SaleBlockedByPrepaidInterest`. Classified
-        // here so the buyer's Accept is disabled rather than spending a
-        // transaction on a guaranteed revert (Codex #1801 r1 P2). APPENDED —
-        // prior values stay stable.
-        SaleBlockedByPrepaidInterest
+        SaleAdmissionBlocked
     }
 
     /// @notice Projection of the loan that would land if the supplied

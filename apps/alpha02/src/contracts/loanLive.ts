@@ -46,6 +46,14 @@ export interface LoanLive {
    *  gross accrual, so any cost mirror must subtract it or it
    *  overstates the pull (Codex #1500 r4). */
   interestSettled: bigint;
+  /** #1503 item 28 — the timestamp this lender has been PAID THROUGH,
+   *  from `RiskPreviewFacet.sellerForfeitureWindow(loanId)`. Carried on
+   *  the record rather than passed to `sellerEconomics`, so every seller
+   *  surface picks it up without threading and none can be left quoting
+   *  the raw accrual. Optional: absent (or 0n) means no delivered
+   *  periodic interest — including every loan predating #1801 — which
+   *  resolves to the accrual origin and the pre-change behaviour. */
+  lenderPaidThroughAt?: bigint;
   // Collateral identity — a refinance-tagged offer must repeat these
   // EXACTLY for the collateral to carry over instead of re-pledging.
   collateralAsset: `0x${string}`;
@@ -177,9 +185,9 @@ export function sellerEconomics(
   shortfallBinding: boolean;
   /** Components exposed so the sale-listing funding math (which
    *  bounds them differently) reuses THESE definitions and can never
-   *  drift from the facet by a rounding path. `accrued` uses RAW
-   *  elapsed — the facet never clamps it to the interest window, so
-   *  past window end it keeps growing. */
+   *  drift from the facet by a rounding path. `accrued` measures the
+   *  FORFEITURE window (#1503 item 28), which the facet never clamps
+   *  to the interest window, so past window end it keeps growing. */
   accrued: bigint;
   shortfall: bigint;
 } {
@@ -188,7 +196,13 @@ export function sellerEconomics(
   const totalSecs = interestRemainingDaysOf(live) * 86_400n;
   const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
   const denom = SECONDS_PER_YEAR * BASIS_POINTS;
-  const accrued = (live.principal * live.interestRateBps * elapsed) / denom;
+  // #1503 item 28 — the FORFEITURE clock is not the accrual clock. `elapsed`
+  // above still measures the loan's own progress, which `remainingSecs` needs;
+  // the forfeiture measures only the stretch the lender has NOT been paid for.
+  const paidThroughAt = live.lenderPaidThroughAt ?? 0n;
+  const forfeitFrom = paidThroughAt > start ? paidThroughAt : start;
+  const forfeitSecs = chainNow > forfeitFrom ? chainNow - forfeitFrom : 0n;
+  const accrued = (live.principal * live.interestRateBps * forfeitSecs) / denom;
   const originalRemaining =
     (live.principal * live.interestRateBps * remainingSecs) / denom;
   const newRemaining = (live.principal * buyRateBps * remainingSecs) / denom;
@@ -298,13 +312,26 @@ export async function readLoanLive(
   diamondAddress: `0x${string}`,
   loanId: number | bigint,
 ): Promise<LoanLive> {
-  const raw = (await publicClient.readContract({
-    address: diamondAddress,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'getLoanDetails',
-    args: [BigInt(loanId)],
-  })) as LoanLive;
+  // Two reads, one round trip. The paid-through mark lives in appended
+  // Diamond storage with no field on the loan struct, so `getLoanDetails`
+  // cannot carry it; without the second read every seller surface would keep
+  // quoting the raw accrual and overstate the cost on a periodic loan.
+  const [raw, window] = await Promise.all([
+    publicClient.readContract({
+      address: diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getLoanDetails',
+      args: [BigInt(loanId)],
+    }) as Promise<LoanLive>,
+    publicClient.readContract({
+      address: diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'sellerForfeitureWindow',
+      args: [BigInt(loanId)],
+    }) as Promise<readonly [bigint, bigint]>,
+  ]);
   return {
+    lenderPaidThroughAt: window[0],
     status: Number(raw.status),
     lender: raw.lender,
     borrower: raw.borrower,

@@ -237,7 +237,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
         selectors[n++] = TestMutatorFacet.setHeldForLenderRaw.selector;
         selectors[n++] = TestMutatorFacet.setSaleProceedsEscrowRaw.selector;
-        selectors[n++] = TestMutatorFacet.setInterestDeliveredRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLenderPaidThroughRaw.selector;
         // Layout-resilient claim writers used by ClaimFacetTest to
         // exercise the NothingToClaim revert + held-only paths
         // without slot math.
@@ -1073,7 +1073,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](9);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1084,6 +1084,8 @@ contract HelperTest {
         // #1503 PR-E — sale admission classification (live health floor +
         // inherited-risk-terms compatibility), read by LibSaleSolvency.
         selectors[7] = RiskPreviewFacet.saleAdmission.selector;
+        // #1503 item 28 — seller forfeiture window (see DeployDiamond).
+        selectors[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.

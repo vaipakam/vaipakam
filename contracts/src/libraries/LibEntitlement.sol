@@ -220,32 +220,47 @@ library LibEntitlement {
         return grossInterest > settled ? grossInterest - settled : 0;
     }
 
-    /// @notice The part of `loan.interestSettled` the lender actually RECEIVED —
-    ///         the full figure less anything frozen into `heldForLender`.
+    /// @notice When the seller's forfeitable interest starts accruing — the
+    ///         later of the loan's interest-accrual origin and the point through
+    ///         which this lender has already been PAID.
     /// @dev    #1503 item 28. Only the lender-position SALE routes want this.
     ///
-    ///         Every other settlement path correctly nets the full
-    ///         `interestSettled`: the borrower paid it, so their obligation
-    ///         reduces by it regardless of whether the lender's copy was
-    ///         delivered or parked, and a parked amount stays claimable by
-    ///         whoever holds the position.
+    ///         A sale forfeits the interest accrued during the seller's tenure,
+    ///         because the borrower has not paid it yet. On a periodic loan that
+    ///         premise is partly false: periodic auto-liquidation forwards
+    ///         interest to the lender WITHOUT moving the accrual clock, so the
+    ///         raw clock still spans periods already settled and the seller is
+    ///         charged for interest they received.
     ///
-    ///         A sale is different, because it MIGRATES `heldForLender` to the
-    ///         buyer. A parked amount is therefore one the exiting seller neither
-    ///         received nor keeps, and crediting it against their forfeiture
-    ///         would pay them for it a second time out of the treasury's share.
-    /// @param loanId The loan being sold. Both counters are keyed per loan
-    ///               rather than held on the struct, because they are appended
-    ///               storage.
-    /// @return realized Interest delivered to the CURRENT lender during their
-    ///                  own tenure.
-    function realizedSettledInterest(
-        uint256 loanId
-    ) internal view returns (uint256 realized) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 delivered = s.interestDeliveredCumulative[loanId];
-        uint256 baseline = s.lenderTenureDeliveredBaseline[loanId];
-        return delivered > baseline ? delivered - baseline : 0;
+    ///         Expressed as a start TIME, not as an amount to subtract. The
+    ///         forfeiture figure is scoped to the current accrual SEGMENT, and
+    ///         `repayPartial` / `swapToRepay` restart that segment; a lifetime
+    ///         amount would then be measuring a different window than the one it
+    ///         is deducted from (Codex #1801 r3 P1). Taking the later of the two
+    ///         marks composes with a reset by construction — a reset past the
+    ///         paid-through mark simply wins — and there is no over-subtraction
+    ///         to refuse, because the window cannot go negative.
+    ///
+    ///         Only the auto-liquidation path needs a mark at all. Every other
+    ///         way interest reaches the lender (`repayPartial`, `swapToRepay`)
+    ///         resets the accrual clock in the same transaction, so the clock
+    ///         itself is already the correct answer there.
+    /// @param loanId       The loan being sold. The mark is keyed per loan rather
+    ///                     than held on the struct, because it is appended
+    ///                     storage.
+    /// @param accrualStart The loan's live interest-accrual origin
+    ///                     ({LibVaipakam.interestAccrualStartOf}).
+    /// @return from The timestamp the seller's forfeiture window opens at. Equal
+    ///              to `accrualStart` on a loan with no delivered periodic
+    ///              interest — including every loan predating this upgrade,
+    ///              whose mark is zero.
+    function forfeitureAccrualStart(
+        uint256 loanId,
+        uint256 accrualStart
+    ) internal view returns (uint256 from) {
+        uint256 paidThrough =
+            LibVaipakam.storageSlot().lenderInterestDeliveredThroughAt[loanId];
+        return paidThrough > accrualStart ? paidThrough : accrualStart;
     }
 
     /// @notice Applies the treasury cut to an interest-like amount, using the

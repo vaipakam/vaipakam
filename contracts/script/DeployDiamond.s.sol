@@ -1669,9 +1669,9 @@ contract DeployDiamond is Script {
 
     /// @dev #1104 — the read-only preview cluster + the two cross-facet gate
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
-    ///      so both facets keep EIP-170 header room. All 7 are `view`.
+    ///      so both facets keep EIP-170 header room. All are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](9);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1682,6 +1682,10 @@ contract DeployDiamond is Script {
         // #1503 PR-E — sale admission classification (live health floor +
         // inherited-risk-terms compatibility), read by LibSaleSolvency.
         s[7] = RiskPreviewFacet.saleAdmission.selector;
+        // #1503 item 28 — the seller's forfeiture window + its value now, so the
+        // client quote can mirror a figure that depends on appended storage with
+        // no field on the loan struct.
+        s[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.

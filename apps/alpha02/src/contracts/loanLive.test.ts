@@ -11,6 +11,7 @@ import {
   loanEndTimeOf,
   refinanceApprovalOf,
   refinancePayoffOf,
+  sellerEconomics,
   type LoanLive,
 } from './loanLive';
 
@@ -115,5 +116,85 @@ describe('refinanceApprovalOf', () => {
     ).toBe(
       live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n,
     );
+  });
+});
+
+/**
+ * #1503 item 28 — the seller's forfeiture measures the stretch the lender has
+ * NOT been paid for. These pin the mirror against
+ * `EarlyWithdrawalDirectFacet` / `EarlyWithdrawalFacet`, whose forfeiture runs
+ * from the later of the interest-accrual origin and the paid-through mark.
+ */
+describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
+  /** A 30-day 10% loan on 1,000e18, accrual clock starting at t=1000. */
+  const saleLive = {
+    principal: 1_000n * 10n ** 18n,
+    interestRateBps: 1_000n,
+    startTime: 1_000n,
+    durationDays: 30n,
+    interestAccrualStart: 1_000n,
+    interestRemainingDays: 30,
+  } as LoanLive;
+
+  const now = 1_000n + 10n * DAY; // ten days in
+  /** Interest over `secs` at the loan's own rate, seconds-precision. */
+  const accrue = (secs: bigint) =>
+    (saleLive.principal * saleLive.interestRateBps * secs) /
+    (365n * DAY * 10_000n);
+
+  it('forfeits the whole elapsed stretch with no mark', () => {
+    // Same-rate buy offer, so there is no shortfall and the cost IS the accrual.
+    expect(sellerEconomics(saleLive, saleLive.interestRateBps, now).accrued).toBe(
+      accrue(10n * DAY),
+    );
+  });
+
+  it('forfeits only the unpaid stretch once a mark is set', () => {
+    const paid = { ...saleLive, lenderPaidThroughAt: now - 6n * DAY };
+    expect(sellerEconomics(paid, paid.interestRateBps, now).accrued).toBe(
+      accrue(6n * DAY),
+    );
+  });
+
+  it('forfeits nothing when the lender is paid through now', () => {
+    const paid = { ...saleLive, lenderPaidThroughAt: now };
+    const econ = sellerEconomics(paid, paid.interestRateBps, now);
+    expect(econ.accrued).toBe(0n);
+    // A window model cannot over-subtract, so this is a completable sale that
+    // returns the whole principal — not a blocked one.
+    expect(econ.toSeller).toBe(paid.principal);
+  });
+
+  it('lets a later accrual-clock reset win over an older mark', () => {
+    // What a partial repayment leaves behind: the clock restarts AFTER the mark.
+    const reset = {
+      ...saleLive,
+      lenderPaidThroughAt: now - 6n * DAY,
+      interestAccrualStart: now - 4n * DAY,
+    };
+    expect(sellerEconomics(reset, reset.interestRateBps, now).accrued).toBe(
+      accrue(4n * DAY),
+    );
+  });
+
+  it('ignores a mark that predates the accrual origin', () => {
+    const stale = { ...saleLive, lenderPaidThroughAt: 500n };
+    expect(sellerEconomics(stale, stale.interestRateBps, now).accrued).toBe(
+      accrue(10n * DAY),
+    );
+  });
+
+  it('measures the loan term from the accrual clock, not the window', () => {
+    // The remaining-term half must NOT move with the mark — it measures the
+    // loan's own progress, which the mark says nothing about. A rate ABOVE the
+    // loan's makes the shortfall the binding cost, exposing that half.
+    const bare = sellerEconomics(saleLive, 2_000n, now);
+    const paid = sellerEconomics(
+      { ...saleLive, lenderPaidThroughAt: now - 6n * DAY },
+      2_000n,
+      now,
+    );
+    expect(paid.shortfall).toBe(bare.shortfall);
+    expect(paid.shortfallBinding).toBe(true);
   });
 });

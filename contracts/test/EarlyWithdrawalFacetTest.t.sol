@@ -606,8 +606,9 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev DIRECT route. The buy offer carries the loan's own rate, so there is
     ///      no shortfall and the seller's whole cost is the forfeited accrual —
-    ///      which makes the payout move one-for-one with the credit.
-    function test_sellLoanViaBuyOffer_netsSettledInterestOutOfForfeiture() public {
+    ///      which makes the payout move one-for-one with the interest the
+    ///      forfeiture window no longer covers.
+    function test_sellLoanViaBuyOffer_forfeitsOnlyTheUnpaidStretch() public {
         _relaxBuyOfferForWarp(20); // 30-day loan, 10 days in
         vm.warp(block.timestamp + 10 days); // let interest accrue (~1.37e18)
         uint256 snap = vm.snapshotState();
@@ -616,67 +617,105 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
-        uint256 paidWithoutCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        uint256 paidForTenDays = ERC20(mockERC20).balanceOf(lender) - openingBalance;
 
         vm.revertToState(snap);
 
-        uint256 credit = 1 ether; // < accrued, so the netting saturates nowhere
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, credit, 0);
+        // Paid through four days ago: six of the ten elapsed days remain
+        // forfeitable, so the seller keeps four days' worth.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
         _mockSaleSideEffects();
         openingBalance = ERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
-        uint256 paidWithCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        uint256 paidForSixDays = ERC20(mockERC20).balanceOf(lender) - openingBalance;
         vm.clearMockedCalls();
 
-        assertGt(paidWithoutCredit, 0, "control run must actually pay the seller");
+        assertGt(paidForTenDays, 0, "control run must actually pay the seller");
+        // Four days of the ten-day forfeiture returned to the seller. Stated as a
+        // ratio of the CONTROL RUN'S FORFEITURE — which the payout reveals, since
+        // a same-rate buy offer leaves the forfeiture as the seller's only cost —
+        // rather than by restating the interest formula, which would check the
+        // implementation against itself.
+        uint256 forfeitedOverTenDays =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal
+                - paidForTenDays;
         assertEq(
-            paidWithCredit - paidWithoutCredit,
-            credit,
-            "seller keeps exactly the interest the borrower had already settled"
+            paidForSixDays - paidForTenDays,
+            (forfeitedOverTenDays * 4) / 10,
+            "seller keeps exactly the four days they were already paid for"
         );
     }
 
-    /// @dev DIRECT route, EXCESS credit. `creditSettledInterest` saturates at
-    ///      zero, so netting alone would leave the forfeiture correctly nil while
-    ///      the leftover silently reduced what the incoming lender is owed. The
-    ///      sale refuses instead, and names the residual it refused over.
-    ///      No time is warped, so the accrual is zero and the reported residual
-    ///      is exactly the seeded credit — an exact assertion that does not
-    ///      restate the accrual formula. The warped case below then shows the
-    ///      guard still fires once interest has accrued.
-    function test_sellLoanViaBuyOffer_revertsWhilePrepaidCreditRemains() public {
-        _mockSaleSideEffects();
-
-        uint256 credit = 500 ether;
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, credit, 0);
-
-        vm.prank(lender);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.SaleBlockedByPrepaidInterest.selector,
-                activeLoanId,
-                credit // accrued == 0, so the residual is the whole credit
-            )
-        );
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev DIRECT route, excess credit against a NON-zero accrual. Only the
-    ///      selector is pinned here; the residual's exact value is covered by the
-    ///      zero-accrual case above, and recomputing it here would duplicate the
-    ///      implementation rather than check it.
-    function test_sellLoanViaBuyOffer_revertsOnExcessCreditAfterAccrual() public {
+    /// @dev DIRECT route, mark at or beyond now. A window model cannot
+    ///      over-subtract, so a lender paid through the present forfeits nothing
+    ///      and the sale COMPLETES. The amount-based predecessor had to refuse
+    ///      here, because subtracting a lifetime figure from a segment-scoped one
+    ///      could leave a residual with nowhere to go (Codex #1801 r3 P1); there
+    ///      is no residual to strand once the quantity is a clamped window.
+    function test_sellLoanViaBuyOffer_paidThroughNowForfeitsNothing() public {
         _relaxBuyOfferForWarp(20);
         vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        // Reference: a sale with the forfeiture window fully closed by the
+        // accrual clock itself, i.e. nothing accrued yet.
+        vm.revertToState(snap);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp
+        );
         _mockSaleSideEffects();
-
-        // Far above anything 10 days at 5% on 1000 could accrue.
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, 500 ether, 0);
-
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
-        vm.expectPartialRevert(IVaipakamErrors.SaleBlockedByPrepaidInterest.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWhenPaidThrough = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        // Full principal back: the buy offer carries the loan's own rate, so with
+        // no forfeiture there is no cost of any kind to net out.
+        assertEq(
+            paidWhenPaidThrough,
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal,
+            "a lender paid through now forfeits nothing and keeps the principal"
+        );
+    }
+
+    /// @dev The mark survives an ACCRUAL-CLOCK RESET (Codex #1801 r3 P1).
+    ///      `repayPartial` and `swapToRepay` restart the accrual segment at the
+    ///      moment they pay the lender. A lifetime amount would then be deducted
+    ///      from a window it was never measured over — reverting immediately
+    ///      after the reset, then double-crediting once the same amount accrued
+    ///      again. The window takes whichever start is LATER, so a reset past the
+    ///      mark simply wins and nothing historical carries into the new segment.
+    function test_sellLoanViaBuyOffer_accrualClockResetWinsOverAnOlderMark()
+        public
+    {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+
+        // Paid through six days ago; then a partial repayment restarts the
+        // accrual clock four days ago — AFTER the mark.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        LibVaipakam.Loan memory l =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        l.interestAccrualStart = uint64(block.timestamp - 4 days);
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l);
+
+        (uint256 forfeitFrom, ) = RiskPreviewFacet(address(diamond))
+            .sellerForfeitureWindow(activeLoanId);
+        assertEq(
+            forfeitFrom,
+            block.timestamp - 4 days,
+            "the newer accrual origin wins over the older paid-through mark"
+        );
+
+        // And the sale completes rather than reverting on a stale residual.
+        _mockSaleSideEffects();
+        vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         vm.clearMockedCalls();
     }
@@ -685,9 +724,8 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      r1 P1). `interestSettled` is credited whether the periodic payout
     ///      reached the lender or was parked into `heldForLender` behind the
     ///      sanctions freeze — and a sale migrates that parked balance to the
-    ///      BUYER. So a credit that is entirely frozen must move the seller's
-    ///      payout by nothing at all: they never held those tokens and do not
-    ///      keep them.
+    ///      BUYER. The freeze branch never advances the mark, so a wholly frozen
+    ///      payout must move the seller's proceeds by nothing at all.
     function test_sellLoanViaBuyOffer_ignoresFrozenSettledInterest() public {
         _relaxBuyOfferForWarp(20);
         vm.warp(block.timestamp + 10 days);
@@ -701,9 +739,8 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.revertToState(snap);
 
-        // The borrower's accumulator says a full ether was settled, but NONE of
-        // it was delivered — the payout froze into `heldForLender`, which this
-        // sale hands to the buyer. The seller's payout must not move.
+        // The borrower's accumulator says a full ether was settled, but the
+        // payout froze into `heldForLender` and the mark never moved.
         _seedSettledInterest(activeLoanId, 1 ether);
         _mockSaleSideEffects();
         openingBalance = ERC20(mockERC20).balanceOf(lender);
@@ -716,89 +753,24 @@ contract EarlyWithdrawalFacetTest is Test {
         assertEq(
             paidWithFrozenCredit,
             paidWithNoCredit,
-            "a wholly frozen credit must not move the seller's payout"
+            "a wholly frozen payout must not move the seller's proceeds"
         );
     }
 
-    /// @dev And the split case: half delivered, half frozen. Only the delivered
-    ///      half may reach the seller's forfeiture.
-    function test_sellLoanViaBuyOffer_creditsOnlyTheDeliveredHalf() public {
-        _relaxBuyOfferForWarp(20);
-        vm.warp(block.timestamp + 10 days);
-        uint256 snap = vm.snapshotState();
-
-        _mockSaleSideEffects();
-        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
-        vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
-        uint256 paidWithNoCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
-
-        vm.revertToState(snap);
-
-        uint256 delivered = 0.4 ether;
-        uint256 frozen = 0.6 ether;
-        _seedSettledInterest(activeLoanId, delivered + frozen);
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, delivered, 0);
-        _mockSaleSideEffects();
-        openingBalance = ERC20(mockERC20).balanceOf(lender);
-        vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
-        uint256 paidWithSplitCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
-        vm.clearMockedCalls();
-
-        assertEq(
-            paidWithSplitCredit - paidWithNoCredit,
-            delivered,
-            "only the delivered half of the settled credit reaches the seller"
-        );
-    }
-
-    /// @dev RESALE (Codex #1801 r2 P1). Interest delivered to a PREVIOUS lender
-    ///      is not this seller's to be credited for. The delivered total is
-    ///      loan-wide, so without a per-tenure baseline lender A's receipts would
-    ///      be deducted again from B's forfeiture on every resale — B's payout
-    ///      up, treasury's share down, once per hop.
-    function test_sellLoanViaBuyOffer_ignoresAPreviousLendersInterest() public {
-        _relaxBuyOfferForWarp(20);
-        vm.warp(block.timestamp + 10 days);
-        uint256 snap = vm.snapshotState();
-
-        _mockSaleSideEffects();
-        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
-        vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
-        uint256 paidWithNoCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
-
-        vm.revertToState(snap);
-
-        // A full ether was delivered on this loan — all of it before the current
-        // lender's tenure began, so the baseline sits at the same figure.
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, 1 ether, 1 ether);
-        _mockSaleSideEffects();
-        openingBalance = ERC20(mockERC20).balanceOf(lender);
-        vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
-        uint256 paidAsSecondLender = ERC20(mockERC20).balanceOf(lender) - openingBalance;
-        vm.clearMockedCalls();
-
-        assertEq(
-            paidAsSecondLender,
-            paidWithNoCredit,
-            "a previous lender's receipts must not move this seller's payout"
-        );
-    }
-
-    /// @dev The credit does NOT ride on `interestSettled` (Codex #1801 r2 P1).
+    /// @dev The window does NOT ride on `interestSettled` (Codex #1801 r2 P1).
     ///      That accumulator is a credit against the BORROWER's obligation:
-    ///      `repayPartial` consumes it and resets the accrual clock, which is
-    ///      correct for the borrower and would silently corrupt any seller-side
-    ///      figure derived from it. Moving it alone must change nothing here.
-    function test_sellLoanViaBuyOffer_creditIsIndependentOfInterestSettled() public {
+    ///      `repayPartial` consumes it, which is correct for the borrower and
+    ///      would silently corrupt any seller-side figure derived from it.
+    ///      Moving it alone must change nothing here.
+    function test_sellLoanViaBuyOffer_windowIsIndependentOfInterestSettled()
+        public
+    {
         _relaxBuyOfferForWarp(20);
         vm.warp(block.timestamp + 10 days);
+        uint256 mark = block.timestamp - 6 days;
         uint256 snap = vm.snapshotState();
 
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, 0.4 ether, 0);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, mark);
         _mockSaleSideEffects();
         uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
@@ -807,9 +779,9 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.revertToState(snap);
 
-        // Same delivered figure; the borrower-side accumulator swung to zero, as
-        // a partial repayment would leave it.
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, 0.4 ether, 0);
+        // Same mark; the borrower-side accumulator swung to zero, as a partial
+        // repayment would leave it.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, mark);
         _seedSettledInterest(activeLoanId, 0);
         _mockSaleSideEffects();
         openingBalance = ERC20(mockERC20).balanceOf(lender);
@@ -818,77 +790,156 @@ contract EarlyWithdrawalFacetTest is Test {
         uint256 paidAfter = ERC20(mockERC20).balanceOf(lender) - openingBalance;
         vm.clearMockedCalls();
 
-        assertEq(paidAfter, paidBefore, "the seller credit does not track interestSettled");
+        assertEq(paidAfter, paidBefore, "the forfeiture window does not track interestSettled");
+    }
+
+    /// @dev RESALE (Codex #1801 r2 P1). A sale re-stamps the mark to the moment
+    ///      the position changes hands, so the incoming lender inherits none of
+    ///      the seller's paid-through stretch. Without it, lender A's receipts
+    ///      would shorten B's forfeiture on every resale — B's payout up,
+    ///      treasury's share down, once per hop.
+    function test_sellLoanViaBuyOffer_restampsTheMarkForTheIncomingLender()
+        public
+    {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.clearMockedCalls();
+
+        (uint256 forfeitFrom, uint256 forfeitAccrued) = RiskPreviewFacet(
+            address(diamond)
+        ).sellerForfeitureWindow(activeLoanId);
+        assertEq(
+            forfeitFrom,
+            block.timestamp,
+            "the buyer's forfeiture window opens at the sale, not at the seller's mark"
+        );
+        assertEq(forfeitAccrued, 0, "and carries nothing from the seller's tenure");
+    }
+
+    /// @dev A plain position TRANSFER must NOT move the mark (Codex #1801 r3 P1,
+    ///      REFUTED in that direction). Nothing is settled by a transfer, so the
+    ///      outstanding forfeiture travels with the position exactly as the
+    ///      unpaid interest it represents does. Stamping at the transfer instead
+    ///      would let any lender zero their own forfeiture by sending the
+    ///      position to a second wallet — or to themselves — and selling from
+    ///      there, which is a larger hole than the one item 28 closes.
+    function test_directLenderNftTransfer_doesNotMoveThePaidThroughMark() public {
+        vm.warp(block.timestamp + 10 days);
+        uint256 mark = block.timestamp - 6 days;
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, mark);
+
+        uint256 lenderTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
+        vm.prank(lender);
+        VaipakamNFTFacet(address(diamond)).transferFrom(lender, borrower, lenderTokenId);
+
+        (uint256 forfeitFrom, ) = RiskPreviewFacet(address(diamond))
+            .sellerForfeitureWindow(activeLoanId);
+        assertEq(
+            forfeitFrom,
+            mark,
+            "a transfer settles nothing, so the outstanding window is unchanged"
+        );
+    }
+
+    /// @dev The public view is what the client quote mirrors (Codex #1801 r3
+    ///      P2), so it must report the figure the sale actually charges — not an
+    ///      independently plausible one. Checked by differential: the view's
+    ///      accrual is exactly what the seller loses off the principal.
+    function test_sellerForfeitureWindow_matchesWhatTheSaleCharges() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+
+        (uint256 forfeitFrom, uint256 forfeitAccrued) = RiskPreviewFacet(
+            address(diamond)
+        ).sellerForfeitureWindow(activeLoanId);
+        assertEq(forfeitFrom, block.timestamp - 6 days, "window opens at the mark");
+
+        uint256 principal =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal;
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paid = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(forfeitAccrued, 0, "the seeded window must actually cost something");
+        assertEq(
+            principal - paid,
+            forfeitAccrued,
+            "the view reports exactly what the sale deducts"
+        );
     }
 
     /// @dev LISTED route. Same claim on the completion path, driven through the
     ///      escrowed-proceeds fan-out — which needed a seeded escrow to reach at
     ///      all, since the scaffolded completions here never run a real accept.
-    function test_completeLoanSale_netsSettledInterestOutOfForfeiture() public {
+    function test_completeLoanSale_forfeitsOnlyTheUnpaidStretch() public {
         _stageAcceptedSaleListing();
-        vm.warp(block.timestamp + 5 days);
+        vm.warp(block.timestamp + 10 days);
         uint256 snap = vm.snapshotState();
 
         _mockSaleSideEffects();
         uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
-        uint256 paidWithoutCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        uint256 paidForTenDays = ERC20(mockERC20).balanceOf(lender) - openingBalance;
 
         vm.revertToState(snap);
 
-        // Below five days' accrual (~6.85e17), so the netting saturates nowhere.
-        uint256 credit = 0.1 ether;
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, credit, 0);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
         _mockSaleSideEffects();
         openingBalance = ERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
-        uint256 paidWithCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        uint256 paidForSixDays = ERC20(mockERC20).balanceOf(lender) - openingBalance;
         vm.clearMockedCalls();
 
-        assertGt(paidWithoutCredit, 0, "control run must actually pay the seller");
+        assertGt(paidForTenDays, 0, "control run must actually pay the seller");
+        uint256 forfeitedOverTenDays =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal
+                - paidForTenDays;
         assertEq(
-            paidWithCredit - paidWithoutCredit,
-            credit,
-            "seller keeps exactly the interest the borrower had already settled"
+            paidForSixDays - paidForTenDays,
+            (forfeitedOverTenDays * 4) / 10,
+            "the listed route prices the same window as the direct one"
         );
     }
 
-    /// @dev LISTED route, EXCESS credit — the refusal sits above the netting on
-    ///      this route too, so the two exits cannot diverge.
-    function test_completeLoanSale_revertsWhilePrepaidCreditRemains() public {
+    /// @dev LISTED route, mark at now — completes rather than refusing, for the
+    ///      same reason the direct route does. The two exits cannot diverge.
+    function test_completeLoanSale_paidThroughNowForfeitsNothing() public {
         _stageAcceptedSaleListing();
-        _mockSaleSideEffects();
-
-        uint256 credit = 500 ether;
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, credit, 0);
-
-        vm.prank(lender);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.SaleBlockedByPrepaidInterest.selector,
-                activeLoanId,
-                credit // accrued == 0, so the residual is the whole credit
-            )
+        vm.warp(block.timestamp + 10 days);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp
         );
-        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
-        vm.clearMockedCalls();
-    }
 
-    /// @dev LISTED route, excess credit against a NON-zero accrual — the warped
-    ///      twin of the case above, selector-only for the same reason.
-    function test_completeLoanSale_revertsOnExcessCreditAfterAccrual() public {
-        _stageAcceptedSaleListing();
-        vm.warp(block.timestamp + 5 days);
         _mockSaleSideEffects();
-
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, 500 ether, 0);
-
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
-        vm.expectPartialRevert(IVaipakamErrors.SaleBlockedByPrepaidInterest.selector);
         EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        uint256 paid = ERC20(mockERC20).balanceOf(lender) - openingBalance;
         vm.clearMockedCalls();
+
+        assertEq(
+            paid,
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal,
+            "a lender paid through now forfeits nothing on the listed route either"
+        );
     }
 
     /// @dev Post a listing, mark its vehicle offer accepted at the loan's own
@@ -3944,37 +3995,6 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
-    /// @dev #1503 item 28 (Codex #1801 r1 P2) — preview parity for the new
-    ///      completion refusal. Accepting a linked sale vehicle calls
-    ///      `completeLoanSaleInternal` atomically, so a loan whose DELIVERED
-    ///      settled interest already exceeds its accrual makes that accept a
-    ///      guaranteed revert. Without the appended classifier the preview
-    ///      returns `None` and a buyer-facing client leaves Accept enabled.
-    function test_previewAccept_saleVehicle_flagsPrepaidInterest() public {
-        uint256 saleOfferId = _listSaleOffer();
-        // No warp, so nothing has accrued and any DELIVERED credit is a residual.
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, 1 ether, 0);
-
-        OfferAcceptFacet.AcceptPreview memory p =
-            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
-        assertEq(
-            uint8(p.errorCode),
-            uint8(OfferAcceptFacet.AcceptError.SaleBlockedByPrepaidInterest),
-            "preview mirrors the completion's prepaid-interest refusal"
-        );
-
-        // And the classifier reads DELIVERED interest, not the raw accumulator
-        // (the r1 P1 carve-out): a credit that is entirely frozen never reached
-        // the seller, so it is no residual and must not block the sale.
-        TestMutatorFacet(address(diamond)).setInterestDeliveredRaw(activeLoanId, 0, 0);
-        OfferAcceptFacet.AcceptPreview memory pf =
-            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
-        assertEq(
-            uint8(pf.errorCode),
-            uint8(OfferAcceptFacet.AcceptError.None),
-            "a wholly frozen credit is not a residual and must not block"
-        );
-    }
 
     /// @dev Codex #1505 r2 P2 — the teardown must emit the CANONICAL
     ///      `OfferCanceled` (same topic0 as cancelOffer's) alongside the

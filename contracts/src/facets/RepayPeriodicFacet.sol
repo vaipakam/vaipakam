@@ -704,7 +704,25 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                     EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
                     loanId,
                     loan.principalAsset,
-                    lenderProceeds
+                    lenderProceeds,
+                    // #1503 item 28 — the lender is paid through the boundary of
+                    // the period being settled here. Passed BEFORE
+                    // `advanceCheckpoint` below moves the checkpoint onto the
+                    // next period, so this is the boundary just satisfied and
+                    // not the one still owed.
+                    //
+                    // The mark moves in LOCKSTEP with the checkpoint, including
+                    // the slippage case where `lenderProceeds < shortfall`: the
+                    // checkpoint advances there regardless (see below), and a
+                    // mark that lagged it would forfeit the whole period to the
+                    // seller a second time on a later sale — a far larger error
+                    // than the shortfall it would be compensating for, which
+                    // `PeriodicSlippageOverBuffer` already surfaces for
+                    // reconciliation. When the lender receives NOTHING the helper
+                    // returns on its zero-amount guard and the mark does not move
+                    // at all, which is right: they were paid nothing for that
+                    // period and forfeit it in full.
+                    boundary
                 ),
                 bytes4(0)
             );

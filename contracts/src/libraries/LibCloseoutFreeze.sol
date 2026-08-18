@@ -237,7 +237,8 @@ library LibCloseoutFreeze {
         uint256 loanId,
         LibVaipakam.Loan storage loan,
         address asset,
-        uint256 amount
+        uint256 amount,
+        uint256 deliveredThroughAt
     ) internal {
         if (amount == 0) return;
         // Resolve the CURRENT lender-position holder here (the loan is Active, so
@@ -247,15 +248,18 @@ library LibCloseoutFreeze {
         address lenderRecipient = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (!LibSanctionedLock.mustFreezeParty(s, lenderRecipient)) {
             IERC20(asset).safeTransfer(lenderRecipient, amount);
-            // #1503 item 28 — DELIVERED. This helper's one caller
-            // (`RepayPeriodicFacet`) passes exactly the interest it is about to
-            // credit to `loan.interestSettled`, and credits it either way; only
-            // this branch actually hands it to the lender. A sale later credits
-            // the seller for their share of THIS total, never for the frozen
-            // branch below — that balance migrates to the buyer with
-            // `heldForLender`, so crediting it would pay the seller twice for
-            // tokens they never held.
-            s.interestDeliveredCumulative[loanId] += amount;
+            // #1503 item 28 — the lender is now PAID THROUGH the boundary of the
+            // period this payout settles, so a later sale must not forfeit that
+            // stretch a second time. Advanced on THIS branch only: the freeze
+            // branch below parks the tokens in `heldForLender`, which migrates to
+            // the BUYER on a sale, so treating a frozen payout as delivered would
+            // pay the seller for tokens they never held and do not keep.
+            //
+            // Monotone: a caller settling an older boundary after a newer one can
+            // never walk the mark backwards and re-open a window already paid.
+            if (deliveredThroughAt > s.lenderInterestDeliveredThroughAt[loanId]) {
+                s.lenderInterestDeliveredThroughAt[loanId] = deliveredThroughAt;
+            }
             return;
         }
         LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);

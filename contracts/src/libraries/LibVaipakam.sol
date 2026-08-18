@@ -6643,35 +6643,59 @@ library LibVaipakam {
         //   discarded portion would read as still-in-transit forever,
         //   restoring the exact phantom allowance this counter removes.
         uint256 recycleReleasedRemitResolvedCumulative;
-        /// @dev #1503 item 28 — interest actually DELIVERED to the lender side
-        ///      over the loan's whole life, and the point in that total at which
-        ///      the current lender's tenure began.
+        /// @dev #1503 item 28 — the point in time through which the CURRENT
+        ///      lender-position holder has actually been PAID their interest.
         ///
         ///      APPENDED AT THE STRUCT TAIL — never insert mid-struct.
         ///
-        ///      A lender-position SALE needs one number: how much interest did
-        ///      THIS seller receive? `loan.interestSettled` cannot answer it, for
-        ///      three separate reasons — it counts interest that was FROZEN into
-        ///      `heldForLender` rather than paid; it is loan-wide, so it still
-        ///      counts what a PREVIOUS lender received; and `repayPartial`
-        ///      consumes and re-baselines it, because it is a credit against the
-        ///      BORROWER's obligation, which is a different quantity that
-        ///      legitimately shrinks.
+        ///      A lender-position sale forfeits the interest that accrued during
+        ///      the seller's tenure, because the borrower has not paid it yet. On
+        ///      a periodic loan the borrower HAS paid part of it: periodic
+        ///      auto-liquidation forwards interest to the lender without moving
+        ///      the accrual clock, so the raw clock still spans periods already
+        ///      settled and the seller is billed for interest they received.
         ///
-        ///      So the sale path reads these instead. `interestDeliveredCumulative`
-        ///      rises only where interest genuinely reaches the lender — never on
-        ///      the frozen branch — and is never consumed, so nothing the borrower
-        ///      side does can perturb it. `lenderTenureDeliveredBaseline` is
-        ///      stamped whenever the position changes hands, so a seller is
-        ///      credited for their own tenure and no one else's.
+        ///      This is stored as a TIMESTAMP, not an amount. An amount cannot be
+        ///      compared with the forfeiture figure at all: that figure is scoped
+        ///      to the current accrual SEGMENT, and `repayPartial` (among six
+        ///      other paths) restarts the segment, after which a lifetime amount
+        ///      is measuring a different window than the one it would be
+        ///      subtracted from — under-charging on one side of the reset and
+        ///      double-crediting on the other (Codex #1801 r3 P1). A timestamp
+        ///      composes with a clock reset by construction: the forfeiture
+        ///      window starts at whichever is LATER, the accrual origin or this
+        ///      mark, so a reset that moves past it simply wins the `max` and
+        ///      nothing historical carries over. There is likewise no "excess
+        ///      credit" case to refuse, because a clamped window cannot
+        ///      over-subtract.
         ///
-        ///      Both are zero for a loan that predates this upgrade, which yields
-        ///      a zero credit — the seller forfeits the full raw accrual, exactly
-        ///      as they did before this change. Grandfathered loans keep the old
-        ///      behaviour rather than acquiring a wrong new one, and no
-        ///      backfill of unreconstructable history is needed.
-        mapping(uint256 => uint256) interestDeliveredCumulative;
-        mapping(uint256 => uint256) lenderTenureDeliveredBaseline;
+        ///      It advances in exactly two places, and the difference between
+        ///      them is worth stating because it is not obvious.
+        ///
+        ///      One: a periodic payout that genuinely REACHES the lender — never
+        ///      the freeze branch, whose tokens are parked in `heldForLender` and
+        ///      migrate to the BUYER on a sale.
+        ///
+        ///      Two: a SALE. The forfeiture settles the outstanding accrual (to
+        ///      treasury, or into the buyer's rate shortfall), so the position
+        ///      the buyer receives is clean and their own window opens at the
+        ///      sale. Without this the same stretch would be forfeited again on
+        ///      every resale.
+        ///
+        ///      A plain position TRANSFER does NOT advance it, and must not.
+        ///      Nothing is settled by a transfer, so the outstanding forfeiture
+        ///      travels with the position — exactly as the unpaid interest it
+        ///      represents does. Stamping there instead would let any lender
+        ///      zero their own forfeiture by transferring the position to
+        ///      themselves and selling from the other side, which is a larger
+        ///      hole than the one this whole mechanism closes.
+        ///
+        ///      Zero for a loan predating this upgrade, which makes the `max`
+        ///      pick the accrual origin — precisely the behaviour those loans
+        ///      already had. Grandfathered loans keep it rather than acquiring a
+        ///      wrong new one, and no backfill of unreconstructable history is
+        ///      needed.
+        mapping(uint256 => uint256) lenderInterestDeliveredThroughAt;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

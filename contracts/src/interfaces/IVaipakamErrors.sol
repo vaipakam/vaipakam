@@ -986,23 +986,4 @@ interface IVaipakamErrors {
     ///         forward link and strand the reverse link, splitting accept/cancel
     ///         authority across two offers.
     error SaleOfferAlreadyExists();
-    /// @notice #1503 item 28 — the loan carries MORE already-settled periodic
-    ///         interest than has accrued since, i.e. a residual prepaid credit.
-    /// @dev    Netting `interestSettled` out of the sale forfeiture (which this
-    ///         change also does) saturates at zero, so a residual is invisible to
-    ///         the seller's side: their forfeiture is correctly nil, and the
-    ///         leftover credit silently transfers to the buyer, reducing the
-    ///         interest the borrower will owe them at final settlement. A zero
-    ///         forfeiture and a clean slate are different claims, and only the
-    ///         first is what netting establishes.
-    ///
-    ///         Both sale routes therefore REFUSE while a residual exists, rather
-    ///         than pricing a position whose remaining yield is already partly
-    ///         consumed. The richer alternative — carrying the excess into the
-    ///         buyer's compensation — belongs with the position-sale bid
-    ///         instrument, where the buyer's side of the price is modelled;
-    ///         refusing is the conservative half that can ship on its own.
-    /// @param loanId          The loan whose sale was refused.
-    /// @param residualCredit  `interestSettled` minus the interest accrued since.
-    error SaleBlockedByPrepaidInterest(uint256 loanId, uint256 residualCredit);
 }

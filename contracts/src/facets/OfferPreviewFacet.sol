@@ -6,7 +6,6 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
-import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -307,37 +306,6 @@ contract OfferPreviewFacet {
             if (acceptor == LibERC721.ownerOf(_saleLoan.borrowerTokenId)) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleSelfBuy;
                 return preview;
-            }
-
-            // #1503 item 28 — mirror the completion's prepaid-interest refusal,
-            // LAST of every sale guard (Codex #1801 r3 P2). Accepting a linked
-            // vehicle calls `completeLoanSaleInternal` atomically, so a loan whose
-            // DELIVERED settled interest already exceeds its accrual makes that
-            // accept a guaranteed revert — but the completion is the final thing
-            // `_acceptOffer` does. Sanctions, pause, country, consent, KYC,
-            // self-buy and solvency all revert before it, so any of them outranks
-            // this one and reporting it early hands the buyer the wrong
-            // remediation.
-            //
-            // This took three attempts, which is the useful part. Round 1 put it
-            // FIRST, arguing first-failure parity; round 2 moved it below solvency
-            // only. The rule that holds is not "above" or "below" some particular
-            // guard but "last, because what it mirrors runs last" — and ordering
-            // claims here are worth checking against `_acceptOffer` rather than
-            // reasoned about locally.
-            {
-                uint256 _elapsed = block.timestamp -
-                    LibVaipakam.interestAccrualStartOf(_saleLoan);
-                uint256 _accrued = (_saleLoan.principal *
-                    _saleLoan.interestRateBps *
-                    _elapsed) /
-                    (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-                if (LibEntitlement.realizedSettledInterest(_saleLoanId) > _accrued) {
-                    preview.errorCode = OfferAcceptFacet
-                        .AcceptError
-                        .SaleBlockedByPrepaidInterest;
-                    return preview;
-                }
             }
         }
 

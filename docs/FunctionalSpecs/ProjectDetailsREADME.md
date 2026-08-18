@@ -1857,17 +1857,44 @@ This option allows Liam to recover principal early by selling his lender positio
 
 - Any interest accrued up to the time of sale is forfeited by Liam and routed to treasury, subject to the platform’s sale rules.
 - This avoids complex retroactive splitting of interest across multiple lenders.
+- **Only interest Liam has not already been paid is forfeitable.** On a loan with
+  periodic interest servicing, Alice pays interest to the lender during the term,
+  and those payments do not stop the accrual measure from advancing. What Liam
+  forfeits is therefore the interest accrued over the stretch he has **not** been
+  paid for — measured from the later of the loan's accrual origin and the point
+  he was last paid through — never the raw accrual, which would bill him a second
+  time for interest already in his hands on a route where he is exiting rather
+  than being made whole.
+- **The measure is a period of time, not a running total.** The forfeiture belongs
+  to the loan's current accrual stretch, and ordinary events — a partial
+  repayment, a swap-to-repay — restart that stretch. A lifetime total of interest
+  paid would not be comparable with it: right after a restart the total describes
+  a period the forfeiture no longer covers, and once the same interest accrued
+  again it would be deducted twice. Taking the later of two points in time stays
+  correct across a restart, and it also means a fully paid-up lender simply
+  forfeits nothing and completes the sale, rather than being blocked by a
+  leftover the platform has nowhere to put.
 - **Only interest Liam has actually RECEIVED counts as already paid.** Interest
   the platform recorded as settled to the lender side is not always interest the
   lender got: when a periodic payment is made to a lender whose wallet is
   sanctions-flagged, the money is held rather than delivered, while the record
   still shows it as settled — correctly, because the borrower paid it and their
   obligation must reduce by it either way. But a sale hands that held balance to
-  the buyer, so it is money the seller never received and does not keep. Only
-  the delivered part may reduce what the seller forfeits; crediting the held
-  part as well would pay them for it a second time, out of the platform's share.
-- **Only interest Liam has not already been paid is forfeitable.** On a loan with periodic interest servicing, Alice pays interest to the lender during the term, and those payments do not stop the accrual measure from advancing. The amount Liam forfeits is therefore the interest accrued to the moment of sale **less whatever has already been settled to the lender side**, never the raw accrual — charging the raw figure would bill Liam a second time for interest he has already received, on a route where he is exiting rather than being made whole.
-- **A sale is refused while the borrower is ahead on interest.** If more interest has already been settled to the lender side than has accrued — which a periodic servicing run can overshoot into, and which a partial repayment may deliberately leave behind as a credit against future accrual — the platform does not simply treat the forfeiture as nil and proceed. A nil forfeiture and a settled position are different claims: the leftover credit belongs to the loan, and letting the sale complete would quietly transfer it to Noah, reducing what Alice owes him at final settlement without either of them agreeing to it. The sale is refused, and the refusal states how much prepaid credit remains, so the position can be brought level first. This applies identically to the direct sale and to the listed sale's completion — a rule that binds one route and not the other would let the same position be sold on different economics depending on which door it left by.
+  the buyer, so it is money the seller never received and does not keep. It
+  therefore does not move the point Liam is paid through; crediting it as well
+  would pay him for it a second time, out of the platform's share.
+- **A completed sale moves the paid-through point forward; a plain transfer does
+  not.** A sale settles the outstanding forfeiture — to the platform, or into the
+  buyer's rate compensation — so the position the buyer receives is clean and
+  their own forfeiture period opens at the sale. Without that, the same stretch
+  would be forfeited again on every resale, at the seller's expense once per hop.
+  A transfer settles nothing, so the outstanding forfeiture travels with the
+  position exactly as the unpaid interest it represents does. Treating a transfer
+  like a sale would let Liam zero his own forfeiture by sending the position to a
+  second wallet — or to himself — and selling from there.
+- **These rules bind both sale routes identically.** A rule that applied to the
+  direct sale and not to the listed sale's completion would let the same position
+  be sold on different economics depending on which door it left by.
 
 ##### Principal Recovery
 

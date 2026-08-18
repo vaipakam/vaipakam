@@ -178,7 +178,7 @@ library FacetSelectors {
         s[28] = VaipakamNFTFacet.getImageURIFor.selector;
     }
 
-    /// @notice Full external selector surface of {RiskPreviewFacet} (8) —
+    /// @notice Full external selector surface of {RiskPreviewFacet} (9) —
     ///         mirrors `DeployDiamond._getRiskPreviewFacetSelectors`.
     ///
     /// @dev    #1649. This facet is not itself refreshed for its own sake by the
@@ -205,7 +205,7 @@ library FacetSelectors {
     ///         Replace the routed), so it is correct against a pre-#1503 diamond
     ///         and a current one alike.
     function riskPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        s = new bytes4[](9);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -214,6 +214,11 @@ library FacetSelectors {
         s[5] = RiskPreviewFacet.previewCreatorBlock.selector;
         s[6] = RiskPreviewFacet.previewIntent.selector;
         s[7] = RiskPreviewFacet.saleAdmission.selector;
+        // #1503 item 28 — the seller's forfeiture window. Same reason the whole
+        // facet is enumerated here: a `Replace` cut must carry the WHOLE routed
+        // surface, so omitting a new selector leaves it pointed at stale
+        // bytecode after a curated refresh.
+        s[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
     }
 
     /// @notice Full external selector surface of {OfferPreviewFacet} (1).

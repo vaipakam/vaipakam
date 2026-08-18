@@ -168,6 +168,11 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "deliveredThroughAt",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],

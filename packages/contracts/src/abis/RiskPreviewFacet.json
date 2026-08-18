@@ -274,6 +274,30 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "sellerForfeitureWindow",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "forfeitFrom",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "forfeitAccrued",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "error",
     "name": "ERC721NonexistentToken",
     "inputs": [

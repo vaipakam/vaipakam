@@ -296,30 +296,24 @@ contract EarlyWithdrawalDirectFacet is
         // is symmetric across the two sides of the net settlement.
         // #641 — accrued/remaining split reads the interest clock (post-partial
         // origin + remaining term), not the immutable term tuple.
-        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
+        uint256 elapsed = block.timestamp - accrualStart;
         uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
 
-        uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
+        // #1503 item 28 — the FORFEITURE clock starts at whichever is later, the
+        // accrual origin or the point this lender has already been PAID through.
+        // Identical treatment to the listed route in `EarlyWithdrawalFacet`: the
+        // accrual clock still spans periods the borrower has already paid for, so
+        // charging from it bills the seller for interest they have received. Both
+        // routes must price the same forfeiture or the asymmetry is arbitrary.
+        // See {LibEntitlement.forfeitureAccrualStart} for why this is a window
+        // and not an amount.
+        uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
+        uint256 forfeitSecs =
+            block.timestamp > forfeitFrom ? block.timestamp - forfeitFrom : 0;
+        uint256 accrued = (loan.principal * loan.interestRateBps * forfeitSecs) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        // #1503 item 28 — NET already-settled periodic interest, and refuse while
-        // a residual prepaid credit exists. Identical treatment to the listed
-        // route in `EarlyWithdrawalFacet`: the accrual clock still spans periods
-        // the borrower has already paid for, so the raw figure bills the seller
-        // for interest they have already received, and the netting helper
-        // saturates at zero so an EXCESS credit would pass to the buyer unseen.
-        // Both routes must cap the same costs or the asymmetry is arbitrary.
-        // Only interest the seller ACTUALLY RECEIVED is theirs to be credited
-        // for (Codex #1801 r1 P1). `interestSettled` is credited whether the
-        // periodic payout reached the lender or was frozen into `heldForLender`,
-        // and a sale migrates that parked balance to the BUYER — so netting the
-        // raw figure would pay the seller for it a second time, out of treasury's
-        // share, for tokens they never held and do not keep.
-        uint256 realizedSettled = LibEntitlement.realizedSettledInterest(loanId);
-        if (realizedSettled > accrued) {
-            revert SaleBlockedByPrepaidInterest(loanId, realizedSettled - accrued);
-        }
-        accrued -= realizedSettled;
         uint256 originalRemainingInterest = (loan.principal *
             loan.interestRateBps *
             remainingSecs) /

@@ -383,22 +383,20 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().saleProceedsEscrow[loanId] = amount;
     }
 
-    /// @notice Write the #1503 item-28 delivered/tenure pair directly.
-    /// @dev Reaching these for real needs a periodic servicing run — and, for the
-    ///      frozen case, one against a registry-flagged lender, which the unit
-    ///      harness has no oracle for. Seeding them exercises what the sale
-    ///      routes read: `delivered - baseline` is the interest THIS lender
-    ///      received during THIS tenure. Frozen interest is represented by
-    ///      simply not raising `delivered`; a previous lender's share by raising
-    ///      `baseline` to where their tenure ended.
-    function setInterestDeliveredRaw(
-        uint256 loanId,
-        uint256 delivered,
-        uint256 tenureBaseline
-    ) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.interestDeliveredCumulative[loanId] = delivered;
-        s.lenderTenureDeliveredBaseline[loanId] = tenureBaseline;
+    /// @notice Write the #1503 item-28 lender paid-through mark directly.
+    /// @dev Reaching it for real needs a periodic servicing run whose shortfall
+    ///      auto-liquidates — and, for the frozen case, one against a
+    ///      registry-flagged lender, which the unit harness has no oracle for.
+    ///      Seeding the mark exercises exactly what the sale routes read: the
+    ///      forfeiture window opens at the LATER of this and the accrual origin.
+    ///      Frozen interest is represented by leaving the mark where it was (the
+    ///      freeze branch never advances it); a previous lender's tenure by
+    ///      setting the mark to when their tenure ended.
+    function setLenderPaidThroughRaw(uint256 loanId, uint256 paidThroughAt)
+        external
+    {
+        LibVaipakam.storageSlot().lenderInterestDeliveredThroughAt[loanId] =
+            paidThroughAt;
     }
 
     /// #594 test — append a loanId to a user's loan index directly (to set up
