@@ -723,7 +723,9 @@ d'encaisser.
 La réclamation du prêteur rend :
 
 - Ton principal de retour dans ton wallet sur cette chaîne.
-- Les intérêts accumulés moins la coupe de trésorerie de `{liveValue:treasuryFeeBps}`%. La
+- Les intérêts accumulés moins la coupe de trésorerie figée à la
+  création de ton prêt (`{liveValue:treasuryFeeBps}`% pour les prêts
+  créés au taux actuel). La
   coupe est elle-même réduite par ton accumulateur de remise sur
   frais VPFI pondéré dans le temps quand le consentement est
   activé.
@@ -1035,9 +1037,10 @@ Actions permissionless disponibles à tous quel que soit le rôle :
 #### Si tu es le prêteur
 
 - **Réclamer en tant que prêteur** — uniquement en état terminal. Rend
-  principal plus intérêts moins la coupe de trésorerie de `{liveValue:treasuryFeeBps}`%
-  (encore réduite par ta remise yield-fee VPFI pondérée dans le
-  temps quand le consentement est activé). Brûle le NFT de
+  principal plus intérêts moins la coupe de trésorerie figée à la
+  création de ton prêt (`{liveValue:treasuryFeeBps}`% pour les prêts
+  créés au taux actuel ; encore réduite par ta remise yield-fee VPFI
+  pondérée dans le temps quand le consentement est activé). Brûle le NFT de
   position de prêteur.
 - **Initier un retrait anticipé** — liste le NFT de position de
   prêteur à la vente à un prix que tu choisis. Un acheteur qui

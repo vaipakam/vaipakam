@@ -685,9 +685,10 @@ transfer करना नए holder को collect करने का अधि
 Lender claim वापस देता है:
 
 - आपका principal, इस chain पर आपके wallet में वापस।
-- accrued interest minus `{liveValue:treasuryFeeBps}`% treasury cut। consent on होने पर वह
-  cut आपके time-weighted VPFI fee-discount accumulator
-  द्वारा कम होती है।
+- accrued interest, आपके loan के बनते समय तय हुआ treasury cut
+  घटाकर (मौजूदा दर पर बने loans के लिए
+  `{liveValue:treasuryFeeBps}`%)। consent on होने पर वह cut आपके
+  time-weighted VPFI fee-discount accumulator द्वारा कम होती है।
 
 loan जैसे ही terminal state (Settled, Defaulted, या Liquidated)
 तक पहुँचता है, claimable हो जाता है। Lender position NFT उसी
@@ -979,8 +980,10 @@ actions:
 #### यदि आप lender हैं
 
 - **Claim as lender** — सिर्फ़ terminal states में। Principal plus
-  interest minus `{liveValue:treasuryFeeBps}`% treasury cut लौटाता है (consent on होने पर
-  time-weighted VPFI yield-fee discount से और कम)। Lender
+  interest लौटाता है, आपके loan के बनते समय तय हुआ treasury cut
+  घटाकर (मौजूदा दर पर बने loans के लिए
+  `{liveValue:treasuryFeeBps}`%; consent on होने पर time-weighted
+  VPFI yield-fee discount से और कम)। Lender
   position NFT को burn करता है।
 - **Initiate early withdrawal** — चुनी गई asking price पर
   lender position NFT को बिक्री के लिए list करता है। एक
