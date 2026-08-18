@@ -332,7 +332,10 @@ what each kind of claim returns.
 #### If you're the lender
 
 Your lender claim returns the loan's principal plus the interest
-that accrued, minus a `{liveValue:treasuryFeeBps}`% treasury cut on the interest portion. It
+that accrued, minus the treasury cut on the interest portion. That
+cut is the percentage fixed when your loan was created — a protocol
+fee change after that does not touch it. Loans created at the
+current rate carry a `{liveValue:treasuryFeeBps}`% cut. It
 becomes claimable as soon as the loan settles — repaid, defaulted,
 or liquidated. The claim consumes your lender position NFT
 atomically — once it lands, that side of the loan is fully closed
@@ -517,7 +520,9 @@ will be greyed out, with a small tooltip explaining why.
 
 - **Claim** — once the loan settles (repaid, defaulted, or
   liquidated), unlocks the principal back plus interest, less the
-  `{liveValue:treasuryFeeBps}`% treasury cut on interest. Consumes your lender NFT.
+  treasury cut fixed at your loan's creation
+  (`{liveValue:treasuryFeeBps}`% for loans created at the current
+  rate). Consumes your lender NFT.
 - **Initiate Early Withdrawal** — list your lender NFT for sale to
   another buyer mid-loan. The buyer takes over your side; you walk
   away with the sale proceeds.

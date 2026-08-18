@@ -340,8 +340,10 @@ tabs では、それぞれの claim が何を返すかを説明します。
 #### あなたが lender の場合
 
 あなたの lender claim は、loan の principal と accrued interest
-を返します。ただし interest 部分から `{liveValue:treasuryFeeBps}`% の treasury cut が
-差し引かれます。loan が settle されると (repaid、defaulted、
+を返します。ただし interest 部分から treasury cut が差し引かれます。
+この cut の割合は loan 作成時に固定されたもので、その後の
+プロトコル手数料の変更は影響しません。現在のレートで作成された
+loan の cut は `{liveValue:treasuryFeeBps}`% です。loan が settle されると (repaid、defaulted、
 または liquidated)、すぐに claimable になります。claim は
 あなたの lender position NFT を atomically に consume します
 — 完了すると、その side の loan は完全に close されます。
@@ -530,8 +532,9 @@ role-specific tabs で各 side の options を確認できます。今は
 
 - **Claim** — loan が settle された後 (repaid、defaulted、
   または liquidated)、principal と interest を戻します。ただし
-  interest 部分から `{liveValue:treasuryFeeBps}`% treasury cut が引かれます。あなたの
-  lender NFT を consume します。
+  interest 部分から loan 作成時に固定された treasury cut
+  (現在のレートで作成された loan は `{liveValue:treasuryFeeBps}`%)
+  が引かれます。あなたの lender NFT を consume します。
 - **Initiate Early Withdrawal** — loan の途中で lender NFT を
   他の buyer 向けに sale listing します。buyer があなたの side
   を引き継ぎ、あなたは sale proceeds を受け取って exit します。

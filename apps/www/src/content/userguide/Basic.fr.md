@@ -357,8 +357,11 @@ ce que chaque type de réclamation rend.
 #### Si tu es le prêteur
 
 Ta réclamation de prêteur rend le principal du prêt plus les
-intérêts accumulés, moins une coupe de trésorerie de `{liveValue:treasuryFeeBps}`% sur la
-portion d'intérêts. Elle devient réclamable dès que le prêt est
+intérêts accumulés, moins la coupe de trésorerie sur la portion
+d'intérêts. Cette coupe est le pourcentage fixé à la création de ton
+prêt — un changement ultérieur des frais du protocole ne la modifie
+pas. Les prêts créés au taux actuel portent une coupe de
+`{liveValue:treasuryFeeBps}`%. Elle devient réclamable dès que le prêt est
 réglé — remboursé, en défaut ou liquidé. La réclamation consomme
 ton NFT de position de prêteur de manière atomique — une fois
 exécutée, ce côté du prêt est entièrement clos.
@@ -558,8 +561,9 @@ info-bulle expliquant pourquoi.
 
 - **Réclamer** — une fois le prêt réglé (remboursé, en défaut ou
   liquidé), débloque le principal plus les intérêts, moins la
-  coupe de trésorerie de `{liveValue:treasuryFeeBps}`% sur les intérêts. Consomme ton NFT de
-  prêteur.
+  coupe de trésorerie fixée à la création de ton prêt
+  (`{liveValue:treasuryFeeBps}`% pour les prêts créés au taux
+  actuel). Consomme ton NFT de prêteur.
 - **Initier un retrait anticipé** — mets en vente ton NFT de
   prêteur à un autre acheteur en cours de prêt. L'acheteur prend
   le relais de ton côté ; tu repars avec le produit de la vente.
