@@ -725,9 +725,11 @@ gibt dem neuen Halter das Recht zur Auszahlung.
 Der Lender-Claim gibt zurück:
 
 - Deinen Principal zurück in dein Wallet auf dieser Chain.
-- Aufgelaufene Zinsen minus den `{liveValue:treasuryFeeBps}`%-Treasury-Anteil. Der Anteil
-  wird selbst durch deinen zeitgewichteten VPFI-Gebühren-Rabatt-
-  Akkumulator reduziert, wenn die Zustimmung an ist.
+- Aufgelaufene Zinsen minus den bei der Erstellung deines Loans
+  festgeschriebenen Treasury-Anteil (`{liveValue:treasuryFeeBps}`%
+  für Loans zum aktuellen Satz). Der Anteil wird selbst durch deinen
+  zeitgewichteten VPFI-Gebühren-Rabatt-Akkumulator reduziert, wenn
+  die Zustimmung an ist.
 
 Claimable, sobald der Loan einen terminalen Zustand erreicht
 (Settled, Defaulted oder Liquidated). Der Lender-Position-NFT
@@ -1033,9 +1035,11 @@ verfügbar sind:
 #### Wenn du der Lender bist
 
 - **Als Lender claimen** — nur in terminalen Zuständen. Gibt
-  Principal plus Zinsen minus dem `{liveValue:treasuryFeeBps}`%-Treasury-Anteil zurück
-  (weiter reduziert durch deinen zeitgewichteten
-  VPFI-Yield-Fee-Rabatt, wenn die Zustimmung an ist). Verbrennt den
+  Principal plus Zinsen zurück, minus dem bei der Erstellung deines
+  Loans festgeschriebenen Treasury-Anteil
+  (`{liveValue:treasuryFeeBps}`% für Loans zum aktuellen Satz; weiter
+  reduziert durch deinen zeitgewichteten VPFI-Yield-Fee-Rabatt, wenn
+  die Zustimmung an ist). Verbrennt den
   Lender-Position-NFT.
 - **Early Withdrawal initiieren** — listet den Lender-Position-
   NFT zum Verkauf zu einem von dir gewählten Preis. Ein Käufer,

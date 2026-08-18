@@ -370,8 +370,11 @@ role-specific tabs ஒவ்வொரு claim வகையும் என்�
 #### நீங்கள் lender எனில்
 
 உங்கள் lender claim loan-இன் principal-ஐயும் சேர்ந்த வட்டியையும்
-திருப்பித் தருகிறது; வட்டி பகுதியில் இருந்து `{liveValue:treasuryFeeBps}`% treasury-க்கு
-கழிக்கப்படும். loan settle ஆனவுடன் — repay செய்யப்பட்டாலும்,
+திருப்பித் தருகிறது; வட்டி பகுதியில் இருந்து treasury-க்கான பங்கு
+கழிக்கப்படும். அந்த சதவீதம் உங்கள் loan உருவாக்கப்பட்டபோது
+நிலைநிறுத்தப்பட்டது — அதன் பிறகு protocol கட்டணம் மாறினாலும் அது
+மாறாது. தற்போதைய விகிதத்தில் உருவாக்கப்படும் loans-க்கு அந்தப் பங்கு
+`{liveValue:treasuryFeeBps}`% ஆகும். loan settle ஆனவுடன் — repay செய்யப்பட்டாலும்,
 default ஆனாலும், liquidate ஆனாலும் — அது claimable ஆகிவிடும்.
 claim உங்கள் lender position NFT-ஐ atomic-ஆக consume செய்கிறது —
 transaction உறுதியாகிவிட்டவுடன், loan-இன் அந்தப் பக்கம்
@@ -569,8 +572,10 @@ default உங்கள் முழு collateral-ஐ lender-க்கு trans
 
 - **Claim** — loan settle ஆனவுடன் (repaid, defaulted, அல்லது
   liquidated), principal மற்றும் வட்டியைத் திருப்பித் தரும்; வட்டியில்
-  இருந்து `{liveValue:treasuryFeeBps}`% treasury-க்கு கழிக்கப்படும். உங்கள் lender NFT-ஐ consume
-  செய்கிறது.
+  இருந்து உங்கள் loan உருவாக்கப்பட்டபோது நிலைநிறுத்தப்பட்ட treasury
+  பங்கு கழிக்கப்படும் (தற்போதைய விகிதத்தில் உருவாக்கப்படும்
+  loans-க்கு `{liveValue:treasuryFeeBps}`%). உங்கள் lender NFT-ஐ
+  consume செய்கிறது.
 - **Initiate Early Withdrawal** — loan நடுவிலேயே உங்கள் lender NFT-ஐ
   மற்றொரு buyer-க்கு விற்பனைக்காக list செய்யுங்கள். அந்த buyer
   உங்கள் பக்கத்தை எடுத்துக் கொள்கிறார்; நீங்கள் sale proceeds-உடன்

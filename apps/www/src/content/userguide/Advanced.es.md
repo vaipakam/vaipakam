@@ -725,7 +725,9 @@ antes de reclamar le da al nuevo poseedor el derecho a cobrar.
 La reclamación del prestamista devuelve:
 
 - Tu principal de vuelta a tu billetera en esta cadena.
-- Los intereses acumulados menos el `{liveValue:treasuryFeeBps}`% de tesorería. Ese corte se
+- Los intereses acumulados menos el recorte de tesorería fijado al
+  crear tu préstamo (`{liveValue:treasuryFeeBps}`% para préstamos
+  creados a la tasa actual). Ese corte se
   reduce a su vez por tu acumulador de descuento de comisiones
   VPFI ponderado por tiempo cuando el consentimiento está
   activado.
@@ -1034,9 +1036,11 @@ del rol:
 #### Si eres el prestamista
 
 - **Reclamar como prestamista** — sólo en estados terminales. Devuelve
-  principal más intereses menos el `{liveValue:treasuryFeeBps}`% de tesorería (reducido aún
-  más por tu descuento de yield-fee VPFI ponderado por tiempo
-  cuando el consentimiento está activado). Quema el NFT de
+  principal más intereses menos el recorte de tesorería fijado al
+  crear tu préstamo (`{liveValue:treasuryFeeBps}`% para préstamos
+  creados a la tasa actual; reducido aún más por tu descuento de
+  yield-fee VPFI ponderado por tiempo cuando el consentimiento está
+  activado). Quema el NFT de
   posición de prestamista.
 - **Iniciar retiro anticipado** — pone el NFT de posición de
   prestamista a la venta a un precio que tú eliges. Un comprador

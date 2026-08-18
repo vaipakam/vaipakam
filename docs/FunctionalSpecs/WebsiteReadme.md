@@ -140,6 +140,17 @@ Public-navigation requirements:
   still-open decision; until it is made, the honest description above is
   the specified behaviour, and any surface describing these artefacts
   must say what they carry rather than imply currency
+- copy that describes a charge applied to an ALREADY-CREATED position
+  must not present the current rate as that position's rate. The
+  protocol stamps its fee percentages on a loan at creation, so a later
+  retune never re-prices an open loan — and a passage explaining what a
+  reader's settling loan will pay must say the percentage was fixed at
+  the loan's creation, presenting the live figure only as what loans
+  created at the current rate carry. Forward-looking copy — what a
+  reader accepting an offer now will get — correctly uses the live
+  figure, because the loan created by that acceptance stamps it; the
+  distinction is whether the reader is being told about a position that
+  exists or one they are about to create
 - the exception is a page documenting a governance knob's DEFAULT, which
   states a plain number rather than a reference. The two look identical
   on the page and are different claims: "the fee is X%" describes what

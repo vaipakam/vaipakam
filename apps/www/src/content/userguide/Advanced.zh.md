@@ -558,9 +558,10 @@ holder。
 lender claim 会返回：
 
 - 您的 principal 回到这条 chain 上的 wallet。
-- Accrued interest 减去 `{liveValue:treasuryFeeBps}`% treasury cut。当 consent 打开时，cut
-  本身又被您的 time-weighted VPFI fee-discount accumulator 减
-  少。
+- Accrued interest 减去 loan 创建时固定的 treasury cut (按当前
+  费率创建的 loan 为 `{liveValue:treasuryFeeBps}`%)。当 consent
+  打开时，cut 本身又被您的 time-weighted VPFI fee-discount
+  accumulator 减少。
 
 loan 一进入 terminal state (Settled、Defaulted 或 Liquidated) 即可
 claim。lender position NFT 会在同一 transaction 中 burn。
@@ -821,8 +822,9 @@ locked" 等)。
 #### 如果您是 lender
 
 - **Claim as lender** — 仅在 terminal state 可用。返回 principal 和 interest
-  minus `{liveValue:treasuryFeeBps}`% treasury cut (consent on 时，会再由您的 time-weighted
-  VPFI yield-fee discount 降低)。会 burn lender position NFT。
+  减去 loan 创建时固定的 treasury cut (按当前费率创建的 loan 为
+  `{liveValue:treasuryFeeBps}`%；consent on 时，会再由您的
+  time-weighted VPFI yield-fee discount 降低)。会 burn lender position NFT。
 - **Initiate early withdrawal** — 以 asking price 把 lender position
   NFT list 出售。完成销售的 buyer 会接管您这一侧；您获得 proceeds。
   sale fill 前可以 cancel。
