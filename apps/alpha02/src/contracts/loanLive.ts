@@ -202,7 +202,6 @@ export class SellerQuoteUnavailableError extends Error {
 export function sellerEconomics(
   live: LoanLive,
   buyRateBps: bigint,
-  chainNow: bigint,
 ): {
   cost: bigint;
   toSeller: bigint;
@@ -215,6 +214,13 @@ export function sellerEconomics(
   accrued: bigint;
   shortfall: bigint;
 } {
+  // The clock is the SNAPSHOT's, and callers cannot supply their own (Codex
+  // #1801 r9 P2). Round 8 added `readAtTimestamp` and updated three files;
+  // `LoanSaleFlow`, `OfferFlow` and two further sites in `loanSalePending` kept
+  // passing a separately fetched latest block, so the torn pair this field
+  // exists to prevent survived in exactly the callers I did not happen to grep.
+  // A parameter that must always be one value should not be a parameter.
+  const chainNow = live.readAtTimestamp;
   const start = interestAccrualStartOf(live);
   const elapsed = chainNow > start ? chainNow - start : 0n;
   const totalSecs = interestRemainingDaysOf(live) * 86_400n;

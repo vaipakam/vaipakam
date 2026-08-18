@@ -86,6 +86,15 @@ so reading it as "paid through the later one" would credit the held period too.
 That second disqualification lasts the rest of the lender's tenure, because no
 later payment restores the missing one.
 
+A loan also needs a starting point for any of this to mean anything. Each new
+loan records the balance it opens at, so the first delivery has something to
+compare against; without that, a balance change between origination and the
+first settlement would be invisible, and that settlement would install a record
+that looks trustworthy while excluding interest charged at the larger balance.
+Loans already open when this ships have no such starting point, so their first
+delivery records one and grants no credit — they keep the full charge they
+already had, and only deliveries after that can be trusted.
+
 Neither disqualification lifts. A later clean settlement cannot repair a record
 that is already discontinuous, so once either has happened nothing on that
 position is trusted again until a sale opens a fresh window for the incoming
@@ -130,7 +139,15 @@ the clock without clearing the older record. The platform would then charge from
 the earlier point while the app quoted from the later one, understating the cost
 and letting a seller commit to a sale the platform then refuses. The app now
 says the quote is unavailable instead of estimating one. Every other surface is
-unaffected — only the figure that cannot be computed declines to be computed.
+unaffected — only the figure that cannot be computed declines to be computed,
+and a listing that exists on chain keeps its card and its cancel button even
+while its funding figure is unknown.
+
+Relatedly, the app can no longer price a sale against a different moment than it
+read the loan at. The timestamp is part of the snapshot and the pricing helpers
+take no clock argument, so pairing a loan with someone else's clock is not
+something a caller can express any more, rather than something each caller has
+to remember.
 
 Loans that predate this change carry no mark, which resolves to the accrual
 origin — exactly the behaviour they already had. Nothing needs to be

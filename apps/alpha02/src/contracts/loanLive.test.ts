@@ -136,6 +136,9 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     durationDays: 30n,
     interestAccrualStart: 1_000n,
     interestRemainingDays: 30,
+    // The seller clock lives on the SNAPSHOT since #1801 r9 — callers cannot
+    // supply their own, so the fixture carries the block it was read at.
+    readAtTimestamp: 1_000n + 10n * DAY,
   } as LoanLive;
 
   const now = 1_000n + 10n * DAY; // ten days in
@@ -152,7 +155,7 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     // older mark), so the contract could charge from the earlier mark while this
     // quoted only from the later clock — understating the seller's cost on a
     // transient RPC failure. An unknown window has no safe substitute.
-    expect(() => sellerEconomics(saleLive, saleLive.interestRateBps, now)).toThrow(
+    expect(() => sellerEconomics(saleLive, saleLive.interestRateBps)).toThrow(
       SellerQuoteUnavailableError,
     );
   });
@@ -161,21 +164,21 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     // The contract resolves "this lender has never been paid" to the accrual
     // origin itself, so that arrives as a real value rather than as an absence.
     const fresh = { ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart };
-    expect(sellerEconomics(fresh, fresh.interestRateBps, now).accrued).toBe(
+    expect(sellerEconomics(fresh, fresh.interestRateBps).accrued).toBe(
       accrue(10n * DAY),
     );
   });
 
   it('forfeits only the unpaid stretch the contract resolved', () => {
     const paid = { ...saleLive, lenderForfeitFrom: now - 6n * DAY };
-    expect(sellerEconomics(paid, paid.interestRateBps, now).accrued).toBe(
+    expect(sellerEconomics(paid, paid.interestRateBps).accrued).toBe(
       accrue(6n * DAY),
     );
   });
 
   it('forfeits nothing when the lender is paid through now', () => {
     const paid = { ...saleLive, lenderForfeitFrom: now };
-    const econ = sellerEconomics(paid, paid.interestRateBps, now);
+    const econ = sellerEconomics(paid, paid.interestRateBps);
     expect(econ.accrued).toBe(0n);
     // A window model cannot over-subtract, so this is a completable sale that
     // returns the whole principal — not a blocked one.
@@ -197,7 +200,7 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
       lenderForfeitFrom: now - 6n * DAY,
       interestAccrualStart: now - 4n * DAY,
     };
-    expect(sellerEconomics(reset, reset.interestRateBps, now).accrued).toBe(
+    expect(sellerEconomics(reset, reset.interestRateBps).accrued).toBe(
       accrue(6n * DAY),
     );
   });
@@ -209,7 +212,7 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     // has moved or whose delivery a freeze broke — and the client's job is only
     // to not second-guess the answer.
     const stale = { ...saleLive, lenderForfeitFrom: now - 20n * DAY };
-    expect(sellerEconomics(stale, stale.interestRateBps, now).accrued).toBe(
+    expect(sellerEconomics(stale, stale.interestRateBps).accrued).toBe(
       accrue(20n * DAY),
     );
   });
@@ -218,16 +221,8 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     // The remaining-term half must NOT move with the mark — it measures the
     // loan's own progress, which the mark says nothing about. A rate ABOVE the
     // loan's makes the shortfall the binding cost, exposing that half.
-    const bare = sellerEconomics(
-      { ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart },
-      2_000n,
-      now,
-    );
-    const paid = sellerEconomics(
-      { ...saleLive, lenderForfeitFrom: now - 6n * DAY },
-      2_000n,
-      now,
-    );
+    const bare = sellerEconomics({ ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart }, 2_000n);
+    const paid = sellerEconomics({ ...saleLive, lenderForfeitFrom: now - 6n * DAY }, 2_000n);
     expect(paid.shortfall).toBe(bare.shortfall);
     expect(paid.shortfallBinding).toBe(true);
   });

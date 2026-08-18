@@ -695,6 +695,49 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev #1801 r9 — a loan with NO baseline cannot claim a credit on its first
+    ///      stamp. Loans opened after this change are baselined at initiation,
+    ///      so this is the GRANDFATHERED shape: a loan already open at upgrade,
+    ///      whose principal may have moved before the upgrade with nothing
+    ///      recorded to detect it. The first stamp therefore records the
+    ///      baseline and nothing else — the mark stays zero, which is the
+    ///      full-accrual charge those loans already had — and only the SECOND
+    ///      stamp can be trusted.
+    function test_sellLoanViaBuyOffer_firstStampWithoutBaselineOnlyBaselines() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // Wipe the init baseline to stage a pre-upgrade loan, then deliver.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, 0, 0
+        );
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidAfterFirstStamp = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
+        assertEq(
+            paidAfterFirstStamp,
+            paidWithNoMark,
+            "a first stamp with no baseline must not open a credit"
+        );
+    }
+
     /// @dev #1801 r8 — a later clean stamp does NOT repair a window that already
     ///      spans a principal change. The sequence is the dangerous one because
     ///      every step looks routine: principal drops (an Active internal match

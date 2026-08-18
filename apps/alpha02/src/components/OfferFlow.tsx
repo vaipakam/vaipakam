@@ -2896,7 +2896,7 @@ async function readSaleReviewLive(
   // Same definition the listing flow approved against
   // (`saleSettlementNow`), read from the wallet the pull binds to
   // (the stored lender — consolidated to the NFT holder at listing).
-  const requiredNow = saleSettlementNow(live, saleRateBps, block.timestamp);
+  const requiredNow = saleSettlementNow(live, saleRateBps);
   const [allowance, balance, currentBorrower] = await Promise.all([
     client.readContract({
       address: live.principalAsset,

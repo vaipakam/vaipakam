@@ -101,12 +101,12 @@ export function EarlyExitFlow({
 
   const fitDays = durationFitDays(live, chainNow);
 
-  // Every seller figure is computed AT THE SNAPSHOT's block, not at `chainNow`
-  // (#1801 r8). `chainNow` is the right clock for offer expiry — that is a
-  // wall-clock question — but the forfeiture must be priced against the same
-  // block the loan and the window were read at, or the three describe a state
-  // no block ever held. `readAtTimestamp` is that block's time.
-  const econAt = live.readAtTimestamp;
+  // Every seller figure prices at the SNAPSHOT's block. Since #1801 r9 that is
+  // not something this component arranges — `sellerEconomics` reads
+  // `live.readAtTimestamp` itself and takes no clock argument, so a caller
+  // cannot pair the loan with a different one. `chainNow` remains the right
+  // clock for offer expiry, which is a wall-clock question rather than a
+  // pricing one.
   // ...and when the window could not be read at all, there is no seller quote
   // to show. `sellerEconomics` throws rather than substituting a number, so the
   // surface has to say so instead of rendering a wrong one — an unavailable
@@ -149,7 +149,7 @@ export function EarlyExitFlow({
         // Buying out your own position is a no-op with fees.
         if (o.creator.toLowerCase() === me) return false;
         // RateShortfallTooHigh guard.
-        const econ = sellerEconomics(live, BigInt(o.interestRateBps), econAt);
+        const econ = sellerEconomics(live, BigInt(o.interestRateBps));
         return econ.cost <= live.principal;
       })
       .sort(
@@ -158,13 +158,13 @@ export function EarlyExitFlow({
         // shortfall varies, monotonically with the rate).
         (a, b) => a.interestRateBps - b.interestRateBps,
       );
-  }, [offers.data, address, row, live, fitDays, chainNow, econAt]);
+  }, [offers.data, address, row, live, fitDays, chainNow]);
 
   const selected =
     candidates?.find((o) => o.offerId === selectedId) ?? null;
   const selectedEcon =
     selected && !quoteUnavailable
-      ? sellerEconomics(live, BigInt(selected.interestRateBps), econAt)
+      ? sellerEconomics(live, BigInt(selected.interestRateBps))
       : null;
 
   const sym = principalMeta.symbol;
@@ -314,11 +314,7 @@ export function EarlyExitFlow({
       // Priced at the SNAPSHOT's block (#1801 r8) — `liveLoan`'s own read time,
       // not a separately fetched latest block, so the loan, the window and the
       // clock all describe one state.
-      const liveEcon = sellerEconomics(
-        liveLoan,
-        BigInt(liveOffer.interestRateBps),
-        liveLoan.readAtTimestamp,
-      );
+      const liveEcon = sellerEconomics(liveLoan, BigInt(liveOffer.interestRateBps));
       if (liveEcon.cost > liveLoan.principal) {
         throw new Error(copy.match.termsChanged);
       }
@@ -379,11 +375,7 @@ export function EarlyExitFlow({
           </p>
           <div className="stack" style={{ gap: 8 }}>
             {shown.map((o) => {
-              const econ = sellerEconomics(
-                live,
-                BigInt(o.interestRateBps),
-                econAt,
-              );
+              const econ = sellerEconomics(live, BigInt(o.interestRateBps));
               const isSelected = o.offerId === selectedId;
               return (
                 <button

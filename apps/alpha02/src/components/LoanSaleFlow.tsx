@@ -72,7 +72,6 @@ import type { TokenMeta } from '../contracts/erc20';
 export function LoanSaleFlow({
   row,
   live,
-  chainNow,
   principalMeta,
   confirmOpen,
   onOpenConfirm,
@@ -83,7 +82,6 @@ export function LoanSaleFlow({
 }: {
   row: IndexedLoan;
   live: LoanLive;
-  chainNow: bigint;
   principalMeta: TokenMeta;
   confirmOpen: boolean;
   onOpenConfirm: () => void;
@@ -147,10 +145,10 @@ export function LoanSaleFlow({
   const dec = principalMeta.decimals;
   const bound =
     rateBps !== null
-      ? saleSettlementBound(live, BigInt(rateBps), chainNow)
+      ? saleSettlementBound(live, BigInt(rateBps))
       : null;
   const nowCost =
-    rateBps !== null ? saleSettlementNow(live, BigInt(rateBps), chainNow) : null;
+    rateBps !== null ? saleSettlementNow(live, BigInt(rateBps)) : null;
   const boundStr =
     bound !== null ? `${formatTokenAmount(bound, dec)} ${sym}` : null;
   const principalStr = `${formatTokenAmount(live.principal, dec)} ${sym}`;
@@ -274,11 +272,7 @@ export function LoanSaleFlow({
       // cover a listing that outlives the pad). Set BEFORE the
       // listing exists so there is no window where a buyer's accept
       // reverts on a short allowance.
-      const liveBound = saleSettlementBound(
-        liveLoan,
-        BigInt(rateBps),
-        latestBlock.timestamp,
-      );
+      const liveBound = saleSettlementBound(liveLoan, BigInt(rateBps));
       // Only a MINED approve tx arms the unwind — when the wallet
       // already held a sufficient allowance (ensureAllowance returns
       // null), that allowance belongs to some other live arrangement

@@ -2685,7 +2685,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               <LoanSaleFlow
                 row={row}
                 live={loanLive.data.live}
-                chainNow={loanLive.data.chainNow}
                 principalMeta={principal}
                 confirmOpen={confirmingSurface === 'loan-sale'}
                 onOpenConfirm={() => setConfirmingSurface('loan-sale')}

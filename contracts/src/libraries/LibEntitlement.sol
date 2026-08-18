@@ -332,12 +332,46 @@ library LibEntitlement {
         // sites: `recorded` was the live principal when it was written, so a
         // difference now is proof a change happened in between. Still no
         // cooperation required from any mutation site.
-        if (recorded != 0 && recorded != live) {
+        if (recorded == 0) {
+            // NO BASELINE, so no claim can be made (Codex #1801 r9 P1). A loan
+            // whose principal moved before its FIRST settlement has nothing to
+            // compare against: that settlement prices the whole period at the
+            // reduced principal and would install a mark that looks valid,
+            // while the excluded stretch still holds interest accrued on the
+            // larger principal and never settled.
+            //
+            // So the first stamp on such a loan RECORDS THE BASELINE and
+            // nothing else. The mark stays where it was — zero for a
+            // grandfathered loan, i.e. the full-accrual charge — and the next
+            // stamp has something to compare against. Loans opened after this
+            // change are baselined at initiation and never take this branch.
+            s.lenderMarkPrincipalAt[loanId] = live;
+            return;
+        }
+        if (recorded != live) {
             voidInterestDeliveredMark(s, loanId);
             return;
         }
         s.lenderInterestDeliveredThroughAt[loanId] = at;
         s.lenderMarkPrincipalAt[loanId] = live;
+    }
+
+    /// @notice Records the principal a new loan starts at, with no mark.
+    /// @dev    The baseline {stampInterestDelivered} compares against (Codex
+    ///         #1801 r9 P1). Without it the first delivery stamp has nothing to
+    ///         detect an earlier principal change with, and a change between
+    ///         origination and the first settlement would be invisible.
+    ///
+    ///         Deliberately does NOT set the mark: a loan that has paid its
+    ///         lender nothing forfeits from the accrual origin, which is what a
+    ///         zero mark already means.
+    /// @param s      The Diamond storage slot.
+    /// @param loanId The loan being opened.
+    function baselineMarkPrincipal(
+        LibVaipakam.Storage storage s,
+        uint256 loanId
+    ) internal {
+        s.lenderMarkPrincipalAt[loanId] = s.loans[loanId].principal;
     }
 
     /// @notice Opens a FRESH mark for an incoming lender on a completed sale.

@@ -1905,6 +1905,18 @@ This option allows Liam to recover principal early by selling his lender positio
     period as well. This disqualification lasts for the rest of Liam's tenure,
     because no later payment restores the missing one.
 
+  Neither refusal lifts on its own. A later clean payment cannot repair a period
+  that is already broken, so once either has happened Liam is charged the full
+  accrual for the rest of his tenure. The sequence that makes this matter looks
+  entirely routine: a balance change followed by an ordinary successful payment
+  would otherwise make the record look sound again while excluding the stretch
+  charged at the larger balance.
+
+  For the same reason a loan needs a starting balance recorded when it opens, so
+  the first payment has something to compare against. A loan already running when
+  this takes effect has none, so its first payment records one and earns no
+  credit — it keeps the charge it already had.
+
   A sale clears both: Noah's period opens at the purchase, at the principal on
   the loan then, and carries nothing from Liam's tenure. Both conditions are read
   from the loan's own recorded state rather than reported by whatever caused

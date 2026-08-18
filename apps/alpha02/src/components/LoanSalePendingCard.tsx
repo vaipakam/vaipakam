@@ -117,11 +117,6 @@ export function LoanSalePendingCard({
         }) as Promise<number | bigint>,
         readLoanLive(publicClient, walletChain.diamondAddress, loanId),
       ]);
-      // The timestamp comes from the SNAPSHOT, not a separate `getBlock`
-      // (#1801 r8). Fetching it alongside meant a block mined in between paired
-      // a timestamp from one block with a loan and window from another, which
-      // `sellerEconomics` then combined into a figure no block ever supported.
-      const readAt = liveLoan.readAtTimestamp;
       if (Number(lock) !== LOCK_EARLY_WITHDRAWAL_SALE) {
         setError(copy.loanSale.restoreAborted);
         void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
@@ -132,8 +127,8 @@ export function LoanSalePendingCard({
       // live requirement plus fresh growth margin, or the red banner
       // returns on the next tick behind a false success message.
       const rate = state.saleRateBps ?? liveLoan.interestRateBps;
-      const bound = saleSettlementBound(liveLoan, rate, readAt);
-      const liveNow = sellerEconomics(liveLoan, rate, readAt).cost;
+      const bound = saleSettlementBound(liveLoan, rate);
+      const liveNow = sellerEconomics(liveLoan, rate).cost;
       const growthMargin =
         (liveLoan.principal * liveLoan.interestRateBps * 30n * 86_400n) /
         (SECONDS_PER_YEAR * BASIS_POINTS);
