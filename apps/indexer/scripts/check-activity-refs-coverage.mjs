@@ -290,6 +290,29 @@ const bindsName = (name, wanted) => {
   return false;
 };
 
+/**
+ * Is this declaration an ALIAS of a name the mapping shape relies on? (Codex
+ * round-19 P2.) `const decoded = args; decoded.loanId = 0n;` rebinds the decoded
+ * value exactly as a direct write does, and a mutation test rooted at `args`
+ * never sees it. Following aliases properly is alias analysis; refusing the
+ * declaration costs nothing real, because a mapper has no reason to alias the
+ * argument bag it is handed.
+ */
+const aliasesShadowable = (n) => {
+  if (!ts.isVariableDeclaration(n) || !n.initializer) return false;
+  let t = n.initializer;
+  while (
+    ts.isParenthesizedExpression(t) ||
+    ts.isAsExpression(t) ||
+    ts.isNonNullExpression(t) ||
+    ts.isSatisfiesExpression?.(t) ||
+    ts.isTypeAssertionExpression?.(t)
+  ) {
+    t = t.expression;
+  }
+  return ts.isIdentifier(t) && SHADOWABLE_NAMES.has(t.text);
+};
+
 /** Does a binding name — plain or destructured — bind one of those names? */
 const bindsShadowable = (name) => {
   if (!name) return false;
@@ -549,6 +572,24 @@ for (const file of memberFiles) {
           continue;
         }
         const path = prefix ? `${prefix}.${i.name}` : i.name;
+        // A PLURAL reference array carries references this checker cannot map,
+        // which is not the same as carrying none (Codex round-19 P2). The shape
+        // regexes deliberately exclude `loanIds` so an array never looks like a
+        // single mappable id — but excluding it from the derivation entirely let
+        // an event whose ONLY loan reference is `uint256[] loanIds` sit outside
+        // coverage with no mapping and no exemption. Reported, for the same
+        // reason as the tuple array: one activity row has one `loan_id`, so
+        // which element it should carry is a decision, not a lookup.
+        if (
+          /\]$/.test(i.type ?? '') &&
+          REF_FIELDS.some((f) => REF_SHAPE[f].test(`${i.name}`.replace(/s$/, '')))
+        ) {
+          abiConflicts.push({
+            kind: 'reference-array',
+            event: item.name,
+            message: `${item.name} — \`${path}\` is an ARRAY of references (${i.type}); one activity row carries one id, so which element it should be is a decision this check cannot make. Map it explicitly or allowlist the event with a reason`,
+          });
+        }
         names.push(path);
         typeOf.set(path, i.type ?? '');
         if (Array.isArray(i.components)) {
@@ -782,25 +823,33 @@ if (shadowsDiscriminant) {
 
 let switchNode = null;
 let sawOtherSwitch = null;
+/**
+ * The switch must be a TOP-LEVEL statement of the mapper (Codex round-19 P2).
+ *
+ * Rounds 14 and 16 stopped a switch standing in for the live path when it was in
+ * an uncalled helper, then when an unconditional exit preceded it. A descendant
+ * search still admits the third variant: wrap the live switch in
+ * `if (args.__dispatch === true)` and return the all-null object after it, and
+ * every ordinary event takes the bypass while the tally is untouched. What the
+ * check actually needs is that the switch DOMINATES the function's exit, and for
+ * a mapper shaped like this one that is exactly "it is a statement of the body",
+ * which is cheap and exact where a dominance analysis would be neither.
+ *
+ * A future mapper that legitimately nests it gets a loud refusal rather than a
+ * silent pass — the same posture as every other shape this checker cannot read.
+ */
 const findSwitch = (node) => {
   if (switchNode) return;
-  // Never descend into a nested function (Codex round-14 P2). Otherwise an
-  // uncalled local helper's switch satisfies the entire coverage check while
-  // `pluckActivityRefs` itself returns the all-null object — the checker would be
-  // validating dead code and reporting the live path as fully mapped.
-  if (isFunctionLike(node)) return;
-  if (ts.isSwitchStatement(node)) {
-    // Keep LOOKING past a switch on something else rather than rejecting outright:
-    // a future mapper may legitimately switch on a sub-key first. Only when no
-    // switch in the body discriminates on the event-name parameter is this a
-    // failure, and the one that was rejected is named so the message is actionable.
-    if (discriminantName && bareIdentifierOf(node.expression) === discriminantName) {
-      switchNode = node;
-      return;
-    }
-    if (!sawOtherSwitch) sawOtherSwitch = node.expression.getText();
+  if (!ts.isSwitchStatement(node)) return;
+  // A switch on something else does not disqualify the body — a future mapper
+  // may dispatch on a sub-key first — but the one this check uses must be on the
+  // event-name parameter, and the rejected one is named so the message is
+  // actionable.
+  if (discriminantName && bareIdentifierOf(node.expression) === discriminantName) {
+    switchNode = node;
+    return;
   }
-  ts.forEachChild(node, findSwitch);
+  if (!sawOtherSwitch) sawOtherSwitch = node.expression.getText();
 };
 /**
  * ...and the switch must be REACHABLE (Codex round-16 P2).
@@ -1006,6 +1055,10 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
       outerShadow = ts.isIdentifier(n.name) ? n.name.text : 'args/Number (destructured)';
       return;
     }
+    if (aliasesShadowable(n)) {
+      outerShadow = `${n.name.getText()} (an alias of args/Number)`;
+      return;
+    }
     if (mutatesShadowable(n)) {
       outerShadow = 'args/Number (assigned)';
       return;
@@ -1163,14 +1216,31 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
       const e = r.expression;
       if (!e || !ts.isObjectLiteralExpression(e)) return { opaque: 'not an object literal' };
       const props = new Map();
-      let spread = false;
+      // Spread POSITION matters, not just presence (Codex round-19 P2). An
+      // explicit property AFTER a spread overrides it — that is a language
+      // guarantee — so `{ ...whatever, loanId: Number(args.loanId) }` is a
+      // perfectly resolvable mapping, and marking the whole scope opaque
+      // rejected a valid one. This is the first finding in the false-POSITIVE
+      // direction, and it is worth separating from the rest: every other round
+      // has been about the checker accepting too much, where the cost is a
+      // silent hole. Here the cost is a correct mapping the author cannot get
+      // past the gate, which is how a guardrail earns a reputation for being
+      // wrong and starts getting worked around.
+      //
+      // So each field records WHERE it was last defined, a spread records where
+      // it sat, and a field survives when its definition is the later of the two.
+      let lastSpreadIdx = -1;
+      const definedAt = new Map();
+      let idx = -1;
       for (const p of e.properties) {
+        idx += 1;
         if (ts.isSpreadAssignment(p)) {
-          spread = true;
+          lastSpreadIdx = idx;
           continue;
         }
         if (ts.isShorthandPropertyAssignment(p)) {
           props.set(p.name.text, { shorthand: true });
+          definedAt.set(p.name.text, idx);
           continue;
         }
         if (ts.isPropertyAssignment(p)) {
@@ -1183,11 +1253,21 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
           else if (ts.isComputedPropertyName(p.name) && ts.isStringLiteralLike(p.name.expression)) {
             key = p.name.expression.text;
           }
-          if (key !== null) props.set(key, { expr: p.initializer });
-          else spread = true; // an unresolvable key could be this field
+          if (key !== null) {
+            props.set(key, { expr: p.initializer });
+            definedAt.set(key, idx);
+          } else {
+            // An unresolvable key could BE this field, and it could sit after
+            // any explicit definition — so it shadows like a spread does.
+            lastSpreadIdx = idx;
+          }
         }
       }
-      return { props, spread };
+      // Drop anything the spread (or an unresolvable key) defines LAST.
+      for (const [key, at] of definedAt) {
+        if (at < lastSpreadIdx) props.delete(key);
+      }
+      return { props, spread: lastSpreadIdx >= 0 };
     });
     if (escapesWithoutReturning) {
       scopes.push({
@@ -1232,6 +1312,7 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
         if (ts.isVariableDeclaration(n) || ts.isParameter(n)) {
           if (bindsShadowable(n.name)) found = found || 'declares a local named';
         }
+        if (aliasesShadowable(n)) found = found || 'declares an alias of';
         ts.forEachChild(n, walk);
       };
       for (const st of groupStatements) walk(st);
@@ -1253,7 +1334,9 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
 
         // Deliberately unmapped on every path that names it, with nothing opaque.
         const allNull = named.every((s) => isNullLiteral(s.props.get(field).expr));
-        const anyOpaque = scopes.some((s) => s.opaque || s.spread || !s.props?.has(field));
+        // `props` now holds only definitions the spread does NOT override, so a
+        // scope with a spread is still resolvable for a field defined after it.
+        const anyOpaque = scopes.some((s) => s.opaque || !s.props?.has(field));
         if (allNull && !anyOpaque) continue;
 
         // The event carries no alias for this field, yet something non-null is
