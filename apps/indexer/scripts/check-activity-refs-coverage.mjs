@@ -1708,11 +1708,44 @@ if (!fnNode) {
           // `objectLiteralView` already answers this question for return values,
           // including the getter case that really is unreadable; asking it here
           // too is the same fix rounds 26 and 29 made for the other readers.
-          if (selfSpreadAt >= 0 && ts.isObjectLiteralExpression(src)) {
-            const inner = objectLiteralView(src);
-            if (inner.opaque || inner.spread) overriddenAfter = true;
-            else if ([...inner.props.keys()].some((k) => couldBeReference(k))) {
+          if (ts.isObjectLiteralExpression(src)) {
+            // A GETTER-bearing literal is dangerous WHEREVER it sits (Codex
+            // round-34 P2), and it is a SIDE-EFFECT question, not a key
+            // question. Spreading reads every own enumerable property, so a
+            // getter runs at that point and its body can reach the decoded
+            // arguments — through a helper, where no write scan in this file
+            // can see it. One placed BEFORE `...args` therefore corrupts the
+            // very bag the self-spread then copies, and the reference fields
+            // pass the ordering check holding another log's values.
+            //
+            // Asked of the literal directly rather than through
+            // `objectLiteralView`: that reader answers "which keys survive",
+            // and a getter it sees at TOP level is merely a key it cannot read,
+            // so it reports shadowing rather than opacity. Only its own spread
+            // branch treats a getter as a side effect — which is this same
+            // question, one level down.
+            const runsAGetter = (lit) =>
+              lit.properties.some(
+                (q) =>
+                  ts.isGetAccessorDeclaration(q) ||
+                  (ts.isSpreadAssignment(q) &&
+                    ts.isObjectLiteralExpression(unwrapAssertions(q.expression)) &&
+                    runsAGetter(unwrapAssertions(q.expression))),
+              );
+            if (runsAGetter(src)) {
               overriddenAfter = true;
+              continue;
+            }
+            const inner = objectLiteralView(src);
+            if (inner.opaque) {
+              overriddenAfter = true;
+              continue;
+            }
+            if (selfSpreadAt >= 0) {
+              if (inner.spread) overriddenAfter = true;
+              else if ([...inner.props.keys()].some((k) => couldBeReference(k))) {
+                overriddenAfter = true;
+              }
             }
             continue;
           }
@@ -1728,13 +1761,26 @@ if (!fnNode) {
         // is a reference this checker itself derives and maps.
         //
         // `creator` — the live enrichment — is neither shape, so it stays legal.
-        const key =
-          ts.isPropertyAssignment(p) &&
-          (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name))
+        //
+        // A COMPUTED key wrapping a static string is resolvable and must be
+        // read (Codex round-34 P2). `objectLiteralView` has handled `['loanId']`
+        // since round 12; this reader did not, so writing the live enrichment as
+        // `args = { ...args, ['creator']: creator }` — valid TypeScript,
+        // reference-preserving — was treated as a key this parser cannot read
+        // and rejected inside `typecheck`. Same syntax, same answer, in both
+        // readers.
+        const nameOf = (nm) => {
+          if (ts.isIdentifier(nm) || ts.isStringLiteralLike(nm)) return nm.text;
+          if (ts.isComputedPropertyName(nm) && ts.isStringLiteralLike(nm.expression)) {
+            return nm.expression.text;
+          }
+          return null;
+        };
+        const key = ts.isPropertyAssignment(p)
+          ? nameOf(p.name)
+          : ts.isShorthandPropertyAssignment(p)
             ? p.name.text
-            : ts.isShorthandPropertyAssignment(p)
-              ? p.name.text
-              : null;
+            : null;
         if (selfSpreadAt >= 0 && (key === null || couldBeReference(key))) {
           overriddenAfter = true; // a reference-shaped key, or one this parser cannot read
         }
@@ -1761,6 +1807,39 @@ if (!fnNode) {
       };
       const walk = (n) => {
         if (found) return;
+        // A mutating CALL is a mutation too (Codex round-34 P2). This scan knew
+        // only the syntactic forms — assignment, ++/--, `delete` — so
+        // `Object.assign(args, { loanId: logs[0]!.args.loanId })` overwrote the
+        // decoded bag in a shape it had no case for, and every later row could
+        // carry the first log's id.
+        //
+        // Recognised by callee, not by "any call receiving the alias": the
+        // ledger legitimately passes the bag to `serializeArgs` and to
+        // `pluckActivityRefs` itself, so a blanket rule would reject the live
+        // code. The list is the built-ins that write through their first
+        // argument.
+        if (ts.isCallExpression(n) && n.arguments.length > 0) {
+          const callee = unwrapAssertions(n.expression);
+          if (ts.isPropertyAccessExpression(callee)) {
+            const host = unwrapAssertions(callee.expression);
+            const mutators = ts.isIdentifier(host) && host.text === 'Object'
+              ? ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf']
+              : ts.isIdentifier(host) && host.text === 'Reflect'
+                ? ['set', 'defineProperty', 'deleteProperty', 'setPrototypeOf']
+                : [];
+            if (mutators.includes(callee.name.text)) {
+              const dest = rootOf(n.arguments[0]);
+              if (
+                ts.isIdentifier(dest) &&
+                dest.text === name &&
+                nearestDecl(n, name) === declOfInterest
+              ) {
+                found = true;
+                return;
+              }
+            }
+          }
+        }
         const target =
           ts.isBinaryExpression(n) && ts.isAssignmentOperator?.(n.operatorToken.kind)
             ? n.left
@@ -1825,27 +1904,30 @@ if (!fnNode) {
           nearestDecl(cur, recv.text) === null
         );
       };
-      const known = new Map();
+      // Keyed by DECLARATION, not by spelling (Codex round-34 P2). A name-keyed
+      // map records the first declaration and skips every later one, so two
+      // sibling scopes reusing an alias name — `{ const decoded = args; }` then
+      // `{ const decoded = args; decoded.loanId = …; }` — left the mutating one
+      // unexamined. Names are not identities anywhere else in this file either;
+      // this map was the last place still assuming they were.
+      const known = new Map(); // declaration node (or the seed key) -> name
+      const SEED = Symbol('the argument expression itself');
       const seed = unwrapAssertions(argExpr);
-      if (ts.isIdentifier(seed)) known.set(seed.text, nearestDecl(init, seed.text));
+      if (ts.isIdentifier(seed)) known.set(nearestDecl(init, seed.text) ?? SEED, seed.text);
+      // Resolves through the map's VALUES, so an alias of an alias is followed
+      // whichever declaration each hop resolves to.
+      const aliasesKnown = (idNode, at) => {
+        const decl = nearestDecl(at, idNode.text) ?? SEED;
+        return known.has(decl) && known.get(decl) === idNode.text;
+      };
       let grew = true;
       while (grew) {
         grew = false;
         const visit = (n) => {
-          if (
-            ts.isVariableDeclaration(n) &&
-            ts.isIdentifier(n.name) &&
-            n.initializer &&
-            !known.has(n.name.text)
-          ) {
+          if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer && !known.has(n)) {
             const rhs = unwrapAssertions(n.initializer);
-            const aliases =
-              isArgObject(rhs) ||
-              (ts.isIdentifier(rhs) &&
-                known.has(rhs.text) &&
-                nearestDecl(n, rhs.text) === known.get(rhs.text));
-            if (aliases) {
-              known.set(n.name.text, n);
+            if (isArgObject(rhs) || (ts.isIdentifier(rhs) && aliasesKnown(rhs, n))) {
+              known.set(n, n.name.text);
               grew = true;
             }
           }
@@ -1853,7 +1935,9 @@ if (!fnNode) {
         };
         visit(loopVar.body);
       }
-      return known;
+      // Back to (name, declaration) pairs for the mutation scan, which resolves
+      // each candidate write against the declaration it is given.
+      return [...known].map(([decl, nm]) => [nm, decl === SEED ? null : decl]);
     };
     /** Which loop-item property `name` resolves to here, or null. */
     const resolvesTo = (from, name, depth = 0) => {
@@ -2265,8 +2349,27 @@ const findSwitch = (node) => {
 const findEscape = (nodes, { countReturns = false } = {}) => {
   let hit = null;
   const walk = (n, st) => {
-    if (hit || isFunctionLike(n)) return;
+    if (hit) return;
+    // An IMMEDIATELY INVOKED function IS on this path (Codex round-34 P2).
+    // "Nested functions are not on this path until called" is the right rule and
+    // the wrong test — `(() => { throw new Error('bypass'); })();` before the
+    // switch is called right there, so every dispatch threw and activity
+    // recording aborted while the scan skipped the body as unreachable.
+    //
+    // Its `throw` escapes into the caller, so it counts; its `return` and its
+    // `break`/`continue` belong to the callee and cannot, so the body is walked
+    // with returns off and breaks owned.
+    if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
+      const callee = unwrapAssertions(n.expression);
+      if (isFunctionLike(callee) && callee.body) {
+        walk(callee.body, { ...st, breakable: true, loop: true, iife: true });
+        (n.arguments ?? []).forEach((a) => walk(a, st));
+        return;
+      }
+    }
+    if (isFunctionLike(n)) return;
     if (ts.isReturnStatement(n)) {
+      if (st.iife) return;
       if (countReturns) hit = 'a return';
       return;
     }
