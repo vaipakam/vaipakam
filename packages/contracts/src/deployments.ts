@@ -49,6 +49,10 @@ export interface DeploymentFacets {
   diamondCutFacet?: HexAddress;
   diamondLoupeFacet?: HexAddress;
   earlyWithdrawalFacet?: HexAddress;
+  /** #1780 — the direct lender-exit route, split off `earlyWithdrawalFacet`
+   *  for EIP-170. Optional like its sibling: a chain deployed before the
+   *  split has no such key. */
+  earlyWithdrawalDirectFacet?: HexAddress;
   vaultFactoryFacet?: HexAddress;
   interactionRewardsFacet?: HexAddress;
   interactionRewardsLensFacet?: HexAddress;

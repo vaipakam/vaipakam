@@ -1230,6 +1230,44 @@ The preview should preserve the resolved economic terms even when acceptance is 
 
 ## 6. Loan Closure & Repayment
 
+### Every status change must be observable, and observability belongs to the transition
+
+A loan's status is intended to change in exactly one way: through the single
+permitted-transition check, which rejects any move not on the allow-list. Two
+consequences are intended to follow from that, and both are requirements rather
+than implementation detail.
+
+- **Every status change is announced, and the announcement is the transition's
+  own responsibility — never the surrounding operation's.** A reader outside the
+  platform must be able to learn that a loan moved between states without
+  knowing which operation moved it. Leaving the announcement to each operation
+  makes correctness a per-operation obligation that can be forgotten silently:
+  an operation that announces nothing, or that announces a different loan than
+  the one whose status moved, produces no error anywhere while leaving external
+  readers permanently wrong about that loan. Announcing from the transition
+  itself makes an unobservable status change impossible to construct, which is
+  a stronger guarantee than any process that checks whether each operation
+  remembered.
+- **The announcement identifies the loan whose status actually moved.** Where an
+  operation touches more than one loan — a settlement that ends a temporary
+  holding record while completing a different, longer-lived one — each affected
+  loan's own change is announced under its own identity. An announcement naming
+  a related-but-different loan is worse than silence: it looks like coverage.
+
+A companion rule follows for the tooling: an automated check that verifies
+announcements are handled must take its input from the transitions that exist,
+not only from the announcements that exist. A check built the second way is
+blind to precisely the failure it exists to prevent, because a state change that
+announces nothing does not appear in a list of announcements. Satisfying the
+first requirement above satisfies this one as a side effect — if every
+transition announces, the two lists are the same list.
+
+Non-terminal edges are still announced, but reading them is optional: an
+external projection is not required to mirror transient states, and must not
+treat a move back into an ongoing state as a reason to overwrite what it holds.
+The requirement is that no loan is left presented as ongoing once the platform
+considers it finished.
+
 ### Repayment Logic
 
 **ERC-20 Lending:**
@@ -1763,6 +1801,34 @@ Lenders may exit or attempt to exit their positions before maturity. For Phase 1
 - The borrower’s payment obligations under the live loan must remain well defined after the lender exit.
 - NFT ownership and claim rights must move consistently with the economic position.
 
+The rules below hold for **every** lender exit route, and are stated here rather
+than under one option because the hazard they address does not belong to a
+particular route. Where a rule was first written for one route and applies to
+both, this is its home — a rule kept under a single option is a rule the other
+option's reader will not see, which is how a route acquires a protection its
+sibling already has.
+
+- **No exit fills against an offer past its deadline.** Wherever a lender exit
+  consumes or creates an offer, an offer whose deadline has passed is not
+  fillable, however fresh the other party's own commitment is. This binds at the
+  moment of the fill, not at the moment the offer was found.
+- **No party may end up owing itself.** An exit that would leave the lender side
+  and the borrower side of one live loan held by the same party is refused,
+  whichever route produced it. Party identity resolves to whoever currently holds
+  the relevant position NFT, never to a stored origination address that may have
+  gone stale on the secondary market.
+- **A buyer may not enter a position sale at or after the loan's due date**, on
+  any route: the remaining term is zero and the buyer would be purchasing
+  nothing. The refusal happens before the buyer commits funds. A purchase already
+  entered before that moment is the opposite case — its settlement must remain
+  completable and is never refused on maturity grounds. Timing gates protect the
+  moment of entry; they never strand a committed purchase.
+- **One live sale route per position.** A position already being sold through one
+  route cannot simultaneously be sold through another; the seller ends the first
+  before starting the second. This is symmetric — neither route is privileged
+  over the other — because the failure it prevents is the same in both
+  directions: one position handed to two buyers.
+
 ### Option 1: Sell the Loan to Another Lender
 
 The original lender may transfer the active lender position to a new lender.
@@ -2198,6 +2264,8 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Core Contracts (Examples):**
   - `VaipakamOfferManagement.sol`: Handles creation, cancellation, and matching of lender/borrower offers.
   - `OfferMatchFacet` or equivalent matching facet: Hosts bot-facing Range Orders preview / match entrypoints when needed to keep the offer-management facet under the EIP-170 runtime bytecode ceiling. Range Orders pushed ordinary offer management past the real-chain bytecode limit, so matching and ordinary create / accept / cancel logic should remain split where necessary for deployability.
+  - **Deployability splits, generally.** The bytecode ceiling is a real-chain constraint, not a design preference, so a facet that outgrows it is expected to be split rather than trimmed of behaviour. Two rules govern where the seam goes. First, the seam follows a boundary the product already has — a distinct user-facing route, a distinct actor, a distinct lifecycle stage — never an arbitrary bisection chosen to balance byte counts. Second, halves that are only correct when read together stay together: where two entry points share an invariant (a link one writes and the other clears, a one-at-a-time rule, a cooldown), splitting between them turns a locally-checkable rule into a cross-facet one and is the wrong seam even when it would free more space. A split changes deployment shape only — the routes it separates keep the same behaviour, the same shared state, and the same single address that callers use.
+  - `EarlyWithdrawalDirectFacet` or equivalent direct lender-exit facet: hosts the one-transaction lender exit (selling a position straight into a standing lender offer) when the listed-sale route's facet needs the room. The two lender-exit routes are separate user-facing choices that share no internals, whereas the listed route's own two stages — putting the position up for sale, and completing the sale once a buyer takes it — share the listing's binding and lifecycle rules and are expected to stay in one facet.
   - `VaipakamLoanManagement.sol`: Manages active loans, repayments, defaults, and liquidations.
   - `VaipakamVault.sol`: Holds collateral, ERC-721/1155 rental NFTs, and funds during various stages.
   - `VaipakamNFT.sol`: The ERC-721 contract responsible for minting and managing Vaipakam NFTs.

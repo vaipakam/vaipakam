@@ -15,6 +15,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
@@ -1429,12 +1430,22 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
-        selectors[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
-        selectors[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
-        selectors[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
+        selectors = new bytes4[](3);
+        selectors[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
+        selectors[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #951 (Codex #959) — cross-facet completion entry.
-        selectors[3] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        selectors[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        return selectors;
+    }
+
+    /// @dev #1780 — the direct lender-exit route's own facet surface.
+    function getEarlyWithdrawalDirectFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
         return selectors;
     }
 

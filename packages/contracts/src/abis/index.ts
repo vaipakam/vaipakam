@@ -60,6 +60,7 @@ import PartialWithdrawalFacetABI from './PartialWithdrawalFacet.json';
 import PrecloseFacetABI from './PrecloseFacet.json';
 import RefinanceFacetABI from './RefinanceFacet.json';
 import EarlyWithdrawalFacetABI from './EarlyWithdrawalFacet.json';
+import EarlyWithdrawalDirectFacetABI from './EarlyWithdrawalDirectFacet.json';
 import TreasuryFacetABI from './TreasuryFacet.json';
 import PayrollFacetABI from './PayrollFacet.json';
 import DiamondLoupeFacetABI from './DiamondLoupeFacet.json';
@@ -164,6 +165,7 @@ export {
   PrecloseFacetABI,
   RefinanceFacetABI,
   EarlyWithdrawalFacetABI,
+  EarlyWithdrawalDirectFacetABI,
   TreasuryFacetABI,
   PayrollFacetABI,
   DiamondLoupeFacetABI,
@@ -257,6 +259,7 @@ export const DIAMOND_ABI = [
   ...PrecloseFacetABI,
   ...RefinanceFacetABI,
   ...EarlyWithdrawalFacetABI,
+  ...EarlyWithdrawalDirectFacetABI,
   ...TreasuryFacetABI,
   ...PayrollFacetABI,
   ...DiamondLoupeFacetABI,

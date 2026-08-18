@@ -555,6 +555,31 @@
   },
   {
     "type": "event",
+    "name": "LoanStatusChanged",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "from",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SanctionedProceedsLocked",
     "inputs": [
       {
@@ -1726,6 +1751,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidSaleOffer",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidTransition",
     "inputs": [
       {
@@ -2212,6 +2242,11 @@
   },
   {
     "type": "error",
+    "name": "RateShortfallTooHigh",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReceivedRemitNotFound",
     "inputs": [
       {
@@ -2516,6 +2551,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SaleOfferAlreadyExists",
+    "inputs": []
   },
   {
     "type": "error",

@@ -28,6 +28,7 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
@@ -184,9 +185,23 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // cut (no selector overlap, order-independent).
     uint256 internal constant SELECTOR_BUDGET = 120;
 
-    // Must equal DeployDiamond's `cuts` array length (currently cuts[0..63]).
-    // A mismatch means a facet was added to DeployDiamond but not mirrored here.
-    uint256 internal constant EXPECTED_FACETS = 73;
+    // Must equal DeployDiamond's `cuts` array length. A mismatch means a facet
+    // was added to DeployDiamond but not mirrored into `_deployItems()` here.
+    //
+    // `public` so an EXTERNAL guardrail can assert it —
+    // `test/deploy/RefreshScriptFacetParityTest` compares this against
+    // `DiamondFacetNames.cutFacetNames().length`. That cross-check has to live
+    // outside this file, because the `require` in `refresh()` below compares
+    // `items.length` against THIS constant: omit a facet from both (the natural
+    // way to omit one, since you touch neither line) and the require passes
+    // while the refresh silently leaves that facet on stale bytecode. #1791's
+    // Codex F1 was exactly that, and this script's own guard could not see it.
+    //
+    // The parity test deliberately lives in `test/`, not here: a production
+    // refresh script must not import test code to check itself.
+    // 73 -> 74: EarlyWithdrawalDirectFacet (#1780) + RewardHorizonSweepFacet
+    // (#1434) landed on either side of one merge.
+    uint256 public constant EXPECTED_FACETS = 74;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -859,7 +874,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///         `addresses.json` key and inherited selector list. The facet set,
     ///         order, types, and getters mirror `DeployDiamond`'s `cuts[0..62]`
     ///         exactly — keep this in lockstep when a facet is added there.
-    function _deployItems() private returns (Item[] memory items) {
+    /// @dev `internal` rather than `private` so `RefreshScriptFacetParityTest`
+    ///      can drive it through a probe subclass and assert every slot is
+    ///      POPULATED — not merely allocated. Codex #1795 P1: the array is sized
+    ///      `new Item[](EXPECTED_FACETS)`, so a forgotten `items[N] = Item(...)`
+    ///      leaves a zero-valued slot while every length check — the `require` in
+    ///      `refresh()` and a count-only test alike — still passes, and the live
+    ///      refresh then skips that facet. Only reading the contents catches it.
+    function _deployItems() internal returns (Item[] memory items) {
         items = new Item[](EXPECTED_FACETS);
         items[0] = Item("diamondLoupeFacet", address(new DiamondLoupeFacet()), _getLoupeSelectors());
         items[1] = Item("ownershipFacet", address(new OwnershipFacet()), _getOwnershipSelectors());
@@ -879,6 +901,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[15] = Item("addCollateralFacet", address(new AddCollateralFacet()), _getAddCollateralSelectors());
         items[16] = Item("treasuryFacet", address(new TreasuryFacet()), _getTreasurySelectors());
         items[17] = Item("earlyWithdrawalFacet", address(new EarlyWithdrawalFacet()), _getEarlyWithdrawalSelectors());
+        // #1780 — the direct lender-exit route. Must be refreshed WITH the listed
+        // route: they were one facet, so refreshing only the listed one leaves
+        // `sellLoanViaBuyOffer` on pre-refresh bytecode while everything around
+        // it moves, which is exactly the full-refresh invariant this script
+        // exists to hold.
+        items[72] = Item("earlyWithdrawalDirectFacet", address(new EarlyWithdrawalDirectFacet()), _getEarlyWithdrawalDirectSelectors());
         items[18] = Item(
             "partialWithdrawalFacet",
             address(new PartialWithdrawalFacet()),
@@ -914,7 +942,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // facet would leave `sweepExpiredInteractionRewards` routed at the old
         // implementation — the pre-unification expiry, with its hand-derived
         // D1 obligation — while every other reward facet moved forward.
-        items[72] = Item(
+        // Slot 73: #1780's earlyWithdrawalDirectFacet took 72 on main and
+        // this facet landed on the same index on the branch; the merge keeps
+        // both, hole-free (the #1795 parity test asserts every slot).
+        items[73] = Item(
             "rewardHorizonSweepFacet",
             address(new RewardHorizonSweepFacet()),
             _getRewardHorizonSweepSelectors()

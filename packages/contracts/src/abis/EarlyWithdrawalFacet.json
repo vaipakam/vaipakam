@@ -54,24 +54,6 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "sellLoanViaBuyOffer",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "buyOfferId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
     "name": "CollateralConsolidated",
     "inputs": [
@@ -160,7 +142,7 @@
   },
   {
     "type": "event",
-    "name": "LoanSold",
+    "name": "LoanStatusChanged",
     "inputs": [
       {
         "name": "loanId",
@@ -169,46 +151,16 @@
         "internalType": "uint256"
       },
       {
-        "name": "originalLender",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newLender",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "shortfallPaid",
-        "type": "uint256",
+        "name": "from",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "enum LibVaipakam.LoanStatus"
       },
       {
-        "name": "newLenderTokenId",
-        "type": "uint256",
+        "name": "to",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newInterestRateBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newDurationDays",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newDueTimestamp",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
+        "internalType": "enum LibVaipakam.LoanStatus"
       }
     ],
     "anonymous": false
@@ -1092,22 +1044,6 @@
   },
   {
     "type": "error",
-    "name": "IlliquidPairNotConsented",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pairKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ImportedMarkerMissing",
     "inputs": [
       {
@@ -1506,22 +1442,6 @@
     "type": "error",
     "name": "MessengerPredatesV3",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "MidTierPairNotAcknowledged",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pairKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2056,27 +1976,6 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RiskTierTooLow",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "requiredTier",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "actorTier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
   },
   {
     "type": "error",

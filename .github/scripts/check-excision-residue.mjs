@@ -519,6 +519,7 @@ const PINNED = new Map([
   ["packages/contracts/src/abis/ClaimFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
   ["packages/contracts/src/abis/ConsolidationFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
   ["packages/contracts/src/abis/DefaultedFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
+  ["packages/contracts/src/abis/EarlyWithdrawalDirectFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
   ["packages/contracts/src/abis/EarlyWithdrawalFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
   ["packages/contracts/src/abis/FeeEntitlementFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
   ["packages/contracts/src/abis/InteractionRewardsFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],

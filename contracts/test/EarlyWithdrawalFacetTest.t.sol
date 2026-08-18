@@ -7,7 +7,9 @@ import {Vm} from "forge-std/Vm.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibLifecycle} from "../src/libraries/LibLifecycle.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -80,6 +82,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ClaimFacet claimFacet;
     AddCollateralFacet addCollateralFacet;
     EarlyWithdrawalFacet earlyFacet;
+    EarlyWithdrawalDirectFacet earlyFacetDirect;
     AccessControlFacet accessControlFacet;
     TestMutatorFacet testMutatorFacet;
     HelperTest helperTest;
@@ -155,6 +158,11 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      (lender, lenderTokenId=99, borrowerTokenId=100).
     function _setupTempLoan(uint256 loanId) internal {
         LibVaipakam.Loan memory l;
+        // #1782 — every production loan carries its own id
+        // (`LoanFacet.sol:953`, the single writer). The lifecycle emit reads
+        // `loan.id`, so a fixture that leaves it zero announces loan 0 and is
+        // not a faithful stand-in for a real loan.
+        l.id = loanId;
         l.lender = newLender;
         l.lenderTokenId = 99;
         l.borrowerTokenId = 100;
@@ -164,6 +172,11 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Build a fresh tempLoan with ERC20 collateral set.
     function _setupTempLoanWithCollateral(uint256 loanId, address collateralAsset, uint256 collateralAmount) internal {
         LibVaipakam.Loan memory l;
+        // #1782 — every production loan carries its own id
+        // (`LoanFacet.sol:953`, the single writer). The lifecycle emit reads
+        // `loan.id`, so a fixture that leaves it zero announces loan 0 and is
+        // not a faithful stand-in for a real loan.
+        l.id = loanId;
         l.lender = newLender;
         l.lenderTokenId = 99;
         l.borrowerTokenId = 100;
@@ -209,6 +222,7 @@ contract EarlyWithdrawalFacetTest is Test {
         claimFacet = new ClaimFacet();
         addCollateralFacet = new AddCollateralFacet();
         earlyFacet = new EarlyWithdrawalFacet();
+        earlyFacetDirect = new EarlyWithdrawalDirectFacet();
         accessControlFacet = new AccessControlFacet();
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
@@ -225,7 +239,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](27);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -270,6 +284,8 @@ contract EarlyWithdrawalFacetTest is Test {
         cuts[10] = IDiamondCut.FacetCut({facetAddress: address(claimFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getClaimFacetSelectors()});
         cuts[11] = IDiamondCut.FacetCut({facetAddress: address(addCollateralFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAddCollateralFacetSelectors()});
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(earlyFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()});
+        // #1780 — the direct lender-exit route lives in its own facet now.
+        cuts[26] = IDiamondCut.FacetCut({facetAddress: address(earlyFacetDirect), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalDirectFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
@@ -411,7 +427,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Borrower is not the lender-side NFT owner.
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     function testSellLoanRevertsForNonExistentLoan() public {
@@ -422,7 +438,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSignature("ERC721NonexistentToken(uint256)", 0)
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(999, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(999, buyOfferId);
     }
 
     function testSellLoanRevertsInvalidSaleOffer_AlreadyAccepted() public {
@@ -432,8 +448,8 @@ contract EarlyWithdrawalFacetTest is Test {
         // Actually easiest: use an offer id that maps to the accepted loan offer.
         // After setUp, offer 1 was accepted by borrower. Let's use offerId 1 (accepted).
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, 1); // offer 1 is accepted
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, 1); // offer 1 is accepted
     }
 
     function testSellLoanRevertsInvalidSaleOffer_RangedBuyOffer() public {
@@ -446,8 +462,8 @@ contract EarlyWithdrawalFacetTest is Test {
         o.amountMax = o.amount * 2;
         TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     function testSellLoanRevertsInvalidSaleOffer_PartiallyFilledBuyOffer() public {
@@ -459,8 +475,8 @@ contract EarlyWithdrawalFacetTest is Test {
         o.amountFilled = 1;
         TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev #1503 design item 8 — the direct sale checked the buy offer's TYPE
@@ -485,7 +501,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 o.expiresAt
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev Boundary: `isOfferExpired` treats `now >= expiresAt` as expired, so
@@ -507,7 +523,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 o.expiresAt
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The GTC sentinel (`expiresAt == 0`) means "never expires", NOT
@@ -524,8 +540,8 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.warp(block.timestamp + 365 days);
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     // ─── sellLoanViaBuyOffer success ──────────────────────────────────────────
@@ -538,9 +554,9 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.expectEmit(true, true, true, false);
         // Topic-only check (data=false in expectEmit above); zero placeholders.
-        emit EarlyWithdrawalFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);
+        emit EarlyWithdrawalDirectFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
 
         // Loan lender should now be newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -657,7 +673,7 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.SaleOfferAlreadyExists.selector);
+        vm.expectRevert(IVaipakamErrors.SaleOfferAlreadyExists.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
     }
 
@@ -869,8 +885,8 @@ contract EarlyWithdrawalFacetTest is Test {
     function testDirectSaleBlockedWhileListed() public {
         _listSaleOffer();
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.SaleOfferAlreadyExists.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(
+        vm.expectRevert(IVaipakamErrors.SaleOfferAlreadyExists.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             activeLoanId, buyOfferId
         );
     }
@@ -949,7 +965,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer);
 
         // Loan lender should now be newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -964,7 +980,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev Covers LoanNotActive in createLoanSaleOffer
@@ -1021,7 +1037,7 @@ contract EarlyWithdrawalFacetTest is Test {
         ERC20Mock(mockERC20).mint(lender, 100 ether);
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateBuyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateBuyOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -1071,7 +1087,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, slightlyHigherOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, slightlyHigherOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -1120,7 +1136,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sameRateOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sameRateOffer);
 
         LibVaipakam.Loan memory loan2 = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan2.lender, newLender);
@@ -1183,7 +1199,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("withdraw failed"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
         vm.clearMockedCalls();
     }
 
@@ -1226,7 +1242,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("burn fail"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
         vm.clearMockedCalls();
     }
 
@@ -1270,7 +1286,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("mint fail"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
         vm.clearMockedCalls();
     }
 
@@ -1320,8 +1336,8 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongOffer);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongOffer);
     }
 
     /// @dev Covers InvalidSaleOffer when buyOffer.amount < loan.principal
@@ -1362,8 +1378,8 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowOffer);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowOffer);
         vm.clearMockedCalls();
     }
 
@@ -1405,8 +1421,8 @@ contract EarlyWithdrawalFacetTest is Test {
         );
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, longOffer);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, longOffer);
     }
 
     /// @dev Covers InvalidSaleOffer when buyOffer.collateralAmount > loan.collateralAmount
@@ -1444,8 +1460,8 @@ contract EarlyWithdrawalFacetTest is Test {
         );
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highCollOffer);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highCollOffer);
     }
 
     // ─── completeLoanSale keeper access ────────────────────────────────────
@@ -1509,7 +1525,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.warp(block.timestamp + 31 days);
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
     }
 
@@ -1553,7 +1569,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowRateOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowRateOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -1600,7 +1616,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("burn fail"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer);
         vm.clearMockedCalls();
     }
 
@@ -1612,8 +1628,8 @@ contract EarlyWithdrawalFacetTest is Test {
         _setLoanAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev Covers InvalidSaleOffer for prepayAsset mismatch
@@ -1660,8 +1676,8 @@ contract EarlyWithdrawalFacetTest is Test {
         );
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongPrepay);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongPrepay);
     }
 
     /// @dev Covers InvalidSaleOffer for collateral asset mismatch
@@ -1708,8 +1724,8 @@ contract EarlyWithdrawalFacetTest is Test {
         );
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongColl);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongColl);
     }
 
     /// @dev Covers excess refund path (buyOffer.amount > loan.principal) and excess > 0 branch
@@ -1752,7 +1768,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -1812,7 +1828,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("refund fail"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
         vm.clearMockedCalls();
     }
 
@@ -1822,7 +1838,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setLoanAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
     }
 
@@ -1872,6 +1888,73 @@ contract EarlyWithdrawalFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1782 / #971 — the sale-vehicle temp loan's terminal edge must be
+    ///      OBSERVABLE off-chain. This is the exact instance that motivated
+    ///      emitting from `LibLifecycle.transition`: `_completeLoanSaleImpl`
+    ///      terminalises the temp loan Active -> Repaid, and the only event it
+    ///      used to produce was `LoanSaleCompleted`, which names the ORIGINAL
+    ///      loan and never `tempLoanId`. On-chain state was correct; an indexer
+    ///      that had recorded the temp loan's creation received nothing saying
+    ///      it ended, so the projection showed it active forever — the
+    ///      May-2026 "loan stuck active" symptom, reached through the one shape
+    ///      the event-coverage guardrail cannot see (a state change that emits
+    ///      nothing is not an untagged or unhandled event).
+    ///
+    ///      Asserting the TEMP loan id specifically is the point. A test that
+    ///      only checked `activeLoanId` would pass on the pre-fix code, because
+    ///      that loan does get an event.
+    ///
+    ///      Deliberately NOT written with `TestMutatorFacet.scaffoldLoanStatusChange`:
+    ///      that helper writes `loan.status` and calls the metrics hook directly,
+    ///      bypassing `LibLifecycle.transition` and therefore the emit, so it
+    ///      would prove nothing about this path.
+    function test_1782_tempLoanTerminalEdgeIsObservable() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true, 7 days);
+        vm.clearMockedCalls();
+
+        _setOfferAcceptedAndRate(50, 1000);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
+        _setupTempLoan(2);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.warp(block.timestamp + 5 days);
+
+        // Recorded logs rather than `vm.expectEmit`: that helper asserts the
+        // NEXT log matches, and `LoanSaleCompleted` is emitted after this edge.
+        // Emit ORDER is not the property under test — presence of the temp
+        // loan's own edge, with the right endpoints, is.
+        vm.recordLogs();
+
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("LoanStatusChanged(uint256,uint8,uint8)");
+        bool sawTempEdge;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length < 2 || logs[i].topics[0] != sig) continue;
+            if (uint256(logs[i].topics[1]) != 2) continue; // the TEMP loan id
+            (uint8 from_, uint8 to_) = abi.decode(logs[i].data, (uint8, uint8));
+            assertEq(from_, uint8(LibVaipakam.LoanStatus.Active));
+            assertEq(to_, uint8(LibVaipakam.LoanStatus.Repaid));
+            sawTempEdge = true;
+        }
+        assertTrue(
+            sawTempEdge,
+            "temp loan terminal edge emitted no LoanStatusChanged (#1782/#971)"
+        );
+
+        // And the transition really happened, so the event is not describing a
+        // state change that did not occur.
+        LibVaipakam.Loan memory temp = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(uint8(temp.status), uint8(LibVaipakam.LoanStatus.Repaid));
         vm.clearMockedCalls();
     }
 
@@ -2045,7 +2128,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         vm.clearMockedCalls();
     }
 
@@ -2059,7 +2142,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
 
         vm.prank(owner);
         ProfileFacet(address(diamond)).updateKYCTier(newLender, LibVaipakam.KYCTier.Tier2);
@@ -2121,8 +2204,8 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // buyOfferId has collateralAssetType=ERC20 but loan now has ERC721 → mismatch
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev Covers completeLoanSale where the live loan burn NFT succeeds but mint NFT succeeds,
@@ -2187,7 +2270,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         vm.clearMockedCalls();
     }
 
@@ -2204,7 +2287,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("fail"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         vm.clearMockedCalls();
     }
 
@@ -2447,7 +2530,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
 
         // Restore KYC
         vm.prank(owner);
@@ -2607,7 +2690,7 @@ contract EarlyWithdrawalFacetTest is Test {
         deal(mockERC20, address(diamond), PRINCIPAL + 100 ether);
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -2658,7 +2741,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -2862,7 +2945,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // Sell the loan to the new lender.
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
 
         // Reservation re-keyed old → new, where the held VPFI now physically lives.
         assertEq(
@@ -2934,7 +3017,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             activeLoanId, buyOfferId
         );
     }
@@ -3594,7 +3677,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 floor
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     function test_createLoanSaleOffer_revertsBelowSolvencyFloor() public {
@@ -3714,7 +3797,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
             newLender,
@@ -3803,7 +3886,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The principal leg is judged too, and names itself — `which == 1`.
@@ -3823,7 +3906,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The staleness half of #1655, in the direction that used to let a
@@ -3859,7 +3942,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The mirror direction, and the reason the snapshot is still read.
@@ -3888,7 +3971,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev Codex #1635 r8 — the refusal must NOT depend on the
@@ -3974,7 +4057,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 tightened
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The gate is one-directional: a loan STRICTER than today's terms is
@@ -3989,7 +4072,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
             newLender,
@@ -4052,7 +4135,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 cap
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The preview must agree with the accept. A preview that checked only

@@ -90,7 +90,8 @@ true on a settlement path, and it cost real time in #1503.
 | -------------------------- | --------------------------------------------------------------------------- |
 | **PrecloseFacet**          | Borrower early close-out: `precloseDirect`, obligation handover to a replacement borrower (`transferObligationViaOffer`), and the offset route (`offsetWithNewOffer` → completion). Completion has TWO entries: `completeOffset` (external) and `completeOffsetInternal` — the `address(this)`-gated cross-facet entry `_acceptOffer`'s auto-link block invokes when a third party accepts the offset offer, skipping the outer `nonReentrant` because the accept already holds the diamond guard. Don't assume a manual second step |
 | **RefinanceFacet**         | Move a borrower onto better terms — `refinanceLoan`, `refinanceLoanFromAccept`. NOT an in-place edit: the replacement loan is a **separate record** (`s.offerIdToLoanId[borrowerOfferId]` → a new `loanId`) created when the new lender accepted the offer, and the old loan is terminalized **Active → Repaid**. So a completed refinance leaves **two loan records and FOUR position NFTs**: every loan carries both a `lenderTokenId` and a `borrowerTokenId`, and the old pair is *status-updated* to `LoanRepaid` — **not burned** — so `ownerOf` still resolves and the old borrower NFT stays a redeemable receipt on the original position. Load-bearing for indexer state and the terminal-path invariants: an indexer that assumes one NFT per loan, or that a terminal loan's NFTs are gone, is wrong on both counts |
-| **EarlyWithdrawalFacet**   | Lender exit: instant sale into a standing buy offer (`sellLoanViaBuyOffer`) and the listed-sale route (`createLoanSaleOffer`, which carries a MANDATORY finite expiry, → completion). Completion mirrors the offset route's shape: `completeLoanSale` (external) plus `completeLoanSaleInternal`, the `address(this)`-gated entry `_acceptOffer` invokes automatically after a buyer accepts the linked sale offer |
+| **EarlyWithdrawalFacet**   | Lender exit, LISTED route only: `createLoanSaleOffer` (carries a MANDATORY finite expiry) → completion. Completion mirrors the offset route's shape: `completeLoanSale` (external) plus `completeLoanSaleInternal`, the `address(this)`-gated entry `_acceptOffer` invokes automatically after a buyer accepts the linked sale offer. **`sellLoanViaBuyOffer` is NOT here** — #1780 moved it to `EarlyWithdrawalDirectFacet` below, so a grep of this facet for the direct sale comes back empty |
+| **EarlyWithdrawalDirectFacet** | Lender exit, DIRECT route: `sellLoanViaBuyOffer` — instant sale into a standing lender ("buy") offer in one transaction. Split out of `EarlyWithdrawalFacet` in #1780, which had reached 30 bytes under EIP-170 — less than one cross-facet call, so every queued fix to either route was undeployable. Same storage, same Diamond, same call surface for callers; only the runtime bytecode is separate. **The two must be refreshed together** — the redeploy scripts carry both, and refreshing one alone leaves the other on pre-split code. Both are sale hosts that reach `RiskPreviewFacet.saleAdmission` through `LibSaleSolvency`, so a curated refresh script touching either must also route that selector (#1649) |
 | **PartialWithdrawalFacet** | Release surplus collateral while a loan is open — `calculateMaxWithdrawable`, `partialWithdrawCollateral` |
 | **TreasuryFacet**          | Treasury operations (56 functions — claims, buyback intents, remittance absorption, asset conversion). Custody is **deployment-mode dependent**: `LibFacet.recordTreasuryAccrual` only credits `treasuryBalances` when `s.treasury == address(this)`, so on the documented mainnet topology (`TREASURY_ADDRESS` = an external multisig) fees leave immediately and the claim / conversion paths have nothing at the Diamond to act on. Those paths are for Diamond-as-treasury deployments |
 
@@ -181,13 +182,68 @@ gate reports with the same "regression failed" wording as a red test — a
 green-looking suite that never ran is the failure mode this delegation
 exists to prevent.
 
-**When you add a facet**: add it to `DiamondFacetNames.cutFacetNames()`
-AND add its `_get<Facet>Selectors()` call to
-`SelectorCoverageTest._populateRoutedSet()`. **When you add a function to
-a facet**: add its selector to the matching `_get<Facet>Selectors()` in
-`DeployDiamond.s.sol` (and `HelperTest.sol`) — `SelectorCoverageTest`
-fails otherwise. A deeper deploy-*integration* test (runs `DeployDiamond`
-and loupe-asserts the built Diamond) is tracked as Issue #72.
+**When you add a facet**, it must be registered in several places. This note
+listed two until #1793; the omissions are where #1780's new facet actually went
+missing. Paths are repo-root-relative.
+
+**ALWAYS required** — skip one of these and the facet is absent from a deploy
+path or a guardrail:
+
+| Place | What it drives |
+| --- | --- |
+| `contracts/script/DeployDiamond.s.sol` | `cuts[]`, `_get<Facet>Selectors()`, **and a `Deployments.writeFacet(...)` line** |
+| `contracts/script/RefreshAllFacetsInPlace.s.sol` | `_deployItems()`'s `items[]` **and** `EXPECTED_FACETS` |
+| `contracts/test/deploy/DiamondFacetNames.sol` | `cutFacetNames()` — ground truth for the whole deploy-sanity suite |
+| `contracts/test/deploy/SelectorCoverageTest.t.sol` | `_populateRoutedSet()` |
+| `contracts/test/HelperTest.sol` | the test-side Diamond build |
+| `contracts/test/SetupTest.t.sol` | shared test setup |
+| `packages/contracts/src/deployments.ts` | a field on the `Deployment` type — mandatory as soon as `DeployDiamond` writes the new key |
+
+**Conditional** — required only when the stated condition holds, so *not*
+registering these can be correct:
+
+| Place | Condition |
+| --- | --- |
+| `contracts/script/RedeployFacets.s.sol` | only if the facet belongs to one of that script's curated refresh families — it is a *curated* partial refresh, not an all-facets one |
+| `contracts/script/exportFrontendAbis.sh` (`FACETS=(...)`) | only if an app actually consumes the facet's ABI. Internal facets are deliberately excluded — `ReceiverFacet` is not in that array and should not be |
+| `packages/contracts/src/abis/index.ts` | only alongside the entry above — the export script does **not** touch this barrel |
+
+The last two are covered in more detail in "Frontend ABI sync" **below**.
+
+**Two of these do not fail loudly, so do not rely on a red check:**
+
+- **`RefreshAllFacetsInPlace`'s guard compares against itself.**
+  `require(items.length == EXPECTED_FACETS, "...facet count drift vs
+  DeployDiamond")` says "vs DeployDiamond" but checks the script's own
+  constant — omit the facet from both lines and it passes, and the refresh then
+  leaves that facet on stale bytecode.
+  `contracts/test/deploy/RefreshScriptFacetParityTest` (#1793) is what makes
+  this loud: it cross-checks the count against `cutFacetNames()`, asserts every
+  `items[]` slot is actually populated (allocation is sized from the constant,
+  so a forgotten assignment leaves a zero slot that every length check
+  accepts), and compares the refresh's **selector set** against the Diamond the
+  deploy script actually builds — so a same-count *swap* of one facet for
+  another cannot pass either.
+- **`DeployDiamond`'s `writeFacet` omission is invisible to
+  `predeploy-check`.** Step 4b validates that every key *written* to the
+  deployment artifact is typed on `Deployment`; it is structurally blind to a
+  key never written, so the gate reports success. Still unguarded — tracked in
+  #1793. The consequence is an inconvenience rather than a lost address: the
+  implementation is still recoverable on-chain via
+  `DiamondLoupeFacet.facetAddress(bytes4)` / `facetAddresses()` from any known
+  selector, as well as from broadcast logs.
+
+**When you add a function to a facet**: add its selector to the matching
+`_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —
+`SelectorCoverageTest` fails otherwise.
+
+The deploy-*integration* test that Issue #72 asked for **already exists** and
+runs in the deploy-sanity suite:
+`contracts/test/deploy/DeployDiamondIntegrationTest.t.sol` invokes the real
+`DeployDiamond.runWith(...)` and loupe-asserts the built Diamond, including
+per-selector ownership. This note previously said it was "tracked as Issue #72",
+which presented a shipped CI guard as a coverage gap and pointed contributors at
+duplicate work.
 
 ## Conventions
 

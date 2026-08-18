@@ -51,6 +51,7 @@ import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
@@ -220,6 +221,7 @@ contract DeployDiamond is Script {
         TreasuryFacet treasuryFacet = new TreasuryFacet();
         PayrollFacet payrollFacet = new PayrollFacet();
         EarlyWithdrawalFacet earlyWithdrawalFacet = new EarlyWithdrawalFacet();
+        EarlyWithdrawalDirectFacet earlyWithdrawalDirectFacet = new EarlyWithdrawalDirectFacet();
         PartialWithdrawalFacet partialWithdrawalFacet = new PartialWithdrawalFacet();
         PrecloseFacet precloseFacet = new PrecloseFacet();
         PrepayListingFacet prepayListingFacet = new PrepayListingFacet();
@@ -288,7 +290,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](73);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](74);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -308,6 +310,13 @@ contract DeployDiamond is Script {
         cuts[15] = _buildCut(address(addCollateralFacet), _getAddCollateralSelectors());
         cuts[16] = _buildCut(address(treasuryFacet), _getTreasurySelectors());
         cuts[17] = _buildCut(address(earlyWithdrawalFacet), _getEarlyWithdrawalSelectors());
+        // #1780 — the DIRECT lender-exit route, split off the listed route for
+        // EIP-170. Same storage, same Diamond; only the runtime bytecode is
+        // separate.
+        cuts[72] = _buildCut(
+            address(earlyWithdrawalDirectFacet),
+            _getEarlyWithdrawalDirectSelectors()
+        );
         cuts[18] = _buildCut(address(partialWithdrawalFacet), _getPartialWithdrawalSelectors());
         cuts[19] = _buildCut(address(precloseFacet), _getPrecloseSelectors());
         cuts[20] = _buildCut(address(refinanceFacet), _getRefinanceSelectors());
@@ -326,7 +335,10 @@ contract DeployDiamond is Script {
         // #1434 — the claim-horizon sweep on its own facet: it settles through
         // the ShareOfPool engine now, and neither existing host had room for
         // it (see RewardHorizonSweepFacet's header for the measured sizes).
-        cuts[72] = _buildCut(
+        // (cuts[73]: #1780's EarlyWithdrawalDirectFacet took 72 on main and
+        // this facet landed on the same index on the branch — the merge keeps
+        // both, hole-free.)
+        cuts[73] = _buildCut(
             address(rewardHorizonSweepFacet),
             _getRewardHorizonSweepSelectors()
         );
@@ -870,6 +882,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
         Deployments.writeFacet("payrollFacet",            address(payrollFacet));
         Deployments.writeFacet("earlyWithdrawalFacet",    address(earlyWithdrawalFacet));
+        Deployments.writeFacet("earlyWithdrawalDirectFacet", address(earlyWithdrawalDirectFacet));
         Deployments.writeFacet("partialWithdrawalFacet",  address(partialWithdrawalFacet));
         Deployments.writeFacet("precloseFacet",           address(precloseFacet));
         Deployments.writeFacet("prepayListingFacet",      address(prepayListingFacet));
@@ -949,6 +962,7 @@ contract DeployDiamond is Script {
         console.log("TreasuryFacet:        ", address(treasuryFacet));
         console.log("PayrollFacet:         ", address(payrollFacet));
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
+        console.log("EarlyWithdrawalDirectFacet:", address(earlyWithdrawalDirectFacet));
         console.log("PartialWithdrawalFacet:", address(partialWithdrawalFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
         console.log("PrepayListingFacet:   ", address(prepayListingFacet));
@@ -1952,13 +1966,20 @@ contract DeployDiamond is Script {
     }
 
     function _getEarlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
-        s[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
-        s[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
-        s[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
+        s = new bytes4[](3);
+        s[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
+        s[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #951 (Codex #959) — cross-facet completion entry for the
         // accept-then-complete auto-link (skips the outer nonReentrant guard).
-        s[3] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        s[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+    }
+
+    /// @dev #1780 — the direct lender-exit route's own facet. One selector, but
+    ///      it carries the whole Option-1 body, which is why the split bought
+    ///      the listed route its EIP-170 headroom back.
+    function _getEarlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
     }
 
     function _getPartialWithdrawalSelectors() internal pure returns (bytes4[] memory s) {

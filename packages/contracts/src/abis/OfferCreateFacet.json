@@ -2142,6 +2142,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidSaleOffer",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "IocRequiresExpiry",
     "inputs": []
   },
@@ -2739,6 +2744,11 @@
   },
   {
     "type": "error",
+    "name": "RateShortfallTooHigh",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ReceivedRemitNotFound",
     "inputs": [
       {
@@ -3072,6 +3082,11 @@
         "internalType": "uint8"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SaleOfferAlreadyExists",
+    "inputs": []
   },
   {
     "type": "error",

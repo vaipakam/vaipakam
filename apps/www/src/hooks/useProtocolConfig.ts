@@ -295,6 +295,24 @@ const SERVER_SNAPSHOT: {
 
 function publish() {
   snapshot = { config, loading };
+  // The store's conclusion, exposed as a document-level fact — the same
+  // philosophy as `data-live-value-source` on each figure (#1623: the
+  // attribute is the fact; prose is prose). A live-review drive needs to
+  // know whether THIS document accepted a snapshot, and every document
+  // fetches independently; without this, an external check can only
+  // re-implement the acceptance conditions (status, `available`,
+  // freshness, full field-level decode) and drift from them — a probe
+  // did exactly that and was wrong twice (#1778 rounds 4-5). `pending`
+  // while the fetch is in flight, then `published` or `bundled` as the
+  // store itself concluded. Guarded: the store is imported during
+  // prerender where no document exists.
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.protocolConfig = loading
+      ? 'pending'
+      : config
+        ? 'published'
+        : 'bundled';
+  }
   for (const l of listeners) l();
 }
 

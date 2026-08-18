@@ -30,6 +30,45 @@ import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 library LibLifecycle {
     error InvalidTransition(LibVaipakam.LoanStatus from, LibVaipakam.LoanStatus to);
 
+    /// @notice Emitted on EVERY `loan.status` edge, from the one primitive all
+    ///         status writes are required to route through.
+    /// @dev #1782 — the off-chain half of the chokepoint this library already
+    ///      documents. `transition` / `transitionFromAny` have always fanned
+    ///      out to {LibMetricsHooks.onLoanStatusChanged}, so every edge already
+    ///      had exactly one observation point on-chain; an indexer had no
+    ///      equivalent and could only watch whatever event the CALLING facet
+    ///      chose to emit. Where a caller emitted nothing — or named a
+    ///      different loan than the one it transitioned, as the sale-vehicle
+    ///      temp loan does — the projection kept that loan `active` forever.
+    ///      That is the May-2026 symptom reached through the event-coverage
+    ///      guardrail's blind spot: a state change that emits nothing is not an
+    ///      untagged or unhandled event, so it never enters the checker's
+    ///      enumeration.
+    ///
+    ///      Emitting HERE rather than at each call site is what closes the
+    ///      class instead of the instance. Routing through this primitive is
+    ///      already mandatory and already enforced (an unlisted edge reverts),
+    ///      so a transition that is invisible off-chain is no longer
+    ///      constructible — there is no call site left that could forget. It
+    ///      also makes a write-side static check on call sites unnecessary.
+    ///      The id comes from `loan.id` rather than from a caller-supplied
+    ///      argument. That is sound because `loan.id` is written exactly once,
+    ///      at creation (`LoanFacet.sol:953` is its only writer anywhere in
+    ///      `src/`), so it cannot drift from the storage key the caller indexed
+    ///      by. It is also the safer of the two: a `loanId` parameter would let
+    ///      a call site pass one loan's id while transitioning another, which is
+    ///      the precise failure #1782 describes — an event naming a different
+    ///      loan than the one that moved.
+    /// @param loanId The loan whose status changed.
+    /// @param from Status before the edge.
+    /// @param to Status after the edge.
+    /// @custom:event-category state-change/loan-mutation
+    event LoanStatusChanged(
+        uint256 indexed loanId,
+        LibVaipakam.LoanStatus from,
+        LibVaipakam.LoanStatus to
+    );
+
     /// @notice Stamp a fresh loan as Active. The default enum value is
     ///         already `Active` (index 0), so this is semantically a
     ///         marker — callers document that a loan has entered the
@@ -51,6 +90,7 @@ library LibLifecycle {
         if (!_isValid(current, to)) revert InvalidTransition(current, to);
         loan.status = to;
         LibMetricsHooks.onLoanStatusChanged(loan, current, to);
+        emit LoanStatusChanged(loan.id, current, to);
     }
 
     /// @notice Variant that accepts the current status implicitly — the
@@ -66,6 +106,7 @@ library LibLifecycle {
         if (!_isValid(current, to)) revert InvalidTransition(current, to);
         loan.status = to;
         LibMetricsHooks.onLoanStatusChanged(loan, current, to);
+        emit LoanStatusChanged(loan.id, current, to);
     }
 
     /// @dev Pure allow-list check. Keep this as an if-ladder — it compiles

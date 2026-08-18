@@ -174,7 +174,7 @@ The Diamond currently cuts a substantially larger facet set than the original co
 | | `AddCollateralFacet` / `PartialWithdrawalFacet` | Collateral top-up; excess-collateral withdrawal under health constraints |
 | | `PrecloseFacet` | Borrower early closure: direct preclose, obligation transfer, offset |
 | | `RefinanceFacet` | Borrower switch to a new lender with original-lender protection |
-| | `EarlyWithdrawalFacet` | Lender exit by selling the live position to a new lender |
+| | `EarlyWithdrawalFacet` / `EarlyWithdrawalDirectFacet` | Lender exit by selling the live position to a new lender — listed sale and direct sale respectively |
 | | `SwapToRepayFacet` / `SwapToRepayIntentFacet` | Atomic collateral-to-principal swap-and-repay, direct and intent-based |
 | | `ClaimFacet` | Pull-based claim distribution for terminal loans |
 | | `ConsolidationFacet` | Position consolidation to the current NFT holder |
