@@ -511,6 +511,21 @@ for (const file of memberFiles) {
     const names = [];
     /** path -> ABI type, so a reference can be required to be numeric. */
     const typeOf = new Map();
+    /**
+     * Could anything under here be a loanId/offerId reference?
+     *
+     * Both unsupported-shape reports below are about references this checker
+     * cannot SEE. A tuple of amounts or addresses hides nothing from coverage,
+     * so reporting it would be noise that trains the reader to ignore the
+     * message — the live ABI has one such case (`PrepayListingUpdated.feeLegs`,
+     * a `tuple[]` of recipient/startAmount/endAmount) and it is not a gap.
+     */
+    const hidesReference = (inputs) =>
+      (inputs ?? []).some(
+        (c) =>
+          REF_FIELDS.some((f) => isAliasOf(f, c?.name)) ||
+          (Array.isArray(c?.components) && hidesReference(c.components)),
+      );
     const collect = (inputs, prefix) => {
       for (const i of inputs ?? []) {
         if (!i?.name) {
@@ -521,7 +536,7 @@ for (const file of memberFiles) {
           // no access path this checker can name for it (the indexer would have
           // to read it positionally), so the honest answer is that this shape is
           // unsupported rather than that the event carries nothing.
-          if (Array.isArray(i?.components) && i.components.some((c) => c?.name)) {
+          if (Array.isArray(i?.components) && hidesReference(i.components)) {
             abiConflicts.push({
               kind: 'unnamed-tuple',
               event: item.name,
@@ -536,7 +551,28 @@ for (const file of memberFiles) {
         const path = prefix ? `${prefix}.${i.name}` : i.name;
         names.push(path);
         typeOf.set(path, i.type ?? '');
-        if (Array.isArray(i.components)) collect(i.components, path);
+        if (Array.isArray(i.components)) {
+          // An ARRAY of tuples is not reachable by a dotted path (Codex round-18
+          // P2): viem decodes `args.items` as an array, so `args.items.loanId`
+          // is `undefined` and `Number(undefined)` is `NaN` — a mapping that
+          // looked valid to this checker and persisted garbage at runtime.
+          // Reported as unsupported rather than descended, since validating an
+          // indexed access is a different question from validating a path.
+          if (/\]$/.test(i.type ?? '')) {
+            if (hidesReference(i.components)) {
+              abiConflicts.push({
+                kind: 'tuple-array',
+                event: item.name,
+                message: `${item.name} — \`${path}\` is an ARRAY of tuples (${i.type}); its components (${i.components
+                  .filter((c) => c?.name)
+                  .map((c) => c.name)
+                  .join(', ')}) are not reachable by a property path, so a reference inside cannot be mapped or seen by this check`,
+              });
+            }
+          } else {
+            collect(i.components, path);
+          }
+        }
       }
     };
     collect(item.inputs, '');
@@ -714,9 +750,15 @@ if (discriminantName && fnNode.body) {
     // does, and skipping it because it is "a nested function" reads the wrong
     // scope. Same mistake this file made in round 11, in a different walk.
     if (
+      // `EnumDeclaration` included (Codex round-18 P2): an enum binds its name in
+      // the enclosing scope exactly as a class does, and the `args`/`Number`
+      // walk further down already knew that. Two whitelists of the same thing
+      // drifted apart, which is the argument for the shared `bindsName` below
+      // rather than for a third list.
       (ts.isVariableDeclaration(n) ||
         ts.isFunctionDeclaration(n) ||
         ts.isClassDeclaration(n) ||
+        ts.isEnumDeclaration(n) ||
         ts.isParameter(n)) &&
       bindsName(n.name, discriminantName)
     ) {
@@ -789,8 +831,17 @@ const exitsFunction = (st) => {
     );
   }
   if (ts.isTryStatement(st)) {
-    // The finally block runs whatever happens, so an exit there is unconditional.
-    return Boolean(st.finallyBlock) && exitsFunction(st.finallyBlock);
+    // Two independent ways a try statement leaves the function (Codex round-18
+    // P2). A `finally` that exits does so whatever happened before it — that
+    // was already handled. But a `try` block that returns ALSO returns, once
+    // the finally (if any) completes normally; checking only the finally missed
+    // `try { return …; } finally { log(); }` entirely. The catch clause has to
+    // exit too, or the thrown path falls through to the code below.
+    if (Boolean(st.finallyBlock) && exitsFunction(st.finallyBlock)) return true;
+    return (
+      exitsFunction(st.tryBlock) &&
+      (!st.catchClause || exitsFunction(st.catchClause.block))
+    );
   }
   return false;
 };
