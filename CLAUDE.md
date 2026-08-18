@@ -248,28 +248,51 @@ compiled ABI's `methodIdentifiers` **exactly** — same size, nothing missing,
 nothing extra — so the omission fails the deploy-sanity suite rather than
 passing silently. Facets outside that set need nothing here.
 
+**`RiskPreviewFacet` has a FOURTH copy of its surface**, and it is a shell
+array: `contracts/script/rehearse-partial-refresh.sh` hard-codes
+`RISK_PREVIEW_SELECTORS`, and `assert_risk_preview_routed` iterates only that
+array. Its own comment claims it is "the same set the refresh scripts cut",
+which is true only for as long as somebody keeps it so. Add the new selector
+there too, or the rehearsal reports that *all* selectors share one host while
+never having looked at the one you just added — a passing check that has stopped
+checking the thing you changed.
+
 (One exception, and it is in the test rather than the rule: `vaipakamNFT` is
 pinned to the facet's ROUTED surface, which is its compiled ABI minus
 `supportsInterface(bytes4)` — that selector is compiled into the facet but cut
 to `DiamondLoupeFacet` instead.)
 
 Why the list exists at all (findings #778 / #779): a `Replace` diamondCut must
-carry a facet's WHOLE routed surface, because any selector left out of the cut
-stays pointed at the OLD implementation — a split Diamond running two versions
-of one facet. The curated scripts used to hand-list partial subsets and drift.
+carry a facet's WHOLE routed surface, because an ALREADY-ROUTED selector left
+out of the cut stays pointed at the OLD implementation — a split Diamond running
+two versions of one facet. The curated scripts used to hand-list partial subsets
+and drift.
+
+**A newly ADDED function fails differently, and the distinction matters when you
+are reading a revert.** Its selector was never routed, so omitting it cannot
+strand it on old bytecode; it stays unrouted and calls revert
+`FunctionDoesNotExist` through the Diamond fallback. It also cannot go in a
+`Replace` at all — `Replace` requires an existing route — which is why the
+production scripts partition each list by live routing and put unrouted
+selectors in an `Add` cut. Reserve "split Diamond" for the stale-selector case;
+the new-function case is a hard revert, not a silent divergence.
 
 **Which script reads which list is uneven, and worth knowing before trusting a
 green parity test.** `RedeployFacets.s.sol` reads most of them;
 `UpgradeOracleFacet.s.sol` reads `oracle`. But `offerPreview` has **no script
 consumer at all** — it is read only by tests — and `ReplaceStaleFacets.s.sol`
-does not import this library: its RiskPreview and OfferPreview cuts use
-`_getRiskPreviewFacetSelectors()` / `_getOfferPreviewSelectors()` inherited from
-`DeployDiamond`. For those two facets, updating `FacetSelectors` satisfies the
-parity test while the production cut is still driven by `DeployDiamond`, so
-update both and do not read a green parity test as proof that a
-`ReplaceStaleFacets` cut is complete. `grep` for the getter to see who actually
-consumes it rather than assuming the library is the single source everywhere —
-it is for most of these facets and not yet for all.
+does not import this library at all. Its Oracle, VaultFactory, RiskPreview and
+OfferPreview cuts use `_getOracleSelectors()`, `_getVaultFactorySelectors()`,
+`_getRiskPreviewFacetSelectors()` and `_getOfferPreviewSelectors()` inherited
+from `DeployDiamond`, while their parity cases check the separate
+`FacetSelectors` getters.
+
+So for those four facets, updating `FacetSelectors` satisfies the parity test
+while the `ReplaceStaleFacets` cut is still driven by `DeployDiamond`'s own
+lists. **Update both, and do not read a green parity test as proof that a
+`ReplaceStaleFacets` cut is complete.** `grep` for the getter to see who
+actually consumes it rather than assuming the library is the single source
+everywhere — it is for some of these facets and not for all.
 
 The deploy-*integration* test that Issue #72 asked for **already exists** and
 runs in the deploy-sanity suite:
