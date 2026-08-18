@@ -143,14 +143,18 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     (saleLive.principal * saleLive.interestRateBps * secs) /
     (365n * DAY * 10_000n);
 
-  it('forfeits the whole elapsed stretch with no mark', () => {
+  it('forfeits the whole elapsed stretch when the window read is absent', () => {
     // Same-rate buy offer, so there is no shortfall and the cost IS the accrual.
+    // Absent means the `sellerForfeitureWindow` read FAILED (a Diamond not yet
+    // routing the selector) — the client falls back to the accrual origin, which
+    // is the full charge and never a credit. It is NOT "no mark": since #1801
+    // the contract resolves that case itself and returns the origin.
     expect(sellerEconomics(saleLive, saleLive.interestRateBps, now).accrued).toBe(
       accrue(10n * DAY),
     );
   });
 
-  it('forfeits only the unpaid stretch once a mark is set', () => {
+  it('forfeits only the unpaid stretch the contract resolved', () => {
     const paid = { ...saleLive, lenderForfeitFrom: now - 6n * DAY };
     expect(sellerEconomics(paid, paid.interestRateBps, now).accrued).toBe(
       accrue(6n * DAY),
@@ -172,7 +176,10 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     // rather than delivered — and that balance migrates to the BUYER on a sale.
     // An earlier revision took the later of the two marks, which let the reset
     // act as the credit and closed the window over interest the seller never
-    // received. The mark is authoritative: the window stays open from it.
+    // received. What this pins on the CLIENT is narrower and is the point of the
+    // #1801 rename: the client does not weigh the two clocks at all. It uses the
+    // window the contract resolved and ignores `interestAccrualStart`, so a
+    // change to the contract's rule cannot leave a stale copy here.
     const reset = {
       ...saleLive,
       lenderForfeitFrom: now - 6n * DAY,
@@ -184,9 +191,11 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
   });
 
   it('honours a mark that predates the accrual origin', () => {
-    // Same rule from the other side: an old mark is still the last time this
-    // lender was PAID, so it bounds the forfeiture even when the obligation
-    // clock has since moved past it.
+    // Same property from the other side: a resolved window earlier than the
+    // obligation clock is used as given. The contract decides whether such a
+    // window is still honourable — since #1801 it refuses one whose principal
+    // has moved or whose delivery a freeze broke — and the client's job is only
+    // to not second-guess the answer.
     const stale = { ...saleLive, lenderForfeitFrom: now - 20n * DAY };
     expect(sellerEconomics(stale, stale.interestRateBps, now).accrued).toBe(
       accrue(20n * DAY),
