@@ -263,22 +263,23 @@ const objectLiteralView = (e) => {
         // Treating every spread as opaque failed a perfectly ordinary return —
         // `{ loanId: …, ...{ actor: null }, offerId: … }` — and since this
         // script runs inside `typecheck`, that blocks the build on valid code.
-        // Merge its keys in at THIS position instead; ordering still applies, so
-        // a literal that does define a reference field correctly overrides an
-        // earlier definition and is correctly overridden by a later one.
+        //
+        // Read it RECURSIVELY rather than flattening its keys (Codex round-29
+        // P2). A flat merge gave every nested property the OUTER position, so a
+        // spread INSIDE the literal could not shadow a reference defined beside
+        // it: `...{ loanId: Number(args.loanId), ...({ loanId: 999 }) }` kept the
+        // accepted value while the runtime took 999. A nested literal is just
+        // another object literal, so it gets the same reader.
         if (ts.isObjectLiteralExpression(src)) {
-          for (const q of src.properties) {
-            if (ts.isPropertyAssignment(q) && (ts.isIdentifier(q.name) || ts.isStringLiteralLike(q.name))) {
-              props.set(q.name.text, { expr: q.initializer });
-              definedAt.set(q.name.text, idx);
-            } else if (ts.isShorthandPropertyAssignment(q)) {
-              props.set(q.name.text, { shorthand: true });
-              definedAt.set(q.name.text, idx);
-            } else {
-              // A nested spread or computed key inside it is unknown again.
-              lastSpreadIdx = idx;
-            }
+          const inner = objectLiteralView(src);
+          if (inner.opaque) return inner;
+          // Whatever SURVIVED inside lands here, at this position; if the nested
+          // literal itself ended on an unresolvable key, it shadows from here.
+          for (const [k, v] of inner.props) {
+            props.set(k, v);
+            definedAt.set(k, idx);
           }
+          if (inner.spread) lastSpreadIdx = idx;
           continue;
         }
         lastSpreadIdx = idx;
@@ -319,12 +320,22 @@ const objectLiteralView = (e) => {
       // Treated as shadowing rather than parsed: what a getter returns is a
       // function body, not an expression, and the honest answer for a shape
       // this checker cannot read is that it cannot read it.
-      if (
-        ts.isGetAccessorDeclaration(p) ||
-        ts.isSetAccessorDeclaration(p) ||
-        ts.isMethodDeclaration(p)
-      ) {
+      if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) {
         lastSpreadIdx = idx;
+        continue;
+      }
+      // A METHOD is not in that class (Codex round-29 P2). Its name is static
+      // and spreading copies a function-valued property without invoking it, so
+      // it defines exactly one KNOWN key and shadows nothing else — where an
+      // accessor runs. Treating the two alike erased an earlier `loanId` from
+      // the view for a harmless `...{ helper() {} }`.
+      if (ts.isMethodDeclaration(p)) {
+        if (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) {
+          props.set(p.name.text, { method: true });
+          definedAt.set(p.name.text, idx);
+        } else {
+          lastSpreadIdx = idx;
+        }
       }
     }
     // Drop anything the spread (or an unresolvable key) defines LAST.
@@ -434,9 +445,26 @@ const REF_EXTRA_ALIASES = {
  * Deliberately over-broad: it decides only whether an enrichment key is allowed
  * to sit after a self-spread, where the safe answer is "assume it matters".
  */
-const NESTED_REF_ROOTS = new Set(['fields']);
+// Derived from the ABI, not hardcoded (Codex round-29 P2). Nested references
+// are found generically — any tuple input whose component is reference-shaped —
+// so pinning the root set to `fields` meant an equally valid `details.loanId`
+// would be derived and mapped while `{ ...args, details: other.args.details }`
+// still read as self-preserving. Computed lazily because `aliasNames` is filled
+// by the ABI scan below and this is only ever called after it.
+const nestedRefRoots = () => {
+  const roots = new Set();
+  for (const perField of aliasNames.values()) {
+    for (const paths of perField.values()) {
+      for (const path of paths) {
+        const dot = path.indexOf('.');
+        if (dot > 0) roots.add(path.slice(0, dot));
+      }
+    }
+  }
+  return roots;
+};
 const couldBeReference = (key) =>
-  NESTED_REF_ROOTS.has(key) ||
+  nestedRefRoots().has(key) ||
   REF_FIELDS.some(
     (f) => REF_SHAPE[f].test(key) || (REF_EXTRA_ALIASES[f] ?? []).includes(key),
   );
@@ -1161,7 +1189,19 @@ if (!fnNode) {
       for (let p = cur.parent; p; cur = p, p = p.parent) {
         if (ts.isAwaitExpression(p) || ts.isParenthesizedExpression(p) ||
             ts.isAsExpression(p) || ts.isNonNullExpression(p)) continue;
-        return ts.isVariableDeclaration(p) && p.initializer === cur;
+        if (ts.isVariableDeclaration(p) && p.initializer === cur) return true;
+        // ...or ASSIGNED to a binding declared earlier (Codex round-29 P2).
+        // `let activityEvents: number; activityEvents = await …` is the ordinary
+        // equivalent — often the only way to write it when the declaration needs
+        // an explicit type — and requiring declaration and initialisation to be
+        // one statement rejected it inside `typecheck`. What matters is that the
+        // result is KEPT, not the syntax that keeps it.
+        return (
+          ts.isBinaryExpression(p) &&
+          p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          p.right === cur &&
+          ts.isIdentifier(unwrapAssertions(p.left))
+        );
       }
       return false;
     };
@@ -1475,11 +1515,19 @@ if (!fnNode) {
       }
       return null;
     };
-    /** Every write to `name` anywhere in the loop, nested closures included. */
-    const writesTo = (name) => {
+    /**
+     * Every write to `name` that targets THIS binding, nested closures included.
+     *
+     * Resolved, not text-matched (Codex round-29 P2). Round 28 fixed exactly
+     * this in `mutatedInPlace` and left the reassignment scan comparing
+     * spelling, so an unrelated nested `{ let args = …; args = … }` invalidated
+     * the real outer binding — a false positive that blocks `typecheck`. Third
+     * site in this file where "same name" was standing in for "same binding".
+     */
+    const writesTo = (name, declOfInterest) => {
       const found = [];
       const walk = (n) => {
-        if (writesName(n, name)) found.push(n);
+        if (writesName(n, name) && nearestDecl(n, name) === declOfInterest) found.push(n);
         ts.forEachChild(n, walk);
       };
       walk(loopVar.body);
@@ -1595,8 +1643,8 @@ if (!fnNode) {
       // chain: the declaration no longer proves what the value is. So does a
       // mutation of the object it points at, which leaves the binding intact
       // and the VALUE wrong.
-      if (writesTo(name).some((w) => !preservesSelf(w, name))) return null;
       const decl = nearestDecl(from, name);
+      if (writesTo(name, decl).some((w) => !preservesSelf(w, name))) return null;
       if (mutatedInPlace(name, decl)) return null;
       // A binder this script cannot read through shadows whatever is further
       // out, so the honest answer is "unknown", not the outer declaration.
@@ -1615,7 +1663,15 @@ if (!fnNode) {
       }
       if (ts.isPropertyAccessExpression(rhs)) {
         const recv = unwrapAssertions(rhs.expression);
-        return ts.isIdentifier(recv) && recv.text === loopVar.name ? rhs.name.text : null;
+        // ...and the INITIALISER's receiver is resolved too (Codex round-29 P2).
+        // Round 28 fixed the direct-argument receiver and left this one matching
+        // spelling, so a nested `const log = logs[0]` plus `const args = log.args`
+        // resolved as if it were the loop item. Same defect, one hop further in.
+        return ts.isIdentifier(recv) &&
+          recv.text === loopVar.name &&
+          nearestDecl(decl, recv.text) === null
+          ? rhs.name.text
+          : null;
       }
       // A rename of a loop-local is still the loop item's property; resolve it
       // from the DECLARATION's position so shadowing is respected at each hop.
@@ -1683,6 +1739,48 @@ if (!fnNode) {
   // to be asked — one activity_events insert in the ledger, or a loud message.
   {
     const COLUMN_OF = { loanId: 'loan_id', offerId: 'offer_id' };
+    /**
+     * The declaration an identifier at `from` actually refers to, searching
+     * outward to the ledger body — so a nearer binding that merely shares the
+     * name is distinguishable from the mapper's own (Codex round-29 P2).
+     *
+     * Deliberately a local resolver: the question here is only "is this the
+     * destructuring", which plain variable declarations answer. Any binder it
+     * cannot read through returns a distinct sentinel rather than the outer
+     * declaration, so an unreadable shadow fails closed.
+     */
+    const SHADOWED = Symbol('shadowed by an unreadable binder');
+    const bindingOfIdentifier = (from, name) => {
+      for (let scope = from; scope; scope = scope.parent) {
+        if (
+          (ts.isCatchClause(scope) && scope.variableDeclaration) ||
+          isFunctionLike(scope)
+        ) {
+          return SHADOWED;
+        }
+        const stmts =
+          ts.isBlock(scope) || ts.isCaseClause(scope) || ts.isDefaultClause(scope)
+            ? scope.statements
+            : null;
+        if (stmts) {
+          for (const st of stmts) {
+            if (!ts.isVariableStatement(st)) continue;
+            for (const d of st.declarationList.declarations) {
+              if (ts.isIdentifier(d.name) && d.name.text === name) return d;
+              if (ts.isObjectBindingPattern(d.name)) {
+                for (const el of d.name.elements) {
+                  if (ts.isBindingElement(el) && ts.isIdentifier(el.name) && el.name.text === name) {
+                    return d;
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (scope === ledgerNode.body) break;
+      }
+      return null;
+    };
     const inserts = [];
     const findInsert = (n) => {
       if (
@@ -1735,13 +1833,24 @@ if (!fnNode) {
       }
       const expected = localOf.get(field) ?? field;
       const arg = bindArgs[at] && unwrapAssertions(bindArgs[at]);
-      if (!arg || !ts.isIdentifier(arg) || arg.text !== expected) {
+      // Matched by DECLARATION, not by spelling (Codex round-29 P2). A nearer
+      // binding of the same name — `{ const loanId = 999; …bind(…, loanId, …) }`
+      // — satisfied a text comparison while filing every row under 999. This is
+      // the last of the four places in this file where "same name" stood in for
+      // "same binding"; `bindingOfIdentifier` is the shared answer.
+      const sameBinding =
+        arg &&
+        ts.isIdentifier(arg) &&
+        arg.text === expected &&
+        bindingOfIdentifier(arg, expected) === bindings[0];
+      if (!sameBinding) {
         console.error(
           `[check-activity-refs-coverage] the activity_events INSERT binds\n` +
-            `  \`${arg ? arg.getText(sourceFile) : '(nothing)'}\` into its \`${COLUMN_OF[field]}\` column, not \`${expected}\`.\n` +
-            '  Every row would file that reference under the wrong column while every count\n' +
-            '  here stays identical. Fix the binding, or update this script — do not delete\n' +
-            '  the check.',
+            `  \`${arg ? arg.getText(sourceFile) : '(nothing)'}\` into its \`${COLUMN_OF[field]}\` column, not the\n` +
+            `  \`${expected}\` destructured from pluckActivityRefs.\n` +
+            '  Every row would file that reference under the wrong column, or under a nearer\n' +
+            '  binding that shares the name, while every count here stays identical. Fix the\n' +
+            '  binding, or update this script — do not delete the check.',
         );
         process.exit(1);
       }
@@ -2204,7 +2313,9 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
         }
       }
       for (const r of defaultReturns) {
-        const e = r.expression;
+        // Same unwrapping as a case return (Codex round-29 P2) — a `satisfies`
+        // or `as` around the fallback is ordinary and must stay readable.
+        const e = r.expression && unwrapAssertions(r.expression);
         if (!e || !ts.isObjectLiteralExpression(e)) {
           structural.push(
             'the default clause returns something this checker cannot read as an object literal — every unmapped and allowlisted event is filed from here',
@@ -2326,7 +2437,10 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     // Each return contributes one "scope": its top-level properties, or a marker
     // that this checker cannot see them.
     const scopes = returnNodes.map((r) => {
-      const e = r.expression;
+      // Unwrapped first (Codex round-29 P2): `return ({ … } satisfies ActivityRefs)`
+      // and the `as` form are ordinary TypeScript, and testing the RAW node made
+      // both opaque — rejecting a mapping that is perfectly readable underneath.
+      const e = r.expression && unwrapAssertions(r.expression);
       if (!e || !ts.isObjectLiteralExpression(e)) return { opaque: 'not an object literal' };
       return objectLiteralView(e);
     });
