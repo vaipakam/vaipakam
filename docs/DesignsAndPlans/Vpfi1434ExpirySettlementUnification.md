@@ -288,6 +288,17 @@ The legacy-legs helper now returns the two destinations separately: the
 displayed preview shows the user half alone, and the walk's reservation
 sums both.
 
+Round 16 sharpened that reservation to the LEGACY component only
+(`total − recycled − armedFresh`), P2: a forfeited entry whose loan is
+terminal still passes the worklist's claimable gate, so its ARMED days
+are priced by the walk itself — on both the live and simulated sides —
+and reserving the whole remaining split counted them twice. Notably the
+error direction FLIPPED: rounds 14–15 fixed overstatement (frozen
+clocks); the r15 fix overshot into understatement, which is the
+dangerous direction — an expiry clock accruing while the live claim
+still defers on delivered allowance. A reservation must equal what the
+predecessor leg actually spends: no less, and no more.
+
 ## Testing
 
 The expiry fixture is unusually easy to make vacuous: **five distinct

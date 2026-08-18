@@ -2314,14 +2314,23 @@ library LibInteractionRewards {
             // terminal-derived) entry routes to TREASURY; a claimable one
             // routes to the user (was the dead `endDay != 0`).
             if (e.forfeited || _entryTerminalForfeit(s, e)) {
-                // Priced from the FORFEIT split, fresh-only —
-                // {_previewEntryLeg} prices the USER destination, which is
-                // zero for a forfeited entry, and the live reservation is
-                // `toTreasury.total − toTreasury.recycled` (a forfeited
-                // entry settles its whole remaining window O(1) at claim,
-                // so there is no walk-owned remainder to exclude).
+                // Priced from the FORFEIT split — {_previewEntryLeg} prices
+                // the USER destination, which is zero for a forfeited entry.
+                //
+                // Codex #1699 r16 P2 — the LEGACY component only:
+                // `total − recycled − armedFresh`, exactly what the entry
+                // path contributes before the walk. A forfeited entry with
+                // armed days still passes the worklist's claimable gate (the
+                // loan is terminal), so the WALK prices those days itself —
+                // on both the live and dry-run sides. Reserving the whole
+                // remaining split counted the armed part twice, which
+                // UNDERSTATES the preview and the armed need — the opposite
+                // error direction, and the dangerous one: the expiry clock
+                // could accrue while the corresponding live claim still
+                // defers on delivered allowance.
                 (, EntrySplit memory tSplit, , ) = _entryPriceCore(s, id, e);
-                treasuryLegs += tSplit.total - tSplit.recycled;
+                treasuryLegs +=
+                    tSplit.total - tSplit.recycled - tSplit.armedFresh;
             } else if (_entryClaimable(s, e)) {
                 // #1008 (S13) — cap is baked into cumMin; no feed read here.
                 userLegs += _previewEntryLeg(s, id, e, armedFrom);

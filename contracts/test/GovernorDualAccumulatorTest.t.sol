@@ -1338,6 +1338,46 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1699 r16 P2 — the forfeit reservation covers the LEGACY
+    ///      component only. A forfeited entry with ARMED days still passes
+    ///      the worklist's claimable gate (the loan is terminal), so the
+    ///      walk prices those days itself; reserving the whole remaining
+    ///      split counted the armed part twice and UNDERSTATED the need —
+    ///      the error direction that could reap a claimant whose live claim
+    ///      still defers.
+    function testP1bForfeitReservationIsLegacyOnly() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+        assertEq(recycled5, 0, "LIVE: and NO recycled share");
+
+        // A wholly-ARMED entry, forfeited: no legacy leg at all, so the
+        // correct reservation from it is ZERO — its armed day belongs to
+        // the walk on both the live and simulated sides.
+        uint256 id = _seedEntry(alice, 106, 5, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 30 days);
+        _mut().setRewardEntryForfeitedRaw(id);
+
+        uint256 armedZ = _lens().getUserArmedFreshNeed(alice);
+        assertGt(armedZ, 0, "LIVE: the forfeited armed leg still walks");
+
+        // Headroom exactly covers the armed leg. A self-double-reservation
+        // would shrink the budget to zero and understate the need.
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - armedZ
+        );
+        assertEq(
+            _lens().getUserArmedFreshNeed(alice),
+            armedZ,
+            "an armed forfeit leg never reserves against itself"
+        );
+    }
+
     function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
