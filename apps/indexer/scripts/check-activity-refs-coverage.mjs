@@ -258,6 +258,29 @@ const objectLiteralView = (e) => {
         ) {
           return { opaque: 'a spread of an object literal with a getter/setter, which runs during the spread and can mutate the decoded arguments before the later fields are computed' };
         }
+        // An INLINE object literal spread has completely known keys, so it does
+        // not shadow anything it does not itself define (Codex round-28 P2).
+        // Treating every spread as opaque failed a perfectly ordinary return —
+        // `{ loanId: …, ...{ actor: null }, offerId: … }` — and since this
+        // script runs inside `typecheck`, that blocks the build on valid code.
+        // Merge its keys in at THIS position instead; ordering still applies, so
+        // a literal that does define a reference field correctly overrides an
+        // earlier definition and is correctly overridden by a later one.
+        if (ts.isObjectLiteralExpression(src)) {
+          for (const q of src.properties) {
+            if (ts.isPropertyAssignment(q) && (ts.isIdentifier(q.name) || ts.isStringLiteralLike(q.name))) {
+              props.set(q.name.text, { expr: q.initializer });
+              definedAt.set(q.name.text, idx);
+            } else if (ts.isShorthandPropertyAssignment(q)) {
+              props.set(q.name.text, { shorthand: true });
+              definedAt.set(q.name.text, idx);
+            } else {
+              // A nested spread or computed key inside it is unknown again.
+              lastSpreadIdx = idx;
+            }
+          }
+          continue;
+        }
         lastSpreadIdx = idx;
         continue;
       }
@@ -397,6 +420,26 @@ const REF_EXTRA_ALIASES = {
   loanId: [],
   offerId: [],
 };
+
+/**
+ * Could a decoded-argument key of this name carry a reference?
+ *
+ * Asked of the ABI's OWN names, not the two normalised column names (Codex
+ * round-28 P2). An enrichment that overwrites `lenderOfferId` or `oldLoanId`
+ * replaces a reference this checker derives and maps, and testing only
+ * `loanId`/`offerId` missed every alias. Nested roots count too, because a
+ * reference can live at `fields.refinanceTargetLoanId` — replacing the whole
+ * `fields` object replaces the reference inside it.
+ *
+ * Deliberately over-broad: it decides only whether an enrichment key is allowed
+ * to sit after a self-spread, where the safe answer is "assume it matters".
+ */
+const NESTED_REF_ROOTS = new Set(['fields']);
+const couldBeReference = (key) =>
+  NESTED_REF_ROOTS.has(key) ||
+  REF_FIELDS.some(
+    (f) => REF_SHAPE[f].test(key) || (REF_EXTRA_ALIASES[f] ?? []).includes(key),
+  );
 
 /**
  * Names the accepted mapping shape depends on. A local binding OR a write to
@@ -1470,8 +1513,15 @@ if (!fnNode) {
           else if (selfSpreadAt >= 0) overriddenAfter = true; // another bag wins
           continue;
         }
-        // An explicit key after the self-spread is fine UNLESS it is one of the
-        // reference fields — `creator` is the live enrichment and harmless.
+        // An explicit key after the self-spread is fine UNLESS it could BE a
+        // reference. The bag being spread here is the DECODED ABI ARGUMENTS, so
+        // the names that matter are the ABI's own — `lenderOfferId`,
+        // `oldLoanId`, the nested `fields` root — not the two normalised column
+        // names (Codex round-28 P2). Checking only `loanId`/`offerId` let
+        // `{ ...args, lenderOfferId: logs[0].args.lenderOfferId }` through, which
+        // is a reference this checker itself derives and maps.
+        //
+        // `creator` — the live enrichment — is neither shape, so it stays legal.
         const key =
           ts.isPropertyAssignment(p) &&
           (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name))
@@ -1479,8 +1529,8 @@ if (!fnNode) {
             : ts.isShorthandPropertyAssignment(p)
               ? p.name.text
               : null;
-        if (selfSpreadAt >= 0 && (key === null || REF_FIELDS.includes(key))) {
-          overriddenAfter = true; // a ref field, or a key this parser cannot read
+        if (selfSpreadAt >= 0 && (key === null || couldBeReference(key))) {
+          overriddenAfter = true; // a reference-shaped key, or one this parser cannot read
         }
       }
       return selfSpreadAt >= 0 && !overriddenAfter;
@@ -1494,7 +1544,7 @@ if (!fnNode) {
      * of `args` a few hundred lines up; the alias chain deserves the same
      * question, or renaming the binding is enough to escape the check.
      */
-    const mutatedInPlace = (name) => {
+    const mutatedInPlace = (name, declOfInterest) => {
       let found = false;
       const rootOf = (e) => {
         let cur = unwrapAssertions(e);
@@ -1521,7 +1571,16 @@ if (!fnNode) {
           // `writesTo` question, already asked separately.
           if (ts.isPropertyAccessExpression(t) || ts.isElementAccessExpression(t)) {
             const root = rootOf(t);
-            if (ts.isIdentifier(root) && root.text === name) found = true;
+            // ...and it must be THIS binding, not a shadowed namesake (Codex
+            // round-28 P2). Comparing identifier text alone meant an unrelated
+            // inner `const args = { harmless: 1 }; args.harmless = 2;` failed
+            // the real mapper argument — and since this script runs inside
+            // `typecheck`, that blocks the build on an ordinary nested refactor.
+            // A false positive here costs more than the hole it was closing.
+            if (ts.isIdentifier(root) && root.text === name &&
+                nearestDecl(n, name) === declOfInterest) {
+              found = true;
+            }
           }
         }
         ts.forEachChild(n, walk);
@@ -1537,8 +1596,8 @@ if (!fnNode) {
       // mutation of the object it points at, which leaves the binding intact
       // and the VALUE wrong.
       if (writesTo(name).some((w) => !preservesSelf(w, name))) return null;
-      if (mutatedInPlace(name)) return null;
       const decl = nearestDecl(from, name);
+      if (mutatedInPlace(name, decl)) return null;
       // A binder this script cannot read through shadows whatever is further
       // out, so the honest answer is "unknown", not the outer declaration.
       if (decl === OPAQUE_BINDING) return null;
@@ -1567,7 +1626,18 @@ if (!fnNode) {
       const cur = unwrapAssertions(a);
       if (ts.isPropertyAccessExpression(cur)) {
         const recv = unwrapAssertions(cur.expression);
-        return cur.name.text === prop && ts.isIdentifier(recv) && recv.text === loopVar.name;
+        // The receiver is RESOLVED, not text-matched (Codex round-28 P2). Round
+        // 27 taught the identifier branch to resolve lexically and left this one
+        // comparing spelling, so `catch (log)` shadowing the loop item made
+        // `log.eventName` satisfy it while referring to the caught value.
+        // `nearestDecl` returns null for the loop's own binding and
+        // OPAQUE_BINDING for anything shadowing it.
+        return (
+          cur.name.text === prop &&
+          ts.isIdentifier(recv) &&
+          recv.text === loopVar.name &&
+          nearestDecl(init, recv.text) === null
+        );
       }
       if (ts.isIdentifier(cur)) return resolvesTo(init, cur.text) === prop;
       return false;
