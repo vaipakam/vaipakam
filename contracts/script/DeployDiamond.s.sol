@@ -1703,7 +1703,7 @@ contract DeployDiamond is Script {
     ///      asserts, split off `RiskAccessFacet` into its own `RiskPreviewFacet`
     ///      so both facets keep EIP-170 header room. All are `view`.
     function _getRiskPreviewFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1718,6 +1718,11 @@ contract DeployDiamond is Script {
         // client quote can mirror a figure that depends on appended storage with
         // no field on the loan struct.
         s[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
+        // #1503 item 4 — the two bounds a listing records, quoted from the same
+        // library the sale path enforces them with. On-chain rather than
+        // mirrored client-side on purpose: a client copy of the rule drifts from
+        // it the moment the rule changes, and this one has changed twice.
+        s[9] = RiskPreviewFacet.quoteSellerBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.

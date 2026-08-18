@@ -188,18 +188,43 @@ library LibSaleListing {
         uint256 saleRateBps,
         uint256 expiresAt
     ) internal {
-        LibVaipakam.Loan storage loan = s.loans[loanId];
+        (uint256 minSellerNet, uint256 maxHeld) =
+            projectSellerBounds(s, loanId, saleRateBps, expiresAt);
+        s.saleListingMinSellerNet[loanId] = minSellerNet;
+        s.saleListingMaxHeldTransfer[loanId] = maxHeld;
+        s.saleListingBoundsRecorded[loanId] = true;
+        s.saleListingBoundsExpiry[loanId] = expiresAt;
+    }
+
+    /// @notice #1503 item 4 — the two bounds a listing with these terms would
+    ///         record, without recording them.
+    /// @dev    Split out of {recordSellerBounds} so the quote a seller is shown
+    ///         and the bound they are held to are ONE computation rather than
+    ///         two that agree today. `RiskPreviewFacet.quoteSellerBounds` is the
+    ///         external read; every claim about the quote not drifting from the
+    ///         rule rests on this being the only place the arithmetic lives.
+    ///
+    ///         Nothing is written, so this is safe to call before a listing
+    ///         exists — which is the only moment the quote is useful, since the
+    ///         seller is still deciding.
+    /// @return minSellerNet The floor: the least the seller receives if the
+    ///                      listing fills at any point before `expiresAt`.
+    /// @return maxHeld      The ceiling: `heldForLender` as it stands now.
+    function projectSellerBounds(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 saleRateBps,
+        uint256 expiresAt
+    ) internal view returns (uint256 minSellerNet, uint256 maxHeld) {
+        uint256 principal = s.loans[loanId].principal;
         uint256 cost = worstCaseSellerCost(s, loanId, saleRateBps, expiresAt);
         // The buyer's escrowed proceeds are bound to the live principal by the
         // accept-time term bind, so the seller's net is principal minus cost.
         // A cost at or above principal is refused at completion by the existing
         // `RateShortfallTooHigh` guard; the floor simply records zero there
         // rather than underflowing.
-        s.saleListingMinSellerNet[loanId] =
-            loan.principal > cost ? loan.principal - cost : 0;
-        s.saleListingMaxHeldTransfer[loanId] = s.heldForLender[loanId];
-        s.saleListingBoundsRecorded[loanId] = true;
-        s.saleListingBoundsExpiry[loanId] = expiresAt;
+        minSellerNet = principal > cost ? principal - cost : 0;
+        maxHeld = s.heldForLender[loanId];
     }
 
     /// @notice #1503 item 4 — what a sale would cost the exiting lender if it

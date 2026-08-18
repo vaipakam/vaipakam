@@ -614,6 +614,35 @@ than a growing list of patches on generic-offer consumption.
    > SURFACED. The seller's own listing card should say why a live listing
    > can no longer complete, and the remedy is to cancel and relist at the
    > new economics rather than to loosen the bound.
+   >
+   > **Where the seller's quote comes from (decided 2026-08-18, as
+   > implemented).** The floor has to be shown to the seller BEFORE they
+   > list, and at that moment there is nothing on-chain to read — the
+   > listing does not exist. So the projection is either offered as a
+   > contract view or re-derived on the client, and this is the choice
+   > worth recording because the obvious answer is the wrong one.
+   >
+   > It is offered as a view, `RiskPreviewFacet.quoteSellerBounds`, taking
+   > the rate and the expiry the seller is still choosing. The client
+   > mirror is cheaper and needs no facet space, and it is exactly the
+   > mistake #1801 spent fourteen review rounds on: a rule copied into a
+   > second place agrees until the rule changes, and this rule changed
+   > twice DURING its own review — once when the amount-based model was
+   > abandoned, once when the item-28 forfeiture rework moved the window's
+   > opening point. A mirror written against either version would have
+   > shipped a quote the platform does not honour, and the seller would
+   > have discovered it as a refused sale.
+   >
+   > The same argument applies one level in, which is why the quote is not
+   > merely "a view that computes the same thing". The writer and the
+   > reader call ONE internal projection, so the number the seller is
+   > shown and the number they are held to are the same computation with
+   > two callers rather than two computations that agree today.
+   >
+   > This is also why the app work is a separate change rather than the
+   > same one: a new selector is not routed on the deployed Diamond until
+   > a facet refresh lands, and the live-review definition-of-done cannot
+   > be met against a Diamond that reverts the call.
 
 5. **The direct sale admits on the stored borrower, not the current
    one.** That path passes the loan's stored borrower to the
