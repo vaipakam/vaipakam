@@ -259,8 +259,8 @@ const REF_SHAPE = {
   // The column name matches either case (`loanId`, `oldLoanId`), but the leg
   // suffix must be UPPERCASE so a plural like `loanIds` — an array, not a single
   // reference — is not treated as one.
-  loanId: /^[A-Za-z0-9]*[Ll]oanId(?:[A-Z]|[0-9]+)?$/,
-  offerId: /^[A-Za-z0-9]*[Oo]fferId(?:[A-Z]|[0-9]+)?$/,
+  loanId: /^[A-Za-z0-9_]*[Ll]oanId(?:[A-Z]|[0-9]+)?$/,
+  offerId: /^[A-Za-z0-9_]*[Oo]fferId(?:[A-Z]|[0-9]+)?$/,
 };
 
 /**
@@ -272,6 +272,57 @@ const REF_SHAPE = {
 const REF_EXTRA_ALIASES = {
   loanId: [],
   offerId: [],
+};
+
+/**
+ * Names the accepted mapping shape depends on. A local binding OR a write to
+ * either one makes `Number(args.x)` mean something this checker cannot resolve.
+ */
+const SHADOWABLE_NAMES = new Set(['args', 'Number']);
+
+/** Does a binding name — plain or destructured — bind one of those names? */
+const bindsShadowable = (name) => {
+  if (!name) return false;
+  if (ts.isIdentifier(name)) return SHADOWABLE_NAMES.has(name.text);
+  if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+    return name.elements.some((el) => ts.isBindingElement(el) && bindsShadowable(el.name));
+  }
+  return false;
+};
+
+/**
+ * Is this node a WRITE to one of those names? Any assignment operator, and the
+ * increment/decrement forms (Codex round-14 P2) — `args.loanId &&= 0n` and
+ * `args.loanId++` rebind the decoded value just as `=` does, and a check for
+ * `EqualsToken` alone sees none of them.
+ */
+const mutatesShadowable = (n) => {
+  // Assertions and parentheses are unwrapped at EVERY step, the same way
+  // `readsArgPath` learned to in round 10. `args` is typed `Record<string,
+  // unknown>`, so the natural way to write a mutation is
+  // `(args as any).loanId = 0n` — and a walk that only peels property access
+  // stops at the ParenthesizedExpression and reports no write at all.
+  const rootOf = (expr) => {
+    let t = expr;
+    for (;;) {
+      if (ts.isPropertyAccessExpression(t) || ts.isElementAccessExpression(t)) t = t.expression;
+      else if (ts.isParenthesizedExpression(t) || ts.isAsExpression(t) || ts.isTypeAssertionExpression?.(t)) t = t.expression;
+      else if (ts.isNonNullExpression(t) || ts.isSatisfiesExpression?.(t)) t = t.expression;
+      else return t;
+    }
+  };
+  if (ts.isBinaryExpression(n) && ts.isAssignmentOperator?.(n.operatorToken.kind)) {
+    const t = rootOf(n.left);
+    return ts.isIdentifier(t) && SHADOWABLE_NAMES.has(t.text);
+  }
+  if (
+    (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
+    (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    const t = rootOf(n.operand);
+    return ts.isIdentifier(t) && SHADOWABLE_NAMES.has(t.text);
+  }
+  return false;
 };
 
 /** Escape every regex metacharacter, so a name can only match itself. */
@@ -487,6 +538,23 @@ for (const file of memberFiles) {
  */
 const ts = (await import('typescript')).default;
 
+/**
+ * Every node kind that opens a new `this`/scope boundary a walk must not cross.
+ * Declared here — immediately after `ts` exists — because the switch-discovery
+ * walk below is the FIRST consumer; a later `const` would be in its temporal
+ * dead zone and crash the whole check.
+ */
+const isFunctionLike = (node) =>
+  ts.isFunctionDeclaration(node) ||
+  ts.isFunctionExpression(node) ||
+  ts.isArrowFunction(node) ||
+  ts.isMethodDeclaration(node) ||
+  ts.isGetAccessorDeclaration(node) ||
+  ts.isSetAccessorDeclaration(node) ||
+  ts.isConstructorDeclaration(node) ||
+  ts.isClassDeclaration(node) ||
+  ts.isClassExpression(node);
+
 const src = readFileSync(CHAIN_INDEXER, 'utf8');
 const sourceFile = ts.createSourceFile(CHAIN_INDEXER, src, ts.ScriptTarget.Latest, true);
 
@@ -508,10 +576,19 @@ if (!fnNode) {
 /** The switch on the event name. */
 let switchNode = null;
 const findSwitch = (node) => {
-  if (ts.isSwitchStatement(node) && !switchNode) switchNode = node;
-  if (!switchNode) ts.forEachChild(node, findSwitch);
+  if (switchNode) return;
+  // Never descend into a nested function (Codex round-14 P2). Otherwise an
+  // uncalled local helper's switch satisfies the entire coverage check while
+  // `pluckActivityRefs` itself returns the all-null object — the checker would be
+  // validating dead code and reporting the live path as fully mapped.
+  if (isFunctionLike(node)) return;
+  if (ts.isSwitchStatement(node)) {
+    switchNode = node;
+    return;
+  }
+  ts.forEachChild(node, findSwitch);
 };
-ts.forEachChild(fnNode, findSwitch);
+if (fnNode.body) ts.forEachChild(fnNode.body, findSwitch);
 if (!switchNode) {
   console.error(
     '[check-activity-refs-coverage] pluckActivityRefs() no longer contains a switch.\n' +
@@ -573,17 +650,6 @@ const alwaysReturns = (stmt) => {
 };
 
 /** Every `return` in a clause, not descending into nested functions. */
-const isFunctionLike = (node) =>
-  ts.isFunctionDeclaration(node) ||
-  ts.isFunctionExpression(node) ||
-  ts.isArrowFunction(node) ||
-  ts.isMethodDeclaration(node) ||
-  ts.isGetAccessorDeclaration(node) ||
-  ts.isSetAccessorDeclaration(node) ||
-  ts.isConstructorDeclaration(node) ||
-  ts.isClassDeclaration(node) ||
-  ts.isClassExpression(node);
-
 const collectReturns = (node, out) => {
   // EVERY function-like boundary, not just the three plain forms (Codex round-11
   // P2): a `return` inside an object method or accessor belongs to that method,
@@ -632,8 +698,12 @@ const readsArgPath = (expr) => {
   return parts.length ? parts.join('.') : null;
 };
 
-const isNullLiteral = (expr) =>
-  expr && (expr.kind === ts.SyntaxKind.NullKeyword || ts.isIdentifier(expr) && expr.text === 'undefined');
+// ONLY the `null` keyword (Codex round-14 P2). `undefined` is an identifier and
+// can be rebound — `const undefined = 123` makes `loanId: undefined` a numeric
+// value while reading here as "deliberately unmapped", which would both persist a
+// wrong id and keep the exemption falsely live. Anything else that is not an
+// accepted read falls through to the shape check and is reported.
+const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.NullKeyword;
 
 /**
  * A shadow declared in the ENCLOSING function body — before the switch — binds
@@ -642,18 +712,24 @@ const isNullLiteral = (expr) =>
  * turns every accepted conversion into a call to something else.
  */
 {
-  const SHADOWABLE_OUTER = new Set(['args', 'Number']);
   let outerShadow = null;
   const walkOuter = (n) => {
     if (outerShadow) return;
     if (n === switchNode) return; // clause bodies are scanned per case
+    // Declarations (including DESTRUCTURED ones) and WRITES alike — the enclosing
+    // body needs the same treatment the per-case scan gets (Codex round-14 P2):
+    // `const { Number } = …` and `args.loanId = 0n` sitting just above the switch
+    // affect every case, and a name-identifier-only test saw neither.
     if (
-      (ts.isVariableDeclaration(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) &&
-      n.name &&
-      ts.isIdentifier(n.name) &&
-      SHADOWABLE_OUTER.has(n.name.text)
+      (ts.isVariableDeclaration(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n) ||
+        ts.isParameter(n)) &&
+      bindsShadowable(n.name)
     ) {
-      outerShadow = n.name.text;
+      outerShadow = ts.isIdentifier(n.name) ? n.name.text : 'args/Number (destructured)';
+      return;
+    }
+    if (mutatesShadowable(n)) {
+      outerShadow = 'args/Number (assigned)';
       return;
     }
     ts.forEachChild(n, walkOuter);
@@ -742,8 +818,12 @@ const isNullLiteral = (expr) =>
       // that name an enclosing label.
       const walk = (n, labels) => {
         if (found) return;
+        if (isFunctionLike(n)) return;
+        // A loop or nested switch owns its OWN break/continue, but not its throws
+        // (Codex round-14 P2): skipping those subtrees entirely hid a
+        // `while (true) { throw … }` that aborts the insertion before any row is
+        // written. Descend for throws, with breaks/continues treated as local.
         if (
-          isFunctionLike(n) ||
           ts.isForStatement(n) ||
           ts.isForOfStatement(n) ||
           ts.isForInStatement(n) ||
@@ -751,6 +831,13 @@ const isNullLiteral = (expr) =>
           ts.isDoStatement(n) ||
           ts.isSwitchStatement(n)
         ) {
+          const scanThrows = (m) => {
+            if (found) return;
+            if (isFunctionLike(m)) return;
+            if (ts.isThrowStatement(m)) found = true;
+            ts.forEachChild(m, scanThrows);
+          };
+          ts.forEachChild(n, scanThrows);
           return;
         }
         if (ts.isLabeledStatement(n)) {
@@ -828,7 +915,6 @@ const isNullLiteral = (expr) =>
     // else entirely, and every row lands with loan id zero. Same reasoning as the
     // `args` shadow — resolving callees symbolically needs a full Program, and
     // refusing to reason about a shadowed name is the sound cheap answer.
-    const SHADOWABLE = new Set(['args', 'Number']);
     const shadowsArgs = (() => {
       let found = false;
       const walk = (n) => {
@@ -839,7 +925,7 @@ const isNullLiteral = (expr) =>
         // a bug I introduced in the round-11 fix for exactly this class.
         if (
           (ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n) || ts.isEnumDeclaration(n)) &&
-          SHADOWABLE.has(n.name?.text)
+          SHADOWABLE_NAMES.has(n.name?.text)
         ) {
           found = true;
           return;
@@ -848,27 +934,9 @@ const isNullLiteral = (expr) =>
         // Binding NAMES recursively (Codex round-10 P2): `const { args } = …` puts
         // the binding inside an ObjectBindingPattern, which an identifier-only
         // test walks straight past.
-        // Assignment or mutation, not just declaration (Codex round-13 P2):
-        // `args = { ...args, loanId: 0n }` (or `args.loanId = 0n`) rebinds the
-        // decoded arguments before the accepted read, and a declaration-only scan
-        // never sees it.
-        if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-          let target = n.left;
-          while (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
-            target = target.expression;
-          }
-          if (ts.isIdentifier(target) && SHADOWABLE.has(target.text)) found = true;
-        }
+        if (mutatesShadowable(n)) found = true;
         if (ts.isVariableDeclaration(n) || ts.isParameter(n)) {
-          const bindsArgs = (name) => {
-            if (!name) return false;
-            if (ts.isIdentifier(name)) return SHADOWABLE.has(name.text);
-            if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
-              return name.elements.some((el) => ts.isBindingElement(el) && bindsArgs(el.name));
-            }
-            return false;
-          };
-          if (bindsArgs(n.name)) found = true;
+          if (bindsShadowable(n.name)) found = true;
         }
         ts.forEachChild(n, walk);
       };
