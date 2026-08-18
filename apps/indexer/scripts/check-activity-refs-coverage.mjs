@@ -1820,14 +1820,26 @@ if (!fnNode) {
         // argument.
         if (ts.isCallExpression(n) && n.arguments.length > 0) {
           const callee = unwrapAssertions(n.expression);
-          if (ts.isPropertyAccessExpression(callee)) {
+          // `Object['assign']` is the same call as `Object.assign` (Codex
+          // round-35 P2). Round 34 matched only the dotted form, so the bracket
+          // form — identical semantics, statically resolvable — walked past.
+          // Member reads are resolved the same way everywhere else in this file
+          // (`objectLiteralView` since round 12, the enrichment key reader since
+          // round 34); this was the last member read still assuming dot syntax.
+          const memberName = ts.isPropertyAccessExpression(callee)
+            ? callee.name.text
+            : ts.isElementAccessExpression(callee) &&
+                ts.isStringLiteralLike(unwrapAssertions(callee.argumentExpression))
+              ? unwrapAssertions(callee.argumentExpression).text
+              : null;
+          if (memberName !== null) {
             const host = unwrapAssertions(callee.expression);
             const mutators = ts.isIdentifier(host) && host.text === 'Object'
               ? ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf']
               : ts.isIdentifier(host) && host.text === 'Reflect'
                 ? ['set', 'defineProperty', 'deleteProperty', 'setPrototypeOf']
                 : [];
-            if (mutators.includes(callee.name.text)) {
+            if (mutators.includes(memberName)) {
               const dest = rootOf(n.arguments[0]);
               if (
                 ts.isIdentifier(dest) &&
@@ -2362,6 +2374,23 @@ const findEscape = (nodes, { countReturns = false } = {}) => {
     if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
       const callee = unwrapAssertions(n.expression);
       if (isFunctionLike(callee) && callee.body) {
+        // ...but only when its throws leave SYNCHRONOUSLY (Codex round-35 P2).
+        // An async function's throw becomes a rejected promise, so
+        // `void (async () => { throw e })().catch(() => {})` reaches the switch
+        // perfectly well — rejecting it blocked `typecheck` on a valid
+        // refactor. A generator's body does not run at the call at all; the
+        // call returns an iterator. Both are skipped like any other nested
+        // function. An AWAITED async call is the exception that proves the
+        // rule: there the rejection does propagate into this frame.
+        const isAsync = (callee.modifiers ?? []).some(
+          (m) => m.kind === ts.SyntaxKind.AsyncKeyword,
+        );
+        const isGenerator = Boolean(callee.asteriskToken);
+        const awaited = n.parent && ts.isAwaitExpression(n.parent);
+        if (isGenerator || (isAsync && !awaited)) {
+          (n.arguments ?? []).forEach((a) => walk(a, st));
+          return;
+        }
         walk(callee.body, { ...st, breakable: true, loop: true, iife: true });
         (n.arguments ?? []).forEach((a) => walk(a, st));
         return;
