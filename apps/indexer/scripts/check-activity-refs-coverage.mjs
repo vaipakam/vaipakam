@@ -2196,6 +2196,15 @@ if (!fnNode) {
   // pass.
   const bindings = [];
   const findBinding = (n) => {
+    // A NESTED function's destructuring is not this binding (Codex round-51
+    // P2). The walk descended into every local helper and callback, so an
+    // ordinary `const { loanId } = value` inside one counted as a second source
+    // for the SQL references and failed the build with "destructures … in 2
+    // places". It cannot be the binding `.bind()` reads — that one is in the
+    // ledger's own scope — and blocking an internal refactor is the expensive
+    // direction to be wrong in. Same function-boundary rule the per-case and
+    // outer shadow scans have carried since rounds 11 and 40.
+    if (n !== ledgerNode.body && isFunctionLike(n)) return;
     if (
       ts.isVariableDeclaration(n) &&
       n.name &&
@@ -3131,6 +3140,25 @@ if (!fnNode) {
           // FUNCTION while resolving it normally, so the caller advances the
           // cursor exactly as it would on success. What has to be true is that
           // the failure reaches the caller, and only a throw does that.
+          /** Can this block finish by `return` / `break` / `continue`? */
+          const completesAbruptly = (node) => {
+            let hit = false;
+            const seek = (m) => {
+              if (hit) return;
+              if (
+                ts.isReturnStatement(m) ||
+                ts.isBreakStatement(m) ||
+                ts.isContinueStatement(m)
+              ) {
+                hit = true;
+                return;
+              }
+              if (isFunctionLike(m)) return; // a nested function's return is its own
+              ts.forEachChild(m, seek);
+            };
+            if (node) seek(node);
+            return hit;
+          };
           const alwaysThrows = (node) => {
             if (!node) return false;
             if (ts.isThrowStatement(node)) return true;
@@ -3146,6 +3174,12 @@ if (!fnNode) {
               );
             }
             if (ts.isTryStatement(node)) {
+              // A `finally` that completes abruptly OVERRIDES a pending throw
+              // (Codex round-51 P2) — `try { throw e } finally { return 0 }`
+              // resolves normally, so the failure never reaches the caller and
+              // the cursor advances. This branch ignored the finally block
+              // entirely, which made the most obscure swallow the easiest one.
+              if (node.finallyBlock && completesAbruptly(node.finallyBlock)) return false;
               // Propagates only if the try body does AND its own handler does.
               return (
                 alwaysThrows(node.tryBlock) &&
