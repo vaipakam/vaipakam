@@ -67,13 +67,13 @@ const CHAIN_INDEXER = join(REPO_ROOT, 'apps', 'indexer', 'src', 'chainIndexer.ts
  */
 const DELIBERATELY_NOT_SCOPED = {
   // ── genuinely not loan/offer-scoped ────────────────────────────────────
-  LoanInitiatedDetails:
+  'LoanInitiatedDetails.loanId':
     'companion payload to LoanInitiated, consumed to build the loans row — the LoanInitiated row already carries the loan reference, so a second row for the same event pair would double-count the timeline',
-  FeeEntitlementStamped:
+  'FeeEntitlementStamped.loanId':
     'fee-entitlement bookkeeping stamped at accept — an internal accounting record, not an event a user reads on a loan timeline',
-  FeeEntitlementRepriced:
+  'FeeEntitlementRepriced.loanId':
     'twin of FeeEntitlementStamped — governance retune bookkeeping, not user-facing loan activity',
-  NotificationFeeBilled:
+  'NotificationFeeBilled.loanId':
     'per-notification billing record — belongs to the notification subsystem, not the loan timeline',
 
   // ── TODO(#1794): real gaps, awaiting per-slice mapping ─────────────────
@@ -90,14 +90,14 @@ const DELIBERATELY_NOT_SCOPED = {
   // and the slice that maps it should say which and why.
   'LoanRefinanced.loanId':
     'TODO(#1794) — refinance; needs a decision on old-vs-new loan for the single loan_id column',
-  LoanSold: 'TODO(#1794) — direct lender sale; plainly loan-timeline material',
-  LoanSaleCompleted: 'TODO(#1794) — listed lender sale completion; plainly loan-timeline material',
+  'LoanSold.loanId': 'TODO(#1794) — direct lender sale; plainly loan-timeline material',
+  'LoanSaleCompleted.loanId': 'TODO(#1794) — listed lender sale completion; plainly loan-timeline material',
   'LoanSaleOfferLinked.loanId': 'TODO(#1794) — sale listing bound to a loan',
   'LoanSaleOfferLinked.offerId': 'TODO(#1794) — the same binding, sale-offer side (saleOfferId)',
   'LoanSaleListingTornDown.loanId': 'TODO(#1794) — sale listing withdrawn',
   'LoanSaleListingTornDown.offerId': 'TODO(#1794) — listing withdrawn, sale-offer side (saleOfferId)',
-  LoanPreclosedDirect: 'TODO(#1794) — borrower early close-out',
-  LoanObligationTransferred: 'TODO(#1794) — obligation handover to a replacement borrower',
+  'LoanPreclosedDirect.loanId': 'TODO(#1794) — borrower early close-out',
+  'LoanObligationTransferred.loanId': 'TODO(#1794) — obligation handover to a replacement borrower',
   // The offset route. Both entered scope with the round-3 shape derivation: they
   // name their references `originalLoanId` / `newOfferId`, so the earlier
   // enumerated alias table could not see either event at all. `chainIndexer.ts`
@@ -115,26 +115,26 @@ const DELIBERATELY_NOT_SCOPED = {
   'OffsetOfferCreated.loanId':
     'TODO(#1794) — offset vehicle offer created; same original-vs-replacement decision as above',
   'OffsetOfferCreated.offerId': 'TODO(#1794) — the offset vehicle offer itself (newOfferId)',
-  CollateralAdded: 'TODO(#1794) — borrower collateral top-up',
-  PartialCollateralWithdrawn: 'TODO(#1794) — surplus collateral release',
-  CollateralConsolidated: 'TODO(#1794) — collateral consolidation to the NFT holder',
-  HFLiquidationTriggered: 'TODO(#1794) — health-factor liquidation; the loans row IS flipped (#1293), only the activity reference is missing',
-  LiquidationDiscounted: 'TODO(#1794) — twin of HFLiquidationTriggered',
-  LoanPartiallyLiquidated: 'TODO(#1794) — partial liquidation',
-  LiquidationFallback: 'TODO(#1794) — liquidation fallback entry',
-  LiquidationFallbackSplit: 'TODO(#1794) — split-route liquidation fallback',
-  LiquidationFallbackOracleUnavailable: 'TODO(#1794) — fallback taken because the oracle was unavailable',
-  LoanFallbackPending: 'TODO(#1794) — fallback episode opened',
-  LoanCuredFromFallback: 'TODO(#1794) — fallback episode cured',
+  'CollateralAdded.loanId': 'TODO(#1794) — borrower collateral top-up',
+  'PartialCollateralWithdrawn.loanId': 'TODO(#1794) — surplus collateral release',
+  'CollateralConsolidated.loanId': 'TODO(#1794) — collateral consolidation to the NFT holder',
+  'HFLiquidationTriggered.loanId': 'TODO(#1794) — health-factor liquidation; the loans row IS flipped (#1293), only the activity reference is missing',
+  'LiquidationDiscounted.loanId': 'TODO(#1794) — twin of HFLiquidationTriggered',
+  'LoanPartiallyLiquidated.loanId': 'TODO(#1794) — partial liquidation',
+  'LiquidationFallback.loanId': 'TODO(#1794) — liquidation fallback entry',
+  'LiquidationFallbackSplit.loanId': 'TODO(#1794) — split-route liquidation fallback',
+  'LiquidationFallbackOracleUnavailable.loanId': 'TODO(#1794) — fallback taken because the oracle was unavailable',
+  'LoanFallbackPending.loanId': 'TODO(#1794) — fallback episode opened',
+  'LoanCuredFromFallback.loanId': 'TODO(#1794) — fallback episode cured',
   // Dual-carrying: split per field so mapping one cannot mask a regression on
   // the other (Codex round-1 P2).
   'BackstopFilled.loanId': 'TODO(#1794) — backstop fill against a loan',
   'BackstopFilled.offerId': 'TODO(#1794) — backstop fill, offer side',
-  BackstopLoanClaimed: 'TODO(#1794) — backstop claim',
-  LenderBackstopOptInSet: 'TODO(#1794) — per-loan backstop opt-in',
-  BorrowerSurplusClaimed: 'TODO(#1794) — borrower surplus claim',
-  ClaimRetryExecuted: 'TODO(#1794) — claim retry',
-  SanctionedProceedsLocked: 'TODO(#1794) — proceeds withheld from a flagged party',
+  'BackstopLoanClaimed.loanId': 'TODO(#1794) — backstop claim',
+  'LenderBackstopOptInSet.loanId': 'TODO(#1794) — per-loan backstop opt-in',
+  'BorrowerSurplusClaimed.loanId': 'TODO(#1794) — borrower surplus claim',
+  'ClaimRetryExecuted.loanId': 'TODO(#1794) — claim retry',
+  'SanctionedProceedsLocked.loanId': 'TODO(#1794) — proceeds withheld from a flagged party',
   'OfferSaleProceedsSplit.loanId': 'TODO(#1794) — proceeds split, loan side',
   'OfferSaleProceedsSplit.offerId': 'TODO(#1794) — proceeds split, offer side',
   'IntentMatched.loanId': 'TODO(#1794) — standing-intent match',
@@ -145,18 +145,18 @@ const DELIBERATELY_NOT_SCOPED = {
   'SignedOfferMatched.loanId': 'TODO(#1794) — gasless signed offer matched',
   'SignedOfferMatched.offerId':
     'TODO(#1794) — signed-offer match, offer side; same sliceOfferId / counterpartyOfferId choice as IntentMatched',
-  AutoDailyDeducted: 'TODO(#1794) — NFT-rental daily deduction',
-  AutoExtendBorrowerCapsChanged: 'TODO(#1794) — borrower auto-extend caps',
-  AutoExtendLenderCapsChanged: 'TODO(#1794) — lender auto-extend caps',
-  AutoRefinanceCapsChanged: 'TODO(#1794) — auto-refinance caps',
-  AutoListOptOutCleared: 'TODO(#1794) — auto-list opt-out cleared',
-  LoanKeeperEnabled: 'TODO(#1794) — per-loan keeper authorization',
-  PrepaySaleListingSynced: 'TODO(#1794) — sanctions-sync breadcrumb on a loan-keyed listening',
-  SwapAdapterAttempted: 'TODO(#1794) — swap adapter attempt',
-  SwapAdapterSucceeded: 'TODO(#1794) — swap adapter success',
-  SwapAllAdaptersFailed: 'TODO(#1794) — every swap adapter failed',
-  VPFIDiscountApplied: 'TODO(#1794) — VPFI fee discount applied',
-  VPFIYieldFeeDiscountApplied: 'TODO(#1794) — VPFI yield-fee discount applied',
+  'AutoDailyDeducted.loanId': 'TODO(#1794) — NFT-rental daily deduction',
+  'AutoExtendBorrowerCapsChanged.loanId': 'TODO(#1794) — borrower auto-extend caps',
+  'AutoExtendLenderCapsChanged.loanId': 'TODO(#1794) — lender auto-extend caps',
+  'AutoRefinanceCapsChanged.loanId': 'TODO(#1794) — auto-refinance caps',
+  'AutoListOptOutCleared.loanId': 'TODO(#1794) — auto-list opt-out cleared',
+  'LoanKeeperEnabled.loanId': 'TODO(#1794) — per-loan keeper authorization',
+  'PrepaySaleListingSynced.loanId': 'TODO(#1794) — sanctions-sync breadcrumb on a loan-keyed listening',
+  'SwapAdapterAttempted.loanId': 'TODO(#1794) — swap adapter attempt',
+  'SwapAdapterSucceeded.loanId': 'TODO(#1794) — swap adapter success',
+  'SwapAllAdaptersFailed.loanId': 'TODO(#1794) — every swap adapter failed',
+  'VPFIDiscountApplied.loanId': 'TODO(#1794) — VPFI fee discount applied',
+  'VPFIYieldFeeDiscountApplied.loanId': 'TODO(#1794) — VPFI yield-fee discount applied',
 
   // NB: FlashLoanLiquidationCompleted and LoanClaimedAndCompounded are NOT
   // listed. They exist only in standalone ABIs (FlashLoanLiquidator,
@@ -179,22 +179,22 @@ const DELIBERATELY_NOT_SCOPED = {
   // wants — but that is a product call for the slice that makes it.
   'OfferCreatedDetails.loanId':
     'TODO(#1794) — refinance TARGET loan inside the terms tuple; scoping it puts an offer creation on that loan timeline, which needs a deliberate decision',
-  OfferCanceledDetails: 'companion payload to OfferCanceled, which is offer-scoped already',
+  'OfferCanceledDetails.offerId': 'companion payload to OfferCanceled, which is offer-scoped already',
 
   // TODO(#1794): real gaps on the offer side. NOTE these are NOT the same
   // question as `check-event-coverage.mjs`'s DELIBERATELY_NOT_HANDLED — that
   // list is about driving a typed `offers` row, this one is about being findable
   // on an offer's activity feed. An event can legitimately not mutate the row
   // and still belong on the timeline, so their reasons do not transfer.
-  OfferClosed:
+  'OfferClosed.offerId':
     'TODO(#1794) — offer-lifecycle terminal, and it IS handled (chainIndexer.ts:1253 flips the row + stamps cancelled_at). Handled but unscoped is the sharpest shape of this bug: the projection is right while the audit trail cannot find the event.',
-  OfferCreatorFullTariffSet: 'TODO(#1794) — per-offer fee-tariff opt-in',
-  OfferKeeperEnabled: 'TODO(#1794) — per-offer keeper authorization',
-  OfferBackstopEligibilitySet: 'TODO(#1794) — per-offer backstop eligibility; no indexer reference at all today',
-  OfferSaleProceedsCredited: 'TODO(#1794) — proceeds credited to the borrower vault on a sale',
-  PostParallelSaleListing: 'TODO(#1794) — parallel-sale listing posted',
-  ParallelSaleLockReleased: 'TODO(#1794) — parallel-sale binding unwound',
-  PrepaySaleOfferSynced: 'TODO(#1794) — sanctions-sync breadcrumb on an offer-keyed listing',
+  'OfferCreatorFullTariffSet.offerId': 'TODO(#1794) — per-offer fee-tariff opt-in',
+  'OfferKeeperEnabled.offerId': 'TODO(#1794) — per-offer keeper authorization',
+  'OfferBackstopEligibilitySet.offerId': 'TODO(#1794) — per-offer backstop eligibility; no indexer reference at all today',
+  'OfferSaleProceedsCredited.offerId': 'TODO(#1794) — proceeds credited to the borrower vault on a sale',
+  'PostParallelSaleListing.offerId': 'TODO(#1794) — parallel-sale listing posted',
+  'ParallelSaleLockReleased.offerId': 'TODO(#1794) — parallel-sale binding unwound',
+  'PrepaySaleOfferSynced.offerId': 'TODO(#1794) — sanctions-sync breadcrumb on an offer-keyed listing',
 };
 
 // ── 1. Events whose compiled ABI carries loanId / offerId ───────────────
@@ -298,9 +298,7 @@ const bindsName = (name, wanted) => {
  * declaration costs nothing real, because a mapper has no reason to alias the
  * argument bag it is handed.
  */
-const aliasesShadowable = (n) => {
-  if (!ts.isVariableDeclaration(n) || !n.initializer) return false;
-  let t = n.initializer;
+const unwrapAssertions = (t) => {
   while (
     ts.isParenthesizedExpression(t) ||
     ts.isAsExpression(t) ||
@@ -310,7 +308,25 @@ const aliasesShadowable = (n) => {
   ) {
     t = t.expression;
   }
-  return ts.isIdentifier(t) && SHADOWABLE_NAMES.has(t.text);
+  return t;
+};
+
+const aliasesShadowable = (n) => {
+  // `const decoded = args;`
+  if (ts.isVariableDeclaration(n) && n.initializer) {
+    const t = unwrapAssertions(n.initializer);
+    if (ts.isIdentifier(t) && SHADOWABLE_NAMES.has(t.text)) return n.name.getText();
+  }
+  // `let decoded: typeof args; decoded = args;` — an alias made by ASSIGNMENT
+  // (Codex round-20 P2). Round 19 read only the declaration's initializer, so
+  // splitting the same alias across a bare declaration and a following assignment
+  // walked straight past it and `decoded.loanId = 0n` was invisible again — the
+  // evasion round 19 closed, reopened by moving one token.
+  if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    const t = unwrapAssertions(n.right);
+    if (ts.isIdentifier(t) && SHADOWABLE_NAMES.has(t.text)) return n.left.getText();
+  }
+  return null;
 };
 
 /** Does a binding name — plain or destructured — bind one of those names? */
@@ -513,6 +529,8 @@ const aliasNames = new Map();
 const eventInputs = new Map();
 /** ABI-side problems: overloaded signatures, reference names that aren't numeric. */
 const abiConflicts = [];
+/** '<Event>.<field>' -> path, where the only reference is an ARRAY of ids. */
+const arrayOnlyRefs = new Map();
 for (const file of memberFiles) {
   let parsed;
   try {
@@ -534,6 +552,8 @@ for (const file of memberFiles) {
     const names = [];
     /** path -> ABI type, so a reference can be required to be numeric. */
     const typeOf = new Map();
+    /** field -> path, for PLURAL reference arrays (`uint256[] loanIds`). */
+    const arrayRefs = new Map();
     /**
      * Could anything under here be a loanId/offerId reference?
      *
@@ -580,15 +600,10 @@ for (const file of memberFiles) {
         // coverage with no mapping and no exemption. Reported, for the same
         // reason as the tuple array: one activity row has one `loan_id`, so
         // which element it should carry is a decision, not a lookup.
-        if (
-          /\]$/.test(i.type ?? '') &&
-          REF_FIELDS.some((f) => REF_SHAPE[f].test(`${i.name}`.replace(/s$/, '')))
-        ) {
-          abiConflicts.push({
-            kind: 'reference-array',
-            event: item.name,
-            message: `${item.name} — \`${path}\` is an ARRAY of references (${i.type}); one activity row carries one id, so which element it should be is a decision this check cannot make. Map it explicitly or allowlist the event with a reason`,
-          });
+        if (/\]$/.test(i.type ?? '')) {
+          for (const f of REF_FIELDS) {
+            if (REF_SHAPE[f].test(`${i.name}`.replace(/s$/, ''))) arrayRefs.set(f, path);
+          }
         }
         names.push(path);
         typeOf.set(path, i.type ?? '');
@@ -661,6 +676,31 @@ for (const file of memberFiles) {
       if (!aliasNames.has(item.name)) aliasNames.set(item.name, new Map());
       aliasNames.get(item.name).set(field, new Set(numeric));
     }
+    // A PLURAL reference array carries references this checker cannot map, which
+    // is not the same as carrying none (Codex round-19 P2). The shape regexes
+    // deliberately exclude `loanIds` so an array never looks like a single
+    // mappable id — but excluding it from the derivation entirely let an event
+    // whose ONLY loan reference is `uint256[] loanIds` sit outside coverage with
+    // no mapping and no exemption.
+    //
+    // Round 19 reported it as an unsupported ABI shape and told the author to
+    // "allowlist the event with a reason" — advice the script could not honour
+    // (Codex round-20 P2). An unsupported-shape report is unconditional, so no
+    // entry suppressed it; and because the event never entered `carries`, the
+    // entry the message asked for reported itself STALE. The only exit from the
+    // failure was the one the message told the reader not to take.
+    //
+    // So the array field enters `carries` like any other reference and runs
+    // through the ordinary gap machinery: an allowlist entry resolves it, and
+    // stops reporting stale the day the ABI drops the array. Only when the field
+    // has no scalar reference on the same event — with one, the scalar is what a
+    // mapping should read and the array is not a gap.
+    for (const [field, path] of arrayRefs) {
+      if (carries.get(item.name)?.has(field)) continue;
+      if (!carries.has(item.name)) carries.set(item.name, new Set());
+      carries.get(item.name).add(field);
+      arrayOnlyRefs.set(`${item.name}.${field}`, path);
+    }
   }
 }
 
@@ -722,6 +762,29 @@ const isFunctionLike = (node) =>
   ts.isClassDeclaration(node) ||
   ts.isClassExpression(node);
 
+/**
+ * Unwrap parens/assertions so `(eventName as string)` still resolves. Declared
+ * here, above every use — a `const` arrow used earlier in the file is a
+ * temporal-dead-zone crash, not a lint nit.
+ */
+const bareIdentifierOf = (expr) => {
+  let t = expr;
+  while (
+    t &&
+    (ts.isParenthesizedExpression(t) ||
+      ts.isAsExpression(t) ||
+      ts.isNonNullExpression(t) ||
+      ts.isSatisfiesExpression?.(t) ||
+      ts.isTypeAssertionExpression?.(t))
+  ) {
+    t = t.expression;
+  }
+  return t && ts.isIdentifier(t) ? t.text : null;
+};
+
+/** The function that writes `activity_events` rows. */
+const LEDGER_FN = 'recordActivityEvents';
+
 const src = readFileSync(CHAIN_INDEXER, 'utf8');
 const sourceFile = ts.createSourceFile(CHAIN_INDEXER, src, ts.ScriptTarget.Latest, true);
 
@@ -741,6 +804,58 @@ if (!fnNode) {
 }
 
 /**
+ * ...and the LEDGER must still call it (Codex round-20 P2).
+ *
+ * Everything above and below reads one function. That is only evidence about the
+ * `activity_events` rows if that function is what fills them. Add a
+ * `pluckActivityRefsV2` returning all-nulls, point `recordActivityEvents` at it,
+ * and leave the original in place: every case this script reads is still there,
+ * the tally is identical, and every row is written with NULL references — the
+ * precise outcome the guardrail exists to prevent, reached by editing a file the
+ * guardrail already parses.
+ *
+ * Checking the call is not proof the returned values reach the INSERT — that
+ * needs dataflow this script does not do — but it is the one link the mapper's
+ * own text cannot establish, and it costs a name lookup.
+ */
+{
+  let ledgerNode = null;
+  const findLedger = (node) => {
+    if (isFunctionLike(node) && node.name?.text === LEDGER_FN) ledgerNode = node;
+    if (!ledgerNode) ts.forEachChild(node, findLedger);
+  };
+  ts.forEachChild(sourceFile, findLedger);
+  if (!ledgerNode) {
+    console.error(
+      `[check-activity-refs-coverage] could not locate ${LEDGER_FN}() in chainIndexer.ts —\n` +
+        '  the function that writes activity_events rows. If it was renamed, update this\n' +
+        '  script — do not delete the check.',
+    );
+    process.exit(1);
+  }
+  let callsMapper = false;
+  const findCall = (n) => {
+    if (callsMapper) return;
+    if (ts.isCallExpression(n) && bareIdentifierOf(n.expression) === 'pluckActivityRefs') {
+      callsMapper = true;
+      return;
+    }
+    ts.forEachChild(n, findCall);
+  };
+  if (ledgerNode.body) findCall(ledgerNode.body);
+  if (!callsMapper) {
+    console.error(
+      `[check-activity-refs-coverage] ${LEDGER_FN}() no longer calls pluckActivityRefs().\n` +
+        '  This script reads pluckActivityRefs to decide which events carry a reference, so\n' +
+        '  a ledger filling activity_events from somewhere else would report full coverage\n' +
+        '  while writing NULL loan_id / offer_id. Restore the call, or update this script —\n' +
+        '  do not delete the check.',
+    );
+    process.exit(1);
+  }
+}
+
+/**
  * The switch on the event name.
  *
  * The DISCRIMINANT is checked, not just the shape (Codex round-15 P2). Every case
@@ -754,21 +869,6 @@ if (!fnNode) {
 const eventNameParam = fnNode.parameters?.[0]?.name;
 const discriminantName =
   eventNameParam && ts.isIdentifier(eventNameParam) ? eventNameParam.text : null;
-/** Unwrap parens/assertions so `(eventName as string)` still resolves. */
-const bareIdentifierOf = (expr) => {
-  let t = expr;
-  while (
-    t &&
-    (ts.isParenthesizedExpression(t) ||
-      ts.isAsExpression(t) ||
-      ts.isNonNullExpression(t) ||
-      ts.isSatisfiesExpression?.(t) ||
-      ts.isTypeAssertionExpression?.(t))
-  ) {
-    t = t.expression;
-  }
-  return t && ts.isIdentifier(t) ? t.text : null;
-};
 /**
  * The name must still MEAN the parameter (Codex round-16 P2).
  *
@@ -858,56 +958,55 @@ const findSwitch = (node) => {
  * path. The same substitution works one level up: a `return { …all null }` placed
  * immediately above the live switch leaves it syntactically present and never
  * executed, and every count stays identical. Statement order at the top level is
- * enough to see it — an unconditional exit before the switch means nothing after
- * it runs. Conditional exits are fine and common, so only a bare `return`/`throw`
- * statement counts.
+ * enough to see it. (Round 16 exempted conditional exits as "fine and common";
+ * round 20 showed a conditional exit is the same bypass and removed the
+ * exemption — see `canExit` below.)
  */
 /**
- * Does control definitely leave the function at this statement? Followed THROUGH
- * blocks and if/else (Codex round-17 P2): a bare `{ return { …null }; }` placed
- * before the switch exits just as surely as a top-level return, and a node-kind
- * test on the statement itself sees a Block and moves on. Same shape as
- * `alwaysExits` further down, declared here because this walk runs first.
+ * CAN control leave the function at this statement? (Codex round-20 P2.)
+ *
+ * Rounds 17 and 18 asked whether a pre-switch statement leaves the function on
+ * EVERY path, growing block / if-else / try-finally handling to answer it. That
+ * question was the wrong one. A bypass does not have to be unconditional to be a
+ * bypass: `if (args.__dispatch !== true) return { …all null };` above the switch
+ * takes every ordinary event down the all-null path while a must-exit test sees a
+ * one-armed `if` and waves it through — the exact evasion the previous two rounds
+ * were closing, one `if` away from where they stopped.
+ *
+ * So the test is MAY-exit, not must-exit: any `return` or `throw` reachable from a
+ * statement that precedes the switch (nested functions excluded — those are not on
+ * this path until called) means the switch does not dominate the function's exit,
+ * which is the whole property this scan exists to establish. That collapses the
+ * three grown cases into one descendant walk.
+ *
+ * The mapper has no pre-switch statements at all, so this refuses nothing that
+ * exists today. A future mapper that legitimately guards before dispatching gets a
+ * loud refusal to update this script — the same posture as every other shape the
+ * checker cannot read, and the opposite of a silent pass.
  */
-const exitsFunction = (st) => {
-  if (!st) return false;
-  if (ts.isReturnStatement(st) || ts.isThrowStatement(st)) return true;
-  if (ts.isBlock(st)) return st.statements.some(exitsFunction);
-  if (ts.isLabeledStatement(st)) return exitsFunction(st.statement);
-  if (ts.isIfStatement(st)) {
-    return (
-      Boolean(st.elseStatement) && exitsFunction(st.thenStatement) && exitsFunction(st.elseStatement)
-    );
-  }
-  if (ts.isTryStatement(st)) {
-    // Two independent ways a try statement leaves the function (Codex round-18
-    // P2). A `finally` that exits does so whatever happened before it — that
-    // was already handled. But a `try` block that returns ALSO returns, once
-    // the finally (if any) completes normally; checking only the finally missed
-    // `try { return …; } finally { log(); }` entirely. The catch clause has to
-    // exit too, or the thrown path falls through to the code below.
-    if (Boolean(st.finallyBlock) && exitsFunction(st.finallyBlock)) return true;
-    return (
-      exitsFunction(st.tryBlock) &&
-      (!st.catchClause || exitsFunction(st.catchClause.block))
-    );
-  }
-  return false;
+const canExit = (node) => {
+  if (isFunctionLike(node)) return false;
+  if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) return true;
+  let found = false;
+  ts.forEachChild(node, (c) => {
+    found = found || canExit(c);
+  });
+  return found;
 };
+// The switch is located FIRST, and only then is what precedes it examined. The
+// two questions have different answers and different fixes, and scanning for
+// early exits while still looking for the switch reports the wrong one: with the
+// switch unrecognised — nested, or on the wrong discriminant — the scan runs past
+// it and trips on the mapper's own trailing all-null `return`, replacing an
+// actionable "switch is on `X`, not `eventName`" with a bypass report about a
+// statement that is not a bypass.
+let switchIndex = -1;
 if (fnNode.body) {
-  for (const st of fnNode.body.statements) {
-    if (!switchNode) findSwitch(st);
-    if (switchNode) break;
-    if (exitsFunction(st)) {
-      console.error(
-        '[check-activity-refs-coverage] pluckActivityRefs() leaves unconditionally before\n' +
-          '  its event switch, so the switch never runs and every event would be stored with\n' +
-          '  all references NULL — while this check reads the cases and reports them mapped.\n' +
-          '  Remove the early exit, or update this script — do not delete the check.',
-      );
-      process.exit(1);
-    }
-  }
+  fnNode.body.statements.forEach((st, i) => {
+    if (switchNode) return;
+    findSwitch(st);
+    if (switchNode) switchIndex = i;
+  });
 }
 if (!switchNode) {
   console.error(
@@ -920,6 +1019,19 @@ if (!switchNode) {
           '  same. Restore the dispatch, or update this script — do not delete the check.'
       : '[check-activity-refs-coverage] pluckActivityRefs() no longer contains a switch.\n' +
           'If its shape changed, update this script — do not delete the check.',
+  );
+  process.exit(1);
+}
+for (const st of fnNode.body.statements.slice(0, switchIndex)) {
+  if (!canExit(st)) continue;
+  console.error(
+    '[check-activity-refs-coverage] pluckActivityRefs() can leave before its event\n' +
+      '  switch, so the switch may never run and events would be stored with all\n' +
+      '  references NULL — while this check reads the cases and reports them mapped.\n' +
+      '  CONDITIONAL early exits are refused too: a guard that returns the all-null\n' +
+      '  object bypasses the switch for whichever events match it, and the tally cannot\n' +
+      '  see the difference. Remove the early exit, or update this script — do not\n' +
+      '  delete the check.',
   );
   process.exit(1);
 }
@@ -1015,11 +1127,30 @@ const readsArgPath = (expr) => {
     return cur;
   };
   // `args.a.b.c` → "a.b.c"; anything not rooted at `args` is rejected.
+  //
+  // Bracket access with a STATIC string literal — `args['loanId']` — is the same
+  // read as `args.loanId` and is accepted alongside it (Codex round-20 P2). It is
+  // not an evasion but ordinary TypeScript: an ABI field whose name is not a valid
+  // identifier (or one a linter's dot-notation rule exempts) can only be read this
+  // way, and rejecting it made the checker demand a mapping it would then refuse.
+  // A COMPUTED index (`args[key]`) stays rejected — the field it reads is not
+  // knowable statically, so it cannot establish coverage of a named reference.
   const parts = [];
   let cur = unwrap(expr.arguments[0]);
-  while (ts.isPropertyAccessExpression(cur)) {
-    parts.unshift(cur.name.text);
-    cur = unwrap(cur.expression);
+  for (;;) {
+    if (ts.isPropertyAccessExpression(cur)) {
+      parts.unshift(cur.name.text);
+      cur = unwrap(cur.expression);
+      continue;
+    }
+    if (ts.isElementAccessExpression(cur)) {
+      const idx = unwrap(cur.argumentExpression);
+      if (!idx || !ts.isStringLiteralLike(idx)) return null;
+      parts.unshift(idx.text);
+      cur = unwrap(cur.expression);
+      continue;
+    }
+    break;
   }
   if (!ts.isIdentifier(cur) || cur.text !== 'args') return null;
   return parts.length ? parts.join('.') : null;
@@ -1055,8 +1186,9 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
       outerShadow = ts.isIdentifier(n.name) ? n.name.text : 'args/Number (destructured)';
       return;
     }
-    if (aliasesShadowable(n)) {
-      outerShadow = `${n.name.getText()} (an alias of args/Number)`;
+    const outerAlias = aliasesShadowable(n);
+    if (outerAlias) {
+      outerShadow = `${outerAlias} (an alias of args/Number)`;
       return;
     }
     if (mutatesShadowable(n)) {
@@ -1312,7 +1444,7 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
         if (ts.isVariableDeclaration(n) || ts.isParameter(n)) {
           if (bindsShadowable(n.name)) found = found || 'declares a local named';
         }
-        if (aliasesShadowable(n)) found = found || 'declares an alias of';
+        if (aliasesShadowable(n)) found = found || 'aliases';
         ts.forEachChild(n, walk);
       };
       for (const st of groupStatements) walk(st);
@@ -1414,27 +1546,40 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
   // control leaves the switch without a mapped return.
   flushPending('this case can fall out of the switch without returning a mapped object');
 }
-// ── 2b. Dual-carrying events must be exempted per field ────────────────
-// Codex round-1 P2. An event-wide key exempts BOTH references, and the stale
-// check below only fires when EVERY carried field is mapped. So for an event
-// carrying both, a slice that maps only `loanId` leaves the event-wide entry
-// live, and a later regression dropping that mapping is silently re-covered by
-// it — defeating the per-field guarantee this script advertises. Requiring
-// `Event.loanId` / `Event.offerId` keys for dual-carrying events also makes the
-// summary count exemptions in the same unit it reports gaps.
-const wideOnDual = [];
+// ── 2b. EVERY allowlist entry is field-scoped ──────────────────────────
+// Codex round-1 P2 required this of dual-carrying events; Codex round-20 P2
+// showed the event-wide form is unsound for single-carrying ones too, so it is
+// now the only accepted key shape.
+//
+// An event-wide key says "this EVENT is exempt" and therefore follows the event
+// through an ABI revision. Rename `LoanSold`'s input `loanId` → `offerId` and the
+// entry — whose stated reason was written about the loan reference — silently
+// exempts the offer reference instead, with nothing reporting stale: the event
+// still exists, still carries a reference, still is not mapped. The exemption
+// outlives the thing it was granted for, which is exactly what the dead-entry
+// discipline exists to prevent.
+//
+// `<Event>.<field>` cannot drift that way. When the field it names goes, the
+// dead-entry check below reports it and a human re-states the reason against
+// whatever the event carries now.
+const wrongShape = [];
 for (const key of Object.keys(DELIBERATELY_NOT_SCOPED)) {
-  if (key.includes('.')) continue;
-  const fields = carries.get(key);
-  if (fields && fields.size > 1) wideOnDual.push(key);
+  const dot = key.indexOf('.');
+  const field = dot === -1 ? null : key.slice(dot + 1);
+  if (!field || !REF_FIELDS.includes(field)) wrongShape.push(key);
 }
-if (wideOnDual.length) {
+if (wrongShape.length) {
   console.error(
-    '\n✖ activity-refs coverage: these events carry BOTH loanId and offerId, so an\n' +
-      '  event-wide allowlist entry would mask a per-field regression. Split each into\n' +
-      "  '<Event>.loanId' and '<Event>.offerId' entries:\n",
+    '\n✖ activity-refs coverage: allowlist entries must be keyed\n' +
+      `  '<Event>.<field>' with field one of ${REF_FIELDS.join(' / ')}. An event-wide entry\n` +
+      '  follows the event through an ABI rename and silently exempts whatever reference\n' +
+      '  the event carries next, while its stated reason still describes the old one.\n' +
+      '  Re-key these against the field each was actually granted for:\n',
   );
-  for (const k of wideOnDual) console.error(`    ${k} (carries ${[...carries.get(k)].join(', ')})`);
+  for (const k of wrongShape) {
+    const has = carries.get(k);
+    console.error(`    ${k}${has ? ` (carries ${[...has].join(', ')})` : ''}`);
+  }
   console.error('');
   process.exit(1);
 }
@@ -1452,10 +1597,7 @@ for (const [event, fields] of [...carries].sort((a, b) => a[0].localeCompare(b[0
     // `Object.hasOwn`, not truthiness (Codex round-10 P2): an event named like an
     // inherited prototype member — `toString`, `constructor` — would otherwise
     // find that inherited value and read as allowlisted with no entry present.
-    if (
-      Object.hasOwn(DELIBERATELY_NOT_SCOPED, event) ||
-      Object.hasOwn(DELIBERATELY_NOT_SCOPED, `${event}.${field}`)
-    ) {
+    if (Object.hasOwn(DELIBERATELY_NOT_SCOPED, `${event}.${field}`)) {
       allowlisted++;
       continue;
     }
@@ -1478,12 +1620,12 @@ for (const key of Object.keys(DELIBERATELY_NOT_SCOPED)) {
   // Testing only that some reference-bearing `Foo` exists leaves a `Foo.loanId`
   // exemption live after an ABI revision drops `loanId` but keeps `offerId` —
   // an obsolete exemption that never reports stale, contradicting the guarantee.
-  if (field && !has.has(field)) {
+  // Every key is field-scoped since round 20, so this fires for every rename.
+  if (!has.has(field)) {
     dead.push(`${key} — the event no longer carries ${field}; remove this entry`);
     continue;
   }
-  const fields = field ? [field] : [...has];
-  if (fields.every((f) => mapped.get(event)?.has(f))) {
+  if (mapped.get(event)?.has(field)) {
     dead.push(`${key} — now mapped in pluckActivityRefs; remove this entry`);
   }
 }
@@ -1535,7 +1677,16 @@ if (
         '  Each stores NULL, so /activity?loanId=N and LoanTimeline cannot find the row.\n' +
         '  Fix by adding a case to pluckActivityRefs(), or allowlist with a reason in this script.\n',
     );
-    for (const { event, field } of gaps) console.error(`    ${event}.${field}`);
+    for (const { event, field } of gaps) {
+      const arrayPath = arrayOnlyRefs.get(`${event}.${field}`);
+      console.error(
+        arrayPath
+          ? `    ${event}.${field} — its only ${field} is \`${arrayPath}\`, an ARRAY of ids; one activity\n` +
+              `      row carries one id, so which element it should be is a decision, not a lookup.\n` +
+              `      Allowlist '${event}.${field}' with a reason saying which, or reshape the event.`
+          : `    ${event}.${field}`,
+      );
+    }
   }
   if (dead.length) {
     console.error('\n✖ activity-refs coverage: stale allowlist entries:\n');
