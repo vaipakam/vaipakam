@@ -2370,6 +2370,33 @@ if (!fnNode) {
         p.initializer.declarations.length === 1 &&
         ts.isIdentifier(p.initializer.declarations[0].name)
       ) {
+        // ...and it must walk the ledger's OWN batch, undiminished (Codex
+        // round-52 P2). Any enclosing `for…of` was accepted regardless of what
+        // it iterated, so `for (const log of logs.slice(0, 1))` recorded one
+        // activity row and let the cursor advance past the rest of the batch.
+        // `.slice(0, 1)` is contrived; `logs.filter(…)` is an ordinary refactor
+        // with the same consequence, which is why this is fixed rather than
+        // deferred. The iterable has to be the parameter itself.
+        const iterated = unwrapAssertions(p.expression);
+        const batchParamName = (() => {
+          const prm = ledgerNode.parameters?.[0]?.name;
+          return prm && ts.isIdentifier(prm) ? prm.text : null;
+        })();
+        if (
+          !ts.isIdentifier(iterated) ||
+          (batchParamName !== null && iterated.text !== batchParamName)
+        ) {
+          console.error(
+            `[check-activity-refs-coverage] ${LEDGER_FN}()'s batch loop iterates\n` +
+              `  \`${p.expression.getText(sourceFile)}\`, not the batch it was handed.\n` +
+              '  Everything below reads that loop as "once per decoded log". A slice, a\n' +
+              '  filter, or any other derived collection silently drops rows while the scan\n' +
+              '  still advances `indexer_cursor` past the whole batch — and every count in\n' +
+              '  this script stays identical. Iterate the parameter, or update this script —\n' +
+              '  do not delete the check.',
+          );
+          process.exit(1);
+        }
         loopVar = { name: p.initializer.declarations[0].name.text, body: p.statement, node: p };
         break;
       }
@@ -3188,7 +3215,22 @@ if (!fnNode) {
             }
             return false;
           };
-          if (!alwaysThrows(p.catchClause.block)) return true;
+          // EVERY reachable path, not just the last statement (Codex round-52
+          // P2). `alwaysThrows` classifies a block by how it ends, so
+          // `catch (err) { if (isTransient(err)) return 0; throw err; }` passed
+          // on its trailing throw while the transient branch resolved normally
+          // and let the cursor advance past the failed INSERT.
+          //
+          // This one is ordinary code, not a constructed bypass — retry-on-
+          // transient is the shape most real handlers take — which is why it is
+          // fixed rather than deferred. A non-throwing exit ANYWHERE in the
+          // handler means some failure completes normally, and that is enough.
+          if (
+            !alwaysThrows(p.catchClause.block) ||
+            completesAbruptly(p.catchClause.block)
+          ) {
+            return true;
+          }
         }
       }
       return false;
