@@ -96,6 +96,16 @@ Public-navigation requirements:
   chain read was "pending or unavailable" on pages where none was ever
   attempted, which told readers something was broken about a page
   working exactly as designed
+- a figure presented as coming from the published configuration must name
+  WHICH deployment's configuration, because every supported network runs
+  its own independently tunable copy of the protocol and the site
+  nominates one of them for its documented figures. An unqualified "the
+  published configuration" reads as universal, and becomes wrong for a
+  reader on any other network the moment two deployments are retuned
+  apart. The name must be derived from the same setting that selects the
+  deployment, never written beside it as a separate literal — two records
+  of one fact drift, and a provenance label that names the wrong network
+  is worse than none
 - a figure the documentation COMPUTES from one of those rates must be
   derived from the same configuration, not written into the page as a
   fixed number beside it. A worked example that states what each party

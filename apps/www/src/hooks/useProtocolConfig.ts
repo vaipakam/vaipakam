@@ -89,6 +89,33 @@ const INDEXER_ORIGIN = (env?.VITE_INDEXER_ORIGIN ?? 'https://indexer.vaipakam.co
 const DOCS_CHAIN_ID = Number(env?.VITE_DOCS_CONFIG_CHAIN_ID ?? '84532');
 
 /**
+ * Human name for the nominated chain, DERIVED from the configured id —
+ * never written as a literal where the id is configurable, or an env
+ * change to another deployment would leave every provenance tooltip
+ * naming the wrong network (#1664 item 4). Each supported network runs
+ * an independent Diamond with independently tunable knobs, so "the
+ * published configuration" without a chain name under-specifies which
+ * deployment a figure describes the moment two chains are retuned
+ * apart. An id outside this map falls back to naming itself, which is
+ * ugly and honest — the reader learns exactly which deployment was
+ * consulted rather than a prettier guess.
+ */
+const CHAIN_NAMES: Record<number, string> = {
+  8453: 'Base',
+  84532: 'Base Sepolia',
+  1: 'Ethereum',
+  11155111: 'Sepolia',
+  137: 'Polygon',
+  42161: 'Arbitrum',
+  421614: 'Arbitrum Sepolia',
+  10: 'Optimism',
+  11155420: 'OP Sepolia',
+};
+
+/** The chain the documented figures describe, e.g. "Base Sepolia". */
+export const DOCS_CHAIN_LABEL = CHAIN_NAMES[DOCS_CHAIN_ID] ?? `chain ${DOCS_CHAIN_ID}`;
+
+/**
  * Refuse a snapshot older than a day. Config flips reach the snapshot
  * within about one ingest scan, so a row this stale means the refresh
  * rail is wedged — and a wedged rail serving a confidently wrong number
