@@ -739,6 +739,19 @@ for (const file of memberFiles) {
         }
       }
     };
+    // MIXED named and unnamed at the TOP LEVEL, same rule as inside a tuple
+    // (Codex round-23 P2). viem decodes an argument list containing any unnamed
+    // member as an ARRAY, so the whole bag loses property access and
+    // `args.loanId` is `undefined` even though `loanId` is named — the accepted
+    // mapping then stores NaN. Round 22 closed this for tuple components and
+    // left the top level open, which is the same shape one nesting level out.
+    if ((item.inputs ?? []).some((i) => !i?.name) && hidesReference(item.inputs)) {
+      abiConflicts.push({
+        kind: 'mixed-inputs',
+        event: item.name,
+        message: `${item.name} — the event mixes named and unnamed top-level inputs, so viem decodes the whole argument bag as an ARRAY and no \`args.<name>\` path resolves; name every input, or map it positionally outside this checker`,
+      });
+    }
     collect(item.inputs, '');
 
     // An overloaded event name is two different argument bags reaching ONE case
@@ -892,6 +905,8 @@ const bareIdentifierOf = (expr) => {
 
 /** The function that writes `activity_events` rows. */
 const LEDGER_FN = 'recordActivityEvents';
+/** The property the ledger reads the event name from on each decoded log. */
+const DISCRIMINANT_PROP = 'eventName';
 
 const src = readFileSync(CHAIN_INDEXER, 'utf8');
 const sourceFile = ts.createSourceFile(CHAIN_INDEXER, src, ts.ScriptTarget.Latest, true);
@@ -1018,10 +1033,24 @@ if (!fnNode) {
       }
       return ts.isIdentifier(cur);
     };
-    if (init.arguments.length !== 2 || !init.arguments.every(isPlainRead)) {
+    // A plain read is not necessarily the EVENT NAME (Codex round-23 P2).
+    // `pluckActivityRefs(log.transactionHash, args)` is a plain read, type-
+    // correct, and misses every case — so the row takes the all-null fallback
+    // while the tally is untouched. The first argument must name the event.
+    const namesTheEvent = (a) => {
+      const cur = unwrapAssertions(a);
+      if (ts.isPropertyAccessExpression(cur)) return cur.name.text === DISCRIMINANT_PROP;
+      return ts.isIdentifier(cur) && cur.text === DISCRIMINANT_PROP;
+    };
+    if (
+      init.arguments.length !== 2 ||
+      !init.arguments.every(isPlainRead) ||
+      !namesTheEvent(init.arguments[0])
+    ) {
       console.error(
         `[check-activity-refs-coverage] ${LEDGER_FN}() calls pluckActivityRefs with\n` +
-          '  arguments that are not plain reads of the current log. A pinned event name or a\n' +
+          `  arguments that are not plain reads of the current log's \`${DISCRIMINANT_PROP}\`\n` +
+          '  and decoded args. A pinned event name, a constructed bag, or the wrong property\n' +
           '  constructed argument bag dispatches every row through one case and stores\n' +
           '  Number(undefined) for its id, while every count here stays identical. Pass the\n' +
           "  log's event name and decoded args, or update this script — do not delete the\n" +
@@ -1030,6 +1059,76 @@ if (!fnNode) {
       process.exit(1);
     }
   }
+  // ...and the bound names must reach the MATCHING SQL COLUMNS (Codex round-23
+  // P2). Uniqueness of the binding says where the values come from, not where
+  // they go: swapping `loanId` and `offerId` in the `.bind(...)` list leaves one
+  // accepted destructuring, typechecks, and files every reference under the
+  // other reference's column, with the tally unmoved.
+  //
+  // Full dataflow is out of reach, but this particular question is not: the
+  // INSERT names its columns in order and `.bind()` supplies them positionally,
+  // so the column list and the bind list can simply be lined up. Read the column
+  // names out of the SQL, find where `loan_id` / `offer_id` sit, and require the
+  // bind argument at each of those positions to be the identifier destructured
+  // for it.
+  {
+    const COLUMN_OF = { loanId: 'loan_id', offerId: 'offer_id' };
+    let insertSql = null;
+    let bindArgs = null;
+    const findInsert = (n) => {
+      if (bindArgs) return;
+      if (
+        ts.isCallExpression(n) &&
+        ts.isPropertyAccessExpression(n.expression) &&
+        n.expression.name.text === 'bind'
+      ) {
+        const text = n.expression.expression.getText(sourceFile);
+        if (/INSERT\s+(OR\s+\w+\s+)?INTO\s+activity_events/i.test(text)) {
+          insertSql = text;
+          bindArgs = n.arguments;
+          return;
+        }
+      }
+      ts.forEachChild(n, findInsert);
+    };
+    if (ledgerNode.body) findInsert(ledgerNode.body);
+    if (!bindArgs) {
+      console.error(
+        `[check-activity-refs-coverage] could not find the activity_events INSERT's\n` +
+          `  \`.bind(...)\` inside ${LEDGER_FN}(). Without it this script cannot tell whether\n` +
+          '  the mapped references reach their own columns. If the write changed shape,\n' +
+          '  update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
+    const cols = (insertSql.match(/\(([^()]*?)\)\s*\n?\s*VALUES/is)?.[1] ?? '')
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean);
+    for (const field of REF_FIELDS) {
+      const at = cols.indexOf(COLUMN_OF[field]);
+      if (at === -1) {
+        console.error(
+          `[check-activity-refs-coverage] the activity_events INSERT no longer names a\n` +
+            `  \`${COLUMN_OF[field]}\` column, so this script cannot check that ${field} reaches it.\n` +
+            '  Update this script — do not delete the check.',
+        );
+        process.exit(1);
+      }
+      const arg = bindArgs[at] && unwrapAssertions(bindArgs[at]);
+      if (!arg || !ts.isIdentifier(arg) || arg.text !== field) {
+        console.error(
+          `[check-activity-refs-coverage] the activity_events INSERT binds\n` +
+            `  \`${arg ? arg.getText(sourceFile) : '(nothing)'}\` into its \`${COLUMN_OF[field]}\` column, not \`${field}\`.\n` +
+            '  Every row would file that reference under the wrong column while every count\n' +
+            '  here stays identical. Fix the binding, or update this script — do not delete\n' +
+            '  the check.',
+        );
+        process.exit(1);
+      }
+    }
+  }
+
   if (boundFrom !== 'pluckActivityRefs') {
     console.error(
       `[check-activity-refs-coverage] ${LEDGER_FN}() takes its activity_events references\n` +
@@ -1454,6 +1553,16 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
       // clause never looked at.
       const defaultReturns = [];
       for (const st of clause.statements) collectReturns(st, defaultReturns);
+      // ZERO returns validates nothing (Codex round-23 P2). A default body of
+      // `throw new Error('unmapped event')` reads as a reasonable instinct and
+      // leaves this loop with nothing to iterate, so the whole check passed
+      // vacuously — while at runtime the first allowlisted event aborts activity
+      // recording entirely. An empty result from a validator is not a pass.
+      if (defaultReturns.length === 0) {
+        structural.push(
+          'the default clause returns nothing this checker can find — every event without a case, and every allowlisted one, is filed from here, so it must return the all-null object rather than throw or fall through',
+        );
+      }
       for (const r of defaultReturns) {
         const e = r.expression;
         if (!e || !ts.isObjectLiteralExpression(e)) {
