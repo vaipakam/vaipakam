@@ -6811,8 +6811,15 @@ library LibVaipakam {
         ///         expiry is mandatory and finite. See
         ///         `LibSaleListing.projectSellerBounds`.
         ///
-        ///         Zero means "no floor recorded", which is every listing made
-        ///         before this shipped. Those keep the behaviour they had.
+        ///         Zero does NOT mean "no floor recorded". `projectSellerBounds`
+        ///         deliberately returns zero when the projected cost reaches the
+        ///         principal, and the listing is recorded all the same — so a
+        ///         current listing can legitimately carry a zero floor. The
+        ///         companion `saleListingBoundsRecorded` flag is the sentinel
+        ///         that separates a recorded listing from one made before this
+        ///         shipped, exactly as it is for a zero ceiling. Reading the
+        ///         numeric floor as the sentinel would misclassify a live
+        ///         listing as legacy and skip its bounds.
         mapping(uint256 => uint256) saleListingMinSellerNet;
 
         /// @notice #1503 item 4 — the seller's CEILING on the held balance a

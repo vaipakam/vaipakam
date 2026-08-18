@@ -1310,10 +1310,12 @@ contract EarlyWithdrawalFacetTest is Test {
 
     // ─── #1503 item 4: the seller's two economic bounds ──────────────────────
 
-    /// @dev The FLOOR is derived at the listing's EXPIRY, so ordinary accrual
-    ///      across the whole window sits inside it. This is the property that
-    ///      makes the bound usable at all: a floor at the figure the seller saw
-    ///      would make their own listing unfillable within minutes.
+    /// @dev The FLOOR is the worst case ACROSS THE WINDOW — both endpoints,
+    ///      whichever is worse for the seller, plus truncation slack (see
+    ///      `LibSaleListing.projectSellerBounds`). Ordinary accrual therefore
+    ///      sits inside it, which is the property that makes the bound usable
+    ///      at all: a floor at the figure the seller saw would make their own
+    ///      listing unfillable within minutes.
     /// @dev Codex #1812 P1 — the worst moment to fill is not always the LAST
     ///      moment, so the floor cannot be projected at the expiry alone.
     ///
