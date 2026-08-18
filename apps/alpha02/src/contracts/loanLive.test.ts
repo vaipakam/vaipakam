@@ -11,6 +11,7 @@ import {
   loanEndTimeOf,
   refinanceApprovalOf,
   refinancePayoffOf,
+  SellerQuoteUnavailableError,
   sellerEconomics,
   type LoanLive,
 } from './loanLive';
@@ -143,13 +144,24 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     (saleLive.principal * saleLive.interestRateBps * secs) /
     (365n * DAY * 10_000n);
 
-  it('forfeits the whole elapsed stretch when the window read is absent', () => {
-    // Same-rate buy offer, so there is no shortfall and the cost IS the accrual.
-    // Absent means the `sellerForfeitureWindow` read FAILED (a Diamond not yet
-    // routing the selector) — the client falls back to the accrual origin, which
-    // is the full charge and never a credit. It is NOT "no mark": since #1801
-    // the contract resolves that case itself and returns the origin.
-    expect(sellerEconomics(saleLive, saleLive.interestRateBps, now).accrued).toBe(
+  it('REFUSES to quote when the window read is unavailable', () => {
+    // This asserted the opposite until #1801 r8, and the correction is the point.
+    // The old fallback quoted from the accrual origin on the reasoning that it is
+    // the conservative answer. It is not always: a valid mark can PRECEDE the
+    // origin (the preclose path re-origins the accrual clock without clearing an
+    // older mark), so the contract could charge from the earlier mark while this
+    // quoted only from the later clock — understating the seller's cost on a
+    // transient RPC failure. An unknown window has no safe substitute.
+    expect(() => sellerEconomics(saleLive, saleLive.interestRateBps, now)).toThrow(
+      SellerQuoteUnavailableError,
+    );
+  });
+
+  it('forfeits the whole elapsed stretch when the window IS the accrual origin', () => {
+    // The contract resolves "this lender has never been paid" to the accrual
+    // origin itself, so that arrives as a real value rather than as an absence.
+    const fresh = { ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart };
+    expect(sellerEconomics(fresh, fresh.interestRateBps, now).accrued).toBe(
       accrue(10n * DAY),
     );
   });
@@ -206,7 +218,11 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     // The remaining-term half must NOT move with the mark — it measures the
     // loan's own progress, which the mark says nothing about. A rate ABOVE the
     // loan's makes the shortfall the binding cost, exposing that half.
-    const bare = sellerEconomics(saleLive, 2_000n, now);
+    const bare = sellerEconomics(
+      { ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart },
+      2_000n,
+      now,
+    );
     const paid = sellerEconomics(
       { ...saleLive, lenderForfeitFrom: now - 6n * DAY },
       2_000n,

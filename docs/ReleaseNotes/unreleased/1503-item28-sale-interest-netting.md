@@ -86,6 +86,13 @@ so reading it as "paid through the later one" would credit the held period too.
 That second disqualification lasts the rest of the lender's tenure, because no
 later payment restores the missing one.
 
+Neither disqualification lifts. A later clean settlement cannot repair a record
+that is already discontinuous, so once either has happened nothing on that
+position is trusted again until a sale opens a fresh window for the incoming
+lender. That matters most in a sequence that looks harmless: a principal change
+followed by a successful settlement would otherwise re-validate the mark and
+silently exclude the stretch that accrued on the larger balance.
+
 Where either applies, the platform discards the credit and charges the full
 accrual — the behaviour that shipped before this change. The exiting lender may
 be charged for interest they genuinely received; the platform never pays the
@@ -113,6 +120,17 @@ period boundary, and pricing a stretch that spans a principal change — are
 tracked separately. Closing them properly needs the platform to accumulate the
 forfeitable amount segment by segment as the loan changes, rather than infer it
 from a single point in time, and that is a larger change than this one.
+
+One more thing changed on the app side, and it is a correction rather than an
+addition. When the seller's window cannot be read — a transient RPC failure —
+the app used to fall back to the loan's own interest clock on the reasoning that
+this is the cautious direction. It is not always: the point a lender was paid
+through can sit EARLIER than that clock, because closing a loan early re-bases
+the clock without clearing the older record. The platform would then charge from
+the earlier point while the app quoted from the later one, understating the cost
+and letting a seller commit to a sale the platform then refuses. The app now
+says the quote is unavailable instead of estimating one. Every other surface is
+unaffected — only the figure that cannot be computed declines to be computed.
 
 Loans that predate this change carry no mark, which resolves to the accrual
 origin — exactly the behaviour they already had. Nothing needs to be

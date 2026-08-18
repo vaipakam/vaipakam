@@ -695,6 +695,57 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev #1801 r8 — a later clean stamp does NOT repair a window that already
+    ///      spans a principal change. The sequence is the dangerous one because
+    ///      every step looks routine: principal drops (an Active internal match
+    ///      does this without resetting the interest window), then an ordinary
+    ///      periodic settlement stamps a later boundary. Before the fix that
+    ///      re-validated the mark and excluded the whole pre-boundary stretch —
+    ///      including the part that accrued on the LARGER principal and was
+    ///      never covered by the lower-principal settlement.
+    ///
+    ///      Staged through the raw seeds because reaching it for real needs a
+    ///      servicing run against a match-liquidated loan; what is pinned is the
+    ///      RULE — a stamp that would span a change voids instead of advancing.
+    function test_sellLoanViaBuyOffer_restampAfterPrincipalChangeStaysVoid() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // A mark recorded at a principal the loan no longer carries...
+        uint256 livePrincipal =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal;
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, block.timestamp - 8 days, livePrincipal + 1
+        );
+        // ...and then a clean settlement stamping a LATER boundary, through the
+        // shared writer exactly as a real delivery would.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 4 days
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidAfterRestamp = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
+        assertEq(
+            paidAfterRestamp,
+            paidWithNoMark,
+            "a stamp across a principal change must void, not re-validate"
+        );
+    }
+
     /// @dev #1801 — a mark on a position that has FROZEN a lender share is not
     ///      honoured, for the rest of that lender's tenure. Once a payment was
     ///      held rather than delivered the lender's delivery is no longer one
@@ -717,7 +768,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.revertToState(snap);
 
         // A share was frozen at some earlier point...
-        TestMutatorFacet(address(diamond)).setLenderMarkVoidedByFreezeRaw(activeLoanId, true);
+        TestMutatorFacet(address(diamond)).setLenderMarkVoidedRaw(activeLoanId, true);
         // ...and a later period then settled cleanly, stamping a fresh mark
         // through the shared writer exactly as a real delivery would.
         TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(

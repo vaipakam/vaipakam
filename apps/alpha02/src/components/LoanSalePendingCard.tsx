@@ -108,7 +108,7 @@ export function LoanSalePendingCard({
       // Verify the listing still stands before re-granting the
       // settlement approval — a completed/cancelled listing must not
       // get a fresh dangling authorization.
-      const [lock, liveLoan, latestBlock] = await Promise.all([
+      const [lock, liveLoan] = await Promise.all([
         publicClient.readContract({
           address: walletChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
@@ -116,8 +116,12 @@ export function LoanSalePendingCard({
           args: [BigInt(lenderTokenId)],
         }) as Promise<number | bigint>,
         readLoanLive(publicClient, walletChain.diamondAddress, loanId),
-        publicClient.getBlock({ blockTag: 'latest' }),
       ]);
+      // The timestamp comes from the SNAPSHOT, not a separate `getBlock`
+      // (#1801 r8). Fetching it alongside meant a block mined in between paired
+      // a timestamp from one block with a loan and window from another, which
+      // `sellerEconomics` then combined into a figure no block ever supported.
+      const readAt = liveLoan.readAtTimestamp;
       if (Number(lock) !== LOCK_EARLY_WITHDRAWAL_SALE) {
         setError(copy.loanSale.restoreAborted);
         void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
@@ -128,8 +132,8 @@ export function LoanSalePendingCard({
       // live requirement plus fresh growth margin, or the red banner
       // returns on the next tick behind a false success message.
       const rate = state.saleRateBps ?? liveLoan.interestRateBps;
-      const bound = saleSettlementBound(liveLoan, rate, latestBlock.timestamp);
-      const liveNow = sellerEconomics(liveLoan, rate, latestBlock.timestamp).cost;
+      const bound = saleSettlementBound(liveLoan, rate, readAt);
+      const liveNow = sellerEconomics(liveLoan, rate, readAt).cost;
       const growthMargin =
         (liveLoan.principal * liveLoan.interestRateBps * 30n * 86_400n) /
         (SECONDS_PER_YEAR * BASIS_POINTS);

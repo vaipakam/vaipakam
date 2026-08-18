@@ -425,10 +425,10 @@ contract TestMutatorFacet {
     /// @notice Set or clear the sticky freeze void on a loan's mark (#1801).
     /// @dev The real setter is every Active-loan lender-share park; staging one
     ///      needs a registry-flagged holder the unit harness has no oracle for.
-    function setLenderMarkVoidedByFreezeRaw(uint256 loanId, bool voided)
+    function setLenderMarkVoidedRaw(uint256 loanId, bool voided)
         external
     {
-        LibVaipakam.storageSlot().lenderMarkVoidedByFreeze[loanId] = voided;
+        LibVaipakam.storageSlot().lenderMarkVoided[loanId] = voided;
     }
 
     /// #594 test — append a loanId to a user's loan index directly (to set up

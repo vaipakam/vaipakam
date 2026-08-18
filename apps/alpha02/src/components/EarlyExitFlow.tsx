@@ -101,10 +101,26 @@ export function EarlyExitFlow({
 
   const fitDays = durationFitDays(live, chainNow);
 
+  // Every seller figure is computed AT THE SNAPSHOT's block, not at `chainNow`
+  // (#1801 r8). `chainNow` is the right clock for offer expiry — that is a
+  // wall-clock question — but the forfeiture must be priced against the same
+  // block the loan and the window were read at, or the three describe a state
+  // no block ever held. `readAtTimestamp` is that block's time.
+  const econAt = live.readAtTimestamp;
+  // ...and when the window could not be read at all, there is no seller quote
+  // to show. `sellerEconomics` throws rather than substituting a number, so the
+  // surface has to say so instead of rendering a wrong one — an unavailable
+  // quote is recoverable, a silently understated one funds a sale the contract
+  // then rejects.
+  const quoteUnavailable = live.lenderForfeitFrom === undefined;
+
   // The facet's admission rules, applied client-side so a doomed
   // candidate never reaches a wallet prompt. Every excluded shape
   // reverts InvalidSaleOffer on-chain.
   const candidates = useMemo(() => {
+    // No window, no quote — every candidate below needs one, and a doomed
+    // list is worse than an empty one because it looks priced.
+    if (live.lenderForfeitFrom === undefined) return [];
     if (!offers.data || !address) return offers.data === null ? null : [];
     const me = address.toLowerCase();
     return offers.data
@@ -133,7 +149,7 @@ export function EarlyExitFlow({
         // Buying out your own position is a no-op with fees.
         if (o.creator.toLowerCase() === me) return false;
         // RateShortfallTooHigh guard.
-        const econ = sellerEconomics(live, BigInt(o.interestRateBps), chainNow);
+        const econ = sellerEconomics(live, BigInt(o.interestRateBps), econAt);
         return econ.cost <= live.principal;
       })
       .sort(
@@ -142,13 +158,14 @@ export function EarlyExitFlow({
         // shortfall varies, monotonically with the rate).
         (a, b) => a.interestRateBps - b.interestRateBps,
       );
-  }, [offers.data, address, row, live, fitDays, chainNow]);
+  }, [offers.data, address, row, live, fitDays, chainNow, econAt]);
 
   const selected =
     candidates?.find((o) => o.offerId === selectedId) ?? null;
-  const selectedEcon = selected
-    ? sellerEconomics(live, BigInt(selected.interestRateBps), chainNow)
-    : null;
+  const selectedEcon =
+    selected && !quoteUnavailable
+      ? sellerEconomics(live, BigInt(selected.interestRateBps), econAt)
+      : null;
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
@@ -286,7 +303,7 @@ export function EarlyExitFlow({
       // live (the picker judged it against a ≤60s-old clock).
       if (
         BigInt(liveOffer.durationDays) >
-        durationFitDays(liveLoan, latestBlock.timestamp)
+        durationFitDays(liveLoan, liveLoan.readAtTimestamp)
       ) {
         throw new Error(copy.match.termsChanged);
       }
@@ -294,10 +311,13 @@ export function EarlyExitFlow({
       // reviewed "~" figure shrinks as time elapses — allow up to two
       // days of drift (same pad convention as the repay paths); more
       // means something material moved (partial repay, rate change).
+      // Priced at the SNAPSHOT's block (#1801 r8) — `liveLoan`'s own read time,
+      // not a separately fetched latest block, so the loan, the window and the
+      // clock all describe one state.
       const liveEcon = sellerEconomics(
         liveLoan,
         BigInt(liveOffer.interestRateBps),
-        latestBlock.timestamp,
+        liveLoan.readAtTimestamp,
       );
       if (liveEcon.cost > liveLoan.principal) {
         throw new Error(copy.match.termsChanged);
@@ -362,7 +382,7 @@ export function EarlyExitFlow({
               const econ = sellerEconomics(
                 live,
                 BigInt(o.interestRateBps),
-                chainNow,
+                econAt,
               );
               const isSelected = o.offerId === selectedId;
               return (

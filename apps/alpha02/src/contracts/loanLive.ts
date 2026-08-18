@@ -62,6 +62,13 @@ export interface LoanLive {
    *  not yet routing the selector), which falls back to the accrual origin —
    *  the full charge, never a credit. */
   lenderForfeitFrom?: bigint;
+  /** Timestamp of the block this whole snapshot was read at.
+   *
+   *  Carried so a caller cannot pair these fields with a `chainNow` from a
+   *  DIFFERENT block (#1801 r8). The contract reads were pinned at round 6 and
+   *  the timestamp was not, which left the same torn-pair hazard one field
+   *  further out — and `sellerEconomics` combines exactly those. */
+  readAtTimestamp: bigint;
   // Collateral identity — a refinance-tagged offer must repeat these
   // EXACTLY for the collateral to carry over instead of re-pledging.
   collateralAsset: `0x${string}`;
@@ -183,6 +190,15 @@ export const MIN_SALE_LISTING_SECONDS = 3_600n;
  *  difference). The seller forfeits the LARGER of accrued or
  *  shortfall, never both — `shortfallBinding` says which one is
  *  actually setting the cost. */
+/** The seller forfeiture window could not be read, so no quote is possible.
+ *  Callers must surface this as unavailable — never as zero (#1801 r8). */
+export class SellerQuoteUnavailableError extends Error {
+  constructor() {
+    super('seller forfeiture window unavailable');
+    this.name = 'SellerQuoteUnavailableError';
+  }
+}
+
 export function sellerEconomics(
   live: LoanLive,
   buyRateBps: bigint,
@@ -216,13 +232,19 @@ export function sellerEconomics(
   // share) live in storage this client never reads. A mirrored rule would have
   // silently kept crediting sellers the contract had stopped crediting.
   //
-  // Zero means the read FAILED — an unupgraded Diamond not routing the
-  // selector. Fall back to the accrual origin, which is the full-accrual charge
-  // and the conservative direction, never a credit the chain would refuse.
-  const forfeitFrom =
-    live.lenderForfeitFrom !== undefined && live.lenderForfeitFrom !== 0n
-      ? live.lenderForfeitFrom
-      : start;
+  // An UNKNOWN window is refused, not guessed (#1801 r8). This used to fall back
+  // to the accrual origin on the reasoning that it is the conservative answer.
+  // It is not always: a valid mark can PRECEDE the origin, because the preclose
+  // path re-origins the accrual clock without clearing an older mark. The
+  // contract would then charge from the earlier mark while this quoted only
+  // from the later clock — understating the seller's cost on a transient RPC
+  // failure, and admitting an offer or allowance the sale then rejects.
+  //
+  // `readLoanLive` still resolves, so position details and every non-seller
+  // surface are unaffected; only the quote that cannot be computed refuses to
+  // be computed.
+  if (live.lenderForfeitFrom === undefined) throw new SellerQuoteUnavailableError();
+  const forfeitFrom = live.lenderForfeitFrom;
   const forfeitSecs = chainNow > forfeitFrom ? chainNow - forfeitFrom : 0n;
   const accrued = (live.principal * live.interestRateBps * forfeitSecs) / denom;
   const originalRemaining =
@@ -361,7 +383,16 @@ export async function readLoanLive(
   // post-partial mark, say. `sellerEconomics` combines exactly these two, so a
   // torn pair does not merely go stale, it produces a figure no block ever
   // supported.
-  const at = await publicClient.getBlockNumber();
+  //
+  // The TIMESTAMP is pinned to the same block too (Codex #1801 r8 P2). Round 6
+  // pinned the two contract reads and left callers taking `chainNow` from their
+  // own `getBlock({ blockTag: 'latest' })`, so a block mined in between gave
+  // `sellerEconomics` a timestamp from N beside a loan and window from N+1 —
+  // a torn pair again, one field further out, and it can clamp the forfeiture
+  // interval to zero. The snapshot now carries the timestamp of the block it
+  // was read at, so a caller cannot combine it with a different one.
+  const atBlock = await publicClient.getBlock({ blockTag: 'latest' });
+  const at = atBlock.number;
   const [rawResult, windowResult] = await Promise.allSettled([
     publicClient.readContract({
       address: diamondAddress,
@@ -381,8 +412,17 @@ export async function readLoanLive(
   if (rawResult.status === 'rejected') throw rawResult.reason;
   const raw = rawResult.value;
   return {
+    readAtTimestamp: atBlock.timestamp,
+    // A FAILED read is not the same as an absent selector (Codex #1801 r8 P2).
+    // Falling back to the accrual origin assumed that is always the
+    // conservative answer, and it is not: a valid mark can PRECEDE the origin,
+    // because `PrecloseFacet` re-origins the accrual clock without clearing an
+    // older mark. The contract would then charge from the earlier mark while
+    // this quoted only from the later clock — understating the seller's cost on
+    // a transient RPC failure. `undefined` means "unknown", and callers must
+    // treat a quote built on it as unavailable rather than as zero.
     lenderForfeitFrom:
-      windowResult.status === 'fulfilled' ? windowResult.value[0] : 0n,
+      windowResult.status === 'fulfilled' ? windowResult.value[0] : undefined,
     status: Number(raw.status),
     lender: raw.lender,
     borrower: raw.borrower,

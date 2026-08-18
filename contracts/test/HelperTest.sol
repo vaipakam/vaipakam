@@ -243,7 +243,7 @@ contract HelperTest {
         // Both are read off state by `forfeitureAccrualStart`, so the tests
         // seed the state rather than driving the writers that cause it.
         selectors[n++] = TestMutatorFacet.setLenderPaidThroughWithPrincipalRaw.selector;
-        selectors[n++] = TestMutatorFacet.setLenderMarkVoidedByFreezeRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLenderMarkVoidedRaw.selector;
         // Layout-resilient claim writers used by ClaimFacetTest to
         // exercise the NothingToClaim revert + held-only paths
         // without slot math.

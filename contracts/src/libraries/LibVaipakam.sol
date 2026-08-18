@@ -6716,9 +6716,11 @@ library LibVaipakam {
         ///         the full accrual instead. Fail-safe by construction rather
         ///         than by cooperation.
         mapping(uint256 => uint256) lenderMarkPrincipalAt;
-        /// @notice #1801 — set once a lender share on this loan has been FROZEN
-        ///         rather than delivered, which permanently disqualifies the
-        ///         scalar mark for the rest of the position's life.
+        /// @notice #1801 — set once this position's delivery record has become
+        ///         DISCONTINUOUS, which permanently disqualifies the scalar mark
+        ///         for the rest of the lender's tenure. Two causes: a lender
+        ///         share frozen rather than delivered, and a stamp whose window
+        ///         would span a principal change that no settlement reconciled.
         ///
         /// @dev    Voiding the mark at the freeze is not enough on its own: a
         ///         later clean delivery re-stamps it, and the window from the
@@ -6734,7 +6736,7 @@ library LibVaipakam {
         ///         {LibEntitlement.stampInterestDeliveredForNewLender},
         ///         because the incoming lender's window opens at the sale and
         ///         carries none of the seller's history — frozen or otherwise.
-        mapping(uint256 => bool) lenderMarkVoidedByFreeze;
+        mapping(uint256 => bool) lenderMarkVoided;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

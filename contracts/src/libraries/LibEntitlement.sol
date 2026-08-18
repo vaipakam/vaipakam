@@ -289,7 +289,7 @@ library LibEntitlement {
         // cause them, so neither depends on a call site remembering to
         // cooperate. The seller loses a credit they arguably earned; they never
         // gain one they did not.
-        if (s.lenderMarkVoidedByFreeze[loanId]) return accrualStart;
+        if (s.lenderMarkVoided[loanId]) return accrualStart;
         if (s.lenderMarkPrincipalAt[loanId] != s.loans[loanId].principal) return accrualStart;
         return paidThrough;
     }
@@ -312,8 +312,32 @@ library LibEntitlement {
         uint256 loanId,
         uint256 at
     ) internal {
+        uint256 live = s.loans[loanId].principal;
+        uint256 recorded = s.lenderMarkPrincipalAt[loanId];
+        // A stamp whose window would SPAN a principal change voids the mark for
+        // good (Codex #1801 r8 P1). Overwriting the recorded principal here
+        // erased the only evidence that the change happened: an Active internal
+        // match decrements principal without resetting the interest window, the
+        // next periodic settlement stamps a later boundary off the now-lower
+        // principal, and the mark reads valid again — while the excluded stretch
+        // still contains interest that accrued on the LARGER principal and was
+        // never covered by that settlement.
+        //
+        // This is the freeze argument applied to the other disqualifier, which I
+        // had made sticky there and not here. Same shape: a later clean stamp
+        // cannot repair a window that is already discontinuous, so nothing on
+        // this position is trustworthy again until a sale opens a fresh one.
+        //
+        // Detected AT THE STAMP rather than reported by the eight decrement
+        // sites: `recorded` was the live principal when it was written, so a
+        // difference now is proof a change happened in between. Still no
+        // cooperation required from any mutation site.
+        if (recorded != 0 && recorded != live) {
+            voidInterestDeliveredMark(s, loanId);
+            return;
+        }
         s.lenderInterestDeliveredThroughAt[loanId] = at;
-        s.lenderMarkPrincipalAt[loanId] = s.loans[loanId].principal;
+        s.lenderMarkPrincipalAt[loanId] = live;
     }
 
     /// @notice Opens a FRESH mark for an incoming lender on a completed sale.
@@ -335,8 +359,16 @@ library LibEntitlement {
         uint256 loanId,
         uint256 at
     ) internal {
-        stampInterestDelivered(s, loanId, at);
-        s.lenderMarkVoidedByFreeze[loanId] = false;
+        // Written DIRECTLY, not through {stampInterestDelivered} (Codex #1801 r8
+        // P1 follow-on): that function now refuses to advance across a pending
+        // principal change, which is right for the seller and wrong here. None
+        // of the seller's history — a freeze, an unreconciled principal move —
+        // is the buyer's, and their window opens at this sale on this principal
+        // whatever happened before it. Delegating would have left the buyer with
+        // no mark at all, quietly re-opening their window at the accrual origin.
+        s.lenderInterestDeliveredThroughAt[loanId] = at;
+        s.lenderMarkPrincipalAt[loanId] = s.loans[loanId].principal;
+        s.lenderMarkVoided[loanId] = false;
     }
 
     /// @notice Permanently disqualifies this loan's mark, because a lender share
@@ -355,7 +387,7 @@ library LibEntitlement {
     ) internal {
         s.lenderInterestDeliveredThroughAt[loanId] = 0;
         s.lenderMarkPrincipalAt[loanId] = 0;
-        s.lenderMarkVoidedByFreeze[loanId] = true;
+        s.lenderMarkVoided[loanId] = true;
     }
 
     /// @notice Applies the treasury cut to an interest-like amount, using the
