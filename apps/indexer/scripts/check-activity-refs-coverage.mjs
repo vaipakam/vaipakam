@@ -906,7 +906,46 @@ const bindsShadowable = (name) => {
  * `args.loanId++` rebind the decoded value just as `=` does, and a check for
  * `EqualsToken` alone sees none of them.
  */
+/**
+ * For a built-in call that WRITES THROUGH its first argument, the root of that
+ * argument. Otherwise null.
+ *
+ * Extracted rather than written a second time (Codex round-46 P2). The ledger's
+ * `mutatedInPlace` has recognised these since round 34 — and had the bracket
+ * form added in 35 — while `mutatesShadowable`, asking the same question about
+ * the mapper, still knew only the syntactic forms. So `Object.assign(args, {
+ * loanId: 999 })` in the mapper body overwrote the decoded bag and every
+ * accepted `Number(args.loanId)` then read 999.
+ *
+ * Recognised by CALLEE, not by "any call receiving the bag": the mapper and the
+ * ledger both legitimately pass it to other functions, so a blanket rule would
+ * reject live code. The list is the built-ins that write through argument zero.
+ */
+const mutatingCallTarget = (n) => {
+  if (!ts.isCallExpression(n) || n.arguments.length === 0) return null;
+  const callee = unwrapAssertions(n.expression);
+  const memberName = memberNameOf(callee);
+  if (memberName === null) return null;
+  const host = unwrapAssertions(callee.expression);
+  const mutators =
+    ts.isIdentifier(host) && host.text === 'Object'
+      ? ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf']
+      : ts.isIdentifier(host) && host.text === 'Reflect'
+        ? ['set', 'defineProperty', 'deleteProperty', 'setPrototypeOf']
+        : [];
+  if (!mutators.includes(memberName)) return null;
+  let dest = unwrapAssertions(n.arguments[0]);
+  while (ts.isPropertyAccessExpression(dest) || ts.isElementAccessExpression(dest)) {
+    dest = unwrapAssertions(dest.expression);
+  }
+  return dest;
+};
+
 const mutatesShadowable = (n) => {
+  const mutTarget = mutatingCallTarget(n);
+  if (mutTarget && ts.isIdentifier(mutTarget) && SHADOWABLE_NAMES.has(mutTarget.text)) {
+    return true;
+  }
   // Assertions and parentheses are unwrapped at EVERY step, the same way
   // `readsArgPath` learned to in round 10. `args` is typed `Record<string,
   // unknown>`, so the natural way to write a mutation is
@@ -1765,6 +1804,16 @@ if (!fnNode) {
      */
     const everFilled = (name, decl, beforePos) => {
       let hit = false;
+      // ...and the addition must be REACHABLE (Codex round-46 P2). Round 45
+      // added ordering and stopped there, so `if (false) noLogs.push(…allLogs)`
+      // placed above the call counted: earlier in the file, never executed. The
+      // same walk that decides whether the INSERT runs answers this, stopped at
+      // the enclosing function rather than at the ledger.
+      const reachable = (n) => {
+        let fn = n.parent;
+        while (fn && !isFunctionLike(fn)) fn = fn.parent;
+        return guardedReason(n, fn?.body ?? sourceFile) === null;
+      };
       const walk = (n) => {
         if (hit) return;
         if (n.getStart(sourceFile) >= beforePos) return;
@@ -1776,14 +1825,32 @@ if (!fnNode) {
           receiver &&
           ts.isIdentifier(receiver) &&
           receiver.text === name &&
-          nearestDeclIn(n, name, sourceFile) === decl
+          nearestDeclIn(n, name, sourceFile) === decl &&
+          reachable(n)
         ) {
           hit = true;
           return;
         }
-        if (writesName(n, name) && nearestDeclIn(n, name, sourceFile) === decl) {
-          hit = true;
-          return;
+        // A REASSIGNMENT counts only if what it assigns is not itself empty
+        // (Codex round-46 P2). Treating every write as evidence accepted
+        // `noLogs = []`, which is the very state the check exists to refuse —
+        // the write was taken as proof of filling while it did the opposite.
+        if (writesName(n, name) && nearestDeclIn(n, name, sourceFile) === decl && reachable(n)) {
+          const assigned =
+            ts.isBinaryExpression(n) &&
+            n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+            ts.isIdentifier(unwrapAssertions(n.left)) &&
+            unwrapAssertions(n.left).text === name
+              ? unwrapAssertions(n.right)
+              : null;
+          const assignsEmpty =
+            assigned &&
+            ts.isArrayLiteralExpression(assigned) &&
+            assigned.elements.length === 0;
+          if (!assignsEmpty) {
+            hit = true;
+            return;
+          }
         }
         ts.forEachChild(n, walk);
       };
@@ -1846,6 +1913,61 @@ if (!fnNode) {
           '  places. This script cannot tell which one the scan actually runs, and a second\n' +
           '  one is how a decoy hides a disconnected live call. Keep one, or update this\n' +
           '  script — do not delete the check.',
+      );
+      process.exit(1);
+    }
+    // The kept result must actually be USED (Codex round-46 P2, narrowed —
+    // see the PR thread). Binding it satisfied every check while
+    // `const ignoredActivityEvents = await recordActivityEvents(…)` sat beside
+    // `const activityEvents = 0`: the rows are written, but the count the scan
+    // reports is a constant zero, and the Durable Object only emits
+    // `activity.appended` on a positive count — so clients keep stale activity.
+    //
+    // Deliberately NOT "resolve the binding through to the scan result's
+    // `activityEvents` property", which is what was suggested. That would
+    // encode the scan's return shape into this script, the same boundary #1811
+    // exists to question for the context arguments, and it makes every
+    // legitimate rename of that field a checker change. "Declared and never
+    // read" is name-agnostic, closes the demonstrated hole, and is true of no
+    // reasonable live code.
+    const unusedResult = (() => {
+      if (callSites.length !== 1) return null;
+      let cur = callSites[0];
+      let bound = null;
+      for (let p = cur.parent; p; cur = p, p = p.parent) {
+        if (ts.isAwaitExpression(p) || isTransparentWrapper(p)) continue;
+        if (ts.isVariableDeclaration(p) && p.initializer === cur && ts.isIdentifier(p.name)) {
+          bound = p.name;
+        } else if (
+          ts.isBinaryExpression(p) &&
+          p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          p.right === cur &&
+          ts.isIdentifier(unwrapAssertions(p.left))
+        ) {
+          // An assignment target is a read of an existing binding elsewhere by
+          // construction, so it cannot be the dangling case.
+          return null;
+        }
+        break;
+      }
+      if (!bound) return null;
+      let reads = 0;
+      const countReads = (n) => {
+        if (ts.isIdentifier(n) && n.text === bound.text && n !== bound) reads += 1;
+        ts.forEachChild(n, countReads);
+      };
+      countReads(sourceFile);
+      return reads === 0 ? bound.text : null;
+    })();
+    if (unusedResult) {
+      console.error(
+        `[check-activity-refs-coverage] ${LEDGER_FN}()'s result is bound to\n` +
+          `  \`${unusedResult}\` and never read again.\n` +
+          '  The rows may well be written, but the COUNT the scan reports is what decides\n' +
+          '  whether an `activity.appended` notification goes out — a dangling binding beside\n' +
+          '  a hard-coded zero leaves every client holding stale activity while every count in\n' +
+          '  this script stays identical. Use the result, or update this script — do not\n' +
+          '  delete the check.',
       );
       process.exit(1);
     }
@@ -2602,15 +2724,31 @@ if (!fnNode) {
       seek(receiver);
       return found;
     };
+    /**
+     * SQL with its COMMENTS removed (Codex round-46 P2).
+     *
+     * Every check here reads the statement as text, and SQLite ignores
+     * `-- line` and `/* block *\/` spans — so a block-commented copy of the
+     * expected INSERT followed by a ten-placeholder `SELECT` satisfied the
+     * column-order regexes and the bind-count check while inserting no row.
+     * Requiring a static expression (round 44) closed the "which arm runs"
+     * question and left the "is this text even executed" one open.
+     */
+    const stripSqlComments = (text) =>
+      text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
     let dynamicSql = null;
     const findInsert = (n) => {
       if (ts.isCallExpression(n) && memberNameOf(n.expression) === 'bind') {
         const receiver = n.expression.expression;
         const raw = receiver.getText(sourceFile);
-        if (/INSERT\s+(OR\s+\w+\s+)?INTO\s+activity_events/i.test(raw)) {
+        if (/INSERT\s+(OR\s+\w+\s+)?INTO\s+activity_events/i.test(stripSqlComments(raw))) {
           const sql = staticSqlOf(receiver);
           if (typeof sql !== 'string') dynamicSql = raw;
-          inserts.push({ sql: typeof sql === 'string' ? sql : raw, args: n.arguments, node: n });
+          inserts.push({
+            sql: stripSqlComments(typeof sql === 'string' ? sql : raw),
+            args: n.arguments,
+            node: n,
+          });
         }
       }
       ts.forEachChild(n, findInsert);
@@ -3325,7 +3463,13 @@ const readsArgPath = (rawExpr) => {
 // value while reading here as "deliberately unmapped", which would both persist a
 // wrong id and keep the exemption falsely live. Anything else that is not an
 // accepted read falls through to the shape check and is reported.
-const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.NullKeyword;
+// Unwrapped before the test (Codex round-46 P2). Testing the raw node made
+// `loanId: (null)` — runtime-identical to `loanId: null` — read as a non-null
+// mapping and reported as suspect, blocking the indexer typecheck on a value
+// that is still stored as NULL. Same shape as round 45's `readsArgPath` fix: the
+// unwrapping existed, and the classifier at the door did not use it.
+const isNullLiteral = (expr) =>
+  Boolean(expr) && unwrapAssertions(expr).kind === ts.SyntaxKind.NullKeyword;
 
 /**
  * A shadow declared in the ENCLOSING function body — before the switch — binds
@@ -3417,9 +3561,32 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
       // `(() => { args.loanId = 999 })()`, which runs before the body on every
       // existing call. The escape analysis has understood invoked IIFEs since
       // round 34; this walk, added one round ago for the same question, had not.
+      // RECURSIVELY (Codex round-46 P2). Round 45 handed only the outer
+      // initializer to `invokedFunctionBodyOf`, and `walkOuter` stops at every
+      // nested function without asking whether it is immediately invoked — so
+      // `(() => { (() => { args.loanId = 999; })(); })()` hid one level down.
+      // Each descent is into a body that provably runs, so there is no depth at
+      // which it stops being a real mutation; the bound is only against a
+      // pathological nest.
       if (!outerShadow) {
-        const invoked = invokedFunctionBodyOf(param.initializer);
-        if (invoked) walkOuter(invoked);
+        const seen = new Set();
+        const descend = (node, depth) => {
+          if (outerShadow || depth > 8 || !node || seen.has(node)) return;
+          seen.add(node);
+          const invoked = invokedFunctionBodyOf(node);
+          if (!invoked) return;
+          walkOuter(invoked);
+          if (outerShadow) return;
+          // Statement bodies hold their invoked calls one level in.
+          const inner = [];
+          const collect = (m) => {
+            if (ts.isCallExpression(m)) inner.push(m);
+            if (!isFunctionLike(m) || m === invoked) ts.forEachChild(m, collect);
+          };
+          ts.forEachChild(invoked, collect);
+          for (const c of inner) descend(c, depth + 1);
+        };
+        descend(param.initializer, 0);
       }
       if (outerShadow) {
         outerShadow = `${outerShadow} (in a parameter default)`;
@@ -3492,7 +3659,15 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     }
     return false;
   };
-  for (const shadowable of ['Number', 'args']) {
+  //
+  // `Number` ONLY, not `args` (Codex round-46 P2 — my error one round earlier).
+  // Shadowing has a direction, and I had it backwards: the mapper's own `args`
+  // PARAMETER shadows any module-scope binding of that name, so a harmless
+  // top-level `const args = …` cannot affect a single mapper read — and listing
+  // it here rejected every case on live code. `Number` is different precisely
+  // because the mapper does NOT bind it: its reads reach outward, so a
+  // module-scope binding is what they find.
+  for (const shadowable of ['Number']) {
     if (moduleBindsName(shadowable)) {
       structural.push(
         `'${shadowable}' is bound outside pluckActivityRefs, shadowing the global the accepted mapping shape relies on for EVERY case — this checker cannot tell the two apart`,
