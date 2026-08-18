@@ -943,7 +943,23 @@ for (const file of memberFiles) {
         // which element it should carry is a decision, not a lookup.
         if (/\]$/.test(i.type ?? '')) {
           for (const f of REF_FIELDS) {
-            if (REF_SHAPE[f].test(`${i.name}`.replace(/s$/, ''))) arrayRefs.set(f, path);
+            if (!REF_SHAPE[f].test(`${i.name}`.replace(/s$/, ''))) continue;
+            // ...and its ELEMENTS must be ids (Codex round-32 P2). A
+            // `bytes32[] loanIds` cannot populate the numeric `loan_id` column
+            // any more than a scalar `bytes32 loanId` can, and that one is an
+            // unconditional conflict — so routing it to the allowlistable array
+            // path let a field exemption make it disappear. The array path is
+            // for arrays of IDS; the wrong element type is the same defect as
+            // the scalar, reported the same way.
+            if (!/^u?int(\d+)?\[\d*\]$/.test(i.type ?? '')) {
+              abiConflicts.push({
+                kind: 'nonNumericReference',
+                event: item.name,
+                message: `${item.name}.${path} — named like a ${f} reference array but typed '${i.type}', whose elements cannot be read as ids`,
+              });
+              continue;
+            }
+            arrayRefs.set(f, path);
           }
         }
         names.push(path);
@@ -1023,19 +1039,26 @@ for (const file of memberFiles) {
     // (Codex round-8 P2). `decodeEventLog` can produce either, so a mapper keyed
     // on the name cannot be right for both unless they agree. Rejected rather
     // than silently collapsed to whichever signature was parsed last.
-    const priorInputs = eventInputs.get(item.name);
-    if (priorInputs) {
-      const differs =
-        priorInputs.size !== names.length || names.some((n) => !priorInputs.has(n));
-      if (differs) {
-        abiConflicts.push({
-          kind: 'overload',
-          event: item.name,
-          message: `${item.name} — two ABI signatures with different arguments (${[...priorInputs].join(', ')} vs ${names.join(', ')}); a name-keyed mapper cannot be correct for both`,
-        });
-      }
+    // Compared by NAME AND TYPE (Codex round-32 P2). A name-only comparison
+    // called two overloads identical when they reuse the names and change the
+    // types — `SyntheticOverload(uint256 loanId)` beside
+    // `SyntheticOverload(uint256[] loanId)` — so a scalar `Number(args.loanId)`
+    // mapping read as covering both while the second hands the mapper an array.
+    // What makes a name-keyed mapper safe is that the bag is the SAME bag, and
+    // the names alone do not establish that.
+    const signature = names
+      .map((n) => `${n}:${typeOf.get(n) ?? '?'}`)
+      .sort()
+      .join(',');
+    const priorSig = eventInputs.get(item.name);
+    if (priorSig !== undefined && priorSig !== signature) {
+      abiConflicts.push({
+        kind: 'overload',
+        event: item.name,
+        message: `${item.name} — two ABI signatures with different arguments (${priorSig} vs ${signature}); a name-keyed mapper cannot be correct for both`,
+      });
     }
-    eventInputs.set(item.name, new Set(names));
+    eventInputs.set(item.name, signature);
     for (const field of REF_FIELDS) {
       // Shape-matching applies to the LAST path segment: `fields.newLoanId` is a
       // loan reference for the same reason `newLoanId` is.
@@ -1057,8 +1080,16 @@ for (const file of memberFiles) {
       // The array report is the RIGHT one: which element a single `loan_id`
       // should carry is a decision, not a lookup. This conflict is for a scalar
       // that cannot decode, which an array is not.
+      // ...and only a NUMERIC-element array is exempt (Codex round-32 P2).
+      // Round 31 excluded every type ending in `]`, which swept in `bytes32[]`
+      // — elements that cannot populate the numeric `loan_id` column any more
+      // than a scalar `bytes32` can, and that one is correctly an unconditional
+      // conflict. The array path is the right home for arrays of IDS; an array
+      // of the wrong element type is the same defect as the scalar, not a
+      // different one.
+      const numericArray = (t) => /^u?int(\d+)?\[\d*\]$/.test(t ?? '');
       const nonNumeric = aliases.filter(
-        (a) => !numeric.includes(a) && !/\]$/.test(typeOf.get(a) ?? ''),
+        (a) => !numeric.includes(a) && !numericArray(typeOf.get(a)),
       );
       for (const a of nonNumeric) {
         abiConflicts.push({
@@ -2366,11 +2397,66 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
       // that return.
       {
         const abrupt = [];
-        const findAbrupt = (n) => {
+        // Catches and loop ownership apply HERE TOO (Codex round-32 P2). This
+        // clause has always had its own traversal, and round 31 taught the
+        // case-side scan about caught throws while leaving this one reporting
+        // every descendant throw — so `default: try { if (…) throw e; return
+        // nullRefs; } catch { return nullRefs; }` was rejected though every
+        // completion path returns the required object.
+        //
+        // Third round in a row where a rule landed on one traversal and not its
+        // sibling. The durable fix is one analysis, which is a refactor this
+        // file wants and does not have; until then the rules are at least
+        // written the same way in both places.
+        const findAbrupt = (n, ownsBreaks = false) => {
           if (isFunctionLike(n)) return;
+          if (
+            ts.isForStatement(n) ||
+            ts.isForOfStatement(n) ||
+            ts.isForInStatement(n) ||
+            ts.isWhileStatement(n) ||
+            ts.isDoStatement(n) ||
+            ts.isSwitchStatement(n)
+          ) {
+            // Owns its own break/continue; its throws still escape.
+            ts.forEachChild(n, (c) => findAbrupt(c, true));
+            return;
+          }
+          if (ts.isTryStatement(n) && n.catchClause) {
+            // Throws in the try block are handled; the catch's and finally's
+            // are not, so those are walked normally.
+            const scanCaught = (m, owns) => {
+              if (isFunctionLike(m) || ts.isThrowStatement(m)) return;
+              if (
+                ts.isForStatement(m) ||
+                ts.isForOfStatement(m) ||
+                ts.isForInStatement(m) ||
+                ts.isWhileStatement(m) ||
+                ts.isDoStatement(m) ||
+                ts.isSwitchStatement(m)
+              ) {
+                ts.forEachChild(m, (c) => scanCaught(c, true));
+                return;
+              }
+              if (ts.isBreakStatement(m) || ts.isContinueStatement(m)) {
+                if (!owns) abrupt.push('a break/continue');
+                return;
+              }
+              ts.forEachChild(m, (c) => scanCaught(c, owns));
+            };
+            ts.forEachChild(n.tryBlock, (c) => scanCaught(c, ownsBreaks));
+            findAbrupt(n.catchClause.block, ownsBreaks);
+            if (n.finallyBlock) findAbrupt(n.finallyBlock, ownsBreaks);
+            return;
+          }
           if (ts.isThrowStatement(n)) abrupt.push('a throw');
-          if (ts.isBreakStatement(n) || ts.isContinueStatement(n)) abrupt.push('a break/continue');
-          ts.forEachChild(n, findAbrupt);
+          if (
+            (ts.isBreakStatement(n) || ts.isContinueStatement(n)) &&
+            !ownsBreaks
+          ) {
+            abrupt.push('a break/continue');
+          }
+          ts.forEachChild(n, (c) => findAbrupt(c, ownsBreaks));
         };
         for (const st of clause.statements) findAbrupt(st);
         if (abrupt.length) {
@@ -2487,17 +2573,34 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
         // finally's are not, so those still count — and break/continue inside
         // the try are unaffected by a catch and keep their normal treatment.
         if (ts.isTryStatement(n) && n.catchClause) {
-          const scanNonThrow = (m) => {
+          // A nested loop or switch owns its OWN break/continue (Codex round-32
+          // P2) — the same rule the enclosing walk applies, which this scan
+          // failed to carry over. `try { for (…) { break; } return refs; }`
+          // was rejected for a break that never leaves the loop, let alone the
+          // case. Only a LABELED break naming an enclosing label escapes.
+          const scanNonThrow = (m, ownsBreaks) => {
             if (found) return;
             if (isFunctionLike(m)) return;
-            if (ts.isThrowStatement(m)) return; // caught here
-            if (ts.isBreakStatement(m) || ts.isContinueStatement(m)) {
-              if (!m.label || !labels.has(m.label.text)) found = true;
+            if (ts.isThrowStatement(m)) return; // caught by this try
+            if (
+              ts.isForStatement(m) ||
+              ts.isForOfStatement(m) ||
+              ts.isForInStatement(m) ||
+              ts.isWhileStatement(m) ||
+              ts.isDoStatement(m) ||
+              ts.isSwitchStatement(m)
+            ) {
+              ts.forEachChild(m, (c) => scanNonThrow(c, true));
               return;
             }
-            ts.forEachChild(m, scanNonThrow);
+            if (ts.isBreakStatement(m) || ts.isContinueStatement(m)) {
+              const labeled = m.label && labels.has(m.label.text);
+              if (labeled || (!m.label && !ownsBreaks)) found = true;
+              return;
+            }
+            ts.forEachChild(m, (c) => scanNonThrow(c, ownsBreaks));
           };
-          ts.forEachChild(n.tryBlock, scanNonThrow);
+          ts.forEachChild(n.tryBlock, (c) => scanNonThrow(c, false));
           walk(n.catchClause.block, labels);
           if (n.finallyBlock) walk(n.finallyBlock, labels);
           return;
