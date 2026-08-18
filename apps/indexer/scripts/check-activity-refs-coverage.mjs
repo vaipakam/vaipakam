@@ -311,9 +311,36 @@ const mutatesShadowable = (n) => {
       else return t;
     }
   };
-  if (ts.isBinaryExpression(n) && ts.isAssignmentOperator?.(n.operatorToken.kind)) {
-    const t = rootOf(n.left);
+  // An ASSIGNMENT PATTERN is a binary assignment whose left side is an object or
+  // array literal (Codex round-15 P2): `({ loanId: args.loanId } = { loanId: 0n })`
+  // rebinds the decoded value exactly like `args.loanId = 0n`, but `rootOf` walks
+  // property access and never reaches the target nested inside the literal. The
+  // pattern is therefore descended, and its leaves are tested the ordinary way.
+  const targetWrites = (expr) => {
+    if (!expr) return false;
+    if (ts.isParenthesizedExpression(expr)) return targetWrites(expr.expression);
+    if (ts.isObjectLiteralExpression(expr)) {
+      return expr.properties.some((p) => {
+        if (ts.isPropertyAssignment(p)) return targetWrites(p.initializer);
+        if (ts.isShorthandPropertyAssignment(p)) return SHADOWABLE_NAMES.has(p.name.text);
+        if (ts.isSpreadAssignment(p)) return targetWrites(p.expression);
+        return false;
+      });
+    }
+    if (ts.isArrayLiteralExpression(expr)) {
+      return expr.elements.some((e) =>
+        ts.isSpreadElement(e) ? targetWrites(e.expression) : targetWrites(e),
+      );
+    }
+    // `[args = fallback]` inside a pattern: the default is not the target.
+    if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      return targetWrites(expr.left);
+    }
+    const t = rootOf(expr);
     return ts.isIdentifier(t) && SHADOWABLE_NAMES.has(t.text);
+  };
+  if (ts.isBinaryExpression(n) && ts.isAssignmentOperator?.(n.operatorToken.kind)) {
+    return targetWrites(n.left);
   }
   if (
     (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
@@ -573,8 +600,37 @@ if (!fnNode) {
   process.exit(1);
 }
 
-/** The switch on the event name. */
+/**
+ * The switch on the event name.
+ *
+ * The DISCRIMINANT is checked, not just the shape (Codex round-15 P2). Every case
+ * label in this switch is read as an event name, so a switch on anything else
+ * makes each label mean something different while the tally stays identical —
+ * `switch (String(args.kind))` kept the check green at 92/39/66 even though
+ * decoded arguments carry no `kind` and every event fell to the all-null default.
+ * The parameter is read off the function rather than hardcoded, so renaming it is
+ * not a false failure.
+ */
+const eventNameParam = fnNode.parameters?.[0]?.name;
+const discriminantName =
+  eventNameParam && ts.isIdentifier(eventNameParam) ? eventNameParam.text : null;
+/** Unwrap parens/assertions so `(eventName as string)` still resolves. */
+const bareIdentifierOf = (expr) => {
+  let t = expr;
+  while (
+    t &&
+    (ts.isParenthesizedExpression(t) ||
+      ts.isAsExpression(t) ||
+      ts.isNonNullExpression(t) ||
+      ts.isSatisfiesExpression?.(t) ||
+      ts.isTypeAssertionExpression?.(t))
+  ) {
+    t = t.expression;
+  }
+  return t && ts.isIdentifier(t) ? t.text : null;
+};
 let switchNode = null;
+let sawOtherSwitch = null;
 const findSwitch = (node) => {
   if (switchNode) return;
   // Never descend into a nested function (Codex round-14 P2). Otherwise an
@@ -583,16 +639,30 @@ const findSwitch = (node) => {
   // validating dead code and reporting the live path as fully mapped.
   if (isFunctionLike(node)) return;
   if (ts.isSwitchStatement(node)) {
-    switchNode = node;
-    return;
+    // Keep LOOKING past a switch on something else rather than rejecting outright:
+    // a future mapper may legitimately switch on a sub-key first. Only when no
+    // switch in the body discriminates on the event-name parameter is this a
+    // failure, and the one that was rejected is named so the message is actionable.
+    if (discriminantName && bareIdentifierOf(node.expression) === discriminantName) {
+      switchNode = node;
+      return;
+    }
+    if (!sawOtherSwitch) sawOtherSwitch = node.expression.getText();
   }
   ts.forEachChild(node, findSwitch);
 };
 if (fnNode.body) ts.forEachChild(fnNode.body, findSwitch);
 if (!switchNode) {
   console.error(
-    '[check-activity-refs-coverage] pluckActivityRefs() no longer contains a switch.\n' +
-      'If its shape changed, update this script — do not delete the check.',
+    sawOtherSwitch
+      ? '[check-activity-refs-coverage] pluckActivityRefs() has a switch, but on\n' +
+          `  \`${sawOtherSwitch}\` — not on its event-name parameter` +
+          (discriminantName ? ` \`${discriminantName}\`.\n` : '.\n') +
+          '  Every case label here is read as an EVENT NAME, so a different discriminant\n' +
+          '  silently changes what each label means while the coverage tally stays the\n' +
+          '  same. Restore the dispatch, or update this script — do not delete the check.'
+      : '[check-activity-refs-coverage] pluckActivityRefs() no longer contains a switch.\n' +
+          'If its shape changed, update this script — do not delete the check.',
   );
   process.exit(1);
 }
@@ -916,7 +986,7 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     // `args` shadow — resolving callees symbolically needs a full Program, and
     // refusing to reason about a shadowed name is the sound cheap answer.
     const shadowsArgs = (() => {
-      let found = false;
+      let found = null;
       const walk = (n) => {
         if (found) return;
         // Name FIRST, then decline to traverse (Codex round-12 P2). Returning on
@@ -927,16 +997,19 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
           (ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n) || ts.isEnumDeclaration(n)) &&
           SHADOWABLE_NAMES.has(n.name?.text)
         ) {
-          found = true;
+          found = 'declares a local named';
           return;
         }
         if (isFunctionLike(n)) return;
         // Binding NAMES recursively (Codex round-10 P2): `const { args } = …` puts
         // the binding inside an ObjectBindingPattern, which an identifier-only
         // test walks straight past.
-        if (mutatesShadowable(n)) found = true;
+        // A WRITE and a DECLARATION are both disqualifying but are not the same
+        // thing, and saying "declares a local" for `({ loanId: args.loanId } = …)`
+        // sends the reader looking for a declaration that is not there.
+        if (mutatesShadowable(n)) { found = found || 'assigns to'; }
         if (ts.isVariableDeclaration(n) || ts.isParameter(n)) {
-          if (bindsShadowable(n.name)) found = true;
+          if (bindsShadowable(n.name)) found = found || 'declares a local named';
         }
         ts.forEachChild(n, walk);
       };
@@ -945,7 +1018,7 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     })();
     if (shadowsArgs) {
       structural.push(
-        `case '${label}' declares a local named 'args' or 'Number', shadowing what the accepted mapping shape relies on — this checker cannot tell the two apart`,
+        `case '${label}' ${shadowsArgs} 'args' or 'Number', shadowing what the accepted mapping shape relies on — this checker cannot tell the two apart`,
       );
     }
 
