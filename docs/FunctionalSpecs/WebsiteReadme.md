@@ -124,11 +124,20 @@ Public-navigation requirements:
   figure must not inherit a confidence none of its parts had, and the
   marker defers to the least certain input rather than the most
 - the machine-readable copies are the one surface with no runtime, so
-  they resolve every reference at build time and are current as of their
-  build. That is a property of the artefact, not a gap to close: a
-  static file cannot follow a retune, and pretending otherwise by
-  leaving the reference unresolved would serve a crawler a token instead
-  of a number
+  they resolve every reference when they are produced — a crawler must
+  receive a number, never the embedding syntax. What they resolve to
+  today is the value set shipped with the site, which is pinned to the
+  protocol's compiled starting rates: a governance retune moves the live
+  configuration, not those starting rates, so these artefacts do not
+  follow a retune even across rebuilds, while the rendered pages do.
+  "Current as of its build" is therefore NOT a property these artefacts
+  have, and nothing may claim it for them. Whether they should instead
+  fetch the published configuration when they are produced — making
+  publication depend on a network read, with everything that implies for
+  a build the configuration service cannot answer — is a deliberate,
+  still-open decision; until it is made, the honest description above is
+  the specified behaviour, and any surface describing these artefacts
+  must say what they carry rather than imply currency
 - the exception is a page documenting a governance knob's DEFAULT, which
   states a plain number rather than a reference. The two look identical
   on the page and are different claims: "the fee is X%" describes what
@@ -685,7 +694,7 @@ Governance-configuration visibility:
 - pages that always present English content, whatever locale prefix the reader arrived through, should format their embedded values as English, so a figure never uses another language's conventions or digits inside an English sentence
 - a page that falls back to English because a translation is missing should likewise format its embedded values as English
 - the documentation search index should hold the same rendered figures the reader sees, formatted for the same document, so searching for a value visible on a page finds that page
-- the machine-readable copies of the docs that the site publishes for automated consumers should carry the same resolved values as the human-facing pages, formatted for the same language, and should never expose the embedding syntax
+- the machine-readable copies of the docs that the site publishes for automated consumers should carry resolved values formatted for the document's language and never expose the embedding syntax. They carry the value set shipped with the site rather than the live configuration the rendered pages follow, so they match the human-facing pages exactly while the published configuration equals the shipped values, and lag them after a retune — a divergence that is specified and stated, not a defect, unless and until the open decision above changes what they resolve against
 
 Foundational frontend migration requirements:
 
