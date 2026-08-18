@@ -415,6 +415,45 @@ const bindsNameLexically = (node, name) => {
   return false;
 };
 
+/** A binder this script cannot follow to a value. It shadows; it is not read. */
+const OPAQUE_BINDING = Symbol('opaque binding');
+
+/**
+ * The nearest binding of `name` at `from`, searching outward and stopping after
+ * `stopAt`.
+ *
+ * Hoisted to module scope so BOTH resolvers share it (Codex round-33 P2). The
+ * SQL-bind resolver had this and the ledger's reassignment scan did not, which
+ * left the latter comparing identifier spelling — so an unrelated nested
+ * `let loanId` failed the mapper's real destructuring and blocked `typecheck`.
+ * Same defect as rounds 27-29 in three other places; keeping one resolver is
+ * what stops it recurring in a fourth.
+ *
+ * @returns the `VariableDeclaration`, `OPAQUE_BINDING` for a binder this script
+ *          cannot follow, or null when nothing up to `stopAt` binds the name.
+ */
+const nearestDeclIn = (from, name, stopAt) => {
+  for (let scope = from; scope; scope = scope.parent) {
+    // A binder ON THE WAY OUT shadows anything further out, even when this
+    // script cannot say what it holds. Looking past it is the bug.
+    if (bindsNameLexically(scope, name)) return OPAQUE_BINDING;
+    const stmts =
+      ts.isBlock(scope) || ts.isCaseClause(scope) || ts.isDefaultClause(scope)
+        ? scope.statements
+        : null;
+    if (stmts) {
+      for (const st of stmts) {
+        if (!ts.isVariableStatement(st)) continue;
+        for (const d of st.declarationList.declarations) {
+          if (declaresName(d.name, name)) return d;
+        }
+      }
+    }
+    if (scope === stopAt) break;
+  }
+  return null;
+};
+
 const REF_FIELDS = ['loanId', 'offerId'];
 
 /**
@@ -1451,11 +1490,26 @@ if (!fnNode) {
   // mapper and the INSERT is hard to imagine, and if one appears the message
   // says so rather than the guarantee quietly weakening.
   {
+    // Resolved to the mapper's destructuring, not text-matched (Codex round-33
+    // P2). This scan compared spelling, so an unrelated nested
+    // `{ let loanId = 1; loanId = 2; }` anywhere in the ledger failed the real
+    // binding and blocked `typecheck` on code that never touched it. Fourth site
+    // in this file where "same name" stood in for "same binding" — rounds 27, 28
+    // and 29 fixed the other three and this one was not looked at.
+    //
+    // `declaresName` walks destructuring patterns, so the mapper's own
+    // `const { loanId } = pluckActivityRefs(…)` resolves to the declaration this
+    // check is protecting; anything nearer shadows it and is somebody else's.
     const writtenAnywhere = (root, name) => {
       let found = false;
       const walk = (n) => {
         if (found) return;
-        if (writesName(n, name)) {
+        // Only a write that resolves to the MAPPER's destructuring counts. A
+        // write resolving anywhere else — a nested `let loanId`, a catch
+        // parameter, a loop variable — is about a different value and does not
+        // touch what goes into SQL. `nearestDeclIn` returns OPAQUE_BINDING for
+        // the binders it cannot follow, which are equally not this one.
+        if (writesName(n, name) && nearestDeclIn(n, name, root) === bindings[0]) {
           found = true;
           return;
         }
@@ -1575,13 +1629,12 @@ if (!fnNode) {
      * to know that OTHER binding forms exist and refuse the ones it cannot
      * follow, rather than looking past them to a declaration further out.
      */
-    const OPAQUE_BINDING = Symbol('opaque binding');
+    // {nearestDeclIn}, with the one thing that resolver cannot know: the
+    // enclosing loop's OWN binding is not a shadow here — it is the log this
+    // whole scan is about — so it resolves to null rather than OPAQUE_BINDING.
     const nearestDecl = (from, name) => {
       for (let scope = from; scope; scope = scope.parent) {
-        // A binder ON THE WAY OUT shadows anything further out, even when this
-        // script cannot say what it holds. Looking past it is the bug.
         if (bindsNameLexically(scope, name)) {
-          // The loop's own binding is the one legitimate case — `log` itself.
           if (scope === loopVar.node && name === loopVar.name) return null;
           return OPAQUE_BINDING;
         }
@@ -1643,8 +1696,27 @@ if (!fnNode) {
         idx += 1;
         if (ts.isSpreadAssignment(p)) {
           const src = unwrapAssertions(p.expression);
-          if (ts.isIdentifier(src) && src.text === name) selfSpreadAt = idx;
-          else if (selfSpreadAt >= 0) overriddenAfter = true; // another bag wins
+          if (ts.isIdentifier(src) && src.text === name) {
+            selfSpreadAt = idx;
+            continue;
+          }
+          // An INLINE object literal has completely known keys, so it overrides
+          // only what it actually defines (Codex round-33 P2). This check called
+          // every non-self spread an opaque overwrite, so writing the live
+          // enrichment as `args = { ...args, ...{ creator } }` — same meaning,
+          // one refactor away — was rejected and blocked `typecheck`.
+          // `objectLiteralView` already answers this question for return values,
+          // including the getter case that really is unreadable; asking it here
+          // too is the same fix rounds 26 and 29 made for the other readers.
+          if (selfSpreadAt >= 0 && ts.isObjectLiteralExpression(src)) {
+            const inner = objectLiteralView(src);
+            if (inner.opaque || inner.spread) overriddenAfter = true;
+            else if ([...inner.props.keys()].some((k) => couldBeReference(k))) {
+              overriddenAfter = true;
+            }
+            continue;
+          }
+          if (selfSpreadAt >= 0) overriddenAfter = true; // another bag wins
           continue;
         }
         // An explicit key after the self-spread is fine UNLESS it could BE a
@@ -1721,6 +1793,67 @@ if (!fnNode) {
       };
       walk(loopVar.body);
       return found;
+    };
+    /**
+     * Every loop-local name that points at the SAME object the mapper is handed
+     * (Codex round-33 P2).
+     *
+     * `mutatedInPlace` asked its question of ONE name — whichever identifier the
+     * call itself uses. `const decoded = args; decoded.loanId = logs[0]!.args.loanId`
+     * mutates the very object the mapper then reads, under a second name, so the
+     * scan looked at `args`, found nothing, and every row carried the first log's
+     * id. Round 27 closed this for an alias chain that FEEDS the call; an alias
+     * that only mutates is the mirror image and was still open.
+     *
+     * It also covers the `log.args` call shape, where `resolvesTo` — and with it
+     * the whole mutation question — was never reached at all.
+     *
+     * Aliases are followed to a fixed point and resolved by declaration, so an
+     * unrelated namesake in a nested block is not mistaken for one.
+     *
+     * @returns Map of name -> the declaration binding it.
+     */
+    const aliasesOfArg = (argExpr) => {
+      const isArgObject = (e) => {
+        const cur = unwrapAssertions(e);
+        if (!ts.isPropertyAccessExpression(cur)) return false;
+        const recv = unwrapAssertions(cur.expression);
+        return (
+          cur.name.text === ARGS_PROP &&
+          ts.isIdentifier(recv) &&
+          recv.text === loopVar.name &&
+          nearestDecl(cur, recv.text) === null
+        );
+      };
+      const known = new Map();
+      const seed = unwrapAssertions(argExpr);
+      if (ts.isIdentifier(seed)) known.set(seed.text, nearestDecl(init, seed.text));
+      let grew = true;
+      while (grew) {
+        grew = false;
+        const visit = (n) => {
+          if (
+            ts.isVariableDeclaration(n) &&
+            ts.isIdentifier(n.name) &&
+            n.initializer &&
+            !known.has(n.name.text)
+          ) {
+            const rhs = unwrapAssertions(n.initializer);
+            const aliases =
+              isArgObject(rhs) ||
+              (ts.isIdentifier(rhs) &&
+                known.has(rhs.text) &&
+                nearestDecl(n, rhs.text) === known.get(rhs.text));
+            if (aliases) {
+              known.set(n.name.text, n);
+              grew = true;
+            }
+          }
+          ts.forEachChild(n, visit);
+        };
+        visit(loopVar.body);
+      }
+      return known;
     };
     /** Which loop-item property `name` resolves to here, or null. */
     const resolvesTo = (from, name, depth = 0) => {
@@ -1799,6 +1932,24 @@ if (!fnNode) {
           '  through one case and stores that log\'s ids on every other row, while every\n' +
           '  count here stays identical. Fix the call, or update this script — do not\n' +
           '  delete the check.',
+      );
+      process.exit(1);
+    }
+    // ...and nothing in the loop may mutate the object behind that argument,
+    // under ANY of its names (Codex round-33 P2).
+    const mutatedAlias = [...aliasesOfArg(init.arguments[1])].find(([n, d]) =>
+      mutatedInPlace(n, d),
+    );
+    if (mutatedAlias) {
+      console.error(
+        `[check-activity-refs-coverage] ${LEDGER_FN}() mutates the decoded arguments in\n` +
+          `  place through \`${mutatedAlias[0]}\` before handing them to pluckActivityRefs.\n` +
+          '  The mapper reads whatever the object holds at call time, so a write like\n' +
+          `  \`${mutatedAlias[0]}.loanId = logs[0].args.loanId\` files every row under the first log's\n` +
+          '  id while every count here stays identical — and renaming the binding is\n' +
+          '  enough to slip past a check that watches only the name in the call. Leave\n' +
+          '  the decoded arguments alone, or update this script — do not delete the\n' +
+          '  check.',
       );
       process.exit(1);
     }
@@ -2083,14 +2234,90 @@ const findSwitch = (node) => {
  * loud refusal to update this script — the same posture as every other shape the
  * checker cannot read, and the opposite of a silent pass.
  */
-const canExit = (node) => {
-  if (isFunctionLike(node)) return false;
-  if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) return true;
-  let found = false;
-  ts.forEachChild(node, (c) => {
-    found = found || canExit(c);
-  });
-  return found;
+/**
+ * ONE abrupt-completion analysis, shared by every place that asks it (Codex
+ * round-33 P2).
+ *
+ * There used to be three separate traversals of this question — the pre-switch
+ * bypass scan, the case-clause scan, and the default clause's — and for four
+ * rounds running a rule landed on one and not its siblings: loop-owned breaks
+ * (round 14, re-found in 32), caught throws (round 31, re-found in 32 and again
+ * in 33), labeled breaks. Each fix was correct and each left the same evasion
+ * live one traversal over. Three copies of one rule set is not a rule set.
+ *
+ * The question is: starting from these statements, can control complete ABRUPTLY
+ * in a way that leaves the region? The answers come straight from the language:
+ *
+ * - a `throw` escapes unless an enclosing `try` inside the region catches it;
+ * - a bare `break` binds to the nearest enclosing loop or switch, a bare
+ *   `continue` to the nearest enclosing loop — inside the region, it does not
+ *   leave; with none inside, it does;
+ * - a labeled `break`/`continue` binds to its label, so it escapes exactly when
+ *   that label is declared outside the region;
+ * - nested functions are not on this path at all until called.
+ *
+ * `countReturns` adds `return` to the list, which is what the pre-switch scan
+ * needs and the two clause scans must not have — inside a clause a `return` is
+ * the successful outcome, not an escape.
+ *
+ * @returns a short phrase naming the first escape found, or null.
+ */
+const findEscape = (nodes, { countReturns = false } = {}) => {
+  let hit = null;
+  const walk = (n, st) => {
+    if (hit || isFunctionLike(n)) return;
+    if (ts.isReturnStatement(n)) {
+      if (countReturns) hit = 'a return';
+      return;
+    }
+    if (ts.isThrowStatement(n)) {
+      if (!st.caught) hit = 'a throw';
+      return;
+    }
+    if (ts.isBreakStatement(n) || ts.isContinueStatement(n)) {
+      const escapes = n.label
+        ? !st.labels.has(n.label.text)
+        : !(ts.isBreakStatement(n) ? st.breakable : st.loop);
+      if (escapes) hit = 'a break/continue';
+      return;
+    }
+    if (ts.isLabeledStatement(n)) {
+      const labels = new Set(st.labels);
+      labels.add(n.label.text);
+      walk(n.statement, { ...st, labels });
+      return;
+    }
+    if (
+      ts.isForStatement(n) ||
+      ts.isForOfStatement(n) ||
+      ts.isForInStatement(n) ||
+      ts.isWhileStatement(n) ||
+      ts.isDoStatement(n)
+    ) {
+      ts.forEachChild(n, (c) => walk(c, { ...st, breakable: true, loop: true }));
+      return;
+    }
+    // A switch owns `break` but NOT `continue` — the distinction the three old
+    // copies all lumped together.
+    if (ts.isSwitchStatement(n)) {
+      ts.forEachChild(n, (c) => walk(c, { ...st, breakable: true }));
+      return;
+    }
+    if (ts.isTryStatement(n)) {
+      // Throws in the try block are handled when this try has a catch; a nested
+      // try without one still propagates outward, so the flag is carried rather
+      // than reset. The catch's and finally's own throws are not caught here.
+      walk(n.tryBlock, { ...st, caught: st.caught || Boolean(n.catchClause) });
+      if (n.catchClause) walk(n.catchClause.block, st);
+      if (n.finallyBlock) walk(n.finallyBlock, st);
+      return;
+    }
+    ts.forEachChild(n, (c) => walk(c, st));
+  };
+  for (const n of nodes) {
+    walk(n, { caught: false, breakable: false, loop: false, labels: new Set() });
+  }
+  return hit;
 };
 // The switch is located FIRST, and only then is what precedes it examined. The
 // two questions have different answers and different fixes, and scanning for
@@ -2122,7 +2349,12 @@ if (!switchNode) {
   process.exit(1);
 }
 for (const st of fnNode.body.statements.slice(0, switchIndex)) {
-  if (!canExit(st)) continue;
+  // A throw the pre-switch code CATCHES itself is not a bypass (Codex round-33
+  // P2). `try { if (…) throw e; } catch {}` above the switch always proceeds to
+  // it, and rejecting it blocked `typecheck` on an ordinary defensive guard.
+  // The case scan had learned this two rounds earlier; this traversal had not,
+  // which is what `findEscape` exists to stop happening again.
+  if (!findEscape([st], { countReturns: true })) continue;
   console.error(
     '[check-activity-refs-coverage] pluckActivityRefs() can leave before its event\n' +
       '  switch, so the switch may never run and events would be stored with all\n' +
@@ -2396,72 +2628,23 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
       // be non-empty; the question is whether ANY path out of the default is not
       // that return.
       {
-        const abrupt = [];
-        // Catches and loop ownership apply HERE TOO (Codex round-32 P2). This
-        // clause has always had its own traversal, and round 31 taught the
-        // case-side scan about caught throws while leaving this one reporting
-        // every descendant throw — so `default: try { if (…) throw e; return
-        // nullRefs; } catch { return nullRefs; }` was rejected though every
-        // completion path returns the required object.
-        //
-        // Third round in a row where a rule landed on one traversal and not its
-        // sibling. The durable fix is one analysis, which is a refactor this
-        // file wants and does not have; until then the rules are at least
-        // written the same way in both places.
-        const findAbrupt = (n, ownsBreaks = false) => {
-          if (isFunctionLike(n)) return;
-          if (
-            ts.isForStatement(n) ||
-            ts.isForOfStatement(n) ||
-            ts.isForInStatement(n) ||
-            ts.isWhileStatement(n) ||
-            ts.isDoStatement(n) ||
-            ts.isSwitchStatement(n)
-          ) {
-            // Owns its own break/continue; its throws still escape.
-            ts.forEachChild(n, (c) => findAbrupt(c, true));
-            return;
-          }
-          if (ts.isTryStatement(n) && n.catchClause) {
-            // Throws in the try block are handled; the catch's and finally's
-            // are not, so those are walked normally.
-            const scanCaught = (m, owns) => {
-              if (isFunctionLike(m) || ts.isThrowStatement(m)) return;
-              if (
-                ts.isForStatement(m) ||
-                ts.isForOfStatement(m) ||
-                ts.isForInStatement(m) ||
-                ts.isWhileStatement(m) ||
-                ts.isDoStatement(m) ||
-                ts.isSwitchStatement(m)
-              ) {
-                ts.forEachChild(m, (c) => scanCaught(c, true));
-                return;
-              }
-              if (ts.isBreakStatement(m) || ts.isContinueStatement(m)) {
-                if (!owns) abrupt.push('a break/continue');
-                return;
-              }
-              ts.forEachChild(m, (c) => scanCaught(c, owns));
-            };
-            ts.forEachChild(n.tryBlock, (c) => scanCaught(c, ownsBreaks));
-            findAbrupt(n.catchClause.block, ownsBreaks);
-            if (n.finallyBlock) findAbrupt(n.finallyBlock, ownsBreaks);
-            return;
-          }
-          if (ts.isThrowStatement(n)) abrupt.push('a throw');
-          if (
-            (ts.isBreakStatement(n) || ts.isContinueStatement(n)) &&
-            !ownsBreaks
-          ) {
-            abrupt.push('a break/continue');
-          }
-          ts.forEachChild(n, (c) => findAbrupt(c, ownsBreaks));
-        };
-        for (const st of clause.statements) findAbrupt(st);
-        if (abrupt.length) {
+        const escape = findEscape(clause.statements);
+        if (escape) {
           structural.push(
-            `the default clause contains ${abrupt[0]} — every event without a case, and every allowlisted one, is filed from here, so it must reach the all-null return on every path`,
+            `the default clause contains ${escape} — every event without a case, and every allowlisted one, is filed from here, so it must reach the all-null return on every path`,
+          );
+        } else if (!alwaysReturns(clause.statements[clause.statements.length - 1])) {
+          // Collected returns are not a MUST-return proof (Codex round-33 P2).
+          // The scan above rules out the abrupt ways to leave; it says nothing
+          // about ordinary fall-through. `default: for (…) { if (c) return
+          // nullRefs; break; }` has a valid return, no escaping abrupt exit —
+          // the break belongs to the loop — and still drops out of the switch
+          // for every iteration that does not take the `if`, landing on the
+          // mapper's trailing return, which a hostile edit can make
+          // `{ loanId: 999 }`. Both questions have to be asked: nothing may
+          // leave abruptly, AND control must reach a return.
+          structural.push(
+            'control can fall out of the default clause without returning — every event without a case, and every allowlisted one, is filed from here, so it must return the all-null object on every path rather than drop through to whatever follows the switch',
           );
         }
       }
@@ -2528,98 +2711,14 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
     // a final valid return leaves `alwaysReturns(last)` true while the break path
     // still reaches the fallback. Nested loops and switches are NOT descended
     // into — a `break` inside them binds to them, not to this clause.
-    const hasAbruptExit = (nodes) => {
-      let found = false;
-      // Labels in scope, so a `break local;` can be told from a bare `break`
-      // (Codex round-12 P2). Round 11 skipped the whole labeled subtree to stop a
-      // false positive, which then hid an UNLABELED break inside it — and that
-      // one does target the switch. Precision both ways: ignore only the breaks
-      // that name an enclosing label.
-      const walk = (n, labels) => {
-        if (found) return;
-        if (isFunctionLike(n)) return;
-        // A loop or nested switch owns its OWN break/continue, but not its throws
-        // (Codex round-14 P2): skipping those subtrees entirely hid a
-        // `while (true) { throw … }` that aborts the insertion before any row is
-        // written. Descend for throws, with breaks/continues treated as local.
-        if (
-          ts.isForStatement(n) ||
-          ts.isForOfStatement(n) ||
-          ts.isForInStatement(n) ||
-          ts.isWhileStatement(n) ||
-          ts.isDoStatement(n) ||
-          ts.isSwitchStatement(n)
-        ) {
-          const scanThrows = (m) => {
-            if (found) return;
-            if (isFunctionLike(m)) return;
-            if (ts.isThrowStatement(m)) found = true;
-            ts.forEachChild(m, scanThrows);
-          };
-          ts.forEachChild(n, scanThrows);
-          return;
-        }
-        if (ts.isLabeledStatement(n)) {
-          const inner = new Set(labels);
-          inner.add(n.label.text);
-          ts.forEachChild(n, (c) => walk(c, inner));
-          return;
-        }
-        // A throw the clause's OWN catch handles does not escape it (Codex
-        // round-31 P2). `try { if (…) throw e; return refs; } catch { return refs; }`
-        // returns a mapped object on every completion path, and treating the
-        // guarded throw as abrupt rejected an ordinary defensive refactor inside
-        // `typecheck`. The try block's throws are caught; the catch's and the
-        // finally's are not, so those still count — and break/continue inside
-        // the try are unaffected by a catch and keep their normal treatment.
-        if (ts.isTryStatement(n) && n.catchClause) {
-          // A nested loop or switch owns its OWN break/continue (Codex round-32
-          // P2) — the same rule the enclosing walk applies, which this scan
-          // failed to carry over. `try { for (…) { break; } return refs; }`
-          // was rejected for a break that never leaves the loop, let alone the
-          // case. Only a LABELED break naming an enclosing label escapes.
-          const scanNonThrow = (m, ownsBreaks) => {
-            if (found) return;
-            if (isFunctionLike(m)) return;
-            if (ts.isThrowStatement(m)) return; // caught by this try
-            if (
-              ts.isForStatement(m) ||
-              ts.isForOfStatement(m) ||
-              ts.isForInStatement(m) ||
-              ts.isWhileStatement(m) ||
-              ts.isDoStatement(m) ||
-              ts.isSwitchStatement(m)
-            ) {
-              ts.forEachChild(m, (c) => scanNonThrow(c, true));
-              return;
-            }
-            if (ts.isBreakStatement(m) || ts.isContinueStatement(m)) {
-              const labeled = m.label && labels.has(m.label.text);
-              if (labeled || (!m.label && !ownsBreaks)) found = true;
-              return;
-            }
-            ts.forEachChild(m, (c) => scanNonThrow(c, ownsBreaks));
-          };
-          ts.forEachChild(n.tryBlock, (c) => scanNonThrow(c, false));
-          walk(n.catchClause.block, labels);
-          if (n.finallyBlock) walk(n.finallyBlock, labels);
-          return;
-        }
-        if (ts.isBreakStatement(n) || ts.isContinueStatement(n)) {
-          if (!n.label || !labels.has(n.label.text)) found = true;
-        }
-        // A `throw` anywhere in the clause is an abrupt path too (Codex round-12
-        // P2): it aborts before the row is written, so it is no more "mapped"
-        // than a break. Round 11 fixed only the throw in terminal position.
-        if (ts.isThrowStatement(n)) found = true;
-        ts.forEachChild(n, (c) => walk(c, labels));
-      };
-      for (const n of nodes) walk(n, new Set());
-      return found;
-    };
+    // Every rule this scan used to carry by hand — loop-owned breaks (round 14),
+    // labeled breaks (round 12), caught throws (round 31), loops nested inside a
+    // try (round 32) — now lives in `findEscape`, which the pre-switch scan and
+    // the default clause read too (Codex round-33 P2). The rules were correct
+    // here and kept arriving late in the siblings.
     const groupStatements = pendingStatements;
     const escapesWithoutReturning =
-      !alwaysReturns(last) || hasAbruptExit(groupStatements);
+      !alwaysReturns(last) || Boolean(findEscape(groupStatements));
 
     const labels = pendingLabels;
     const returnNodes = pendingReturns;
