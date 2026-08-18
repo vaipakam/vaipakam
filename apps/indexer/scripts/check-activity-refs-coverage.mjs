@@ -259,8 +259,19 @@ const REF_SHAPE = {
   // The column name matches either case (`loanId`, `oldLoanId`), but the leg
   // suffix must be UPPERCASE so a plural like `loanIds` — an array, not a single
   // reference — is not treated as one.
-  loanId: /^[A-Za-z0-9_]*[Ll]oanId(?:[A-Z]|[0-9]+)?$/,
-  offerId: /^[A-Za-z0-9_]*[Oo]fferId(?:[A-Z]|[0-9]+)?$/,
+  //
+  // The suffix is a WHOLE identifier tail, not one letter (Codex round-24 P2).
+  // `loanIdPrimary` and `offerIdReplacement` are ordinary ABI names, and the
+  // one-uppercase-or-digits form matched neither them nor the empty escape list,
+  // so an event whose only reference was named that way sat outside coverage
+  // with no mapping and no exemption — the same enumerated-range mistake round
+  // 13 fixed, one character wider.
+  //
+  // The suffix must still START uppercase, which is the whole reason a PLURAL is
+  // excluded: `loanIds` continues after `loanId` in lower case, so it is an
+  // array rather than a single reference and must not be treated as one.
+  loanId: /^[A-Za-z0-9_]*[Ll]oanId(?:[A-Z][A-Za-z0-9_]*|[0-9]+)?$/,
+  offerId: /^[A-Za-z0-9_]*[Oo]fferId(?:[A-Z][A-Za-z0-9_]*|[0-9]+)?$/,
 };
 
 /**
@@ -1013,6 +1024,24 @@ if (!fnNode) {
     );
     process.exit(1);
   }
+  // The LOCAL name each reference was bound to, which is not always the field
+  // name (Codex round-24 P2). The discovery above deliberately keys on the
+  // PROPERTY taken, so `const { loanId: rowLoanId } = …` is a valid binding —
+  // and then the SQL check below compared the bind argument against the hardcoded
+  // `loanId`, rejecting a harmless refactor the rest of this script supports.
+  // Carry the alias through instead.
+  const localOf = new Map();
+  for (const el of bindings[0].name.elements) {
+    if (!ts.isBindingElement(el)) continue;
+    const key = el.propertyName ?? el.name;
+    if (
+      (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) &&
+      REF_FIELDS.includes(key.text) &&
+      ts.isIdentifier(el.name)
+    ) {
+      localOf.set(key.text, el.name.text);
+    }
+  }
   const init = bindings[0].initializer && unwrapAssertions(bindings[0].initializer);
   const boundFrom = init && ts.isCallExpression(init) ? bareIdentifierOf(init.expression) : null;
   // ...and it must be handed THIS log's event name and decoded arguments (Codex
@@ -1037,9 +1066,18 @@ if (!fnNode) {
     // `pluckActivityRefs(log.transactionHash, args)` is a plain read, type-
     // correct, and misses every case — so the row takes the all-null fallback
     // while the tally is untouched. The first argument must name the event.
+    // ...and it must come from the CURRENT loop item, not any object with an
+    // `eventName` (Codex round-24 P2). `pluckActivityRefs(logs[0].eventName,
+    // args)` names the right property on the wrong object, so every row after
+    // the first is dispatched under the first log's event name. The receiver has
+    // to be a bare identifier — `log.eventName`, not `logs[0].eventName` — which
+    // is what an element access into the collection gives itself away as.
     const namesTheEvent = (a) => {
       const cur = unwrapAssertions(a);
-      if (ts.isPropertyAccessExpression(cur)) return cur.name.text === DISCRIMINANT_PROP;
+      if (ts.isPropertyAccessExpression(cur)) {
+        if (cur.name.text !== DISCRIMINANT_PROP) return false;
+        return ts.isIdentifier(unwrapAssertions(cur.expression));
+      }
       return ts.isIdentifier(cur) && cur.text === DISCRIMINANT_PROP;
     };
     if (
@@ -1115,11 +1153,12 @@ if (!fnNode) {
         );
         process.exit(1);
       }
+      const expected = localOf.get(field) ?? field;
       const arg = bindArgs[at] && unwrapAssertions(bindArgs[at]);
-      if (!arg || !ts.isIdentifier(arg) || arg.text !== field) {
+      if (!arg || !ts.isIdentifier(arg) || arg.text !== expected) {
         console.error(
           `[check-activity-refs-coverage] the activity_events INSERT binds\n` +
-            `  \`${arg ? arg.getText(sourceFile) : '(nothing)'}\` into its \`${COLUMN_OF[field]}\` column, not \`${field}\`.\n` +
+            `  \`${arg ? arg.getText(sourceFile) : '(nothing)'}\` into its \`${COLUMN_OF[field]}\` column, not \`${expected}\`.\n` +
             '  Every row would file that reference under the wrong column while every count\n' +
             '  here stays identical. Fix the binding, or update this script — do not delete\n' +
             '  the check.',
@@ -1562,6 +1601,27 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
         structural.push(
           'the default clause returns nothing this checker can find — every event without a case, and every allowlisted one, is filed from here, so it must return the all-null object rather than throw or fall through',
         );
+      }
+      // ONE valid return is not enough either (Codex round-24 P2). A default of
+      // `if ('loanId' in args) throw …; return { …nulls };` leaves this list
+      // non-empty and every reference-carrying allowlisted event still takes the
+      // throw, aborting the whole activity write. Round 23 required the list to
+      // be non-empty; the question is whether ANY path out of the default is not
+      // that return.
+      {
+        const abrupt = [];
+        const findAbrupt = (n) => {
+          if (isFunctionLike(n)) return;
+          if (ts.isThrowStatement(n)) abrupt.push('a throw');
+          if (ts.isBreakStatement(n) || ts.isContinueStatement(n)) abrupt.push('a break/continue');
+          ts.forEachChild(n, findAbrupt);
+        };
+        for (const st of clause.statements) findAbrupt(st);
+        if (abrupt.length) {
+          structural.push(
+            `the default clause contains ${abrupt[0]} — every event without a case, and every allowlisted one, is filed from here, so it must reach the all-null return on every path`,
+          );
+        }
       }
       for (const r of defaultReturns) {
         const e = r.expression;
