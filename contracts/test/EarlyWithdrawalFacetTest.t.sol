@@ -681,6 +681,78 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev FROZEN interest is not the seller's to be credited for (Codex #1801
+    ///      r1 P1). `interestSettled` is credited whether the periodic payout
+    ///      reached the lender or was parked into `heldForLender` behind the
+    ///      sanctions freeze — and a sale migrates that parked balance to the
+    ///      BUYER. So a credit that is entirely frozen must move the seller's
+    ///      payout by nothing at all: they never held those tokens and do not
+    ///      keep them.
+    function test_sellLoanViaBuyOffer_ignoresFrozenSettledInterest() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // Settled, but ALL of it frozen — nothing was delivered.
+        uint256 credit = 1 ether;
+        _seedSettledInterest(activeLoanId, credit);
+        TestMutatorFacet(address(diamond)).setSettledInterestParkedRaw(activeLoanId, credit);
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithFrozenCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoCredit, 0, "control run must actually pay the seller");
+        assertEq(
+            paidWithFrozenCredit,
+            paidWithNoCredit,
+            "a wholly frozen credit must not move the seller's payout"
+        );
+    }
+
+    /// @dev And the split case: half delivered, half frozen. Only the delivered
+    ///      half may reach the seller's forfeiture.
+    function test_sellLoanViaBuyOffer_creditsOnlyTheDeliveredHalf() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        uint256 delivered = 0.4 ether;
+        uint256 frozen = 0.6 ether;
+        _seedSettledInterest(activeLoanId, delivered + frozen);
+        TestMutatorFacet(address(diamond)).setSettledInterestParkedRaw(activeLoanId, frozen);
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithSplitCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertEq(
+            paidWithSplitCredit - paidWithNoCredit,
+            delivered,
+            "only the delivered half of the settled credit reaches the seller"
+        );
+    }
+
     /// @dev LISTED route. Same claim on the completion path, driven through the
     ///      escrowed-proceeds fan-out — which needed a seeded escrow to reach at
     ///      all, since the scaffolded completions here never run a real accept.
@@ -3801,6 +3873,38 @@ contract EarlyWithdrawalFacetTest is Test {
             uint8(pf.errorCode),
             uint8(OfferAcceptFacet.AcceptError.SaleLoanPastMaturity),
             "maturity classifier outranks later checks, mirroring _acceptOffer"
+        );
+    }
+
+    /// @dev #1503 item 28 (Codex #1801 r1 P2) — preview parity for the new
+    ///      completion refusal. Accepting a linked sale vehicle calls
+    ///      `completeLoanSaleInternal` atomically, so a loan whose DELIVERED
+    ///      settled interest already exceeds its accrual makes that accept a
+    ///      guaranteed revert. Without the appended classifier the preview
+    ///      returns `None` and a buyer-facing client leaves Accept enabled.
+    function test_previewAccept_saleVehicle_flagsPrepaidInterest() public {
+        uint256 saleOfferId = _listSaleOffer();
+        // No warp, so nothing has accrued and any settled credit is a residual.
+        _seedSettledInterest(activeLoanId, 1 ether);
+
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleBlockedByPrepaidInterest),
+            "preview mirrors the completion's prepaid-interest refusal"
+        );
+
+        // And the classifier reads DELIVERED interest, not the raw accumulator
+        // (the r1 P1 carve-out): a credit that is entirely frozen never reached
+        // the seller, so it is no residual and must not block the sale.
+        TestMutatorFacet(address(diamond)).setSettledInterestParkedRaw(activeLoanId, 1 ether);
+        OfferAcceptFacet.AcceptPreview memory pf =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(pf.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.None),
+            "a wholly frozen credit is not a residual and must not block"
         );
     }
 

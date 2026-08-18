@@ -21,6 +21,21 @@ either party agreeing to it. The refusal names the residual so the position can
 be brought level first, and it sits above the netting on both routes, because
 after netting the residual is no longer recoverable.
 
+There is a second, subtler version of the same mistake, and it is closed here
+too. Interest recorded as settled to the lender side is not always interest the
+lender received: when a periodic payment is due to a wallet the sanctions
+registry flags, the money is held rather than delivered, while the record still
+counts it — correctly, since the borrower paid it and their obligation must
+reduce either way. A sale then hands that held balance to the buyer. So it is
+money the exiting lender never received and does not keep, and crediting it
+against their forfeiture would pay them for it a second time at the platform's
+expense. Only the delivered part is credited, and the platform now tracks the
+held part separately so the two can be told apart.
+
+The buyer's side of the same sale gets a matching read-only signal: a position
+that cannot complete for this reason is reported as unavailable before anyone
+commits a transaction, rather than letting the purchase be attempted and fail.
+
 Refusing is the conservative half of a larger design. The lender-exit design doc
 offers a richer alternative — carry the excess into the buyer's compensation —
 which belongs with the position-sale bid instrument, where the buyer's side of

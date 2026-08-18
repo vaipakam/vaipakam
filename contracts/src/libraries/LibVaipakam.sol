@@ -6643,6 +6643,29 @@ library LibVaipakam {
         //   discarded portion would read as still-in-transit forever,
         //   restoring the exact phantom allowance this counter removes.
         uint256 recycleReleasedRemitResolvedCumulative;
+        /// @dev #1503 item 28 — the part of `loan.interestSettled` that was
+        ///      FROZEN rather than delivered.
+        ///
+        ///      APPENDED AT THE STRUCT TAIL — never insert mid-struct.
+        ///
+        ///      `RepayPeriodicFacet` credits `interestSettled` by the interest it
+        ///      forwarded, and forwards it through
+        ///      `freezeOrPayActiveLenderResident` — which pays the holder when
+        ///      clean and PARKS into `heldForLender` when they are registry-
+        ///      flagged. The credit is unconditional either way, and rightly so:
+        ///      the borrower paid it, so their obligation nets it whatever
+        ///      happened on the lender side.
+        ///
+        ///      But a lender-position SALE migrates `heldForLender` to the buyer,
+        ///      so a parked amount is one the seller never received and does not
+        ///      keep. Netting it out of their sale forfeiture would credit them
+        ///      for it a second time, at treasury's expense. This counter is what
+        ///      lets the sale routes subtract only interest actually delivered,
+        ///      while every other settlement path keeps using the full figure.
+        ///
+        ///      Not decremented on sale: the parked balance moves to the buyer
+        ///      still undelivered, so the same carve-out must apply if THEY sell.
+        mapping(uint256 => uint256) settledInterestParked;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

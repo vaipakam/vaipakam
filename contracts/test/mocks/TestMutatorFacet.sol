@@ -383,6 +383,15 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().saleProceedsEscrow[loanId] = amount;
     }
 
+    /// @notice Write `s.settledInterestParked[loanId] = amount` directly.
+    /// @dev #1503 item 28 — the frozen-payout counter. Reaching it for real needs
+    ///      a periodic servicing run against a registry-flagged lender, which the
+    ///      unit harness has no oracle for; seeding it exercises the carve-out
+    ///      the sale routes apply to it.
+    function setSettledInterestParkedRaw(uint256 loanId, uint256 amount) external {
+        LibVaipakam.storageSlot().settledInterestParked[loanId] = amount;
+    }
+
     /// #594 test — append a loanId to a user's loan index directly (to set up
     /// the already-indexed dup-protection case).
     function pushUserLoanIdRaw(address user, uint256 loanId) external {

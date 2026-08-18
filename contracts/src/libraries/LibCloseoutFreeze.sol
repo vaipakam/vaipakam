@@ -250,6 +250,14 @@ library LibCloseoutFreeze {
             return;
         }
         LibSanctionedLock.depositLocked(s, loan.lender, loanId, asset, amount);
+        // #1503 item 28 — this helper's ONE caller (`RepayPeriodicFacet`) passes
+        // exactly the interest it is about to credit to `loan.interestSettled`,
+        // and credits it whether or not the payout froze here. Record the frozen
+        // part so a later lender-position sale can tell interest the seller
+        // RECEIVED from interest merely booked against them: the parked balance
+        // migrates to the buyer with `heldForLender`, so netting it out of the
+        // seller's forfeiture would hand them the same amount twice.
+        s.settledInterestParked[loanId] += amount;
         _parkActiveLenderShare(s, loanId, loan, lenderRecipient, asset, amount);
     }
 

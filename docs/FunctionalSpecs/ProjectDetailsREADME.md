@@ -1857,6 +1857,15 @@ This option allows Liam to recover principal early by selling his lender positio
 
 - Any interest accrued up to the time of sale is forfeited by Liam and routed to treasury, subject to the platform’s sale rules.
 - This avoids complex retroactive splitting of interest across multiple lenders.
+- **Only interest Liam has actually RECEIVED counts as already paid.** Interest
+  the platform recorded as settled to the lender side is not always interest the
+  lender got: when a periodic payment is made to a lender whose wallet is
+  sanctions-flagged, the money is held rather than delivered, while the record
+  still shows it as settled — correctly, because the borrower paid it and their
+  obligation must reduce by it either way. But a sale hands that held balance to
+  the buyer, so it is money the seller never received and does not keep. Only
+  the delivered part may reduce what the seller forfeits; crediting the held
+  part as well would pay them for it a second time, out of the platform's share.
 - **Only interest Liam has not already been paid is forfeitable.** On a loan with periodic interest servicing, Alice pays interest to the lender during the term, and those payments do not stop the accrual measure from advancing. The amount Liam forfeits is therefore the interest accrued to the moment of sale **less whatever has already been settled to the lender side**, never the raw accrual — charging the raw figure would bill Liam a second time for interest he has already received, on a route where he is exiting rather than being made whole.
 - **A sale is refused while the borrower is ahead on interest.** If more interest has already been settled to the lender side than has accrued — which a periodic servicing run can overshoot into, and which a partial repayment may deliberately leave behind as a credit against future accrual — the platform does not simply treat the forfeiture as nil and proceed. A nil forfeiture and a settled position are different claims: the leftover credit belongs to the loan, and letting the sale complete would quietly transfer it to Noah, reducing what Alice owes him at final settlement without either of them agreeing to it. The sale is refused, and the refusal states how much prepaid credit remains, so the position can be brought level first. This applies identically to the direct sale and to the listed sale's completion — a rule that binds one route and not the other would let the same position be sold on different economics depending on which door it left by.
 

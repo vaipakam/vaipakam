@@ -309,10 +309,17 @@ contract EarlyWithdrawalDirectFacet is
         // for interest they have already received, and the netting helper
         // saturates at zero so an EXCESS credit would pass to the buyer unseen.
         // Both routes must cap the same costs or the asymmetry is arbitrary.
-        if (uint256(loan.interestSettled) > accrued) {
-            revert SaleBlockedByPrepaidInterest(loanId, uint256(loan.interestSettled) - accrued);
+        // Only interest the seller ACTUALLY RECEIVED is theirs to be credited
+        // for (Codex #1801 r1 P1). `interestSettled` is credited whether the
+        // periodic payout reached the lender or was frozen into `heldForLender`,
+        // and a sale migrates that parked balance to the BUYER — so netting the
+        // raw figure would pay the seller for it a second time, out of treasury's
+        // share, for tokens they never held and do not keep.
+        uint256 realizedSettled = LibEntitlement.realizedSettledInterest(loan, loanId);
+        if (realizedSettled > accrued) {
+            revert SaleBlockedByPrepaidInterest(loanId, realizedSettled - accrued);
         }
-        accrued = LibEntitlement.creditSettledInterest(loan, accrued);
+        accrued -= realizedSettled;
         uint256 originalRemainingInterest = (loan.principal *
             loan.interestRateBps *
             remainingSecs) /

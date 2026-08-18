@@ -220,6 +220,33 @@ library LibEntitlement {
         return grossInterest > settled ? grossInterest - settled : 0;
     }
 
+    /// @notice The part of `loan.interestSettled` the lender actually RECEIVED —
+    ///         the full figure less anything frozen into `heldForLender`.
+    /// @dev    #1503 item 28. Only the lender-position SALE routes want this.
+    ///
+    ///         Every other settlement path correctly nets the full
+    ///         `interestSettled`: the borrower paid it, so their obligation
+    ///         reduces by it regardless of whether the lender's copy was
+    ///         delivered or parked, and a parked amount stays claimable by
+    ///         whoever holds the position.
+    ///
+    ///         A sale is different, because it MIGRATES `heldForLender` to the
+    ///         buyer. A parked amount is therefore one the exiting seller neither
+    ///         received nor keeps, and crediting it against their forfeiture
+    ///         would pay them for it a second time out of the treasury's share.
+    /// @param loan   The loan being sold.
+    /// @param loanId Its id — the parked counter is keyed per loan, not on the
+    ///               struct, because it is appended storage.
+    /// @return realized Interest genuinely delivered to the lender side so far.
+    function realizedSettledInterest(
+        LibVaipakam.Loan storage loan,
+        uint256 loanId
+    ) internal view returns (uint256 realized) {
+        uint256 settled = uint256(loan.interestSettled);
+        uint256 parked = LibVaipakam.storageSlot().settledInterestParked[loanId];
+        return settled > parked ? settled - parked : 0;
+    }
+
     /// @notice Applies the treasury cut to an interest-like amount, using the
     ///         fee BPS the loan was ORIGINATED under.
     /// @param loan           The loan whose treasury cut is being settled — its
