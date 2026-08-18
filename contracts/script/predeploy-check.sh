@@ -674,6 +674,31 @@ else
   # Bodies are split by brace depth on the comment-stripped text, so a `{` in a
   # string cannot unbalance it: the stripper has already reduced every string to
   # either a bare key or nothing.
+  # Two things beyond plain reachability, both from Codex #1798 r6, both
+  # conservative refusals rather than deeper analysis:
+  #
+  #   · OVERLOADS are rejected. Bodies are keyed by bare name, so calling one
+  #     overload would mark every same-named overload live — hiding a write that
+  #     sits in the uncalled one. Solidity's dispatch is by signature; this walk
+  #     is by name, and the honest response to that gap is to refuse rather than
+  #     to guess which overload a call site meant.
+  #   · Only STATEMENT-LEVEL lines are emitted (brace depth ≤ 1 within the
+  #     function). A registration nested any deeper sits inside an `if`, a loop,
+  #     or a scoping block, and its execution is conditional —
+  #     `if (block.chainid == 31337) { writeFacet(...) }` reaches a reachable
+  #     function and still records nothing on every other chain. Dropping those
+  #     lines makes the registration vanish from the harvest, so its still-live
+  #     cut reports the facet as unrecorded. All 147 of today's registrations
+  #     are already at statement level, so this constrains nothing that exists.
+  #
+  # Reachability is computed over the FULL body — a helper called from inside an
+  # `if` is genuinely reachable — while only the statement-level lines are
+  # emitted. The two must not share one view.
+  #
+  # What this still does not prove: that the function runs to completion. An
+  # early `return` ahead of a registration leaves it unconditional in the text
+  # and unexecuted in practice. That is the artifact-level check's job (#1800),
+  # not a static parse's.
   reachable_bodies() { # <entry-point seeds are derived, not passed>
     awk '
       function nchar(s, c,   n, i) {
@@ -686,17 +711,26 @@ else
           if (match($0, /function[ \t]+[A-Za-z0-9_]+[ \t]*\(/)) {
             name = substr($0, RSTART, RLENGTH)
             sub(/function[ \t]+/, "", name); sub(/[ \t]*\(.*/, "", name)
-            cur = name; buf = ""; depth = 0; started = 0; sig = ""
+            if (name in body) overloaded[name] = 1
+            cur = name; buf = ""; shallow = ""; depth = 0; started = 0; sig = ""
           } else next
         }
         buf = buf " " $0
+        # Depth BEFORE this line decides whether the line is statement-level:
+        # the closing `}` of a nested block belongs to that block, not to the
+        # statement list around it.
+        pre = depth
+        depth += nchar($0, "{") - nchar($0, "}")
         if (!started) {
           sig = sig " " $0
           if (index($0, "{") > 0) started = 1
+          shallow = shallow " " $0
+        } else if (pre <= 1 && depth <= 1) {
+          shallow = shallow " " $0
         }
-        depth += nchar($0, "{") - nchar($0, "}")
         if (started && depth <= 0) {
           body[cur] = body[cur] " " buf
+          emit[cur] = emit[cur] " " shallow
           # A multi-line signature puts the visibility keyword on any of its
           # lines, so the whole header up to the opening brace is examined.
           if (sig ~ /(^|[^A-Za-z0-9_])(external|public)([^A-Za-z0-9_]|$)/) seed[cur] = 1
@@ -704,6 +738,11 @@ else
         }
       }
       END {
+        for (n in overloaded) bad = bad " " n
+        if (bad != "") {
+          print "OVERLOADED_FUNCTIONS" bad > "/dev/stderr"
+          exit 3
+        }
         for (n in seed) if (n in body) { live[n] = 1; queue[++qn] = n }
         for (qi = 1; qi <= qn; qi++) {
           text = body[queue[qi]]
@@ -712,7 +751,7 @@ else
             if (text ~ ("(^|[^A-Za-z0-9_])" n "[ \t]*\\(")) { live[n] = 1; queue[++qn] = n }
           }
         }
-        for (n in live) printf "%s ", body[n]
+        for (n in live) printf "%s ", emit[n]
         printf "\n"
       }
     '
@@ -730,8 +769,16 @@ else
   # (`[A-Za-z0-9]+`), which is the only thing either half needs to read out of a
   # string. Everything else in quotes — URLs, log text, a registration-shaped
   # string — is dropped before either half sees it.
-  DEPLOY_FLAT="$(strip_sol_comments "$DEPLOY_SOL" | reachable_bodies)"
-  REFRESH_FLAT="$(strip_sol_comments "$REFRESH_SOL" | reachable_bodies)"
+  # An overload rejection must STOP this step rather than colour one comparison:
+  # with the harvest unusable, every check below would compare against a set that
+  # is missing whatever the overloads held, and the most likely outcome is a
+  # falsely green one.
+  HARVEST_ERR="$(mktemp)"
+  HARVEST_FAILED=""
+  DEPLOY_FLAT="$(strip_sol_comments "$DEPLOY_SOL" | reachable_bodies 2>>"$HARVEST_ERR")" \
+    || HARVEST_FAILED=1
+  REFRESH_FLAT="$(strip_sol_comments "$REFRESH_SOL" | reachable_bodies 2>>"$HARVEST_ERR")" \
+    || HARVEST_FAILED=1
 
   CUT_GETTER_VAR="$(printf '%s' "$DEPLOY_FLAT" \
     | grep -oE '_buildCut[[:space:]]*\([[:space:]]*address[[:space:]]*\([A-Za-z0-9_]+\)[[:space:]]*,[[:space:]]*_get[A-Za-z0-9]+Selectors[[:space:]]*\(\)' \
@@ -780,7 +827,15 @@ else
     writeFacet: $N_WRITE_CALLS call(s) in DeployDiamond.s.sol, $N_WRITE_PAIRS parsed"
   [ "$N_ITEM_PAIRS" -eq "$N_ITEM_CALLS" ] || UNPARSED="$UNPARSED
     Item: $N_ITEM_CALLS call(s) in RefreshAllFacetsInPlace.s.sol, $N_ITEM_PAIRS parsed"
-  if [ -n "$UNPARSED" ]; then
+  if [ -n "$HARVEST_FAILED" ]; then
+    echo "  ✗ this check cannot read the deploy scripts:" >&2
+    sed 's/^/      /' "$HARVEST_ERR" >&2
+    echo "    Solidity dispatches overloads by SIGNATURE; this walk resolves calls by" >&2
+    echo "    NAME, so calling one overload marks every same-named one live and hides" >&2
+    echo "    a registration sitting in the uncalled twin. Give them distinct names, or" >&2
+    echo "    teach this walk signatures — do not delete the check." >&2
+    FAIL=1
+  elif [ -n "$UNPARSED" ]; then
     echo "  ✗ some facet registrations could not be parsed, so they would be" >&2
     echo "    invisible to the comparisons below:$UNPARSED" >&2
     echo "    Every call must match the expected shape. Fix the registration (or this" >&2
@@ -895,6 +950,7 @@ else
       echo "  ✓ refresh-script facet keys match the deploy script's"
     fi
   fi
+  rm -f "$HARVEST_ERR"
 fi
 
 # ── Verdict ───────────────────────────────────────────────────────────

@@ -36,3 +36,14 @@ is of a known kind, which tells it nothing about an address never recorded at
 all. That check cannot be expressed in the contract language and belongs in the
 deploy gate script instead, so it is tracked as its own follow-up rather than
 bolted on here.
+
+The gate reads the deploy scripts as text, so it can only ever approximate the
+question anyone actually cares about — whether a real deploy's record of
+addresses ends up complete. It now restricts itself to code the deploy actually
+runs, and refuses outright on the shapes it cannot read faithfully rather than
+guessing at them: two same-named functions, or a registration nested inside a
+conditional, stop the check and say so. That is deliberately conservative — a
+refusal is a loud, fixable message, whereas a guess is a silent wrong answer on
+exactly the question the gate exists to settle. Asserting the record produced by
+an actual deployment, which needs no such approximation, is tracked separately as
+#1800; this gate stays as the fast pre-check that needs no compile.
