@@ -35,6 +35,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {LibSaleListing} from "../src/libraries/LibSaleListing.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -1288,15 +1289,237 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      rate (no shortfall), and escrow the buyer's principal so the net
     ///      settlement actually runs.
     function _stageAcceptedSaleListing() internal {
+        // The loan's OWN rate, so the rate-shortfall leg is zero throughout.
+        _stageAcceptedSaleListingAtRate(500);
+    }
+
+    /// @dev A listing at `rateBps` rather than the loan's 500. Above it, the
+    ///      shortfall leg is non-zero and — unlike the forfeited accrual — it
+    ///      SHRINKS as the window elapses, which is what makes the two ends of
+    ///      the window disagree about which is worst.
+    function _stageAcceptedSaleListingAtRate(uint256 rateBps) internal {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, rateBps, true, 7 days);
         vm.clearMockedCalls();
 
-        _setOfferAcceptedAndRate(50, 500);
+        _setOfferAcceptedAndRate(50, rateBps);
         TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
         _setupTempLoan(2);
         TestMutatorFacet(address(diamond)).setSaleProceedsEscrowRaw(activeLoanId, PRINCIPAL);
+    }
+
+    // ─── #1503 item 4: the seller's two economic bounds ──────────────────────
+
+    /// @dev Codex #1812 round 3/5 — the TRUNCATION SLACK, measured rather than
+    ///      argued. Evaluating both endpoints is exactly tight over the reals
+    ///      and not in integer arithmetic: the shortfall leg is a difference of
+    ///      two SEPARATELY TRUNCATED figures, so it can exceed both endpoint
+    ///      values at a second in between, and a floor recorded without slack
+    ///      then refuses a fill that changed nothing.
+    ///
+    ///      These parameters are not decorative — they are the smallest case I
+    ///      could construct that is REACHABLE here. The counterexample in the
+    ///      review used 7,203 seconds of remaining term, which this contract
+    ///      cannot express: `interestRemainingDaysOf` returns whole days, so
+    ///      the term is always a multiple of 86,400. Searching whole-day terms
+    ///      found this one:
+    ///
+    ///        principal 1e9, loan 2 bps, sale 3 bps, 13-day term, 280,800s
+    ///        window → cost 3,561 at listing, 2,671 at expiry, and 3,562 at
+    ///        t = 46s. Without slack the recorded floor sits ONE unit above the
+    ///        seller's own net at that second.
+    ///
+    ///      The probe is `quoteSellerBounds`, which returns the floor for a
+    ///      window. Quoting a window that begins and ends at the SAME second
+    ///      collapses both endpoint evaluations onto it, so that quote is that
+    ///      second's own cost. The slack is added back to recover the true net,
+    ///      which is why the constant appears in the assertion: the invariant
+    ///      is "the recorded floor never exceeds the seller's real net at any
+    ///      second inside the window", and the probe carries slack of its own.
+    function test_saleListing_floorCoversAnInteriorSecondDespiteTruncation() public {
+        uint256 truncLoanId = 4242;
+        LibVaipakam.Loan memory l;
+        l.id = truncLoanId;
+        l.lender = lender;
+        l.principal = 1_000_000_000;
+        l.interestRateBps = 2;
+        l.interestAccrualStart = uint64(block.timestamp);
+        l.interestRemainingDays = 13;
+        TestMutatorFacet(address(diamond)).setLoan(truncLoanId, l);
+
+        uint256 listedAt = block.timestamp;
+        (uint256 floorAtListing, ) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(truncLoanId, 3, listedAt + 280_800);
+
+        // The interior second whose truncated cost exceeds BOTH endpoints.
+        vm.warp(listedAt + 46);
+        (uint256 floorAtThatSecond, ) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(truncLoanId, 3, block.timestamp);
+        uint256 trueNetAtThatSecond =
+            floorAtThatSecond + LibSaleListing.TRUNCATION_SLACK;
+
+        assertLe(
+            floorAtListing,
+            trueNetAtThatSecond,
+            "the recorded floor must not exceed the seller's net at an interior second"
+        );
+    }
+
+    /// @dev The FLOOR is the worst case ACROSS THE WINDOW — both endpoints,
+    ///      whichever is worse for the seller, plus truncation slack (see
+    ///      `LibSaleListing.projectSellerBounds`). Ordinary accrual therefore
+    ///      sits inside it, which is the property that makes the bound usable
+    ///      at all: a floor at the figure the seller saw would make their own
+    ///      listing unfillable within minutes.
+    /// @dev Codex #1812 P1 — the worst moment to fill is not always the LAST
+    ///      moment, so the floor cannot be projected at the expiry alone.
+    ///
+    ///      The cost is `max(forfeited accrual, rate shortfall)` and the two
+    ///      legs move in opposite directions: accrual grows across the window,
+    ///      while the shortfall is owed over the REMAINING term and so shrinks.
+    ///      Listed well above the loan's own rate, the shortfall dominates and
+    ///      the sale is costliest to the seller IMMEDIATELY.
+    ///
+    ///      Projecting only at the expiry therefore recorded a floor ABOVE the
+    ///      seller's own instant net, and this fill — which disturbs nothing,
+    ///      warps nowhere, and is exactly what the seller asked for — reverted
+    ///      `SaleBelowSellerFloor`. The bound refusing the sale it exists to
+    ///      protect is the failure this pins.
+    ///
+    ///      Evaluating both ends is necessary and NOT sufficient (Codex #1812
+    ///      round 3): the shortfall leg is a difference of separately truncated
+    ///      figures, so it can peak between the endpoints, and the projection
+    ///      carries two units of slack for that. This case would still pass
+    ///      without the slack — its gap is far wider than two units — so the
+    ///      slack is covered by the derivation in `LibSaleListing`, not here.
+    function test_saleListing_immediateFillAtAHigherRateIsNotBelowTheFloor() public {
+        _stageAcceptedSaleListingAtRate(1500);
+        // No warp: the buyer fills at once, which is the costliest moment here.
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "an immediate fill on an above-rate listing is inside the seller's own floor"
+        );
+    }
+
+    function test_saleListing_ordinaryAccrualDoesNotTripTheFloor() public {
+        _stageAcceptedSaleListing();
+        // Most of the seller-chosen window elapses before the buyer fills.
+        vm.warp(block.timestamp + 6 days);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "the sale completed and the position stayed live for the buyer"
+        );
+    }
+
+    /// @dev A PRINCIPAL change is the case only the floor can see: it
+    ///      disqualifies the paid-through mark — re-opening the forfeiture
+    ///      window earlier than the projection assumed — while parking nothing,
+    ///      so the held ceiling is untouched.
+    ///
+    ///      ORDER MATTERS, and getting it wrong is what a first draft of this
+    ///      test did: the mark must exist BEFORE the listing, so the seller's
+    ///      projection is computed against a short window. Setting it
+    ///      afterwards and voiding it proves nothing — the projection already
+    ///      assumed the accrual origin, so the void returns the window to
+    ///      exactly where the floor expected it and nothing trips. That is the
+    ///      floor being correctly insensitive to a change that does not worsen
+    ///      the seller's position.
+    function test_saleListing_principalChangeTripsTheFloor() public {
+        // The loan must have RUN before the listing, or voiding the mark barely
+        // widens the window: with the accrual origin at listing time the two
+        // starting points nearly coincide and the projected cost is already the
+        // larger one. Thirty days of history is what makes the disqualification
+        // a step rather than a rounding difference.
+        // Ten days, not thirty: the listing window is clamped at the loan's own
+        // maturity, so too much history makes `createLoanSaleOffer` refuse the
+        // listing outright and the test would pass on the wrong revert. The
+        // trip needs only history + fill-delay to exceed the seven-day window.
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        // A lender paid through NOW, so the listing's projected cost covers only
+        // the seven-day window and its floor is correspondingly high. The mark
+        // is stamped WITH the live principal, which is what a real settlement
+        // records and what the disqualifier below then contradicts.
+        uint256 principalAtMark =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal;
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, block.timestamp, principalAtMark
+        );
+        _stageAcceptedSaleListing();
+
+        // Then a partial repayment moves principal, disqualifying the mark. The
+        // forfeiture window re-opens at the accrual origin, far earlier than
+        // the projection assumed, and the seller's net drops below the floor
+        // they recorded.
+        //
+        // Staged as a genuine PRINCIPAL MISMATCH (Codex #1812 round-4 P2). This
+        // test previously called `setLenderMarkVoidedRaw`, which trips the
+        // independent freeze/park disqualifier — so despite its name and its
+        // comment it never exercised the principal-change predicate at all, and
+        // would have passed with that predicate deleted. Leaving the mark's
+        // recorded principal behind the loan's live one is what a partial
+        // repayment actually does.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, block.timestamp, principalAtMark + 1
+        );
+        vm.warp(block.timestamp + 3 days);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        // The SELECTOR, not a bare expectRevert: an earlier draft of this test
+        // was tripping `InvalidSaleOffer` at listing time — too much warped
+        // history for the window — and a bare expectRevert passed on it,
+        // reporting a green test that never reached the bound at all.
+        vm.expectPartialRevert(IVaipakamErrors.SaleBelowSellerFloor.selector);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev A PARK between listing and acceptance enlarges what transfers to the
+    ///      buyer. Unlike the forfeiture it does not grow with time, so the
+    ///      ceiling is simply the balance at listing.
+    function test_saleListing_newParkTripsTheHeldCeiling() public {
+        _stageAcceptedSaleListing();
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SaleAboveHeldCeiling.selector,
+                0,
+                1e6
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev A listing made before the bounds existed records none, and must keep
+    ///      completing exactly as it did. The recorded-flag is what makes this
+    ///      distinguishable from a listing whose ceiling is legitimately zero.
+    function test_saleListing_legacyListingWithoutBoundsStillCompletes() public {
+        _stageAcceptedSaleListing();
+        TestMutatorFacet(address(diamond)).clearSaleListingBoundsRaw(activeLoanId);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "a pre-bounds listing is not retro-bound by a ceiling it never recorded"
+        );
     }
 
     // ─── createLoanSaleOffer reverts ─────────────────────────────────────────

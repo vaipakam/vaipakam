@@ -1985,6 +1985,38 @@
   },
   {
     "type": "error",
+    "name": "SaleAboveHeldCeiling",
+    "inputs": [
+      {
+        "name": "maxHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleBelowSellerFloor",
+    "inputs": [
+      {
+        "name": "minSellerNet",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleInheritsWeakerRiskTerms",
     "inputs": [
       {

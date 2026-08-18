@@ -91,7 +91,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](176);
+        selectors = new bytes4[](177);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -237,6 +237,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
         selectors[n++] = TestMutatorFacet.setHeldForLenderRaw.selector;
         selectors[n++] = TestMutatorFacet.setSaleProceedsEscrowRaw.selector;
+        selectors[n++] = TestMutatorFacet.clearSaleListingBoundsRaw.selector;
         selectors[n++] = TestMutatorFacet.setLenderPaidThroughRaw.selector;
         // #1801 — the two DISQUALIFICATION seeds: a mark recorded against a
         // principal the loan no longer carries, and the sticky freeze void.
@@ -1081,7 +1082,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](10);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1094,6 +1095,8 @@ contract HelperTest {
         selectors[7] = RiskPreviewFacet.saleAdmission.selector;
         // #1503 item 28 — seller forfeiture window (see DeployDiamond).
         selectors[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
+        // #1503 item 4 — listing bounds quote (see DeployDiamond).
+        selectors[9] = RiskPreviewFacet.quoteSellerBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.

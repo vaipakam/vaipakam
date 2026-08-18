@@ -6790,6 +6790,77 @@ library LibVaipakam {
         ///         about when their lender's tenure started, so no clamp is
         ///         applied and they keep the behaviour they already had.
         mapping(uint256 => uint256) lenderTenureStart;
+
+        /// @notice #1503 item 4 — the seller's FLOOR on a sale listing: the
+        ///         least they will accept out of the buyer's escrowed proceeds,
+        ///         after the settlement forfeiture is deducted.
+        ///
+        /// @dev    The listing stored no economic bound of any kind, so
+        ///         completion recomputed the forfeiture at the acceptance block
+        ///         and the seller was bound by whatever it came to then.
+        ///
+        ///         The floor is NOT the figure the seller saw. Accrued interest
+        ///         grows across the listing window, so a floor at the displayed
+        ///         value would make the listing unfillable almost immediately.
+        ///         It is the worst case they accepted — the same settlement
+        ///         arithmetic evaluated at BOTH ends of the listing window,
+        ///         taking whichever is worse for them, plus slack for integer
+        ///         truncation. Not the expiry alone: the two legs of the cost
+        ///         move in opposite directions, so an above-rate listing is
+        ///         costliest to fill immediately. Computable only because the
+        ///         expiry is mandatory and finite. See
+        ///         `LibSaleListing.projectSellerBounds`.
+        ///
+        ///         Zero does NOT mean "no floor recorded". `projectSellerBounds`
+        ///         deliberately returns zero when the projected cost reaches the
+        ///         principal, and the listing is recorded all the same — so a
+        ///         current listing can legitimately carry a zero floor. The
+        ///         companion `saleListingBoundsRecorded` flag is the sentinel
+        ///         that separates a recorded listing from one made before this
+        ///         shipped, exactly as it is for a zero ceiling. Reading the
+        ///         numeric floor as the sentinel would misclassify a live
+        ///         listing as legacy and skip its bounds.
+        mapping(uint256 => uint256) saleListingMinSellerNet;
+
+        /// @notice #1503 item 4 — the seller's CEILING on the held balance a
+        ///         sale hands to the buyer: what was parked for them when they
+        ///         listed.
+        ///
+        /// @dev    The opposite shape to the floor, because this quantity does
+        ///         not grow with time. It grows only when a partial or internal
+        ///         settlement parks MORE into it between listing and
+        ///         acceptance — precisely the drift this bound exists to
+        ///         refuse — so the recorded value is the balance at listing and
+        ///         any later park fails the sale rather than silently enlarging
+        ///         what transfers.
+        ///
+        ///         Recorded even when zero, with a companion flag, because "no
+        ///         held balance at listing" is a real bound and not the absence
+        ///         of one: without the flag a listing made with nothing parked
+        ///         would be indistinguishable from a legacy listing and would
+        ///         accept an arbitrary later park.
+        mapping(uint256 => uint256) saleListingMaxHeldTransfer;
+
+        /// @notice #1503 item 4 — whether this loan's live listing carries the
+        ///         item-4 bounds at all.
+        /// @dev    Distinguishes a listing that recorded a zero ceiling from one
+        ///         made before the bounds existed. Cleared with the listing.
+        mapping(uint256 => bool) saleListingBoundsRecorded;
+
+        /// @notice #1503 item 4 — the expiry the FLOOR was projected to.
+        /// @dev    Stored with the bounds rather than read back off the sale
+        ///         offer, so the seller's authorisation is one self-contained
+        ///         record. The offer is a different lifecycle — cancel and
+        ///         teardown clear it — and a bound that depends on a record
+        ///         someone else may remove is a bound with a hole in it.
+        ///
+        ///         The floor bounds every fill INSIDE the window and says
+        ///         nothing about one after it: `completeLoanSale` stays callable
+        ///         past the window on purpose, and the seller invoking it
+        ///         themselves is fresh authorisation rather than a race, so
+        ///         enforcing a stale projection there would refuse their own
+        ///         deliberate act.
+        mapping(uint256 => uint256) saleListingBoundsExpiry;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

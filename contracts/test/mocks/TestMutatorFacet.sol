@@ -374,6 +374,18 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().heldForLender[loanId] = amount;
     }
 
+    /// @notice Clear a listing's #1503 item-4 seller bounds (#1503 item 4).
+    /// @dev    Stages the LEGACY case: a listing created before the bounds
+    ///         existed records none, and the recorded-flag is what tells that
+    ///         apart from a listing whose ceiling is legitimately zero.
+    function clearSaleListingBoundsRaw(uint256 loanId) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        delete s.saleListingMinSellerNet[loanId];
+        delete s.saleListingMaxHeldTransfer[loanId];
+        delete s.saleListingBoundsRecorded[loanId];
+        delete s.saleListingBoundsExpiry[loanId];
+    }
+
     /// @notice Write `s.saleProceedsEscrow[loanId] = amount` directly.
     /// @dev #1503 item 28 — the listed sale route's net settlement only runs when
     ///      the buyer's principal is escrowed, which happens on a real listing

@@ -207,7 +207,7 @@ library FacetSelectors {
     ///         Replace the routed), so it is correct against a pre-#1503 diamond
     ///         and a current one alike.
     function riskPreview() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         s[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         s[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         s[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -221,6 +221,9 @@ library FacetSelectors {
         // surface, so omitting a new selector leaves it pointed at stale
         // bytecode after a curated refresh.
         s[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
+        // #1503 item 4 — listing bounds quote. Same `Replace`-completeness
+        // reason as the line above.
+        s[9] = RiskPreviewFacet.quoteSellerBounds.selector;
     }
 
     /// @notice Full external selector surface of {RepayPeriodicFacet} (4).

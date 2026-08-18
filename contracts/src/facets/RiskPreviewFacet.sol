@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -595,6 +596,46 @@ contract RiskPreviewFacet {
             block.timestamp > forfeitFrom ? block.timestamp - forfeitFrom : 0;
         forfeitAccrued = (loan.principal * loan.interestRateBps * secs) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+    }
+
+    /**
+     * @notice #1503 item 4 — the two bounds a listing made right now WOULD
+     *         record, so the seller can be shown what they are agreeing to
+     *         before they agree to it.
+     *
+     * @dev    Literally the same call the listing makes:
+     *         {LibSaleListing.projectSellerBounds} is what
+     *         {LibSaleListing.recordSellerBounds} stores, so the quote cannot
+     *         disagree with the bound — not "agrees today", but one computation
+     *         with two callers. That is the #1801 lesson applied ahead of time
+     *         rather than after: a client that mirrors the rule drifts from it
+     *         the moment the rule changes, and this rule has changed under
+     *         review more than once. There is nothing on-chain to read at
+     *         listing time — the listing does not exist yet — so the projection
+     *         has to be offered as a view or the client is forced to re-derive
+     *         it, which is the drift by a longer road.
+     *
+     *         `expiresAt` is passed rather than derived because the seller is
+     *         still choosing it: the whole point of the quote is to answer
+     *         "what would I be agreeing to if I listed for THIS long".
+     *
+     * @param loanId      The loan the seller is considering listing.
+     * @param saleRateBps The rate they would list at.
+     * @param expiresAt   The expiry the listing would carry.
+     * @return minSellerNet The floor that listing would record — the least the
+     *                      seller receives if it fills at any point before it
+     *                      expires.
+     * @return maxHeld      The ceiling it would record: money already set aside
+     *                      for the lender, which transfers with the position.
+     */
+    function quoteSellerBounds(
+        uint256 loanId,
+        uint256 saleRateBps,
+        uint256 expiresAt
+    ) external view returns (uint256 minSellerNet, uint256 maxHeld) {
+        return LibSaleListing.projectSellerBounds(
+            LibVaipakam.storageSlot(), loanId, saleRateBps, expiresAt
+        );
     }
 
     function saleAdmission(uint256 loanId)
