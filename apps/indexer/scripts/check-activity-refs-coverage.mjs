@@ -280,6 +280,63 @@ const REF_EXTRA_ALIASES = {
  */
 const SHADOWABLE_NAMES = new Set(['args', 'Number']);
 
+const unwrapAssertions = (t) => {
+  while (
+    ts.isParenthesizedExpression(t) ||
+    ts.isAsExpression(t) ||
+    ts.isNonNullExpression(t) ||
+    ts.isSatisfiesExpression?.(t) ||
+    ts.isTypeAssertionExpression?.(t)
+  ) {
+    t = t.expression;
+  }
+  return t;
+};
+
+/**
+ * Is this node a WRITE to the bare identifier `wanted`? Any assignment operator,
+ * the increment/decrement forms, and a destructuring-assignment target — the
+ * same shapes `mutatesShadowable` recognises for `args`, asked of a plain name.
+ */
+const writesName = (n, wanted) => {
+  if (!wanted) return false;
+  const targets = (expr) => {
+    if (!expr) return false;
+    if (ts.isParenthesizedExpression(expr)) return targets(expr.expression);
+    if (ts.isObjectLiteralExpression(expr)) {
+      return expr.properties.some((p) => {
+        if (ts.isPropertyAssignment(p)) return targets(p.initializer);
+        if (ts.isShorthandPropertyAssignment(p)) return p.name.text === wanted;
+        if (ts.isSpreadAssignment(p)) return targets(p.expression);
+        return false;
+      });
+    }
+    if (ts.isArrayLiteralExpression(expr)) {
+      return expr.elements.some((e) =>
+        ts.isSpreadElement(e) ? targets(e.expression) : targets(e),
+      );
+    }
+    if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      return targets(expr.left); // `[x = fallback]`: the default is not the target
+    }
+    // Assertions and parens are peeled — but NOT property access: `foo.eventName`
+    // is a different binding, and treating it as this one would refuse ordinary
+    // code. `unwrapAssertions` stops exactly there.
+    const bare = unwrapAssertions(expr);
+    return ts.isIdentifier(bare) && bare.text === wanted;
+  };
+  if (ts.isBinaryExpression(n) && ts.isAssignmentOperator?.(n.operatorToken.kind)) {
+    return targets(n.left);
+  }
+  if (
+    (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
+    (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return targets(n.operand);
+  }
+  return false;
+};
+
 /** Does a binding name — plain or destructured — bind `wanted`? */
 const bindsName = (name, wanted) => {
   if (!name) return false;
@@ -298,18 +355,6 @@ const bindsName = (name, wanted) => {
  * declaration costs nothing real, because a mapper has no reason to alias the
  * argument bag it is handed.
  */
-const unwrapAssertions = (t) => {
-  while (
-    ts.isParenthesizedExpression(t) ||
-    ts.isAsExpression(t) ||
-    ts.isNonNullExpression(t) ||
-    ts.isSatisfiesExpression?.(t) ||
-    ts.isTypeAssertionExpression?.(t)
-  ) {
-    t = t.expression;
-  }
-  return t;
-};
 
 const aliasesShadowable = (n) => {
   // `const decoded = args;`
@@ -396,6 +441,14 @@ const mutatesShadowable = (n) => {
     (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)
   ) {
     const t = rootOf(n.operand);
+    return ts.isIdentifier(t) && SHADOWABLE_NAMES.has(t.text);
+  }
+  // `delete args.loanId` (Codex round-21 P2). Not an assignment and not one of
+  // the two unary operators, so every earlier round walked past it — and it is
+  // the most direct mutation of all: the property is gone and `Number(undefined)`
+  // is NaN, which the row stores in place of the id.
+  if (ts.isDeleteExpression?.(n)) {
+    const t = rootOf(n.expression);
     return ts.isIdentifier(t) && SHADOWABLE_NAMES.has(t.text);
   }
   return false;
@@ -563,10 +616,21 @@ for (const file of memberFiles) {
      * message — the live ABI has one such case (`PrepayListingUpdated.feeLegs`,
      * a `tuple[]` of recipient/startAmount/endAmount) and it is not a gap.
      */
+    // PLURAL names count here too (Codex round-21 P2). `isAliasOf` deliberately
+    // excludes `loanIds` so an array never looks like a single mappable id — but
+    // this predicate is asking a different question: does the shape HIDE a
+    // reference this checker then cannot see? A `tuple[] items` whose component
+    // is `uint256[] loanIds` answered no, so the tuple-array branch declined to
+    // report and the event sat outside coverage entirely. `collect` already
+    // recognises the plural form; the two must agree or the exclusion leaks from
+    // "not directly mappable" into "not there".
+    const isPluralRef = (name) =>
+      !!name && REF_FIELDS.some((f) => REF_SHAPE[f].test(`${name}`.replace(/s$/, '')));
     const hidesReference = (inputs) =>
       (inputs ?? []).some(
         (c) =>
           REF_FIELDS.some((f) => isAliasOf(f, c?.name)) ||
+          (/\]$/.test(c?.type ?? '') && isPluralRef(c?.name)) ||
           (Array.isArray(c?.components) && hidesReference(c.components)),
       );
     const collect = (inputs, prefix) => {
@@ -833,23 +897,52 @@ if (!fnNode) {
     );
     process.exit(1);
   }
-  let callsMapper = false;
-  const findCall = (n) => {
-    if (callsMapper) return;
-    if (ts.isCallExpression(n) && bareIdentifierOf(n.expression) === 'pluckActivityRefs') {
-      callsMapper = true;
+  // The call must SUPPLY THE ROW's references, not merely appear (Codex round-21
+  // P2). Any syntactic call satisfied the first version of this check, including
+  // an `if (false) pluckActivityRefs(…)` left beside a hand-rolled all-null
+  // object — which is the same substitution the check was added to stop, with a
+  // decoy left behind. So the anchor is the destructuring that names the
+  // reference fields, and what is required is that ITS INITIALIZER is the call.
+  let boundFrom = null;
+  let sawBinding = false;
+  const findBinding = (n) => {
+    if (sawBinding) return;
+    if (
+      ts.isVariableDeclaration(n) &&
+      n.name &&
+      ts.isObjectBindingPattern(n.name) &&
+      n.name.elements.some(
+        (el) =>
+          ts.isBindingElement(el) &&
+          ts.isIdentifier(el.name) &&
+          REF_FIELDS.includes(el.name.text),
+      )
+    ) {
+      sawBinding = true;
+      const init = n.initializer && unwrapAssertions(n.initializer);
+      if (init && ts.isCallExpression(init)) boundFrom = bareIdentifierOf(init.expression);
       return;
     }
-    ts.forEachChild(n, findCall);
+    ts.forEachChild(n, findBinding);
   };
-  if (ledgerNode.body) findCall(ledgerNode.body);
-  if (!callsMapper) {
+  if (ledgerNode.body) findBinding(ledgerNode.body);
+  if (!sawBinding) {
     console.error(
-      `[check-activity-refs-coverage] ${LEDGER_FN}() no longer calls pluckActivityRefs().\n` +
+      `[check-activity-refs-coverage] ${LEDGER_FN}() no longer destructures\n` +
+        `  ${REF_FIELDS.join(' / ')} from anything, so this script cannot tell where the row's\n` +
+        '  references come from. If the ledger changed shape, update this script — do not\n' +
+        '  delete the check.',
+    );
+    process.exit(1);
+  }
+  if (boundFrom !== 'pluckActivityRefs') {
+    console.error(
+      `[check-activity-refs-coverage] ${LEDGER_FN}() takes its activity_events references\n` +
+        `  from ${boundFrom ? `\`${boundFrom}()\`` : 'something that is not a function call'}, not from pluckActivityRefs().\n` +
         '  This script reads pluckActivityRefs to decide which events carry a reference, so\n' +
-        '  a ledger filling activity_events from somewhere else would report full coverage\n' +
-        '  while writing NULL loan_id / offer_id. Restore the call, or update this script —\n' +
-        '  do not delete the check.',
+        '  a ledger filled from somewhere else would report full coverage while writing NULL\n' +
+        '  loan_id / offer_id. Restore the call, or update this script — do not delete the\n' +
+        '  check.',
     );
     process.exit(1);
   }
@@ -903,6 +996,16 @@ if (discriminantName && fnNode.body) {
         ts.isParameter(n)) &&
       bindsName(n.name, discriminantName)
     ) {
+      shadowsDiscriminant = true;
+      return;
+    }
+    // A WRITE shadows the parameter just as a declaration does (Codex round-21
+    // P2). `eventName = 'LoanRepaid'` before the switch leaves the binding
+    // intact — nothing is redeclared — and sends every decoded event through
+    // one case, with the tally unmoved. Rounds 16-18 kept widening WHICH
+    // declarations bind the name and never asked whether the name still holds
+    // the argument it was handed.
+    if (writesName(n, discriminantName)) {
       shadowsDiscriminant = true;
       return;
     }
@@ -1462,7 +1565,29 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
         const accepted = aliasNames.get(label)?.get(field);
 
         const named = scopes.filter((s) => s.props?.has(field));
-        if (named.length === 0) continue; // this field is never returned here
+        // "Never returned here" and "returned by something unreadable" are
+        // different answers, and only the first may be skipped (Codex round-21
+        // P2). A return shaped `{ actor, ...{ loanId: 999 }, offerId: … }` names
+        // no explicit `loanId`, so this `continue` ran before opacity was even
+        // considered and every row for the event was filed under loan 999 with
+        // the tally unmoved. Round 19 taught the scope builder that an explicit
+        // property AFTER a spread survives; it left the case where there is no
+        // explicit property at all.
+        if (named.length === 0) {
+          // `spread` (a `...x` this builder could not resolve) as well as
+          // `opaque` (a whole return it could not read) — the round-19 builder
+          // records the two separately, and it is the spread that carries this
+          // case.
+          const unreadable = scopes.filter((sc) => sc.opaque || sc.spread);
+          if (unreadable.length === 0) continue; // genuinely never returned here
+          suspectMappings.push({
+            event: label,
+            field,
+            why: 'only a spread or unresolved computed key could define it, so what the row stores cannot be read here',
+            expr: unreadable[0].opaque ?? 'a spread with no explicit definition after it',
+          });
+          continue;
+        }
 
         // Deliberately unmapped on every path that names it, with nothing opaque.
         const allNull = named.every((s) => isNullLiteral(s.props.get(field).expr));
