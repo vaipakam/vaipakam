@@ -220,40 +220,6 @@ contract OfferPreviewFacet {
                     .SaleAdmissionBlocked;
                 return preview;
             }
-            // #1503 item 28 — mirror the completion's prepaid-interest refusal
-            // (Codex #1801 r1 P2). Acceptance of a linked sale vehicle calls
-            // `completeLoanSaleInternal` atomically, so a loan whose DELIVERED
-            // settled interest already exceeds its accrual makes that accept a
-            // guaranteed revert. Without this the buyer's Accept stays enabled
-            // and they spend a transaction to learn it; the escrow rolls back,
-            // but the read-only availability signal was false.
-            //
-            // Placed BELOW the solvency block, which is where `_acceptOffer`
-            // actually fails first (Codex #1801 r2 P2). That accept calls
-            // `LibSaleSolvency.assertSaleSolvent` at OfferAcceptFacet.sol:872 and
-            // only reaches `completeLoanSaleInternal` — where this revert lives —
-            // at :1567. A loan failing both would revert for solvency, so
-            // reporting the prepaid blocker first would hand the buyer the wrong
-            // remediation. An earlier version of this comment argued the opposite
-            // ordering from first-failure parity, which was the right principle
-            // applied without checking the order it was supposed to mirror.
-            {
-                uint256 _elapsed = block.timestamp -
-                    LibVaipakam.interestAccrualStartOf(_saleLoanM);
-                uint256 _accrued = (_saleLoanM.principal *
-                    _saleLoanM.interestRateBps *
-                    _elapsed) /
-                    (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-                if (
-                    LibEntitlement.realizedSettledInterest(_saleLoanId) >
-                    _accrued
-                ) {
-                    preview.errorCode = OfferAcceptFacet
-                        .AcceptError
-                        .SaleBlockedByPrepaidInterest;
-                    return preview;
-                }
-            }
         }
         if (LibVaipakam.isSanctionedAddress(acceptor)) {
             preview.errorCode = OfferAcceptFacet.AcceptError.SanctionedAcceptor;
@@ -341,6 +307,37 @@ contract OfferPreviewFacet {
             if (acceptor == LibERC721.ownerOf(_saleLoan.borrowerTokenId)) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleSelfBuy;
                 return preview;
+            }
+
+            // #1503 item 28 — mirror the completion's prepaid-interest refusal,
+            // LAST of every sale guard (Codex #1801 r3 P2). Accepting a linked
+            // vehicle calls `completeLoanSaleInternal` atomically, so a loan whose
+            // DELIVERED settled interest already exceeds its accrual makes that
+            // accept a guaranteed revert — but the completion is the final thing
+            // `_acceptOffer` does. Sanctions, pause, country, consent, KYC,
+            // self-buy and solvency all revert before it, so any of them outranks
+            // this one and reporting it early hands the buyer the wrong
+            // remediation.
+            //
+            // This took three attempts, which is the useful part. Round 1 put it
+            // FIRST, arguing first-failure parity; round 2 moved it below solvency
+            // only. The rule that holds is not "above" or "below" some particular
+            // guard but "last, because what it mirrors runs last" — and ordering
+            // claims here are worth checking against `_acceptOffer` rather than
+            // reasoned about locally.
+            {
+                uint256 _elapsed = block.timestamp -
+                    LibVaipakam.interestAccrualStartOf(_saleLoan);
+                uint256 _accrued = (_saleLoan.principal *
+                    _saleLoan.interestRateBps *
+                    _elapsed) /
+                    (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+                if (LibEntitlement.realizedSettledInterest(_saleLoanId) > _accrued) {
+                    preview.errorCode = OfferAcceptFacet
+                        .AcceptError
+                        .SaleBlockedByPrepaidInterest;
+                    return preview;
+                }
             }
         }
 
