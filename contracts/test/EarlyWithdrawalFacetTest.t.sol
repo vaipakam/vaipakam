@@ -480,6 +480,33 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
+    /// @dev #1503 design item 21 — while a Preclose Option-3 offset is live on
+    ///      the loan, the DIRECT sale must refuse, exactly as the listing path
+    ///      has since #1001. The offset pays the current lender at completion,
+    ///      so migrating the position mid-offset entangles two close-outs of one
+    ///      loan; the direct route does it inside a single transaction.
+    ///
+    ///      The live offset is scaffolded through the raw mutator rather than by
+    ///      driving `PrecloseFacet.offsetWithNewOffer`, because this suite's
+    ///      diamond does not cut `PrecloseFacet` (driving it reverts
+    ///      `FunctionDoesNotExist`). The scaffold is faithful: `offsetWithNewOffer`
+    ///      records the live offset by writing exactly this mapping, so the state
+    ///      under test is the state production reaches. Same reason
+    ///      `setLoanToSaleOfferIdRaw` exists for the listing-side twin.
+    ///
+    ///      The buy offer is the suite's ordinary valid `buyOfferId`, so the
+    ///      revert is reached through a sale that would otherwise SUCCEED — the
+    ///      guard, not an earlier shape check, is what refuses it.
+    function testSellLoanRejectedWhileOffsetLive() public {
+        TestMutatorFacet(address(diamond)).setLoanToOffsetOfferIdRaw(activeLoanId, 99);
+
+        vm.prank(lender);
+        vm.expectRevert(EarlyWithdrawalDirectFacet.OffsetActiveOnLoan.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, buyOfferId
+        );
+    }
+
     /// @dev #1503 design item 8 — the direct sale checked the buy offer's TYPE
     ///      and `accepted` flag but never its GTT deadline. A lender offer past
     ///      `expiresAt` and not yet permissionlessly cancelled stayed

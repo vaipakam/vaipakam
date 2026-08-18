@@ -106,6 +106,14 @@ contract EarlyWithdrawalDirectFacet is
     ///         revert data whichever path refused the fill.
     error OfferExpired(uint256 offerId, uint64 expiresAt);
 
+    /// @notice The loan being sold has a live Preclose Option-3 offset offer on
+    ///         it; the offset must be cancelled or completed first. Mirrors
+    ///         `EarlyWithdrawalFacet.OffsetActiveOnLoan` (same name, no args ⇒
+    ///         same EVM selector), declared here rather than shared because the
+    ///         #1780 split left the two sale hosts as separate contracts — the
+    ///         same reason `OfferExpired` above is declared twice.
+    error OffsetActiveOnLoan();
+
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -216,6 +224,25 @@ contract EarlyWithdrawalDirectFacet is
         // direct `acceptOffer` path; reject it as a sale vehicle here, same as the
         // matcher rejects it (`OffsetVehicleNotMatchable`).
         if (s.offsetOfferToLoanId[buyOfferId] != 0) revert InvalidSaleOffer();
+        // #1503 design item 21 — and note this is a DIFFERENT question from the
+        // line above, which is why the gap survived review: that one asks "is the
+        // OFFER I am consuming an offset vehicle" (`offsetOfferToLoanId[offerId]`),
+        // this one asks "does the LOAN I am selling have a live offset on it"
+        // (`loanToOffsetOfferId[loanId]`). Same mapping family, opposite subject;
+        // the first reads like the second at a glance.
+        //
+        // The listing sibling has refused this since #1001 (S3, Codex #1070) with
+        // the same rationale, which applies at least as sharply here: the offset
+        // pays the CURRENT lender at completion, so letting the position change
+        // hands mid-offset entangles two concurrent close-outs of one loan. The
+        // direct sale is the sharper case because it migrates the lender inside a
+        // single transaction — there is no listing window during which anyone
+        // could notice the offset and cancel.
+        //
+        // Every other mutator of this class already guards it: `PrecloseFacet`
+        // (a second offset), `PrepayListingFacet`, and `createLoanSaleOffer`. This
+        // path was the one that did not.
+        if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetActiveOnLoan();
         // T-407-C (#566) Codex P2 — the loan sale consumes the buy offer
         // in full, so it must be a clean SINGLE-VALUE, UNFILLED offer:
         //   • Ranged (effective amountMax > amount): the offer pre-vaults

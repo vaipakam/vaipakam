@@ -1754,7 +1754,9 @@ Alice may cancel her offsetting offer while it is still un-matched. Because post
 
 ##### Mutual exclusion while an offset is live
 
-While an offset offer is linked to a loan, three actions that would race the pending settlement are refused until the offset is completed or cancelled (it is short-lived): listing the lender position for sale, transferring the borrower obligation to a new borrower, and editing the linked offset offer's terms. The offset offer is immutable once linked — its terms are pinned to the loan it offsets.
+While an offset offer is linked to a loan, any action that would race the pending settlement is refused until the offset is completed or cancelled (it is short-lived). The governing rule is that the offset pays whoever holds the lender position at completion, and settles against the borrower recorded on the loan, so **neither side of the loan may change hands, and the pending offset's own terms may not move, while it is outstanding**. Concretely that refuses: putting the lender position up for sale, selling the lender position outright in a single step, transferring the borrower obligation to a new borrower, and editing the linked offset offer's terms. The offset offer is immutable once linked — its terms are pinned to the loan it offsets.
+
+This is stated as a rule about *what must not change* rather than as a list of blocked entry points, deliberately: the instant lender-sale route went unguarded for some time precisely because the requirement had been read as naming the listing route alone. Any future route that hands the lender or borrower position to someone else is covered by the rule whether or not it appears in the list above.
 
 A loan may have at most **one live offsetting offer at a time**: a second offset attempt while an earlier one is still outstanding is rejected, so Liam can never be prepaid twice by stacking offers. The single live offer is cleared when it completes or is cancelled.
 
