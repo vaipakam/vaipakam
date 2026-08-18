@@ -12,14 +12,25 @@ them. Their shapes are deliberately different, which is the part worth
 understanding, because it follows from what each cost actually does over time.
 
 The first is a floor on what the seller receives. It cannot be the number on
-their screen: the interest they forfeit grows for as long as the listing stands,
-so a floor set at the displayed figure would make their own listing unfillable
-within minutes of posting it. The enforceable floor is the worst case they are
-accepting — the same arithmetic evaluated at the moment the listing expires. "If
-this fills at any time before it runs out, you receive at least this much" is
-both a true sentence to show them and a promise the platform can keep. It is
-only computable because a listing must now carry a finite expiry, which is the
-second time that rule has turned out to carry weight it was not introduced for.
+their screen at the instant they look: the interest they forfeit grows for as
+long as the listing stands, so a floor set at the displayed figure would make
+their own listing unfillable within minutes of posting it. The enforceable floor
+is the worst case they are accepting across the whole window — the same
+settlement arithmetic evaluated at both ends of it, taking whichever is worse for
+them. "If this fills at any time before it runs out, you receive at least this
+much" is both a true sentence to show them and a promise the platform can keep.
+It is only computable because a listing must now carry a finite expiry, which is
+the second time that rule has turned out to carry weight it was not introduced
+for.
+
+Both ends, not just the last one, and the reason is the second thing about this
+worth understanding. Two costs make up the figure and they move in opposite
+directions: the interest the seller forfeits grows as the listing stands, while
+the compensation owed to the buyer for taking a rate above the loan's own is
+calculated over the remaining term and therefore shrinks. So the costliest moment
+to fill is one end of the window or the other, and which end depends on the
+terms. A listing priced well above the loan's rate is most expensive for the
+seller to exit immediately.
 
 The second is a ceiling on money already set aside for the lender, which
 transfers to the buyer along with the position. That quantity does not grow with
@@ -64,12 +75,10 @@ differ if the borrower repays in the moments between — and it lands with the
 surface that actually shows them a quote, since there is nothing to bind against
 until something does.
 
-One consequence of the floor's shape is visible to sellers and is not a fault.
-A listing priced well above the loan's own rate is most expensive for the seller
-to exit *immediately*, not at the end of its window: the interest they forfeit
-grows over the window, but the compensation owed to the buyer is calculated over
-the remaining term and therefore shrinks. The floor accounts for both ends, so
-such a listing is quoted against its instant cost rather than its expiry cost.
+One consequence of the floor's two-ended shape is worth repeating because sellers
+will see it: an above-rate listing is quoted against its instant cost rather than
+its expiry cost, so its floor sits lower than a same-rate listing's would. That
+is the bound being honest about the worst case, not a penalty.
 
 The bounds apply only while the seller's projection still describes the sale.
 Completing a listing is deliberately still possible after its window has run

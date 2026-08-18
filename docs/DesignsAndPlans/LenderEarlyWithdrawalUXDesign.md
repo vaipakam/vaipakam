@@ -635,14 +635,35 @@ than a growing list of patches on generic-offer consumption.
    >
    > The same argument applies one level in, which is why the quote is not
    > merely "a view that computes the same thing". The writer and the
-   > reader call ONE internal projection, so the number the seller is
-   > shown and the number they are held to are the same computation with
-   > two callers rather than two computations that agree today.
+   > reader call ONE internal projection, so there is a single place the
+   > arithmetic lives and no second copy to drift.
+   >
+   > **What that does and does not buy, stated precisely, because the
+   > loose version of this claim is wrong.** Sharing the projection rules
+   > out ALGORITHM drift: the quote can never disagree with the bound
+   > because the rule differs between them. It does NOT make the displayed
+   > figure equal to the recorded one. Both read live loan state, so a
+   > partial repayment or a park between the seller reading a quote and
+   > their listing transaction being mined moves the answer, and the
+   > listing carries no commitment to what they were shown. Binding those
+   > together is a SEPARATE guarantee — quote-to-listing rather than
+   > listing-to-fill — and it is deferred with the surface that shows the
+   > quote (#1810), where the reviewed figures can actually be passed in.
    >
    > This is also why the app work is a separate change rather than the
    > same one: a new selector is not routed on the deployed Diamond until
    > a facet refresh lands, and the live-review definition-of-done cannot
    > be met against a Diamond that reverts the call.
+   >
+   > **Also revised after round 1 of the implementing PR (#1812).** The
+   > floor above is described as the settlement evaluated AT THE EXPIRY.
+   > That is wrong whenever the listing rate exceeds the loan's own: the
+   > forfeited accrual grows across the window while the buyer's rate
+   > compensation shrinks with the remaining term, so the worst moment is
+   > an endpoint but not always the last one. The shipped projection
+   > evaluates BOTH ends and takes the worse. Two evaluations are exactly
+   > tight — for an increasing f and a decreasing g, max(f, g) peaks at
+   > max(f(end), g(start)) — so no interior sampling is needed.
 
 5. **The direct sale admits on the stored borrower, not the current
    one.** That path passes the loan's stored borrower to the
