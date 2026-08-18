@@ -383,6 +383,38 @@ const declaresName = (bindingName, name) => {
   return false;
 };
 
+/**
+ * Does this NODE introduce a binding for `name` — a catch clause, function
+ * parameters, or a for/for-of/for-in initialiser?
+ *
+ * Hoisted beside {declaresName} and shared by every resolver (Codex round-31
+ * P2). Round 30 unified the name MATCHER and left this half duplicated, so the
+ * SQL-bind resolver still carried its own shorter list — it knew about catch
+ * clauses and functions but not loop initialisers, and
+ * `for (const loanId of [999])` around the INSERT resolved outward to the
+ * mapper's destructuring. Removing the second copy is the same fix as last
+ * round, finished.
+ *
+ * None of these is followable to a value this script can read, so each is
+ * treated as opaque by callers rather than looked past.
+ */
+const bindsNameLexically = (node, name) => {
+  if (ts.isCatchClause(node) && node.variableDeclaration) {
+    return declaresName(node.variableDeclaration.name, name);
+  }
+  if (isFunctionLike(node)) {
+    return (node.parameters ?? []).some((p) => declaresName(p.name, name));
+  }
+  if (
+    (ts.isForOfStatement(node) || ts.isForInStatement(node) || ts.isForStatement(node)) &&
+    node.initializer &&
+    ts.isVariableDeclarationList(node.initializer)
+  ) {
+    return node.initializer.declarations.some((d) => declaresName(d.name, name));
+  }
+  return false;
+};
+
 const REF_FIELDS = ['loanId', 'offerId'];
 
 /**
@@ -1014,7 +1046,20 @@ for (const file of memberFiles) {
       // imprecise or out-of-range value. Name shape says "this is meant to be a
       // reference"; the type says "and it can actually be read as one".
       const numeric = aliases.filter((a) => /^u?int(\d+)?$/.test(typeOf.get(a) ?? ''));
-      const nonNumeric = aliases.filter((a) => !numeric.includes(a));
+      // An ARRAY is classified before this, not as a broken scalar (Codex
+      // round-31 P2). A reference-shaped collection name — `uint256[]
+      // loanIdList` — matches the shape rules, so it landed here as
+      // "typed 'uint256[]', which Number(args…) cannot read", AND was picked up
+      // by the array logic as an array-only reference. The array path is
+      // allowlistable; this one is not, so the documented exemption could never
+      // make `typecheck` pass. Two reports for one input, one of them a dead end.
+      //
+      // The array report is the RIGHT one: which element a single `loan_id`
+      // should carry is a decision, not a lookup. This conflict is for a scalar
+      // that cannot decode, which an array is not.
+      const nonNumeric = aliases.filter(
+        (a) => !numeric.includes(a) && !/\]$/.test(typeOf.get(a) ?? ''),
+      );
       for (const a of nonNumeric) {
         abiConflicts.push({
           kind: 'nonNumericReference',
@@ -1500,29 +1545,11 @@ if (!fnNode) {
      * follow, rather than looking past them to a declaration further out.
      */
     const OPAQUE_BINDING = Symbol('opaque binding');
-    const bindsName = (node, name) => {
-      // Catch clauses, function parameters and for-of/for-in initialisers all
-      // bind. None is followable to a loop-item property, so each is opaque.
-      if (ts.isCatchClause(node) && node.variableDeclaration) {
-        return declaresName(node.variableDeclaration.name, name);
-      }
-      if (isFunctionLike(node)) {
-        return (node.parameters ?? []).some((p) => declaresName(p.name, name));
-      }
-      if (
-        (ts.isForOfStatement(node) || ts.isForInStatement(node) || ts.isForStatement(node)) &&
-        node.initializer &&
-        ts.isVariableDeclarationList(node.initializer)
-      ) {
-        return node.initializer.declarations.some((d) => declaresName(d.name, name));
-      }
-      return false;
-    };
     const nearestDecl = (from, name) => {
       for (let scope = from; scope; scope = scope.parent) {
         // A binder ON THE WAY OUT shadows anything further out, even when this
         // script cannot say what it holds. Looking past it is the bug.
-        if (bindsName(scope, name)) {
+        if (bindsNameLexically(scope, name)) {
           // The loop's own binding is the one legitimate case — `log` itself.
           if (scope === loopVar.node && name === loopVar.name) return null;
           return OPAQUE_BINDING;
@@ -1780,12 +1807,7 @@ if (!fnNode) {
     const SHADOWED = Symbol('shadowed by an unreadable binder');
     const bindingOfIdentifier = (from, name) => {
       for (let scope = from; scope; scope = scope.parent) {
-        if (
-          (ts.isCatchClause(scope) && scope.variableDeclaration) ||
-          isFunctionLike(scope)
-        ) {
-          return SHADOWED;
-        }
+        if (bindsNameLexically(scope, name)) return SHADOWED;
         const stmts =
           ts.isBlock(scope) || ts.isCaseClause(scope) || ts.isDefaultClause(scope)
             ? scope.statements
@@ -2455,6 +2477,29 @@ const isNullLiteral = (expr) => Boolean(expr) && expr.kind === ts.SyntaxKind.Nul
           const inner = new Set(labels);
           inner.add(n.label.text);
           ts.forEachChild(n, (c) => walk(c, inner));
+          return;
+        }
+        // A throw the clause's OWN catch handles does not escape it (Codex
+        // round-31 P2). `try { if (…) throw e; return refs; } catch { return refs; }`
+        // returns a mapped object on every completion path, and treating the
+        // guarded throw as abrupt rejected an ordinary defensive refactor inside
+        // `typecheck`. The try block's throws are caught; the catch's and the
+        // finally's are not, so those still count — and break/continue inside
+        // the try are unaffected by a catch and keep their normal treatment.
+        if (ts.isTryStatement(n) && n.catchClause) {
+          const scanNonThrow = (m) => {
+            if (found) return;
+            if (isFunctionLike(m)) return;
+            if (ts.isThrowStatement(m)) return; // caught here
+            if (ts.isBreakStatement(m) || ts.isContinueStatement(m)) {
+              if (!m.label || !labels.has(m.label.text)) found = true;
+              return;
+            }
+            ts.forEachChild(m, scanNonThrow);
+          };
+          ts.forEachChild(n.tryBlock, scanNonThrow);
+          walk(n.catchClause.block, labels);
+          if (n.finallyBlock) walk(n.finallyBlock, labels);
           return;
         }
         if (ts.isBreakStatement(n) || ts.isContinueStatement(n)) {
