@@ -301,6 +301,16 @@ export function snapshotFresh(updatedAt: unknown): boolean {
 let config: MarketingProtocolConfig | null = null;
 let loading = false;
 let started = false;
+/** `updatedAt` of the snapshot `config` was accepted from — the input to
+ *  the same freshness rule at REVALIDATION time that gated acceptance,
+ *  so a snapshot cannot keep `published` provenance past the window
+ *  just because it was fresh when it arrived (#1664 item 6). */
+let acceptedUpdatedAt: number | null = null;
+/** Whether at least one load has CONCLUDED. Until then the marker may
+ *  honestly say `pending`; after a conclusion, a background revalidation
+ *  keeps the previous conclusion on display rather than flickering to
+ *  `pending` — the store still HAS a conclusion while it re-checks. */
+let hasConcluded = false;
 const listeners = new Set<() => void>();
 
 /** Stable snapshot object: `useSyncExternalStore` compares by identity,
@@ -334,11 +344,9 @@ function publish() {
   // store itself concluded. Guarded: the store is imported during
   // prerender where no document exists.
   if (typeof document !== 'undefined') {
-    document.documentElement.dataset.protocolConfig = loading
-      ? 'pending'
-      : config
-        ? 'published'
-        : 'bundled';
+    const concludedSource = config ? 'published' : 'bundled';
+    document.documentElement.dataset.protocolConfig =
+      loading && !hasConcluded ? 'pending' : concludedSource;
   }
   for (const l of listeners) l();
 }
@@ -385,6 +393,8 @@ async function load() {
         snapshotFresh((body as { updatedAt?: unknown }).updatedAt)
       ) {
         config = decodeMarketingConfig((body as { bundle?: unknown }).bundle);
+        acceptedUpdatedAt =
+          config !== null ? ((body as { updatedAt: number }).updatedAt) : null;
       }
     }
   } catch {
@@ -394,16 +404,120 @@ async function load() {
     // its bundled defaults. Logging here would put a red error in the
     // console of a perfectly working page.
   } finally {
+    // A held snapshot that has aged past the freshness window must not
+    // keep claiming published provenance just because this refresh
+    // failed to replace it. Acceptance requires freshness, so a config
+    // accepted THIS round always survives; only a stale hold is
+    // demoted — to the same bundled fallback a failed first read gets,
+    // which is the honest description of what the page then knows.
+    if (config !== null && !snapshotFresh(acceptedUpdatedAt)) {
+      config = null;
+      acceptedUpdatedAt = null;
+    }
     clearTimeout(timer);
     loading = false;
+    hasConcluded = true;
+    // Re-arm (or clear) the expiry deadline for whatever this load
+    // concluded: a fresh acceptance schedules its own aging-out; a
+    // demotion or failure leaves no timer, because there is nothing
+    // held whose expiry could need acting on.
+    armExpiryTimer();
     publish();
   }
 }
+
+/** A read is worth (re)trying when none is in flight and the store
+ *  either holds nothing (the first read failed) or holds a snapshot
+ *  that has aged past the freshness window. A fresh, accepted snapshot
+ *  triggers nothing — navigation must not turn into request traffic. */
+function needsRevalidation(): boolean {
+  return !loading && (config === null || !snapshotFresh(acceptedUpdatedAt));
+}
+
+/** One DEADLINE timer, armed at acceptance for the moment the held
+ *  snapshot crosses the freshness window. Without it, a tab that stays
+ *  visible with no navigation never re-evaluates `snapshotFresh` after
+ *  acceptance, and the displayed values keep `published` provenance
+ *  past the cutoff — the exact indefinite hold the spec forbids
+ *  (Codex #1809 r1 P2).
+ *
+ *  The deadline is a WALL-CLOCK moment (`snapshotFresh` compares
+ *  against `Date.now()`), but `setTimeout` counts MONOTONIC time, and
+ *  the two disagree whenever the clock is corrected or the machine
+ *  sleeps. Both directions bit in review: a backward correction fires
+ *  the timer while the snapshot still reads fresh (r2 P2), and a
+ *  forward correction — most commonly a laptop sleeping with the tab
+ *  visible throughout, so no `visibilitychange` fires either — expires
+ *  the snapshot while the timer's countdown stands still (r3 P2). So
+ *  no single slice is trusted for the whole window: each armed slice
+ *  is capped, and every firing re-reads the wall clock — demote/reload
+ *  if the deadline has truly passed, re-arm for the recomputed
+ *  remainder if not. The wakeups are bounded (at most one per slice)
+ *  and make NO network request; the read still happens only at expiry.
+ *  Background tabs may throttle timers arbitrarily; the
+ *  `visibilitychange` path covers those on return, and the timer
+ *  covers the visible-idle case timers are reliable for. */
+let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Longest slice the deadline timer trusts before re-reading the wall
+ *  clock: bounds how long a forward clock jump (sleep/resume, NTP) can
+ *  keep an already-expired snapshot on display at ~1h, at the cost of
+ *  at most `FRESH_WINDOW / slice` zero-network wakeups per window. */
+const MAX_TIMER_SLICE_MS = 3_600_000;
+
+function armExpiryTimer(): void {
+  if (typeof window === 'undefined') return;
+  if (expiryTimer !== null) {
+    clearTimeout(expiryTimer);
+    expiryTimer = null;
+  }
+  if (config === null || acceptedUpdatedAt === null) return;
+  const expiresAtMs = (acceptedUpdatedAt + FRESH_WINDOW_SECONDS) * 1000;
+  // +1s so the check runs just AFTER the boundary — firing on the exact
+  // millisecond would race `snapshotFresh`'s own comparison.
+  const delay = Math.min(Math.max(0, expiresAtMs - Date.now()) + 1_000, MAX_TIMER_SLICE_MS);
+  expiryTimer = setTimeout(() => {
+    expiryTimer = null;
+    if (needsRevalidation()) {
+      void load();
+    } else if (!loading) {
+      // The deadline has not actually arrived — this was a capped
+      // intermediate slice, or the wall clock moved backward past the
+      // cushion. Re-arm for the recomputed remainder; the delay is
+      // always ≥1s, so this cannot spin. (If a load is in flight
+      // instead, its conclusion re-arms; arming here off the pre-load
+      // state would tick uselessly until it ends.)
+      armExpiryTimer();
+    }
+  }, delay);
+}
+
+/** Registered once: returning to a long-lived tab is the other natural
+ *  moment to re-check (#1664 item 6) — without it, a tab left in the
+ *  background for a day keeps a by-then-stale snapshot on display with
+ *  no navigation to trigger the subscribe-path retry. */
+let visibilityHooked = false;
 
 function subscribe(onChange: () => void): () => void {
   listeners.add(onChange);
   if (!started) {
     started = true;
+    if (typeof document !== 'undefined' && !visibilityHooked) {
+      visibilityHooked = true;
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && needsRevalidation()) {
+          void load();
+        }
+      });
+    }
+    void load();
+  } else if (needsRevalidation()) {
+    // A later subscription — a new page in the same document — retries
+    // a failed first read and refreshes an aged-out snapshot, instead
+    // of the session being pinned forever to its first attempt
+    // (#1664 item 6). The `loading` gate inside `needsRevalidation`
+    // means a page mounting a dozen `<LiveValue>`s still causes at
+    // most one request.
     void load();
   }
   return () => {

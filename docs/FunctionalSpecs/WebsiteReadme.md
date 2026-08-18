@@ -140,6 +140,18 @@ Public-navigation requirements:
   still-open decision; until it is made, the honest description above is
   the specified behaviour, and any surface describing these artefacts
   must say what they carry rather than imply currency
+- a failed or aged-out configuration read is retried when the reader
+  gives the page a natural opportunity — visiting another page, or
+  returning to a tab left in the background — rather than the session
+  being pinned forever to the outcome of its first attempt. A fresh,
+  accepted snapshot triggers no re-read: navigation must not turn into
+  request traffic. A snapshot that ages past the freshness window while
+  on display loses its published claim rather than keeping it
+  indefinitely — the same rule that gates acceptance applies for as long
+  as the figure is shown, and a stale hold that cannot be refreshed
+  reverts to the bundled value, honestly labelled. Revalidation must not
+  flicker: while a re-check is in flight the page keeps stating its
+  previous conclusion, because it still has one
 - copy that describes a charge applied to an ALREADY-CREATED position
   must not present the current rate as that position's rate. The
   protocol stamps its fee percentages on a loan at creation, so a later
