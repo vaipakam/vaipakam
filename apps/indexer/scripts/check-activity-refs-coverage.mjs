@@ -252,9 +252,12 @@ const objectLiteralView = (e) => {
         const src = unwrapAssertions(p.expression);
         if (
           ts.isObjectLiteralExpression(src) &&
-          src.properties.some(
-            (q) => ts.isGetAccessorDeclaration(q) || ts.isSetAccessorDeclaration(q),
-          )
+          // A GETTER only (Codex round-30 P2). Spreading READS every own
+          // enumerable property, so a getter runs and can mutate the decoded
+          // arguments; a setter is never invoked by a read, and lumping the two
+          // together rejected a harmless `...{ set helper(v) {} }` inside
+          // `typecheck`. The setter still defines a key, handled below.
+          src.properties.some((q) => ts.isGetAccessorDeclaration(q))
         ) {
           return { opaque: 'a spread of an object literal with a getter/setter, which runs during the spread and can mutate the decoded arguments before the later fields are computed' };
         }
@@ -320,8 +323,21 @@ const objectLiteralView = (e) => {
       // Treated as shadowing rather than parsed: what a getter returns is a
       // function body, not an expression, and the honest answer for a shape
       // this checker cannot read is that it cannot read it.
-      if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) {
+      if (ts.isGetAccessorDeclaration(p)) {
         lastSpreadIdx = idx;
+        continue;
+      }
+      // A SETTER defines a statically named key and is not run by a read, so it
+      // behaves like a method here (Codex round-30 P2) — known, not opaque. It
+      // still SHADOWS if its name is one of the reference fields, because the
+      // value a later read would see is not an expression this parser can read.
+      if (ts.isSetAccessorDeclaration(p)) {
+        if (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) {
+          props.set(p.name.text, { accessor: true });
+          definedAt.set(p.name.text, idx);
+        } else {
+          lastSpreadIdx = idx;
+        }
         continue;
       }
       // A METHOD is not in that class (Codex round-29 P2). Its name is static
@@ -343,6 +359,28 @@ const objectLiteralView = (e) => {
       if (at < lastSpreadIdx) props.delete(key);
     }
   return { props, spread: lastSpreadIdx >= 0 };
+};
+
+/**
+ * Does this binding name — an identifier, or an object/array destructuring
+ * pattern, nested to any depth — bind `name`?
+ *
+ * ONE matcher, used by every resolver in this file (Codex round-30 P2). There
+ * were two, and only the elaborate one handled array patterns, so
+ * `const [loanId] = [999]` was invisible to the SQL-bind resolver and the
+ * argument resolved to the mapper's destructuring further out. Two
+ * implementations of the same question is how that gap opened; keeping one is
+ * the fix, not teaching the second about arrays.
+ */
+const declaresName = (bindingName, name) => {
+  if (!bindingName) return false;
+  if (ts.isIdentifier(bindingName)) return bindingName.text === name;
+  if (ts.isObjectBindingPattern(bindingName) || ts.isArrayBindingPattern(bindingName)) {
+    return bindingName.elements.some(
+      (el) => ts.isBindingElement(el) && declaresName(el.name, name),
+    );
+  }
+  return false;
 };
 
 const REF_FIELDS = ['loanId', 'offerId'];
@@ -1462,16 +1500,6 @@ if (!fnNode) {
      * follow, rather than looking past them to a declaration further out.
      */
     const OPAQUE_BINDING = Symbol('opaque binding');
-    /** Does this binding name (identifier or destructuring pattern) bind `name`? */
-    const declaresName = (bindingName, name) => {
-      if (ts.isIdentifier(bindingName)) return bindingName.text === name;
-      if (ts.isObjectBindingPattern(bindingName) || ts.isArrayBindingPattern(bindingName)) {
-        return bindingName.elements.some(
-          (el) => ts.isBindingElement(el) && declaresName(el.name, name),
-        );
-      }
-      return false;
-    };
     const bindsName = (node, name) => {
       // Catch clauses, function parameters and for-of/for-in initialisers all
       // bind. None is followable to a loop-item property, so each is opaque.
@@ -1766,14 +1794,7 @@ if (!fnNode) {
           for (const st of stmts) {
             if (!ts.isVariableStatement(st)) continue;
             for (const d of st.declarationList.declarations) {
-              if (ts.isIdentifier(d.name) && d.name.text === name) return d;
-              if (ts.isObjectBindingPattern(d.name)) {
-                for (const el of d.name.elements) {
-                  if (ts.isBindingElement(el) && ts.isIdentifier(el.name) && el.name.text === name) {
-                    return d;
-                  }
-                }
-              }
+              if (declaresName(d.name, name)) return d;
             }
           }
         }
@@ -2081,6 +2102,18 @@ const alwaysExits = (stmt) => {
   if (ts.isReturnStatement(stmt) || ts.isThrowStatement(stmt)) return true;
   if (ts.isBreakStatement(stmt) || ts.isContinueStatement(stmt)) return true;
   if (ts.isBlock(stmt)) return alwaysExits(stmt.statements[stmt.statements.length - 1]);
+  // A `try` completes abruptly when the relevant branches do (Codex round-30 P2).
+  // `try { return …; } finally {}` is an ordinary refactor and reads as
+  // "falls through" to a helper that only knew blocks and `if`s, which then
+  // merged the case with its neighbour and rejected both mappings inside
+  // `typecheck`. The rules are the language's: a `finally` that itself exits
+  // decides the whole statement; otherwise the try block must exit AND, if a
+  // catch exists, the catch must too.
+  if (ts.isTryStatement(stmt)) {
+    if (stmt.finallyBlock && alwaysExits(stmt.finallyBlock)) return true;
+    if (!alwaysExits(stmt.tryBlock)) return false;
+    return !stmt.catchClause || alwaysExits(stmt.catchClause.block);
+  }
   if (ts.isIfStatement(stmt)) {
     return Boolean(stmt.elseStatement) && alwaysExits(stmt.thenStatement) && alwaysExits(stmt.elseStatement);
   }
@@ -2105,6 +2138,18 @@ const alwaysReturns = (stmt) => {
   // establishes coverage.
   if (ts.isReturnStatement(stmt)) return true;
   if (ts.isBlock(stmt)) return alwaysReturns(stmt.statements[stmt.statements.length - 1]);
+  // A `try` completes abruptly when the relevant branches do (Codex round-30 P2).
+  // `try { return …; } finally {}` is an ordinary refactor and reads as
+  // "falls through" to a helper that only knew blocks and `if`s, which then
+  // merged the case with its neighbour and rejected both mappings inside
+  // `typecheck`. The rules are the language's: a `finally` that itself exits
+  // decides the whole statement; otherwise the try block must exit AND, if a
+  // catch exists, the catch must too.
+  if (ts.isTryStatement(stmt)) {
+    if (stmt.finallyBlock && alwaysReturns(stmt.finallyBlock)) return true;
+    if (!alwaysReturns(stmt.tryBlock)) return false;
+    return !stmt.catchClause || alwaysReturns(stmt.catchClause.block);
+  }
   if (ts.isIfStatement(stmt)) {
     return (
       Boolean(stmt.elseStatement) && alwaysReturns(stmt.thenStatement) && alwaysReturns(stmt.elseStatement)
