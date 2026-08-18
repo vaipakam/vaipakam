@@ -117,11 +117,23 @@ followed by a successful settlement would otherwise re-validate the mark and
 silently exclude the stretch that accrued on the larger balance.
 
 Where any of these applies — a principal change, a held payment, or a missing
-starting point — the platform discards the credit and charges the full accrual,
-the behaviour that shipped before this change. The exiting lender may be charged
-for interest they genuinely received; the platform never pays the same interest
-twice. A sale clears all of them, since the buyer's period opens at the purchase
-and carries nothing from the seller's tenure.
+starting point — the platform discards the credit. The exiting lender may be
+charged for interest they genuinely received; the platform never pays the same
+interest twice. A sale clears all of them, since the buyer's period opens at the
+purchase and carries nothing from the seller's tenure.
+
+Discarding the credit is not the same as forgetting the record, and the
+difference is the whole point. The obvious reading — fall back to the loan's own
+interest clock — is wrong for a reason that only shows up in combination: the
+clock moves. A partial repayment whose interest is held back does both things at
+once, holding the money and re-basing the clock to that moment, so falling back
+to the clock would open the seller's window at the reset and skip exactly the
+stretch the disqualification exists to keep charging for. That is the same
+mistake described earlier in this note, arriving by the opposite door: reading
+the obligation clock as evidence of payment. So the recorded point is kept and
+used as the earliest of the two, which is the honest answer — neither the last
+recorded payment nor the obligation restart can be later than the moment this
+lender was genuinely paid through.
 
 Both conditions are read from the loan's own recorded state rather than reported
 by whatever caused them. That distinction is the point: principal is reduced at

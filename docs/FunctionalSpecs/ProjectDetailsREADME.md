@@ -1931,6 +1931,16 @@ This option allows Liam to recover principal early by selling his lender positio
   make the SECOND payment look trustworthy while its window still began inside
   the unreconciled stretch.
 
+  Refusing the credit must not RESET the window, and that distinction is
+  load-bearing. Falling back to the loan's own interest clock reads as the
+  obvious answer and is wrong for the same reason the clock is not evidence of
+  payment: it moves. A partial repayment that holds Liam's interest back also
+  re-bases the clock to that moment, so a fallback to the clock would open his
+  window at the reset and skip precisely the held stretch. The recorded point is
+  therefore kept and the EARLIER of the two is used — neither Liam's last
+  recorded payment nor the borrower's obligation restart can be later than the
+  moment he was genuinely paid through.
+
   A sale clears all three: Noah's period opens at the purchase, at the principal
   on the loan then, and carries nothing from Liam's tenure. The conditions are read
   from the loan's own recorded state rather than reported by whatever caused

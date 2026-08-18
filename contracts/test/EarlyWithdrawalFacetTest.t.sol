@@ -842,6 +842,55 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev DIRECT route, a void whose accrual clock ALSO moved (Codex #1801
+    ///      r12 P1). A partial repayment whose lender share is frozen does two
+    ///      things at once: it parks the share, disqualifying the mark, and it
+    ///      re-bases `interestAccrualStart` to now. Reading "disqualified" as
+    ///      "fall back to the clock" then opened the window at the reset and
+    ///      omitted the frozen stretch entirely — the leak the disqualification
+    ///      exists to prevent.
+    ///
+    ///      The control is the LOWER charge the broken rule produced, so this
+    ///      asserts the seller is now charged strictly more than that, and
+    ///      exactly as much as a window opening at the mark.
+    function test_sellLoanViaBuyOffer_voidedMarkStillFloorsTheWindow() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint64 movedClock = uint64(block.timestamp - 2 days);
+        uint256 mark = block.timestamp - 8 days;
+        uint256 snap = vm.snapshotState();
+
+        // Control: the clock moved and NOTHING is recorded — the window opens at
+        // the reset, which is what the seller used to be charged from.
+        TestMutatorFacet(address(diamond)).setInterestAccrualStartRaw(activeLoanId, movedClock);
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidFromResetOnly = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // The real sequence: a mark from the last clean delivery, then a freeze
+        // that voids it, and the same clock reset.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, mark);
+        TestMutatorFacet(address(diamond)).setLenderMarkVoidedRaw(activeLoanId, true);
+        TestMutatorFacet(address(diamond)).setInterestAccrualStartRaw(activeLoanId, movedClock);
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithVoidedMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidFromResetOnly, 0, "control run must actually pay the seller");
+        assertLt(
+            paidWithVoidedMark,
+            paidFromResetOnly,
+            "a voided mark must still floor the window at the older unpaid boundary"
+        );
+    }
+
     /// @dev DIRECT route, a PARK on a continuing loan (Codex #1801 r11 P1).
     ///      `transferObligationViaOffer` parks the lender's accrued share in
     ///      `heldForLender` rather than delivering it, and — unlike the freeze

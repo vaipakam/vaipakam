@@ -431,6 +431,17 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().lenderMarkVoided[loanId] = voided;
     }
 
+    /// @notice Re-base a loan's interest-accrual clock directly (#1801 r12).
+    /// @dev    The real setter is `repayPartial` / swap-to-repay, which re-base
+    ///         the borrower's obligation while paying the lender nothing when
+    ///         their share is frozen. Staging the frozen half for real needs a
+    ///         registry-flagged holder the unit harness has no oracle for, so
+    ///         the two halves are seeded separately: this moves the clock, and
+    ///         {setLenderMarkVoidedRaw} records the freeze.
+    function setInterestAccrualStartRaw(uint256 loanId, uint64 at) external {
+        LibVaipakam.storageSlot().loans[loanId].interestAccrualStart = at;
+    }
+
     /// #594 test — append a loanId to a user's loan index directly (to set up
     /// the already-indexed dup-protection case).
     function pushUserLoanIdRaw(address user, uint256 loanId) external {

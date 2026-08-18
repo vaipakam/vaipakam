@@ -289,8 +289,33 @@ library LibEntitlement {
         // cause them, so neither depends on a call site remembering to
         // cooperate. The seller loses a credit they arguably earned; they never
         // gain one they did not.
-        if (s.lenderMarkVoided[loanId]) return accrualStart;
-        if (s.lenderMarkPrincipalAt[loanId] != s.loans[loanId].principal) return accrualStart;
+        // A disqualified mark still bounds the window from BELOW (Codex #1801
+        // r12 P1). "Discard the credit and charge the full accrual" was written
+        // as "fall back to the accrual clock", and those are not the same
+        // sentence: the clock MOVES. A partial repayment whose lender share is
+        // frozen does both at once — it parks the share, which disqualifies the
+        // mark, and re-bases `interestAccrualStart` to now. Falling back to the
+        // clock therefore returned a window of roughly zero and omitted the very
+        // frozen stretch the disqualification exists to keep charging for, while
+        // that parked balance migrates to the buyer.
+        //
+        // That is round 4's finding arriving by the opposite door. Round 4
+        // refused `max(mark, clock)` because the clock re-bases on events that
+        // pay nobody; taking the clock ALONE once the mark is disqualified is
+        // the same mistake with the mark deleted first.
+        //
+        // So a disqualification means "no CREDIT", never "reset the window": the
+        // earlier of the two is the honest start, since neither the recorded
+        // delivery point nor the obligation clock can be later than the point
+        // this lender was genuinely paid through. `voidInterestDeliveredMark`
+        // keeps the timestamp for exactly this reason and zeroes only the
+        // principal companion, which is what keeps later stamps void.
+        if (
+            s.lenderMarkVoided[loanId] ||
+            s.lenderMarkPrincipalAt[loanId] != s.loans[loanId].principal
+        ) {
+            return paidThrough < accrualStart ? paidThrough : accrualStart;
+        }
         return paidThrough;
     }
 
@@ -451,7 +476,18 @@ library LibEntitlement {
         LibVaipakam.Storage storage s,
         uint256 loanId
     ) internal {
-        s.lenderInterestDeliveredThroughAt[loanId] = 0;
+        // The timestamp is KEPT (Codex #1801 r12 P1). Zeroing it made
+        // {forfeitureAccrualStart} take its no-mark branch and open the window
+        // at the accrual clock — and the clock had just moved, because the same
+        // partial repayment that froze the share re-bases it. The frozen stretch
+        // then fell outside the seller's charge entirely, which is the leak the
+        // void exists to prevent, not a side effect of it.
+        //
+        // A void means the mark grants no CREDIT. It does not mean the mark is
+        // unknown: the recorded point is still a real lower bound on the window,
+        // and the reader now takes the earlier of it and the clock. Only the
+        // principal companion is cleared, which is what keeps every later stamp
+        // void for the rest of this lender's tenure.
         s.lenderMarkPrincipalAt[loanId] = 0;
         s.lenderMarkHeldAt[loanId] = 0;
         s.lenderMarkVoided[loanId] = true;

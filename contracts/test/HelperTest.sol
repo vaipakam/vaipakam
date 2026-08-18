@@ -91,7 +91,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](174);
+        selectors = new bytes4[](175);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -244,6 +244,7 @@ contract HelperTest {
         // seed the state rather than driving the writers that cause it.
         selectors[n++] = TestMutatorFacet.setLenderPaidThroughWithPrincipalRaw.selector;
         selectors[n++] = TestMutatorFacet.setLenderMarkVoidedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setInterestAccrualStartRaw.selector;
         // Layout-resilient claim writers used by ClaimFacetTest to
         // exercise the NothingToClaim revert + held-only paths
         // without slot math.
