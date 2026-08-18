@@ -695,15 +695,21 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
-    /// @dev #1801 r9 — a loan with NO baseline cannot claim a credit on its first
-    ///      stamp. Loans opened after this change are baselined at initiation,
-    ///      so this is the GRANDFATHERED shape: a loan already open at upgrade,
-    ///      whose principal may have moved before the upgrade with nothing
-    ///      recorded to detect it. The first stamp therefore records the
-    ///      baseline and nothing else — the mark stays zero, which is the
-    ///      full-accrual charge those loans already had — and only the SECOND
-    ///      stamp can be trusted.
-    function test_sellLoanViaBuyOffer_firstStampWithoutBaselineOnlyBaselines() public {
+    /// @dev #1801 r9, corrected r10 — a loan with NO baseline never earns a
+    ///      credit for the CURRENT lender, not merely on its first stamp. This
+    ///      is the GRANDFATHERED shape: a loan already open at upgrade, whose
+    ///      principal may have moved before it with nothing recorded to detect
+    ///      that.
+    ///
+    ///      r9 recorded a baseline on the first stamp and let the second be
+    ///      trusted, which does not hold: the second settlement matches the
+    ///      freshly recorded principal and installs a mark whose window begins
+    ///      AFTER the unreconciled interval, so the sale excludes history that
+    ///      was never settled. The safe boundary is unknowable, so the position
+    ///      is voided for the tenure. A sale clears it for the buyer.
+    ///
+    ///      TWO stamps here, deliberately — one would pass under the r9 rule too.
+    function test_sellLoanViaBuyOffer_baselinelessPositionStaysVoid() public {
         _relaxBuyOfferForWarp(20);
         vm.warp(block.timestamp + 10 days);
         uint256 snap = vm.snapshotState();
@@ -721,20 +727,24 @@ contract EarlyWithdrawalFacetTest is Test {
             activeLoanId, 0, 0
         );
         TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
-            activeLoanId, block.timestamp - 6 days
+            activeLoanId, block.timestamp - 8 days
+        );
+        // ...and a SECOND clean settlement, which r9 would have honoured.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 4 days
         );
         _mockSaleSideEffects();
         openingBalance = ERC20(mockERC20).balanceOf(lender);
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
-        uint256 paidAfterFirstStamp = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        uint256 paidAfterTwoStamps = ERC20(mockERC20).balanceOf(lender) - openingBalance;
         vm.clearMockedCalls();
 
         assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
         assertEq(
-            paidAfterFirstStamp,
+            paidAfterTwoStamps,
             paidWithNoMark,
-            "a first stamp with no baseline must not open a credit"
+            "a baseline-less position must not open a credit, first stamp or later"
         );
     }
 

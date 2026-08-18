@@ -143,12 +143,24 @@ export function LoanSaleFlow({
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
+  // An unavailable QUOTE must not take the listing surface with it (Codex
+  // #1801 r10 P2). `readLoanLive` deliberately still resolves when the optional
+  // window read fails, and `sellerEconomics` throws rather than substituting a
+  // number — but these two calls run at RENDER time, outside any handler or
+  // boundary, so opening Position Details would lose the whole form instead of
+  // showing an unavailable quote.
+  //
+  // Same guard EarlyExitFlow got in r8; this component is its sibling and I
+  // fixed only the one the finding named.
+  const quoteUnavailable = live.lenderForfeitFrom === undefined;
   const bound =
-    rateBps !== null
+    rateBps !== null && !quoteUnavailable
       ? saleSettlementBound(live, BigInt(rateBps))
       : null;
   const nowCost =
-    rateBps !== null ? saleSettlementNow(live, BigInt(rateBps)) : null;
+    rateBps !== null && !quoteUnavailable
+      ? saleSettlementNow(live, BigInt(rateBps))
+      : null;
   const boundStr =
     bound !== null ? `${formatTokenAmount(bound, dec)} ${sym}` : null;
   const principalStr = `${formatTokenAmount(live.principal, dec)} ${sym}`;
@@ -419,7 +431,7 @@ export function LoanSaleFlow({
           type="button"
           className="btn btn-secondary"
           style={{ marginTop: 12 }}
-          disabled={busy || !walletReady || !rateValid || flowDisabled('post-offer')}
+          disabled={busy || !walletReady || !rateValid || quoteUnavailable || flowDisabled('post-offer')}
           onClick={onOpenConfirm}
         >
           {copy.loanSale.action}
@@ -440,7 +452,7 @@ export function LoanSaleFlow({
             confirmLabel={copy.loanSale.confirm}
             onBack={onCloseConfirm}
             onConfirm={() => void submit()}
-            disabled={!walletReady || !consent || flowDisabled('post-offer')}
+            disabled={!walletReady || !consent || quoteUnavailable || flowDisabled('post-offer')}
             data={{
               youReceive: copy.loanSale.receiptYouReceive(principalStr),
               youLock: copy.loanSale.receiptLock,

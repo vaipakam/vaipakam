@@ -1914,11 +1914,16 @@ This option allows Liam to recover principal early by selling his lender positio
 
   For the same reason a loan needs a starting balance recorded when it opens, so
   the first payment has something to compare against. A loan already running when
-  this takes effect has none, so its first payment records one and earns no
-  credit — it keeps the charge it already had.
+  this takes effect has none, and no later event supplies one: the stretch
+  between the loan opening and the first payment is never reconciled, so a record
+  installed after it excludes whatever happened in there just as surely. Such a
+  position therefore earns no credit for the rest of Liam's tenure — it keeps the
+  charge it already had. Recording a starting balance at the first payment would
+  make the SECOND payment look trustworthy while its window still began inside
+  the unreconciled stretch.
 
-  A sale clears both: Noah's period opens at the purchase, at the principal on
-  the loan then, and carries nothing from Liam's tenure. Both conditions are read
+  A sale clears all three: Noah's period opens at the purchase, at the principal
+  on the loan then, and carries nothing from Liam's tenure. The conditions are read
   from the loan's own recorded state rather than reported by whatever caused
   them, so a path nobody thought to update cannot leave a stale credit standing.
   Where the credit is refused, Liam is charged interest he may genuinely have

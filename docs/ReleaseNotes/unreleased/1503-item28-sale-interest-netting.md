@@ -91,9 +91,12 @@ loan records the balance it opens at, so the first delivery has something to
 compare against; without that, a balance change between origination and the
 first settlement would be invisible, and that settlement would install a record
 that looks trustworthy while excluding interest charged at the larger balance.
-Loans already open when this ships have no such starting point, so their first
-delivery records one and grants no credit — they keep the full charge they
-already had, and only deliveries after that can be trusted.
+Loans already open when this ships have no such starting point, and no later
+event supplies one: the interval between origination and the first delivery is
+never reconciled, so a mark installed after it excludes whatever happened in
+there just the same. Such a position therefore grants no credit for the rest of
+the lender's tenure — it keeps the full charge it already had — and only a sale,
+which opens a fresh window for the incoming lender, clears the condition.
 
 Neither disqualification lifts. A later clean settlement cannot repair a record
 that is already discontinuous, so once either has happened nothing on that
@@ -102,11 +105,12 @@ lender. That matters most in a sequence that looks harmless: a principal change
 followed by a successful settlement would otherwise re-validate the mark and
 silently exclude the stretch that accrued on the larger balance.
 
-Where either applies, the platform discards the credit and charges the full
-accrual — the behaviour that shipped before this change. The exiting lender may
-be charged for interest they genuinely received; the platform never pays the
-same interest twice. A sale clears both conditions, since the buyer's period
-opens at the purchase and carries nothing from the seller's tenure.
+Where any of these applies — a principal change, a held payment, or a missing
+starting point — the platform discards the credit and charges the full accrual,
+the behaviour that shipped before this change. The exiting lender may be charged
+for interest they genuinely received; the platform never pays the same interest
+twice. A sale clears all of them, since the buyer's period opens at the purchase
+and carries nothing from the seller's tenure.
 
 Both conditions are read from the loan's own recorded state rather than reported
 by whatever caused them. That distinction is the point: principal is reduced at

@@ -333,19 +333,23 @@ library LibEntitlement {
         // difference now is proof a change happened in between. Still no
         // cooperation required from any mutation site.
         if (recorded == 0) {
-            // NO BASELINE, so no claim can be made (Codex #1801 r9 P1). A loan
-            // whose principal moved before its FIRST settlement has nothing to
-            // compare against: that settlement prices the whole period at the
-            // reduced principal and would install a mark that looks valid,
-            // while the excluded stretch still holds interest accrued on the
-            // larger principal and never settled.
+            // NO BASELINE, so no claim can EVER be made for this lender (Codex
+            // #1801 r9 P1, corrected r10 P1). A loan whose principal moved
+            // before its first post-upgrade settlement has nothing to compare
+            // against, and — this is what r9 got wrong — recording a baseline
+            // now does not make LATER stamps safe either. The next settlement
+            // matches the freshly recorded principal and installs a mark whose
+            // window still begins after the unreconciled interval, so the sale
+            // excludes history that was never settled, at treasury's expense.
             //
-            // So the first stamp on such a loan RECORDS THE BASELINE and
-            // nothing else. The mark stays where it was — zero for a
-            // grandfathered loan, i.e. the full-accrual charge — and the next
-            // stamp has something to compare against. Loans opened after this
-            // change are baselined at initiation and never take this branch.
-            s.lenderMarkPrincipalAt[loanId] = live;
+            // The safe boundary is unknowable here, so the position is voided
+            // for the rest of this lender's tenure: full accrual, exactly what
+            // a grandfathered loan already had. A sale clears it, because the
+            // buyer's window opens at the purchase and carries none of it.
+            //
+            // Loans opened after this change are baselined at initiation and
+            // never reach this branch.
+            voidInterestDeliveredMark(s, loanId);
             return;
         }
         if (recorded != live) {
