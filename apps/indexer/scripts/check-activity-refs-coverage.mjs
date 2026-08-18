@@ -247,8 +247,20 @@ const REF_FIELDS = ['loanId', 'offerId'];
  * for leg A.
  */
 const REF_SHAPE = {
-  loanId: /^[A-Za-z0-9]*loanId(?:[A-C]|[0-9]+)?$/i,
-  offerId: /^[A-Za-z0-9]*offerId(?:[A-C]|[0-9]+)?$/i,
+  // Any UPPERCASE leg letter or digits — not just A-C (Codex round-13 P2). The
+  // three-way match happens to use A/B/C today, and baking that in meant a
+  // fourth leg (`loanIdD`) matched neither the shape nor the empty escape list,
+  // so it could be filed NULL with no mapping and no exemption. An enumerated
+  // range inside a derivation is the same mistake as the enumerated alias table
+  // this shape rule replaced, just smaller.
+  //
+  // Uppercase deliberately: `loanIds` (a plural, i.e. an array) is not a single
+  // reference and must not be treated as one.
+  // The column name matches either case (`loanId`, `oldLoanId`), but the leg
+  // suffix must be UPPERCASE so a plural like `loanIds` — an array, not a single
+  // reference — is not treated as one.
+  loanId: /^[A-Za-z0-9]*[Ll]oanId(?:[A-Z]|[0-9]+)?$/,
+  offerId: /^[A-Za-z0-9]*[Oo]fferId(?:[A-Z]|[0-9]+)?$/,
 };
 
 /**
@@ -623,6 +635,37 @@ const readsArgPath = (expr) => {
 const isNullLiteral = (expr) =>
   expr && (expr.kind === ts.SyntaxKind.NullKeyword || ts.isIdentifier(expr) && expr.text === 'undefined');
 
+/**
+ * A shadow declared in the ENCLOSING function body — before the switch — binds
+ * for every clause (Codex round-13 P2). Scanning only clause statements missed
+ * `const Number = () => 0` sitting immediately above the switch, which silently
+ * turns every accepted conversion into a call to something else.
+ */
+{
+  const SHADOWABLE_OUTER = new Set(['args', 'Number']);
+  let outerShadow = null;
+  const walkOuter = (n) => {
+    if (outerShadow) return;
+    if (n === switchNode) return; // clause bodies are scanned per case
+    if (
+      (ts.isVariableDeclaration(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) &&
+      n.name &&
+      ts.isIdentifier(n.name) &&
+      SHADOWABLE_OUTER.has(n.name.text)
+    ) {
+      outerShadow = n.name.text;
+      return;
+    }
+    ts.forEachChild(n, walkOuter);
+  };
+  if (fnNode.body) ts.forEachChild(fnNode.body, walkOuter);
+  if (outerShadow) {
+    structural.push(
+      `pluckActivityRefs declares '${outerShadow}' in its own body, shadowing what the accepted mapping shape relies on for EVERY case — this checker cannot tell the two apart`,
+    );
+  }
+}
+
 {
   /** Labels accumulate across fall-through clauses, along with their returns. */
   let pendingLabels = [];
@@ -805,6 +848,17 @@ const isNullLiteral = (expr) =>
         // Binding NAMES recursively (Codex round-10 P2): `const { args } = …` puts
         // the binding inside an ObjectBindingPattern, which an identifier-only
         // test walks straight past.
+        // Assignment or mutation, not just declaration (Codex round-13 P2):
+        // `args = { ...args, loanId: 0n }` (or `args.loanId = 0n`) rebinds the
+        // decoded arguments before the accepted read, and a declaration-only scan
+        // never sees it.
+        if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+          let target = n.left;
+          while (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+            target = target.expression;
+          }
+          if (ts.isIdentifier(target) && SHADOWABLE.has(target.text)) found = true;
+        }
         if (ts.isVariableDeclaration(n) || ts.isParameter(n)) {
           const bindsArgs = (name) => {
             if (!name) return false;
