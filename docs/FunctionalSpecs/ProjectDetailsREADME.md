@@ -1905,6 +1905,15 @@ This option allows Liam to recover principal early by selling his lender positio
     period as well. This disqualification lasts for the rest of Liam's tenure,
     because no later payment restores the missing one.
 
+    Sanctions are not the only reason interest gets held back, and the others
+    count identically. Handing the borrower's obligation to a replacement
+    borrower settles Liam's accrued share into the same holding account on a
+    loan that carries on running: Liam has not been paid it, and it goes to
+    whoever buys his position next. The platform therefore asks whether anything
+    is being held for Liam that was not being held when his mark was last
+    recorded — a question about the loan's own state, not a rule each holding
+    site has to remember.
+
   Neither refusal lifts on its own. A later clean payment cannot repair a period
   that is already broken, so once either has happened Liam is charged the full
   accrual for the rest of his tenure. The sequence that makes this matter looks

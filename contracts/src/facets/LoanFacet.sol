@@ -851,7 +851,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // looks valid while excluding interest accrued on the larger principal.
         // No mark is set: a loan that has paid its lender nothing forfeits from
         // the accrual origin, which a zero mark already means.
-        LibEntitlement.baselineMarkPrincipal(LibVaipakam.storageSlot(), loanId);
+        LibEntitlement.baselineMark(LibVaipakam.storageSlot(), loanId);
         // A lender-sale-vehicle accept (offer mapped to an underlying loan)
         // skips the LIF charge, so the receipt must NOT record one.
         _snapshotFeeBps(

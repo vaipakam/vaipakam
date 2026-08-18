@@ -120,7 +120,15 @@ export function EarlyExitFlow({
   const candidates = useMemo(() => {
     // No window, no quote — every candidate below needs one, and a doomed
     // list is worse than an empty one because it looks priced.
-    if (live.lenderForfeitFrom === undefined) return [];
+    //
+    // `null`, NOT `[]` (Codex #1801 r11 P2). This component already renders
+    // three distinct states, and `[]` is "the market is empty" — so a transient
+    // failure to read the seller's window told the lender there are no
+    // compatible offers when there may be plenty. The unavailable branch
+    // (`candidates === null`) is the one that describes what actually happened,
+    // and it already exists for the offer read failing; a quote failure is the
+    // same class of answer.
+    if (live.lenderForfeitFrom === undefined) return null;
     if (!offers.data || !address) return offers.data === null ? null : [];
     const me = address.toLowerCase();
     return offers.data

@@ -86,6 +86,17 @@ so reading it as "paid through the later one" would credit the held period too.
 That second disqualification lasts the rest of the lender's tenure, because no
 later payment restores the missing one.
 
+Interest can be held back for reasons that have nothing to do with sanctions,
+and those count identically. Handing the borrower's obligation to a replacement
+borrower settles the outgoing lender's accrued share into the same holding
+account, on a loan that carries on running — the lender has not been paid, and
+the balance goes to whoever buys the position next. Any later payment would
+otherwise close the seller's window over that stretch. The platform therefore
+looks at whether anything is being held for this lender that was not being held
+when the mark was last recorded, rather than relying on each of the seven places
+that can hold money to remember the rule. One of them did; that is the argument
+for reading the state rather than trusting the caller, not against it.
+
 A loan also needs a starting point for any of this to mean anything. Each new
 loan records the balance it opens at, so the first delivery has something to
 compare against; without that, a balance change between origination and the

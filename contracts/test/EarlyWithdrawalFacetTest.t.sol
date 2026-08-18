@@ -842,6 +842,54 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev DIRECT route, a PARK on a continuing loan (Codex #1801 r11 P1).
+    ///      `transferObligationViaOffer` parks the lender's accrued share in
+    ///      `heldForLender` rather than delivering it, and — unlike the freeze
+    ///      path — never touched the void flag. A clean settlement afterwards
+    ///      would then stamp a mark straight over the parked stretch, and the
+    ///      sale would exclude it from the seller's charge although the seller
+    ///      never received it and the balance migrates to the buyer.
+    ///
+    ///      Both runs carry the SAME parked balance, so the only difference
+    ///      between them is whether the later stamp installed a mark.
+    function test_sellLoanViaBuyOffer_markAfterAParkIsNotHonoured() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 parked = 1e6;
+        uint256 snap = vm.snapshotState();
+
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, parked);
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // The obligation transfer parked the accrued share — no void flag set,
+        // exactly as that path leaves it...
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, parked);
+        // ...and a later period settled cleanly, stamping through the shared
+        // writer as a real delivery would.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidAfterPark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
+        assertEq(
+            paidAfterPark,
+            paidWithNoMark,
+            "a clean period after a park must not re-open the credit"
+        );
+    }
+
     /// @dev DIRECT route, mark at or beyond now. A window model cannot
     ///      over-subtract, so a lender paid through the present forfeits nothing
     ///      and the sale COMPLETES. The amount-based predecessor had to refuse

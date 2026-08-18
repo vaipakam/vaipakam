@@ -74,7 +74,19 @@ export function saleSettlementBound(
   // buyer's acceptance reverted. `econ.cost` is max(accrued, shortfall), so
   // taking it here covers both.
   const floor = paddedAccrual > econ.shortfall ? paddedAccrual : econ.shortfall;
-  return floor > econ.cost ? floor : econ.cost;
+  // ...and when the current cost is what binds, it needs the SAME growth
+  // headroom the term-based figure already has (Codex #1801 r11 P2). Round 9
+  // added `econ.cost` as a floor and stopped there, so in exactly the case that
+  // made it necessary — a mark far enough before the accrual origin that the
+  // accrued cost outruns remaining-term-plus-pad — the allowance was the pull at
+  // the instant of approval and nothing more. Interest keeps accruing after the
+  // snapshot, so a buyer arriving later reverts unless the seller happens to
+  // notice the funding watch and restores. Adding the pad's worth of accrual is
+  // the same margin, applied to the branch that was missing it.
+  const padAccrual =
+    (live.principal * live.interestRateBps * REACCRUAL_PAD_DAYS * 86_400n) / denom;
+  const costWithHeadroom = econ.cost + padAccrual;
+  return floor > costWithHeadroom ? floor : costWithHeadroom;
 }
 
 /** What a buyer's acceptance would pull RIGHT NOW. */

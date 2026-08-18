@@ -6737,6 +6737,32 @@ library LibVaipakam {
         ///         because the incoming lender's window opens at the sale and
         ///         carries none of the seller's history — frozen or otherwise.
         mapping(uint256 => bool) lenderMarkVoided;
+
+        /// @notice #1503 item 28 — the `heldForLender` balance the mark was
+        ///         stamped at, so a park that happened since it is DETECTABLE.
+        ///
+        /// @dev    Codex #1801 r11 P1. Parked interest is interest the lender did
+        ///         not receive, so it disqualifies the mark for exactly the
+        ///         reason a freeze does — but the two are not the same event, and
+        ///         only the freeze path was setting {lenderMarkVoided}. The
+        ///         obligation-transfer route parks the lender's accrued share on
+        ///         a CONTINUING loan and never touched the flag, so a later clean
+        ///         settlement re-stamped the mark over the parked stretch and the
+        ///         sale excluded it from the seller's charge — money the seller
+        ///         never received and which migrates to the buyer.
+        ///
+        ///         Reading the balance rather than trusting the park sites is the
+        ///         same choice made for principal one field up, and for the same
+        ///         reason: there are SEVEN places that park to `heldForLender`
+        ///         across four facets, one of which remembered to void, and any
+        ///         future eighth would have to remember too. A rule read off
+        ///         state cannot be forgotten by code that has never seen it.
+        ///
+        ///         Safe as an equality test because `heldForLender[loanId]` only
+        ///         grows while a loan is live — it is consumed at terminal claim,
+        ///         never decremented during a lender's tenure — so a difference
+        ///         is proof of a park and nothing else.
+        mapping(uint256 => uint256) lenderMarkHeldAt;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

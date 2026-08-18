@@ -356,26 +356,53 @@ library LibEntitlement {
             voidInterestDeliveredMark(s, loanId);
             return;
         }
+        // A PARK since the last stamp disqualifies the mark too (Codex #1801 r11
+        // P1). Parked interest is interest the lender did not receive, so it
+        // breaks delivery exactly as a freeze does — but a park is not a freeze,
+        // and only the freeze path was voiding. `transferObligationViaOffer`
+        // parks the lender's accrued share on a CONTINUING loan; the next clean
+        // settlement then stamped straight over that stretch, and the sale
+        // excluded it from the seller's charge while the parked balance migrated
+        // to the buyer.
+        //
+        // Detected the same way the principal change is — by comparing state
+        // against what was recorded, not by asking seven park sites across four
+        // facets to remember a rule. One of them remembered; that is the
+        // argument against call-site cooperation, not for it.
+        uint256 heldNow = s.heldForLender[loanId];
+        if (s.lenderMarkHeldAt[loanId] != heldNow) {
+            voidInterestDeliveredMark(s, loanId);
+            return;
+        }
         s.lenderInterestDeliveredThroughAt[loanId] = at;
         s.lenderMarkPrincipalAt[loanId] = live;
+        s.lenderMarkHeldAt[loanId] = heldNow;
     }
 
-    /// @notice Records the principal a new loan starts at, with no mark.
+    /// @notice Records the position a new loan starts at, with no mark.
     /// @dev    The baseline {stampInterestDelivered} compares against (Codex
-    ///         #1801 r9 P1). Without it the first delivery stamp has nothing to
-    ///         detect an earlier principal change with, and a change between
-    ///         origination and the first settlement would be invisible.
+    ///         #1801 r9 P1, widened r11 P1). Without it the first delivery stamp
+    ///         has nothing to detect an earlier change with, and a principal
+    ///         change or a park between origination and the first settlement
+    ///         would be invisible.
+    ///
+    ///         The held baseline is written explicitly rather than left at its
+    ///         zero default even though a new loan holds nothing: the pair is
+    ///         what makes "recorded != live" mean "something happened since",
+    ///         and splitting responsibility for the two fields is how the
+    ///         principal half went missing in the first place.
     ///
     ///         Deliberately does NOT set the mark: a loan that has paid its
     ///         lender nothing forfeits from the accrual origin, which is what a
     ///         zero mark already means.
     /// @param s      The Diamond storage slot.
     /// @param loanId The loan being opened.
-    function baselineMarkPrincipal(
+    function baselineMark(
         LibVaipakam.Storage storage s,
         uint256 loanId
     ) internal {
         s.lenderMarkPrincipalAt[loanId] = s.loans[loanId].principal;
+        s.lenderMarkHeldAt[loanId] = s.heldForLender[loanId];
     }
 
     /// @notice Opens a FRESH mark for an incoming lender on a completed sale.
@@ -406,6 +433,7 @@ library LibEntitlement {
         // no mark at all, quietly re-opening their window at the accrual origin.
         s.lenderInterestDeliveredThroughAt[loanId] = at;
         s.lenderMarkPrincipalAt[loanId] = s.loans[loanId].principal;
+        s.lenderMarkHeldAt[loanId] = s.heldForLender[loanId];
         s.lenderMarkVoided[loanId] = false;
     }
 
@@ -425,6 +453,7 @@ library LibEntitlement {
     ) internal {
         s.lenderInterestDeliveredThroughAt[loanId] = 0;
         s.lenderMarkPrincipalAt[loanId] = 0;
+        s.lenderMarkHeldAt[loanId] = 0;
         s.lenderMarkVoided[loanId] = true;
     }
 
