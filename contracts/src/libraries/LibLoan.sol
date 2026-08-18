@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
+import {LibEntitlement} from "./LibEntitlement.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 
@@ -35,7 +36,14 @@ library LibLoan {
         //
         // Set unconditionally, and never below the mark it replaces: a sale is
         // always "now", which is at or after any boundary already settled.
-        s.lenderInterestDeliveredThroughAt[loanId] = block.timestamp;
+        //
+        // #1801 — this also CLEARS the freeze void. The flag is sticky for a
+        // lender's tenure because a frozen stretch makes their delivery
+        // non-contiguous, but none of that history is the buyer's: their window
+        // opens here, at this principal, and carries nothing from before the
+        // sale. Stamping through the shared writer is what keeps the recorded
+        // principal in step with the mark.
+        LibEntitlement.stampInterestDeliveredForNewLender(s, loanId, block.timestamp);
         // #998 S10 Class B NOTE — the dedicated active-held reservation is NOT
         // migrated here: the sale callers withdraw `priorHeld` from the OLD
         // lender's vault BEFORE calling this helper, so the reservation must be

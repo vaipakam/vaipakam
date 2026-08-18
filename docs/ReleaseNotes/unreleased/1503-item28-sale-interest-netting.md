@@ -71,6 +71,49 @@ like a sale would let any lender zero their own forfeiture by sending the
 position to a second wallet — or to themselves — and selling from there, which
 is a larger hole than the one this change closes.
 
+The mark is honoured only while it still describes the position, and this is the
+limit worth understanding. A point in time carries no amount. It can stand in for
+"interest already received" only when nothing since has changed what that stretch
+is worth or broken it into pieces — and two ordinary things do.
+
+The first is a change of principal. The unpaid stretch is priced at the balance
+it accrued on, so a partial repayment inside the stretch leaves part of it having
+accrued on a larger balance than the loan now carries; one figure would bill it
+at the wrong size. The second is a payment held rather than delivered. After
+that, the lender's delivery is no longer one continuous run — an earlier period
+is unpaid while a later one is settled — and a single point cannot express which,
+so reading it as "paid through the later one" would credit the held period too.
+That second disqualification lasts the rest of the lender's tenure, because no
+later payment restores the missing one.
+
+Where either applies, the platform discards the credit and charges the full
+accrual — the behaviour that shipped before this change. The exiting lender may
+be charged for interest they genuinely received; the platform never pays the
+same interest twice. A sale clears both conditions, since the buyer's period
+opens at the purchase and carries nothing from the seller's tenure.
+
+Both conditions are read from the loan's own recorded state rather than reported
+by whatever caused them. That distinction is the point: principal is reduced at
+eight places across five parts of the protocol, and a rule those places have to
+remember to honour has eight places to be forgotten — including in code written
+later by someone who has never seen this change. A rule that reads the state
+instead cannot be forgotten.
+
+One consequence is worth stating plainly, because it is a step back for some
+sellers rather than only a correction. A larger forfeiture is a larger cost, and
+the sale routes refuse a sale that would leave the position short of its solvency
+floor. A lender on a loan that has taken a partial repayment, or that has ever
+held a payment to them, may therefore find a sale priced higher than before —
+and, near the floor, refused where it would previously have completed. That is
+the platform declining to fund a credit it cannot size correctly, not a fee
+increase, and it resolves as the accumulator work lands.
+
+The narrower cases this leaves open — crediting interest delivered beyond a
+period boundary, and pricing a stretch that spans a principal change — are
+tracked separately. Closing them properly needs the platform to accumulate the
+forfeitable amount segment by segment as the loan changes, rather than infer it
+from a single point in time, and that is a larger change than this one.
+
 Loans that predate this change carry no mark, which resolves to the accrual
 origin — exactly the behaviour they already had. Nothing needs to be
 reconstructed or backfilled for them.

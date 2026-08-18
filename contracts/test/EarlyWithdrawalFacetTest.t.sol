@@ -649,6 +649,95 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev #1801 — a mark stamped at a DIFFERENT principal is not honoured.
+    ///      The unpaid stretch is priced at the principal it accrued on, so a
+    ///      mark that predates a principal change describes a window whose worth
+    ///      the loan can no longer state. Rather than bill it at the wrong size
+    ///      the credit is discarded and the seller pays the full accrual — which
+    ///      is the CONTROL payout, i.e. exactly as if no mark existed.
+    ///
+    ///      Read off state, so the eight principal-decrement sites across five
+    ///      facets need not cooperate: this test seeds the mismatch directly
+    ///      rather than driving one of them, because what is being pinned is
+    ///      that the READ refuses, not that any particular writer remembered.
+    function test_sellLoanViaBuyOffer_markAtAStalePrincipalIsNotHonoured() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // Same six-days-ago mark as the credited case above — but recorded
+        // against a principal the loan no longer carries.
+        uint256 livePrincipal =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal;
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, block.timestamp - 6 days, livePrincipal + 1
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithStaleMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
+        assertEq(
+            paidWithStaleMark,
+            paidWithNoMark,
+            "a mark recorded at another principal must buy the seller nothing"
+        );
+    }
+
+    /// @dev #1801 — a mark on a position that has FROZEN a lender share is not
+    ///      honoured, for the rest of that lender's tenure. Once a payment was
+    ///      held rather than delivered the lender's delivery is no longer one
+    ///      continuous run, and a single timestamp cannot say which period is
+    ///      which; reading it as "paid through the later one" would credit the
+    ///      held period too. Sticky, because no later payment restores the
+    ///      missing one — pinned here by stamping a FRESH mark after the void
+    ///      and showing it still buys nothing.
+    function test_sellLoanViaBuyOffer_markAfterAFrozenShareIsNotHonoured() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // A share was frozen at some earlier point...
+        TestMutatorFacet(address(diamond)).setLenderMarkVoidedByFreezeRaw(activeLoanId, true);
+        // ...and a later period then settled cleanly, stamping a fresh mark
+        // through the shared writer exactly as a real delivery would.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidAfterFreeze = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
+        assertEq(
+            paidAfterFreeze,
+            paidWithNoMark,
+            "a clean period after a freeze must not re-open the credit"
+        );
+    }
+
     /// @dev DIRECT route, mark at or beyond now. A window model cannot
     ///      over-subtract, so a lender paid through the present forfeits nothing
     ///      and the sale COMPLETES. The amount-based predecessor had to refuse

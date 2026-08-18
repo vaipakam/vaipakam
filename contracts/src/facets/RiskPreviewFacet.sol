@@ -570,7 +570,13 @@ contract RiskPreviewFacet {
      * @return forfeitFrom    Timestamp the forfeiture window opens at — the
      *                        point the current lender has been paid through, or
      *                        the interest-accrual origin when they have never been
-     *                        paid.
+     *                        paid. Callers should treat this as the ANSWER and not
+     *                        re-derive it from the mark: the mark is honoured only
+     *                        while the position is provably unchanged since it was
+     *                        stamped (no principal movement, no frozen share), and
+     *                        this returns the accrual origin wherever it is not.
+     *                        A client mirroring the rule would keep crediting
+     *                        sellers the Diamond had stopped crediting.
      * @return forfeitAccrued Interest accrued across that window as of this
      *                        block, at the LOAN's own rate. This is the figure
      *                        the seller absorbs, before the rate shortfall.

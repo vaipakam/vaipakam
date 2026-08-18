@@ -1886,10 +1886,36 @@ This option allows Liam to recover principal early by selling his lender positio
   repayment, a swap-to-repay — restart that stretch. A lifetime total of interest
   paid would not be comparable with it: right after a restart the total describes
   a period the forfeiture no longer covers, and once the same interest accrued
-  again it would be deducted twice. Taking the later of two points in time stays
-  correct across a restart, and it also means a fully paid-up lender simply
-  forfeits nothing and completes the sale, rather than being blocked by a
-  leftover the platform has nowhere to put.
+  again it would be deducted twice. A fully paid-up lender simply forfeits
+  nothing and completes the sale, rather than being blocked by a leftover the
+  platform has nowhere to put.
+- **The paid-through point is only honoured while it still describes the
+  position.** A point in time carries no amount, so it can only stand in for
+  "interest already received" when nothing has happened since that would change
+  what that stretch is worth or break it into pieces. Two things do, and either
+  one discards the credit in favour of charging Liam the full accrual:
+  - **The principal has moved.** The unpaid stretch is priced at the principal it
+    accrued on. A partial repayment inside that stretch means part of it accrued
+    on a larger balance than the one now on the loan, so a single figure would
+    bill it at the wrong size.
+  - **A payment to Liam was held rather than delivered.** Once that happens his
+    delivery is no longer one continuous run — some earlier period is unpaid
+    while a later one is settled — and a single point in time cannot say which.
+    Reading it as "paid through the later one" would credit him for the held
+    period as well. This disqualification lasts for the rest of Liam's tenure,
+    because no later payment restores the missing one.
+
+  A sale clears both: Noah's period opens at the purchase, at the principal on
+  the loan then, and carries nothing from Liam's tenure. Both conditions are read
+  from the loan's own recorded state rather than reported by whatever caused
+  them, so a path nobody thought to update cannot leave a stale credit standing.
+  Where the credit is refused, Liam is charged interest he may genuinely have
+  received — the platform errs toward over-charging the exiting lender and never
+  toward paying the same interest twice. Because a larger forfeiture is a larger
+  cost, and a sale that would leave the position below its solvency floor is
+  refused, this can also mean Liam is unable to sell at a moment when a credited
+  window would have let him. That is the platform declining to fund a credit it
+  cannot size correctly.
 - **Only interest Liam has actually RECEIVED counts as already paid.** Interest
   the platform recorded as settled to the lender side is not always interest the
   lender got: when a periodic payment is made to a lender whose wallet is

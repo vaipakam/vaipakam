@@ -151,14 +151,14 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
   });
 
   it('forfeits only the unpaid stretch once a mark is set', () => {
-    const paid = { ...saleLive, lenderPaidThroughAt: now - 6n * DAY };
+    const paid = { ...saleLive, lenderForfeitFrom: now - 6n * DAY };
     expect(sellerEconomics(paid, paid.interestRateBps, now).accrued).toBe(
       accrue(6n * DAY),
     );
   });
 
   it('forfeits nothing when the lender is paid through now', () => {
-    const paid = { ...saleLive, lenderPaidThroughAt: now };
+    const paid = { ...saleLive, lenderForfeitFrom: now };
     const econ = sellerEconomics(paid, paid.interestRateBps, now);
     expect(econ.accrued).toBe(0n);
     // A window model cannot over-subtract, so this is a completable sale that
@@ -175,7 +175,7 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     // received. The mark is authoritative: the window stays open from it.
     const reset = {
       ...saleLive,
-      lenderPaidThroughAt: now - 6n * DAY,
+      lenderForfeitFrom: now - 6n * DAY,
       interestAccrualStart: now - 4n * DAY,
     };
     expect(sellerEconomics(reset, reset.interestRateBps, now).accrued).toBe(
@@ -187,7 +187,7 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     // Same rule from the other side: an old mark is still the last time this
     // lender was PAID, so it bounds the forfeiture even when the obligation
     // clock has since moved past it.
-    const stale = { ...saleLive, lenderPaidThroughAt: now - 20n * DAY };
+    const stale = { ...saleLive, lenderForfeitFrom: now - 20n * DAY };
     expect(sellerEconomics(stale, stale.interestRateBps, now).accrued).toBe(
       accrue(20n * DAY),
     );
@@ -199,7 +199,7 @@ describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
     // loan's makes the shortfall the binding cost, exposing that half.
     const bare = sellerEconomics(saleLive, 2_000n, now);
     const paid = sellerEconomics(
-      { ...saleLive, lenderPaidThroughAt: now - 6n * DAY },
+      { ...saleLive, lenderForfeitFrom: now - 6n * DAY },
       2_000n,
       now,
     );

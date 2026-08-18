@@ -6696,6 +6696,45 @@ library LibVaipakam {
         ///      wrong new one, and no backfill of unreconstructable history is
         ///      needed.
         mapping(uint256 => uint256) lenderInterestDeliveredThroughAt;
+        /// @notice #1801 — the loan's `principal` at the moment the mark above
+        ///         was stamped. Written with the mark and never apart from it
+        ///         (both go through {LibEntitlement.stampInterestDelivered}).
+        ///
+        /// @dev    The mark names a WINDOW; a window is only meaningful at the
+        ///         principal it was priced against. Principal is decremented at
+        ///         eight sites across five facets — `RepayFacet`,
+        ///         `SwapToRepayFacet`, `RiskFacet` and `RiskMatchLiquidationFacet`
+        ///         (five) — and a design that asks each of them to keep the mark
+        ///         honest has eight places to miss, in facets edited for
+        ///         unrelated reasons.
+        ///
+        ///         So the mark is not maintained by them; it is INVALIDATED BY
+        ///         STATE. A read honours it only while this equals the live
+        ///         principal, which means any principal change anywhere — today's
+        ///         eight sites and any added later by someone who has never read
+        ///         this — voids the credit automatically and charges the seller
+        ///         the full accrual instead. Fail-safe by construction rather
+        ///         than by cooperation.
+        mapping(uint256 => uint256) lenderMarkPrincipalAt;
+        /// @notice #1801 — set once a lender share on this loan has been FROZEN
+        ///         rather than delivered, which permanently disqualifies the
+        ///         scalar mark for the rest of the position's life.
+        ///
+        /// @dev    Voiding the mark at the freeze is not enough on its own: a
+        ///         later clean delivery re-stamps it, and the window from the
+        ///         new mark back to the previous one then spans the frozen
+        ///         stretch, crediting the seller for interest that went to
+        ///         `heldForLender` and migrates to the buyer. That is exactly
+        ///         the "do not leap the mark over frozen periods" case — a
+        ///         single timestamp cannot say "paid for the second period, not
+        ///         the first", so once delivery has become non-contiguous no
+        ///         stamp on this loan is trustworthy again.
+        ///
+        ///         Cleared on a position SALE, through
+        ///         {LibEntitlement.stampInterestDeliveredForNewLender},
+        ///         because the incoming lender's window opens at the sale and
+        ///         carries none of the seller's history — frozen or otherwise.
+        mapping(uint256 => bool) lenderMarkVoidedByFreeze;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

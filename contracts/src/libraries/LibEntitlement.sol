@@ -256,10 +256,13 @@ library LibEntitlement {
         uint256 loanId,
         uint256 accrualStart
     ) internal view returns (uint256 from) {
-        uint256 paidThrough =
-            LibVaipakam.storageSlot().lenderInterestDeliveredThroughAt[loanId];
-        // The mark is AUTHORITATIVE once it exists; the accrual clock is only the
-        // seed for a loan that has never paid its lender (Codex #1801 r4 P1).
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 paidThrough = s.lenderInterestDeliveredThroughAt[loanId];
+        // The mark OUTRANKS the accrual clock where it applies; the clock is only
+        // the seed for a loan that has never paid its lender (Codex #1801 r4 P1).
+        // Where it applies is the second half of this function — an earlier
+        // revision said "authoritative once it exists" full stop, and rounds 5/6
+        // showed that is one condition short.
         //
         // An earlier revision took the LATER of the two, which reads as the safe
         // choice and is not. The accrual clock resets whenever the borrower's
@@ -271,10 +274,88 @@ library LibEntitlement {
         //
         // The two clocks answer different questions. "When did the borrower's
         // obligation restart" is not "when was this lender last paid", and only
-        // the second bounds a forfeiture. Every path that genuinely pays the
-        // lender advances the mark, so a missed one over-charges the seller
-        // rather than leaking to them — the direction to be wrong in.
-        return paidThrough != 0 ? paidThrough : accrualStart;
+        // the second bounds a forfeiture.
+        if (paidThrough == 0) return accrualStart;
+        // ...but a scalar mark can only be honoured while it still DESCRIBES the
+        // position (Codex #1801 r5/r6, five P1s). Those findings are one finding:
+        // a timestamp carries no amount, so it cannot price a window whose
+        // principal moved inside it, and cannot express a delivery that is not
+        // contiguous. Rather than teach it to — that is the checkpointed
+        // accumulator, tracked separately — the mark is honoured ONLY while the
+        // position is provably unchanged since it was stamped, and otherwise
+        // discarded in favour of the full-accrual charge this PR inherited.
+        //
+        // Both disqualifiers are read off STATE, not reported by the sites that
+        // cause them, so neither depends on a call site remembering to
+        // cooperate. The seller loses a credit they arguably earned; they never
+        // gain one they did not.
+        if (s.lenderMarkVoidedByFreeze[loanId]) return accrualStart;
+        if (s.lenderMarkPrincipalAt[loanId] != s.loans[loanId].principal) return accrualStart;
+        return paidThrough;
+    }
+
+    /// @notice Records that this loan's lender has been paid interest through
+    ///         `at`, together with the principal that window was priced at.
+    /// @dev    The ONLY writer of the pair. Keeping the two in one function is
+    ///         the whole guarantee: a mark without its principal would be
+    ///         honoured against whatever principal happened to be current, which
+    ///         is the leak {forfeitureAccrualStart} exists to refuse.
+    ///
+    ///         Callers must have DELIVERED the interest — not frozen it, not
+    ///         re-based the borrower's obligation clock. A freeze goes to
+    ///         {voidInterestDeliveredMark} instead.
+    /// @param s      The Diamond storage slot.
+    /// @param loanId The loan whose lender was paid.
+    /// @param at     The timestamp delivery is paid through.
+    function stampInterestDelivered(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 at
+    ) internal {
+        s.lenderInterestDeliveredThroughAt[loanId] = at;
+        s.lenderMarkPrincipalAt[loanId] = s.loans[loanId].principal;
+    }
+
+    /// @notice Opens a FRESH mark for an incoming lender on a completed sale.
+    /// @dev    A sale settles the outstanding forfeiture — to treasury, or into
+    ///         the buyer's rate compensation — before the position changes hands,
+    ///         so the buyer's window starts at the sale carrying nothing of the
+    ///         seller's tenure. That includes the seller's freeze history: the
+    ///         void is sticky for a lender, not for a loan.
+    ///
+    ///         Separate from {stampInterestDelivered} because clearing the void
+    ///         is only ever correct here, and kept in this library rather than at
+    ///         the call site so all three fields have one owner — a later sale
+    ///         path cannot stamp the mark and forget the flag.
+    /// @param s      The Diamond storage slot.
+    /// @param loanId The loan whose lender position was sold.
+    /// @param at     The sale timestamp the buyer's window opens at.
+    function stampInterestDeliveredForNewLender(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 at
+    ) internal {
+        stampInterestDelivered(s, loanId, at);
+        s.lenderMarkVoidedByFreeze[loanId] = false;
+    }
+
+    /// @notice Permanently disqualifies this loan's mark, because a lender share
+    ///         was frozen rather than delivered.
+    /// @dev    Clearing the timestamp alone would not hold: a later clean
+    ///         delivery re-stamps it, and the window back to the previous mark
+    ///         then spans the frozen stretch. Once delivery is non-contiguous no
+    ///         scalar stamp on this position is trustworthy again, so the flag
+    ///         is sticky for the rest of the lender's tenure — and cleared only
+    ///         by a SALE, where the incoming lender's window starts fresh.
+    /// @param s      The Diamond storage slot.
+    /// @param loanId The loan whose lender share was frozen.
+    function voidInterestDeliveredMark(
+        LibVaipakam.Storage storage s,
+        uint256 loanId
+    ) internal {
+        s.lenderInterestDeliveredThroughAt[loanId] = 0;
+        s.lenderMarkPrincipalAt[loanId] = 0;
+        s.lenderMarkVoidedByFreeze[loanId] = true;
     }
 
     /// @notice Applies the treasury cut to an interest-like amount, using the

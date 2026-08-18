@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibEntitlement} from "../../src/libraries/LibEntitlement.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {LibEncumbrance} from "../../src/libraries/LibEncumbrance.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
@@ -393,11 +394,41 @@ contract TestMutatorFacet {
     ///      Frozen interest is represented by leaving the mark where it was (the
     ///      freeze branch never advances it); a previous lender's tenure by
     ///      setting the mark to when their tenure ended.
+    ///      Seeds through the SHARED writer (#1801), so the recorded principal
+    ///      lands with the mark exactly as a real delivery would leave it. A
+    ///      mark seeded without its principal would be disqualified on read and
+    ///      every test using this would silently exercise the fallback instead.
     function setLenderPaidThroughRaw(uint256 loanId, uint256 paidThroughAt)
         external
     {
-        LibVaipakam.storageSlot().lenderInterestDeliveredThroughAt[loanId] =
-            paidThroughAt;
+        LibEntitlement.stampInterestDelivered(
+            LibVaipakam.storageSlot(), loanId, paidThroughAt
+        );
+    }
+
+    /// @notice Seed the mark WITHOUT its principal companion (#1801).
+    /// @dev For the disqualification case only: proves a mark whose recorded
+    ///      principal no longer matches the live one is discarded in favour of
+    ///      the full-accrual charge. Reaching it for real means a principal
+    ///      decrement after a delivery — one of eight sites across five facets —
+    ///      which the unit harness cannot stage without a servicing run.
+    function setLenderPaidThroughWithPrincipalRaw(
+        uint256 loanId,
+        uint256 paidThroughAt,
+        uint256 markPrincipal
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.lenderInterestDeliveredThroughAt[loanId] = paidThroughAt;
+        s.lenderMarkPrincipalAt[loanId] = markPrincipal;
+    }
+
+    /// @notice Set or clear the sticky freeze void on a loan's mark (#1801).
+    /// @dev The real setter is every Active-loan lender-share park; staging one
+    ///      needs a registry-flagged holder the unit harness has no oracle for.
+    function setLenderMarkVoidedByFreezeRaw(uint256 loanId, bool voided)
+        external
+    {
+        LibVaipakam.storageSlot().lenderMarkVoidedByFreeze[loanId] = voided;
     }
 
     /// #594 test — append a loanId to a user's loan index directly (to set up

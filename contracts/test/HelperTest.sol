@@ -91,7 +91,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](172);
+        selectors = new bytes4[](174);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -238,6 +238,12 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setHeldForLenderRaw.selector;
         selectors[n++] = TestMutatorFacet.setSaleProceedsEscrowRaw.selector;
         selectors[n++] = TestMutatorFacet.setLenderPaidThroughRaw.selector;
+        // #1801 — the two DISQUALIFICATION seeds: a mark recorded against a
+        // principal the loan no longer carries, and the sticky freeze void.
+        // Both are read off state by `forfeitureAccrualStart`, so the tests
+        // seed the state rather than driving the writers that cause it.
+        selectors[n++] = TestMutatorFacet.setLenderPaidThroughWithPrincipalRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLenderMarkVoidedByFreezeRaw.selector;
         // Layout-resilient claim writers used by ClaimFacetTest to
         // exercise the NothingToClaim revert + held-only paths
         // without slot math.

@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibSanctionedLock} from "./LibSanctionedLock.sol";
 import {LibEncumbrance} from "./LibEncumbrance.sol";
+import {LibEntitlement} from "./LibEntitlement.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -207,6 +208,14 @@ library LibCloseoutFreeze {
         uint256 amount
     ) private {
         s.heldForLender[loanId] += amount;
+        // #1801 — this share was FROZEN, not delivered, so the loan's
+        // paid-through mark stops describing reality and can never be trusted
+        // again for this lender: delivery on this position is now
+        // non-contiguous, and one timestamp cannot say "paid for the later
+        // period, not the earlier one". Voided here rather than at each caller
+        // because every Active-loan park funnels through this helper, which makes
+        // the coverage a property of the code shape instead of a checklist.
+        LibEntitlement.voidInterestDeliveredMark(s, loanId);
         LibSanctionedLock.recordFrozenClaimant(s, loanId, true, frozenHolder);
         // #998 S10 Class B — reserve through the DEDICATED active-held ledger, NOT
         // the single-terminal `encumberLenderProceeds` ledger. That ledger records
@@ -258,7 +267,7 @@ library LibCloseoutFreeze {
             // Monotone: a caller settling an older boundary after a newer one can
             // never walk the mark backwards and re-open a window already paid.
             if (deliveredThroughAt > s.lenderInterestDeliveredThroughAt[loanId]) {
-                s.lenderInterestDeliveredThroughAt[loanId] = deliveredThroughAt;
+                LibEntitlement.stampInterestDelivered(s, loanId, deliveredThroughAt);
             }
             return;
         }
@@ -299,7 +308,7 @@ library LibCloseoutFreeze {
             // credit and close the seller's window over interest they never
             // received. The mark stays put, so the window stays open.
             if (block.timestamp > s.lenderInterestDeliveredThroughAt[loanId]) {
-                s.lenderInterestDeliveredThroughAt[loanId] = block.timestamp;
+                LibEntitlement.stampInterestDelivered(s, loanId, block.timestamp);
             }
             return;
         }
@@ -334,7 +343,7 @@ library LibCloseoutFreeze {
             // from-payer helper above, including why the freeze branch below does
             // not stamp.
             if (block.timestamp > s.lenderInterestDeliveredThroughAt[loanId]) {
-                s.lenderInterestDeliveredThroughAt[loanId] = block.timestamp;
+                LibEntitlement.stampInterestDelivered(s, loanId, block.timestamp);
             }
             return;
         }

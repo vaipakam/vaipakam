@@ -46,14 +46,22 @@ export interface LoanLive {
    *  gross accrual, so any cost mirror must subtract it or it
    *  overstates the pull (Codex #1500 r4). */
   interestSettled: bigint;
-  /** #1503 item 28 — the timestamp this lender has been PAID THROUGH,
-   *  from `RiskPreviewFacet.sellerForfeitureWindow(loanId)`. Carried on
-   *  the record rather than passed to `sellerEconomics`, so every seller
-   *  surface picks it up without threading and none can be left quoting
-   *  the raw accrual. Optional: absent (or 0n) means no delivered
-   *  periodic interest — including every loan predating #1801 — which
-   *  resolves to the accrual origin and the pre-change behaviour. */
-  lenderPaidThroughAt?: bigint;
+  /** #1503 item 28 — the timestamp the seller's forfeiture window OPENS at,
+   *  as resolved by `RiskPreviewFacet.sellerForfeitureWindow(loanId)`.
+   *
+   *  Deliberately not "the paid-through mark", which is what an earlier name
+   *  claimed: since #1801 the contract honours that mark only while the
+   *  position is provably unchanged since it was stamped, and returns the
+   *  accrual origin otherwise. What arrives here is the ANSWER, disqualifiers
+   *  already applied — this client holds no copy of the rule and so cannot
+   *  drift from it.
+   *
+   *  Carried on the record rather than passed to `sellerEconomics`, so every
+   *  seller surface picks it up without threading and none can be left quoting
+   *  the raw accrual. Optional: absent or 0n means the read FAILED (a Diamond
+   *  not yet routing the selector), which falls back to the accrual origin —
+   *  the full charge, never a credit. */
+  lenderForfeitFrom?: bigint;
   // Collateral identity — a refinance-tagged offer must repeat these
   // EXACTLY for the collateral to carry over instead of re-pledging.
   collateralAsset: `0x${string}`;
@@ -199,14 +207,22 @@ export function sellerEconomics(
   // #1503 item 28 — the FORFEITURE clock is not the accrual clock. `elapsed`
   // above still measures the loan's own progress, which `remainingSecs` needs;
   // the forfeiture measures only the stretch the lender has NOT been paid for.
-  // The mark is AUTHORITATIVE once it exists; the accrual clock is only the
-  // seed for a loan that has never paid its lender. Mirrors
-  // LibEntitlement.forfeitureAccrualStart — see there for why taking the LATER
-  // of the two is wrong (a partial repayment whose lender share was frozen
-  // resets the clock without paying anyone, and the max let that reset act as
-  // the credit).
-  const paidThroughAt = live.lenderPaidThroughAt ?? 0n;
-  const forfeitFrom = paidThroughAt !== 0n ? paidThroughAt : start;
+  //
+  // This value is RESOLVED ON CHAIN, not re-derived here: `readLoanLive` reads
+  // `RiskPreviewFacet.sellerForfeitureWindow`, which returns what
+  // `LibEntitlement.forfeitureAccrualStart` decided. That matters as of #1801 —
+  // the mark is honoured only while the position is provably unchanged since it
+  // was stamped, and the disqualifiers (a principal that has moved, a frozen
+  // share) live in storage this client never reads. A mirrored rule would have
+  // silently kept crediting sellers the contract had stopped crediting.
+  //
+  // Zero means the read FAILED — an unupgraded Diamond not routing the
+  // selector. Fall back to the accrual origin, which is the full-accrual charge
+  // and the conservative direction, never a credit the chain would refuse.
+  const forfeitFrom =
+    live.lenderForfeitFrom !== undefined && live.lenderForfeitFrom !== 0n
+      ? live.lenderForfeitFrom
+      : start;
   const forfeitSecs = chainNow > forfeitFrom ? chainNow - forfeitFrom : 0n;
   const accrued = (live.principal * live.interestRateBps * forfeitSecs) / denom;
   const originalRemaining =
@@ -365,7 +381,7 @@ export async function readLoanLive(
   if (rawResult.status === 'rejected') throw rawResult.reason;
   const raw = rawResult.value;
   return {
-    lenderPaidThroughAt:
+    lenderForfeitFrom:
       windowResult.status === 'fulfilled' ? windowResult.value[0] : 0n,
     status: Number(raw.status),
     lender: raw.lender,
