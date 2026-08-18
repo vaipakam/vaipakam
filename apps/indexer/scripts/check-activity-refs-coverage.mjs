@@ -1456,27 +1456,59 @@ if (!fnNode) {
     // 999 — where the chain-scoped history queries will never find them. The
     // tally is identical either way, which is this script's whole failure mode.
     //
-    // A bare identifier is required rather than a specific binding: naming
-    // which local is "the chain id" would hard-code the ledger's parameter
-    // order, and the demonstrated hole is a PINNED VALUE, which an identifier
-    // cannot be.
+    // Round 38 required a bare IDENTIFIER, on the reasoning that "the
+    // demonstrated hole is a pinned value, which an identifier cannot be".
+    // That reasoning was wrong (Codex round-39 P2): `const wrongChainId = 999`
+    // is an identifier and a pinned value, one hop apart, and the rows land
+    // under chain 999 exactly as before. Syntax was never the property worth
+    // checking — being pinned is — so the argument is FOLLOWED to what it
+    // holds.
+    //
+    // Still not resolved to a NAMED binding: saying which local is "the chain
+    // id" would hard-code the ledger's parameter order into this script, and
+    // it is not needed. A constant is refused however many renames it hides
+    // behind; anything this walk cannot follow to a constant is accepted,
+    // because a real binding is exactly the thing it cannot prove constant.
     //
     // Scoped to the arguments AFTER the logs: argument 1 already has a check
     // with a better message (an empty literal batch is a distinct mistake with
     // a distinct explanation), and subsuming it into a generic one would lose
     // that.
+    const isPinned = (node, from, depth = 0) => {
+      if (depth > 8) return false; // a rename chain this long is not real code
+      const e = unwrapAssertions(node);
+      if (
+        ts.isNumericLiteral(e) ||
+        ts.isStringLiteralLike(e) ||
+        e.kind === ts.SyntaxKind.TrueKeyword ||
+        e.kind === ts.SyntaxKind.FalseKeyword ||
+        e.kind === ts.SyntaxKind.NullKeyword ||
+        ts.isArrayLiteralExpression(e) ||
+        ts.isObjectLiteralExpression(e)
+      ) {
+        return true;
+      }
+      if (ts.isPrefixUnaryExpression(e)) return isPinned(e.operand, from, depth + 1);
+      if (ts.isIdentifier(e)) {
+        const decl = nearestDeclIn(from, e.text, sourceFile);
+        if (!decl || decl === OPAQUE_BINDING || !decl.initializer) return false;
+        return isPinned(decl.initializer, decl, depth + 1);
+      }
+      return false;
+    };
     const pinnedArg = callSites.length === 1
-      ? callSites[0].arguments
-          .findIndex((a, i) => i > 0 && !ts.isIdentifier(unwrapAssertions(a)))
+      ? callSites[0].arguments.findIndex((a, i) => i > 0 && isPinned(a, callSites[0]))
       : -1;
     if (pinnedArg >= 0) {
       console.error(
         `[check-activity-refs-coverage] ${LEDGER_FN}() is called with a pinned value in\n` +
           `  argument ${pinnedArg + 1} (\`${callSites[0].arguments[pinnedArg].getText(sourceFile)}\`).\n` +
           '  Only the LOGS argument used to be checked, but the other arguments decide what\n' +
-          '  every row is filed under — a literal chain id stores the whole batch under a\n' +
-          '  chain nobody queries, while every count in this script stays identical. Pass the\n' +
-          '  scan\'s own bindings, or update this script — do not delete the check.',
+          '  every row is filed under — a fixed chain id stores the whole batch under a\n' +
+          '  chain nobody queries, while every count in this script stays identical. A local\n' +
+          '  holding a constant is the same thing one rename along, so the value is followed\n' +
+          '  rather than its spelling checked. Pass the scan\'s own bindings, or update this\n' +
+          '  script — do not delete the check.',
       );
       process.exit(1);
     }
