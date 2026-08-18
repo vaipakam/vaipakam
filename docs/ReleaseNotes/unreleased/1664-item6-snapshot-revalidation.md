@@ -27,7 +27,12 @@ is current, was the one remaining way the provenance marker could overclaim.
 Reader-driven moments alone could not deliver that rule: a tab left open and
 visible sees neither a navigation nor a return, and review caught that it
 would have held its published label indefinitely. So when a snapshot is
-accepted, the page also notes the one moment it will expire and re-checks
-then — once, at that deadline, not on a repeating schedule. Browsing still
-produces at most the requests it always did; an expired snapshot that cannot
-be replaced simply steps down at the moment its acceptance always implied.
+accepted, the page also notes the moment it will expire and re-checks then.
+Because a device's clock can be corrected while the page waits — most
+commonly by the machine sleeping and waking — the page does not trust one
+long countdown to land on that moment: it confirms the deadline against the
+clock at most hourly, and each confirmation either acts, if the moment has
+passed, or simply waits on. These confirmations make no requests — browsing
+still produces at most the requests it always did, and the read itself still
+happens only at expiry. An expired snapshot that cannot be replaced steps
+down at the moment its acceptance always implied.

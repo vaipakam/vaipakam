@@ -439,18 +439,31 @@ function needsRevalidation(): boolean {
  *  visible with no navigation never re-evaluates `snapshotFresh` after
  *  acceptance, and the displayed values keep `published` provenance
  *  past the cutoff — the exact indefinite hold the spec forbids
- *  (Codex #1809 r1 P2). This is not polling: it fires once, at the
- *  expiry the acceptance already computed, and is re-armed only by a
- *  new acceptance — or by its own firing discovering the deadline has
- *  not actually arrived. `setTimeout` counts monotonic time while
- *  `snapshotFresh` reads the wall clock, so a backward clock correction
- *  larger than the cushion makes the timer fire while the snapshot is
- *  still fresh; dropping the deadline there would silently reintroduce
- *  the indefinite hold (Codex #1809 r2 P2), so the callback re-arms for
- *  the recomputed remaining time instead. Background tabs may throttle
- *  it; the `visibilitychange` path covers those on return, and the
- *  timer covers the visible-idle case timers are reliable for. */
+ *  (Codex #1809 r1 P2).
+ *
+ *  The deadline is a WALL-CLOCK moment (`snapshotFresh` compares
+ *  against `Date.now()`), but `setTimeout` counts MONOTONIC time, and
+ *  the two disagree whenever the clock is corrected or the machine
+ *  sleeps. Both directions bit in review: a backward correction fires
+ *  the timer while the snapshot still reads fresh (r2 P2), and a
+ *  forward correction — most commonly a laptop sleeping with the tab
+ *  visible throughout, so no `visibilitychange` fires either — expires
+ *  the snapshot while the timer's countdown stands still (r3 P2). So
+ *  no single slice is trusted for the whole window: each armed slice
+ *  is capped, and every firing re-reads the wall clock — demote/reload
+ *  if the deadline has truly passed, re-arm for the recomputed
+ *  remainder if not. The wakeups are bounded (at most one per slice)
+ *  and make NO network request; the read still happens only at expiry.
+ *  Background tabs may throttle timers arbitrarily; the
+ *  `visibilitychange` path covers those on return, and the timer
+ *  covers the visible-idle case timers are reliable for. */
 let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Longest slice the deadline timer trusts before re-reading the wall
+ *  clock: bounds how long a forward clock jump (sleep/resume, NTP) can
+ *  keep an already-expired snapshot on display at ~1h, at the cost of
+ *  at most `FRESH_WINDOW / slice` zero-network wakeups per window. */
+const MAX_TIMER_SLICE_MS = 3_600_000;
 
 function armExpiryTimer(): void {
   if (typeof window === 'undefined') return;
@@ -462,18 +475,18 @@ function armExpiryTimer(): void {
   const expiresAtMs = (acceptedUpdatedAt + FRESH_WINDOW_SECONDS) * 1000;
   // +1s so the check runs just AFTER the boundary — firing on the exact
   // millisecond would race `snapshotFresh`'s own comparison.
-  const delay = Math.max(0, expiresAtMs - Date.now()) + 1_000;
+  const delay = Math.min(Math.max(0, expiresAtMs - Date.now()) + 1_000, MAX_TIMER_SLICE_MS);
   expiryTimer = setTimeout(() => {
     expiryTimer = null;
     if (needsRevalidation()) {
       void load();
     } else if (!loading) {
-      // Fired, yet the snapshot still reads fresh: the wall clock moved
-      // backward past the cushion since this deadline was computed.
-      // Re-arm for the recomputed remaining time — the delay is always
-      // ≥1s, so repeated corrections cost one re-arm each, not a spin.
-      // (If a load is in flight instead, its conclusion re-arms; arming
-      // here off the pre-load state would tick uselessly until it ends.)
+      // The deadline has not actually arrived — this was a capped
+      // intermediate slice, or the wall clock moved backward past the
+      // cushion. Re-arm for the recomputed remainder; the delay is
+      // always ≥1s, so this cannot spin. (If a load is in flight
+      // instead, its conclusion re-arms; arming here off the pre-load
+      // state would tick uselessly until it ends.)
       armExpiryTimer();
     }
   }, delay);
