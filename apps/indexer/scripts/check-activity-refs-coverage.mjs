@@ -1860,11 +1860,41 @@ if (!fnNode) {
       return guardedReason(n, fn?.body ?? sourceFile) === null;
     };
     const BATCH_ADDERS = ['push', 'unshift'];
+    /**
+     * Does this call add the WHOLE decoded collection, rather than some of it?
+     *
+     * "Any insertion" was too weak (Codex round-49 P2): `someLogs.push(allLogs[0])`
+     * is an insertion, passes every other check, and makes a multi-log scan
+     * record one activity row and then advance the cursor past the rest. That is
+     * a plausible real bug, not only a decoy — an off-by-one in the fill loop
+     * has exactly this shape.
+     *
+     * Two accepted forms, matching how a complete batch is actually built:
+     * a SPREAD of another collection, or a per-item push INSIDE A LOOP — which
+     * is what the live decode loop does, one decoded log at a time.
+     */
+    const addsWholeCollection = (call) => {
+      if ((call.arguments ?? []).some((a) => ts.isSpreadElement(a))) return true;
+      for (let cur = call; cur && cur !== sourceFile; cur = cur.parent) {
+        const p = cur.parent;
+        if (!p) break;
+        if (isFunctionLike(p)) break; // a loop outside the helper is not its loop
+        if (
+          ts.isForOfStatement(p) || ts.isForInStatement(p) ||
+          ts.isForStatement(p) || ts.isWhileStatement(p) || ts.isDoStatement(p)
+        ) {
+          return true;
+        }
+      }
+      return false;
+    };
     const insertsInto = (call, name) => {
       const member = memberNameOf(call.expression);
-      if (BATCH_ADDERS.includes(member)) return call.arguments.length > 0;
+      if (BATCH_ADDERS.includes(member)) {
+        return call.arguments.length > 0 && addsWholeCollection(call);
+      }
       // splice(start, deleteCount, ...items) — an insertion needs the items.
-      if (member === 'splice') return call.arguments.length > 2;
+      if (member === 'splice') return call.arguments.length > 2 && addsWholeCollection(call);
       return false;
     };
     /**
@@ -2946,11 +2976,29 @@ if (!fnNode) {
      * @returns the SQL text, `null` for a dynamic expression, `undefined` when
      *          no `prepare(...)` call was found at all.
      */
+    /**
+     * Is this `prepare(...)` call made on a D1 binding?
+     *
+     * The SQL and executor checks accepted ANY object exposing `prepare` /
+     * `bind` / `run` (Codex round-49 P2), so a local stub whose `run()` resolves
+     * `{ meta: { changes: 1 } }` satisfied every one of them while writing
+     * nothing and letting the scan advance its cursor. Requiring the receiver to
+     * be a `.DB` property — the Workers D1 binding convention this ledger uses —
+     * is cheap and ties the checks to the real database.
+     */
+    const preparedOnD1 = (call) => {
+      const recv = unwrapAssertions(call.expression);
+      if (!ts.isPropertyAccessExpression(recv) && !ts.isElementAccessExpression(recv)) return false;
+      const host = unwrapAssertions(recv.expression);
+      return memberNameOf(host) === 'DB';
+    };
+    let nonD1Prepare = null;
     const staticSqlOf = (receiver) => {
       let found;
       const seek = (n) => {
         if (found !== undefined) return;
         if (ts.isCallExpression(n) && memberNameOf(n.expression) === 'prepare') {
+          if (!preparedOnD1(n)) nonD1Prepare = n.getText(sourceFile).slice(0, 80);
           const only = n.arguments.length === 1 ? unwrapAssertions(n.arguments[0]) : null;
           // `isStringLiteralLike` is exactly the right line: it covers a string
           // literal and a no-substitution template, and excludes a template
@@ -3055,15 +3103,36 @@ if (!fnNode) {
         const p = cur.parent;
         if (!p) break;
         if (ts.isTryStatement(p) && p.tryBlock === cur && p.catchClause) {
-          let rethrows = false;
-          const seek = (n) => {
-            if (rethrows) return;
-            if (ts.isThrowStatement(n)) { rethrows = true; return; }
-            if (isFunctionLike(n)) return;
-            ts.forEachChild(n, seek);
+          // EVERY completing path must exit, not "a throw exists somewhere"
+          // (Codex round-49 P2). One `throw` anywhere marked the whole handler
+          // as rethrowing, so `catch (e) { if (false) throw e; }` passed while
+          // swallowing every real failure. What matters is whether the handler
+          // can COMPLETE — if it can, the ledger returns normally and the
+          // cursor advances past the lost row.
+          const alwaysExitsBlock = (node) => {
+            if (!node) return false;
+            if (ts.isThrowStatement(node) || ts.isReturnStatement(node)) return true;
+            if (ts.isBlock(node)) {
+              const last = node.statements[node.statements.length - 1];
+              return alwaysExitsBlock(last);
+            }
+            if (ts.isIfStatement(node)) {
+              return (
+                Boolean(node.elseStatement) &&
+                alwaysExitsBlock(node.thenStatement) &&
+                alwaysExitsBlock(node.elseStatement)
+              );
+            }
+            if (ts.isTryStatement(node)) {
+              // Completes unless both the try and its handler exit.
+              return (
+                alwaysExitsBlock(node.tryBlock) &&
+                (!node.catchClause || alwaysExitsBlock(node.catchClause.block))
+              );
+            }
+            return false;
           };
-          seek(p.catchClause.block);
-          if (!rethrows) return true;
+          if (!alwaysExitsBlock(p.catchClause.block)) return true;
         }
       }
       return false;
@@ -3077,6 +3146,18 @@ if (!fnNode) {
           '  `indexer_cursor` past those blocks, and the activity row be skipped for good —\n' +
           '  the one failure mode here a re-run cannot repair, and invisible to every count\n' +
           '  in this script. Rethrow, or update this script — do not delete the check.',
+      );
+      process.exit(1);
+    }
+    if (nonD1Prepare) {
+      console.error(
+        `[check-activity-refs-coverage] the activity_events statement in ${LEDGER_FN}() is\n` +
+          `  prepared on something that is not a D1 binding:\n    ${nonD1Prepare}\n` +
+          '  Every check here reads a statement built by `prepare` / `bind` / `run`, and any\n' +
+          '  object exposing those names satisfies them — a stub whose `run()` resolves a\n' +
+          '  plausible result passes while writing no row, and the scan then advances its\n' +
+          '  cursor. Prepare on the D1 binding, or update this script — do not delete the\n' +
+          '  check.',
       );
       process.exit(1);
     }
