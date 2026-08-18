@@ -1861,10 +1861,26 @@ This option allows Liam to recover principal early by selling his lender positio
   periodic interest servicing, Alice pays interest to the lender during the term,
   and those payments do not stop the accrual measure from advancing. What Liam
   forfeits is therefore the interest accrued over the stretch he has **not** been
-  paid for — measured from the later of the loan's accrual origin and the point
-  he was last paid through — never the raw accrual, which would bill him a second
+  paid for — measured from the point he was last paid through — never the raw
+  accrual, which would bill him a second
   time for interest already in his hands on a route where he is exiting rather
   than being made whole.
+- **Being paid is what moves that point, not the loan's own interest clock.**
+  The loan's clock restarts whenever Alice's obligation is re-based, which is a
+  different event from Liam being paid. They come apart in a case that matters:
+  when a payment is due to a lender the sanctions registry has flagged, the money
+  is held rather than delivered while the obligation still re-bases. Reading the
+  obligation clock as evidence of payment would close Liam's forfeiture over money
+  that never reached him — and that held balance goes to Noah on the sale. Where a
+  lender has never been paid at all, the loan's clock is the starting point; after
+  that, only actual payment moves it. A payment the platform failed to account for
+  therefore over-charges Liam slightly rather than quietly paying him twice.
+- **A period counts as paid only when it is paid in FULL.** A partial settlement
+  leaves the remainder in Alice's obligation, so treating the period as settled
+  would let Liam collect that remainder through his sale price while Noah can
+  still collect it later when Alice repays — the same interest, paid twice, and
+  the effect is largest exactly where collateral is nearly exhausted and the
+  payment smallest.
 - **The measure is a period of time, not a running total.** The forfeiture belongs
   to the loan's current accrual stretch, and ordinary events — a partial
   repayment, a swap-to-repay — restart that stretch. A lifetime total of interest

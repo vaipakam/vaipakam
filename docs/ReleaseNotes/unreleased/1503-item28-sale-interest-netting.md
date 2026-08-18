@@ -11,10 +11,22 @@ preclose, swap-to-repay, default and the fallback route all already did.
 
 The fix narrows the *window* the forfeiture is measured over rather than
 subtracting an amount from it. The platform now records, per position, the point
-in time through which the lender has actually been paid; the forfeiture then
-runs from whichever is later, that mark or the loan's interest-accrual origin.
-A seller is charged for the stretch nobody has paid them for, and for nothing
-else.
+in time through which the lender has actually been paid, and the forfeiture runs
+from there. A seller is charged for the stretch nobody has paid them for, and for
+nothing else.
+
+That mark is the authority, not the loan's own interest clock. The two are easy
+to conflate and answer different questions: the loan's clock restarts whenever
+the borrower's obligation is re-based, which is not the same event as the lender
+being paid. They diverge in a case that matters — when a payment is due to a
+lender whose wallet the sanctions registry flags, the money is held rather than
+delivered while the obligation still re-bases — so reading the obligation clock
+as evidence of payment would close the seller's window over money that never
+reached them. Where no payment has ever been made to a lender, the loan's clock
+is the starting point; after that, only actual payment moves the mark. A payment
+path the platform failed to account for therefore over-charges the seller
+slightly rather than quietly paying them twice, which is the safer way to be
+wrong.
 
 Measuring a window rather than netting an amount is the load-bearing choice, and
 it took two attempts to see why. The forfeiture figure belongs to the loan's
@@ -38,6 +50,13 @@ reduce either way. A sale then hands that held balance to the buyer. So it is
 money the exiting lender never received and does not keep, and treating it as
 paid would credit them for it a second time at the platform's expense. The mark
 only advances where interest genuinely reaches the lender.
+
+For the same reason it advances only when a period is settled in FULL. A partial
+settlement leaves the remainder in the borrower's obligation, so treating the
+period as paid would let the seller collect that remainder through their sale
+price while the buyer can still collect it later through repayment — the same
+interest, paid twice. The effect would be largest exactly where collateral is
+nearly exhausted and the payment smallest.
 
 A completed sale also moves the mark forward, because a sale settles the
 outstanding forfeiture — to the platform, or into the buyer's rate compensation.
