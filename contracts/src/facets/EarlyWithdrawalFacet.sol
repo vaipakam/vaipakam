@@ -11,6 +11,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
+import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
@@ -302,6 +303,14 @@ contract EarlyWithdrawalFacet is
         s.saleVehicleCreate = false;
         s.loanToSaleOfferId[loanId] = saleOfferId;
         s.saleOfferToLoanId[saleOfferId] = loanId;
+        // #1503 item 4 — record what the seller is agreeing to, so completion
+        // is bound by it rather than by whatever the arithmetic comes to at the
+        // acceptance block. Hosted in LibSaleListing so the direct route can
+        // share the projection rather than re-deriving it — the two routes
+        // duplicating settlement algebra is what #1659 had to repair.
+        LibSaleListing.recordSellerBounds(
+            s, loanId, interestRateBps, listingExpiresAt
+        );
         // #951 v2 (Codex #959 bind-to-live) — no collateral snapshot is stored:
         // the buyer's accept binds `collateralAmount` `>=`-style against the LIVE
         // loan in `OfferAcceptFacet._bindTermsToOffer`, so a later collateral
@@ -631,6 +640,25 @@ contract EarlyWithdrawalFacet is
             uint256 liamCost = accrued > saleShortfall
                 ? accrued
                 : saleShortfall;
+            // #1503 item 4 — the seller's FLOOR. Ordinary accrual across the
+            // listing window cannot trip this: the floor was derived at the
+            // listing's own expiry, so the whole window sits inside it. What
+            // trips it is a step the seller never reviewed — a principal
+            // movement or a park disqualifying the paid-through mark, which
+            // re-opens the forfeiture window earlier than the projection
+            // assumed. Refusing is the point; the remedy is to relist.
+            if (s.saleListingBoundsRecorded[loanId]) {
+                uint256 sellerNet = proceeds > liamCost ? proceeds - liamCost : 0;
+                uint256 floorNet = s.saleListingMinSellerNet[loanId];
+                if (sellerNet < floorNet) {
+                    revert SaleBelowSellerFloor(floorNet, sellerNet);
+                }
+                uint256 heldNow = s.heldForLender[loanId];
+                uint256 heldCeiling = s.saleListingMaxHeldTransfer[loanId];
+                if (heldNow > heldCeiling) {
+                    revert SaleAboveHeldCeiling(heldCeiling, heldNow);
+                }
+            }
             uint256 treasuryCut = accrued > saleShortfall
                 ? accrued - saleShortfall
                 : 0;
@@ -947,6 +975,9 @@ contract EarlyWithdrawalFacet is
         // one-listing-per-loan guard in createLoanSaleOffer would reject it).
         delete s.loanToSaleOfferId[loanId];
         delete s.saleOfferToLoanId[saleOfferId];
+        // #1503 item 4 — the bounds belong to THIS listing; leaving them would
+        // apply them to the next one.
+        LibSaleListing.clearSellerBounds(s, loanId);
 
         emit LoanSaleCompleted(loanId, originalLender, newLender);
     }
