@@ -515,6 +515,13 @@ contract EarlyWithdrawalDirectFacet is
         // #1123 — the movement gate for this direct sale ran BEFORE the buyer's
         // vault operations above (block-both; see the comment at the principal
         // pull). No second gate needed here.
+        // #1817 (Codex #1819 r1 P1) — snapshot the STORED lender before the
+        // migration rewrites `loan.lender`: the held VPFI was withdrawn from
+        // THEIR vault above (the #672 P1 rule), so theirs is the accumulator
+        // the restamp below must refresh. After a plain lender-NFT transfer
+        // (pre-consolidation) `msg.sender` is the current NFT holder, whose
+        // vault this sale did not touch.
+        address storedLender = loan.lender;
         // Migrate lender position: burn old NFT + mint new LoanInitiated NFT
         // for Noah, update loan.lender and loan.lenderTokenId in one place.
         // (#998 S10 Class B — `migrateLenderPosition` carries the dedicated
@@ -542,17 +549,19 @@ contract EarlyWithdrawalDirectFacet is
             );
             // #1503 item 27 (#1817) — the sale moved VPFI through both
             // parties' vaults (the buyer's principal debit + held credit,
-            // the seller's held debit), so run the post-balance discount /
-            // staking checkpoint for each, per the rollup-at-the-mutation-
-            // site rule every other VPFI vault movement follows. Via the
-            // cross-facet entry so this EIP-170-tight facet doesn't inline
-            // the rollup body. `msg.sender` is the seller (the lender-NFT
-            // holder, enforced up top); `loan.lender` is the buyer after
-            // the migration above.
+            // the stored lender's held debit), so run the post-balance
+            // discount / staking checkpoint for each, per the rollup-at-the-
+            // mutation-site rule every other VPFI vault movement follows.
+            // Via the cross-facet entry so this EIP-170-tight facet doesn't
+            // inline the rollup body. `storedLender` is the pre-migration
+            // `loan.lender`, whose vault the held VPFI actually left (Codex
+            // #1819 r1 P1 — after a plain lender-NFT transfer, `msg.sender`
+            // holds the NFT but their vault is untouched by this sale);
+            // `loan.lender` is the buyer after the migration above.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     ConsolidationFacet.restampUserVpfiInternal.selector,
-                    msg.sender
+                    storedLender
                 ),
                 bytes4(0)
             );

@@ -4011,6 +4011,56 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @notice #1817, Codex #1819 r1 P1 — the DIRECT route must restamp the
+    ///         STORED lender (whose vault the held VPFI actually left), not
+    ///         `msg.sender`. After a plain lender-NFT transfer without
+    ///         consolidation, the caller is the current NFT holder while the
+    ///         held withdrawal still sources from `loan.lender` (the #672 P1
+    ///         rule) — restamping the caller would refresh a vault this sale
+    ///         never touched and leave the stored lender's accumulator at its
+    ///         pre-sale balance indefinitely.
+    function test_1817_directSaleRestampsStoredLenderNotNftHolder() public {
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+
+        uint256 held = 500 ether;
+        uint256 sellerStake = 50 ether;
+        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(oldVault, held + sellerStake);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held + sellerStake);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
+
+        // Hand the lender NFT to a third party WITHOUT consolidation, so the
+        // caller (NFT holder) and the stored `loan.lender` diverge.
+        address nftHolder = makeAddr("gap1817NftHolder");
+        vm.prank(nftHolder);
+        ProfileFacet(address(diamond)).setUserCountry("US");
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).updateKYCTier(nftHolder, LibVaipakam.KYCTier.Tier2);
+        uint256 lenderTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
+        TestMutatorFacet(address(diamond)).burnNFTRaw(lenderTokenId);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(nftHolder, lenderTokenId);
+
+        vm.prank(nftHolder);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+
+        (uint40 storedLenderStart, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        (uint40 holderStart, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(nftHolder);
+        assertTrue(
+            storedLenderStart != 0,
+            "the STORED lender - whose vault lost the held VPFI - is restamped"
+        );
+        assertEq(
+            holderStart,
+            0,
+            "the NFT holder's untouched vault records no stake start"
+        );
+    }
+
     /// @notice #1817 (#1503 item 27) — LISTED-route mirror of the direct-sale
     ///         restamp test: `completeLoanSale`'s VPFI settlement block must
     ///         checkpoint the seller (captured pre-migration) and the buyer.
