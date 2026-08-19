@@ -783,33 +783,21 @@ const guardedReason = (node, stopAt) => {
           let touched = false;
           const scanTouch = (m) => {
             if (touched) return;
+            // ANY other occurrence withholds the verdict (Codex round-67
+            // P2): round 66 enumerated three touch shapes and missed the
+            // plain initializer copy — `const alias = once; alias.push(1)`
+            // fills the collection through a name this scan never followed,
+            // and the enumerated list wrongly declared a live loop dead.
+            // The occurrence itself is the evidence; what its context does
+            // with the value is exactly what this walk cannot know.
             if (
               ts.isIdentifier(m) &&
               m.text === name &&
               m !== decl.name &&
               m !== loopIterable
             ) {
-              const q = m.parent;
-              if (
-                (ts.isPropertyAccessExpression(q) ||
-                  ts.isElementAccessExpression(q)) &&
-                q.expression === m
-              ) {
-                touched = true;
-              } else if (
-                ts.isCallExpression(q) &&
-                q.arguments &&
-                q.arguments.includes(m)
-              ) {
-                touched = true;
-              } else if (
-                ts.isBinaryExpression(q) &&
-                q.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-                q.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-                q.left === m
-              ) {
-                touched = true;
-              }
+              touched = true;
+              return;
             }
             ts.forEachChild(m, scanTouch);
           };
@@ -831,7 +819,27 @@ const guardedReason = (node, stopAt) => {
       (ts.isWhileStatement(p) || ts.isForStatement(p)) &&
       cur === p.statement &&
       p.expression &&
-      unwrapAssertions(p.expression).kind === ts.SyntaxKind.FalseKeyword
+      (() => {
+        // ...through a CONST BOOLEAN too (Codex round-67 P2): `const never =
+        // false; while (never)` never runs its body, and only the literal
+        // spelling was recognized. A const primitive cannot be mutated
+        // through an alias, so the chain resolution is enough here — no
+        // touch scan needed, unlike the collection case above.
+        let c = unwrapAssertions(p.expression);
+        for (let hop = 0; hop < 4 && ts.isIdentifier(c); hop += 1) {
+          const decl = nearestDeclIn(c, c.text, sourceFile);
+          if (!decl || decl === OPAQUE_BINDING || !decl.initializer) return false;
+          const list = decl.parent;
+          if (
+            !ts.isVariableDeclarationList(list) ||
+            (list.flags & ts.NodeFlags.Const) === 0
+          ) {
+            return false;
+          }
+          c = unwrapAssertions(decl.initializer);
+        }
+        return c.kind === ts.SyntaxKind.FalseKeyword;
+      })()
     ) {
       return 'inside a loop whose condition is constantly false, so its body never runs';
     }
@@ -1114,6 +1122,55 @@ const isTransparentWrapper = (n) =>
  * before anything else happens. A GENERATOR is the real exemption — calling one
  * returns an iterator and runs no body at all.
  */
+/**
+ * The method body a `localLiteral.member(…)` call runs, or null (Codex
+ * round-67 P2): `const poisoners = { poison() { args.loanId = 999n; } };
+ * poisoners.poison();` invokes synchronously exactly like a named helper,
+ * and the member-call path treated every non-call/apply property invocation
+ * as inert. Same scope walk and conservative default as
+ * {resolveInvokedCallee}: a const binding to an object LITERAL resolves;
+ * anything else — a parameter, a rebindable binding, a computed member — is
+ * null and stays inert.
+ */
+const resolveLiteralMethod = (ident, member, from) => {
+  if (member === null) return null;
+  for (let scope = from; scope; scope = scope.parent) {
+    if (bindsNameLexically(scope, ident.text)) return null;
+    const stmts =
+      ts.isBlock(scope) ||
+      ts.isSourceFile(scope) ||
+      ts.isCaseClause(scope) ||
+      ts.isDefaultClause(scope)
+        ? scope.statements
+        : null;
+    if (!stmts) continue;
+    for (const st of stmts) {
+      if (!ts.isVariableStatement(st)) continue;
+      for (const d of st.declarationList.declarations) {
+        if (!ts.isIdentifier(d.name) || d.name.text !== ident.text) continue;
+        if ((st.declarationList.flags & ts.NodeFlags.Const) === 0) return null;
+        const init = d.initializer ? unwrapAssertions(d.initializer) : null;
+        if (!init || !ts.isObjectLiteralExpression(init)) return null;
+        for (const pr of init.properties) {
+          const nm =
+            pr.name && (ts.isIdentifier(pr.name) || ts.isStringLiteralLike(pr.name))
+              ? pr.name.text
+              : null;
+          if (nm !== member) continue;
+          if (ts.isMethodDeclaration(pr)) return pr;
+          if (ts.isPropertyAssignment(pr)) {
+            const v = unwrapForInvocation(pr.initializer);
+            if (v && isFunctionLike(v)) return v;
+          }
+          return null;
+        }
+        return null;
+      }
+    }
+  }
+  return null;
+};
+
 const invokedFunctionNodeOf = (expr) => {
   const e = unwrapForInvocation(expr);
   if (!e || !ts.isCallExpression(e)) return null;
@@ -1126,7 +1183,15 @@ const invokedFunctionNodeOf = (expr) => {
   if (callee && (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))) {
     const via = memberNameOf(callee);
     if (via === 'call' || via === 'apply') callee = unwrapForInvocation(callee.expression);
-    else return null;
+    else {
+      // a method on a local object LITERAL runs like any named helper
+      // (Codex round-67 P2) — resolved conservatively, inert otherwise
+      const recv = unwrapForInvocation(callee.expression);
+      const method =
+        recv && ts.isIdentifier(recv) ? resolveLiteralMethod(recv, via, e) : null;
+      if (!method) return null;
+      callee = method;
+    }
   }
   // A NAMED local helper is invoked just as directly (Codex round-54 P2).
   // Every earlier round matched a function sitting literally in callee position,
@@ -1579,6 +1644,23 @@ const bindsShadowable = (name) => {
  * ledger both legitimately pass it to other functions, so a blanket rule would
  * reject live code. The list is the built-ins that write through argument zero.
  */
+/** The mutator-list + destination half of {mutatingCallTarget}, shared with
+ *  the destructured-extraction path (round 67). */
+const _mutatingMemberTarget = (n, memberName, host) => {
+  const mutators =
+    ts.isIdentifier(host) && host.text === 'Object'
+      ? ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf']
+      : ts.isIdentifier(host) && host.text === 'Reflect'
+        ? ['set', 'defineProperty', 'deleteProperty', 'setPrototypeOf']
+        : [];
+  if (!mutators.includes(memberName)) return null;
+  let dest = unwrapAssertions(n.arguments[0]);
+  while (ts.isPropertyAccessExpression(dest) || ts.isElementAccessExpression(dest)) {
+    dest = unwrapAssertions(dest.expression);
+  }
+  return dest;
+};
+
 const mutatingCallTarget = (n) => {
   if (!ts.isCallExpression(n) || n.arguments.length === 0) return null;
   let callee = unwrapAssertions(n.expression);
@@ -1604,22 +1686,54 @@ const mutatingCallTarget = (n) => {
     if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
       callee = cur;
     }
+    // ...and through a DESTRUCTURED extraction (Codex round-67 P2):
+    // `const { assign } = Object; assign(args, …)` copies the built-in
+    // without any member access for the chain above to land on — the
+    // binding element carries the member name and the declaration's
+    // initializer carries the host.
+    if (ts.isIdentifier(callee)) {
+      for (let scope = n; scope; scope = scope.parent) {
+        if (bindsNameLexically(scope, callee.text)) break;
+        const stmts =
+          ts.isBlock(scope) ||
+          ts.isSourceFile(scope) ||
+          ts.isCaseClause(scope) ||
+          ts.isDefaultClause(scope)
+            ? scope.statements
+            : null;
+        if (!stmts) continue;
+        let settled = false;
+        for (const st of stmts) {
+          if (!ts.isVariableStatement(st)) continue;
+          for (const d of st.declarationList.declarations) {
+            if (!ts.isObjectBindingPattern(d.name) || !d.initializer) continue;
+            for (const el of d.name.elements) {
+              if (!ts.isBindingElement(el) || !ts.isIdentifier(el.name)) continue;
+              if (el.name.text !== callee.text) continue;
+              settled = true;
+              if ((st.declarationList.flags & ts.NodeFlags.Const) === 0) break;
+              const src = unwrapAssertions(d.initializer);
+              const prop =
+                el.propertyName && ts.isIdentifier(el.propertyName)
+                  ? el.propertyName.text
+                  : el.name.text;
+              if (ts.isIdentifier(src)) {
+                return _mutatingMemberTarget(n, prop, src);
+              }
+              break;
+            }
+            if (settled) break;
+          }
+          if (settled) break;
+        }
+        if (settled) break;
+      }
+    }
   }
   const memberName = memberNameOf(callee);
   if (memberName === null) return null;
   const host = unwrapAssertions(callee.expression);
-  const mutators =
-    ts.isIdentifier(host) && host.text === 'Object'
-      ? ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf']
-      : ts.isIdentifier(host) && host.text === 'Reflect'
-        ? ['set', 'defineProperty', 'deleteProperty', 'setPrototypeOf']
-        : [];
-  if (!mutators.includes(memberName)) return null;
-  let dest = unwrapAssertions(n.arguments[0]);
-  while (ts.isPropertyAccessExpression(dest) || ts.isElementAccessExpression(dest)) {
-    dest = unwrapAssertions(dest.expression);
-  }
-  return dest;
+  return _mutatingMemberTarget(n, memberName, host);
 };
 
 const mutatesShadowable = (n) => {
@@ -1669,6 +1783,18 @@ const mutatesShadowable = (n) => {
     const t = rootOf(expr);
     return ts.isIdentifier(t) && SHADOWABLE_NAMES.has(t.text);
   };
+  // A for-of/for-in TARGET is a write (Codex round-67 P2):
+  // `for (args.loanId of [999n]) {}` assigns through the decoded reference
+  // on every iteration, with no assignment token for the operator tests to
+  // see. Same rule the discriminant-write classifier already applies.
+  if (
+    (ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
+    n.initializer &&
+    !ts.isVariableDeclarationList(n.initializer) &&
+    targetWrites(n.initializer)
+  ) {
+    return true;
+  }
   if (ts.isBinaryExpression(n) && ts.isAssignmentOperator?.(n.operatorToken.kind)) {
     return targetWrites(n.left);
   }
@@ -2635,8 +2761,48 @@ if (!fnNode) {
         const p = cur.parent;
         if (!p) break;
         if (isFunctionLike(p)) break; // a loop outside the helper is not its loop
+        if (ts.isForOfStatement(p) || ts.isForInStatement(p)) {
+          // The loop must not PROVABLY iterate a subset (Codex round-67 P2):
+          // `for (const first of [allLogs[0]!]) subset.push(first)` is a
+          // per-item push inside a loop — the accepted shape — walking one
+          // enumerated element. A literal iterable qualifies only when every
+          // element is a spread of a qualifying source; a `.slice`/`.filter`/
+          // `.splice` product is a subset by construction. Anything this walk
+          // cannot classify (the decode fetch's own await result included)
+          // stays accepted — the same boundary every membership rule here
+          // draws at what a static walk can prove.
+          let itb = unwrapAssertions(p.expression);
+          for (let hop = 0; hop < 4 && ts.isIdentifier(itb); hop += 1) {
+            const d = nearestDeclIn(itb, itb.text, sourceFile);
+            if (!d || d === OPAQUE_BINDING || !d.initializer) break;
+            const dl = d.parent;
+            if (
+              !ts.isVariableDeclarationList(dl) ||
+              (dl.flags & ts.NodeFlags.Const) === 0
+            ) {
+              break;
+            }
+            itb = unwrapAssertions(d.initializer);
+          }
+          if (ts.isArrayLiteralExpression(itb)) {
+            return (
+              itb.elements.length > 0 &&
+              itb.elements.every(
+                (el) =>
+                  ts.isSpreadElement(el) &&
+                  spreadHoldsRows(el.expression, call),
+              )
+            );
+          }
+          if (ts.isCallExpression(itb)) {
+            const mm = memberNameOf(unwrapAssertions(itb.expression));
+            if (mm !== null && ['slice', 'filter', 'splice'].includes(mm)) {
+              return false;
+            }
+          }
+          return true;
+        }
         if (
-          ts.isForOfStatement(p) || ts.isForInStatement(p) ||
           ts.isForStatement(p) || ts.isWhileStatement(p) || ts.isDoStatement(p)
         ) {
           return true;
@@ -3049,6 +3215,20 @@ if (!fnNode) {
               if (!node || depth > 8) return null;
               const x = unwrapAssertions(node);
               if (ts.isStringLiteralLike(x)) return x.text;
+              // A template whose substitutions all fold is one static string
+              // (Codex round-67 P2): \`UPDATE ${table} …\` with a const
+              // `table` executes as the composed statement while its source
+              // text carries the interpolation tokens that interrupt the
+              // regex.
+              if (ts.isTemplateExpression(x)) {
+                let out = x.head.text;
+                for (const sp of x.templateSpans) {
+                  const v = staticStringOf(sp.expression, depth + 1);
+                  if (v === null) return null;
+                  out += v + sp.literal.text;
+                }
+                return out;
+              }
               if (
                 ts.isBinaryExpression(x) &&
                 x.operatorToken.kind === ts.SyntaxKind.PlusToken
@@ -5148,7 +5328,7 @@ if (!fnNode) {
               q = q.parent;
             }
             if (!q) return false;
-            const entryFlows = (accessNode) => {
+            const entryFlows = (accessNode, depth = 0) => {
               let child = accessNode;
               for (let up = accessNode.parent; up; child = up, up = up.parent) {
                 if (isTransparentWrapper(up)) continue;
@@ -5171,7 +5351,42 @@ if (!fnNode) {
                 }
                 if (ts.isConditionalExpression(up)) continue;
                 if (ts.isPrefixUnaryExpression(up)) continue;
-                if (ts.isVariableDeclaration(up)) return up.initializer === child;
+                if (ts.isVariableDeclaration(up)) {
+                  if (up.initializer !== child) return false;
+                  // A declaration is a WAY STATION, not a destination (Codex
+                  // round-67 P2): `const ignoredEntry = batchResults[0];`
+                  // binds the entry and drops it, and treating the
+                  // declaration itself as sufficient flow accepted exactly
+                  // that. An identifier binding must itself be READ on a
+                  // reachable path, and that read must flow, by the same
+                  // rules — bounded so a chain of way stations terminates.
+                  if (ts.isIdentifier(up.name)) {
+                    if (depth >= 4) return false;
+                    const hopName = up.name.text;
+                    const hopDecl = up;
+                    let hopFlows = false;
+                    const scanHop = (m) => {
+                      if (hopFlows) return;
+                      if (m !== body && isFunctionLike(m)) return;
+                      if (
+                        ts.isIdentifier(m) &&
+                        m.text === hopName &&
+                        m !== hopDecl.name &&
+                        m.getStart(sourceFile) > hopDecl.getStart(sourceFile) &&
+                        nearestDeclIn(m, hopName, body) === hopDecl &&
+                        guardedReason(m, body) === null &&
+                        entryFlows(m, depth + 1)
+                      ) {
+                        hopFlows = true;
+                        return;
+                      }
+                      ts.forEachChild(m, scanHop);
+                    };
+                    scanHop(body);
+                    return hopFlows;
+                  }
+                  return true; // a destructuring pattern extracts the entry
+                }
                 if (ts.isReturnStatement(up)) return true;
                 if (
                   (ts.isIfStatement(up) ||
