@@ -320,11 +320,22 @@ const objectLiteralView = (e) => {
       // returned here" and the case was skipped, with the ledger attaching
       // every such event to whatever the getter returns.
       //
-      // Treated as shadowing rather than parsed: what a getter returns is a
+      // Treated as unreadable rather than parsed: what a getter returns is a
       // function body, not an expression, and the honest answer for a shape
-      // this checker cannot read is that it cannot read it.
+      // this checker cannot read is that it cannot read it. But a STATICALLY
+      // NAMED getter defines only its own key (Codex round-57 P2) — recording
+      // it like an unknown spread discarded every explicit property written
+      // before it, so a harmless `get actor() { … }` made a valid `loanId`
+      // mapping beside it read as shadowed. Same key-scoping the setter and
+      // method branches below already apply; only a computed name keeps the
+      // spread-like treatment.
       if (ts.isGetAccessorDeclaration(p)) {
-        lastSpreadIdx = idx;
+        if (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) {
+          props.set(p.name.text, { accessor: true });
+          definedAt.set(p.name.text, idx);
+        } else {
+          lastSpreadIdx = idx;
+        }
         continue;
       }
       // A SETTER defines a statically named key and is not run by a read, so it
@@ -444,6 +455,13 @@ const bindsNameLexically = (node, name) => {
  */
 const CURSOR_ADVANCE_SQL =
   /(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|REPLACE\s+INTO)\s+indexer_cursor\b/i;
+
+/**
+ * The D1 methods that actually EXECUTE a prepared statement. One list, shared
+ * by the ledger's executed-write check and the cursor-order check — the two
+ * must agree on what "runs" means or they disagree about the same statement.
+ */
+const D1_EXECUTORS = ['run', 'all', 'first', 'raw'];
 
 const stripSqlComments = (text) =>
   text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
@@ -873,6 +891,31 @@ const syncCutoffOf = (expr, sourceFile) => {
       if (awaitAt !== null) return;
       if (ts.isAwaitExpression(m)) { awaitAt = m.getStart(sourceFile); return; }
       if (isFunctionLike(m)) return; // a nested function's awaits are its own
+      // An `await` that cannot RUN does not suspend (Codex round-57 P2).
+      // `if (false) await …; args.loanId = 999n` mutates synchronously — the
+      // false branch never executes, so cutting the prefix at its await filed
+      // the mutation as post-return when it in fact races nothing. Only the
+      // literal-`false`/`true` shapes are decided, the same line this script's
+      // reachability walk draws for constant-false loops; anything computed
+      // stays treated as a real suspension point, the conservative direction.
+      if (ts.isIfStatement(m)) {
+        const k = unwrapAssertions(m.expression).kind;
+        if (k === ts.SyntaxKind.FalseKeyword) {
+          if (m.elseStatement) seek(m.elseStatement);
+          return;
+        }
+        if (k === ts.SyntaxKind.TrueKeyword) {
+          seek(m.thenStatement);
+          return;
+        }
+      }
+      if (
+        (ts.isWhileStatement(m) || ts.isForStatement(m)) &&
+        m.expression &&
+        unwrapAssertions(m.expression).kind === ts.SyntaxKind.FalseKeyword
+      ) {
+        return; // body never runs — its awaits never suspend
+      }
       ts.forEachChild(m, seek);
     };
     seek(st);
@@ -2206,8 +2249,70 @@ if (!fnNode) {
                 memberNameOf(unwrapAssertions(n.expression)) === 'prepare' &&
                 CURSOR_ADVANCE_SQL.test(stripSqlComments(raw))
               ) {
-                const at = n.getStart(sourceFile);
-                if (at < callAt) hit = at;
+                // The advance happens where the statement is EXECUTED, not
+                // where it is prepared (Codex round-57 P2): `prepare()` writes
+                // nothing, so a cursor statement bound to a const before the
+                // ledger call and `.run()` afterwards is the correct order —
+                // this check used to fail it on the prepare's position. Follow
+                // the fluent chain; if it ends bound to a const, the advance
+                // positions are the executor calls on that binding (matched by
+                // spelling — a shadow here could only produce a spurious
+                // rejection, never hide a real early advance).
+                let top = n;
+                for (let q = n.parent; q; q = q.parent) {
+                  if (isTransparentWrapper(q)) { top = q; continue; }
+                  if (
+                    (ts.isPropertyAccessExpression(q) ||
+                      ts.isElementAccessExpression(q)) &&
+                    q.expression === top
+                  ) { top = q; continue; }
+                  if (ts.isCallExpression(q) && q.expression === top) {
+                    top = q;
+                    continue;
+                  }
+                  break;
+                }
+                let outer = top.parent;
+                while (outer && isTransparentWrapper(outer)) outer = outer.parent;
+                let advanceAts = null;
+                if (
+                  outer &&
+                  ts.isVariableDeclaration(outer) &&
+                  outer.initializer &&
+                  ts.isIdentifier(outer.name) &&
+                  ts.isVariableDeclarationList(outer.parent) &&
+                  (outer.parent.flags & ts.NodeFlags.Const) !== 0
+                ) {
+                  const bindingName = outer.name.text;
+                  advanceAts = [];
+                  const findExec = (m) => {
+                    if (m !== fn.body && isFunctionLike(m)) return;
+                    if (ts.isCallExpression(m)) {
+                      const mem = memberNameOf(m.expression);
+                      if (mem !== null && D1_EXECUTORS.includes(mem)) {
+                        let hostE = unwrapAssertions(m.expression.expression);
+                        while (
+                          hostE &&
+                          (ts.isCallExpression(hostE) ||
+                            ts.isPropertyAccessExpression(hostE) ||
+                            ts.isElementAccessExpression(hostE))
+                        ) {
+                          hostE = unwrapAssertions(hostE.expression);
+                        }
+                        if (hostE && ts.isIdentifier(hostE) && hostE.text === bindingName) {
+                          advanceAts.push(m.getStart(sourceFile));
+                        }
+                      }
+                    }
+                    ts.forEachChild(m, findExec);
+                  };
+                  findExec(fn.body);
+                } else {
+                  advanceAts = [n.getStart(sourceFile)];
+                }
+                for (const at of advanceAts) {
+                  if (at < callAt) hit = hit === null ? at : Math.min(hit, at);
+                }
                 return;
               }
             }
@@ -2307,19 +2412,37 @@ if (!fnNode) {
       // nothing to do with. The question is whether the RESULT is consumed, so
       // the window starts where the result arrives.
       const resultAt = bound.getStart(sourceFile);
+      // ...and only reads on the scan's own reachable control flow, of the
+      // SAME binding (Codex round-57 P2). Counting any same-spelled identifier
+      // anywhere in the file let a read inside an UNCALLED local helper stand
+      // in for consumption — referenced, never executed, the same non-read the
+      // executed-write check refuses — and let a different binding that merely
+      // shares the spelling satisfy a check about this one. The read must sit
+      // in the scan function itself (nested function bodies are not its
+      // control flow) and resolve to the result's own declaration.
+      const scanFn = (() => {
+        let f = callSites[0].parent;
+        while (f && !isFunctionLike(f)) f = f.parent;
+        return f && f.body ? f : null;
+      })();
+      const readRoot = scanFn ? scanFn.body : sourceFile;
+      const boundDecl = nearestDeclIn(bound, bound.text, scanFn ?? sourceFile);
       const countReads = (n) => {
+        if (n !== readRoot && isFunctionLike(n)) return;
         if (
           ts.isIdentifier(n) &&
           n.text === bound.text &&
           n !== bound &&
           !isWriteOccurrence(n) &&
-          n.getStart(sourceFile) > resultAt
+          n.getStart(sourceFile) > resultAt &&
+          (boundDecl === null ||
+            nearestDeclIn(n, bound.text, scanFn ?? sourceFile) === boundDecl)
         ) {
           reads += 1;
         }
         ts.forEachChild(n, countReads);
       };
-      countReads(sourceFile);
+      countReads(readRoot);
       return reads === 0 ? bound.text : null;
     })();
     if (unusedResult) {
@@ -2689,15 +2812,21 @@ if (!fnNode) {
                 return;
               }
             }
-            // `logs.length = n`
+            // `logs.length = n` — through an ALIAS too (Codex round-57 P2).
+            // Round 56 taught the MUTATOR branch to resolve its receiver and
+            // left this one comparing the literal name, so
+            // `activityLogs.length = 1` truncated the very same array through
+            // a name this branch did not recognise. Same rule, same resolver.
             if (
               ts.isBinaryExpression(n) &&
               n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
               memberNameOf(n.left) === 'length'
             ) {
               const host = unwrapAssertions(n.left.expression);
-              if (ts.isIdentifier(host) && host.text === batchParamName) {
-                why = `\`${batchParamName}.length\` is assigned, which truncates it`;
+              if (ts.isIdentifier(host) && namesTheBatch(host)) {
+                why =
+                  `\`${host.text}.length\` is assigned, which truncates the batch` +
+                  (host.text === batchParamName ? '' : ` (\`${host.text}\` is the batch)`);
                 return;
               }
             }
@@ -3446,7 +3575,7 @@ if (!fnNode) {
     // and the bind list off that statement, was satisfied by it. Requiring the
     // matched bind to flow into an awaited execution is the difference between
     // "this statement is correct" and "this statement happens".
-    const EXECUTORS = ['run', 'all', 'first', 'raw'];
+    const EXECUTORS = D1_EXECUTORS;
     // The executor must be INVOKED, not merely reached (Codex round-43 P2).
     // Requiring only that the member sit under some call accepted
     // `console.log(env.DB.prepare(…).bind(…).run)` — the property is read, the
@@ -3682,6 +3811,15 @@ if (!fnNode) {
               );
             }
             if (ts.isTryStatement(node)) {
+              // An always-THROWING `finally` is decisive the other way (Codex
+              // round-57 P2): it overrides WHATEVER the try and catch decided
+              // with its own throw, so `catch (err) { try { log(err) } finally
+              // { throw err } }` propagates — this branch used to demand the
+              // try block itself throw and rejected a legitimate rethrow.
+              // Checked before the abrupt-completion override below, because a
+              // throw IS the propagation the caller needs, where a `return` in
+              // finally is the swallow round 51 refused.
+              if (node.finallyBlock && alwaysThrows(node.finallyBlock)) return true;
               // A `finally` that completes abruptly OVERRIDES a pending throw
               // (Codex round-51 P2) — `try { throw e } finally { return 0 }`
               // resolves normally, so the failure never reaches the caller and
