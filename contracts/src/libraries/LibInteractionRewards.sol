@@ -2814,7 +2814,21 @@ library LibInteractionRewards {
             }
             (, EntrySplit memory tSplit, , EntryPriceState memory st) =
                 _entryPriceCore(s, id, e);
-            if (!st.priced) return (0, 0, 0, 0); // globals not final: retry
+            if (!st.priced) {
+                // Pre-merge audit (2026-08-19) — distinguish the two reasons
+                // pricing produced nothing. Globals not yet final is a RETRY
+                // (the value is still owed). An EMPTY remaining window is
+                // terminal: there is nothing left to settle, and returning
+                // "retry" for it left the entry unprocessed and re-scanned by
+                // every future sweep forever — the wholly-legacy branch
+                // already retires that case through {_processEntryWhole}, so
+                // this was a pure divergence between the two legacy branches.
+                if (st.emptyWindow) {
+                    (, EntrySplit memory empt) = _processEntryWhole(s, id);
+                    return (empt.total - empt.recycled, empt.recycled, 0, 0);
+                }
+                return (0, 0, 0, 0);
+            }
             uint256 legacyFresh =
                 tSplit.total - tSplit.recycled - tSplit.armedFresh;
             if (legacyFresh > freshHeadroom) {
@@ -4062,15 +4076,26 @@ library LibInteractionRewards {
     }
 
     /// @dev The WHOLE-WINDOW entry settle: flips `processed = true` and
-    ///      returns the routed amounts. Used directly by the loan-close
-    ///      forfeit sweeps ({closeLoanEntries} / the orphaned-forfeit sweep),
-    ///      which settle a forfeited entry's full window O(1) at terminal —
-    ///      deferring a defaulted counterparty's armed days to a claim walk
-    ///      they will never run would strand them. The armed forfeit
-    ///      deliberately bypasses the D1 day charge here: it is a treasury
-    ///      reclaim, not user extraction, so skipping the charge only leaves
-    ///      the user MORE of their own daily ceiling — leniency, not a
-    ///      bypass.
+    ///      returns the routed amounts.
+    ///
+    ///      #1699 r18 — TWO call sites only, and the difference matters:
+    ///      the claim path's entry loop, and {_forfeitEntryChunk}'s
+    ///      WHOLLY PRE-CUTOVER branch. It is NOT the forfeit path's armed
+    ///      settle any more, and must not become one again: a forfeited
+    ///      entry's armed days now settle per day through
+    ///      {processUserSideDay} + {_persistDay}, which is what applies the
+    ///      D1 ceiling, the per-day fresh/recycled split, the delivered
+    ///      bound and a persistent cursor. An earlier revision of this note
+    ///      described an O(1) whole-window armed forfeit and named a
+    ///      `closeLoanEntries` consumer that no longer exists; both were
+    ///      retired by the unification, and leaving that description here is
+    ///      exactly the signpost that sends the next contributor back into
+    ///      the second-implementation-of-settlement defect this PR exists to
+    ///      remove (see docs/DesignsAndPlans/Vpfi1434ExpirySettlementUnification.md).
+    ///
+    ///      A wholly pre-cutover window carries no armed value by the regime
+    ///      identity, so that branch's use of this settle raises no D1,
+    ///      delivered or commitment question at all.
     function _processEntryWhole(
         LibVaipakam.Storage storage s,
         uint256 id
