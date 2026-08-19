@@ -624,14 +624,18 @@ contract RedeployFacets is Script {
     ///      eager + post-withdraw-restamp entries the refreshed liquidation /
     ///      close-out hosts cross-call (new → Add). `_partitionByRouting` sorts
     ///      them by live routing so this is correct against any target diamond
-    ///      version.
+    ///      version. Index 6 is the #1817 broadcast-free restamp twin the
+    ///      refreshed sale hosts cross-call on every intermediate checkpoint —
+    ///      omitting it here leaves an upgraded diamond reverting
+    ///      `FunctionDoesNotExist` on every VPFI direct sale.
     function _consolidationSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         s[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         s[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
         s[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
         s[4] = ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector;
         s[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
+        s[6] = ConsolidationFacet.restampUserVpfiLocalInternal.selector;
     }
 }
