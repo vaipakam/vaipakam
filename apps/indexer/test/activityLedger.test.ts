@@ -12,6 +12,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { pluckActivityRefs, recordActivityEvents } from '../src/chainIndexer';
+import { surface, synthesizeArgs } from './helpers/activityRefsSynth';
 
 interface Recorded {
   sql: string;
@@ -126,6 +127,34 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     expect(inserts[2].binds[5]).toBeNull();
   });
 
+  it('records one row per event for EVERY reference-carrying surface event', async () => {
+    // The one-insert-per-log contract over the WHOLE derived surface, not a
+    // hand-picked pair (Codex round-70 P2): `recordActivityEvents` carries
+    // event-specific branches (the OfferConsumedBySale enrichment today),
+    // and a future branch that skips or suppresses an insert for some other
+    // real event must fail here — a two-event batch would never see it.
+    const events = [...surface.carries.keys()].sort();
+    const logs = events.map((e, i) => makeLog(e, synthesizeArgs(e), i + 1));
+    const { statements, db } = fakeDb();
+    const inserted = await recordActivityEvents(
+      logs,
+      { DB: db } as never,
+      CHAIN_ID,
+      new Map(),
+    );
+    const inserts = activityInserts(statements);
+    expect(inserts).toHaveLength(logs.length);
+    expect(inserted).toBe(logs.length);
+    logs.forEach((log, i) => {
+      const expected = pluckActivityRefs(log.eventName, log.args);
+      expect(inserts[i].binds[4], `${log.eventName} row kind`).toBe(log.eventName);
+      // loan_id / offer_id only — the actor can legitimately differ from a
+      // raw-args pluck on the enrichment branch (creator merged in first).
+      expect(inserts[i].binds[5], `${log.eventName} loan_id`).toBe(expected.loanId);
+      expect(inserts[i].binds[6], `${log.eventName} offer_id`).toBe(expected.offerId);
+    });
+  });
+
   it('counts only rows that actually landed (INSERT OR IGNORE duplicates excluded)', async () => {
     const logs = [
       makeLog('LoanStatusChanged', { loanId: 1n, from: 0, to: 1 }, 1),
@@ -181,8 +210,13 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     const [insert] = activityInserts(statements);
     expect(insert).toBeDefined();
     expect(String(insert.binds[8])).toContain('"creator":"0xborrower"');
-    // and the creator lookup went through the offers table for this chain
+    // ...and the creator lookup bound EXACTLY the chain id followed by the
+    // consumed offer ids (Codex round-70 P2): a stub that answers regardless
+    // of bindings would keep this green while a production lookup that
+    // dropped the ids or left placeholders unbound returns no creator — or
+    // fails the whole batch — on real D1.
     const select = statements.find((s) => /FROM offers/i.test(s.sql));
-    expect(select?.binds[0]).toBe(CHAIN_ID);
+    expect(select?.binds).toEqual([CHAIN_ID, 9]);
+    expect((select?.sql.match(/\?/g) ?? []).length).toBe(select?.binds.length);
   });
 });

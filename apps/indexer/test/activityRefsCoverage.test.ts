@@ -35,61 +35,10 @@ import { pluckActivityRefs } from '../src/chainIndexer';
 import {
   DELIBERATELY_NOT_SCOPED,
   REF_FIELDS,
-  deriveActivityRefsSurface,
 } from '../scripts/lib/activity-refs-surface.mjs';
+import { expectedIds, surface, synthesizeArgs } from './helpers/activityRefsSynth';
 
-const surface = deriveActivityRefsSurface();
-const { carries, aliasNames, argShapes, arrayOnlyRefs, abiConflicts } = surface;
-
-/** Unique numeric id per (event, path) — starts high enough that no real
- *  constant in the mapper (0, 1, …) can collide with a planted value. */
-const plantedId = (() => {
-  let next = 100_000;
-  const byKey = new Map<string, bigint>();
-  return (event: string, path: string) => {
-    const key = `${event} ${path}`;
-    let v = byKey.get(key);
-    if (v === undefined) {
-      v = BigInt((next += 7));
-      byKey.set(key, v);
-    }
-    return v;
-  };
-})();
-
-/** A decoded-args bag for `event`, every ABI leaf populated by type. Numeric
- *  scalars get the planted unique id; everything else gets an inert value of
- *  the right JS shape (what viem would hand the mapper). */
-function synthesizeArgs(event: string): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  for (const { path, type } of argShapes.get(event) ?? []) {
-    if (type === 'tuple') continue; // parents materialize via their leaves
-    const segs = path.split('.');
-    let host = args;
-    for (const s of segs.slice(0, -1)) {
-      host = (host[s] ??= {}) as Record<string, unknown>;
-    }
-    host[segs[segs.length - 1]] = valueFor(event, path, type);
-  }
-  return args;
-}
-
-function valueFor(event: string, path: string, type: string): unknown {
-  if (/^u?int(\d+)?$/.test(type)) return plantedId(event, path);
-  if (/\]$/.test(type)) return []; // any array — inert
-  if (type === 'address') return '0xAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa';
-  if (type === 'bool') return false;
-  if (type === 'string') return 'synthetic';
-  if (/^bytes\d*$/.test(type)) return `0x${'00'.repeat(32)}`;
-  return `0x${'00'.repeat(32)}`;
-}
-
-/** The planted values that count as "mapped" for this event+field. */
-function expectedIds(event: string, field: string): number[] {
-  const paths = aliasNames.get(event)?.get(field);
-  if (!paths) return [];
-  return [...paths].map((p) => Number(plantedId(event, p)));
-}
+const { carries, arrayOnlyRefs, abiConflicts, eventInputs } = surface;
 
 describe('activity-refs coverage — executed against the real mapper', () => {
   it('derives a non-vacuous reference surface from the compiled ABI bundle', () => {
@@ -99,18 +48,54 @@ describe('activity-refs coverage — executed against the real mapper', () => {
   it('has no ABI problems the derivation cannot reason around', () => {
     // The one tolerated shape: an overload on an event that carries no
     // reference (the live ABI has `StuckERC20Recovered`, an ops recovery
-    // event mapped nowhere). Everything else is a real problem.
+    // event mapped nowhere). Tolerated only while it stays UNMAPPED — the
+    // test below executes exactly that. Everything else is a real problem.
     const relevant = abiConflicts.filter(
       (c) => c.kind !== 'overload' || carries.has(c.event),
     );
     expect(relevant.map((c) => c.message)).toEqual([]);
   });
 
+  it('keeps every tolerated overloaded event completely unmapped', () => {
+    // A name-keyed mapper cannot be correct for two argument layouts at once
+    // (Codex round-70 P2): an overload outside the reference surface is
+    // tolerated by the filter above only because nothing maps it — a case
+    // reading a field present in one layout would silently misread logs
+    // emitted under the other. EXECUTE the mapper for each such event and
+    // require the default branch: all three references null.
+    const overloadedOutsideSurface = [
+      ...new Set(
+        abiConflicts
+          .filter((c) => c.kind === 'overload' && !carries.has(c.event))
+          .map((c) => c.event),
+      ),
+    ];
+    // The live ABI has exactly one; if that changes this list grows and each
+    // entry is still executed. Guard against the check going vacuous the day
+    // the overload is cleaned up: skip silently only when there are none.
+    for (const event of overloadedOutsideSurface) {
+      expect(
+        pluckActivityRefs(event, synthesizeArgs(event)),
+        `${event} is overloaded — mapping it under one layout misreads the other`,
+      ).toEqual({ actor: null, loanId: null, offerId: null });
+    }
+    // eventInputs holds the LAST-parsed signature per name; nothing further
+    // to assert here — the conflict record itself is what flags the shape.
+    expect(eventInputs.size).toBeGreaterThan(0);
+  });
+
   it('maps or deliberately allowlists every reference-bearing event/field pair', () => {
     const gaps: string[] = [];
     const staleNowMapped: string[] = [];
     for (const [event, fields] of [...carries].sort((a, b) => a[0].localeCompare(b[0]))) {
-      const refs = pluckActivityRefs(event, synthesizeArgs(event));
+      const args = synthesizeArgs(event);
+      // The mapper must not MUTATE the decoded arguments (Codex round-70 P2):
+      // `recordActivityEvents` serializes `args_json` only after calling it,
+      // so a side effect here corrupts the persisted bag while every returned
+      // reference still checks out. structuredClone carries bigints.
+      const before = structuredClone(args);
+      const refs = pluckActivityRefs(event, args);
+      expect(args, `${event} — the mapper mutated the decoded arguments`).toEqual(before);
       for (const field of fields) {
         const got = (refs as Record<string, unknown>)[field];
         const planted = expectedIds(event, field);
@@ -119,34 +104,37 @@ describe('activity-refs coverage — executed against the real mapper', () => {
         // `Object.hasOwn`, not truthiness (Codex round-10 P2): an event named
         // like a prototype member must not read as allowlisted.
         const isAllowlisted = Object.hasOwn(DELIBERATELY_NOT_SCOPED, allowKey);
+        // A MALFORMED non-null result fails REGARDLESS of the allowlist
+        // (Codex round-70 P2): an allowlist entry exempts the intentionally
+        // unscoped null, never a wrong value — otherwise an implementation
+        // slice that lands a broken mapping before removing the TODO entry
+        // persists corrupt references behind a green run.
+        if (got !== null && !isMapped) {
+          gaps.push(
+            typeof got === 'number' && !Number.isNaN(got)
+              ? `${allowKey} — the mapper returned ${got}, which is NOT one of the values planted ` +
+                  `on this event's ${field} inputs (${planted.join(', ')}); it reads a constant or ` +
+                  'the wrong argument'
+              : `${allowKey} — the mapper returned ${String(got)} (not a usable id); ` +
+                  'it likely reads an argument the event does not carry',
+          );
+          continue;
+        }
         if (isMapped && isAllowlisted) {
           staleNowMapped.push(`${allowKey} — now mapped in pluckActivityRefs; remove this entry`);
           continue;
         }
         if (isMapped || isAllowlisted) continue;
-        if (typeof got === 'number' && !Number.isNaN(got)) {
-          gaps.push(
-            `${allowKey} — the mapper returned ${got}, which is NOT one of the values planted ` +
-              `on this event's ${field} inputs (${planted.join(', ')}); it reads a constant or ` +
-              'the wrong argument',
-          );
-        } else if (got !== null) {
-          gaps.push(
-            `${allowKey} — the mapper returned ${String(got)} (not a usable id); ` +
-              'it likely reads an argument the event does not carry',
-          );
-        } else {
-          const arrayPath = arrayOnlyRefs.get(allowKey);
-          gaps.push(
-            arrayPath
-              ? `${allowKey} — its only ${field} is \`${arrayPath}\`, an ARRAY of ids; one activity ` +
-                  'row carries one id, so which element it should be is a decision, not a lookup. ' +
-                  `Allowlist '${allowKey}' with a reason saying which, or reshape the event.`
-              : `${allowKey} — stores NULL, so /activity?${field}=N and the timeline cannot find the row. ` +
-                  'Add a case to pluckActivityRefs(), or allowlist with a reason in ' +
-                  'scripts/lib/activity-refs-surface.mjs.',
-          );
-        }
+        const arrayPath = arrayOnlyRefs.get(allowKey);
+        gaps.push(
+          arrayPath
+            ? `${allowKey} — its only ${field} is \`${arrayPath}\`, an ARRAY of ids; one activity ` +
+                'row carries one id, so which element it should be is a decision, not a lookup. ' +
+                `Allowlist '${allowKey}' with a reason saying which, or reshape the event.`
+            : `${allowKey} — stores NULL, so /activity?${field}=N and the timeline cannot find the row. ` +
+                'Add a case to pluckActivityRefs(), or allowlist with a reason in ' +
+                'scripts/lib/activity-refs-surface.mjs.',
+        );
       }
     }
     expect(gaps).toEqual([]);
