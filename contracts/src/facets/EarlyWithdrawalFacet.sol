@@ -27,6 +27,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 
@@ -884,6 +885,27 @@ contract EarlyWithdrawalFacet is
                 s.heldForLenderEncumbered[loanId];
             LibEncumbrance.encumberLenderProceeds(
                 loanId, loan.lender, loan.principalAsset, nonActiveHeld
+            );
+            // #1503 item 27 (#1817) — mirror of the direct route: the sale
+            // moved VPFI through both parties' vaults (held migration off
+            // the seller, held credit + settlement movements on the buyer),
+            // so run the post-balance discount / staking checkpoint for
+            // each. Cross-facet entry keeps the rollup body off this
+            // EIP-170-tight facet. `originalLender` is the seller captured
+            // before the migration; `newLender` is the buyer.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    originalLender
+                ),
+                bytes4(0)
+            );
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    newLender
+                ),
+                bytes4(0)
             );
         }
 

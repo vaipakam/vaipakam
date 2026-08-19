@@ -568,6 +568,7 @@ Shared rules:
 - in the frontend, this shared consent should be managed from `Dashboard`, not as an offer-level, loan-level, or VPFI-vault-page-only toggle
 - once this common consent is enabled, no separate offer-level or loan-level consent is required
 - toggling consent must not by itself trigger a cross-chain tier broadcast; only tier-affecting rollups or an explicit user poke should attempt propagation
+- every protocol action that moves VPFI through a user's Vault must refresh that user's tier accumulator at the post-movement balance, at the moment of the movement. This includes a lender position sale settled in VPFI — both the instant sale into a standing offer and the completion of a listed sale — where the seller's held VPFI departs (and proceeds arrive) and the buyer's Vault takes on the principal and held VPFI. A sale that skipped the refresh would let a departed balance keep accruing tier history, or a received balance go uncounted, until the user's next unrelated Vault movement
 
 Lender rules:
 

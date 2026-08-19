@@ -22,6 +22,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 
 /**
@@ -538,6 +539,29 @@ contract EarlyWithdrawalDirectFacet is
                 s.heldForLenderEncumbered[loanId];
             LibEncumbrance.encumberLenderProceeds(
                 loanId, loan.lender, loan.principalAsset, nonActiveHeld
+            );
+            // #1503 item 27 (#1817) — the sale moved VPFI through both
+            // parties' vaults (the buyer's principal debit + held credit,
+            // the seller's held debit), so run the post-balance discount /
+            // staking checkpoint for each, per the rollup-at-the-mutation-
+            // site rule every other VPFI vault movement follows. Via the
+            // cross-facet entry so this EIP-170-tight facet doesn't inline
+            // the rollup body. `msg.sender` is the seller (the lender-NFT
+            // holder, enforced up top); `loan.lender` is the buyer after
+            // the migration above.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    msg.sender
+                ),
+                bytes4(0)
+            );
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    loan.lender
+                ),
+                bytes4(0)
             );
         }
 
