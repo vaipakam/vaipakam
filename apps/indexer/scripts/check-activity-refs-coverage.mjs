@@ -653,6 +653,18 @@ const guardedReason = (node, stopAt) => {
       return 'behind a short-circuit operator, so it runs only when the left side allows it';
     }
     if (ts.isIfStatement(p) && cur !== p.expression) {
+      // Literal-condition narrowing (Codex round-60 P2): `if (true) …` runs
+      // its then-branch unconditionally and `if (false) … else …` its
+      // else-branch — the same line stmtAlwaysExits and syncCutoffOf draw.
+      // Anything computed stays a guard.
+      const k = unwrapAssertions(p.expression).kind;
+      const inThen = cur === p.thenStatement;
+      if (
+        (k === ts.SyntaxKind.TrueKeyword && inThen) ||
+        (k === ts.SyntaxKind.FalseKeyword && !inThen)
+      ) {
+        continue; // the branch is unconditional; keep walking outward
+      }
       return 'inside an `if` branch, so it runs only on some rows';
     }
     // A switch clause is an `if` by another name (Codex round-37 P2):
@@ -1046,10 +1058,17 @@ const fnSyncPrefixEnd = (callee, sourceFile) => {
  * {resolveInvokedCallee}, the round-54/56 rule that invocation shapes must
  * agree on.
  */
-const SYNC_CALLBACK_METHODS = new Set([
-  'forEach', 'map', 'filter', 'find', 'findIndex', 'findLast', 'findLastIndex',
-  'some', 'every', 'reduce', 'reduceRight', 'flatMap', 'sort', 'toSorted',
-  'replace', 'replaceAll',
+// Callback POSITION per method, not "any function-valued argument" (Codex
+// round-60 P2): `map`/`forEach`/`filter`/… take a non-invoked `thisArg` after
+// their callback, so walking every argument reported a mutation in a function
+// that never runs. `reduce`'s second argument is an initial value, `sort`'s
+// only argument is the comparator, `replace`'s replacer sits at index 1 — as
+// does `Array.from`'s mapper.
+const SYNC_CALLBACK_ARG = new Map([
+  ['forEach', 0], ['map', 0], ['filter', 0], ['find', 0], ['findIndex', 0],
+  ['findLast', 0], ['findLastIndex', 0], ['some', 0], ['every', 0],
+  ['reduce', 0], ['reduceRight', 0], ['flatMap', 0], ['sort', 0],
+  ['toSorted', 0], ['replace', 1], ['replaceAll', 1],
 ]);
 const syncCallbackFunctionsOf = (expr) => {
   const e = unwrapForInvocation(expr);
@@ -1069,14 +1088,13 @@ const syncCallbackFunctionsOf = (expr) => {
   const host = unwrapForInvocation(callee.expression);
   const isArrayFrom =
     via === 'from' && host && ts.isIdentifier(host) && host.text === 'Array';
-  if (!isArrayFrom && !SYNC_CALLBACK_METHODS.has(via)) return [];
-  const fns = [];
-  for (const a of e.arguments) {
-    let f = unwrapForInvocation(a);
-    if (f && ts.isIdentifier(f)) f = resolveInvokedCallee(f, e);
-    if (f && isFunctionLike(f) && f.body) fns.push(f);
-  }
-  return fns;
+  const cbAt = isArrayFrom ? 1 : SYNC_CALLBACK_ARG.get(via);
+  if (cbAt === undefined) return [];
+  const a = e.arguments[cbAt];
+  if (!a) return [];
+  let f = unwrapForInvocation(a);
+  if (f && ts.isIdentifier(f)) f = resolveInvokedCallee(f, e);
+  return f && isFunctionLike(f) && f.body ? [f] : [];
 };
 
 /** `unwrapAssertions`, usable before it is defined below. */
@@ -1124,6 +1142,40 @@ const resolveInvokedCallee = (ident, from) => {
         if (!ts.isIdentifier(d.name) || d.name.text !== ident.text) continue;
         const init = d.initializer ? unwrapForInvocation(d.initializer) : null;
         return init && isFunctionLike(init) ? init : null;
+      }
+    }
+  }
+  return null;
+};
+
+/**
+ * The class a `new <Identifier>()` constructs, or null when this script cannot
+ * say (Codex round-60 P2). Same scope walk and same conservative default as
+ * {resolveInvokedCallee}: a hoisted `class C {}` declaration or a variable
+ * initialised to a class expression resolves; anything else — including a
+ * binder this script cannot read through — is null, and the construction is
+ * treated as inert.
+ */
+const resolveConstructedClass = (ident, from) => {
+  for (let scope = from; scope; scope = scope.parent) {
+    if (bindsNameLexically(scope, ident.text)) return null;
+    const stmts =
+      ts.isBlock(scope) ||
+      ts.isSourceFile(scope) ||
+      ts.isCaseClause(scope) ||
+      ts.isDefaultClause(scope)
+        ? scope.statements
+        : null;
+    if (!stmts) continue;
+    for (const st of stmts) {
+      if (ts.isClassDeclaration(st) && st.name && st.name.text === ident.text) {
+        return st;
+      }
+      if (!ts.isVariableStatement(st)) continue;
+      for (const d of st.declarationList.declarations) {
+        if (!ts.isIdentifier(d.name) || d.name.text !== ident.text) continue;
+        const init = d.initializer ? unwrapForInvocation(d.initializer) : null;
+        return init && (ts.isClassExpression(init) ? init : null);
       }
     }
   }
@@ -2445,6 +2497,25 @@ if (!fnNode) {
                   (outer.parent.flags & ts.NodeFlags.Const) !== 0
                 ) {
                   const bindingName = outer.name.text;
+                  // ...through ALIASES of the binding too (Codex round-60 P2):
+                  // `const cursorAlias = earlyCursor; await cursorAlias.run()`
+                  // executes the same prepared statement under a name the
+                  // spelling test did not recognise. Follow an identifier's
+                  // declaration chain a few hops toward the binding.
+                  const resolvesToBinding = (identNode) => {
+                    let cur = identNode;
+                    for (let hop = 0; hop < 4 && cur; hop += 1) {
+                      if (cur.text === bindingName) return true;
+                      const decl = nearestDeclIn(cur, cur.text, fn);
+                      if (!decl || decl === OPAQUE_BINDING || !decl.initializer) {
+                        return false;
+                      }
+                      const init2 = unwrapAssertions(decl.initializer);
+                      if (!ts.isIdentifier(init2)) return false;
+                      cur = init2;
+                    }
+                    return false;
+                  };
                   advanceAts = [];
                   const findExec = (m) => {
                     if (m !== fn.body && isFunctionLike(m)) return;
@@ -2460,7 +2531,7 @@ if (!fnNode) {
                         ) {
                           hostE = unwrapAssertions(hostE.expression);
                         }
-                        if (hostE && ts.isIdentifier(hostE) && hostE.text === bindingName) {
+                        if (hostE && ts.isIdentifier(hostE) && resolvesToBinding(hostE)) {
                           advanceAts.push(m.getStart(sourceFile));
                         }
                       }
@@ -2941,9 +3012,32 @@ if (!fnNode) {
         };
         const batchDisturbed = (() => {
           if (batchParamName === null || !ledgerNode.body) return null;
+          // A mutation AFTER the batch loop finishes cannot remove a row from
+          // processing (Codex round-60 P2) — `logs.length = 0` as post-loop
+          // cleanup was failed by a scan whose subject is rows dropped BEFORE
+          // they are recorded. Bound the walk at the end of the last loop that
+          // iterates the batch; with no such loop found, stay unbounded, the
+          // conservative direction.
+          let loopEnd = Infinity;
+          {
+            let lastEnd = -1;
+            const findLoop = (m) => {
+              if (m !== ledgerNode.body && isFunctionLike(m)) return;
+              if (ts.isForOfStatement(m)) {
+                const it = unwrapAssertions(m.expression);
+                if (ts.isIdentifier(it) && namesTheBatch(it)) {
+                  lastEnd = Math.max(lastEnd, m.getEnd());
+                }
+              }
+              ts.forEachChild(m, findLoop);
+            };
+            findLoop(ledgerNode.body);
+            if (lastEnd >= 0) loopEnd = lastEnd;
+          }
           let why = null;
           const walk = (n) => {
             if (why) return;
+            if (n.getStart(sourceFile) >= loopEnd) return;
             // a nested binder of the same name is a different `logs` entirely
             if (n !== ledgerNode.body && bindsNameLexically(n, batchParamName)) return;
             // A nested function nothing invokes is not the ledger's control
@@ -3010,6 +3104,31 @@ if (!fnNode) {
               // `activityLogs.splice(1)` mutated the very same array through a
               // name this walk did not recognise. Both halves have to resolve,
               // or the alias support becomes the bypass.
+              // ...and through `call`/`apply` too (Codex round-60 P2):
+              // `Array.prototype.splice.call(logs, 1, …)` names no mutator as
+              // the batch's member — the mutator is the RECEIVER chain and the
+              // batch is the thisArg. Unwrap one indirection level and inspect
+              // the first argument as the mutation target.
+              if (
+                (member === 'call' || member === 'apply') &&
+                host &&
+                (ts.isPropertyAccessExpression(host) ||
+                  ts.isElementAccessExpression(host)) &&
+                memberNameOf(host) !== null &&
+                MEMBERSHIP_MUTATORS.includes(memberNameOf(host)) &&
+                n.arguments.length > 0
+              ) {
+                const thisArg = unwrapAssertions(n.arguments[0]);
+                if (ts.isIdentifier(thisArg) && namesTheBatch(thisArg)) {
+                  why =
+                    `\`${memberNameOf(host)}\` is invoked on the batch through ` +
+                    `\`${member}\`, which changes which rows it holds` +
+                    (thisArg.text === batchParamName
+                      ? ''
+                      : ` (\`${thisArg.text}\` is the batch)`);
+                  return;
+                }
+              }
               if (
                 member !== null &&
                 MEMBERSHIP_MUTATORS.includes(member) &&
@@ -4183,6 +4302,31 @@ if (!fnNode) {
                 (!node.catchClause || alwaysThrows(node.catchClause.block))
               );
             }
+            // A SWITCH whose every path throws is a throw with a classifier
+            // in front of it (Codex round-60 P2): `switch (typeof err) {
+            // case 'object': throw err; default: throw err; }` cannot resolve
+            // normally, and rejecting it broke an ordinary error-dispatch
+            // refactor. Requirements: a default clause (else the discriminant
+            // can fall out of the switch), each non-empty clause ends in a
+            // statement that always throws, no earlier statement in a clause
+            // completes abruptly (a break would exit normally), and an empty
+            // clause falls through to the next — so it cannot be last.
+            if (ts.isSwitchStatement(node)) {
+              const clauses = node.caseBlock.clauses;
+              if (!clauses.some((c) => ts.isDefaultClause(c))) return false;
+              for (let ci = 0; ci < clauses.length; ci += 1) {
+                const stmts = clauses[ci].statements;
+                if (stmts.length === 0) {
+                  if (ci === clauses.length - 1) return false;
+                  continue;
+                }
+                if (!alwaysThrows(stmts[stmts.length - 1])) return false;
+                for (let sj = 0; sj < stmts.length - 1; sj += 1) {
+                  if (completesAbruptly(stmts[sj])) return false;
+                }
+              }
+              return true;
+            }
             return false;
           };
           // EVERY reachable path, not just the last statement (Codex round-52
@@ -4599,11 +4743,17 @@ const findEscape = (nodes, { countReturns = false } = {}) => {
       // same gap round 35 fixed for `Object['assign']`. Read through the shared
       // resolver so the two cannot drift apart again.
       const invokerName = memberNameOf(callee);
-      if (
-        (invokerName === 'call' || invokerName === 'apply') &&
-        isFunctionLike(unwrapAssertions(callee.expression))
-      ) {
-        callee = unwrapAssertions(callee.expression);
+      if (invokerName === 'call' || invokerName === 'apply') {
+        // The receiver resolves like any other callee (Codex round-60 P2):
+        // `failDispatch.call(null)` carried an identifier here, and testing
+        // only for a literal function node let a named never-helper slip past
+        // the round-59 fix one indirection later.
+        let recvF = unwrapAssertions(callee.expression);
+        if (ts.isCallExpression(n) && recvF && ts.isIdentifier(recvF)) {
+          const r = resolveInvokedCallee(recvF, n);
+          if (r) recvF = r;
+        }
+        if (isFunctionLike(recvF)) callee = recvF;
       }
       // A NAMED local helper is invoked just as directly (Codex round-59 P2)
       // — `function failDispatch(): never { throw … } failDispatch();` before
@@ -5359,6 +5509,29 @@ const isNullLiteral = (expr) =>
           walk(cb.body);
           syncLimit = previousLimit;
           if (found) return;
+        }
+        // A CONSTRUCTOR runs at `new` (Codex round-60 P2): `new Mutator()`
+        // executes the constructor body and every instance-field initializer
+        // synchronously, so `class Mutator { constructor() { args.loanId =
+        // 999n } }` mutates the bag before the case's return while the class
+        // case above — which covers only what runs at DECLARATION — sees
+        // nothing. Resolved by name with the same conservative default as
+        // every other invocation shape.
+        if (ts.isNewExpression(n)) {
+          let cls = unwrapAssertions(n.expression);
+          if (ts.isIdentifier(cls)) cls = resolveConstructedClass(cls, n);
+          if (cls && (ts.isClassDeclaration(cls) || ts.isClassExpression(cls))) {
+            for (const cm of cls.members ?? []) {
+              const cmStatic = (cm.modifiers ?? []).some(
+                (m2) => m2.kind === ts.SyntaxKind.StaticKeyword,
+              );
+              if (ts.isConstructorDeclaration(cm) && cm.body) walk(cm.body);
+              else if (!cmStatic && ts.isPropertyDeclaration(cm) && cm.initializer) {
+                walk(cm.initializer);
+              }
+              if (found) return;
+            }
+          }
         }
         // A CLASS body is not an inert boundary (Codex round-48 P2). Evaluating
         // a class declaration runs its static blocks and static field
