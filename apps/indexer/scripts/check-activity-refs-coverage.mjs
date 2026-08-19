@@ -298,7 +298,21 @@ const getterBodyWritesNonLocal = (body) => {
           return;
         }
       }
+      // Bodies that provably RUN at read time are walked explicitly —
+      // an invoked callee, a synchronous collection callback, a
+      // parameter default — mirroring the batch mutation walk.
+      const invoked = invokedFunctionBodyOf(n);
+      if (invoked) walk(invoked);
+      for (const cb of syncCallbackFunctionsOf(n)) walk(cb.body);
+      for (const dflt of invokedParamDefaultsOf(n)) walk(dflt);
+      if (hit) return;
     }
+    // A NESTED function the getter never invokes does not run at read time
+    // (Codex round-62 P2): an unused local helper whose body assigns through
+    // a property made a harmless getter — and with it the whole returned
+    // view — read as opaque, failing the indexer typecheck on valid code.
+    // Invoked bodies were walked above; the boundary itself is skipped.
+    if (n !== body && isFunctionLike(n)) return;
     ts.forEachChild(n, walk);
   };
   walk(body);
@@ -584,8 +598,12 @@ const bindsNameLexically = (node, name) => {
  * and with the ledger call below it, a failed activity INSERT again becomes
  * unrecoverable. Both statements advance the same cursor; only one was seen.
  */
+// The table name accepts SQLite's quoted-identifier forms too (Codex round-62
+// P2): `UPDATE "indexer_cursor" …`, backtick and bracket quoting are all the
+// same table to SQLite, and requiring the bare spelling let a quoted advance
+// slip out of the ordering check entirely.
 const CURSOR_ADVANCE_SQL =
-  /(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|REPLACE\s+INTO)\s+indexer_cursor\b/i;
+  /(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|REPLACE\s+INTO)\s+["'`[]?indexer_cursor\b/i;
 
 /**
  * The D1 methods that actually EXECUTE a prepared statement. One list, shared
@@ -1021,7 +1039,7 @@ const isTransparentWrapper = (n) =>
  * before anything else happens. A GENERATOR is the real exemption — calling one
  * returns an iterator and runs no body at all.
  */
-const invokedFunctionBodyOf = (expr) => {
+const invokedFunctionNodeOf = (expr) => {
   const e = unwrapForInvocation(expr);
   if (!e || !ts.isCallExpression(e)) return null;
   let callee = unwrapForInvocation(e.expression);
@@ -1044,7 +1062,12 @@ const invokedFunctionBodyOf = (expr) => {
   if (callee && ts.isIdentifier(callee)) {
     callee = resolveInvokedCallee(callee, e);
   }
-  if (!callee || !isFunctionLike(callee) || !callee.body) return null;
+  return callee && isFunctionLike(callee) ? callee : null;
+};
+
+const invokedFunctionBodyOf = (expr) => {
+  const callee = invokedFunctionNodeOf(expr);
+  if (!callee || !callee.body) return null;
   if (callee.asteriskToken) return null;
   // An ASYNC body runs only to its first `await` (Codex round-48 P2). Round 47
   // fed the whole body to the case-mutation scan, which then failed the build on
@@ -1058,6 +1081,26 @@ const invokedFunctionBodyOf = (expr) => {
   // `getStart`, so handing them a synthetic body would break the very checks
   // this is meant to feed.
   return callee.body;
+};
+
+/**
+ * The PARAMETER-DEFAULT initializers an invocation evaluates (Codex round-62
+ * P2). Defaults run at the CALL, before the body — `function normalize(v =
+ * (args.loanId = 999n)) {}` mutates the decoded arguments the moment
+ * `normalize()` is invoked, while every body-walking consumer above saw only
+ * the (empty) body. Generators are NOT exempt here: calling one runs no body,
+ * but its parameter defaults still evaluate immediately. Returned in full
+ * rather than filtered by arity — an omitted argument is what triggers a
+ * default at runtime, but a mutation sitting in any default is the same
+ * defect one call-shape edit away, and walking it can only flag code that
+ * writes where it should not.
+ */
+const invokedParamDefaultsOf = (expr) => {
+  const callee = invokedFunctionNodeOf(expr);
+  if (!callee) return [];
+  return (callee.parameters ?? [])
+    .map((p) => p.initializer)
+    .filter(Boolean);
 };
 
 /**
@@ -2559,10 +2602,21 @@ if (!fnNode) {
           };
           for (let i = 0; i + 1 < boundaries.length; i += 1) {
             const f = boundaries[i];
-            // an IIFE is entered where it stands
+            const outerBody = boundaries[i + 1].body;
+            // an IIFE is entered where it stands — IF that stand is itself
+            // reachable (Codex round-62 P2): a syntactic invocation inside
+            // `if (false) { … }` enters nothing, and accepting it re-opens
+            // the exact hole this check closes, one guard out.
             let w = f.parent;
             while (w && isTransparentWrapper(w)) w = w.parent;
-            if (w && ts.isCallExpression(w) && directCallee(w) === f) continue;
+            if (
+              w &&
+              ts.isCallExpression(w) &&
+              directCallee(w) === f &&
+              !guardedReason(w, outerBody ?? sourceFile)
+            ) {
+              continue;
+            }
             // a named helper needs a call the resolver traces back to it
             let name = null;
             if (ts.isFunctionDeclaration(f) && f.name) name = f.name.text;
@@ -2573,7 +2627,6 @@ if (!fnNode) {
                 name = d.name.text;
               }
             }
-            const outerBody = boundaries[i + 1].body;
             let invoked = false;
             if (name && outerBody) {
               const fStart = f.getStart(sourceFile);
@@ -2588,7 +2641,11 @@ if (!fnNode) {
                   if (
                     ts.isIdentifier(callee) &&
                     callee.text === name &&
-                    resolveInvokedCallee(callee, n) === f
+                    resolveInvokedCallee(callee, n) === f &&
+                    // ...and the call site must itself be REACHABLE (Codex
+                    // round-62 P2): `if (false) await runLedger()` is a
+                    // syntactic invocation that enters nothing.
+                    !guardedReason(n, outerBody)
                   ) {
                     invoked = true;
                     return;
@@ -2733,7 +2790,27 @@ if (!fnNode) {
                       // binding is an execution at the batch call's position.
                       if (mem === 'batch') {
                         for (const bArg of m.arguments ?? []) {
-                          const arr = unwrapAssertions(bArg);
+                          let arr = unwrapAssertions(bArg);
+                          // ...resolved through a CONST binding too (Codex
+                          // round-62 P2): `const cursorBatch = [stmt.bind(…)];
+                          // await env.DB.batch(cursorBatch)` executes the very
+                          // same statements under a name the literal test did
+                          // not see. Only a const initialised to an array
+                          // literal resolves — a mutable binding's contents
+                          // are not statically knowable, and inventing them
+                          // could only produce a spurious rejection.
+                          if (ts.isIdentifier(arr)) {
+                            const bDecl = nearestDeclIn(arr, arr.text, fn);
+                            if (
+                              bDecl &&
+                              bDecl !== OPAQUE_BINDING &&
+                              bDecl.initializer &&
+                              ts.isVariableDeclarationList(bDecl.parent) &&
+                              (bDecl.parent.flags & ts.NodeFlags.Const) !== 0
+                            ) {
+                              arr = unwrapAssertions(bDecl.initializer);
+                            }
+                          }
                           if (!ts.isArrayLiteralExpression(arr)) continue;
                           for (const el of arr.elements) {
                             let root = unwrapAssertions(
@@ -3278,6 +3355,10 @@ if (!fnNode) {
               const invoked = invokedFunctionBodyOf(n);
               if (invoked) walk(invoked, true);
               for (const cb of syncCallbackFunctionsOf(n)) walk(cb.body, true);
+              // Parameter DEFAULTS evaluate at the call, before the body
+              // (Codex round-62 P2) — same invocation, one more place its
+              // code runs.
+              for (const dflt of invokedParamDefaultsOf(n)) walk(dflt, true);
               if (why) return;
             }
             // A mutating API whose DESTINATION is rooted in the batch (Codex
@@ -5404,6 +5485,9 @@ const isNullLiteral = (expr) =>
           const invoked = invokedFunctionBodyOf(node);
           if (invoked) bodies.push(invoked);
           for (const cb of syncCallbackFunctionsOf(node)) bodies.push(cb.body);
+          // Parameter DEFAULTS evaluate at the call, before the body (Codex
+          // round-62 P2).
+          for (const dflt of invokedParamDefaultsOf(node)) bodies.push(dflt);
           if (!bodies.length) return;
           for (const body of bodies) {
             walkOuter(body);
@@ -5738,6 +5822,16 @@ const isNullLiteral = (expr) =>
           syncLimit = previousLimit;
           if (found) return;
         }
+        // Parameter DEFAULTS evaluate at the call, before the body (Codex
+        // round-62 P2), and always synchronously — an async callee's defaults
+        // still run at invocation, ahead of any await, so no prefix limit
+        // applies to them.
+        if (ts.isCallExpression(n)) {
+          for (const dflt of invokedParamDefaultsOf(n)) {
+            walk(dflt);
+            if (found) return;
+          }
+        }
         // A callback handed to a synchronous collection method RUNS before the
         // next statement (Codex round-58 P2): `[0].forEach(() => { args.loanId
         // = 999n })` mutates the bag exactly as an IIFE does, and this scan
@@ -5759,6 +5853,27 @@ const isNullLiteral = (expr) =>
         // every other invocation shape.
         if (ts.isNewExpression(n)) {
           let cls = unwrapAssertions(n.expression);
+          // `new Promise(executor)` runs its executor SYNCHRONOUSLY before
+          // returning (Codex round-62 P2) — a language guarantee, so
+          // `new Promise(() => { args.loanId = 999n; })` mutates the bag
+          // before the case's return while the local-class resolution below
+          // (rightly) finds no local class named Promise and stops. The
+          // executor callback gets the same sync-prefix treatment as any
+          // other invoked callback. If a local binding shadows `Promise`,
+          // walking the callback can only flag a function that mutates the
+          // decoded arguments — suspicious under any constructor.
+          if (ts.isIdentifier(cls) && cls.text === 'Promise') {
+            for (const pArg of n.arguments ?? []) {
+              const executor = unwrapAssertions(pArg);
+              if (isFunctionLike(executor) && executor.body) {
+                const previousLimit = syncLimit;
+                syncLimit = Math.min(syncLimit, fnSyncPrefixEnd(executor, sourceFile));
+                walk(executor.body);
+                syncLimit = previousLimit;
+                if (found) return;
+              }
+            }
+          }
           if (ts.isIdentifier(cls)) cls = resolveConstructedClass(cls, n);
           // ...and construction runs the BASE constructor too (Codex round-61
           // P2): `class Sub extends MutBase {}` has no members of its own, and
@@ -5778,8 +5893,14 @@ const isNullLiteral = (expr) =>
               const cmStatic = (cm.modifiers ?? []).some(
                 (m2) => m2.kind === ts.SyntaxKind.StaticKeyword,
               );
-              if (ts.isConstructorDeclaration(cm) && cm.body) walk(cm.body);
-              else if (!cmStatic && ts.isPropertyDeclaration(cm) && cm.initializer) {
+              if (ts.isConstructorDeclaration(cm)) {
+                // ...its parameter DEFAULTS run at `new` too (Codex round-62
+                // P2), before the constructor body.
+                for (const p2 of cm.parameters ?? []) {
+                  if (p2.initializer) walk(p2.initializer);
+                }
+                if (cm.body) walk(cm.body);
+              } else if (!cmStatic && ts.isPropertyDeclaration(cm) && cm.initializer) {
                 walk(cm.initializer);
               }
               if (found) return;
