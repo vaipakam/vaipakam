@@ -303,7 +303,12 @@ const getterBodyWritesNonLocal = (body) => {
       // parameter default — mirroring the batch mutation walk.
       const invoked = invokedFunctionBodyOf(n);
       if (invoked) walk(invoked);
-      for (const cb of syncCallbackFunctionsOf(n)) walk(cb.body);
+      for (const cb of syncCallbackFunctionsOf(n)) {
+        for (const p2 of cb.parameters ?? []) {
+          if (p2.initializer) walk(p2.initializer);
+        }
+        walk(cb.body);
+      }
       for (const dflt of invokedParamDefaultsOf(n)) walk(dflt);
       if (hit) return;
     }
@@ -398,18 +403,27 @@ const objectLiteralView = (e) => {
         // claims to do — the asymmetry is deliberate (a spurious rejection is
         // recoverable, a silent poisoned reference is not).
         if (ts.isIdentifier(src)) {
-          const decl = nearestDeclIn(src, src.text, src.getSourceFile());
-          if (decl && decl !== OPAQUE_BINDING && decl.initializer) {
-            const bound = unwrapAssertions(decl.initializer);
-            if (
-              ts.isObjectLiteralExpression(bound) &&
-              bound.properties.some((q) => ts.isGetAccessorDeclaration(q))
-            ) {
-              return {
-                opaque:
-                  'a spread of a bound object literal with a getter, which runs during the spread and can mutate the decoded arguments before the later fields are computed',
-              };
+          // ...through const ALIASES too (Codex round-63 P2): `const poison =
+          // { get x() {…} }; const alias = poison; return { ...alias, … }`
+          // runs the getter during the spread exactly like the direct
+          // binding. Bounded identifier hops before the literal test.
+          let bound = src;
+          for (let hop = 0; hop < 4 && ts.isIdentifier(bound); hop += 1) {
+            const decl = nearestDeclIn(bound, bound.text, bound.getSourceFile());
+            if (decl && decl !== OPAQUE_BINDING && decl.initializer) {
+              bound = unwrapAssertions(decl.initializer);
+            } else {
+              break;
             }
+          }
+          if (
+            ts.isObjectLiteralExpression(bound) &&
+            bound.properties.some((q) => ts.isGetAccessorDeclaration(q))
+          ) {
+            return {
+              opaque:
+                'a spread of a bound object literal with a getter, which runs during the spread and can mutate the decoded arguments before the later fields are computed',
+            };
           }
         }
         lastSpreadIdx = idx;
@@ -601,9 +615,12 @@ const bindsNameLexically = (node, name) => {
 // The table name accepts SQLite's quoted-identifier forms too (Codex round-62
 // P2): `UPDATE "indexer_cursor" …`, backtick and bracket quoting are all the
 // same table to SQLite, and requiring the bare spelling let a quoted advance
-// slip out of the ordering check entirely.
+// slip out of the ordering check entirely. `UPDATE OR <action>` is the same
+// statement with a conflict clause (Codex round-63 P2) — SQLite permits it
+// between the verb and the table name, and the regex expected the identifier
+// immediately after UPDATE.
 const CURSOR_ADVANCE_SQL =
-  /(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|REPLACE\s+INTO)\s+["'`[]?indexer_cursor\b/i;
+  /(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE(?:\s+OR\s+\w+)?|REPLACE\s+INTO)\s+["'`[]?indexer_cursor\b/i;
 
 /**
  * The D1 methods that actually EXECUTE a prepared statement. One list, shared
@@ -1262,7 +1279,7 @@ const unwrapForInvocation = (t) => {
  * Stops at the first binder of the name, so an inner shadow is never mistaken
  * for an outer helper.
  */
-const resolveInvokedCallee = (ident, from) => {
+const resolveInvokedCallee = (ident, from, depth = 0) => {
   for (let scope = from; scope; scope = scope.parent) {
     // a parameter / catch variable holding this name is opaque to this script
     if (bindsNameLexically(scope, ident.text)) return null;
@@ -1286,7 +1303,15 @@ const resolveInvokedCallee = (ident, from) => {
       for (const d of st.declarationList.declarations) {
         if (!ts.isIdentifier(d.name) || d.name.text !== ident.text) continue;
         const init = d.initializer ? unwrapForInvocation(d.initializer) : null;
-        return init && isFunctionLike(init) ? init : null;
+        if (init && isFunctionLike(init)) return init;
+        // ...through ALIASES too (Codex round-63 P2): `const alias = mutate;
+        // alias()` invokes the very same helper under a name one hop away.
+        // Follow an identifier initializer from the alias's own declaration
+        // site, bounded, with the same lexical-shadow checks each hop.
+        if (init && ts.isIdentifier(init) && depth < 4) {
+          return resolveInvokedCallee(init, st, depth + 1);
+        }
+        return null;
       }
     }
   }
@@ -1301,7 +1326,7 @@ const resolveInvokedCallee = (ident, from) => {
  * binder this script cannot read through — is null, and the construction is
  * treated as inert.
  */
-const resolveConstructedClass = (ident, from) => {
+const resolveConstructedClass = (ident, from, depth = 0) => {
   for (let scope = from; scope; scope = scope.parent) {
     if (bindsNameLexically(scope, ident.text)) return null;
     const stmts =
@@ -1320,7 +1345,14 @@ const resolveConstructedClass = (ident, from) => {
       for (const d of st.declarationList.declarations) {
         if (!ts.isIdentifier(d.name) || d.name.text !== ident.text) continue;
         const init = d.initializer ? unwrapForInvocation(d.initializer) : null;
-        return init && (ts.isClassExpression(init) ? init : null);
+        if (init && ts.isClassExpression(init)) return init;
+        // ...through ALIASES too (Codex round-63 P2): `const Alias = Mutator;
+        // new Alias()` constructs the same class one hop away. Same bounded
+        // hop rule as {resolveInvokedCallee}.
+        if (init && ts.isIdentifier(init) && depth < 4) {
+          return resolveConstructedClass(init, st, depth + 1);
+        }
+        return null;
       }
     }
   }
@@ -2690,10 +2722,84 @@ if (!fnNode) {
     // demonstrated hole is the in-place reordering.
     const cursorAdvanceBeforeLedger = callSites.length === 1
       ? (() => {
-          let fn = callSites[0].parent;
-          while (fn && !isFunctionLike(fn)) fn = fn.parent;
-          if (!fn || !fn.body) return null;
-          const callAt = callSites[0].getStart(sourceFile);
+          // The ordering is checked at EVERY level of the proven wrapper
+          // chain (Codex round-63 P2). With the ledger call inside a helper
+          // the scan invokes, a cursor write in the OUTER function placed
+          // before the helper's invocation advances first just as surely —
+          // and the round-62 check, confined to the innermost function,
+          // never saw it. Each level's anchor is the position at which the
+          // inner level is ENTERED: the ledger call itself innermost, the
+          // proven invocation site in every enclosing function.
+          const levels = [];
+          {
+            let inner = callSites[0];
+            let fnW = callSites[0].parent;
+            while (fnW && !isFunctionLike(fnW)) fnW = fnW.parent;
+            let hops = 0;
+            while (fnW && fnW.body && hops < 8) {
+              levels.push({ fn: fnW, anchor: inner.getStart(sourceFile) });
+              let outer = fnW.parent;
+              while (outer && !isFunctionLike(outer)) outer = outer.parent;
+              if (!outer || !outer.body) break;
+              const entryCalleeOf = (call) => {
+                let callee = unwrapAssertions(call.expression);
+                if (
+                  (ts.isPropertyAccessExpression(callee) ||
+                    ts.isElementAccessExpression(callee)) &&
+                  ['call', 'apply'].includes(memberNameOf(callee) ?? '')
+                ) {
+                  callee = unwrapAssertions(callee.expression);
+                }
+                return callee;
+              };
+              let entry = null;
+              let w = fnW.parent;
+              while (w && isTransparentWrapper(w)) w = w.parent;
+              if (w && ts.isCallExpression(w) && entryCalleeOf(w) === fnW) {
+                entry = w;
+              }
+              if (!entry) {
+                let name = null;
+                if (ts.isFunctionDeclaration(fnW) && fnW.name) name = fnW.name.text;
+                else {
+                  let d = fnW.parent;
+                  while (d && isTransparentWrapper(d)) d = d.parent;
+                  if (d && ts.isVariableDeclaration(d) && ts.isIdentifier(d.name)) {
+                    name = d.name.text;
+                  }
+                }
+                if (name) {
+                  const fStart = fnW.getStart(sourceFile);
+                  const fEnd = fnW.getEnd();
+                  const scanEntry = (k) => {
+                    if (entry) return;
+                    if (k.getStart(sourceFile) >= fStart && k.getEnd() <= fEnd) {
+                      return;
+                    }
+                    if (ts.isCallExpression(k)) {
+                      const callee2 = entryCalleeOf(k);
+                      if (
+                        ts.isIdentifier(callee2) &&
+                        callee2.text === name &&
+                        resolveInvokedCallee(callee2, k) === fnW
+                      ) {
+                        entry = k;
+                        return;
+                      }
+                    }
+                    ts.forEachChild(k, scanEntry);
+                  };
+                  scanEntry(outer.body);
+                }
+              }
+              if (!entry) break;
+              inner = entry;
+              fnW = outer;
+              hops += 1;
+            }
+          }
+          if (!levels.length) return null;
+          const seekLevel = (fn, callAt) => {
           let hit = null;
           const seek = (n) => {
             if (hit) return;
@@ -2703,6 +2809,17 @@ if (!fnNode) {
               const raw = n.arguments?.[0]
                 ? n.arguments[0].getText(sourceFile)
                 : '';
+              // `D1Database.exec(sql)` runs the SQL DIRECTLY (Codex round-63
+              // P2) — no prepare/bind/run chain to chase, the execution IS
+              // this call, so its position joins the ordering set as-is.
+              if (
+                memberNameOf(unwrapAssertions(n.expression)) === 'exec' &&
+                CURSOR_ADVANCE_SQL.test(stripSqlComments(raw))
+              ) {
+                const at = n.getStart(sourceFile);
+                if (at < callAt) hit = hit === null ? at : Math.min(hit, at);
+                return;
+              }
               if (
                 memberNameOf(unwrapAssertions(n.expression)) === 'prepare' &&
                 CURSOR_ADVANCE_SQL.test(stripSqlComments(raw))
@@ -2799,7 +2916,11 @@ if (!fnNode) {
                           // literal resolves — a mutable binding's contents
                           // are not statically knowable, and inventing them
                           // could only produce a spurious rejection.
-                          if (ts.isIdentifier(arr)) {
+                          // ...following const ALIASES of the binding too
+                          // (Codex round-63 P2): `const alias = cursorBatch;
+                          // env.DB.batch(alias)` executes the same array one
+                          // hop away. Bounded, const-only at every hop.
+                          for (let hop2 = 0; hop2 < 4 && ts.isIdentifier(arr); hop2 += 1) {
                             const bDecl = nearestDeclIn(arr, arr.text, fn);
                             if (
                               bDecl &&
@@ -2809,6 +2930,8 @@ if (!fnNode) {
                               (bDecl.parent.flags & ts.NodeFlags.Const) !== 0
                             ) {
                               arr = unwrapAssertions(bDecl.initializer);
+                            } else {
+                              break;
                             }
                           }
                           if (!ts.isArrayLiteralExpression(arr)) continue;
@@ -2850,6 +2973,13 @@ if (!fnNode) {
             ts.forEachChild(n, seek);
           };
           seek(fn.body);
+          return hit;
+          };
+          let hit = null;
+          for (const level of levels) {
+            hit = seekLevel(level.fn, level.anchor);
+            if (hit !== null) break;
+          }
           return hit;
         })()
       : null;
@@ -2967,7 +3097,12 @@ if (!fnNode) {
           !isWriteOccurrence(n) &&
           n.getStart(sourceFile) > resultAt &&
           (boundDecl === null ||
-            nearestDeclIn(n, bound.text, scanFn ?? sourceFile) === boundDecl)
+            nearestDeclIn(n, bound.text, scanFn ?? sourceFile) === boundDecl) &&
+          // ...and on a path that can RUN (Codex round-63 P2):
+          // `if (false) console.log(activityEvents)` is a syntactic read of
+          // a value the scan never consumes — the same dead-branch shape
+          // every other occurrence check here already refuses.
+          guardedReason(n, readRoot) === null
         ) {
           reads += 1;
         }
@@ -3314,24 +3449,52 @@ if (!fnNode) {
           // A mutation AFTER the batch loop finishes cannot remove a row from
           // processing (Codex round-60 P2) — `logs.length = 0` as post-loop
           // cleanup was failed by a scan whose subject is rows dropped BEFORE
-          // they are recorded. Bound the walk at the end of the last loop that
-          // iterates the batch; with no such loop found, stay unbounded, the
-          // conservative direction.
+          // they are recorded. Bound the walk at the end of the loop that
+          // CONTAINS the mapper call (Codex round-63 P2) — not the last loop
+          // over the batch: a read-only diagnostics `for…of logs` added after
+          // the processing loop would otherwise stretch the bound back over
+          // legitimate post-processing cleanup and fail it. Rows are recorded
+          // in the mapper loop; that loop's end is where "before they are
+          // recorded" stops meaning anything. With no such loop found, stay
+          // unbounded, the conservative direction.
           let loopEnd = Infinity;
           {
+            let mapperLoopEnd = -1;
             let lastEnd = -1;
+            const MAPPER_FN = 'pluckActivityRefs';
+            const containsMapperCall = (m) => {
+              let found2 = false;
+              const look = (k) => {
+                if (found2) return;
+                if (
+                  ts.isCallExpression(k) &&
+                  ts.isIdentifier(unwrapAssertions(k.expression)) &&
+                  unwrapAssertions(k.expression).text === MAPPER_FN
+                ) {
+                  found2 = true;
+                  return;
+                }
+                ts.forEachChild(k, look);
+              };
+              look(m);
+              return found2;
+            };
             const findLoop = (m) => {
               if (m !== ledgerNode.body && isFunctionLike(m)) return;
               if (ts.isForOfStatement(m)) {
                 const it = unwrapAssertions(m.expression);
                 if (ts.isIdentifier(it) && namesTheBatch(it)) {
                   lastEnd = Math.max(lastEnd, m.getEnd());
+                  if (containsMapperCall(m)) {
+                    mapperLoopEnd = Math.max(mapperLoopEnd, m.getEnd());
+                  }
                 }
               }
               ts.forEachChild(m, findLoop);
             };
             findLoop(ledgerNode.body);
-            if (lastEnd >= 0) loopEnd = lastEnd;
+            if (mapperLoopEnd >= 0) loopEnd = mapperLoopEnd;
+            else if (lastEnd >= 0) loopEnd = lastEnd;
           }
           let why = null;
           // `exempt` marks descent into a body that RUNS AT ITS CALL SITE
@@ -3354,11 +3517,41 @@ if (!fnNode) {
             if (ts.isCallExpression(n)) {
               const invoked = invokedFunctionBodyOf(n);
               if (invoked) walk(invoked, true);
-              for (const cb of syncCallbackFunctionsOf(n)) walk(cb.body, true);
+              for (const cb of syncCallbackFunctionsOf(n)) {
+                // ...the CALLBACK's own parameter defaults evaluate at its
+                // invocation too (Codex round-63 P2).
+                for (const p2 of cb.parameters ?? []) {
+                  if (p2.initializer) walk(p2.initializer, true);
+                }
+                walk(cb.body, true);
+              }
               // Parameter DEFAULTS evaluate at the call, before the body
               // (Codex round-62 P2) — same invocation, one more place its
               // code runs.
               for (const dflt of invokedParamDefaultsOf(n)) walk(dflt, true);
+              if (why) return;
+            }
+            // `new Promise(executor)` runs its executor synchronously
+            // (Codex round-63 P2) — the case scan learned this in round 62;
+            // this walk, asking the same run-before-the-return question of
+            // the batch, had not. Named executors resolve like any callee.
+            if (ts.isNewExpression(n)) {
+              const pc = unwrapAssertions(n.expression);
+              if (ts.isIdentifier(pc) && pc.text === 'Promise') {
+                for (const pArg of n.arguments ?? []) {
+                  let ex = unwrapAssertions(pArg);
+                  if (ts.isIdentifier(ex)) {
+                    const resolved = resolveInvokedCallee(ex, n);
+                    if (resolved) ex = resolved;
+                  }
+                  if (isFunctionLike(ex) && ex.body) {
+                    for (const p2 of ex.parameters ?? []) {
+                      if (p2.initializer) walk(p2.initializer, true);
+                    }
+                    walk(ex.body, true);
+                  }
+                }
+              }
               if (why) return;
             }
             // A mutating API whose DESTINATION is rooted in the batch (Codex
@@ -4119,9 +4312,29 @@ if (!fnNode) {
         if (nearestDecl(at, root.text) !== null) return false; // shadowed
         return hopKnown ? hop === ARGS_PROP : true;
       };
-      const walk = (n) => {
+      // `exempt` marks descent into a body that RUNS AT ITS CALL SITE (Codex
+      // round-63 P2, same shape as the round-61 batch-walk fix): a helper
+      // nothing invokes is not the loop's control flow, and its writes never
+      // execute — this walk used to descend into every nested function and
+      // failed the build over an unused local helper. Invoked bodies are
+      // walked explicitly, exempt from the position bound, which applies to
+      // the invocation the non-exempt walk already checked.
+      const walk = (n, exempt = false) => {
         if (hit) return;
-        if (n.getStart(sourceFile) >= bound) return;
+        if (!exempt && n.getStart(sourceFile) >= bound) return;
+        if (n !== loopVar.body && isFunctionLike(n)) return;
+        if (ts.isCallExpression(n)) {
+          const invoked = invokedFunctionBodyOf(n);
+          if (invoked) walk(invoked, true);
+          for (const cb of syncCallbackFunctionsOf(n)) {
+            for (const p2 of cb.parameters ?? []) {
+              if (p2.initializer) walk(p2.initializer, true);
+            }
+            walk(cb.body, true);
+          }
+          for (const dflt of invokedParamDefaultsOf(n)) walk(dflt, true);
+          if (hit) return;
+        }
         if (ts.isCallExpression(n) && n.arguments.length > 0) {
           const callee = unwrapAssertions(n.expression);
           const memberName = memberNameOf(callee);
@@ -4158,7 +4371,7 @@ if (!fnNode) {
             return;
           }
         }
-        ts.forEachChild(n, walk);
+        ts.forEachChild(n, (c) => walk(c, exempt));
       };
       walk(loopVar.body);
       return hit;
@@ -4379,8 +4592,17 @@ if (!fnNode) {
         scope = scope.parent;
       }
       const body = scope && scope.body ? scope.body : scope;
-      if (!body) return false;
-      let found = false;
+      if (!body) return null;
+      // The receiver must resolve to THIS binding, not merely spell its name
+      // (Codex round-63 P2): a nested `const statement = …('SELECT 1')`
+      // shadow's `.run()` satisfied the spelling test while the tracked
+      // INSERT was never executed.
+      const receiverIsTracked = (identNode) =>
+        Boolean(identNode) &&
+        ts.isIdentifier(identNode) &&
+        identNode.text === name &&
+        nearestDeclIn(identNode, name, body) === declaration;
+      let found = null;
       const seek = (n) => {
         if (found) return;
         // Do NOT descend into a nested function (Codex round-56 P2). The search
@@ -4391,30 +4613,84 @@ if (!fnNode) {
         // the ledger's control flow, which is the same rule `guardedReason` and
         // `findEscape` already apply.
         if (n !== body && isFunctionLike(n)) return;
-        if (
-          ts.isCallExpression(n) &&
-          memberNameOf(n.expression) !== null &&
-          EXECUTORS.includes(memberNameOf(n.expression)) &&
-          ts.isIdentifier(unwrapAssertions(n.expression.expression)) &&
-          unwrapAssertions(n.expression.expression).text === name &&
-          // ...on a path that can RUN (Codex round-59 P2): the executor under
-          // `if (false)` is referenced, never executed — the same reachability
-          // question the inline INSERT already answers via guardedReason, asked
-          // of the executor's own position.
-          guardedReason(n, body) === null
-        ) {
-          for (let q = n.parent, child = n; q; child = q, q = q.parent) {
-            if (isTransparentWrapper(q)) continue;
-            if (ts.isAwaitExpression(q) && q.expression === child) found = true;
-            break;
+        if (ts.isCallExpression(n)) {
+          const mem = memberNameOf(n.expression);
+          let execNode = null;
+          if (
+            mem !== null &&
+            EXECUTORS.includes(mem) &&
+            receiverIsTracked(unwrapAssertions(n.expression.expression))
+          ) {
+            execNode = n;
           }
-          if (found) return;
+          // An awaited `DB.batch([statement])` EXECUTES the tracked statement
+          // too (Codex round-63 P2) — a valid batching refactor was reported
+          // as "never executed". Array elements (through const array
+          // bindings) whose chain root resolves to this binding count.
+          if (execNode === null && mem === 'batch') {
+            for (const bArg of n.arguments ?? []) {
+              let arr = unwrapAssertions(bArg);
+              for (let hop = 0; hop < 4 && ts.isIdentifier(arr); hop += 1) {
+                const aDecl = nearestDeclIn(arr, arr.text, body);
+                if (
+                  aDecl &&
+                  aDecl !== OPAQUE_BINDING &&
+                  aDecl.initializer &&
+                  ts.isVariableDeclarationList(aDecl.parent) &&
+                  (aDecl.parent.flags & ts.NodeFlags.Const) !== 0
+                ) {
+                  arr = unwrapAssertions(aDecl.initializer);
+                } else {
+                  break;
+                }
+              }
+              if (!ts.isArrayLiteralExpression(arr)) continue;
+              for (const el of arr.elements) {
+                let root = unwrapAssertions(
+                  ts.isSpreadElement(el) ? el.expression : el,
+                );
+                while (
+                  root &&
+                  (ts.isCallExpression(root) ||
+                    ts.isPropertyAccessExpression(root) ||
+                    ts.isElementAccessExpression(root))
+                ) {
+                  root = unwrapAssertions(root.expression);
+                }
+                if (receiverIsTracked(root)) {
+                  execNode = n;
+                  break;
+                }
+              }
+              if (execNode) break;
+            }
+          }
+          if (
+            execNode !== null &&
+            // ...on a path that can RUN (Codex round-59 P2): the executor under
+            // `if (false)` is referenced, never executed — the same reachability
+            // question the inline INSERT already answers via guardedReason, asked
+            // of the executor's own position.
+            guardedReason(execNode, body) === null
+          ) {
+            for (let q = execNode.parent, child = execNode; q; child = q, q = q.parent) {
+              if (isTransparentWrapper(q)) continue;
+              if (ts.isAwaitExpression(q) && q.expression === child) found = execNode;
+              break;
+            }
+            if (found) return;
+          }
         }
         ts.forEachChild(n, seek);
       };
       seek(body);
       return found;
     };
+    // Returns { awaited, executorNode }: whether the INSERT's execution is
+    // awaited, and the CALL that actually hands it to D1 — the node whose
+    // enclosing catches decide whether a failure is swallowed (Codex round-63
+    // P2: the swallow analysis was anchored at the bind site, so splitting
+    // the statement into a const binding moved the try/catch out of its view).
     const executedFrom = (bindCall) => {
       for (let cur = bindCall, p = cur.parent; p; cur = p, p = p.parent) {
         if (isTransparentWrapper(p)) continue;
@@ -4432,9 +4708,12 @@ if (!fnNode) {
           // parentheses / assertions — is what makes the row observed.
           for (let q = p.parent.parent, child = p.parent; q; child = q, q = q.parent) {
             if (isTransparentWrapper(q)) continue;
-            return ts.isAwaitExpression(q) && q.expression === child;
+            return {
+              awaited: ts.isAwaitExpression(q) && q.expression === child,
+              executorNode: p.parent,
+            };
           }
-          return false;
+          return { awaited: false, executorNode: p.parent };
         }
         // ...or the statement is BOUND first and executed through the binding
         // (Codex round-54 P2). `const statement = env.DB.prepare(…).bind(…);`
@@ -4453,12 +4732,15 @@ if (!fnNode) {
           ts.isVariableDeclarationList(p.parent) &&
           (p.parent.flags & ts.NodeFlags.Const) !== 0
         ) {
-          return awaitedExecutorOn(p.name.text, p);
+          const execNode = awaitedExecutorOn(p.name.text, p);
+          return { awaited: execNode !== null, executorNode: execNode };
         }
-        return false;
+        return { awaited: false, executorNode: null };
       }
-      return false;
+      return { awaited: false, executorNode: null };
     };
+    const insertExecution =
+      inserts.length === 1 ? executedFrom(inserts[0].node) : null;
     // A SWALLOWED failure is not a write (Codex round-48 P2). Requiring an
     // awaited execution settled that the statement is handed to D1 and waited
     // for; it said nothing about what happens when D1 rejects. Wrapped in
@@ -4466,7 +4748,12 @@ if (!fnNode) {
     // advances `indexer_cursor`, and the missing activity row is skipped
     // permanently — the one failure here that cannot be repaired by a re-run.
     const swallowedInsert = inserts.length === 1 && (() => {
-      for (let cur = inserts[0].node; cur && cur !== ledgerNode.body; cur = cur.parent) {
+      // Climb from the EXECUTOR when the statement is bound and executed
+      // separately (Codex round-63 P2): a try/catch around `await
+      // statement.run()` is what swallows the D1 rejection, and a climb
+      // anchored at the bind site never passed through it.
+      const swallowAnchor = insertExecution?.executorNode ?? inserts[0].node;
+      for (let cur = swallowAnchor; cur && cur !== ledgerNode.body; cur = cur.parent) {
         const p = cur.parent;
         if (!p) break;
         if (ts.isTryStatement(p) && p.tryBlock === cur && p.catchClause) {
@@ -4715,7 +5002,7 @@ if (!fnNode) {
       );
       process.exit(1);
     }
-    if (inserts.length === 1 && !executedFrom(inserts[0].node)) {
+    if (inserts.length === 1 && !insertExecution.awaited) {
       console.error(
         `[check-activity-refs-coverage] the activity_events statement in ${LEDGER_FN}() is\n` +
           '  bound but never executed.\n' +
@@ -5484,7 +5771,14 @@ const isNullLiteral = (expr) =>
           const bodies = [];
           const invoked = invokedFunctionBodyOf(node);
           if (invoked) bodies.push(invoked);
-          for (const cb of syncCallbackFunctionsOf(node)) bodies.push(cb.body);
+          for (const cb of syncCallbackFunctionsOf(node)) {
+            // ...the callback's own parameter defaults too (Codex round-63
+            // P2) — they evaluate when the collection method invokes it.
+            for (const p2 of cb.parameters ?? []) {
+              if (p2.initializer) bodies.push(p2.initializer);
+            }
+            bodies.push(cb.body);
+          }
           // Parameter DEFAULTS evaluate at the call, before the body (Codex
           // round-62 P2).
           for (const dflt of invokedParamDefaultsOf(node)) bodies.push(dflt);
@@ -5838,6 +6132,14 @@ const isNullLiteral = (expr) =>
         // treated every callback as inert. Same async-prefix rule as the IIFE
         // descent, per callback.
         for (const cb of syncCallbackFunctionsOf(n)) {
+          // ...the callback's own parameter defaults run at its invocation
+          // too (Codex round-63 P2): `[x].forEach((_v = (args.loanId =
+          // 999n)) => {})` mutates before the empty body even starts. They
+          // are unconditionally synchronous, so no prefix limit applies.
+          for (const p2 of cb.parameters ?? []) {
+            if (p2.initializer) walk(p2.initializer);
+            if (found) return;
+          }
           const previousLimit = syncLimit;
           syncLimit = Math.min(syncLimit, fnSyncPrefixEnd(cb, sourceFile));
           walk(cb.body);
@@ -5864,8 +6166,20 @@ const isNullLiteral = (expr) =>
           // decoded arguments — suspicious under any constructor.
           if (ts.isIdentifier(cls) && cls.text === 'Promise') {
             for (const pArg of n.arguments ?? []) {
-              const executor = unwrapAssertions(pArg);
+              let executor = unwrapAssertions(pArg);
+              // A NAMED executor is invoked just as synchronously (Codex
+              // round-63 P2): `const mutate = () => {…}; new Promise(mutate)`
+              // — resolve it (and its aliases) with the shared resolver.
+              if (ts.isIdentifier(executor)) {
+                const resolved = resolveInvokedCallee(executor, n);
+                if (resolved) executor = resolved;
+              }
               if (isFunctionLike(executor) && executor.body) {
+                // its parameter defaults run at the invocation too
+                for (const p2 of executor.parameters ?? []) {
+                  if (p2.initializer) walk(p2.initializer);
+                  if (found) return;
+                }
                 const previousLimit = syncLimit;
                 syncLimit = Math.min(syncLimit, fnSyncPrefixEnd(executor, sourceFile));
                 walk(executor.body);
