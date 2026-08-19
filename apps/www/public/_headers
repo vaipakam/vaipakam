@@ -82,11 +82,11 @@
 
 # applies the same rule to the connected app's wallet SDKs' own
 
-# telemetry — a requirement, not a description: NEITHER the Coinbase
+# telemetry — a requirement, not a description: neither connector
 
-# nor the WalletConnect connector configures it off today (#1824), so
+# configures it off explicitly today (#1824), and Coinbase's SDK opts
 
-# do not read it here as a shipped precedent.
+# IN by default, so do not read it here as a shipped precedent.
 
 # Any future analytics — Cloudflare's included — has to load
 

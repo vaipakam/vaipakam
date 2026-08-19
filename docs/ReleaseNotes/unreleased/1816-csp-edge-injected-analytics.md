@@ -21,10 +21,12 @@ page — a worse state that happens to look tidier. The project's rules already
 extend this reasoning beyond its own analytics: the connected app's wallet
 connectors are required to have their built-in telemetry switched off, so that
 merely opening the connect dialog does not report usage the visitor never
-agreed to. Checking that requirement while writing this turned up that it is
-not actually implemented for either of the two connectors it names — each can
-still report to its vendor when the connect dialog opens — which is now
-recorded separately as its own gap.
+agreed to. Checking that requirement while writing this turned up that neither
+of the two connectors it names actually switches its telemetry off. For one of
+them that means it does report to its vendor when the connect dialog opens; for
+the other, today's versions happen not to, but only because nobody asked either
+way — which is a coincidence the next dependency update can quietly reverse.
+Both are recorded separately as their own gap.
 
 So the policy is unchanged, and it was doing its job — it caught a collector
 that had never been declared anywhere in the project. The policy file and the
