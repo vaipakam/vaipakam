@@ -1557,4 +1557,177 @@ contract LenderIntentMatchTest is SetupTest {
             "no duplicate index entry from reacquiring an already-indexed loan"
         );
     }
+
+    /// @dev Codex #1818 r3 P2 — a GRANDFATHERED loan (created before the
+    ///      membership map shipped) must not have holders' bits invented.
+    ///      Fabricates the legacy state: strips the born-exact flag and both
+    ///      parties' bits, and models the SELLER as a pre-map acquirer by
+    ///      removing the loan from their lifetime array entirely (the item-25
+    ///      bug's own footprint). The sale must leave that seller unstamped
+    ///      rather than recording false membership, stamp the original
+    ///      borrower WITHOUT a duplicate append, and append the buyer exactly
+    ///      once — and when the pre-map seller later buys the position back,
+    ///      the loan must genuinely enter their index (the refuted blind
+    ///      stamp would have deduped that append against membership that
+    ///      never existed, hiding the loan from their views permanently).
+    function test_directSale_grandfatheredIndexScanRepair() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("gfBorrower");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+
+        // Fabricate the pre-map state. The borrower stays in the array
+        // unstamped (an original party); the lender is stripped from the
+        // array too, modelling a holder who ACQUIRED the position through a
+        // pre-map migration and was therefore never appended.
+        {
+            address[] memory holders = new address[](2);
+            holders[0] = lender;
+            holders[1] = b;
+            TestMutatorFacet(address(diamond)).clearLoanIndexRegimeRaw(
+                loanId, holders
+            );
+            TestMutatorFacet(address(diamond)).removeUserLoanIdRaw(lender, loanId);
+        }
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(lender),
+            0,
+            "fixture: pre-map acquirer absent from their own index"
+        );
+
+        LibVaipakam.Loan memory pre =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address posBuyer = _newBorrower("gfPositionBuyer");
+        vm.prank(posBuyer);
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: pre.interestRateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: pre.collateralAmount,
+                durationDays: pre.durationDays,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: pre.prepayAsset,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: pre.interestRateBps,
+                collateralAmountMax: pre.collateralAmount,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            loanId, buyOfferId
+        );
+
+        // The pre-map seller's bit stays truthfully FALSE — the refuted
+        // revision stamped it true here, against an array entry that does
+        // not exist.
+        assertFalse(
+            TestMutatorFacet(address(diamond)).getUserLoanIndexedRaw(lender, loanId),
+            "outgoing pre-map acquirer must not be stamped without membership"
+        );
+        // The loan is never promoted out of the legacy regime: its FORMER
+        // pre-map holders stay ambiguous, so migrations keep the scan path.
+        assertFalse(
+            TestMutatorFacet(address(diamond)).getLoanHolderIndexExactRaw(loanId),
+            "a grandfathered loan is not promoted to the exact regime"
+        );
+        // The original borrower is stamped without a duplicate append.
+        assertTrue(
+            TestMutatorFacet(address(diamond)).getUserLoanIndexedRaw(b, loanId),
+            "counterparty stamped by the scan repair"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(b),
+            1,
+            "original party's membership scan must not duplicate their row"
+        );
+        // The buyer is appended exactly once and stamped.
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(posBuyer),
+            1,
+            "buyer appended once by the scan repair"
+        );
+        assertTrue(
+            TestMutatorFacet(address(diamond)).getUserLoanIndexedRaw(posBuyer, loanId),
+            "buyer stamped by the scan repair"
+        );
+
+        // The pre-map seller buys the position back through their own
+        // standing offer: the acquisition must genuinely append.
+        LibVaipakam.Loan memory mid =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        ERC20Mock(mockERC20).mint(lender, 2 * PRINCIPAL);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), 2 * PRINCIPAL);
+        vm.prank(lender);
+        uint256 rebuyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: mid.interestRateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: mid.collateralAmount,
+                durationDays: mid.durationDays,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mid.prepayAsset,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: mid.interestRateBps,
+                collateralAmountMax: mid.collateralAmount,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        vm.prank(posBuyer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            loanId, rebuyOfferId
+        );
+
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lender,
+            lender,
+            "reacquisition completed"
+        );
+        assertTrue(
+            TestMutatorFacet(address(diamond)).getUserLoanIndexedRaw(lender, loanId),
+            "reacquirer stamped on genuine membership"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(lender),
+            1,
+            "reacquisition finally lands the loan in the pre-map acquirer's index"
+        );
+    }
 }

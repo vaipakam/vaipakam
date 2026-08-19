@@ -48,6 +48,17 @@ and freeing the cap for it would have been a way to mint lending headroom out
 of a self-trade. A self-purchase now leaves the cap, and the loan's
 intent-origin marker, exactly as they were.
 
+A second review round closed an upgrade-day corner of the list-view fix: on a
+deployment that already has loans, a holder who acquired a position before
+this change shipped was never added to their own list — that is the bug being
+fixed — so the bookkeeping must not assume anything about who is already
+listed. Positions on loans created from now on carry exact bookkeeping and
+stay constant-cost; a sale touching an older loan instead verifies each
+party's membership once, records the true answer, and reuses it from then on.
+The alternative — assuming a departing holder was always listed — would have
+quietly guaranteed the opposite of the fix: a pre-upgrade buyer who later
+repurchased the same position would never appear in their own lists at all.
+
 Neither of these is a loss of funds. Both are the same shape as several recent
 fixes on the lender-exit paths: a mechanism that exists, is correct, and was
 applied to one route and not its sibling.

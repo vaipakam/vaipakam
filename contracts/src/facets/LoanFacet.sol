@@ -502,6 +502,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // lifetime array.
         s.userLoanIndexed[loan.lender][ctx.loanId] = true;
         s.userLoanIndexed[loan.borrower][ctx.loanId] = true;
+        // ...and mark the loan as BORN in the exact-map regime (Codex #1818
+        // r3 P2): every party who ever touches it is stamped at touch, so
+        // migrations may trust the map. Loans created before the map shipped
+        // lack this flag forever; their migrations establish membership by a
+        // scan each user pays at most once.
+        s.loanHolderIndexExact[ctx.loanId] = true;
 
         _applyRentalPrepayIfNft(ctx.loanId, ctx.offerId);
         _maybeRunInitialRiskGates(ctx);

@@ -135,32 +135,80 @@ library LibLoan {
     ///      with the buyer's history and can turn a funded-looking fill into a
     ///      seller-burning revert.
     ///
-    ///      Grandfathered rows (loans created before the map shipped) have
-    ///      their parties in the array but not the map. Two facts close that
-    ///      seam without a scan: the OUTGOING holder is indexed by
-    ///      construction — creation put them there, or their own acquisition
-    ///      did — so their map bit can be set on the way out (which makes an
-    ///      A→B→A reacquisition dedup correctly); and the loan's CURRENT
-    ///      counterparty is indexed for the same reason, so an incoming holder
-    ///      who IS the counterparty (a borrower buying the lender side) is
-    ///      marked rather than re-appended.
+    ///      The map is trusted only for loans in the exact regime
+    ///      (`loanHolderIndexExact`, stamped at creation alongside the
+    ///      original parties' pushes). For those, every CURRENT holder's bit
+    ///      is faithful by induction — creation stamped both parties, and
+    ///      every migration stamps its acquirer — so a false bit on the
+    ///      incoming holder genuinely means "not in the array" and a bare
+    ///      push is correct.
+    ///
+    ///      Grandfathered loans (created before the map shipped) admit no
+    ///      such O(1) inference (Codex #1818 r3 P2): original parties sit in
+    ///      the array unstamped, while a holder who acquired through a
+    ///      pre-map migration is in NEITHER — that absence is the item-25
+    ///      bug itself. An earlier revision stamped the outgoing holder on
+    ///      the assumption "indexed by construction", which records false
+    ///      membership for exactly those pre-map acquirers and turns their
+    ///      later reacquisition into a permanent absence (the dedup skips
+    ///      an append the array never received). Instead, every migration
+    ///      of a grandfathered loan establishes the incoming holder's and
+    ///      the counterparty's membership by scan and stamps them
+    ///      truthfully. The loan is deliberately NOT promoted to the exact
+    ///      regime afterwards: a FORMER pre-map holder is still ambiguous
+    ///      (maybe original-and-present, maybe acquirer-and-absent), and a
+    ///      promoted flag would hand their reacquisition to the bare-push
+    ///      path — a duplicate row for originals, the mirror image of the
+    ///      absence this fixes. The stamp makes each user's scan a one-time
+    ///      cost: once stamped, every later encounter is the O(1) bit read.
+    ///      The scan item 25 forbids is the unbounded per-fill one; this one
+    ///      amortizes to once per (user, legacy loan) pair, and the legacy
+    ///      population is closed.
     ///
     ///      Also marks a first-time buyer as a seen protocol user — the
     ///      creation path does this for original parties, and item 25 requires
     ///      it of migration.
     function _indexLoanForHolder(
         LibVaipakam.Storage storage s,
-        address outgoing,
+        address, // outgoing — deliberately no write here (see above)
         address incoming,
         address counterparty,
         uint256 loanId
     ) private {
-        s.userLoanIndexed[outgoing][loanId] = true;
         LibMetricsHooks.markUserSeen(s, incoming);
+        if (!s.loanHolderIndexExact[loanId]) {
+            _establishMembership(s, incoming, loanId);
+            _establishMembership(s, counterparty, loanId);
+            return;
+        }
         if (s.userLoanIndexed[incoming][loanId]) return;
         s.userLoanIndexed[incoming][loanId] = true;
-        if (incoming == counterparty) return; // indexed at creation/migration
         s.userLoanIds[incoming].push(loanId);
+    }
+
+    /// @dev Grandfathered-loan repair: make `userLoanIndexed[user][loanId]`
+    ///      faithful by scanning the lifetime array once, appending only on
+    ///      genuine absence. Bounded to the first migration of a pre-map
+    ///      loan; the exact regime never calls this.
+    function _establishMembership(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 loanId
+    ) private {
+        if (s.userLoanIndexed[user][loanId]) return;
+        uint256[] storage ids = s.userLoanIds[user];
+        uint256 n = ids.length;
+        for (uint256 i; i < n; ) {
+            if (ids[i] == loanId) {
+                s.userLoanIndexed[user][loanId] = true;
+                return;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        s.userLoanIndexed[user][loanId] = true;
+        s.userLoanIds[user].push(loanId);
     }
 
     /// @dev Replaces the borrower on an existing loan. Symmetric to

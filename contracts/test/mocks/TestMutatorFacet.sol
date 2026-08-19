@@ -62,6 +62,45 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().loanIdByPositionTokenId[tokenId];
     }
 
+    /// @notice #1503 item 25 test-only (Codex #1818 r3 P2) — fabricate the
+    ///         GRANDFATHERED index state a loan created before the membership
+    ///         map shipped would have: no exact-regime flag, no map bits, and
+    ///         (for a pre-map acquirer) no lifetime-array entry. New loans set
+    ///         all of these at creation, so tests must be able to strip them
+    ///         to exercise the one-time scan repair.
+    function clearLoanIndexRegimeRaw(uint256 loanId, address[] calldata holders) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.loanHolderIndexExact[loanId] = false;
+        for (uint256 i; i < holders.length; ++i) {
+            s.userLoanIndexed[holders[i]][loanId] = false;
+        }
+    }
+
+    /// @notice Companion to {clearLoanIndexRegimeRaw}: remove `loanId` from
+    ///         `userLoanIds[user]` to model a pre-map acquirer, who was never
+    ///         appended at all (the item-25 bug this PR fixes). Swap-and-pop —
+    ///         order is not part of the array's contract.
+    function removeUserLoanIdRaw(address user, uint256 loanId) external {
+        uint256[] storage ids = LibVaipakam.storageSlot().userLoanIds[user];
+        for (uint256 i; i < ids.length; ++i) {
+            if (ids[i] == loanId) {
+                ids[i] = ids[ids.length - 1];
+                ids.pop();
+                return;
+            }
+        }
+    }
+
+    /// @notice Raw reads for the exact-regime flag and the membership map, so
+    ///         the grandfathered-migration tests can assert truthful stamping.
+    function getLoanHolderIndexExactRaw(uint256 loanId) external view returns (bool) {
+        return LibVaipakam.storageSlot().loanHolderIndexExact[loanId];
+    }
+
+    function getUserLoanIndexedRaw(address user, uint256 loanId) external view returns (bool) {
+        return LibVaipakam.storageSlot().userLoanIndexed[user][loanId];
+    }
+
     /// @notice RL-1 test-only — force the mandatory-vault-upgrade gate
     ///         without deploying a fresh implementation, so tests can put a
     ///         claimant's vault below `mandatoryVaultVersion` and assert the

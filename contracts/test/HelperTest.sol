@@ -91,7 +91,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](179);
+        selectors = new bytes4[](183);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -373,6 +373,12 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanId.selector;
         // #1503 item 25 — raw read of the position-token → loan reverse index.
         selectors[n++] = TestMutatorFacet.getLoanIdByPositionTokenIdRaw.selector;
+        // #1503 item 25, Codex #1818 r3 P2 — grandfathered-index fabrication +
+        // raw reads for the one-time scan-repair tests.
+        selectors[n++] = TestMutatorFacet.clearLoanIndexRegimeRaw.selector;
+        selectors[n++] = TestMutatorFacet.removeUserLoanIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLoanHolderIndexExactRaw.selector;
+        selectors[n++] = TestMutatorFacet.getUserLoanIndexedRaw.selector;
         // #1008 (S13) — entry-path per-day-cap test scaffolding.
         selectors[n++] = TestMutatorFacet.closeRewardEntryRaw.selector;
         selectors[n++] = TestMutatorFacet.setDayCapThreshold18.selector;
