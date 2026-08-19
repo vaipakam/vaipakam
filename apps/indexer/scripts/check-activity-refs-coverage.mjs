@@ -279,6 +279,18 @@ const getterBodyWritesNonLocal = (body) => {
       hit = true;
       return;
     }
+    // A for-of/for-in TARGET writes through its expression (Codex round-68
+    // P2): `for (this.loanId of [999]) {}` inside a getter assigns the
+    // member on every iteration with no assignment token to classify.
+    if (
+      (ts.isForOfStatement(n) || ts.isForInStatement(n)) &&
+      n.initializer &&
+      !ts.isVariableDeclarationList(n.initializer) &&
+      memberTarget(n.initializer)
+    ) {
+      hit = true;
+      return;
+    }
     if (ts.isCallExpression(n)) {
       const callee = unwrapAssertions(n.expression);
       if (
@@ -619,6 +631,15 @@ const bindsNameLexically = (node, name) => {
 // statement with a conflict clause (Codex round-63 P2) — SQLite permits it
 // between the verb and the table name, and the regex expected the identifier
 // immediately after UPDATE.
+// Round-68 P2 — a mutation verb followed by an UNRESOLVABLE interpolation in
+// table-name position fails closed: the table could be `indexer_cursor`, and
+// treating it as safe is how an early advance hides behind an unfoldable
+// span.
+const DYNAMIC_SQL_SENTINEL = '\u0000DYN\u0000';
+const CURSOR_VERB_THEN_DYNAMIC =
+  /(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE(?:\s+OR\s+\w+)?|REPLACE\s+INTO)\s+["'`[]?\u0000DYN\u0000/i;
+const advancesCursorSql = (raw) =>
+  CURSOR_ADVANCE_SQL.test(raw) || CURSOR_VERB_THEN_DYNAMIC.test(raw);
 const CURSOR_ADVANCE_SQL =
   /(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE(?:\s+OR\s+\w+)?|REPLACE\s+INTO)\s+["'`[]?indexer_cursor\b/i;
 
@@ -818,14 +839,20 @@ const guardedReason = (node, stopAt) => {
     if (
       (ts.isWhileStatement(p) || ts.isForStatement(p)) &&
       cur === p.statement &&
-      p.expression &&
+      // A WhileStatement keeps its condition in `.expression`; a ForStatement
+      // keeps it in `.condition` (`.expression` doesn't exist there), so
+      // reading only `.expression` silently skipped every `for (; cond;)`
+      // loop (Codex round-68 follow-through).
+      (ts.isWhileStatement(p) ? p.expression : p.condition) &&
       (() => {
         // ...through a CONST BOOLEAN too (Codex round-67 P2): `const never =
         // false; while (never)` never runs its body, and only the literal
         // spelling was recognized. A const primitive cannot be mutated
         // through an alias, so the chain resolution is enough here — no
         // touch scan needed, unlike the collection case above.
-        let c = unwrapAssertions(p.expression);
+        let c = unwrapAssertions(
+          ts.isWhileStatement(p) ? p.expression : p.condition
+        );
         for (let hop = 0; hop < 4 && ts.isIdentifier(c); hop += 1) {
           const decl = nearestDeclIn(c, c.text, sourceFile);
           if (!decl || decl === OPAQUE_BINDING || !decl.initializer) return false;
@@ -838,7 +865,14 @@ const guardedReason = (node, stopAt) => {
           }
           c = unwrapAssertions(decl.initializer);
         }
-        return c.kind === ts.SyntaxKind.FalseKeyword;
+        // EVERY statically falsy primitive, not just `false` (Codex
+        // round-68 P2): `const never = 0; for (; never;)` runs its body
+        // exactly as often.
+        if (c.kind === ts.SyntaxKind.FalseKeyword) return true;
+        if (c.kind === ts.SyntaxKind.NullKeyword) return true;
+        if (ts.isNumericLiteral(c)) return Number(c.text) === 0;
+        if (ts.isStringLiteralLike(c)) return c.text.length === 0;
+        return false;
       })()
     ) {
       return 'inside a loop whose condition is constantly false, so its body never runs';
@@ -1712,7 +1746,24 @@ const mutatingCallTarget = (n) => {
               if (el.name.text !== callee.text) continue;
               settled = true;
               if ((st.declarationList.flags & ts.NodeFlags.Const) === 0) break;
-              const src = unwrapAssertions(d.initializer);
+              let src = unwrapAssertions(d.initializer);
+              // ...the HOST itself through the const chain too (Codex
+              // round-68 P2): `const Builtins = Object; const { assign } =
+              // Builtins` names the built-in one rename away, and the
+              // whitelist reads the identifier's spelling.
+              for (let hop2 = 0; hop2 < 4 && ts.isIdentifier(src); hop2 += 1) {
+                if (src.text === 'Object' || src.text === 'Reflect') break;
+                const hd = nearestDeclIn(src, src.text, sourceFile);
+                if (!hd || hd === OPAQUE_BINDING || !hd.initializer) break;
+                const hl = hd.parent;
+                if (
+                  !ts.isVariableDeclarationList(hl) ||
+                  (hl.flags & ts.NodeFlags.Const) === 0
+                ) {
+                  break;
+                }
+                src = unwrapAssertions(hd.initializer);
+              }
               const prop =
                 el.propertyName && ts.isIdentifier(el.propertyName)
                   ? el.propertyName.text
@@ -2634,6 +2685,25 @@ if (!fnNode) {
           isPinned(sp.expression, from, depth + 1),
         );
       }
+      // A CONSTANT CONVERSION is as pinned as its operand (Codex round-68
+      // P2): `Number('999')` deterministically produces 999, and an
+      // unrecognized call read as unpinned. Only the global converters over
+      // a single pinned argument fold — and only when nothing local shadows
+      // the name.
+      if (ts.isCallExpression(e)) {
+        const conv = unwrapAssertions(e.expression);
+        if (
+          ts.isIdentifier(conv) &&
+          ['Number', 'String', 'Boolean', 'BigInt'].includes(conv.text) &&
+          e.arguments.length === 1 &&
+          resolveNameInScopes(e, conv.text, {
+            stopAt: sourceFile,
+            shadowSentinel: OPAQUE_BINDING,
+          }) === null
+        ) {
+          return isPinned(e.arguments[0], from, depth + 1);
+        }
+      }
       if (ts.isIdentifier(e)) {
         const decl = nearestDeclIn(from, e.text, sourceFile);
         if (!decl || decl === OPAQUE_BINDING) return false;
@@ -2794,11 +2864,37 @@ if (!fnNode) {
               )
             );
           }
-          if (ts.isCallExpression(itb)) {
-            const mm = memberNameOf(unwrapAssertions(itb.expression));
+          // ...and through the WHOLE receiver chain (Codex round-68 P2):
+          // `allLogs.slice(0, 1).values()` hides the subset transform one
+          // member call deeper, and only the outermost call was classified.
+          let probe = itb;
+          while (ts.isCallExpression(probe)) {
+            const mexpr = unwrapAssertions(probe.expression);
+            const mm = memberNameOf(mexpr);
             if (mm !== null && ['slice', 'filter', 'splice'].includes(mm)) {
               return false;
             }
+            if (
+              ts.isPropertyAccessExpression(mexpr) ||
+              ts.isElementAccessExpression(mexpr)
+            ) {
+              probe = unwrapAssertions(mexpr.expression);
+            } else {
+              break;
+            }
+          }
+          // ...and a LITERAL at the chain's root gets the literal rule
+          // (found writing the round-68 pin): `[allLogs[0]!].values()` is
+          // the enumerated subset behind one inert wrapper call.
+          if (ts.isArrayLiteralExpression(probe)) {
+            return (
+              probe.elements.length > 0 &&
+              probe.elements.every(
+                (el) =>
+                  ts.isSpreadElement(el) &&
+                  spreadHoldsRows(el.expression, call),
+              )
+            );
           }
           return true;
         }
@@ -3160,7 +3256,12 @@ if (!fnNode) {
                       if (
                         ts.isIdentifier(callee2) &&
                         callee2.text === name &&
-                        resolveInvokedCallee(callee2, k) === fnW
+                        resolveInvokedCallee(callee2, k) === fnW &&
+                        // ...and the invocation must be REACHABLE (Codex
+                        // round-68 P2): `if (false) await runLedger()` is a
+                        // syntactic call that anchors the ordering while the
+                        // only executed call sits after the cursor write.
+                        guardedReason(k, outer.body ?? outer) === null
                       ) {
                         entry = k;
                         return;
@@ -3253,7 +3354,24 @@ if (!fnNode) {
             };
             if (!cur) return '';
             const folded = staticStringOf(cur);
-            return folded !== null ? folded : cur.getText(sourceFile);
+            if (folded !== null) return folded;
+            // An UNRESOLVED span must not hide the statement (Codex round-68
+            // P2): an interpolated table name whose expression cannot be
+            // folded (String('indexer_cursor')) executes a cursor advance
+            // whose SOURCE text never contains the table name, so a plain
+            // source-text fallback UNDER-matches. Unfoldable spans are
+            // replaced with a sentinel; the cursor test fails closed when a
+            // mutation verb is followed by the sentinel in table-name
+            // position.
+            if (ts.isTemplateExpression(cur)) {
+              let out = cur.head.text;
+              for (const sp of cur.templateSpans) {
+                const v = staticStringOf(sp.expression);
+                out += (v !== null ? v : DYNAMIC_SQL_SENTINEL) + sp.literal.text;
+              }
+              return out;
+            }
+            return cur.getText(sourceFile);
           };
           const seek = (n) => {
             if (hit) return;
@@ -3266,7 +3384,7 @@ if (!fnNode) {
               // this call, so its position joins the ordering set as-is.
               if (
                 memberNameOf(unwrapAssertions(n.expression)) === 'exec' &&
-                CURSOR_ADVANCE_SQL.test(stripSqlComments(raw))
+                advancesCursorSql(stripSqlComments(raw))
               ) {
                 const at = n.getStart(sourceFile);
                 if (at < callAt) hit = hit === null ? at : Math.min(hit, at);
@@ -3274,7 +3392,7 @@ if (!fnNode) {
               }
               if (
                 memberNameOf(unwrapAssertions(n.expression)) === 'prepare' &&
-                CURSOR_ADVANCE_SQL.test(stripSqlComments(raw))
+                advancesCursorSql(stripSqlComments(raw))
               ) {
                 // The advance happens where the statement is EXECUTED, not
                 // where it is prepared (Codex round-57 P2): `prepare()` writes
@@ -4387,6 +4505,79 @@ if (!fnNode) {
       );
       process.exit(1);
     }
+    // ...and the accepted loop must COMPLETE every iteration (Codex round-68
+    // P2): an unconditional `break` after the first INSERT records one row
+    // and the scan still advances the cursor past every remaining event.
+    // ANY break/continue that exits THIS loop — labeled ones included — and
+    // any `return` outside a nested function are refused, guarded or not:
+    // the live loop body carries none, and a conditional skip is exactly the
+    // per-item hole this walk cannot prove harmless.
+    {
+      let skipper = null;
+      const scanExit = (m) => {
+        if (skipper) return;
+        if (isFunctionLike(m)) return; // its own control flow
+        if (ts.isTryStatement(m) && m.catchClause) {
+          // The catch handler — and any finally attached to a try that HAS
+          // one — is the rethrow-discipline checks' territory (rounds
+          // 50–57): a `return Promise.reject(err)` there is an accepted
+          // rethrow-equivalent, a labelled break to a target inside the
+          // handler never leaves it, and every genuine swallow (plain
+          // return, bare continue, returning finally) already gets the
+          // dedicated "does not rethrow" verdict. Re-flagging those here
+          // would double-cover with a coarser message and refuse the
+          // accepted shapes. The try block itself is still ours.
+          scanExit(m.tryBlock);
+          return;
+        }
+        if (ts.isBreakStatement(m) || ts.isContinueStatement(m)) {
+          if (m.label) {
+            skipper = m; // a labeled jump can target the batch loop itself
+            return;
+          }
+          let owner = m.parent;
+          let consumed = false;
+          while (owner && owner !== loopVar.body) {
+            if (
+              ts.isForStatement(owner) ||
+              ts.isForOfStatement(owner) ||
+              ts.isForInStatement(owner) ||
+              ts.isWhileStatement(owner) ||
+              ts.isDoStatement(owner) ||
+              (ts.isBreakStatement(m) && ts.isSwitchStatement(owner))
+            ) {
+              consumed = true;
+              break;
+            }
+            owner = owner.parent;
+          }
+          if (!consumed) {
+            skipper = m;
+            return;
+          }
+        }
+        if (ts.isReturnStatement(m)) {
+          skipper = m;
+          return;
+        }
+        ts.forEachChild(m, scanExit);
+      };
+      scanExit(loopVar.body);
+      if (skipper) {
+        const { line } = sourceFile.getLineAndCharacterOfPosition(
+          skipper.getStart(sourceFile),
+        );
+        console.error(
+          `[check-activity-refs-coverage] the ${LEDGER_FN}() batch loop can SKIP\n` +
+            `  iterations: line ${line + 1} carries a break/continue/return that exits the\n` +
+            '  loop (or the ledger) before every decoded event reaches the INSERT. One\n' +
+            '  recorded row and an advanced cursor look identical to full coverage from\n' +
+            '  here. Let the loop run every item, or update this script — do not delete\n' +
+            '  the check.',
+        );
+        process.exit(1);
+      }
+    }
     // Locals declared INSIDE the loop body that read a property off the loop
     // binding: `let args = log.args` maps args → 'args'; `const { eventName } =
     // log` maps eventName → 'eventName'. This is what lets the live ledger pass
@@ -5394,7 +5585,47 @@ if (!fnNode) {
                     ts.isDoStatement(up)) &&
                   up.expression === child
                 ) {
-                  return true;
+                  // A condition read counts only when the guarded body can
+                  // MOVE the count (Codex round-68 P2): `if (ignoredEntry)
+                  // {}` reads the entry into an empty branch while a
+                  // fabricated result decides what the ledger returns. The
+                  // live counting shape — `if ((….changes ?? 0) > 0)
+                  // inserted++` — mutates a binding (or returns) in the
+                  // branch, and that is what is required.
+                  let mutates = false;
+                  const scanMut = (b) => {
+                    if (mutates || !b) return;
+                    if (isFunctionLike(b)) return;
+                    if (
+                      ts.isBinaryExpression(b) &&
+                      b.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+                      b.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+                    ) {
+                      mutates = true;
+                      return;
+                    }
+                    if (
+                      (ts.isPrefixUnaryExpression(b) ||
+                        ts.isPostfixUnaryExpression(b)) &&
+                      (b.operator === ts.SyntaxKind.PlusPlusToken ||
+                        b.operator === ts.SyntaxKind.MinusMinusToken)
+                    ) {
+                      mutates = true;
+                      return;
+                    }
+                    if (ts.isReturnStatement(b)) {
+                      mutates = true;
+                      return;
+                    }
+                    ts.forEachChild(b, scanMut);
+                  };
+                  if (ts.isIfStatement(up)) {
+                    scanMut(up.thenStatement);
+                    scanMut(up.elseStatement);
+                  } else {
+                    scanMut(up.statement);
+                  }
+                  return mutates;
                 }
                 if (ts.isCallExpression(up) || ts.isNewExpression(up)) {
                   return false;
