@@ -740,9 +740,11 @@ contract EarlyWithdrawalFacet is
                 );
                 // #1817 (Codex #1819 r6 P2) — the buyer's checkpoint at THIS
                 // credit's own site; a completion that credits nothing stays
-                // broadcast-free.
+                // broadcast-free. Local when the held migration will stamp
+                // the buyer again below (r7 P2 — the later stamp is the
+                // final one and carries the broadcast).
                 if (loan.principalAsset == s.vpfiToken) {
-                    _restampVpfiParty(newLender);
+                    _restampVpfiParty(newLender, priorHeldSale > 0);
                 }
             }
         } else if (saleRemainingInterest > originalRemainingInterest) {
@@ -770,9 +772,10 @@ contract EarlyWithdrawalFacet is
                 LibSanctionedLock.end(
                     s, newLender, loanId, loan.principalAsset, shortfall
                 );
-                // r6 P2 — buyer checkpoint at this credit site.
+                // r6 P2 — buyer checkpoint at this credit site (local when
+                // the held migration stamps the buyer again below, r7 P2).
                 if (loan.principalAsset == s.vpfiToken) {
-                    _restampVpfiParty(newLender);
+                    _restampVpfiParty(newLender, priorHeldSale > 0);
                 }
             } else {
                 uint256 remainingShortfall = shortfall - accrued;
@@ -789,9 +792,10 @@ contract EarlyWithdrawalFacet is
                 LibSanctionedLock.end(
                     s, newLender, loanId, loan.principalAsset, totalFromLiam
                 );
-                // r6 P2 — buyer checkpoint at this credit site.
+                // r6 P2 — buyer checkpoint at this credit site (local when
+                // the held migration stamps the buyer again below, r7 P2).
                 if (loan.principalAsset == s.vpfiToken) {
-                    _restampVpfiParty(newLender);
+                    _restampVpfiParty(newLender, priorHeldSale > 0);
                 }
             }
         } else {
@@ -1088,14 +1092,17 @@ contract EarlyWithdrawalFacet is
             VaultWithdrawFailed.selector
         );
         s.consolidationMoveFromUser = address(0);
+        // Self-purchase: this stamp is INTERMEDIATE for the shared user (the
+        // buyer stamp below follows), so it rolls up locally; a third-party
+        // seller's is their final movement and broadcasts (r7 P2).
         if (loan.principalAsset == s.vpfiToken) {
-            _restampVpfiParty(originalLender);
+            _restampVpfiParty(originalLender, originalLender == newLender);
         }
         LibSanctionedLock.depositLocked(
             s, newLender, loanId, payAsset, priorHeldSale
         );
         if (loan.principalAsset == s.vpfiToken) {
-            _restampVpfiParty(newLender);
+            _restampVpfiParty(newLender, false);
         }
     }
 
@@ -1103,10 +1110,16 @@ contract EarlyWithdrawalFacet is
     ///      the viaIR stack ceiling, and inlining the abi.encode temporaries
     ///      for each checkpoint tipped it over; a private frame keeps them
     ///      out of the big function entirely.
-    function _restampVpfiParty(address who) private {
+    /// @param localOnly INTERMEDIATE checkpoints roll up locally (r7 P2 —
+    ///        one broadcast per party per completion; the party's FINAL
+    ///        stamp carries the push, and a per-checkpoint CCIP message
+    ///        could exhaust the shared budget mid-settlement).
+    function _restampVpfiParty(address who, bool localOnly) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                ConsolidationFacet.restampUserVpfiInternal.selector,
+                localOnly
+                    ? ConsolidationFacet.restampUserVpfiLocalInternal.selector
+                    : ConsolidationFacet.restampUserVpfiInternal.selector,
                 who
             ),
             bytes4(0)

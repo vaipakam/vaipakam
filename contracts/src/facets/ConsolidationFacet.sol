@@ -124,6 +124,19 @@ contract ConsolidationFacet is
         LibConsolidation.restampUserVpfi(user);
     }
 
+    /// @notice Broadcast-FREE twin of {restampUserVpfiInternal} (#1817,
+    ///         Codex #1819 r7) — for INTERMEDIATE checkpoints inside a
+    ///         multi-movement settlement, where the transient balance must
+    ///         reach the accumulator but no observer can use the transient
+    ///         tier tuple and a per-checkpoint CCIP push would double-charge
+    ///         the shared budget (or revert the settlement when it runs
+    ///         out). The affected party's FINAL stamp carries the broadcast.
+    ///         Internal-only; NOT `nonReentrant` (the host holds the lock).
+    function restampUserVpfiLocalInternal(address user) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibConsolidation.restampUserVpfiLocal(user);
+    }
+
     /// @notice Consolidate the **borrower** (collateral) side of `loanId` into
     ///         the current borrower-NFT holder's vault.
     function consolidateCollateralToHolder(

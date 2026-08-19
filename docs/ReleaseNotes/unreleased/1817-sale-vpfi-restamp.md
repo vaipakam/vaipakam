@@ -22,9 +22,15 @@ themselves only at each user's next unrelated vault movement, which could be
 much later or never — and until then one side was quietly over-priced and the
 other under-priced on every fee the tier touches.
 
-Both sale routes — the instant sale into a standing offer and the completion
-of a listed sale — now refresh the seller's and the buyer's tier records at
-settlement, at their true post-sale balances, the same way the vault flows
-the tier system already instruments do.
+Both sale routes now refresh each party's tier record at the vault movements
+the sale itself performs. On the instant sale that is every movement: the
+buyer's principal debit (and any refund of an oversized offer), and the held
+VPFI leaving the seller and landing with the buyer. On the completion of a
+listed sale it is the movements completion actually makes — the held
+migration and any rate-difference deposit; a completion that moves nothing
+(the legacy recovery path) touches no one's record, and the buyer's
+purchase-price debit, which happened earlier when they accepted the listing,
+remains among the untracked paths recorded in the audit and deferred to
+#1820.
 
 Part of #1503 (item 27); tracked as #1817.

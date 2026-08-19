@@ -1807,13 +1807,14 @@ contract DeployDiamond is Script {
 
     /// #594 — standalone holder-only consolidation entry points.
     function _getConsolidationFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         s[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         s[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
         s[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
         s[4] = ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector;
         s[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
+        s[6] = ConsolidationFacet.restampUserVpfiLocalInternal.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

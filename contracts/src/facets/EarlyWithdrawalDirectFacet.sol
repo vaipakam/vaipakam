@@ -427,11 +427,16 @@ contract EarlyWithdrawalDirectFacet is
         // tier tenure. Stamping the trough makes the zero observable; the
         // final stamp after the credits remains. When the offer escrowed
         // MORE than the principal, the excess refund below is the last
-        // debit and carries its own re-stamp (r4 P1).
+        // debit and carries its own re-stamp (r4 P1). LOCAL rollup (r7 P2):
+        // this is an INTERMEDIATE checkpoint — the buyer's final stamp in
+        // the settlement block carries the broadcast, and a per-checkpoint
+        // CCIP push would charge the shared budget once per dip and could
+        // revert the sale when it covers the first message but not the
+        // second.
         if (loan.principalAsset == s.vpfiToken) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    ConsolidationFacet.restampUserVpfiLocalInternal.selector,
                     buyOffer.creator
                 ),
                 bytes4(0)
@@ -474,11 +479,13 @@ contract EarlyWithdrawalDirectFacet is
             // credited above). Re-stamp so the post-refund balance is
             // observed before the held migration re-credits. Gated on the
             // refund actually firing — with no excess the principal-pull
-            // stamp already sat at the last debit.
+            // stamp already sat at the last debit. LOCAL rollup (r7 P2):
+            // intermediate checkpoint; the settlement block's final buyer
+            // stamp carries the one broadcast.
             if (loan.principalAsset == s.vpfiToken) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        ConsolidationFacet.restampUserVpfiInternal.selector,
+                        ConsolidationFacet.restampUserVpfiLocalInternal.selector,
                         buyOffer.creator
                     ),
                     bytes4(0)
@@ -582,11 +589,16 @@ contract EarlyWithdrawalDirectFacet is
             // - the staker lifecycle never resets. For a third-party sale
             // this is the same post-mutation stamp the settlement block used
             // to take, moved to the mutation site (where every other VPFI
-            // movement stamps).
+            // movement stamps). In a SELF-SALE this stamp is INTERMEDIATE —
+            // the same user's final buyer stamp follows — so it rolls up
+            // LOCALLY there (r7 P2: one broadcast per party per sale); for a
+            // third-party seller it is their final movement and broadcasts.
             if (loan.principalAsset == s.vpfiToken) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        ConsolidationFacet.restampUserVpfiInternal.selector,
+                        loan.lender == buyOffer.creator
+                            ? ConsolidationFacet.restampUserVpfiLocalInternal.selector
+                            : ConsolidationFacet.restampUserVpfiInternal.selector,
                         loan.lender
                     ),
                     bytes4(0)
