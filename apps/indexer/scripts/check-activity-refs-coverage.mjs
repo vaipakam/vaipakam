@@ -217,6 +217,94 @@ const DELIBERATELY_NOT_SCOPED = {
  * fallback left the run green while attaching every unmapped and allowlisted
  * event to loan 999. Two readers of the same shape is one reader too many.
  */
+/**
+ * Does this getter body WRITE anywhere a caller could observe? A statically
+ * named getter defines only its own key (round 57) — but its body still runs
+ * at every READ of the returned reference (Codex round-61 P2), so
+ * `get actor() { args.loanId = 999n; return null; }` poisons the fields the
+ * ledger reads after it while the view records a harmless accessor key.
+ *
+ * The test is for writes THROUGH a property or element access (any object —
+ * proving which object a member write lands on is more than this parser
+ * claims), a `delete`, or an Object/Reflect mutator call. A plain assignment
+ * to a LOCAL identifier stays fine: a getter that computes into its own
+ * temporaries is ordinary code, and rejecting it would block valid mappings.
+ */
+const getterBodyWritesNonLocal = (body) => {
+  let hit = false;
+  const memberTarget = (t) => {
+    t = unwrapAssertions(t);
+    if (ts.isPropertyAccessExpression(t) || ts.isElementAccessExpression(t)) {
+      return true;
+    }
+    // a destructuring-assignment pattern can hide member targets:
+    // `({ x: args.loanId } = src)`
+    if (ts.isObjectLiteralExpression(t)) {
+      return t.properties.some((p) => {
+        if (ts.isPropertyAssignment(p)) return memberTarget(p.initializer);
+        if (ts.isSpreadAssignment(p)) return memberTarget(p.expression);
+        return false;
+      });
+    }
+    if (ts.isArrayLiteralExpression(t)) {
+      return t.elements.some((el) =>
+        ts.isSpreadElement(el) ? memberTarget(el.expression) : memberTarget(el),
+      );
+    }
+    return false;
+  };
+  const walk = (n) => {
+    if (hit || !n) return;
+    if (ts.isBinaryExpression(n)) {
+      const k = n.operatorToken.kind;
+      if (
+        k >= ts.SyntaxKind.FirstAssignment &&
+        k <= ts.SyntaxKind.LastAssignment &&
+        memberTarget(n.left)
+      ) {
+        hit = true;
+        return;
+      }
+    }
+    if (
+      (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
+      (n.operator === ts.SyntaxKind.PlusPlusToken ||
+        n.operator === ts.SyntaxKind.MinusMinusToken) &&
+      memberTarget(n.operand)
+    ) {
+      hit = true;
+      return;
+    }
+    if (ts.isDeleteExpression(n)) {
+      hit = true;
+      return;
+    }
+    if (ts.isCallExpression(n)) {
+      const callee = unwrapAssertions(n.expression);
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        ts.isIdentifier(callee.name)
+      ) {
+        const host = callee.expression.text;
+        const meth = callee.name.text;
+        if (
+          (host === 'Object' &&
+            ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf'].includes(meth)) ||
+          (host === 'Reflect' &&
+            ['set', 'defineProperty', 'deleteProperty', 'setPrototypeOf'].includes(meth))
+        ) {
+          hit = true;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(n, walk);
+  };
+  walk(body);
+  return hit;
+};
+
 const objectLiteralView = (e) => {
     const props = new Map();
     // Spread POSITION matters, not just presence (Codex round-19 P2). An
@@ -359,6 +447,20 @@ const objectLiteralView = (e) => {
       // method branches below already apply; only a computed name keeps the
       // spread-like treatment.
       if (ts.isGetAccessorDeclaration(p)) {
+        // ...but only a getter whose body is FREE of observable writes (Codex
+        // round-61 P2). The round-57 narrowing above scoped a getter to its own
+        // key so a harmless `get actor()` stopped shadowing the mapping beside
+        // it — and in doing so accepted `get actor() { args.loanId = 999n;
+        // return null; }`, whose body runs at every read of the returned
+        // reference and rewrites the fields the ledger reads after it. A
+        // side-effectful getter makes the WHOLE view unreadable, not just its
+        // key, because the effect lands on values defined elsewhere.
+        if (p.body && getterBodyWritesNonLocal(p.body)) {
+          return {
+            opaque:
+              'a getter whose body writes through a property, which runs at every read of the returned reference and can mutate the decoded arguments the other fields were checked against',
+          };
+        }
         if (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) {
           props.set(p.name.text, { accessor: true });
           definedAt.set(p.name.text, idx);
@@ -2426,6 +2528,92 @@ if (!fnNode) {
       );
       process.exit(1);
     }
+    // A reachable call inside a function NOTHING INVOKES still never runs
+    // (Codex round-61 P2). `guardedReason` above walks up to the call's own
+    // enclosing function and asks what could skip the statement inside it —
+    // wrap that whole function in `async function runLedger() { … }` that
+    // nothing calls, and every check here stays green while no activity row is
+    // written. So every function boundary between the call and the module's
+    // outermost function must be provably ENTERED: an immediately-invoked
+    // function expression, or a named local that some call OUTSIDE its own
+    // body (recursion proves nothing) demonstrably invokes, traced with the
+    // same resolver the mutation walk uses. The outermost boundary is exempt —
+    // whether the Worker runs the scan entry is the platform's contract, not
+    // a question this file can answer.
+    const uninvokedWrapper = callSites.length === 1
+      ? (() => {
+          const boundaries = [];
+          for (let a = callSites[0].parent; a; a = a.parent) {
+            if (isFunctionLike(a)) boundaries.push(a);
+          }
+          const directCallee = (call) => {
+            let callee = unwrapAssertions(call.expression);
+            if (
+              (ts.isPropertyAccessExpression(callee) ||
+                ts.isElementAccessExpression(callee)) &&
+              ['call', 'apply'].includes(memberNameOf(callee) ?? '')
+            ) {
+              callee = unwrapAssertions(callee.expression);
+            }
+            return callee;
+          };
+          for (let i = 0; i + 1 < boundaries.length; i += 1) {
+            const f = boundaries[i];
+            // an IIFE is entered where it stands
+            let w = f.parent;
+            while (w && isTransparentWrapper(w)) w = w.parent;
+            if (w && ts.isCallExpression(w) && directCallee(w) === f) continue;
+            // a named helper needs a call the resolver traces back to it
+            let name = null;
+            if (ts.isFunctionDeclaration(f) && f.name) name = f.name.text;
+            else {
+              let d = f.parent;
+              while (d && isTransparentWrapper(d)) d = d.parent;
+              if (d && ts.isVariableDeclaration(d) && ts.isIdentifier(d.name)) {
+                name = d.name.text;
+              }
+            }
+            const outerBody = boundaries[i + 1].body;
+            let invoked = false;
+            if (name && outerBody) {
+              const fStart = f.getStart(sourceFile);
+              const fEnd = f.getEnd();
+              const scanForCall = (n) => {
+                if (invoked) return;
+                if (n.getStart(sourceFile) >= fStart && n.getEnd() <= fEnd) {
+                  return; // f's own body — a recursive call is not an entry
+                }
+                if (ts.isCallExpression(n)) {
+                  const callee = directCallee(n);
+                  if (
+                    ts.isIdentifier(callee) &&
+                    callee.text === name &&
+                    resolveInvokedCallee(callee, n) === f
+                  ) {
+                    invoked = true;
+                    return;
+                  }
+                }
+                ts.forEachChild(n, scanForCall);
+              };
+              scanForCall(outerBody);
+            }
+            if (!invoked) return name ? `\`${name}\`` : 'an anonymous function';
+          }
+          return null;
+        })()
+      : null;
+    if (uninvokedWrapper) {
+      console.error(
+        `[check-activity-refs-coverage] the only call to ${LEDGER_FN}() sits inside\n` +
+          `  ${uninvokedWrapper}, and nothing on the scan's path provably invokes that\n` +
+          '  function. Every reachability check here walks the call\'s own enclosing\n' +
+          '  function — a wrapper nothing calls keeps all of them green while no activity\n' +
+          '  row is ever written. Invoke the wrapper where the scan runs, or update this\n' +
+          '  script — do not delete the check.',
+      );
+      process.exit(1);
+    }
     // ...and it must run BEFORE the cursor advances (Codex round-54 P2).
     //
     // Every check here established that the ledger call happens and that a
@@ -2533,6 +2721,40 @@ if (!fnNode) {
                         }
                         if (hostE && ts.isIdentifier(hostE) && resolvesToBinding(hostE)) {
                           advanceAts.push(m.getStart(sourceFile));
+                        }
+                      }
+                      // `DB.batch([…])` EXECUTES every statement in its array
+                      // (Codex round-61 P2): `await env.DB.batch([earlyCursor
+                      // .bind(…)])` advances the cursor as surely as `.run()`
+                      // does, and the executor test above only recognises a
+                      // call ON the binding — batch's receiver is the
+                      // database, and the statement rides in as an ARGUMENT.
+                      // An array element whose chain root resolves to the
+                      // binding is an execution at the batch call's position.
+                      if (mem === 'batch') {
+                        for (const bArg of m.arguments ?? []) {
+                          const arr = unwrapAssertions(bArg);
+                          if (!ts.isArrayLiteralExpression(arr)) continue;
+                          for (const el of arr.elements) {
+                            let root = unwrapAssertions(
+                              ts.isSpreadElement(el) ? el.expression : el,
+                            );
+                            while (
+                              root &&
+                              (ts.isCallExpression(root) ||
+                                ts.isPropertyAccessExpression(root) ||
+                                ts.isElementAccessExpression(root))
+                            ) {
+                              root = unwrapAssertions(root.expression);
+                            }
+                            if (
+                              root &&
+                              ts.isIdentifier(root) &&
+                              resolvesToBinding(root)
+                            ) {
+                              advanceAts.push(m.getStart(sourceFile));
+                            }
+                          }
                         }
                       }
                     }
@@ -3035,9 +3257,14 @@ if (!fnNode) {
             if (lastEnd >= 0) loopEnd = lastEnd;
           }
           let why = null;
-          const walk = (n) => {
+          // `exempt` marks descent into a body that RUNS AT ITS CALL SITE
+          // (Codex round-61 P2): a hoisted helper declared below the loop but
+          // called above it executes before processing, so the loop-end bound
+          // applies to the INVOCATION, which the non-exempt walk already
+          // checked — not to the body's own source position.
+          const walk = (n, exempt = false) => {
             if (why) return;
-            if (n.getStart(sourceFile) >= loopEnd) return;
+            if (!exempt && n.getStart(sourceFile) >= loopEnd) return;
             // a nested binder of the same name is a different `logs` entirely
             if (n !== ledgerNode.body && bindsNameLexically(n, batchParamName)) return;
             // A nested function nothing invokes is not the ledger's control
@@ -3049,8 +3276,8 @@ if (!fnNode) {
             if (n !== ledgerNode.body && isFunctionLike(n)) return;
             if (ts.isCallExpression(n)) {
               const invoked = invokedFunctionBodyOf(n);
-              if (invoked) walk(invoked);
-              for (const cb of syncCallbackFunctionsOf(n)) walk(cb.body);
+              if (invoked) walk(invoked, true);
+              for (const cb of syncCallbackFunctionsOf(n)) walk(cb.body, true);
               if (why) return;
             }
             // A mutating API whose DESTINATION is rooted in the batch (Codex
@@ -3213,7 +3440,7 @@ if (!fnNode) {
               }
               return;
             }
-            ts.forEachChild(n, walk);
+            ts.forEachChild(n, (c) => walk(c, exempt));
           };
           walk(ledgerNode.body);
           return why;
@@ -4314,18 +4541,38 @@ if (!fnNode) {
             if (ts.isSwitchStatement(node)) {
               const clauses = node.caseBlock.clauses;
               if (!clauses.some((c) => ts.isDefaultClause(c))) return false;
-              for (let ci = 0; ci < clauses.length; ci += 1) {
+              // Backward pass so a clause may FALL THROUGH into a later
+              // throwing clause (Codex round-61 P2): `case 'object':
+              // console.error(err); default: throw err;` propagates on every
+              // path, and requiring each non-empty clause to end in its OWN
+              // throw rejected that ordinary logging refactor. A clause
+              // qualifies if it ends in a throw itself, or completes normally
+              // (nothing abrupt anywhere in it) into a qualifying successor.
+              const qualifies = new Array(clauses.length).fill(false);
+              for (let ci = clauses.length - 1; ci >= 0; ci -= 1) {
                 const stmts = clauses[ci].statements;
+                const nextOk = ci + 1 < clauses.length && qualifies[ci + 1];
                 if (stmts.length === 0) {
-                  if (ci === clauses.length - 1) return false;
+                  qualifies[ci] = nextOk;
                   continue;
                 }
-                if (!alwaysThrows(stmts[stmts.length - 1])) return false;
-                for (let sj = 0; sj < stmts.length - 1; sj += 1) {
-                  if (completesAbruptly(stmts[sj])) return false;
+                let abrupt = false;
+                for (let sj = 0; sj < stmts.length; sj += 1) {
+                  if (completesAbruptly(stmts[sj])) abrupt = true;
+                }
+                if (alwaysThrows(stmts[stmts.length - 1])) {
+                  // Earlier abrupt completion could still exit before the
+                  // throw, so it disqualifies even here.
+                  let earlierAbrupt = false;
+                  for (let sj = 0; sj < stmts.length - 1; sj += 1) {
+                    if (completesAbruptly(stmts[sj])) earlierAbrupt = true;
+                  }
+                  qualifies[ci] = !earlierAbrupt;
+                } else {
+                  qualifies[ci] = !abrupt && nextOk;
                 }
               }
-              return true;
+              return qualifies.every(Boolean);
             }
             return false;
           };
@@ -5000,18 +5247,11 @@ const readsArgPath = (rawExpr) => {
   // AsExpression before reaching `args`. That made the round-6 tuple expectation
   // unsatisfiable by any type-safe mapping: the checker demanded a reference it
   // would then refuse to accept.
-  const unwrap = (n) => {
-    let cur = n;
-    while (
-      ts.isAsExpression(cur) ||
-      ts.isParenthesizedExpression(cur) ||
-      ts.isNonNullExpression(cur) ||
-      ts.isTypeAssertionExpression?.(cur)
-    ) {
-      cur = cur.expression;
-    }
-    return cur;
-  };
+  // ...including `satisfies` (Codex round-61 P2) — this local loop had drifted
+  // from the shared wrapper list, so `(args.loanId satisfies unknown) as
+  // bigint` reported a valid typed mapping as indirect. One list, not two:
+  // delegate to the shared unwrapper.
+  const unwrap = (n) => unwrapAssertions(n);
   // `args.a.b.c` → "a.b.c"; anything not rooted at `args` is rejected.
   //
   // Bracket access with a STATIC string literal — `args['loanId']` — is the same
@@ -5520,7 +5760,20 @@ const isNullLiteral = (expr) =>
         if (ts.isNewExpression(n)) {
           let cls = unwrapAssertions(n.expression);
           if (ts.isIdentifier(cls)) cls = resolveConstructedClass(cls, n);
-          if (cls && (ts.isClassDeclaration(cls) || ts.isClassExpression(cls))) {
+          // ...and construction runs the BASE constructor too (Codex round-61
+          // P2): `class Sub extends MutBase {}` has no members of its own, and
+          // `new Sub()` still executes MutBase's constructor and instance-field
+          // initializers before the case's return. Follow the extends chain a
+          // few hops, resolving each base by the same conservative rule — an
+          // unresolvable base (an import, a parameter, an expression) ends the
+          // walk as inert, exactly like an unresolvable class name.
+          for (
+            let hop = 0;
+            hop < 4 &&
+            cls &&
+            (ts.isClassDeclaration(cls) || ts.isClassExpression(cls));
+            hop += 1
+          ) {
             for (const cm of cls.members ?? []) {
               const cmStatic = (cm.modifiers ?? []).some(
                 (m2) => m2.kind === ts.SyntaxKind.StaticKeyword,
@@ -5531,6 +5784,16 @@ const isNullLiteral = (expr) =>
               }
               if (found) return;
             }
+            const ext = (cls.heritageClauses ?? []).find(
+              (h) => h.token === ts.SyntaxKind.ExtendsKeyword,
+            );
+            const baseExpr = ext?.types?.[0]
+              ? unwrapAssertions(ext.types[0].expression)
+              : null;
+            cls =
+              baseExpr && ts.isIdentifier(baseExpr)
+                ? resolveConstructedClass(baseExpr, cls)
+                : null;
           }
         }
         // A CLASS body is not an inert boundary (Codex round-48 P2). Evaluating
