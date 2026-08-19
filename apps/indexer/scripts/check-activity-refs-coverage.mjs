@@ -285,6 +285,31 @@ const objectLiteralView = (e) => {
           if (inner.spread) lastSpreadIdx = idx;
           continue;
         }
+        // A spread of a CONST-BOUND literal runs its getters just the same
+        // (Codex round-59 P2): `const poison = { get x() { args.loanId = 999n;
+        // … } }; return { ...poison, loanId: … }` invokes the getter during
+        // the spread, before the later fields are computed — and holding the
+        // literal in a local made it invisible to the inline-literal test
+        // above. Only the GETTER question is asked of the resolved literal;
+        // its keys keep the shadow treatment below, since proving the binding
+        // unmutated between declaration and spread is more than this parser
+        // claims to do — the asymmetry is deliberate (a spurious rejection is
+        // recoverable, a silent poisoned reference is not).
+        if (ts.isIdentifier(src)) {
+          const decl = nearestDeclIn(src, src.text, src.getSourceFile());
+          if (decl && decl !== OPAQUE_BINDING && decl.initializer) {
+            const bound = unwrapAssertions(decl.initializer);
+            if (
+              ts.isObjectLiteralExpression(bound) &&
+              bound.properties.some((q) => ts.isGetAccessorDeclaration(q))
+            ) {
+              return {
+                opaque:
+                  'a spread of a bound object literal with a getter, which runs during the spread and can mutate the decoded arguments before the later fields are computed',
+              };
+            }
+          }
+        }
         lastSpreadIdx = idx;
         continue;
       }
@@ -300,8 +325,12 @@ const objectLiteralView = (e) => {
         // round-12 P2).
         let key = null;
         if (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) key = p.name.text;
-        else if (ts.isComputedPropertyName(p.name) && ts.isStringLiteralLike(p.name.expression)) {
-          key = p.name.expression.text;
+        else if (ts.isComputedPropertyName(p.name)) {
+          // ...through a type-only assertion too (Codex round-59 P2):
+          // `['loanId' as const]: …` is the same statically known key, and
+          // testing the wrapped node reported a valid mapping as unreadable.
+          const inner = unwrapAssertions(p.name.expression);
+          if (ts.isStringLiteralLike(inner)) key = inner.text;
         }
         if (key !== null) {
           props.set(key, { expr: p.initializer });
@@ -474,35 +503,43 @@ const D1_EXECUTORS = ['run', 'all', 'first', 'raw'];
  * computed keeps both branches possible, which is the conservative direction
  * for a reachability question.
  */
-const stmtAlwaysExits = (s) => {
+const stmtAlwaysExits = (s, labels = new Set()) => {
   if (!s) return false;
-  if (
-    ts.isReturnStatement(s) ||
-    ts.isThrowStatement(s) ||
-    ts.isBreakStatement(s) ||
-    ts.isContinueStatement(s)
-  ) {
-    return true;
+  if (ts.isReturnStatement(s) || ts.isThrowStatement(s)) return true;
+  if (ts.isBreakStatement(s) || ts.isContinueStatement(s)) {
+    // A break CONSUMED by an enclosing label is normal completion of that
+    // labelled statement, not an exit of the surrounding flow (Codex round-59
+    // P2) — `harmless: { break harmless; }` falls through to the next
+    // statement. Same label bookkeeping `completesAbruptly` keeps.
+    return !(s.label && labels.has(s.label.text));
   }
-  if (ts.isBlock(s)) return s.statements.some(stmtAlwaysExits);
-  if (ts.isLabeledStatement(s)) return stmtAlwaysExits(s.statement);
+  if (ts.isBlock(s)) return s.statements.some((st) => stmtAlwaysExits(st, labels));
+  if (ts.isLabeledStatement(s)) {
+    return stmtAlwaysExits(s.statement, new Set(labels).add(s.label.text));
+  }
   if (ts.isIfStatement(s)) {
     const k = (s.expression && unwrapAssertions(s.expression).kind) ?? null;
-    if (k === ts.SyntaxKind.TrueKeyword) return stmtAlwaysExits(s.thenStatement);
+    if (k === ts.SyntaxKind.TrueKeyword) return stmtAlwaysExits(s.thenStatement, labels);
     if (k === ts.SyntaxKind.FalseKeyword) {
-      return s.elseStatement ? stmtAlwaysExits(s.elseStatement) : false;
+      return s.elseStatement ? stmtAlwaysExits(s.elseStatement, labels) : false;
     }
     return (
       Boolean(s.elseStatement) &&
-      stmtAlwaysExits(s.thenStatement) &&
-      stmtAlwaysExits(s.elseStatement)
+      stmtAlwaysExits(s.thenStatement, labels) &&
+      stmtAlwaysExits(s.elseStatement, labels)
     );
   }
   if (ts.isTryStatement(s)) {
-    if (s.finallyBlock && s.finallyBlock.statements.some(stmtAlwaysExits)) return true;
+    if (
+      s.finallyBlock &&
+      s.finallyBlock.statements.some((st) => stmtAlwaysExits(st, labels))
+    ) {
+      return true;
+    }
     return (
-      s.tryBlock.statements.some(stmtAlwaysExits) &&
-      (!s.catchClause || s.catchClause.block.statements.some(stmtAlwaysExits))
+      s.tryBlock.statements.some((st) => stmtAlwaysExits(st, labels)) &&
+      (!s.catchClause ||
+        s.catchClause.block.statements.some((st) => stmtAlwaysExits(st, labels)))
     );
   }
   return false;
@@ -1025,7 +1062,14 @@ const syncCallbackFunctionsOf = (expr) => {
     return [];
   }
   const via = memberNameOf(callee);
-  if (via === null || !SYNC_CALLBACK_METHODS.has(via)) return [];
+  if (via === null) return [];
+  // `Array.from(iterable, cb)` invokes its MAPPING callback synchronously too
+  // (Codex round-59 P2) — a static method rather than an instance method, so
+  // the member-name set alone missed it.
+  const host = unwrapForInvocation(callee.expression);
+  const isArrayFrom =
+    via === 'from' && host && ts.isIdentifier(host) && host.text === 'Array';
+  if (!isArrayFrom && !SYNC_CALLBACK_METHODS.has(via)) return [];
   const fns = [];
   for (const a of e.arguments) {
     let f = unwrapForInvocation(a);
@@ -1680,9 +1724,16 @@ for (const file of memberFiles) {
     //
     // Order is part of the ABI. Comparing a sorted bag was comparing something
     // weaker than the thing that has to match.
-    const signature = names
-      .map((n) => `${n}:${typeOf.get(n) ?? '?'}${indexedOf.get(n) ? ':indexed' : ''}`)
-      .join(',');
+    // ...and the `anonymous` flag (Codex round-59 P2): an anonymous event has
+    // no topic-0, so two definitions differing only in that flag have
+    // different wire layouts while their input lists compare identical —
+    // whichever one EVENT_ABI keeps, the other form's logs fail to decode and
+    // are dropped.
+    const signature =
+      (item.anonymous === true ? 'anonymous|' : '') +
+      names
+        .map((n) => `${n}:${typeOf.get(n) ?? '?'}${indexedOf.get(n) ? ':indexed' : ''}`)
+        .join(',');
     const priorSig = eventInputs.get(item.name);
     if (priorSig !== undefined && priorSig !== signature) {
       abiConflicts.push({
@@ -2895,6 +2946,56 @@ if (!fnNode) {
             if (why) return;
             // a nested binder of the same name is a different `logs` entirely
             if (n !== ledgerNode.body && bindsNameLexically(n, batchParamName)) return;
+            // A nested function nothing invokes is not the ledger's control
+            // flow (Codex round-59 P2) — an unused helper containing
+            // `logs[0] = logs[0]` failed the build for a write that never
+            // executes. Bodies that provably RUN — an invoked callee, a
+            // synchronous collection callback — are walked explicitly below,
+            // so skipping the boundary here loses nothing real.
+            if (n !== ledgerNode.body && isFunctionLike(n)) return;
+            if (ts.isCallExpression(n)) {
+              const invoked = invokedFunctionBodyOf(n);
+              if (invoked) walk(invoked);
+              for (const cb of syncCallbackFunctionsOf(n)) walk(cb.body);
+              if (why) return;
+            }
+            // A mutating API whose DESTINATION is rooted in the batch (Codex
+            // round-59 P2) — `Object.assign(logs[1], logs[0])` rewrites a
+            // member without any assignment syntax or batch-hosted method
+            // call, the same built-in-writes-through-its-first-argument class
+            // the decoded-argument scan has caught since round 34.
+            if (ts.isCallExpression(n) && n.arguments.length > 0) {
+              const callee = unwrapAssertions(n.expression);
+              const memberName = memberNameOf(callee);
+              if (memberName !== null) {
+                const h = unwrapAssertions(callee.expression);
+                const mutators = ts.isIdentifier(h) && h.text === 'Object'
+                  ? ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf']
+                  : ts.isIdentifier(h) && h.text === 'Reflect'
+                    ? ['set', 'defineProperty', 'deleteProperty', 'setPrototypeOf']
+                    : [];
+                if (mutators.includes(memberName)) {
+                  let root = unwrapAssertions(n.arguments[0]);
+                  let viaMember = false;
+                  while (
+                    ts.isPropertyAccessExpression(root) ||
+                    ts.isElementAccessExpression(root)
+                  ) {
+                    viaMember = true;
+                    root = unwrapAssertions(root.expression);
+                  }
+                  if (ts.isIdentifier(root) && namesTheBatch(root)) {
+                    why =
+                      `\`${h.text}.${memberName}(…)\` writes through ` +
+                      (viaMember
+                        ? `a member of \`${root.text}\``
+                        : `\`${root.text}\``) +
+                      (root.text === batchParamName ? '' : ` (\`${root.text}\` is the batch)`);
+                    return;
+                  }
+                }
+              }
+            }
             // a membership-changing method call on the batch
             if (ts.isCallExpression(n)) {
               const member = memberNameOf(n.expression);
@@ -3868,7 +3969,12 @@ if (!fnNode) {
           memberNameOf(n.expression) !== null &&
           EXECUTORS.includes(memberNameOf(n.expression)) &&
           ts.isIdentifier(unwrapAssertions(n.expression.expression)) &&
-          unwrapAssertions(n.expression.expression).text === name
+          unwrapAssertions(n.expression.expression).text === name &&
+          // ...on a path that can RUN (Codex round-59 P2): the executor under
+          // `if (false)` is referenced, never executed — the same reachability
+          // question the inline INSERT already answers via guardedReason, asked
+          // of the executor's own position.
+          guardedReason(n, body) === null
         ) {
           for (let q = n.parent, child = n; q; child = q, q = q.parent) {
             if (isTransparentWrapper(q)) continue;
@@ -4498,6 +4604,16 @@ const findEscape = (nodes, { countReturns = false } = {}) => {
         isFunctionLike(unwrapAssertions(callee.expression))
       ) {
         callee = unwrapAssertions(callee.expression);
+      }
+      // A NAMED local helper is invoked just as directly (Codex round-59 P2)
+      // — `function failDispatch(): never { throw … } failDispatch();` before
+      // the switch throws on every call, and this walk followed only literal
+      // function nodes. Same resolver, same rule as every other invocation
+      // site since round 54; new-expressions are left alone (a constructor is
+      // a different question).
+      if (ts.isCallExpression(n) && callee && ts.isIdentifier(callee)) {
+        const resolved = resolveInvokedCallee(callee, n);
+        if (resolved) callee = resolved;
       }
       if (isFunctionLike(callee) && callee.body) {
         // ...but only when its throws leave SYNCHRONOUSLY (Codex round-35 P2).
