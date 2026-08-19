@@ -66,7 +66,9 @@
 
 # zone has Web Analytics auto-injection on, Cloudflare inserts its RUM
 
-# beacon into every response and this CSP refuses it, which shows up as
+# beacon into every HTML page response — not into assets, images or
+
+# other non-HTML payloads — and this CSP refuses it, which shows up as
 
 # a console error on every page load. The fix is to turn the injection
 
@@ -80,9 +82,11 @@
 
 # applies the same rule to the connected app's wallet SDKs' own
 
-# telemetry — a requirement, not a description: that one is NOT yet
+# telemetry — a requirement, not a description: NEITHER the Coinbase
 
-# implemented (#1824), so do not read it here as a shipped precedent.
+# nor the WalletConnect connector configures it off today (#1824), so
+
+# do not read it here as a shipped precedent.
 
 # Any future analytics — Cloudflare's included — has to load
 
