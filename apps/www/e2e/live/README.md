@@ -39,14 +39,57 @@ known configuration — a value assertion pinned to the shipped default
 fee rates is skipped, not failed, after a governance retune, and the
 live rates are printed so the skip is legible rather than silent.
 
-## Known environment limitation
+## Running from the agent container (#1777)
 
-**These cannot currently run from a Claude Code remote container**
-(#1777). Chromium gets `ERR_CONNECTION_RESET` on every navigation
-through the agent proxy, while `curl` to the same URL through the same
-proxy returns 200. Run them from an operator machine until that is
-fixed. Substituting a bundle inspection is not the same assurance and
-should not be reported as though it were.
+The Claude Code remote container CAN run these, after two host-side
+preparations plus two environment variables. Without the preparations
+every navigation dies with `ERR_CONNECTION_RESET` while `curl` to the
+same URL succeeds — the diagnosis behind that is on #1777, and it is
+worth knowing because the visible error points away from both causes:
+
+1. **The egress TLS terminator resets any ClientHello carrying the
+   Encrypted ClientHello (ECH) GREASE extension**, which Chromium sends
+   by default and `curl` does not. Turn it off via the enterprise
+   policy (the matching `--disable-features` names are silently
+   ignored by current builds):
+
+   ```bash
+   sudo mkdir -p /etc/chromium/policies/managed
+   echo '{"PostQuantumKeyAgreementEnabled": false, "EncryptedClientHelloEnabled": false}' \
+     | sudo tee /etc/chromium/policies/managed/agent-proxy-compat.json
+   ```
+
+   (ECH is the one that matters; the post-quantum key share is disabled
+   alongside it because it triples the ClientHello size for a
+   terminator already shown to be picky.)
+
+2. **Chromium must trust the proxy's re-terminating CA** via the NSS
+   user store — the container's `~/.pki/nssdb` exists but does not
+   contain it. `certutil` is not installed; fetch `libnss3-tools` as a
+   `.deb` (the Ubuntu archive is reachable through the proxy) and
+   `dpkg -x` it somewhere scratch, then:
+
+   ```bash
+   certutil -A -d sql:$HOME/.pki/nssdb -n "CCR Agent Proxy CA" -t "C,," \
+     -i /root/.ccr/agent-proxy-ca.crt
+   ```
+
+Then run with the two launch overrides the drives honour:
+
+```bash
+PW_CHROMIUM_EXE=/opt/pw-browsers/chromium PW_PROXY="$HTTPS_PROXY" \
+  node apps/www/e2e/live/live-worked-example.mjs
+```
+
+`PW_CHROMIUM_EXE` covers the container's browser install not matching
+the repo's pinned Playwright version; `PW_PROXY` covers Chromium not
+reading `HTTPS_PROXY` on its own. An operator machine with a matching
+browser and direct egress sets neither and runs exactly as before.
+
+The policies file and the NSS import are container-lifetime — a fresh
+container needs them again. Never substitute `ignoreHTTPSErrors` or a
+certificate-error bypass for step 2; the drive is watching a production
+surface and must not be taught to accept an unverified one.
 
 ## The drives
 
