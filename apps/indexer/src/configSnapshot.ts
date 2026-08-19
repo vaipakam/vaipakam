@@ -450,6 +450,15 @@ export async function handleConfigSnapshot(
       ...(flags ? { flags } : {}),
       sourceBlock: row.source_block,
       updatedAt: row.updated_at,
+      // `markStaleBelow` zeroes `updated_at` when a catch-up scan saw a
+      // governance event this row predates: the figures are known to be
+      // behind, pending the next near-head refresh. The site's own
+      // consumer already rejects it (a zero stamp fails its freshness
+      // window), but an outside consumer reading `values` had no way to
+      // tell — and this endpoint is now advertised to them, so the
+      // signal has to be explicit rather than inferred from a magic
+      // timestamp (Codex #1821 r1 P2).
+      ...(row.updated_at === 0 ? { stale: true } : {}),
     });
   } catch (err) {
     // eslint-disable-next-line no-console

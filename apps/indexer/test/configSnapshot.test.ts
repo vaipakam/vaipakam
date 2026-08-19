@@ -422,6 +422,35 @@ describe('configSnapshot', () => {
       });
     });
 
+    it('flags a stale-marked row so an outside consumer can skip it', async () => {
+      // markStaleBelow zeroes updated_at when a catch-up scan saw a
+      // governance event the row predates. The site rejects that via its
+      // own freshness window; an external reader following llms.txt had
+      // only a magic timestamp to infer it from (Codex #1821 r1 P2).
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
+      db.prepare(
+        `INSERT INTO protocol_config
+           (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(84532, serializeTuple(FULL_BUNDLE), JSON.stringify([true, true, false]), 1, 0);
+      const body = (await (
+        await handleConfigSnapshot(84532, { DB: d1 } as unknown as Env)
+      ).json()) as { stale?: boolean; values?: Record<string, unknown> };
+      expect(body.stale).toBe(true);
+      // Still served — a consumer may want the last-known figures — but
+      // now it is told, rather than left to read a zero stamp.
+      expect(body.values?.treasuryFeeBps).toBe('200');
+    });
+
+    it('carries no stale flag on a normal row', async () => {
+      const { env } = await seed(FULL_BUNDLE);
+      const body = (await (await handleConfigSnapshot(84532, env)).json()) as Record<
+        string,
+        unknown
+      >;
+      expect(body).not.toHaveProperty('stale');
+    });
+
     it('omits the labelled view rather than mislabelling a drifted row', async () => {
       // A row stored before/after an ABI arity change. Zipping by
       // position here would name a real number wrongly, and a consumer
