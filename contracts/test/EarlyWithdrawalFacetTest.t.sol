@@ -4228,6 +4228,130 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @notice #1817, Codex #1819 r6 P1 — a SELF-SALE (the stored lender
+    ///         selling into their own standing buy offer) withdraws the held
+    ///         VPFI from the seller's vault and redeposits it into the SAME
+    ///         vault. The departed-lender checkpoint must therefore run at
+    ///         the held-withdrawal site, between debit and redeposit — a
+    ///         stamp taken only after the migration observes positive →
+    ///         positive across a real zero and the stake tenure survives.
+    function test_1817_directSelfSaleHeldMigrationResetsStakeStart() public {
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+
+        // The lender's vault holds ONLY the held VPFI, so the held
+        // withdrawal troughs at exactly zero before the self-redeposit.
+        uint256 held = 500 ether;
+        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(oldVault, held);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
+
+        // The lender creates their OWN buy offer as the sale vehicle.
+        ERC20Mock(mockERC20).mint(lender, PRINCIPAL);
+        vm.prank(lender);
+        ERC20Mock(mockERC20).approve(address(diamond), PRINCIPAL);
+        vm.prank(lender);
+        uint256 selfOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 7,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        // Pre-stamp: the lender is an active staker (their vault holds the
+        // held VPFI plus the offer's escrow).
+        TestMutatorFacet(address(diamond)).restampUserVpfiRaw(lender);
+        (uint40 start0, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        assertTrue(start0 != 0, "fixture: lender is an active staker pre-sale");
+
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, selfOfferId);
+
+        (uint40 start1, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        assertEq(
+            start1,
+            uint40(block.timestamp),
+            "self-sale stake start RESET - the held-withdrawal zero was observed"
+        );
+        assertTrue(
+            start1 != start0,
+            "pre-sale tenure does not survive the held-migration zero"
+        );
+    }
+
+    /// @notice #1817, Codex #1819 r6 P2 — a completion that moves NOTHING of
+    ///         the buyer's (legacy/no-escrow path, equal rates, no held
+    ///         VPFI) must not restamp the buyer at all: a broadcasting
+    ///         checkpoint with an exhausted push budget could revert the
+    ///         only recovery hook for an accepted sale.
+    function test_1817_listedRecoveryCompletionSkipsBuyerRestamp() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        vm.clearMockedCalls();
+
+        // Equal rate (500 == the loan's), no escrow recorded, no held VPFI:
+        // the buyer's vault does not move during this completion.
+        _setOfferAcceptedAndRate(50, 500);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
+        _setupTempLoan(2);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(newLender, mockERC20, 100 ether);
+
+        // Fund the seller's accrued-interest pull (legacy path pays accrued
+        // to treasury from the seller's wallet).
+        ERC20Mock(mockERC20).mint(lender, 1_000 ether);
+        vm.prank(lender);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+
+        (uint40 buyerStart, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertEq(
+            buyerStart,
+            0,
+            "no buyer restamp - this completion moved nothing of theirs"
+        );
+    }
+
     /// @notice #1817 (#1503 item 27) — LISTED-route mirror of the direct-sale
     ///         restamp test: `completeLoanSale`'s VPFI settlement block must
     ///         checkpoint the seller (captured pre-migration) and the buyer.

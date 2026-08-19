@@ -738,6 +738,12 @@ contract EarlyWithdrawalFacet is
                 LibSanctionedLock.end(
                     s, newLender, loanId, loan.principalAsset, saleShortfall
                 );
+                // #1817 (Codex #1819 r6 P2) — the buyer's checkpoint at THIS
+                // credit's own site; a completion that credits nothing stays
+                // broadcast-free.
+                if (loan.principalAsset == s.vpfiToken) {
+                    _restampVpfiParty(newLender);
+                }
             }
         } else if (saleRemainingInterest > originalRemainingInterest) {
             uint256 shortfall = saleRemainingInterest -
@@ -764,6 +770,10 @@ contract EarlyWithdrawalFacet is
                 LibSanctionedLock.end(
                     s, newLender, loanId, loan.principalAsset, shortfall
                 );
+                // r6 P2 — buyer checkpoint at this credit site.
+                if (loan.principalAsset == s.vpfiToken) {
+                    _restampVpfiParty(newLender);
+                }
             } else {
                 uint256 remainingShortfall = shortfall - accrued;
                 uint256 totalFromLiam = accrued + remainingShortfall;
@@ -779,6 +789,10 @@ contract EarlyWithdrawalFacet is
                 LibSanctionedLock.end(
                     s, newLender, loanId, loan.principalAsset, totalFromLiam
                 );
+                // r6 P2 — buyer checkpoint at this credit site.
+                if (loan.principalAsset == s.vpfiToken) {
+                    _restampVpfiParty(newLender);
+                }
             }
         } else {
             LibFacet.transferFromPayerToTreasury(
@@ -810,34 +824,8 @@ contract EarlyWithdrawalFacet is
         // Migrate only pre-existing heldForLender from old lender's vault to new lender's
         {
             if (priorHeldSale > 0) {
-                address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
-                    ? loan.principalAsset
-                    : loan.prepayAsset;
-                // #597 Codex #672 P2 — same sanctions exemption as
-                // `sellLoanViaBuyOffer`: the departed `originalLender` is losing
-                // custody of their held VPFI, so the Tier-1 vault gate must not
-                // brick the sale for the unflagged seller. Address-scoped; the
-                // host is `nonReentrant`; cleared immediately after.
-                s.consolidationMoveFromUser = originalLender;
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        originalLender,
-                        payAsset,
-                        address(this),
-                        priorHeldSale
-                    ),
-                    VaultWithdrawFailed.selector
-                );
-                s.consolidationMoveFromUser = address(0);
-                // #831 — vault-lock the held migration into the buyer's
-                // (newLender) vault: a buyer flagged after committing must not
-                // brick the completion. `depositLocked` resolves the buyer vault
-                // under the receive-side exemption, pushes the held from Diamond
-                // custody, and emits `SanctionedProceedsLocked` when flagged
-                // (T-051 — the Diamond-side transfer ticks the tracked counter).
-                LibSanctionedLock.depositLocked(
-                    s, newLender, loanId, payAsset, priorHeldSale
+                _migrateHeldOnCompletion(
+                    s, loan, loanId, originalLender, newLender, priorHeldSale
                 );
             }
         }
@@ -908,22 +896,13 @@ contract EarlyWithdrawalFacet is
             // budget spend. (No buyer debit trough exists on THIS route: the
             // buyer's principal was escrowed in Diamond custody at accept,
             // so completion only credits their vault.)
-            if (priorHeldSale > 0) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        ConsolidationFacet.restampUserVpfiInternal.selector,
-                        originalLender
-                    ),
-                    bytes4(0)
-                );
-            }
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    ConsolidationFacet.restampUserVpfiInternal.selector,
-                    newLender
-                ),
-                bytes4(0)
-            );
+            // No party stamps remain here (r6): the DEPARTED lender is
+            // stamped at the held-withdrawal site, and the buyer at each
+            // credit site — the rate-shortfall deposit and the held
+            // migration. With neither movement (the legacy/manual-recovery
+            // completion), nobody's vault moved and nothing may broadcast:
+            // an exhausted push budget must not be able to revert the only
+            // recovery hook (r6 P2).
         }
 
         // Old lender forfeits interaction rewards to treasury; new lender
@@ -1063,6 +1042,77 @@ contract EarlyWithdrawalFacet is
     ///      reward bookkeeping is subordinate). Production always cuts
     ///      InteractionRewardsFacet; a focused test harness that omits it simply
     ///      skips the reward transfer.
+    /// @dev The `priorHeldSale > 0` migration leg of `_completeLoanSaleImpl`,
+    ///      in its OWN frame: the host sits at the viaIR stack ceiling, and
+    ///      the r6 mutation-site checkpoints tipped it over — this leg's
+    ///      temporaries (the pay-asset pick, the withdraw encode, the two
+    ///      stamps) now live here instead.
+    ///
+    ///      #597 Codex #672 P2 — the sanctions exemption around the from-side
+    ///      withdrawal: the departed `originalLender` is LOSING custody, so
+    ///      the Tier-1 vault gate must not brick the sale for the unflagged
+    ///      seller. Address-scoped; the host is `nonReentrant`.
+    ///
+    ///      #1817 (Codex #1819 r6 P1) — the DEPARTED lender is checkpointed
+    ///      at their post-withdraw balance, between the held debit and the
+    ///      buyer-side redeposit: in a self-purchase (originalLender ==
+    ///      newLender) the deposit returns the same vault to positive, and a
+    ///      stamp taken only afterwards would observe positive -> positive
+    ///      across a real zero. The BUYER is stamped after the credit (r6 P2
+    ///      — stamps live where the vault moves, so a completion that moves
+    ///      nothing stays broadcast-free).
+    ///
+    ///      #831 — `depositLocked` vault-locks the buyer-side receive so a
+    ///      buyer flagged after committing cannot brick the completion
+    ///      (T-051 — the Diamond-side transfer ticks the tracked counter).
+    function _migrateHeldOnCompletion(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 loanId,
+        address originalLender,
+        address newLender,
+        uint256 priorHeldSale
+    ) private {
+        address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
+            ? loan.principalAsset
+            : loan.prepayAsset;
+        s.consolidationMoveFromUser = originalLender;
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                originalLender,
+                payAsset,
+                address(this),
+                priorHeldSale
+            ),
+            VaultWithdrawFailed.selector
+        );
+        s.consolidationMoveFromUser = address(0);
+        if (loan.principalAsset == s.vpfiToken) {
+            _restampVpfiParty(originalLender);
+        }
+        LibSanctionedLock.depositLocked(
+            s, newLender, loanId, payAsset, priorHeldSale
+        );
+        if (loan.principalAsset == s.vpfiToken) {
+            _restampVpfiParty(newLender);
+        }
+    }
+
+    /// @dev #1817 r6 — one-liner restamp emitter. completeLoanSale sits at
+    ///      the viaIR stack ceiling, and inlining the abi.encode temporaries
+    ///      for each checkpoint tipped it over; a private frame keeps them
+    ///      out of the big function entirely.
+    function _restampVpfiParty(address who) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.restampUserVpfiInternal.selector,
+                who
+            ),
+            bytes4(0)
+        );
+    }
+
     function _rewardHook(bytes memory data) private {
         (bool ok, ) = address(this).call(data);
         if (!ok) {

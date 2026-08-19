@@ -573,6 +573,25 @@ contract EarlyWithdrawalDirectFacet is
                 VaultWithdrawFailed.selector
             );
             s.consolidationMoveFromUser = address(0);
+            // #1817 (Codex #1819 r6 P1) — checkpoint the DEPARTED lender at
+            // their post-withdraw balance NOW, between the held debit and the
+            // buyer-side redeposit. In a SELF-SALE (the stored lender selling
+            // into their own standing buy offer) the redeposit below returns
+            // the very same vault to positive, and a stamp taken only after
+            // the migration observes positive -> positive across a real zero
+            // - the staker lifecycle never resets. For a third-party sale
+            // this is the same post-mutation stamp the settlement block used
+            // to take, moved to the mutation site (where every other VPFI
+            // movement stamps).
+            if (loan.principalAsset == s.vpfiToken) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        ConsolidationFacet.restampUserVpfiInternal.selector,
+                        loan.lender
+                    ),
+                    bytes4(0)
+                );
+            }
             address newVault = LibFacet.getOrCreateVault(buyOffer.creator);
             IERC20(payAsset).safeTransfer(newVault, priorHeld);
             // T-051 — Diamond-side transfer to new lender's vault
@@ -620,31 +639,13 @@ contract EarlyWithdrawalDirectFacet is
             LibEncumbrance.encumberLenderProceeds(
                 loanId, loan.lender, loan.principalAsset, nonActiveHeld
             );
-            // #1503 item 27 (#1817) — the sale moved VPFI through both
-            // parties' vaults (the buyer's principal debit + held credit,
-            // the stored lender's held debit), so run the post-balance
-            // discount / staking checkpoint for each, per the rollup-at-the-
-            // mutation-site rule every other VPFI vault movement follows.
-            // Via the cross-facet entry so this EIP-170-tight facet doesn't
-            // inline the rollup body. `storedLender` is the pre-migration
-            // `loan.lender`, whose vault the held VPFI actually left (Codex
-            // #1819 r1 P1 — after a plain lender-NFT transfer, `msg.sender`
-            // holds the NFT but their vault is untouched by this sale);
-            // `loan.lender` is the buyer after the migration above.
-            // ...and only when the stored lender's vault actually MOVED
-            // (Codex #1819 r3 P2): with no held VPFI to migrate, their vault
-            // is untouched by this sale, and an unconditional restamp could
-            // recompute a tier tuple and spend the protocol broadcast budget
-            // on an unrelated push — or fail closed and block the sale.
-            if (priorHeld > 0) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        ConsolidationFacet.restampUserVpfiInternal.selector,
-                        storedLender
-                    ),
-                    bytes4(0)
-                );
-            }
+            // #1503 item 27 (#1817) — the buyer's post-sale checkpoint.
+            // `loan.lender` is the buyer after the migration above; their
+            // vault always moved on this route (the principal debit, plus
+            // the held credit when any was held). The DEPARTED lender's
+            // stamp happens at the held-withdrawal site itself (r6 P1, gated
+            // on priorHeld > 0 by that block), so a self-sale's
+            // mid-transaction zero is observed before the redeposit.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     ConsolidationFacet.restampUserVpfiInternal.selector,
