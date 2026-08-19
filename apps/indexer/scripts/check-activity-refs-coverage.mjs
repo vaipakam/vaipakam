@@ -434,6 +434,17 @@ const bindsNameLexically = (node, name) => {
  * `-- line` and block spans, so any check that reads a statement as text has to
  * strip them first or a commented-out copy satisfies it.
  */
+/**
+ * SQL that advances `indexer_cursor`, by EFFECT rather than by one spelling
+ * (Codex round-56 P2). The ordering check matched only the live upsert's
+ * `INSERT INTO indexer_cursor`, so rewriting it as an equally valid
+ * `UPDATE indexer_cursor SET last_block = ?` moved the advance out of view —
+ * and with the ledger call below it, a failed activity INSERT again becomes
+ * unrecoverable. Both statements advance the same cursor; only one was seen.
+ */
+const CURSOR_ADVANCE_SQL =
+  /(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|REPLACE\s+INTO)\s+indexer_cursor\b/i;
+
 const stripSqlComments = (text) =>
   text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
 
@@ -840,6 +851,16 @@ const syncCutoffOf = (expr, sourceFile) => {
     const via = memberNameOf(callee);
     if (via === 'call' || via === 'apply') callee = unwrapForInvocation(callee.expression);
     else return Infinity;
+  }
+  // Resolve a NAMED helper, exactly as `invokedFunctionBodyOf` now does (Codex
+  // round-56 P2). That twin gained identifier resolution in round 55 and this
+  // one did not, so an extracted `const mutateLater = async () => { await …;
+  // args.loanId = 999n }` got an infinite synchronous prefix — the whole body
+  // treated as running before the mapper returns, failing a mutation that in
+  // fact happens after. Two functions answering halves of one question have to
+  // resolve callees the same way or they disagree about the same code.
+  if (callee && ts.isIdentifier(callee)) {
+    callee = resolveInvokedCallee(callee, e);
   }
   if (!callee || !isFunctionLike(callee) || !callee.body || !ts.isBlock(callee.body)) {
     return Infinity;
@@ -1496,9 +1517,18 @@ for (const file of memberFiles) {
     //
     // A dropped log is invisible to every count in this script, which is the
     // property that makes it worth refusing rather than tolerating.
+    // ORDERED, not sorted (Codex round-56 P2). Sorting made the signature a bag
+    // and erased argument POSITION — so swapping two same-typed indexed inputs
+    // (`SwapAdapterAttempted`'s `loanId` and `adapterIdx`, both indexed uint256)
+    // compared equal. Those definitions share a topic signature but assign
+    // different meanings to topics 1 and 2, so whichever layout `EVENT_ABI`
+    // keeps decodes the other facet's logs with the fields transposed — a
+    // reference read from the wrong topic, silently, with no decode error.
+    //
+    // Order is part of the ABI. Comparing a sorted bag was comparing something
+    // weaker than the thing that has to match.
     const signature = names
       .map((n) => `${n}:${typeOf.get(n) ?? '?'}${indexedOf.get(n) ? ':indexed' : ''}`)
-      .sort()
       .join(',');
     const priorSig = eventInputs.get(item.name);
     if (priorSig !== undefined && priorSig !== signature) {
@@ -2174,9 +2204,7 @@ if (!fnNode) {
                 : '';
               if (
                 memberNameOf(unwrapAssertions(n.expression)) === 'prepare' &&
-                /INSERT\s+(OR\s+\w+\s+)?INTO\s+indexer_cursor/i.test(
-                  stripSqlComments(raw),
-                )
+                CURSOR_ADVANCE_SQL.test(stripSqlComments(raw))
               ) {
                 const at = n.getStart(sourceFile);
                 if (at < callAt) hit = at;
@@ -2601,9 +2629,19 @@ if (!fnNode) {
             ? unwrapAssertions(e.expression.expression)
             : null;
           if (!host || !ts.isIdentifier(host)) return false;
-          // `Array.from(logs)` / `Array.of(...)`
+          // `Array.from(logs)` — the ONE-ARGUMENT form only (Codex round-56 P2).
+          // `Array.from` takes a mapping callback as its second argument, so
+          // `Array.from(logs, () => logs[0]!)` has the same length as the batch
+          // and none of its rows: every entry is the first log, the duplicate
+          // INSERTs are ignored, and the cursor still advances past everything
+          // that was dropped. Checking argument zero alone read that as a copy.
+          //
+          // Proving an arbitrary callback identity-preserving is not something
+          // this script can do, so the arity is the check: no callback, no
+          // transformation.
           if (host.text === 'Array' && PRESERVING_COPY.includes(member)) {
-            const a0 = e.arguments[0] && unwrapAssertions(e.arguments[0]);
+            if (e.arguments.length !== 1) return false;
+            const a0 = unwrapAssertions(e.arguments[0]);
             return Boolean(a0 && ts.isIdentifier(a0) && a0.text === batchParamName);
           }
           // `logs.slice()` / `logs.concat()` — full copies ONLY when argumentless;
@@ -2632,14 +2670,22 @@ if (!fnNode) {
                 ts.isElementAccessExpression(n.expression)
                   ? unwrapAssertions(n.expression.expression)
                   : null;
+              // Through an ALIAS too (Codex round-56 P2). Round 55 taught the
+              // loop to resolve `const activityLogs = logs`, and left this
+              // check comparing the receiver's literal name — so
+              // `activityLogs.splice(1)` mutated the very same array through a
+              // name this walk did not recognise. Both halves have to resolve,
+              // or the alias support becomes the bypass.
               if (
                 member !== null &&
                 MEMBERSHIP_MUTATORS.includes(member) &&
                 host &&
                 ts.isIdentifier(host) &&
-                host.text === batchParamName
+                namesTheBatch(host)
               ) {
-                why = `\`${batchParamName}.${member}(…)\` changes which rows it holds`;
+                why =
+                  `\`${host.text}.${member}(…)\` changes which rows the batch holds` +
+                  (host.text === batchParamName ? '' : ` (\`${host.text}\` is the batch)`);
                 return;
               }
             }
@@ -3333,7 +3379,19 @@ if (!fnNode) {
       const host = unwrapAssertions(recv.expression);
       if (memberNameOf(host) !== 'DB') return false;
       const carrier = unwrapAssertions(host.expression);
-      return ts.isIdentifier(carrier) && ledgerParamNames.has(carrier.text);
+      // RESOLVED, not spelled (Codex round-56 P2). Matching the carrier's name
+      // accepted a nested `const env = { DB: … }` shadowing the ledger's own
+      // parameter — a stub whose `run()` reports a change and writes nothing,
+      // with the ledger returning success and the caller advancing the cursor.
+      // The name has to reach the parameter, with nothing nearer binding it.
+      if (!ts.isIdentifier(carrier) || !ledgerParamNames.has(carrier.text)) return false;
+      const bound = resolveNameInScopes(call, carrier.text, {
+        stopAt: ledgerNode,
+        shadowSentinel: OPAQUE_BINDING,
+        // the ledger's own parameter list is the destination, not a shadow
+        notAShadow: (scope) => scope === ledgerNode,
+      });
+      return bound === null;
     };
     let nonD1Prepare = null;
     const staticSqlOf = (receiver) => {
@@ -3423,6 +3481,14 @@ if (!fnNode) {
       let found = false;
       const seek = (n) => {
         if (found) return;
+        // Do NOT descend into a nested function (Codex round-56 P2). The search
+        // was unrestricted, so an UNCALLED
+        // `async function neverExecuteInsert() { await statement.run(); }`
+        // satisfied it — the statement is referenced, never executed, no row is
+        // written, and the scan advances anyway. A body nothing invokes is not
+        // the ledger's control flow, which is the same rule `guardedReason` and
+        // `findEscape` already apply.
+        if (n !== body && isFunctionLike(n)) return;
         if (
           ts.isCallExpression(n) &&
           memberNameOf(n.expression) !== null &&
@@ -3538,7 +3604,18 @@ if (!fnNode) {
             const member = memberNameOf(e.expression);
             if (member !== 'reject') return false;
             const host = unwrapAssertions(e.expression.expression);
-            return ts.isIdentifier(host) && host.text === 'Promise';
+            if (!ts.isIdentifier(host) || host.text !== 'Promise') return false;
+            // ...and it must BE the global (Codex round-56 P2). A handler can
+            // declare `const Promise = { reject: () => 0 }`, whose `reject`
+            // returns an ordinary value — the ledger then resolves with zero on
+            // a D1 failure and the caller advances the cursor, while this read
+            // the spelling and called it propagation.
+            return (
+              resolveNameInScopes(e, 'Promise', {
+                stopAt: sourceFile,
+                shadowSentinel: OPAQUE_BINDING,
+              }) === null
+            );
           };
           const isLoopStatement = (m) =>
             ts.isForStatement(m) ||
