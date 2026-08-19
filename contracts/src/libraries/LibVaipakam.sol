@@ -6861,6 +6861,38 @@ library LibVaipakam {
         ///         enforcing a stale projection there would refuse their own
         ///         deliberate act.
         mapping(uint256 => uint256) saleListingBoundsExpiry;
+        /// @notice O(1) membership map over `userLoanIds` (#1503 item 25,
+        ///         Codex #1818 r1 P2): true when `loanId` is already present in
+        ///         `userLoanIds[user]`, so a position migration can append the
+        ///         acquired loan to the buyer's index WITHOUT the linear
+        ///         lifetime-array scan the consolidation path uses — item 25
+        ///         names that scan as the thing a high-volume buyer could turn
+        ///         into an out-of-gas seller-burning revert.
+        ///
+        ///         Populated at loan creation for both original parties going
+        ///         forward. Loans created BEFORE this field shipped have their
+        ///         parties in the array but not the map — and holders who
+        ///         acquired a position through a pre-map migration in NEITHER
+        ///         (that absence is the item-25 bug itself), so no O(1) fact
+        ///         separates "in the array, unstamped" from "absent". The
+        ///         migration writer resolves that per LOAN via
+        ///         `loanHolderIndexExact` below rather than by assuming
+        ///         anything about individual holders (Codex #1818 r3 P2).
+        mapping(address => mapping(uint256 => bool)) userLoanIndexed;
+        /// @notice Per-loan regime marker for `userLoanIndexed` (Codex #1818
+        ///         r3 P2): true when the loan was CREATED under map-aware
+        ///         code, i.e. every party who ever touches it is stamped at
+        ///         touch, so a false bit truly means "not in the array". Set
+        ///         at creation only and never afterwards — repairing a
+        ///         grandfathered loan cannot earn the flag, because its
+        ///         FORMER pre-map holders stay ambiguous (an original party
+        ///         is in the array unstamped; a pre-map acquirer is in
+        ///         neither), and promoting the loan would hand their
+        ///         reacquisition to the bare-push path. While false,
+        ///         migration writers must neither trust nor blindly set any
+        ///         holder's bit; `LibLoan._indexLoanForHolder` establishes
+        ///         membership by a scan that each user pays at most once.
+        mapping(uint256 => bool) loanHolderIndexExact;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

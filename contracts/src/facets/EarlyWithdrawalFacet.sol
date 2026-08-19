@@ -562,23 +562,6 @@ contract EarlyWithdrawalFacet is
         // source is the correct fix.)
         address originalLender = loan.lender;
 
-        // #393 v1-b — the seller EXITS the loan here (receives sale proceeds and
-        // hands the position to the buyer), so release their standing-intent
-        // live-principal cap now rather than waiting for the buyer's eventual
-        // claim (the buyer might never claim, stranding the seller's cap). Keyed
-        // off the ORIGINATING intent so it frees the original owner's counter +
-        // deletes the marker. Gated on the cheap per-loan origin check so a
-        // non-intent loan skips the cross-facet hop entirely (no wasted gas, and
-        // no dependency on LenderIntentFacet being routed).
-        if (s.intentOrigin[loanId].owner != address(0)) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    LenderIntentFacet.releaseIntentExposure.selector, loanId
-                ),
-                bytes4(0)
-            );
-        }
-
         // ── Find the temporary loan via O(1) lookup ─────────────────────────
         uint256 tempLoanId = s.offerIdToLoanId[saleOfferId];
         if (tempLoanId == 0)
@@ -587,6 +570,32 @@ contract EarlyWithdrawalFacet is
         address newLender = s.loans[tempLoanId].lender;
         if (newLender == address(0))
             revert LenderResolutionFailed();
+
+        // #393 v1-b — the seller EXITS the loan here (receives sale proceeds and
+        // hands the position to the buyer), so release their standing-intent
+        // live-principal cap now rather than waiting for the buyer's eventual
+        // claim (the buyer might never claim, stranding the seller's cap). Keyed
+        // off the ORIGINATING intent so it frees the original owner's counter +
+        // deletes the marker. Gated on the cheap per-loan origin check so a
+        // non-intent loan skips the cross-facet hop entirely (no wasted gas, and
+        // no dependency on LenderIntentFacet being routed).
+        // ...unless the buyer IS the origin owner (Codex #1818 r1 P1, applied
+        // to both routes): a self-purchase leaves the origin owner holding a
+        // live intent loan, and releasing would free its principal from their
+        // exposure cap while the exposure is still real. Marker and counter
+        // are retained in that case — see the direct route's twin for the
+        // full reasoning.
+        if (
+            s.intentOrigin[loanId].owner != address(0) &&
+            s.intentOrigin[loanId].owner != newLender
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    LenderIntentFacet.releaseIntentExposure.selector, loanId
+                ),
+                bytes4(0)
+            );
+        }
 
         // Snapshot pre-existing heldForLender before any new shortfall deposits
         uint256 priorHeldSale = s.heldForLender[loanId];
