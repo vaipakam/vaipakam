@@ -482,9 +482,13 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev #1503 design item 21 — while a Preclose Option-3 offset is live on
     ///      the loan, the DIRECT sale must refuse, exactly as the listing path
-    ///      has since #1001. The offset pays the current lender at completion,
-    ///      so migrating the position mid-offset entangles two close-outs of one
-    ///      loan; the direct route does it inside a single transaction.
+    ///      has since #1001. A sale starts its OWN settlement of a loan that
+    ///      already has one in flight, and the two would race; the direct route
+    ///      does it inside a single transaction.
+    ///
+    ///      Not because the position changes hands — a bare lender-NFT transfer
+    ///      during a live offset is supported, since the offset locks only the
+    ///      borrower position and completion re-anchors to the current holder.
     ///
     ///      The live offset is scaffolded through the raw mutator rather than by
     ///      driving `PrecloseFacet.offsetWithNewOffer`, because this suite's

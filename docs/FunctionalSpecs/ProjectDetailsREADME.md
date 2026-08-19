@@ -1754,7 +1754,11 @@ Alice may cancel her offsetting offer while it is still un-matched. Because post
 
 ##### Mutual exclusion while an offset is live
 
-While an offset offer is linked to a loan, any **protocol-mediated settlement** that would race the pending one is refused until the offset is completed or cancelled (it is short-lived). The governing rule is that an offset is a settlement in flight, so **no second settlement of the same loan may be started, and the pending offset's own terms may not move, while it is outstanding**. Concretely that refuses: putting the lender position up for sale, selling the lender position outright in a single step, transferring the borrower obligation to a new borrower, and editing the linked offset offer's terms. The offset offer is immutable once linked — its terms are pinned to the loan it offsets.
+While an offset offer is linked to a loan, four specific routes are refused until the offset is completed or cancelled: putting the lender position up for sale, selling the lender position outright in a single step, transferring the borrower obligation to a new borrower, and editing the linked offset offer's terms. The offset offer is immutable once linked — its terms are pinned to the loan it offsets.
+
+The reason each is refused is that it would start a **second settlement** of a loan that already has one in flight, and the two would race. That is the test to apply to any new route.
+
+**This is a list of guarded routes, not a general mutual-exclusion guarantee, and callers must not read it as one.** Other paths can still make the loan terminal while an offset stays linked — a refinance does not consult the offset link at all, and ordinary repayment or default can close the loan out from under it. Those are handled downstream rather than by refusal at the entry point. A caller that needs "nothing else can settle this loan right now" does not get it from this rule.
 
 **A bare transfer of a position is a different thing and is deliberately still allowed on the lender side.** The offset locks the borrower's position NFT, not the lender's, and completion pays whoever holds the lender position at that moment — re-anchoring to the current holder before it settles. So a lender who simply hands their NFT to another wallet is safe: one settlement still happens, and it pays the right party. What is refused is a second *settlement*, which moves money on its own terms and would leave two close-outs of one loan racing each other.
 

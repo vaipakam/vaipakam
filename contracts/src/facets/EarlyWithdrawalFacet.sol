@@ -217,8 +217,15 @@ contract EarlyWithdrawalFacet is
         // #1001 (S3, Codex #1070) — refuse to list the lender position for sale
         // while a Preclose Option-3 offset offer is live on this loan. A sale is a
         // second SETTLEMENT of a loan that already has one in flight, and the two
-        // would race. The offset must be cancelled or completed first (it is
-        // short-lived).
+        // would race. The offset must be cancelled or completed first.
+        //
+        // NOT "short-lived" (#1503 item 21): `_buildOffsetParams` leaves an
+        // offset GTC on purpose (#1032 L-c), and `cancelOffer` lets a third
+        // party clean up only an EXPIRED offer — so a GTC link is
+        // creator-cancellable only, and an unaccepted offset can sit on the loan
+        // for its whole life. Brevity is the borrower's intent, not an enforced
+        // property, and the consequence — a borrower-side veto over both
+        // protocol-mediated lender exits — is tracked in #1814.
         //
         // Corrected wording (#1503 item 21): this comment used to say the conflict
         // was the position "changing hands", which is not what makes it unsafe —

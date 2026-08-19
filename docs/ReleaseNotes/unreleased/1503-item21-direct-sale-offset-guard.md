@@ -15,9 +15,20 @@ completion pays whoever holds the lender side at that moment. Ownership moving
 is safe. What is refused is starting a second settlement while one is pending.
 
 It now refuses, with the same error the listing route uses, so a caller sees
-identical revert data whichever route turned them away. The remedy is unchanged
-and unchanged in cost: cancel or complete the offset first, which is short-lived
-by design, then sell.
+identical revert data whichever route turned them away. The remedy is to cancel
+or complete the offset first, then sell.
+
+**One consequence is worth stating plainly rather than leaving for someone to
+discover.** Only the borrower who created an offset can cancel it: offsets are
+deliberately created without a deadline, and the permissionless cleanup path
+applies only to offers that have expired. Until now that let a borrower stall
+the *listed* lender exit indefinitely by posting an offset nobody accepts;
+closing the instant route means both protocol-mediated exits can now be stalled
+the same way. That is a deliberate trade — an unguarded instant sale during a
+live offset risks two settlements racing over real money, where the stall costs
+the lender time and optionality — but it is a real widening of a borrower-side
+veto, and giving linked offsets a bounded lifetime or a permissionless teardown
+is tracked in #1814.
 
 The instant route is the sharper case, which is why this is worth calling out
 rather than filing as a consistency tidy-up. A listing sits in public for a
