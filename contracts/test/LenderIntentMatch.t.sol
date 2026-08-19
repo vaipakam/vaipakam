@@ -13,6 +13,7 @@ import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibOfferBounds} from "../src/libraries/LibOfferBounds.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -1353,5 +1354,473 @@ contract LenderIntentMatchTest is SetupTest {
         assertEq(tAfter, 0, "roll de-registers the loan");
         assertEq(rAfter.length, 0, "no rollable loans after roll");
         assertGt(_intentCapital(), 0, "proceeds re-liened as intent capital");
+    }
+
+    // ─── #1503 item 17 — the DIRECT sale releases the seller's intent cap ────
+
+    /// @dev The seller exits the loan at sale time: they take the proceeds and
+    ///      hand the position to the buyer, so their standing-intent
+    ///      live-principal cap must free NOW, not at the buyer's eventual claim
+    ///      (the buyer might never claim, stranding the cap). The LISTED route
+    ///      has released here since #393 v1-b; the direct route was the gap.
+    ///      Unmocked flow on purpose — the sale really mints, so the buyer's
+    ///      position is also asserted through the user-facing Metrics view,
+    ///      which covers the item-25 rekey observably.
+    function test_directSale_releasesIntentExposure() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("dsBorrower");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        assertEq(_livePrincipal(), PRINCIPAL, "fill counted against the cap");
+        (, uint256 t0) = _rollable();
+        assertEq(t0, 1, "registered in the roll-discovery set");
+
+        // A third party posts a standing buy offer matching the loan's terms.
+        address posBuyer = _newBorrower("dsPositionBuyer");
+        LibVaipakam.Loan memory pre =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        vm.prank(posBuyer);
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: pre.interestRateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: pre.collateralAmount,
+                durationDays: pre.durationDays,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: pre.prepayAsset,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: pre.interestRateBps,
+                collateralAmountMax: pre.collateralAmount,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        // Pre-set the seller-paid notification flag: a GENUINE holder change
+        // must clear it (each holder pays separately — Codex #1818 r2 P2).
+        {
+            LibVaipakam.Loan memory l0 =
+                LoanFacet(address(diamond)).getLoanDetails(loanId);
+            l0.lenderNotifBilled = true;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l0);
+        }
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            loanId, buyOfferId
+        );
+
+        assertEq(
+            _livePrincipal(),
+            0,
+            "cap released at SALE time, not at the buyer's eventual claim"
+        );
+        assertFalse(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lenderNotifBilled,
+            "a genuine holder change resets the paid-notification flag"
+        );
+        (, uint256 t1) = _rollable();
+        assertEq(t1, 0, "de-registered from the roll-discovery set");
+
+        LibVaipakam.Loan memory post =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(post.lender, posBuyer, "sale completed to the buyer");
+
+        // #1503 item 25, observable half — the buyer can FIND the position
+        // they just paid for through the token-keyed reverse index.
+        (uint256[] memory loanIds, uint256[] memory tokenIds) =
+            MetricsFacet(address(diamond)).getUserPositionLoans(posBuyer);
+        bool found;
+        for (uint256 i = 0; i < loanIds.length; i++) {
+            if (loanIds[i] == loanId && tokenIds[i] == post.lenderTokenId) {
+                found = true;
+            }
+        }
+        assertTrue(found, "buyer's new position token resolves to the loan");
+
+        // #1503 item 25, list-view half (Codex #1818 r1 P2) — the dashboard and
+        // history views walk `userLoanIds`, so the acquired REAL loan id must
+        // appear in the buyer's index, not only behind their position token.
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(posBuyer),
+            1,
+            "acquired loan appended to the buyer's user-loan index"
+        );
+    }
+
+    /// @dev Codex #1818 r1 P1 — a self-purchase must not free the exposure cap.
+    ///      The origin owner posts their own standing buy offer and sells the
+    ///      intent loan to themselves: they remain the lender of a live intent
+    ///      fill, so releasing `lenderIntentLivePrincipal` would mint headroom
+    ///      under MAX_EXPOSURE out of a trade that changed nothing real. The
+    ///      marker and counter are retained; and the loan-index dedup means no
+    ///      duplicate entry lands in their own history either.
+    function test_directSale_selfBuybackRetainsExposure() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("sbBorrower");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        assertEq(_livePrincipal(), PRINCIPAL, "fill counted against the cap");
+        uint256 loansBefore = MetricsFacet(address(diamond)).getUserLoanCount(lender);
+
+        LibVaipakam.Loan memory pre =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        ERC20Mock(mockERC20).mint(lender, 2 * PRINCIPAL);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), 2 * PRINCIPAL);
+        vm.prank(lender);
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: pre.interestRateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: pre.collateralAmount,
+                durationDays: pre.durationDays,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: pre.prepayAsset,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: pre.interestRateBps,
+                collateralAmountMax: pre.collateralAmount,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        {
+            LibVaipakam.Loan memory l0 =
+                LoanFacet(address(diamond)).getLoanDetails(loanId);
+            l0.lenderNotifBilled = true;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l0);
+        }
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            loanId, buyOfferId
+        );
+
+        assertEq(
+            _livePrincipal(),
+            PRINCIPAL,
+            "a self-purchase must not free the exposure cap"
+        );
+        assertTrue(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lenderNotifBilled,
+            "a self-purchase keeps the same holder's paid flag (Codex #1818 r2)"
+        );
+        (, uint256 t) = _rollable();
+        assertEq(t, 1, "the origin marker is retained");
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lender,
+            lender,
+            "still the origin owner's loan"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(lender),
+            loansBefore,
+            "no duplicate index entry from reacquiring an already-indexed loan"
+        );
+    }
+
+    /// @dev Codex #1818 r3 P2 — a GRANDFATHERED loan (created before the
+    ///      membership map shipped) must not have holders' bits invented.
+    ///      Fabricates the legacy state: strips the born-exact flag and both
+    ///      parties' bits, and models the SELLER as a pre-map acquirer by
+    ///      removing the loan from their lifetime array entirely (the item-25
+    ///      bug's own footprint). The sale must leave that seller unstamped
+    ///      rather than recording false membership, stamp the original
+    ///      borrower WITHOUT a duplicate append, and append the buyer exactly
+    ///      once — and when the pre-map seller later buys the position back,
+    ///      the loan must genuinely enter their index (the refuted blind
+    ///      stamp would have deduped that append against membership that
+    ///      never existed, hiding the loan from their views permanently).
+    function test_directSale_grandfatheredIndexScanRepair() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("gfBorrower");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+
+        // Fabricate the pre-map state. The borrower stays in the array
+        // unstamped (an original party); the lender is stripped from the
+        // array too, modelling a holder who ACQUIRED the position through a
+        // pre-map migration and was therefore never appended.
+        {
+            address[] memory holders = new address[](2);
+            holders[0] = lender;
+            holders[1] = b;
+            TestMutatorFacet(address(diamond)).clearLoanIndexRegimeRaw(
+                loanId, holders
+            );
+            TestMutatorFacet(address(diamond)).removeUserLoanIdRaw(lender, loanId);
+        }
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(lender),
+            0,
+            "fixture: pre-map acquirer absent from their own index"
+        );
+
+        LibVaipakam.Loan memory pre =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address posBuyer = _newBorrower("gfPositionBuyer");
+        vm.prank(posBuyer);
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: pre.interestRateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: pre.collateralAmount,
+                durationDays: pre.durationDays,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: pre.prepayAsset,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: pre.interestRateBps,
+                collateralAmountMax: pre.collateralAmount,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            loanId, buyOfferId
+        );
+
+        // The pre-map seller's bit stays truthfully FALSE — the refuted
+        // revision stamped it true here, against an array entry that does
+        // not exist.
+        assertFalse(
+            TestMutatorFacet(address(diamond)).getUserLoanIndexedRaw(lender, loanId),
+            "outgoing pre-map acquirer must not be stamped without membership"
+        );
+        // The loan is never promoted out of the legacy regime: its FORMER
+        // pre-map holders stay ambiguous, so migrations keep the scan path.
+        assertFalse(
+            TestMutatorFacet(address(diamond)).getLoanHolderIndexExactRaw(loanId),
+            "a grandfathered loan is not promoted to the exact regime"
+        );
+        // The original borrower is stamped without a duplicate append.
+        assertTrue(
+            TestMutatorFacet(address(diamond)).getUserLoanIndexedRaw(b, loanId),
+            "counterparty stamped by the scan repair"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(b),
+            1,
+            "original party's membership scan must not duplicate their row"
+        );
+        // The buyer is appended exactly once and stamped.
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(posBuyer),
+            1,
+            "buyer appended once by the scan repair"
+        );
+        assertTrue(
+            TestMutatorFacet(address(diamond)).getUserLoanIndexedRaw(posBuyer, loanId),
+            "buyer stamped by the scan repair"
+        );
+
+        // The pre-map seller buys the position back through their own
+        // standing offer: the acquisition must genuinely append.
+        LibVaipakam.Loan memory mid =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        ERC20Mock(mockERC20).mint(lender, 2 * PRINCIPAL);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), 2 * PRINCIPAL);
+        vm.prank(lender);
+        uint256 rebuyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: mid.interestRateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: mid.collateralAmount,
+                durationDays: mid.durationDays,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mid.prepayAsset,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: mid.interestRateBps,
+                collateralAmountMax: mid.collateralAmount,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        vm.prank(posBuyer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            loanId, rebuyOfferId
+        );
+
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lender,
+            lender,
+            "reacquisition completed"
+        );
+        assertTrue(
+            TestMutatorFacet(address(diamond)).getUserLoanIndexedRaw(lender, loanId),
+            "reacquirer stamped on genuine membership"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(lender),
+            1,
+            "reacquisition finally lands the loan in the pre-map acquirer's index"
+        );
+    }
+
+    /// @dev Codex #1818 r4 P2 — the legacy membership repair is BOUNDED. An
+    ///      unbounded scan re-created on the legacy corner exactly the
+    ///      failure item 25 forbids: a buyer with a long-enough lifetime
+    ///      array makes the fill run out of gas, and since the revert rolls
+    ///      the stamp back, every retry repeats the scan — the position is
+    ///      permanently unmigratable. The scan now walks backwards over at
+    ///      most 1,024 entries; an entry buried deeper is treated as absent
+    ///      and re-appended (a cosmetic duplicate row, deliberately chosen
+    ///      over the bricked fill). This test buries the real loan id under
+    ///      1,500 filler entries and proves the sale still completes, the
+    ///      buyer is stamped, and the accepted duplicate appears.
+    function test_directSale_grandfatheredScanIsBounded() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("gbBorrower");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+
+        LibVaipakam.Loan memory pre =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address posBuyer = _newBorrower("gbPositionBuyer");
+        vm.prank(posBuyer);
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: pre.interestRateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: pre.collateralAmount,
+                durationDays: pre.durationDays,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: pre.prepayAsset,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: pre.interestRateBps,
+                collateralAmountMax: pre.collateralAmount,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        // Fabricate the pathological legacy state: strip the born-exact flag
+        // and the buyer's bit, seed the REAL loan id at the very front of the
+        // buyer's array, then bury it under 1,500 fillers — deeper than the
+        // backward scan window.
+        {
+            address[] memory holders = new address[](3);
+            holders[0] = lender;
+            holders[1] = b;
+            holders[2] = posBuyer;
+            TestMutatorFacet(address(diamond)).clearLoanIndexRegimeRaw(
+                loanId, holders
+            );
+        }
+        TestMutatorFacet(address(diamond)).removeUserLoanIdRaw(posBuyer, loanId);
+        // put the real id at depth > cap: [loanId, 1500 fillers...]
+        TestMutatorFacet(address(diamond)).pushUserLoanIdsRaw(posBuyer, 1, loanId);
+        TestMutatorFacet(address(diamond)).pushUserLoanIdsRaw(posBuyer, 1500, 10_000_000);
+        uint256 preCount = MetricsFacet(address(diamond)).getUserLoanCount(posBuyer);
+        assertEq(preCount, 1501, "fixture: real id buried under 1,500 fillers");
+
+        // The fill must complete — bounded scan, no out-of-gas brick.
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            loanId, buyOfferId
+        );
+
+        assertTrue(
+            TestMutatorFacet(address(diamond)).getUserLoanIndexedRaw(posBuyer, loanId),
+            "buyer stamped despite the buried entry"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(posBuyer),
+            1502,
+            "beyond the cap the repair appends: the documented duplicate, not a revert"
+        );
     }
 }

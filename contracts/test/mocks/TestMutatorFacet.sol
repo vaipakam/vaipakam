@@ -53,6 +53,64 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().offerIdToLoanId[offerId] = loanId;
     }
 
+    /// @notice #1503 item 25 test-only — read the position-token → loan reverse
+    ///         index directly. The migration tests mock `mintNFT`/`burnNFT`
+    ///         (their diamonds are built per test file), so the burned/minted
+    ///         tokens are not enumerable and the ERC721-walking Metrics views
+    ///         cannot observe the rekey; this raw read can.
+    function getLoanIdByPositionTokenIdRaw(uint256 tokenId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().loanIdByPositionTokenId[tokenId];
+    }
+
+    /// @notice #1503 item 25 test-only (Codex #1818 r3 P2) — fabricate the
+    ///         GRANDFATHERED index state a loan created before the membership
+    ///         map shipped would have: no exact-regime flag, no map bits, and
+    ///         (for a pre-map acquirer) no lifetime-array entry. New loans set
+    ///         all of these at creation, so tests must be able to strip them
+    ///         to exercise the one-time scan repair.
+    function clearLoanIndexRegimeRaw(uint256 loanId, address[] calldata holders) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.loanHolderIndexExact[loanId] = false;
+        for (uint256 i; i < holders.length; ++i) {
+            s.userLoanIndexed[holders[i]][loanId] = false;
+        }
+    }
+
+    /// @notice Companion to {clearLoanIndexRegimeRaw}: remove `loanId` from
+    ///         `userLoanIds[user]` to model a pre-map acquirer, who was never
+    ///         appended at all (the item-25 bug this PR fixes). Swap-and-pop —
+    ///         order is not part of the array's contract.
+    function removeUserLoanIdRaw(address user, uint256 loanId) external {
+        uint256[] storage ids = LibVaipakam.storageSlot().userLoanIds[user];
+        for (uint256 i; i < ids.length; ++i) {
+            if (ids[i] == loanId) {
+                ids[i] = ids[ids.length - 1];
+                ids.pop();
+                return;
+            }
+        }
+    }
+
+    /// @notice Codex #1818 r4 test-only — bloat `userLoanIds[user]` with
+    ///         filler ids so the bounded legacy membership scan's cap can be
+    ///         exercised without scaffolding thousands of real loans.
+    function pushUserLoanIdsRaw(address user, uint256 count, uint256 fillerStart) external {
+        uint256[] storage ids = LibVaipakam.storageSlot().userLoanIds[user];
+        for (uint256 i; i < count; ++i) {
+            ids.push(fillerStart + i);
+        }
+    }
+
+    /// @notice Raw reads for the exact-regime flag and the membership map, so
+    ///         the grandfathered-migration tests can assert truthful stamping.
+    function getLoanHolderIndexExactRaw(uint256 loanId) external view returns (bool) {
+        return LibVaipakam.storageSlot().loanHolderIndexExact[loanId];
+    }
+
+    function getUserLoanIndexedRaw(address user, uint256 loanId) external view returns (bool) {
+        return LibVaipakam.storageSlot().userLoanIndexed[user][loanId];
+    }
+
     /// @notice RL-1 test-only — force the mandatory-vault-upgrade gate
     ///         without deploying a fresh implementation, so tests can put a
     ///         claimant's vault below `mandatoryVaultVersion` and assert the

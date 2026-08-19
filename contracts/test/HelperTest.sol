@@ -91,7 +91,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](178);
+        selectors = new bytes4[](184);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -371,6 +371,15 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.callMigrateActiveHeld.selector;
         // #1144 — offer→loan link pin for the syncPrepaySaleOffer Scenario-B test.
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanId.selector;
+        // #1503 item 25 — raw read of the position-token → loan reverse index.
+        selectors[n++] = TestMutatorFacet.getLoanIdByPositionTokenIdRaw.selector;
+        // #1503 item 25, Codex #1818 r3 P2 — grandfathered-index fabrication +
+        // raw reads for the one-time scan-repair tests.
+        selectors[n++] = TestMutatorFacet.clearLoanIndexRegimeRaw.selector;
+        selectors[n++] = TestMutatorFacet.removeUserLoanIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.pushUserLoanIdsRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLoanHolderIndexExactRaw.selector;
+        selectors[n++] = TestMutatorFacet.getUserLoanIndexedRaw.selector;
         // #1008 (S13) — entry-path per-day-cap test scaffolding.
         selectors[n++] = TestMutatorFacet.closeRewardEntryRaw.selector;
         selectors[n++] = TestMutatorFacet.setDayCapThreshold18.selector;
@@ -1519,7 +1528,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](50);
+        selectors = new bytes4[](51);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1594,6 +1603,10 @@ contract HelperTest {
         selectors[47] = MetricsFacet.getUserPositionLoansPaginated.selector;
         selectors[48] = MetricsFacet.getUserPositionOffersPaginated.selector;
         selectors[49] = MetricsFacet.getOfferState.selector; // #955 (#921 item 4)
+        // #1503 item 25 — routed in DeployDiamond since #769; the test diamond
+        // lagged, surfacing when the item-25 rekey test read the buyer's
+        // position through it.
+        selectors[50] = MetricsFacet.getUserPositionLoans.selector;
         return selectors;
     }
 

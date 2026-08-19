@@ -256,6 +256,11 @@ library LibConsolidation {
         address user,
         uint256 loanId
     ) private {
+        // #1503 item 25 (Codex #1818 r2 P2) — keep the O(1) membership map in
+        // step with the array on BOTH outcomes, or a holder this scan indexed
+        // (map unset) who later departs and reacquires through a sale gets
+        // double-appended by the migration writer, whose dedup reads the map.
+        s.userLoanIndexed[user][loanId] = true;
         uint256[] storage ids = s.userLoanIds[user];
         uint256 n = ids.length;
         for (uint256 i; i < n; ) {
