@@ -671,10 +671,8 @@ contract EarlyWithdrawalDirectFacet is
         // gets a fresh entry covering the residual loan window. #1067 — routed
         // through the `transferLenderRewardEntry` self-hook so the O(1) transfer
         // body lives on InteractionRewardsFacet, off this EIP-170-tight facet.
-        // BEST-EFFORT (not bubbled): reward bookkeeping is strictly subordinate
-        // to the fund-critical sale settlement, matching every sibling reward
-        // hook (preclose / riskmatch / claim / prepay / periodic). Production
-        // always cuts InteractionRewardsFacet, so the forfeit is never dropped.
+        // ATOMIC with the settlement since #1503 item 12 — see `_rewardHook`
+        // for why a failure here must not settle silently.
         _rewardHook(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.transferLenderRewardEntry.selector,
@@ -708,16 +706,23 @@ contract EarlyWithdrawalDirectFacet is
         );
     }
 
-    /// @dev #1067 — best-effort reward transfer self-call. The O(1) transfer
-    ///      body lives on {InteractionRewardsFacet}; a failed low-level call is
-    ///      intentionally not bubbled (the sale settlement proceeds regardless —
-    ///      reward bookkeeping is subordinate). Production always cuts
-    ///      InteractionRewardsFacet; a focused test harness that omits it simply
-    ///      skips the reward transfer.
+    /// @dev #1067 — reward transfer self-call; the O(1) transfer body lives
+    ///      on {InteractionRewardsFacet}. #1503 item 12 made it atomic with
+    ///      the settlement (a failed call bubbles) — see the body comment.
     function _rewardHook(bytes memory data) private {
-        (bool ok, ) = address(this).call(data);
+        // #1503 item 12 — ATOMIC with settlement, no longer best-effort; see
+        // the listed route's twin for the full rationale (the quote's
+        // forfeiture disclosure makes this a kept promise, and the transfer
+        // body cannot revert on a properly-cut diamond, so what bubbles is
+        // deploy drift — the case that must not settle silently).
+        (bool ok, bytes memory ret) = address(this).call(data);
         if (!ok) {
-            // best-effort — the sale settlement proceeds regardless.
+            if (ret.length > 0) {
+                assembly {
+                    revert(add(32, ret), mload(ret))
+                }
+            }
+            revert RewardMigrationFailed();
         }
     }
 }

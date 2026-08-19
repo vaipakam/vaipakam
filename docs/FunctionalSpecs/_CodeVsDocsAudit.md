@@ -463,3 +463,74 @@ touched facets, and the offer facets are not otherwise in #1819's blast
 radius). #1820 also carries the instruction to re-audit every remaining
 vault-movement call site for VPFI reachability rather than trusting this
 enumeration to be exhaustive.
+
+## A disclosed reward migration was performed best-effort (#1503 item 12)
+
+**Spec** (`ProjectDetailsREADME.md`, §9 lender exit): the sale quote a seller
+decides on names the interaction-reward forfeiture as a priced cost line, and
+names the buyer's fresh entry over the remaining loan window as something they
+receive. A quote is a representation of what the transaction will do.
+
+**Code**: both sale routes performed that migration through a self-call whose
+failure was deliberately swallowed, on the rationale — correct for its
+siblings — that reward bookkeeping is subordinate to a fund-critical
+settlement. A failure therefore settled the sale with the seller's entry
+un-forfeited and no residual entry for the buyer, reporting success. The two
+parties transacted on terms neither was shown, with nothing in the outcome to
+reveal it.
+
+**Decision**: candidate BUG on the SALE routes specifically, and NOT a general
+reversal of the best-effort convention. The distinguishing fact is the quote:
+where a cost line is disclosed at the moment of decision, delivering it is part
+of what was agreed, and its silent omission is a mis-settled trade rather than
+a deferred bookkeeping chore. The sibling hooks (preclose, claim, prepay,
+periodic, risk-match) disclose nothing comparable and stay best-effort by
+intent — that asymmetry is the finding, not an inconsistency to iron out.
+
+**RESOLVED** — both sale routes now refuse the settlement when the migration
+cannot be performed, surfacing the underlying reason where there is one and a
+named failure where there is not. In normal operation the migration is O(1)
+storage bookkeeping with its own inactive-programme and no-entry early returns,
+so what this can actually surface is a deploy in which the reward component is
+unrouted: exactly the state that must not settle sales quietly. The spec now
+states the rule directly rather than leaving it implied by the quote.
+
+## The sale's transitional record was counted as a real position (#1503 item 26)
+
+**Spec** (`ProjectDetailsREADME.md`, §9 lender exit): the internal record a
+listed sale creates to carry the lender relationship from acceptance to
+settlement is not a position and is invisible to users — it holds no
+collateral, carries no borrower obligation, and ends inside the flow that
+created it.
+
+**Code**: it was counted into the active-position and lifetime-position totals
+and the interest-rate averages, appended to both parties' permanent position
+histories, placed in the working set keepers walk, and announced to interfaces
+as a newly created loan. Users saw a position in their history they never
+opened; the protocol's own lifetime totals permanently counted positions that
+were never real.
+
+**Decision**: candidate BUG. The spec's claim is not an enumeration that a new
+surface could fall outside of — "invisible" is a property of the record, and
+every one of these is a place it was visible.
+
+There is a second, subtler divergence in the same area worth recording because
+the fix reverses an earlier fix. #1782 had made the record's ENDING observable,
+on the reasoning that an interface which had recorded its creation received
+nothing saying it ended and left it running forever. That reasoning was sound
+given a creation event; removing the creation event dissolves its premise. The
+property that survives is a PAIRING — announced at both ends or at neither —
+and a terminal event for a record no interface knows about is a reference to an
+unknown position, the same confusion #1782 set out to remove.
+
+**RESOLVED** — the record is excluded at every listed point and its close-out
+is silent and count-neutral to match, so entries balance exactly in both
+directions. The exclusion is drawn around POSITION accounting specifically:
+the record still counts a first-time buyer toward the unique-participant
+total and still releases the consumed listing's open-offer entry, because
+neither is a claim about positions and dropping them would have replaced one
+visible-phantom defect with two invisible ones (a real participant missing
+from the user count, and a consumed listing still on display until its token
+is destroyed). Records created under the earlier behaviour were counted and
+announced, so their close-outs still decrement and still announce; the two
+regimes are distinguished from the record's own state, needing no migration.

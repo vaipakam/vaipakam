@@ -48,6 +48,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibERC721} from "../src/libraries/LibERC721.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
+import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
@@ -242,7 +243,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](29);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](30);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -296,6 +297,13 @@ contract EarlyWithdrawalFacetTest is Test {
         // than the minimal-fixture silent no-op.
         cuts[27] = IDiamondCut.FacetCut({facetAddress: address(new ConsolidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getConsolidationFacetSelectors()});
         cuts[28] = IDiamondCut.FacetCut({facetAddress: address(new VPFIDiscountAccumulatorFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()});
+        // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
+        // settlement now, so `transferLenderRewardEntry` must be routed here:
+        // an unrouted selector is exactly the deploy-drift failure the hook
+        // bubbles, and it would fail every sale-success test in this file.
+        // With the interaction program unconfigured (no launch timestamp) the
+        // routed call is a no-op early-return, matching production-before-launch.
+        cuts[29] = IDiamondCut.FacetCut({facetAddress: address(new InteractionRewardsFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getInteractionRewardsFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
@@ -2049,6 +2057,271 @@ contract EarlyWithdrawalFacetTest is Test {
         assertEq(p.lifEstimate, 0, "sale-vehicle accept quotes no LIF");
     }
 
+    // ─── #1503 item 26: the sale vehicle never enters metrics / index / events ─
+    //
+    // The lender-sale temp loan is a transitional bookkeeping row, not real
+    // exposure: zero collateral, terminal within the same flow, and the UX says
+    // it is never visible. Item 26 makes that a PAIRED lifecycle — never
+    // counted at initiation (no metrics bump, no per-user index, no
+    // `LoanInitiated`) and never uncounted at terminal (the internal-vehicle
+    // transition runs no hook and emits no `LoanStatusChanged`) — so every
+    // write is exactly balanced and no consumer ever sees a phantom loan.
+
+    /// @dev A REAL sale accept (signed terms, funded buyer, auto-complete hop
+    ///      mocked) must leave every protocol-wide and per-user counter exactly
+    ///      where it was, keep the vehicle out of the keeper-walked active
+    ///      list, and announce no `LoanInitiated` — while the vehicle row
+    ///      itself exists and is Active for the completion hop to consume.
+    function test_1503item26_vehicleInvisibleAtInitiation() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("item26Buyer");
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer); ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+        vm.prank(buyer); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
+
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        // Mock the auto-complete hop: this test pins the ACCEPT half of the
+        // paired lifecycle in isolation (the completion half is pinned below).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EarlyWithdrawalFacet.completeLoanSaleInternal.selector),
+            ""
+        );
+
+        uint256 activeBefore = MetricsFacet(address(diamond)).getActiveLoansCount();
+        (uint256 everBefore, uint256 rateSumBefore) =
+            TestMutatorFacet(address(diamond)).getLifetimeLoanCountersRaw();
+        uint256 lenderLoansBefore = MetricsFacet(address(diamond)).getUserLoanCount(lender);
+        uint256 buyerLoansBefore = MetricsFacet(address(diamond)).getUserLoanCount(buyer);
+        uint256 usersBefore = MetricsFacet(address(diamond)).getUserCount();
+        // The vehicle consumes the SELLER's sale-offer position NFT; the
+        // offer-side reverse entry must be released when it becomes a loan
+        // position, or the seller keeps showing a consumed listing as an open
+        // offer until the token is burned at completion.
+        uint256 vehicleOfferToken =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId).positionTokenId;
+        assertGt(vehicleOfferToken, 0, "fixture: the listing minted an offer position");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOfferIdByPositionTokenIdRaw(vehicleOfferToken),
+            saleOfferId,
+            "fixture: the offer-side reverse entry is live before the accept"
+        );
+
+        vm.recordLogs();
+        vm.prank(buyer);
+        uint256 tempLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.clearMockedCalls();
+
+        assertGt(tempLoanId, 0, "the accept forged a vehicle loan");
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(tempLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "the vehicle row exists and is Active for the completion hop"
+        );
+
+        assertEq(
+            MetricsFacet(address(diamond)).getActiveLoansCount(),
+            activeBefore,
+            "vehicle must not enter the active-loan count"
+        );
+        (uint256 everAfter, uint256 rateSumAfter) =
+            TestMutatorFacet(address(diamond)).getLifetimeLoanCountersRaw();
+        assertEq(everAfter, everBefore, "vehicle must not inflate totalLoansEverCreated");
+        assertEq(rateSumAfter, rateSumBefore, "vehicle must not skew the lifetime rate sum");
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(lender),
+            lenderLoansBefore,
+            "vehicle must not land in the exiting lender's loan history"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(buyer),
+            buyerLoansBefore,
+            "vehicle must not land in the buyer's loan history"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getActiveLoanListPosRaw(tempLoanId),
+            0,
+            "vehicle must never enter the keeper-walked active list"
+        );
+
+        // ── and the effects that are about RECORDS, not positions, are KEPT ──
+        // These are what a blanket "skip the metrics hook" would have dropped
+        // along with the counters. A buyer who acquires a position is a
+        // protocol participant even though the vehicle is not their loan...
+        assertEq(
+            MetricsFacet(address(diamond)).getUserCount(),
+            usersBefore + 1,
+            "the first-time buyer is still counted as a unique participant"
+        );
+        // ...and the consumed listing must stop presenting as an open offer
+        // position the moment its NFT becomes a loan position.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOfferIdByPositionTokenIdRaw(vehicleOfferToken),
+            0,
+            "the consumed listing's offer-side reverse entry is released"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(vehicleOfferToken),
+            tempLoanId,
+            "the position token now resolves to the record that holds it"
+        );
+
+        bytes32 initSig =
+            keccak256("LoanInitiated(uint256,uint256,address,address,uint256,uint256)");
+        for (uint256 i; i < logs.length; i++) {
+            assertTrue(
+                logs[i].topics[0] != initSig,
+                "no LoanInitiated may announce the vehicle"
+            );
+        }
+    }
+
+    /// @dev The completion half of the pair: closing a NEVER-COUNTED vehicle
+    ///      must not decrement counters it never incremented and must emit no
+    ///      `LoanStatusChanged` for a loan no indexer was ever told exists —
+    ///      while still terminalizing the vehicle row itself.
+    function test_1503item26_completionSilentForUncountedVehicle() public {
+        _stageAcceptedSaleListing(); // vehicle is loan id 2, written raw — never counted
+        uint256 activeBefore = MetricsFacet(address(diamond)).getActiveLoansCount();
+
+        _mockSaleSideEffects();
+        vm.recordLogs();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.clearMockedCalls();
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(2).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the vehicle still terminalizes Active -> Repaid"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getActiveLoansCount(),
+            activeBefore,
+            "an uncounted vehicle must not decrement the active-loan count"
+        );
+
+        bytes32 statusSig = keccak256("LoanStatusChanged(uint256,uint8,uint8)");
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == statusSig) {
+                assertTrue(
+                    uint256(logs[i].topics[1]) != 2,
+                    "no LoanStatusChanged may name the uncounted vehicle"
+                );
+            }
+        }
+    }
+
+    /// @dev LEGACY vehicles — accepted BEFORE this upgrade — were counted into
+    ///      the metrics layer at initiation, so their terminal must keep taking
+    ///      the ordinary decrementing transition (and keep emitting the #1792
+    ///      safety-net status event) or the active count leaks upward forever.
+    ///      Membership in `activeLoanIdsListPos` is the discriminator.
+    function test_1503item26_legacyCountedVehicleStillDecrements() public {
+        _stageAcceptedSaleListing();
+        // Replay the pre-upgrade world: the vehicle WAS registered in metrics.
+        TestMutatorFacet(address(diamond)).metricsCountLoanRaw(2);
+        assertGt(
+            TestMutatorFacet(address(diamond)).getActiveLoanListPosRaw(2),
+            0,
+            "fixture: the legacy vehicle sits in the active list"
+        );
+        uint256 activeBefore = MetricsFacet(address(diamond)).getActiveLoansCount();
+
+        _mockSaleSideEffects();
+        vm.recordLogs();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.clearMockedCalls();
+
+        assertEq(
+            MetricsFacet(address(diamond)).getActiveLoansCount(),
+            activeBefore - 1,
+            "a counted legacy vehicle must decrement on terminal"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getActiveLoanListPosRaw(2),
+            0,
+            "the legacy vehicle left the active list"
+        );
+        bytes32 statusSig = keccak256("LoanStatusChanged(uint256,uint8,uint8)");
+        bool announced;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == statusSig && uint256(logs[i].topics[1]) == 2) {
+                announced = true;
+            }
+        }
+        assertTrue(
+            announced,
+            "the ordinary transition still announces a counted legacy vehicle"
+        );
+    }
+
+    // ─── #1503 item 12: reward migration is ATOMIC with the settlement ───────
+    //
+    // Every sale quote discloses the seller's reward forfeiture and the
+    // buyer's residual entry as a cost line; a swallowed hook failure would
+    // settle the sale with neither delivered, in silence. The hook now
+    // bubbles: a revert WITH data is rethrown verbatim, an empty failure is
+    // named `RewardMigrationFailed`.
+
+    /// @dev LISTED route: a failing reward hook aborts `completeLoanSale`
+    ///      wholesale — no settlement without the disclosed reward migration.
+    function test_1503item12_completeLoanSaleBubblesRewardHookFailure() public {
+        _stageAcceptedSaleListing();
+        _mockSaleSideEffects();
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(InteractionRewardsFacet.transferLenderRewardEntry.selector),
+            "boom"
+        );
+        vm.prank(lender);
+        vm.expectRevert(bytes("boom"));
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev A DATALESS hook failure (the unrouted-selector deploy-drift shape)
+    ///      must surface as the named `RewardMigrationFailed`, not as an
+    ///      undiagnosable empty revert.
+    function test_1503item12_emptyRewardHookFailureIsNamed() public {
+        _stageAcceptedSaleListing();
+        _mockSaleSideEffects();
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(InteractionRewardsFacet.transferLenderRewardEntry.selector),
+            ""
+        );
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.RewardMigrationFailed.selector);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev DIRECT route: `sellLoanViaBuyOffer` carries the same promise and
+    ///      bubbles the same way.
+    function test_1503item12_directSaleBubblesRewardHookFailure() public {
+        _mockSaleSideEffects();
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(InteractionRewardsFacet.transferLenderRewardEntry.selector),
+            "boom"
+        );
+        vm.prank(lender);
+        vm.expectRevert(bytes("boom"));
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.clearMockedCalls();
+    }
+
     // ─── _getTreasury coverage via accrued interest ───────────────────────────
 
     function testSellLoanWithAccruedInterestCoversGetTreasury() public {
@@ -3023,71 +3296,95 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev #1782 / #971 — the sale-vehicle temp loan's terminal edge must be
-    ///      OBSERVABLE off-chain. This is the exact instance that motivated
-    ///      emitting from `LibLifecycle.transition`: `_completeLoanSaleImpl`
-    ///      terminalises the temp loan Active -> Repaid, and the only event it
-    ///      used to produce was `LoanSaleCompleted`, which names the ORIGINAL
-    ///      loan and never `tempLoanId`. On-chain state was correct; an indexer
-    ///      that had recorded the temp loan's creation received nothing saying
-    ///      it ended, so the projection showed it active forever — the
-    ///      May-2026 "loan stuck active" symptom, reached through the one shape
-    ///      the event-coverage guardrail cannot see (a state change that emits
-    ///      nothing is not an untagged or unhandled event).
+    /// @dev #1782 / #971, SUPERSEDED IN FORM BY #1503 item 26 — read the two
+    ///      together, because this test used to assert the exact opposite of
+    ///      what it now asserts, and the reversal is deliberate.
     ///
-    ///      Asserting the TEMP loan id specifically is the point. A test that
-    ///      only checked `activeLoanId` would pass on the pre-fix code, because
-    ///      that loan does get an event.
+    ///      #1782's property is that no loan an indexer knows about can go
+    ///      dark. The sale vehicle was its motivating instance: an indexer
+    ///      recorded the vehicle's creation from `LoanInitiated`, and the
+    ///      terminal produced only `LoanSaleCompleted` — which names the
+    ///      ORIGINAL loan, never `tempLoanId` — so the projection showed the
+    ///      vehicle active forever. #1782 closed that by emitting from
+    ///      `LibLifecycle.transition`, giving the vehicle a terminal event.
     ///
-    ///      Deliberately NOT written with `TestMutatorFacet.scaffoldLoanStatusChange`:
-    ///      that helper writes `loan.status` and calls the metrics hook directly,
-    ///      bypassing `LibLifecycle.transition` and therefore the emit, so it
-    ///      would prove nothing about this path.
-    function test_1782_tempLoanTerminalEdgeIsObservable() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
-        vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true, 7 days);
-        vm.clearMockedCalls();
+    ///      Item 26 removes the PRECONDITION instead: the vehicle no longer
+    ///      announces its creation at all, so no indexer can hold a row for it
+    ///      and there is nothing to leave stuck. The property survives as a
+    ///      PAIRING — announced at both ends or at neither — and the vehicle
+    ///      now takes the "neither" branch. A terminal event for a loan no
+    ///      consumer was told exists is not the safety net; it is a status
+    ///      edge naming an unknown id, which is the same class of confusion
+    ///      #1782 set out to remove.
+    ///
+    ///      What this test therefore pins is the pairing across ONE REAL
+    ///      flow — accept and completion in a single transaction, no
+    ///      completion mock — since a fixture that stages the two halves
+    ///      separately could satisfy each in isolation while the live flow
+    ///      still announced one of them.
+    ///
+    ///      #1782's live half is unchanged and covered by
+    ///      `test_1503item26_legacyCountedVehicleStillDecrements`: a vehicle
+    ///      that WAS counted and announced (accepted before this upgrade)
+    ///      still takes the ordinary transition and still emits its edge.
+    function test_1782_saleVehicleAnnouncesNeitherEndOfItsLife() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("pairingBuyer");
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer); ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+        vm.prank(buyer); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
 
-        _setOfferAcceptedAndRate(50, 1000);
-        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
-        _setupTempLoan(2);
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
-        vm.warp(block.timestamp + 5 days);
-
-        // Recorded logs rather than `vm.expectEmit`: that helper asserts the
-        // NEXT log matches, and `LoanSaleCompleted` is emitted after this edge.
-        // Emit ORDER is not the property under test — presence of the temp
-        // loan's own edge, with the right endpoints, is.
         vm.recordLogs();
-
-        vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
-
+        vm.prank(buyer);
+        uint256 tempLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256("LoanStatusChanged(uint256,uint8,uint8)");
-        bool sawTempEdge;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics.length < 2 || logs[i].topics[0] != sig) continue;
-            if (uint256(logs[i].topics[1]) != 2) continue; // the TEMP loan id
-            (uint8 from_, uint8 to_) = abi.decode(logs[i].data, (uint8, uint8));
-            assertEq(from_, uint8(LibVaipakam.LoanStatus.Active));
-            assertEq(to_, uint8(LibVaipakam.LoanStatus.Repaid));
-            sawTempEdge = true;
-        }
-        assertTrue(
-            sawTempEdge,
-            "temp loan terminal edge emitted no LoanStatusChanged (#1782/#971)"
+
+        // The flow ran to completion inside the accept: the position changed
+        // hands and the vehicle is terminal. Without this the silence below
+        // would be trivially satisfied by a flow that never happened.
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            buyer,
+            "the sale actually settled inside the accept"
+        );
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(tempLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the vehicle actually terminalised"
         );
 
-        // And the transition really happened, so the event is not describing a
-        // state change that did not occur.
-        LibVaipakam.Loan memory temp = LoanFacet(address(diamond)).getLoanDetails(2);
-        assertEq(uint8(temp.status), uint8(LibVaipakam.LoanStatus.Repaid));
-        vm.clearMockedCalls();
+        bytes32 initSig =
+            keccak256("LoanInitiated(uint256,uint256,address,address,uint256,uint256)");
+        bytes32 statusSig = keccak256("LoanStatusChanged(uint256,uint8,uint8)");
+        bool sawSaleCompleted;
+        bytes32 completedSig = keccak256("LoanSaleCompleted(uint256,address,address)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length == 0) continue;
+            if (logs[i].topics[0] == initSig) {
+                assertTrue(
+                    uint256(logs[i].topics[1]) != tempLoanId,
+                    "the vehicle announced its creation"
+                );
+            }
+            if (logs[i].topics[0] == statusSig && logs[i].topics.length > 1) {
+                assertTrue(
+                    uint256(logs[i].topics[1]) != tempLoanId,
+                    "the vehicle announced its terminal"
+                );
+            }
+            if (logs[i].topics[0] == completedSig) sawSaleCompleted = true;
+        }
+        // The sale IS narrated — on the REAL loan id, which is the row every
+        // consumer actually holds.
+        assertTrue(sawSaleCompleted, "the settlement is announced on the real loan");
     }
 
     /// @dev #831 — a BUYER (`newLender`) flagged AFTER committing the sale must

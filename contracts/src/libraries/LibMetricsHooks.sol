@@ -12,6 +12,9 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 /// @dev Hook coverage (must stay exhaustive):
 ///        • {onLoanInitialized}     — called from LoanFacet after the loan
 ///          struct is fully populated (lender, borrower, asset fields all set).
+///        • {onInternalVehicleInitialized} — the same moment, for the
+///          lender-sale vehicle: a loan RECORD that is not a counted
+///          POSITION (#1503 item 26). Registries yes, counters no.
 ///        • {onLoanStatusChanged}   — called from LibLifecycle.transition /
 ///          transitionFromAny for every status edge. FallbackPending ↔ Active
 ///          is a no-op for counts because both states are "active" under
@@ -79,19 +82,69 @@ library LibMetricsHooks {
             s.nftsInVaultByCollection[loan.collateralAsset] += 1;
         }
 
-        // Position NFT → loan id reverse mapping (O(1) NFT-rental lookup).
-        if (loan.lenderTokenId != 0) s.loanIdByPositionTokenId[loan.lenderTokenId] = id;
-        if (loan.borrowerTokenId != 0) s.loanIdByPositionTokenId[loan.borrowerTokenId] = id;
-
-        // The accepted-offer's tokenId carries over from offer-position to
+        // Position NFT → loan id reverse mapping (O(1) NFT-rental lookup), and
+        // the accepted-offer's tokenId carries over from offer-position to
         // loan-position (LoanFacet._copyFinancialFields assigns it to
         // lenderTokenId or borrowerTokenId depending on offerType). Clear
         // the offer-side reverse mapping so `getUserPositionOffers` no
         // longer returns this tokenId as an OPEN offer position — the
         // loan-side mapping now owns it. Both slots clear is safe:
         // whichever was set will be cleared; the other is a no-op delete.
-        if (loan.lenderTokenId != 0) delete s.offerIdByPositionTokenId[loan.lenderTokenId];
-        if (loan.borrowerTokenId != 0) delete s.offerIdByPositionTokenId[loan.borrowerTokenId];
+        _registerPositionTokens(s, loan, id);
+    }
+
+    /// @notice Registers the lender-sale VEHICLE — a loan record that is not a
+    ///         counted position — in the registries that describe records,
+    ///         while entering none of the indices that count positions.
+    /// @dev #1503 item 26. The distinction this draws is between the two kinds
+    ///      of work {onLoanInitialized} does, which is why the vehicle needs
+    ///      its own entry point rather than a caller-side skip of the whole
+    ///      hook: a skip would silently drop whatever else the hook grows.
+    ///
+    ///      NOT done here — the position-counting effects, each of which
+    ///      {onLoanStatusChanged} reverses on the terminal edge the vehicle
+    ///      takes through {LibLifecycle.transitionInternalVehicle} (which runs
+    ///      no hook at all): the active count, the active-id list, the
+    ///      asset-pair match-candidate index, and the per-collection
+    ///      NFT-in-vault counts. Never counted and never uncounted, so every
+    ///      write balances exactly. Also not done: `totalLoansEverCreated` and
+    ///      `interestRateBpsSum`, which no terminal reverses — those are
+    ///      excluded on the same intent rather than by symmetry, because they
+    ///      describe real positions and the vehicle would inflate the first
+    ///      and skew the second by the SALE's rate forever.
+    ///
+    ///      DONE here — the effects that are about records and holders rather
+    ///      than about positions, and which no terminal reverses either:
+    ///      unique-user marking (a buyer acquiring a position is a protocol
+    ///      participant even though the vehicle is not their loan) and the
+    ///      position-token registry handover (the vehicle consumes the sale
+    ///      offer's position NFT, so the offer-side reverse entry must be
+    ///      released or the SELLER keeps showing a consumed listing as an open
+    ///      offer position until the token is burned at completion).
+    function onInternalVehicleInitialized(LibVaipakam.Loan storage loan) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        _markUserSeen(s, loan.lender);
+        _markUserSeen(s, loan.borrower);
+        _registerPositionTokens(s, loan, loan.id);
+    }
+
+    /// @dev Position-NFT registry upkeep shared by the real-loan and
+    ///      sale-vehicle entry points: point each position token at this loan,
+    ///      and release the offer-side entry the token carried before it became
+    ///      a loan position.
+    function _registerPositionTokens(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 id
+    ) private {
+        if (loan.lenderTokenId != 0) {
+            s.loanIdByPositionTokenId[loan.lenderTokenId] = id;
+            delete s.offerIdByPositionTokenId[loan.lenderTokenId];
+        }
+        if (loan.borrowerTokenId != 0) {
+            s.loanIdByPositionTokenId[loan.borrowerTokenId] = id;
+            delete s.offerIdByPositionTokenId[loan.borrowerTokenId];
+        }
     }
 
     /// @notice Updates counters and the active-set list for a loan status edge.

@@ -91,7 +91,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](186);
+        selectors = new bytes4[](190);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -239,6 +239,9 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setSaleProceedsEscrowRaw.selector;
         selectors[n++] = TestMutatorFacet.clearSaleListingBoundsRaw.selector;
         selectors[n++] = TestMutatorFacet.getSaleListingBoundsRaw.selector;
+        selectors[n++] = TestMutatorFacet.metricsCountLoanRaw.selector;
+        selectors[n++] = TestMutatorFacet.getActiveLoanListPosRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLifetimeLoanCountersRaw.selector;
         selectors[n++] = TestMutatorFacet.setLenderPaidThroughRaw.selector;
         // #1801 — the two DISQUALIFICATION seeds: a mark recorded against a
         // principal the loan no longer carries, and the sticky freeze void.
@@ -374,6 +377,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanId.selector;
         // #1503 item 25 — raw read of the position-token → loan reverse index.
         selectors[n++] = TestMutatorFacet.getLoanIdByPositionTokenIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.getOfferIdByPositionTokenIdRaw.selector;
         // #1503 item 25, Codex #1818 r3 P2 — grandfathered-index fabrication +
         // raw reads for the one-time scan-repair tests.
         selectors[n++] = TestMutatorFacet.clearLoanIndexRegimeRaw.selector;

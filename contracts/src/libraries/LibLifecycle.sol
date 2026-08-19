@@ -93,6 +93,30 @@ library LibLifecycle {
         emit LoanStatusChanged(loan.id, current, to);
     }
 
+    /// @notice #1503 item 26 — terminal transition for an INTERNAL vehicle
+    ///         loan (the lender-sale transitional loan): validates the edge
+    ///         and flips the status, but runs NO metrics hook and emits NO
+    ///         `LoanStatusChanged`.
+    /// @dev    The pair of `LoanFacet._finalizeLoanCreation`'s vehicle skips:
+    ///         the vehicle was never counted into the metrics layer, never
+    ///         indexed per-user, and never announced by `LoanInitiated`, so
+    ///         the ordinary transition here would decrement an active count
+    ///         it never incremented (swap-popping an id that is not in the
+    ///         list) and hand indexers a status edge for a loan they were
+    ///         never told exists. Use ONLY for the sale vehicle — every real
+    ///         loan goes through {transition} / {transitionFromAny} so the
+    ///         #1792 safety-net event stays exhaustive for them.
+    function transitionInternalVehicle(
+        LibVaipakam.Loan storage loan,
+        LibVaipakam.LoanStatus expectedFrom,
+        LibVaipakam.LoanStatus to
+    ) internal {
+        LibVaipakam.LoanStatus current = loan.status;
+        if (current != expectedFrom) revert InvalidTransition(current, to);
+        if (!_isValid(current, to)) revert InvalidTransition(current, to);
+        loan.status = to;
+    }
+
     /// @notice Variant that accepts the current status implicitly — the
     ///         library reads `loan.status` and validates the edge without
     ///         requiring the caller to know `from`. Useful where multiple

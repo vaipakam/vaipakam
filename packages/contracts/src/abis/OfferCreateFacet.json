@@ -3070,6 +3070,11 @@
   },
   {
     "type": "error",
+    "name": "RewardMigrationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
   },

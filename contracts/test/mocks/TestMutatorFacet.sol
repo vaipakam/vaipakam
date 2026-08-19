@@ -63,6 +63,15 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().loanIdByPositionTokenId[tokenId];
     }
 
+    /// @notice #1503 item 26 test-only — the offer-side twin of the getter
+    ///         above. `MetricsFacet.getUserPositionOffers` reads this map but
+    ///         only for tokens the queried wallet still HOLDS, so it cannot
+    ///         distinguish "entry released" from "token burned"; the vehicle's
+    ///         registry handover has to be observed on the map itself.
+    function getOfferIdByPositionTokenIdRaw(uint256 tokenId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().offerIdByPositionTokenId[tokenId];
+    }
+
     /// @notice #1503 item 25 test-only (Codex #1818 r3 P2) — fabricate the
     ///         GRANDFATHERED index state a loan created before the membership
     ///         map shipped would have: no exact-regime flag, no map bits, and
@@ -439,6 +448,35 @@ contract TestMutatorFacet {
     /// @notice Write `s.heldForLender[loanId] = amount` directly.
     ///         Used by tests that need to scaffold preclose-residual
     ///         state without running a full preclose flow.
+    /// @notice Run `LibMetricsHooks.onLoanInitialized` for an existing loan
+    ///         (#1503 item 26 tests). Stages the LEGACY sale-vehicle state: a
+    ///         vehicle accepted BEFORE the paired-skip lifecycle went through
+    ///         the ordinary init and sits counted in the metrics active set,
+    ///         which is what routes its completion through the ordinary
+    ///         (decrementing, event-emitting) transition.
+    function metricsCountLoanRaw(uint256 loanId) external {
+        LibMetricsHooks.onLoanInitialized(LibVaipakam.storageSlot().loans[loanId]);
+    }
+
+    /// @notice Read `s.activeLoanIdsListPos[loanId]` (#1503 item 26 tests) —
+    ///         the exact membership marker the vehicle terminal routes on
+    ///         (1-based position; 0 = never counted).
+    function getActiveLoanListPosRaw(uint256 loanId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().activeLoanIdsListPos[loanId];
+    }
+
+    /// @notice Read the lifetime metrics counters the sale vehicle must never
+    ///         touch (#1503 item 26 tests) — `getProtocolStats` bundles them
+    ///         into a wide tuple; the tests want the two raw slots.
+    function getLifetimeLoanCountersRaw()
+        external
+        view
+        returns (uint256 totalLoansEverCreated, uint256 interestRateBpsSum)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.totalLoansEverCreated, s.interestRateBpsSum);
+    }
+
     function setHeldForLenderRaw(uint256 loanId, uint256 amount) external {
         LibVaipakam.storageSlot().heldForLender[loanId] = amount;
     }
