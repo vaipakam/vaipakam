@@ -13,6 +13,7 @@ import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibOfferBounds} from "../src/libraries/LibOfferBounds.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -1353,5 +1354,94 @@ contract LenderIntentMatchTest is SetupTest {
         assertEq(tAfter, 0, "roll de-registers the loan");
         assertEq(rAfter.length, 0, "no rollable loans after roll");
         assertGt(_intentCapital(), 0, "proceeds re-liened as intent capital");
+    }
+
+    // ─── #1503 item 17 — the DIRECT sale releases the seller's intent cap ────
+
+    /// @dev The seller exits the loan at sale time: they take the proceeds and
+    ///      hand the position to the buyer, so their standing-intent
+    ///      live-principal cap must free NOW, not at the buyer's eventual claim
+    ///      (the buyer might never claim, stranding the cap). The LISTED route
+    ///      has released here since #393 v1-b; the direct route was the gap.
+    ///      Unmocked flow on purpose — the sale really mints, so the buyer's
+    ///      position is also asserted through the user-facing Metrics view,
+    ///      which covers the item-25 rekey observably.
+    function test_directSale_releasesIntentExposure() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("dsBorrower");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        assertEq(_livePrincipal(), PRINCIPAL, "fill counted against the cap");
+        (, uint256 t0) = _rollable();
+        assertEq(t0, 1, "registered in the roll-discovery set");
+
+        // A third party posts a standing buy offer matching the loan's terms.
+        address posBuyer = _newBorrower("dsPositionBuyer");
+        LibVaipakam.Loan memory pre =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        vm.prank(posBuyer);
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: pre.interestRateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: pre.collateralAmount,
+                durationDays: pre.durationDays,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: pre.prepayAsset,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: pre.interestRateBps,
+                collateralAmountMax: pre.collateralAmount,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            loanId, buyOfferId
+        );
+
+        assertEq(
+            _livePrincipal(),
+            0,
+            "cap released at SALE time, not at the buyer's eventual claim"
+        );
+        (, uint256 t1) = _rollable();
+        assertEq(t1, 0, "de-registered from the roll-discovery set");
+
+        LibVaipakam.Loan memory post =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(post.lender, posBuyer, "sale completed to the buyer");
+
+        // #1503 item 25, observable half — the buyer can FIND the position
+        // they just paid for through the token-keyed reverse index.
+        (uint256[] memory loanIds, uint256[] memory tokenIds) =
+            MetricsFacet(address(diamond)).getUserPositionLoans(posBuyer);
+        bool found;
+        for (uint256 i = 0; i < loanIds.length; i++) {
+            if (loanIds[i] == loanId && tokenIds[i] == post.lenderTokenId) {
+                found = true;
+            }
+        }
+        assertTrue(found, "buyer's new position token resolves to the loan");
     }
 }

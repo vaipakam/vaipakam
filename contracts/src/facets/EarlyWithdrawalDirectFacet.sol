@@ -22,6 +22,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 
 /**
@@ -421,6 +422,29 @@ contract EarlyWithdrawalDirectFacet is
         // loan. The full held is re-reserved on the new lender after the
         // position migrates (see end of this block).
         LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+        // #1503 design item 17 — release the seller's standing-intent live-
+        // principal cap, exactly as the listed route has done since #393 v1-b.
+        // The seller EXITS the loan here too: they take the sale proceeds and
+        // hand the position to the buyer, so holding their cap until the buyer
+        // eventually claims strands it against a claim the buyer might never
+        // make. Keyed off the ORIGINATING intent so it frees the original
+        // owner's counter and deletes the marker.
+        //
+        // Gated on the same cheap per-loan origin check, so a loan that came
+        // from no intent skips the cross-facet hop entirely — no wasted gas, and
+        // no dependency on `LenderIntentFacet` being routed.
+        //
+        // This is the guard-remembered-twice shape recorded on #1503: the
+        // release exists, is correct, and was simply never applied to the direct
+        // sibling — like the GTT expiry (#1772) and the offset guard (#1813).
+        if (s.intentOrigin[loanId].owner != address(0)) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    LenderIntentFacet.releaseIntentExposure.selector, loanId
+                ),
+                bytes4(0)
+            );
+        }
         // #998 S10 Class B (Codex fresh-round P2) — migrate the dedicated
         // active-held reservation off the OLD lender NOW, BEFORE the `priorHeld`
         // withdrawal below: `vaultWithdrawERC20` subtracts `encumbered[oldLender]`,

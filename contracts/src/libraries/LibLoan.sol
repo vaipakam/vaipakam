@@ -79,8 +79,40 @@ library LibLoan {
         );
         LibRevert.bubbleOnFailureTyped(success, data, IVaipakamErrors.NFTMintFailed.selector);
 
+        // #1503 design item 25 — carry the reverse index with the position.
+        // `loanIdByPositionTokenId` is written in exactly one other place,
+        // `LibMetricsHooks` at loan creation, and nothing refreshed it when a
+        // position migrated. So after any lender sale the BUYER's new token id
+        // resolved to 0 through `MetricsFacet.getLoanIdByPositionTokenId` and the
+        // paginated position views built on it, while the SELLER's superseded
+        // token id still resolved to this loan — the buyer could not find the
+        // position they had just paid for, and the index answered with the party
+        // who no longer held it.
+        //
+        // Done here rather than at each sale path deliberately: this helper is
+        // the single point every lender migration passes through, and the same
+        // omission would otherwise have to be remembered separately by the
+        // listed route, the direct route, and anything added later. That is the
+        // shape of the guard-remembered-twice defect recorded on #1503.
+        _rekeyPositionIndex(s, loan.lenderTokenId, newTokenId, loanId);
+
         loan.lender = newLender;
         loan.lenderTokenId = newTokenId;
+    }
+
+    /// @dev Moves `loanIdByPositionTokenId` from a superseded position token to
+    ///      the token that replaces it. Both halves matter: the stale entry has
+    ///      to go, or a burned token keeps resolving to a live loan, and the new
+    ///      entry has to exist, or the current holder's token resolves to
+    ///      nothing.
+    function _rekeyPositionIndex(
+        LibVaipakam.Storage storage s,
+        uint256 oldTokenId,
+        uint256 newTokenId,
+        uint256 loanId
+    ) private {
+        if (oldTokenId != 0) delete s.loanIdByPositionTokenId[oldTokenId];
+        if (newTokenId != 0) s.loanIdByPositionTokenId[newTokenId] = loanId;
     }
 
     /// @dev Replaces the borrower on an existing loan. Symmetric to
@@ -119,6 +151,18 @@ library LibLoan {
             )
         );
         LibRevert.bubbleOnFailureTyped(success, data, IVaipakamErrors.NFTMintFailed.selector);
+
+        // #1503 design item 25, borrower side. The item is written about lender
+        // migration, because that is where the sale routes surfaced it — but the
+        // index is keyed by POSITION TOKEN, not by side, and this function
+        // supersedes a borrower token exactly the same way. An obligation
+        // transfer left the incoming borrower's token resolving to nothing and
+        // the departed borrower's still resolving to the loan.
+        //
+        // Fixed here rather than filed as a second item: it is the same defect
+        // in the symmetric half of the same helper, and splitting it would leave
+        // a known gap open for the sake of matching the audit's wording.
+        _rekeyPositionIndex(s, loan.borrowerTokenId, newTokenId, loanId);
 
         loan.borrower = newBorrower;
         loan.borrowerTokenId = newTokenId;

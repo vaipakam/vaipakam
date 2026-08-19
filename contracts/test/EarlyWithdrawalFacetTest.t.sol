@@ -564,6 +564,45 @@ contract EarlyWithdrawalFacetTest is Test {
         assertEq(loan.lender, newLender);
     }
 
+    /// @dev #1503 item 25 — a lender migration must carry the position-token →
+    ///      loan reverse index with it. `loanIdByPositionTokenId` was written
+    ///      only at loan creation, so after a sale the buyer's fresh token
+    ///      resolved to nothing while the seller's superseded (burned) token
+    ///      still resolved to the live loan — the Metrics position views built
+    ///      on the index answered with the party who no longer held it.
+    ///      Raw-read probe on purpose: this file's diamond mocks mint/burn, so
+    ///      the tokens are not enumerable and the ERC721-walking views cannot
+    ///      see the rekey.
+    function testSellLoanRekeysPositionIndex() public {
+        uint256 oldTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(oldTokenId),
+            activeLoanId,
+            "precondition: creation indexed the seller's token"
+        );
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+
+        uint256 newTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
+        assertTrue(newTokenId != oldTokenId, "migration minted a fresh token id");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(newTokenId),
+            activeLoanId,
+            "buyer's token resolves to the loan"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(oldTokenId),
+            0,
+            "seller's superseded token no longer resolves"
+        );
+    }
+
     // ─── #1503 item 28: settled interest nets out of the forfeiture ──────────
     //
     // Periodic auto-liquidation forwards interest to the lender through

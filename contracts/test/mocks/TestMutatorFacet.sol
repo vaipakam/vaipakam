@@ -53,6 +53,15 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().offerIdToLoanId[offerId] = loanId;
     }
 
+    /// @notice #1503 item 25 test-only — read the position-token → loan reverse
+    ///         index directly. The migration tests mock `mintNFT`/`burnNFT`
+    ///         (their diamonds are built per test file), so the burned/minted
+    ///         tokens are not enumerable and the ERC721-walking Metrics views
+    ///         cannot observe the rekey; this raw read can.
+    function getLoanIdByPositionTokenIdRaw(uint256 tokenId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().loanIdByPositionTokenId[tokenId];
+    }
+
     /// @notice RL-1 test-only — force the mandatory-vault-upgrade gate
     ///         without deploying a fresh implementation, so tests can put a
     ///         claimant's vault below `mandatoryVaultVersion` and assert the
