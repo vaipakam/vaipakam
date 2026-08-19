@@ -24,7 +24,7 @@ other under-priced on every fee the tier touches.
 
 Both sale routes — the instant sale into a standing offer and the completion
 of a listed sale — now refresh the seller's and the buyer's tier records at
-settlement, at their true post-sale balances, the same way every other vault
-movement already did.
+settlement, at their true post-sale balances, the same way the vault flows
+the tier system already instruments do.
 
 Part of #1503 (item 27); tracked as #1817.
