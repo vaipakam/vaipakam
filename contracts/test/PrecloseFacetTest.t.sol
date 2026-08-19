@@ -1561,7 +1561,11 @@ contract PrecloseFacetTest is Test {
     }
 
     /// @dev #1001 (S3, Codex #1070) — while an offset is live, listing the lender
-    ///      position for sale is rejected (two concurrent close-outs of one loan).
+    ///      position for sale is rejected: a sale starts its own settlement of a
+    ///      loan that already has one in flight. (Wording corrected in #1503 item
+    ///      21 — this used to say "two concurrent close-outs", which reads as
+    ///      though the position changing hands is the problem. It is not; a bare
+    ///      lender-NFT transfer during a live offset is supported.)
     function testCreateLoanSaleRejectedWhileOffsetLive() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);

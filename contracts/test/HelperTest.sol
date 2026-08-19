@@ -352,6 +352,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.getForfeitedLenderEntryIds.selector;
         selectors[n++] = TestMutatorFacet.setOfferConsumedBySaleRaw.selector; // #955
         selectors[n++] = TestMutatorFacet.setLoanToSaleOfferIdRaw.selector; // #951 (Codex #959 r5)
+        selectors[n++] = TestMutatorFacet.setLoanToOffsetOfferIdRaw.selector; // #1503 item 21
         selectors[n++] = TestMutatorFacet.tierLiquidationLtvBpsFor.selector; // #999 (S1) tier-0 remap probe
         selectors[n++] = TestMutatorFacet.setRentalBufferBpsRaw.selector; // #1004 (S8) rental late-fee buffer cap
         selectors[n++] = TestMutatorFacet.setLoanInitMaxLtvBpsRaw.selector; // #900 (S15) per-asset init-LTV cap
