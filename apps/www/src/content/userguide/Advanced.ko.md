@@ -619,8 +619,10 @@ bearer instrument입니다 — claim 전에 transfer하면 새 holder가 collect
 Lender claim은 다음을 반환합니다:
 
 - 이 chain의 내 wallet으로 돌아오는 principal.
-- accrued interest minus `{liveValue:treasuryFeeBps}`% treasury cut. consent가 on이면 그 cut 자체가
-  time-weighted VPFI fee-discount accumulator에 의해 더 줄어듭니다.
+- accrued interest에서, loan 생성 시 고정된 treasury cut(현재
+  요율로 생성된 loan은 `{liveValue:treasuryFeeBps}`%)을 뺀 금액.
+  consent가 on이면 그 cut 자체가 time-weighted VPFI fee-discount
+  accumulator에 의해 더 줄어듭니다.
 
 loan이 terminal state(Settled, Defaulted, 또는 Liquidated)에 도달하는
 즉시 claimable해집니다. Lender position NFT는 같은 transaction에서
@@ -887,9 +889,10 @@ role과 관계없이 누구나 사용할 수 있는 permissionless actions:
 
 #### 내가 lender인 경우
 
-- **Lender로 claim** — terminal state 전용. Principal plus interest minus `{liveValue:treasuryFeeBps}`%
-  treasury cut을 반환합니다(consent가 on이면 time-weighted VPFI yield-fee
-  discount로 더 줄어듭니다). Lender position NFT를 burn합니다.
+- **Lender로 claim** — terminal state 전용. Principal plus interest에서
+  loan 생성 시 고정된 treasury cut(현재 요율로 생성된 loan은
+  `{liveValue:treasuryFeeBps}`%)을 빼고 반환합니다(consent가 on이면
+  time-weighted VPFI yield-fee discount로 더 줄어듭니다). Lender position NFT를 burn합니다.
 - **Early withdrawal 시작** — 선택한 asking price로 lender position NFT를
   sale listing합니다. sale을 complete한 buyer가 내 side를 인수하고, 나는
   proceeds를 받습니다. sale이 fill되기 전에는 cancel할 수 있습니다.

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
@@ -843,6 +844,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         _copyPartyFields(loan, offer, acceptor);
         _snapshotLenderDiscount(loan);
         _snapshotBorrowerDiscount(loan);
+        // #1801 r9 — record the principal this loan opens at, so the FIRST
+        // delivery stamp has a baseline to detect an earlier principal change
+        // against. Without it a change between origination and the first
+        // settlement is invisible, and that settlement installs a mark that
+        // looks valid while excluding interest accrued on the larger principal.
+        // No mark is set: a loan that has paid its lender nothing forfeits from
+        // the accrual origin, which a zero mark already means.
+        LibEntitlement.baselineMark(LibVaipakam.storageSlot(), loanId);
         // A lender-sale-vehicle accept (offer mapped to an underlying loan)
         // skips the LIF charge, so the receipt must NOT record one.
         _snapshotFeeBps(

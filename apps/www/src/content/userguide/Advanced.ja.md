@@ -672,9 +672,10 @@ NFT *こそ* bearer instrument です — claim 前に transfer すると、
 Lender claim は次を返します:
 
 - principal がこの chain 上のあなたの wallet に戻ります。
-- accrued interest minus `{liveValue:treasuryFeeBps}`% treasury cut。同意が on の場合、その
-  cut 自体があなたの time-weighted VPFI fee-discount accumulator
-  によってさらに減ります。
+- accrued interest から、loan 作成時に固定された treasury cut
+  (現在のレートで作成された loan は `{liveValue:treasuryFeeBps}`%)
+  を差し引いた額。同意が on の場合、その cut 自体があなたの
+  time-weighted VPFI fee-discount accumulator によってさらに減ります。
 
 loan が terminal state (Settled、Defaulted、Liquidated) に達すると
 すぐに claimable になります。Lender position NFT は同じ transaction
@@ -958,8 +959,10 @@ role に関係なく誰でも利用できる permissionless actions:
 #### あなたが lender の場合
 
 - **Lender として claim** — terminal state のみ。Principal plus interest
-  minus `{liveValue:treasuryFeeBps}`% treasury cut を返します (consent on の場合は
-  time-weighted VPFI yield-fee discount でさらに減ります)。
+  から、loan 作成時に固定された treasury cut (現在のレートで
+  作成された loan は `{liveValue:treasuryFeeBps}`%) を差し引いて
+  返します (consent on の場合は time-weighted VPFI yield-fee
+  discount でさらに減ります)。
   Lender position NFT を burn します。
 - **Early withdrawal を開始** — 選んだ asking price で lender
   position NFT を sale listing します。sale を complete した buyer

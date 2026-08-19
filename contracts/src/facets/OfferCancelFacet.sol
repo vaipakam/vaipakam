@@ -235,6 +235,8 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             LibERC721._unlock(s.loans[lockedSaleLoanId].lenderTokenId);
             delete s.saleOfferToLoanId[offerId];
             delete s.loanToSaleOfferId[lockedSaleLoanId];
+            // #1503 item 4 — bounds die with the listing they describe.
+            LibSaleListing.clearSellerBounds(s, lockedSaleLoanId);
             // #951 v2 (Codex #959 bind-to-live) — no collateral snapshot to clear
             // (removed; the accept binds `>=` live collateral directly).
             //

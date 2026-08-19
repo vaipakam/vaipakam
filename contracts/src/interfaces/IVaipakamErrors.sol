@@ -997,6 +997,33 @@ interface IVaipakamErrors {
     /// @notice The rate difference between the live loan and the sale vehicle
     ///         would cost the exiting lender more than the principal itself.
     error RateShortfallTooHigh();
+    /// @notice #1503 item 4 — completing this sale would pay the exiting lender
+    ///         less than the floor they recorded when they listed.
+    /// @dev    Raised when the settlement cost has grown past what the seller
+    ///         authorised. Ordinary accrual across the listing window CANNOT
+    ///         trip this: the floor is derived at BOTH ends of the listing
+    ///         window — whichever is worse for the seller, plus truncation
+    ///         slack — so the whole window is inside it. What trips it is a step change
+    ///         the seller never reviewed — a principal movement, or interest
+    ///         parked rather than delivered, either of which disqualifies the
+    ///         paid-through mark and re-opens the forfeiture window earlier.
+    ///
+    ///         The remedy is to cancel and relist at the new economics, NOT to
+    ///         relax the bound: the larger cost is real, and the seller has
+    ///         simply not agreed to it.
+    /// @param minSellerNet The floor recorded on the listing.
+    /// @param actual       What completion would actually pay the seller.
+    error SaleBelowSellerFloor(uint256 minSellerNet, uint256 actual);
+    /// @notice #1503 item 4 — completing this sale would hand the buyer more
+    ///         held-for-lender balance than there was when the seller listed.
+    /// @dev    That balance is money already set aside for the lender which
+    ///         transfers with the position, so a park between listing and
+    ///         acceptance silently enlarges what the seller gives up. Unlike
+    ///         the forfeiture it does not grow with time, so the recorded value
+    ///         is simply the balance at listing.
+    /// @param maxHeld The ceiling recorded on the listing.
+    /// @param actual  The balance that would transfer now.
+    error SaleAboveHeldCeiling(uint256 maxHeld, uint256 actual);
     /// @notice #951 (Codex #959) — a loan already has a live sale listing. Only
     ///         one listing per loan at a time: `loanToSaleOfferId` is cleared on
     ///         cancel (OfferCancelFacet) and on completion, so a re-list after

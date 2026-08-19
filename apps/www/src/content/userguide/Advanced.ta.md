@@ -689,8 +689,11 @@ NFT *தான்* bearer instrument — claim செய்வதற்கு �
 Lender claim திருப்பித் தருவது:
 
 - இந்த chain-இல் உங்கள் principal மீண்டும் wallet-க்கு.
-- Accrued interest minus `{liveValue:treasuryFeeBps}`% treasury cut. Consent on ஆக இருக்கும்போது
-  cut-ஐ உங்கள் time-weighted VPFI fee-discount accumulator குறைக்கிறது.
+- Accrued interest-இல் இருந்து, உங்கள் loan உருவாக்கப்பட்டபோது
+  நிலைநிறுத்தப்பட்ட treasury cut கழிக்கப்படும் (தற்போதைய
+  விகிதத்தில் உருவாக்கப்படும் loans-க்கு
+  `{liveValue:treasuryFeeBps}`%). Consent on ஆக இருக்கும்போது cut-ஐ
+  உங்கள் time-weighted VPFI fee-discount accumulator குறைக்கிறது.
 
 Loan terminal state-ஐ (Settled, Defaulted, அல்லது Liquidated) எட்டியவுடன்
 claimable. Lender position NFT அதே transaction-இல் burn செய்யப்படும்.
@@ -981,8 +984,11 @@ Role-இப் பொருட்படுத்தாமல் யாரும�
 #### நீங்கள் lender-ஆக இருந்தால்
 
 - **Claim as lender** — Terminal state-இல் மட்டும். Principal மற்றும் interest minus
-  `{liveValue:treasuryFeeBps}`% treasury cut-ஐ திருப்பித் தருகிறது (consent on ஆக இருக்கும்போது
-  உங்கள் time-weighted VPFI yield-fee discount-ஆல் மேலும் குறையும்).
+  உங்கள் loan உருவாக்கப்பட்டபோது நிலைநிறுத்தப்பட்ட treasury cut-ஐ
+  கழித்து திருப்பித் தருகிறது (தற்போதைய விகிதத்தில் உருவாக்கப்படும்
+  loans-க்கு `{liveValue:treasuryFeeBps}`%; consent on ஆக
+  இருக்கும்போது உங்கள் time-weighted VPFI yield-fee discount-ஆல்
+  மேலும் குறையும்).
   Lender position NFT-ஐ burn செய்கிறது.
 - **Initiate early withdrawal** — asking price-இல் lender position NFT-ஐ
   விற்பனைக்கு list செய்கிறது. விற்பனையை நிறைவு செய்யும் buyer உங்கள்

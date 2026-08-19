@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibEntitlement} from "../../src/libraries/LibEntitlement.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {LibEncumbrance} from "../../src/libraries/LibEncumbrance.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
@@ -371,6 +372,95 @@ contract TestMutatorFacet {
     ///         state without running a full preclose flow.
     function setHeldForLenderRaw(uint256 loanId, uint256 amount) external {
         LibVaipakam.storageSlot().heldForLender[loanId] = amount;
+    }
+
+    /// @notice Clear a listing's #1503 item-4 seller bounds (#1503 item 4).
+    /// @dev    Stages the LEGACY case: a listing created before the bounds
+    ///         existed records none, and the recorded-flag is what tells that
+    ///         apart from a listing whose ceiling is legitimately zero.
+    function clearSaleListingBoundsRaw(uint256 loanId) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        delete s.saleListingMinSellerNet[loanId];
+        delete s.saleListingMaxHeldTransfer[loanId];
+        delete s.saleListingBoundsRecorded[loanId];
+        delete s.saleListingBoundsExpiry[loanId];
+    }
+
+    /// @notice Write `s.saleProceedsEscrow[loanId] = amount` directly.
+    /// @dev #1503 item 28 — the listed sale route's net settlement only runs when
+    ///      the buyer's principal is escrowed, which happens on a real listing
+    ///      accept. Tests that scaffold a completion from `_setupTempLoan` never
+    ///      reach that, so the whole payout fan-out was unreachable and no test
+    ///      could observe what the seller is actually charged.
+    function setSaleProceedsEscrowRaw(uint256 loanId, uint256 amount) external {
+        LibVaipakam.storageSlot().saleProceedsEscrow[loanId] = amount;
+    }
+
+    /// @notice Write the #1503 item-28 lender paid-through mark directly.
+    /// @dev Reaching it for real needs a periodic servicing run whose shortfall
+    ///      auto-liquidates — and, for the frozen case, one against a
+    ///      registry-flagged lender, which the unit harness has no oracle for.
+    ///      Seeding the mark exercises exactly what the sale routes read: the
+    ///      forfeiture window opens at this mark once it is non-zero, and at the
+    ///      accrual origin only while it is zero.
+    ///      Frozen interest is represented by leaving the mark where it was (the
+    ///      freeze branch never advances it); a previous lender's tenure by
+    ///      setting the mark to when their tenure ended.
+    ///      Seeds through the SHARED writer (#1801), so the recorded principal
+    ///      lands with the mark exactly as a real delivery would leave it. A
+    ///      mark seeded without its principal would be disqualified on read and
+    ///      every test using this would silently exercise the fallback instead.
+    function setLenderPaidThroughRaw(uint256 loanId, uint256 paidThroughAt)
+        external
+    {
+        LibEntitlement.stampInterestDelivered(
+            LibVaipakam.storageSlot(), loanId, paidThroughAt
+        );
+    }
+
+    /// @notice Seed the mark WITHOUT its principal companion (#1801).
+    /// @dev For the disqualification case only: proves a mark whose recorded
+    ///      principal no longer matches the live one is discarded in favour of
+    ///      the full-accrual charge. Reaching it for real means a principal
+    ///      decrement after a delivery — one of eight sites across five facets —
+    ///      which the unit harness cannot stage without a servicing run.
+    function setLenderPaidThroughWithPrincipalRaw(
+        uint256 loanId,
+        uint256 paidThroughAt,
+        uint256 markPrincipal
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.lenderInterestDeliveredThroughAt[loanId] = paidThroughAt;
+        s.lenderMarkPrincipalAt[loanId] = markPrincipal;
+    }
+
+    /// @notice Set or clear the sticky freeze void on a loan's mark (#1801).
+    /// @dev The real setter is every Active-loan lender-share park; staging one
+    ///      needs a registry-flagged holder the unit harness has no oracle for.
+    function setLenderMarkVoidedRaw(uint256 loanId, bool voided)
+        external
+    {
+        LibVaipakam.storageSlot().lenderMarkVoided[loanId] = voided;
+    }
+
+    /// @notice Seed this lender's tenure floor directly (#1801 r13).
+    /// @dev    The real setters are loan origination and a completed position
+    ///         sale. Staging a real sale inside this suite's scaffolded
+    ///         completions is what the escrow setter exists for; seeding the
+    ///         floor alone isolates what the DISQUALIFIED path reads.
+    function setLenderTenureStartRaw(uint256 loanId, uint256 at) external {
+        LibVaipakam.storageSlot().lenderTenureStart[loanId] = at;
+    }
+
+    /// @notice Re-base a loan's interest-accrual clock directly (#1801 r12).
+    /// @dev    The real setter is `repayPartial` / swap-to-repay, which re-base
+    ///         the borrower's obligation while paying the lender nothing when
+    ///         their share is frozen. Staging the frozen half for real needs a
+    ///         registry-flagged holder the unit harness has no oracle for, so
+    ///         the two halves are seeded separately: this moves the clock, and
+    ///         {setLenderMarkVoidedRaw} records the freeze.
+    function setInterestAccrualStartRaw(uint256 loanId, uint64 at) external {
+        LibVaipakam.storageSlot().loans[loanId].interestAccrualStart = at;
     }
 
     /// #594 test — append a loanId to a user's loan index directly (to set up
@@ -1580,17 +1670,23 @@ contract TestMutatorFacet {
     ///         pay-or-freeze bookkeeping can be asserted in isolation. Runs as a
     ///         facet (msg.sender == diamond), so the `onlyDiamondInternal` host
     ///         accepts the routed self-call.
+    /// @param deliveredThroughAt #1503 item 28 — the paid-through boundary the
+    ///        host records on the CLEAN branch. Exposed on the driver rather than
+    ///        pinned to zero so a test can assert the mark moves on a clean payout
+    ///        and does NOT move on a frozen one, which is the whole distinction.
     function callFreezeOrPayActiveLenderResident(
         uint256 loanId,
         address asset,
-        uint256 amount
+        uint256 amount,
+        uint256 deliveredThroughAt
     ) external {
         _selfCall(
             abi.encodeWithSelector(
                 EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
                 loanId,
                 asset,
-                amount
+                amount,
+                deliveredThroughAt
             )
         );
     }

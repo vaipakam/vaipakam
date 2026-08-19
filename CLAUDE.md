@@ -205,6 +205,7 @@ registering these can be correct:
 | Place | Condition |
 | --- | --- |
 | `contracts/script/RedeployFacets.s.sol` | only if the facet belongs to one of that script's curated refresh families — it is a *curated* partial refresh, not an all-facets one |
+| `contracts/script/lib/FacetSelectors.sol` **+ a matching case in `contracts/test/deploy/RedeploySelectorParityTest.t.sol`** | only when the facet ALREADY HAS a getter in `FacetSelectors` — that is the condition, not "the curated scripts cut it", which is true of far more facets than the library covers (`ReplaceStaleFacets` cuts `ConfigFacet`, `OfferAcceptFacet` and others through `DeployDiamond`'s inherited getters, and those need nothing here). A brand-new facet needs a getter only if you are adding it to a curated script's set. These are ONE step, not a step and its guard: the parity test enumerates each facet BY HAND, so adding a getter without adding its case compiles happily and leaves that selector list entirely unpinned. The same list must also be updated when a covered facet gains, loses or renames an external FUNCTION — see "When you add a function to a facet" below |
 | `contracts/script/exportFrontendAbis.sh` (`FACETS=(...)`) | only if an app actually consumes the facet's ABI. Internal facets are deliberately excluded — `ReceiverFacet` is not in that array and should not be |
 | `packages/contracts/src/abis/index.ts` | only alongside the entry above — the export script does **not** touch this barrel |
 
@@ -224,18 +225,102 @@ The last two are covered in more detail in "Frontend ABI sync" **below**.
   accepts), and compares the refresh's **selector set** against the Diamond the
   deploy script actually builds — so a same-count *swap* of one facet for
   another cannot pass either.
-- **`DeployDiamond`'s `writeFacet` omission is invisible to
-  `predeploy-check`.** Step 4b validates that every key *written* to the
-  deployment artifact is typed on `Deployment`; it is structurally blind to a
-  key never written, so the gate reports success. Still unguarded — tracked in
-  #1793. The consequence is an inconvenience rather than a lost address: the
-  implementation is still recoverable on-chain via
+- **`DeployDiamond`'s `writeFacet` omission is invisible to `predeploy-check`.**
+  Step 4b validates that every key *written* to the deployment artifact is typed
+  on `Deployment`; it is structurally blind to a key never written, so the gate
+  reports success. #1793 assumed one facet was in that state; building a check
+  for it found **thirteen** — all already typed on `Deployment`, because
+  `RefreshAllFacetsInPlace` writes all 73 keys through `items[i].key`, so only a
+  never-refreshed chain was missing them. Those thirteen writes are now in the
+  deploy script.
+
+  **There is no automated guard against this recurring yet**, and that is a
+  deliberate, recorded position rather than an oversight. A step-4c that read
+  the deploy scripts as text was written and then withdrawn: review found
+  thirteen distinct ways to get a registration past it, and each fix opened the
+  next. Proving "this registration executes, under this identity, on every
+  chain" is a question about scope, control flow and aliasing, and a shell
+  parser reading lines of Solidity cannot answer it — it was reaching a green
+  verdict it had not earned, which on a pre-deploy gate is worse than no gate.
+  **#1800** replaces it with the assertion that needs no parsing: run the deploy
+  with artifact writing on and require every address `facetAddresses()` reports
+  to appear in the JSON it wrote. The refresh-key-identity check
+  (`RefreshScriptFacetParityTest` documents it as out of its own scope) goes
+  there too.
+
+  Note also that this class of omission is an inconvenience rather than a lost
+  address — the implementation stays recoverable on-chain via
   `DiamondLoupeFacet.facetAddress(bytes4)` / `facetAddresses()` from any known
-  selector, as well as from broadcast logs.
+  selector, and from broadcast logs.
 
 **When you add a function to a facet**: add its selector to the matching
 `_get<Facet>Selectors()` in `DeployDiamond.s.sol` (and `HelperTest.sol`) —
 `SelectorCoverageTest` fails otherwise.
+
+There is a **third** registration site, and only for some facets, which is why
+it is easy to miss: `contracts/script/lib/FacetSelectors.sol` carries the FULL
+external surface of the facets the curated redeploy scripts cut — the library's
+getters are the list, so read them there rather than trusting a copy here.
+Adding an external function to any of those facets means adding
+its selector there too. `RedeploySelectorParityTest` pins each list to the
+compiled ABI's `methodIdentifiers` **exactly** — same size, nothing missing,
+nothing extra — so the omission fails the deploy-sanity suite rather than
+passing silently. Facets outside that set need nothing here.
+
+**Deleting or renaming a function needs more than deleting the line.** Dropping
+a selector from the library turns the parity test green and simultaneously makes
+the curated script blind to that selector — so its OLD route stays live on the
+stale implementation, which is the split Diamond again by the opposite door. A
+retired selector needs an explicit `FacetCutAction.Remove` leg, the way
+`RedeployFacets` handles the retired `uint8` keeper signatures via
+`_legacyProfileRemovedSelectors()`. The library update is necessary and not
+sufficient.
+
+**`RiskPreviewFacet` has a FOURTH copy of its surface**, and it is a shell
+array: `contracts/script/rehearse-partial-refresh.sh` hard-codes
+`RISK_PREVIEW_SELECTORS`, and `assert_risk_preview_routed` iterates only that
+array. Its own comment claims it is "the same set the refresh scripts cut",
+which is true only for as long as somebody keeps it so. Add the new selector
+there too, or the rehearsal reports that *all* selectors share one host while
+never having looked at the one you just added — a passing check that has stopped
+checking the thing you changed.
+
+(One exception, and it is in the test rather than the rule: `vaipakamNFT` is
+pinned to the facet's ROUTED surface, which is its compiled ABI minus
+`supportsInterface(bytes4)` — that selector is compiled into the facet but cut
+to `DiamondLoupeFacet` instead.)
+
+Why the list exists at all (findings #778 / #779): a `Replace` diamondCut must
+carry a facet's WHOLE routed surface, because an ALREADY-ROUTED selector left
+out of the cut stays pointed at the OLD implementation — a split Diamond running
+two versions of one facet. The curated scripts used to hand-list partial subsets
+and drift.
+
+**A newly ADDED function fails differently, and the distinction matters when you
+are reading a revert.** Its selector was never routed, so omitting it cannot
+strand it on old bytecode; it stays unrouted and calls revert
+`FunctionDoesNotExist` through the Diamond fallback. It also cannot go in a
+`Replace` at all — `Replace` requires an existing route — which is why the
+production scripts partition each list by live routing and put unrouted
+selectors in an `Add` cut. Reserve "split Diamond" for the stale-selector case;
+the new-function case is a hard revert, not a silent divergence.
+
+**Which script reads which list is uneven, and worth knowing before trusting a
+green parity test.** `RedeployFacets.s.sol` reads most of them;
+`UpgradeOracleFacet.s.sol` reads `oracle`. But `offerPreview` has **no script
+consumer at all** — it is read only by tests — and `ReplaceStaleFacets.s.sol`
+does not import this library at all. Its Oracle, VaultFactory, RiskPreview and
+OfferPreview cuts use `_getOracleSelectors()`, `_getVaultFactorySelectors()`,
+`_getRiskPreviewFacetSelectors()` and `_getOfferPreviewSelectors()` inherited
+from `DeployDiamond`, while their parity cases check the separate
+`FacetSelectors` getters.
+
+So for those four facets, updating `FacetSelectors` satisfies the parity test
+while the `ReplaceStaleFacets` cut is still driven by `DeployDiamond`'s own
+lists. **Update both, and do not read a green parity test as proof that a
+`ReplaceStaleFacets` cut is complete.** `grep` for the getter to see who
+actually consumes it rather than assuming the library is the single source
+everywhere — it is for some of these facets and not for all.
 
 The deploy-*integration* test that Issue #72 asked for **already exists** and
 runs in the deploy-sanity suite:

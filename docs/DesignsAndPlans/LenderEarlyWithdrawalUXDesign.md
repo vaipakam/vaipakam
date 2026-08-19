@@ -519,6 +519,172 @@ than a growing list of patches on generic-offer consumption.
    the line "unbounded" is disclosure, not authorization, and this section
    already treats disclosure as insufficient for an uncapped wallet debit
    or reward loss.
+
+   > **Scoping note, verified against the code (2026-08-18).** The three
+   > parts are not in the same state, so implementing item 4 should not
+   > treat them as one job.
+   >
+   > Parts one and two — the settlement forfeiture and the transferring
+   > held balance — are genuinely unbounded today. `createLoanSaleOffer`
+   > takes a loan id, a rate, a consent flag and a listing window; it
+   > stores no economic bound of any kind, and completion recomputes both
+   > figures at the acceptance block. These need the stored bound this
+   > item asks for.
+   >
+   > Part three is **already bounded in the form this item itself
+   > permits** — "a maximum cutoff day". The listing carries a MANDATORY
+   > finite expiry, seller-chosen within one hour to thirty days and
+   > additionally clamped at the loan's own maturity, and `acceptOffer`
+   > refuses an expired listing. On the ordinary route, completion runs
+   > inside that accept, so the reward drift between what the seller
+   > reviewed and what acceptance forfeits cannot exceed the window the
+   > seller picked. The manual `completeLoanSale` entry is
+   > lender-side-gated, so the seller invoking it later is fresh
+   > authorization rather than a race.
+   >
+   > One residual, and it is narrow but real: an **approved keeper**
+   > holding the `CompleteLoanSale` bit can sit on an accepted sale and
+   > complete it after the window, inflating the forfeiture past what the
+   > seller reviewed. That is the same keeper-authority concern this
+   > document raises separately, and it argues for a completion deadline
+   > on the manual path rather than for a reward-denominated bound.
+   >
+   > The practical consequence: a reward-forfeiture *figure* stored on the
+   > listing would duplicate a cap that already exists and binds. State
+   > this reasoning in the implementing PR so it can be challenged —
+   > silently shipping two of three parts and calling it item 4 is exactly
+   > the "disclosure as resolution" move this item warns against.
+   >
+   > **How the two live bounds are derived (decided 2026-08-18).** The
+   > floor cannot be the figure the seller sees on screen. Accrued
+   > interest grows across the listing window, so their net shrinks, and a
+   > floor set at the displayed value would make the listing unfillable
+   > almost immediately. The enforceable floor is the WORST CASE they are
+   > accepting: the same settlement arithmetic evaluated at the listing's
+   > own expiry. "If this fills at any time before it expires, you receive
+   > at least X" is both a true sentence to show them and a bound the
+   > contract can check. It is computable only because the mandatory
+   > finite expiry exists, which is the second place that lifecycle change
+   > turns out to be load-bearing here.
+   >
+   > The ceiling takes the opposite shape, because the held balance does
+   > not grow with time. It grows only when a partial or internal
+   > settlement parks more into it between listing and acceptance —
+   > precisely the drift this item exists to refuse. So the ceiling is the
+   > balance as it stands at listing, and any new park fails the sale
+   > rather than silently enlarging what transfers to the buyer.
+   >
+   > **Revised after the item-28 forfeiture rework landed (2026-08-18,
+   > post-#1801).** The paragraph above assumed the settlement cost drifts
+   > only by CONTINUOUS accrual, so that evaluating it at the expiry is a
+   > true upper bound. That is no longer the whole picture, and the change
+   > makes item 4 stronger rather than harder.
+   >
+   > The forfeiture is now measured over a WINDOW that opens at the
+   > lender's recorded paid-through mark, and that mark is disqualified —
+   > wholesale, for the rest of the lender's tenure — by a principal
+   > change, by interest parked rather than delivered, or by a missing
+   > origination baseline. When a disqualifier fires, the window's opening
+   > point jumps EARLIER. So between listing and acceptance the settlement
+   > cost can move in two unrelated ways: it grows continuously with
+   > accrual, and it can step up discretely if the position is
+   > disqualified.
+   >
+   > The floor should NOT be widened to absorb that step. Deriving it from
+   > the worst reachable opening point (the tenure floor) would price every
+   > listing as though it had already been disqualified, which is a large,
+   > permanent overcharge to cover an event that usually does not happen.
+   > The correct behaviour is the one the floor already produces: a
+   > disqualification between listing and acceptance breaks the bound and
+   > the sale fails. That is not a defect to design around — it is exactly
+   > what the seller did not authorize, refused for the same reason a new
+   > park is refused.
+   >
+   > Stated that way the two bounds turn out to be complementary rather
+   > than overlapping, and it is worth checking that neither is redundant:
+   > a PARK both enlarges the held balance (caught by the ceiling) and
+   > voids the mark (caught by the floor), but a PRINCIPAL CHANGE voids the
+   > mark while parking nothing, so the floor catches a case the ceiling
+   > cannot see. Both are needed.
+   >
+   > One consequence to carry into the implementing PR: the floor is now
+   > sensitive to events that have nothing to do with the sale, so a
+   > listing can become unfillable through ordinary borrower activity — a
+   > partial repayment is enough. That is the right outcome, but it must be
+   > SURFACED. The seller's own listing card should say why a live listing
+   > can no longer complete, and the remedy is to cancel and relist at the
+   > new economics rather than to loosen the bound.
+   >
+   > **Where the seller's quote comes from (decided 2026-08-18, as
+   > implemented).** The floor has to be shown to the seller BEFORE they
+   > list, and at that moment there is nothing on-chain to read — the
+   > listing does not exist. So the projection is either offered as a
+   > contract view or re-derived on the client, and this is the choice
+   > worth recording because the obvious answer is the wrong one.
+   >
+   > It is offered as a view, `RiskPreviewFacet.quoteSellerBounds`, taking
+   > the rate and the expiry the seller is still choosing. The client
+   > mirror is cheaper and needs no facet space, and it is exactly the
+   > mistake #1801 spent fourteen review rounds on: a rule copied into a
+   > second place agrees until the rule changes, and this rule changed
+   > twice DURING its own review — once when the amount-based model was
+   > abandoned, once when the item-28 forfeiture rework moved the window's
+   > opening point. A mirror written against either version would have
+   > shipped a quote the platform does not honour, and the seller would
+   > have discovered it as a refused sale.
+   >
+   > The same argument applies one level in, which is why the quote is not
+   > merely "a view that computes the same thing". The writer and the
+   > reader call ONE internal projection, so there is a single place the
+   > arithmetic lives and no second copy to drift.
+   >
+   > **What that does and does not buy, stated precisely, because the
+   > loose version of this claim is wrong.** Sharing the projection rules
+   > out ALGORITHM drift: the quote can never disagree with the bound
+   > because the rule differs between them. It does NOT make the displayed
+   > figure equal to the recorded one. Both read live loan state, so a
+   > partial repayment or a park between the seller reading a quote and
+   > their listing transaction being mined moves the answer, and the
+   > listing carries no commitment to what they were shown. Binding those
+   > together is a SEPARATE guarantee — quote-to-listing rather than
+   > listing-to-fill — and it is deferred with the surface that shows the
+   > quote (#1810), where the reviewed figures can actually be passed in.
+   >
+   > This is also why the app work is a separate change rather than the
+   > same one: a new selector is not routed on the deployed Diamond until
+   > a facet refresh lands, and the live-review definition-of-done cannot
+   > be met against a Diamond that reverts the call.
+   >
+   > **Also revised after round 1 of the implementing PR (#1812).** The
+   > floor above is described as the settlement evaluated AT THE EXPIRY.
+   > That is wrong whenever the listing rate exceeds the loan's own: the
+   > forfeited accrual grows across the window while the buyer's rate
+   > compensation shrinks with the remaining term, so the worst moment is
+   > an endpoint but not always the last one. The shipped projection
+   > evaluates BOTH ends and takes the worse.
+   >
+   > **Corrected again after round 3 (2026-08-18).** This paragraph said two
+   > evaluations are "exactly tight — for an increasing f and a decreasing
+   > g, max(f, g) peaks at max(f(end), g(start))". That holds over the
+   > REALS and not in the arithmetic this contract has. The shortfall leg
+   > is a difference of two SEPARATELY TRUNCATED figures, so it is not
+   > monotonic even when the continuous difference is: it can sit a unit
+   > above the continuous value at an interior second and a unit below it
+   > at the endpoint meant to bound the window, and both endpoints can read
+   > the same figure while a second between them costs one more.
+   >
+   > The projection therefore adds two units of slack, bounded rather than
+   > guessed: with f = trunc(A) − trunc(B) and g = A − B decreasing,
+   > f(t) ≤ g(t) + 1 ≤ g(start) + 1 ≤ f(start) + 2. Slack LOWERS the
+   > recorded floor, which is the direction that cannot refuse a fill the
+   > seller's own projection allowed.
+   >
+   > Recorded as a third correction rather than an edit because the pattern
+   > is the lesson: this model has now been fixed in the code, then in two
+   > prose documents, then in four contract comments, and each sweep missed
+   > a site. The one that survived longest was this one — the round-3 sweep
+   > grepped for the word "expiry" and this paragraph says "exactly tight".
+
 5. **The direct sale admits on the stored borrower, not the current
    one.** That path passes the loan's stored borrower to the
    compliance check and never compares the buy-offer creator against

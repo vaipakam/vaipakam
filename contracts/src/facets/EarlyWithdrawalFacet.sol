@@ -11,6 +11,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
+import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
@@ -27,6 +28,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 
 /**
  * @title EarlyWithdrawalFacet
@@ -301,6 +303,14 @@ contract EarlyWithdrawalFacet is
         s.saleVehicleCreate = false;
         s.loanToSaleOfferId[loanId] = saleOfferId;
         s.saleOfferToLoanId[saleOfferId] = loanId;
+        // #1503 item 4 — record what the seller is agreeing to, so completion
+        // is bound by it rather than by whatever the arithmetic comes to at the
+        // acceptance block. Hosted in LibSaleListing so the direct route can
+        // share the projection rather than re-deriving it — the two routes
+        // duplicating settlement algebra is what #1659 had to repair.
+        LibSaleListing.recordSellerBounds(
+            s, loanId, interestRateBps, listingExpiresAt
+        );
         // #951 v2 (Codex #959 bind-to-live) — no collateral snapshot is stored:
         // the buyer's accept binds `collateralAmount` `>=`-style against the LIVE
         // loan in `OfferAcceptFacet._bindTermsToOffer`, so a later collateral
@@ -568,10 +578,25 @@ contract EarlyWithdrawalFacet is
         // routed to treasury or Noah.
         // #641 — accrued/remaining split reads the interest clock (post-partial
         // origin + remaining term), not the immutable term tuple.
-        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
+        uint256 elapsed = block.timestamp - accrualStart;
         uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
-        uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
+        // #1503 item 28 — the FORFEITURE clock is not the accrual clock. The
+        // seller forfeits accrued interest because the borrower has not paid it;
+        // on a periodic loan the borrower has paid part of it, since periodic
+        // auto-liquidation forwards interest to the lender WITHOUT moving the
+        // accrual clock. Charging from the accrual origin bills the seller for
+        // interest already in their hands.
+        //
+        // Narrowing the WINDOW rather than subtracting an amount — see
+        // {LibEntitlement.forfeitureAccrualStart}. `elapsed` above is unchanged
+        // and still measures the loan's own progress, which is what
+        // `remainingSecs` needs; only the forfeiture figure uses the later start.
+        uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
+        uint256 forfeitSecs =
+            block.timestamp > forfeitFrom ? block.timestamp - forfeitFrom : 0;
+        uint256 accrued = (loan.principal * loan.interestRateBps * forfeitSecs) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
         uint256 originalRemainingInterest = (loan.principal *
             loan.interestRateBps *
@@ -615,6 +640,43 @@ contract EarlyWithdrawalFacet is
             uint256 liamCost = accrued > saleShortfall
                 ? accrued
                 : saleShortfall;
+            // #1503 item 4 — the seller's FLOOR. Ordinary accrual across the
+            // listing window cannot trip this: the floor was derived at the
+            // listing's BOTH endpoints (plus truncation slack — see
+            // LibSaleListing.projectSellerBounds), so the whole window sits
+            // inside it. What
+            // trips it is a step the seller never reviewed — a principal
+            // movement or a park disqualifying the paid-through mark, which
+            // re-opens the forfeiture window earlier than the projection
+            // assumed. Refusing is the point; the remedy is to relist.
+            // ...but only while the seller's projection still DESCRIBES the
+            // fill. The floor is derived from the window's own endpoints, so it
+            // bounds every fill inside the window and says nothing about one
+            // after it.
+            // `completeLoanSale` is lender-side-gated and deliberately remains
+            // callable past the window — the seller invoking it themselves is
+            // fresh authorisation, not a race — and enforcing a stale
+            // projection there would refuse the seller's own deliberate act.
+            //
+            // Caught by an EXISTING #1801 test rather than by a new one: the
+            // targeted run of the four new cases was green, and only the full
+            // suite showed `forfeitsOnlyTheUnpaidStretch` completing past the
+            // window and tripping a bound that was never meant to reach it.
+            if (
+                s.saleListingBoundsRecorded[loanId] &&
+                block.timestamp <= s.saleListingBoundsExpiry[loanId]
+            ) {
+                uint256 sellerNet = proceeds > liamCost ? proceeds - liamCost : 0;
+                uint256 floorNet = s.saleListingMinSellerNet[loanId];
+                if (sellerNet < floorNet) {
+                    revert SaleBelowSellerFloor(floorNet, sellerNet);
+                }
+                uint256 heldNow = s.heldForLender[loanId];
+                uint256 heldCeiling = s.saleListingMaxHeldTransfer[loanId];
+                if (heldNow > heldCeiling) {
+                    revert SaleAboveHeldCeiling(heldCeiling, heldNow);
+                }
+            }
             uint256 treasuryCut = accrued > saleShortfall
                 ? accrued - saleShortfall
                 : 0;
@@ -931,6 +993,9 @@ contract EarlyWithdrawalFacet is
         // one-listing-per-loan guard in createLoanSaleOffer would reject it).
         delete s.loanToSaleOfferId[loanId];
         delete s.saleOfferToLoanId[saleOfferId];
+        // #1503 item 4 — the bounds belong to THIS listing; leaving them would
+        // apply them to the next one.
+        LibSaleListing.clearSellerBounds(s, loanId);
 
         emit LoanSaleCompleted(loanId, originalLender, newLender);
     }

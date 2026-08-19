@@ -348,7 +348,10 @@ tabs बताती हैं कि हर claim किस तरह की �
 #### यदि आप lender हैं
 
 आपका lender claim loan का principal और accrued interest लौटाता
-है, ब्याज वाले हिस्से पर `{liveValue:treasuryFeeBps}`% treasury cut घटाकर। loan settle होते
+है, ब्याज वाले हिस्से पर treasury cut घटाकर। यह cut का प्रतिशत आपके
+loan के बनते समय तय हो जाता है — बाद में protocol fee बदलने से यह
+नहीं बदलता। मौजूदा दर पर बने loans पर यह cut
+`{liveValue:treasuryFeeBps}`% है। loan settle होते
 ही — repay, default या liquidation के बाद — यह claimable हो जाता
 है। claim आपके lender position NFT को atomically consume करता है
 — transaction land होते ही loan का वह पक्ष पूरी तरह close हो
@@ -538,7 +541,9 @@ available नहीं हैं वे greyed out रहेंगे, और to
 
 - **Claim** — loan settle होने के बाद (repay, default या
   liquidation), principal और interest unlock करता है, ब्याज पर
-  `{liveValue:treasuryFeeBps}`% treasury cut घटाकर। यह आपके lender NFT को consume करता है।
+  आपके loan के बनते समय तय हुआ treasury cut घटाकर (मौजूदा दर पर बने
+  loans के लिए `{liveValue:treasuryFeeBps}`%)। यह आपके lender NFT को
+  consume करता है।
 - **Initiate Early Withdrawal** — मध्य-loan में किसी और
   ख़रीदार को बेचने के लिए अपना lender NFT लिस्ट करें।
   ख़रीदार आपका पक्ष ले लेता है; आप sale की रकम लेकर निकल

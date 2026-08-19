@@ -671,9 +671,10 @@ hands the new holder the right to collect.
 The lender claim returns:
 
 - Your principal back into your wallet on this chain.
-- Accrued interest minus the `{liveValue:treasuryFeeBps}`% treasury cut. The cut is itself
-  reduced by your time-weighted VPFI fee-discount accumulator
-  when consent is on.
+- Accrued interest minus the treasury cut fixed when your loan
+  was created (`{liveValue:treasuryFeeBps}`% for loans created at
+  the current rate). The cut is itself reduced by your
+  time-weighted VPFI fee-discount accumulator when consent is on.
 
 Claimable as soon as the loan reaches a terminal state
 (Settled, Defaulted, or Liquidated). The lender position NFT is
@@ -967,9 +968,10 @@ Permissionless actions available to anyone regardless of role:
 #### If you're the lender
 
 - **Claim as lender** — terminal-only. Returns principal plus
-  interest minus the `{liveValue:treasuryFeeBps}`% treasury cut (further reduced by
-  your time-weighted VPFI yield-fee discount when consent is
-  on). Burns the lender position NFT.
+  interest minus the treasury cut fixed at your loan's creation
+  (`{liveValue:treasuryFeeBps}`% for loans created at the current
+  rate; further reduced by your time-weighted VPFI yield-fee
+  discount when consent is on). Burns the lender position NFT.
 - **Initiate early withdrawal** — list the lender position NFT
   for sale at an asking price. A buyer who completes the sale
   takes over your side; you receive the proceeds. Cancellable
