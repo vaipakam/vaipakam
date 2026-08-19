@@ -1144,6 +1144,11 @@ contract PrecloseFacet is
         // ── 4. ben's collateral already locked in his vault at offer creation
 
         // ── 5. Update loan to reflect ben as borrower ───────────────────────
+        // Captured for the migration helper below (Codex #1818 r4 P2): the
+        // rewrite on the next line is what made the helper's own
+        // holder-change comparison read new-vs-new and never reset the
+        // paid-notification flag on an obligation transfer.
+        address previousBorrower = loan.borrower;
         loan.borrower = newBorrower;
         loan.collateralAmount = offer.collateralAmount;
         // #569 Codex #572 P1 #2 (2026-06-13) — copy the incoming offer's
@@ -1323,7 +1328,7 @@ contract PrecloseFacet is
             ),
             bytes4(0)
         );
-        LibLoan.migrateBorrowerPosition(loanId, newBorrower);
+        LibLoan.migrateBorrowerPosition(loanId, newBorrower, previousBorrower);
 
         // Burn ben's offer position NFT (offer is consumed)
         LibFacet.crossFacetCall(

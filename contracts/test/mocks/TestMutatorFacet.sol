@@ -91,6 +91,16 @@ contract TestMutatorFacet {
         }
     }
 
+    /// @notice Codex #1818 r4 test-only — bloat `userLoanIds[user]` with
+    ///         filler ids so the bounded legacy membership scan's cap can be
+    ///         exercised without scaffolding thousands of real loans.
+    function pushUserLoanIdsRaw(address user, uint256 count, uint256 fillerStart) external {
+        uint256[] storage ids = LibVaipakam.storageSlot().userLoanIds[user];
+        for (uint256 i; i < count; ++i) {
+            ids.push(fillerStart + i);
+        }
+    }
+
     /// @notice Raw reads for the exact-regime flag and the membership map, so
     ///         the grandfathered-migration tests can assert truthful stamping.
     function getLoanHolderIndexExactRaw(uint256 loanId) external view returns (bool) {

@@ -186,10 +186,31 @@ library LibLoan {
         s.userLoanIds[incoming].push(loanId);
     }
 
+    /// @dev Hard ceiling on the legacy membership scan (Codex #1818 r4 P2).
+    ///      An UNBOUNDED repair scan re-creates on the legacy corner exactly
+    ///      the failure item 25 forbids: a party with a long-enough lifetime
+    ///      array makes the fill run out of gas, the revert rolls back the
+    ///      stamp, and every retry repeats the full scan — the position is
+    ///      unmigratable. 1,024 cold reads is ≈2.2M gas, comfortably inside
+    ///      a fill; no account on the CLOSED pre-map population approaches
+    ///      it, so in practice the cap never binds.
+    uint256 private constant MAX_LEGACY_MEMBERSHIP_SCAN = 1024;
+
     /// @dev Grandfathered-loan repair: make `userLoanIndexed[user][loanId]`
     ///      faithful by scanning the lifetime array once, appending only on
-    ///      genuine absence. Bounded to the first migration of a pre-map
-    ///      loan; the exact regime never calls this.
+    ///      genuine absence. Each user pays this at most once per legacy
+    ///      loan (the stamp makes every later encounter an O(1) bit read);
+    ///      the exact regime never calls this.
+    ///
+    ///      The scan walks BACKWARDS and stops at the cap: a legacy party's
+    ///      entry for this loan is either their creation-time append or a
+    ///      repair append, both of which sit within the pre-map population's
+    ///      modest history. If the entry is genuinely deeper than the cap,
+    ///      the append below records a DUPLICATE row — chosen deliberately
+    ///      over the unbounded scan's alternative, an out-of-gas revert that
+    ///      leaves the position permanently unmigratable. A duplicate is a
+    ///      cosmetic double-listing on one legacy corner; a bricked fill is
+    ///      a loss.
     function _establishMembership(
         LibVaipakam.Storage storage s,
         address user,
@@ -198,13 +219,16 @@ library LibLoan {
         if (s.userLoanIndexed[user][loanId]) return;
         uint256[] storage ids = s.userLoanIds[user];
         uint256 n = ids.length;
-        for (uint256 i; i < n; ) {
+        uint256 floor = n > MAX_LEGACY_MEMBERSHIP_SCAN
+            ? n - MAX_LEGACY_MEMBERSHIP_SCAN
+            : 0;
+        for (uint256 i = n; i > floor; ) {
+            unchecked {
+                --i;
+            }
             if (ids[i] == loanId) {
                 s.userLoanIndexed[user][loanId] = true;
                 return;
-            }
-            unchecked {
-                ++i;
             }
         }
         s.userLoanIndexed[user][loanId] = true;
@@ -217,7 +241,8 @@ library LibLoan {
     ///      both `loan.borrower` and `loan.borrowerTokenId`.
     function migrateBorrowerPosition(
         uint256 loanId,
-        address newBorrower
+        address newBorrower,
+        address previousBorrower
     ) internal returns (uint256 newTokenId) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -260,9 +285,15 @@ library LibLoan {
         // a known gap open for the sake of matching the audit's wording.
         _rekeyPositionIndex(s, loan.borrowerTokenId, newTokenId, loanId);
         // #1503 item 25, borrower side — same list-view discovery as the
-        // lender half, same dedup, same notification policy.
-        _indexLoanForHolder(s, loan.borrower, newBorrower, loan.lender, loanId);
-        if (newBorrower != loan.borrower) loan.borrowerNotifBilled = false;
+        // lender half, same dedup, same notification policy. The departing
+        // holder arrives as an explicit PARAMETER (Codex #1818 r4 P2):
+        // `transferObligationViaOffer` rewrites `loan.borrower` well before
+        // it reaches this helper, so a comparison against the field here was
+        // always false and the paid-notification flag silently travelled to
+        // every incoming borrower — the exact free-ride the each-holder-pays
+        // policy exists to refuse.
+        _indexLoanForHolder(s, previousBorrower, newBorrower, loan.lender, loanId);
+        if (newBorrower != previousBorrower) loan.borrowerNotifBilled = false;
 
         loan.borrower = newBorrower;
         loan.borrowerTokenId = newTokenId;

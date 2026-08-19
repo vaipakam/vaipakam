@@ -928,8 +928,24 @@ contract PrecloseFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
 
+        // Pre-set the departing borrower's paid-notification flag: the
+        // handover must clear it (each holder pays separately — Codex #1818
+        // r4 P2 found the reset comparing new-vs-new because the facet
+        // rewrites `loan.borrower` before the migration helper runs).
+        {
+            LibVaipakam.Loan memory l0 =
+                LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+            l0.borrowerNotifBilled = true;
+            TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l0);
+        }
+
         vm.prank(borrower);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+
+        assertFalse(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerNotifBilled,
+            "obligation handover resets the paid-notification flag"
+        );
 
         uint256 newTokenId =
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId;

@@ -1730,4 +1730,97 @@ contract LenderIntentMatchTest is SetupTest {
             "reacquisition finally lands the loan in the pre-map acquirer's index"
         );
     }
+
+    /// @dev Codex #1818 r4 P2 — the legacy membership repair is BOUNDED. An
+    ///      unbounded scan re-created on the legacy corner exactly the
+    ///      failure item 25 forbids: a buyer with a long-enough lifetime
+    ///      array makes the fill run out of gas, and since the revert rolls
+    ///      the stamp back, every retry repeats the scan — the position is
+    ///      permanently unmigratable. The scan now walks backwards over at
+    ///      most 1,024 entries; an entry buried deeper is treated as absent
+    ///      and re-appended (a cosmetic duplicate row, deliberately chosen
+    ///      over the bricked fill). This test buries the real loan id under
+    ///      1,500 filler entries and proves the sale still completes, the
+    ///      buyer is stamped, and the accepted duplicate appears.
+    function test_directSale_grandfatheredScanIsBounded() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("gbBorrower");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+
+        LibVaipakam.Loan memory pre =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address posBuyer = _newBorrower("gbPositionBuyer");
+        vm.prank(posBuyer);
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: pre.interestRateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: pre.collateralAmount,
+                durationDays: pre.durationDays,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: pre.prepayAsset,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: pre.interestRateBps,
+                collateralAmountMax: pre.collateralAmount,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        // Fabricate the pathological legacy state: strip the born-exact flag
+        // and the buyer's bit, seed the REAL loan id at the very front of the
+        // buyer's array, then bury it under 1,500 fillers — deeper than the
+        // backward scan window.
+        {
+            address[] memory holders = new address[](3);
+            holders[0] = lender;
+            holders[1] = b;
+            holders[2] = posBuyer;
+            TestMutatorFacet(address(diamond)).clearLoanIndexRegimeRaw(
+                loanId, holders
+            );
+        }
+        TestMutatorFacet(address(diamond)).removeUserLoanIdRaw(posBuyer, loanId);
+        // put the real id at depth > cap: [loanId, 1500 fillers...]
+        TestMutatorFacet(address(diamond)).pushUserLoanIdsRaw(posBuyer, 1, loanId);
+        TestMutatorFacet(address(diamond)).pushUserLoanIdsRaw(posBuyer, 1500, 10_000_000);
+        uint256 preCount = MetricsFacet(address(diamond)).getUserLoanCount(posBuyer);
+        assertEq(preCount, 1501, "fixture: real id buried under 1,500 fillers");
+
+        // The fill must complete — bounded scan, no out-of-gas brick.
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            loanId, buyOfferId
+        );
+
+        assertTrue(
+            TestMutatorFacet(address(diamond)).getUserLoanIndexedRaw(posBuyer, loanId),
+            "buyer stamped despite the buried entry"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(posBuyer),
+            1502,
+            "beyond the cap the repair appends: the documented duplicate, not a revert"
+        );
+    }
 }
