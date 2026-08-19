@@ -91,7 +91,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](185);
+        selectors = new bytes4[](186);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -238,6 +238,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setHeldForLenderRaw.selector;
         selectors[n++] = TestMutatorFacet.setSaleProceedsEscrowRaw.selector;
         selectors[n++] = TestMutatorFacet.clearSaleListingBoundsRaw.selector;
+        selectors[n++] = TestMutatorFacet.getSaleListingBoundsRaw.selector;
         selectors[n++] = TestMutatorFacet.setLenderPaidThroughRaw.selector;
         // #1801 — the two DISQUALIFICATION seeds: a mark recorded against a
         // principal the loan no longer carries, and the sticky freeze void.
@@ -1445,11 +1446,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         selectors[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #951 (Codex #959) — cross-facet completion entry.
         selectors[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        // #1810 — quote-bound listing creation.
+        selectors[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
         return selectors;
     }
 

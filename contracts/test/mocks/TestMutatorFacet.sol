@@ -455,6 +455,23 @@ contract TestMutatorFacet {
         delete s.saleListingBoundsExpiry[loanId];
     }
 
+    /// @notice Read a listing's #1503 item-4 seller bounds (#1810).
+    /// @dev    Lets the quote→listing binding tests assert the figures a bound
+    ///         creation recorded, instead of inferring them from behavior.
+    function getSaleListingBoundsRaw(uint256 loanId)
+        external
+        view
+        returns (uint256 minSellerNet, uint256 maxHeld, bool recorded, uint256 expiry)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.saleListingMinSellerNet[loanId],
+            s.saleListingMaxHeldTransfer[loanId],
+            s.saleListingBoundsRecorded[loanId],
+            s.saleListingBoundsExpiry[loanId]
+        );
+    }
+
     /// @notice Write `s.saleProceedsEscrow[loanId] = amount` directly.
     /// @dev #1503 item 28 — the listed sale route's net settlement only runs when
     ///      the buyer's principal is escrowed, which happens on a real listing
