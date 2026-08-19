@@ -60,6 +60,32 @@
 
 # `connect-src https:` above — no extra rule needed there.
 
+#
+
+# `static.cloudflareinsights.com` is DELIBERATELY ABSENT (#1816). If the
+
+# zone has Web Analytics auto-injection on, Cloudflare inserts its RUM
+
+# beacon into every response and this CSP refuses it, which shows up as
+
+# a console error on every page load. The fix is to turn the injection
+
+# OFF at the zone — NOT to add the host here. That beacon is injected at
+
+# the edge, downstream of the app, so `lib/consent.ts` cannot gate it:
+
+# allowing it would run an analytics collector before the visitor has
+
+# consented to any, which the privacy spec forbids outright, and which
+
+# is the same reason the connected app disables its wallet SDKs' own
+
+# telemetry. Any future analytics — Cloudflare's included — has to load
+
+# through the consent-aware pipeline, and would then be added here as a
+
+# deliberate entry rather than to silence an error.
+
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
