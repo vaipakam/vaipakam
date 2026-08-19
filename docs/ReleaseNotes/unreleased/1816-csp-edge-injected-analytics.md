@@ -17,17 +17,25 @@ application loads. A collector inserted after the fact sits outside that
 enforcement entirely: it cannot be held back until consent, because the code
 that would hold it back never sees it. Permitting it would therefore have
 traded a visible console message for an unconsented collector running on every
-page — a worse state that happens to look tidier. The project already applies
-exactly this reasoning elsewhere: the connected app disables the wallet
-connectors' own built-in telemetry, so that merely opening the connect dialog
-does not report usage the visitor never agreed to.
+page — a worse state that happens to look tidier. The project's rules already
+extend this reasoning beyond its own analytics: the connected app's wallet
+connectors are required to have their built-in telemetry switched off, so that
+merely opening the connect dialog does not report usage the visitor never
+agreed to. Checking that requirement while writing this turned up that it is
+not actually implemented for one of the connectors, which is now recorded
+separately as its own gap.
 
 So the policy is unchanged, and it was doing its job — it caught a collector
-that had never been declared anywhere in the project. The injection is switched
-off at the layer that adds it, which removes the console error at its source.
-The policy file and the site's specification now both record why that address
-is deliberately missing, so the next person to meet the error does not resolve
-it the quick way.
+that had never been declared anywhere in the project. The policy file and the
+site's specification now both record why that address is deliberately missing,
+so the next person to meet the error does not resolve it the quick way.
+
+The console error itself is **not yet gone**, and nothing in this change makes
+it go: the beacon is added by the hosting configuration, not by anything in the
+project, so it stops only when an operator turns that setting off for the site.
+Until then the browser console keeps showing the refusal — which is the safe
+state, since the refusal is what prevents the unconsented collector from
+running.
 
 If the product later wants this kind of performance data, it can have it: the
 route is through the same consent flow every other category uses, added as a

@@ -76,11 +76,15 @@
 
 # allowing it would run an analytics collector before the visitor has
 
-# consented to any, which the privacy spec forbids outright, and which
+# consented to any, which the privacy spec forbids outright. The spec
 
-# is the same reason the connected app disables its wallet SDKs' own
+# applies the same rule to the connected app's wallet SDKs' own
 
-# telemetry. Any future analytics — Cloudflare's included — has to load
+# telemetry — a requirement, not a description: that one is NOT yet
+
+# implemented (#1824), so do not read it here as a shipped precedent.
+
+# Any future analytics — Cloudflare's included — has to load
 
 # through the consent-aware pipeline, and would then be added here as a
 
