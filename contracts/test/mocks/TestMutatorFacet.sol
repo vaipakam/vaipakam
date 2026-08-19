@@ -8,6 +8,7 @@ import {LibEncumbrance} from "../../src/libraries/LibEncumbrance.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
+import {LibConsolidation} from "../../src/libraries/LibConsolidation.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
 import {LibCollateralSettlement} from "../../src/libraries/LibCollateralSettlement.sol";
 import {LibPrepayCleanup} from "../../src/libraries/LibPrepayCleanup.sol";
@@ -117,6 +118,16 @@ contract TestMutatorFacet {
     ///         vault-credit → wallet fallback.
     function setMandatoryVaultVersionRaw(uint256 version) external {
         LibVaipakam.storageSlot().mandatoryVaultVersion = version;
+    }
+
+    /// @notice #1817 test-only — run the REAL tier restamp for `user` at
+    ///         their current (tracked-clamped) vault VPFI balance, exactly as
+    ///         the production mutation sites do. Lets a test establish a
+    ///         genuine pre-existing staker lifecycle (non-zero
+    ///         `currentStakeStartSec`) before exercising a flow that must
+    ///         reset it.
+    function restampUserVpfiRaw(address user) external {
+        LibConsolidation.restampUserVpfi(user);
     }
 
     /// @notice RL-1 test-only — inspect the T-087 accumulator's lifecycle +

@@ -91,7 +91,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](184);
+        selectors = new bytes4[](185);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -392,6 +392,9 @@ contract HelperTest {
         // RL-1 — claim-to-vault delivery test scaffolding.
         selectors[n++] = TestMutatorFacet.setMandatoryVaultVersionRaw.selector;
         selectors[n++] = TestMutatorFacet.getStakeRollupStateRaw.selector;
+        // #1817 — establish a genuine pre-existing staker lifecycle before a
+        // flow that must reset it at a mid-transaction zero balance.
+        selectors[n++] = TestMutatorFacet.restampUserVpfiRaw.selector;
         // Governor PR-3a — recycle-bucket forfeit-routing scaffolding.
         selectors[n++] = TestMutatorFacet.setRewardEntryForfeitedRaw.selector;
         // Governor PR-3b — day-pool stamp test scaffolding.

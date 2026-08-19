@@ -418,6 +418,24 @@ contract EarlyWithdrawalDirectFacet is
             VaultWithdrawFailed.selector
         );
 
+        // #1817 (Codex #1819 r3 P1) — checkpoint the buyer at the DEBIT
+        // trough, before any re-credit. The principal pull above can take
+        // their vaulted VPFI to zero, and the single post-credit stamp below
+        // would then observe old-positive → final-positive: the staker
+        // lifecycle never resets and the day's minimum never records the
+        // zero, so re-credited held VPFI would inherit the buyer's pre-sale
+        // tier tenure. Stamping the trough makes the zero observable; the
+        // final stamp after the credits remains.
+        if (loan.principalAsset == s.vpfiToken) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    buyOffer.creator
+                ),
+                bytes4(0)
+            );
+        }
+
         uint256 toLiam = loan.principal - liamCost;
         if (toLiam > 0) {
             IERC20(loan.principalAsset).safeTransfer(msg.sender, toLiam);
@@ -593,13 +611,20 @@ contract EarlyWithdrawalDirectFacet is
             // #1819 r1 P1 — after a plain lender-NFT transfer, `msg.sender`
             // holds the NFT but their vault is untouched by this sale);
             // `loan.lender` is the buyer after the migration above.
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    ConsolidationFacet.restampUserVpfiInternal.selector,
-                    storedLender
-                ),
-                bytes4(0)
-            );
+            // ...and only when the stored lender's vault actually MOVED
+            // (Codex #1819 r3 P2): with no held VPFI to migrate, their vault
+            // is untouched by this sale, and an unconditional restamp could
+            // recompute a tier tuple and spend the protocol broadcast budget
+            // on an unrelated push — or fail closed and block the sale.
+            if (priorHeld > 0) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        ConsolidationFacet.restampUserVpfiInternal.selector,
+                        storedLender
+                    ),
+                    bytes4(0)
+                );
+            }
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     ConsolidationFacet.restampUserVpfiInternal.selector,

@@ -901,14 +901,22 @@ contract EarlyWithdrawalFacet is
             // so run the post-balance discount / staking checkpoint for
             // each. Cross-facet entry keeps the rollup body off this
             // EIP-170-tight facet. `originalLender` is the seller captured
-            // before the migration; `newLender` is the buyer.
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    ConsolidationFacet.restampUserVpfiInternal.selector,
-                    originalLender
-                ),
-                bytes4(0)
-            );
+            // before the migration; `newLender` is the buyer. The seller is
+            // stamped only when their vault actually moved (Codex #1819 r3
+            // P2) — the held migration is their sale-side vault movement, so
+            // with none held their stamp would be an unrelated broadcast-
+            // budget spend. (No buyer debit trough exists on THIS route: the
+            // buyer's principal was escrowed in Diamond custody at accept,
+            // so completion only credits their vault.)
+            if (priorHeldSale > 0) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        ConsolidationFacet.restampUserVpfiInternal.selector,
+                        originalLender
+                    ),
+                    bytes4(0)
+                );
+            }
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     ConsolidationFacet.restampUserVpfiInternal.selector,

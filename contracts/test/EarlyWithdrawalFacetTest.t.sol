@@ -4108,6 +4108,68 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @notice #1817, Codex #1819 r3 P1 — the DIRECT route must checkpoint the
+    ///         buyer at the DEBIT trough, not only after the re-credits. The
+    ///         principal pull can take the buyer's vaulted VPFI to zero
+    ///         mid-transaction; a single post-credit stamp would observe
+    ///         positive→positive, so the staker lifecycle would never reset
+    ///         and the re-credited held VPFI would inherit the buyer's
+    ///         pre-sale tier tenure. The trough stamp makes the zero
+    ///         observable: the lifecycle clears at the debit and restarts at
+    ///         the credit, so the pre-sale stake tenure does not survive.
+    ///         (The ring's dayMin deliberately does NOT retain the
+    ///         mid-transaction zero: a same-day stamp whose previous close
+    ///         was zero routes to the fresh-write branch — the Sub 1.B
+    ///         round-2 P2 rule — so the assertion here is the stake start,
+    ///         which is the durable effect.)
+    function test_1817_directSaleBuyerDebitTroughResetsStakeStart() public {
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+
+        // Held scaffold so the buyer is re-credited after the debit (the
+        // trough is only a trough if the balance comes back up).
+        uint256 held = 500 ether;
+        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(oldVault, held);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
+
+        // The buy offer's creation escrow (== the full principal) is the
+        // buyer's ENTIRE vaulted VPFI, so the sale's principal pull troughs
+        // at exactly zero. Stamp the buyer NOW so they carry a live staker
+        // lifecycle (non-zero start) into the sale.
+        TestMutatorFacet(address(diamond)).restampUserVpfiRaw(newLender);
+        (uint40 buyerStart0, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertTrue(buyerStart0 != 0, "fixture: buyer is an active staker pre-sale");
+
+        // Shrink the buy offer's residual term below the loan's remaining
+        // days so the borrower-favorability duration check still passes
+        // after the warp (the warp exists so the pre-sale stake start and
+        // the sale timestamp are distinguishable).
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.durationDays = 7;
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+
+        (uint40 buyerStart1, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertEq(
+            buyerStart1,
+            uint40(block.timestamp),
+            "buyer's stake start RESET at the sale - the debit trough was observed"
+        );
+        assertTrue(
+            buyerStart1 != buyerStart0,
+            "pre-sale tenure does not survive the mid-sale zero balance"
+        );
+    }
+
     /// @notice #1817 (#1503 item 27) — LISTED-route mirror of the direct-sale
     ///         restamp test: `completeLoanSale`'s VPFI settlement block must
     ///         checkpoint the seller (captured pre-migration) and the buyer.
@@ -4131,6 +4193,15 @@ contract EarlyWithdrawalFacetTest is Test {
         TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, 100 ether);
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(newLender, mockERC20, 100 ether);
+
+        // Give the loan a held-for-lender balance: the seller's restamp is
+        // (correctly) gated on their vault actually moving, and on this
+        // route the sale price goes to the seller's WALLET — only the held
+        // migration touches their vault. The withdraw leg is mocked above,
+        // so fund the Diamond directly for the buyer-side deposit leg.
+        uint256 heldSale = 500 ether;
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, heldSale);
+        ERC20Mock(mockERC20).mint(address(diamond), heldSale);
 
         (uint40 sellerStart0, , , ) =
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
