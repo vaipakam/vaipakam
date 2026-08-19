@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { pluckActivityRefs, recordActivityEvents } from '../src/chainIndexer';
-import { surface, synthesizeArgs } from './helpers/activityRefsSynth';
+import { layoutsOf, surface, synthesizeArgs } from './helpers/activityRefsSynth';
 
 interface Recorded {
   sql: string;
@@ -146,8 +146,13 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     // ALL compiled events, not only the reference-carrying subset (Codex
     // round-71 P2): actor-only events (Transfer, vault deposits, rewards)
     // traverse the same recording path and must each land a row too.
-    const events = [...surface.argShapes.keys()].sort();
-    const logs = events.map((e, i) => makeLog(e, synthesizeArgs(e), i + 1));
+    // ...and every LAYOUT of every event (Codex round-72 P2): an overloaded
+    // event decodes under either signature, and a branch keyed on a field
+    // unique to one layout only misbehaves when THAT bag arrives.
+    let n = 0;
+    const logs = [...surface.argShapes.keys()]
+      .sort()
+      .flatMap((e) => layoutsOf(e).map((l) => makeLog(e, synthesizeArgs(e, l), ++n)));
     const { executed, db } = fakeDb();
     const inserted = await recordActivityEvents(
       logs,
@@ -161,10 +166,14 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     logs.forEach((log, i) => {
       const expected = pluckActivityRefs(log.eventName, log.args);
       expect(inserts[i].binds[4], `${log.eventName} row kind`).toBe(log.eventName);
-      // loan_id / offer_id only — the actor can legitimately differ from a
-      // raw-args pluck on the enrichment branch (creator merged in first).
       expect(inserts[i].binds[5], `${log.eventName} loan_id`).toBe(expected.loanId);
       expect(inserts[i].binds[6], `${log.eventName} offer_id`).toBe(expected.offerId);
+      // Actor too (Codex round-72 P2): a ledger that binds null where the
+      // mapper resolved a wallet drops the row from /activity?actor=… while
+      // every reference assertion stays green. In THIS batch the enrichment
+      // SELECT returns no creator rows, so the raw-args pluck is the exact
+      // expectation for every event, OfferConsumedBySale included.
+      expect(inserts[i].binds[7], `${log.eventName} actor`).toBe(expected.actor);
     });
   });
 
@@ -223,6 +232,16 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     const [insert] = activityInserts(executed);
     expect(insert).toBeDefined();
     expect(String(insert.binds[8])).toContain('"creator":"0xborrower"');
+    // ...and the bound ACTOR is the enriched creator (Codex round-72 P2) —
+    // the whole point of the enrichment is that the borrower's wallet filter
+    // surfaces the sold row.
+    const enriched = pluckActivityRefs('OfferConsumedBySale', {
+      offerId: 9n,
+      executor: '0xEXEC',
+      creator: '0xborrower',
+    });
+    expect(insert.binds[7]).toBe(enriched.actor);
+    expect(enriched.actor).toBe('0xborrower');
     // ...and the creator lookup bound EXACTLY the chain id followed by the
     // consumed offer ids (Codex round-70 P2): a stub that answers regardless
     // of bindings would keep this green while a production lookup that

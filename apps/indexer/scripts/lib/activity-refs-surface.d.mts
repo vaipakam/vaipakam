@@ -4,6 +4,7 @@
  * what lets the vitest half import it type-checked).
  */
 export const DELIBERATELY_NOT_SCOPED: Record<string, string>;
+export const INTENDED_REFERENCE_ALIAS: Record<string, string>;
 export const REF_FIELDS: string[];
 export const REF_SHAPE: Record<string, RegExp>;
 export const REF_EXTRA_ALIASES: Record<string, string[]>;

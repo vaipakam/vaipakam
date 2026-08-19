@@ -34,9 +34,10 @@ import { describe, expect, it } from 'vitest';
 import { pluckActivityRefs } from '../src/chainIndexer';
 import {
   DELIBERATELY_NOT_SCOPED,
+  INTENDED_REFERENCE_ALIAS,
   REF_FIELDS,
 } from '../scripts/lib/activity-refs-surface.mjs';
-import { expectedIds, layoutsOf, surface, synthesizeArgs } from './helpers/activityRefsSynth';
+import { expectedIds, layoutsOf, plantedId, surface, synthesizeArgs } from './helpers/activityRefsSynth';
 
 const { carries, arrayOnlyRefs, abiConflicts, eventInputs } = surface;
 
@@ -123,7 +124,32 @@ describe('activity-refs coverage — executed against the real mapper', () => {
           staleNowMapped.push(`${allowKey} — now mapped in pluckActivityRefs; remove this entry`);
           continue;
         }
-        if (isMapped || isAllowlisted) continue;
+        if (isMapped) {
+          // A mapped pair with MORE THAN ONE candidate alias must read the
+          // alias the recorded policy names (Codex round-72 P2): any-alias
+          // acceptance let OfferMatched silently switch from the lender to
+          // the borrower offer id while staying green.
+          const aliasPaths = [...(surface.aliasNames.get(event)?.get(field) ?? [])];
+          if (aliasPaths.length > 1) {
+            if (!Object.hasOwn(INTENDED_REFERENCE_ALIAS, allowKey)) {
+              gaps.push(
+                `${allowKey} — mapped from one of ${aliasPaths.join(', ')}, but no intended ` +
+                  'alias is recorded; add an INTENDED_REFERENCE_ALIAS entry with the policy',
+              );
+            } else {
+              const intended = INTENDED_REFERENCE_ALIAS[allowKey];
+              const intendedId = Number(plantedId(event, intended));
+              if (got !== intendedId) {
+                gaps.push(
+                  `${allowKey} — the policy is to index \`${intended}\` (${intendedId}), but the ` +
+                    `mapper returned ${got}, another of the event's aliases`,
+                );
+              }
+            }
+          }
+          continue;
+        }
+        if (isAllowlisted) continue;
         const arrayPath = arrayOnlyRefs.get(allowKey);
         gaps.push(
           arrayPath
@@ -138,6 +164,31 @@ describe('activity-refs coverage — executed against the real mapper', () => {
     }
     expect(gaps).toEqual([]);
     expect(staleNowMapped).toEqual([]);
+  });
+
+  it('has no stale intended-alias entries', () => {
+    // Each entry must still describe a live, mapped, multi-alias pair whose
+    // named alias exists — anything less re-opens the ambiguity it documents.
+    const stale: string[] = [];
+    for (const [key, intended] of Object.entries(INTENDED_REFERENCE_ALIAS)) {
+      const [event, field] = key.split('.');
+      const aliasPaths = surface.aliasNames.get(event)?.get(field);
+      if (!aliasPaths || aliasPaths.size < 2) {
+        stale.push(`${key} — the pair is no longer multi-alias; remove this entry`);
+        continue;
+      }
+      if (!aliasPaths.has(intended)) {
+        stale.push(`${key} — \`${intended}\` is not among the event's ${field} aliases`);
+        continue;
+      }
+      const got = (pluckActivityRefs(event, synthesizeArgs(event)) as Record<string, unknown>)[
+        field
+      ];
+      if (got === null) {
+        stale.push(`${key} — the pair is no longer mapped; remove this entry`);
+      }
+    }
+    expect(stale).toEqual([]);
   });
 
   it('has no allowlist entries for pairs the ABI no longer carries', () => {

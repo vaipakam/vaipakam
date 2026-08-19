@@ -280,6 +280,30 @@ export const REF_EXTRA_ALIASES = {
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/**
+ * For a MAPPED event/field with MORE THAN ONE candidate alias, the alias the
+ * mapping is REQUIRED to read (Codex round-72 P2). Accepting any candidate
+ * proves only that some alias reached the column; which one is a per-event
+ * policy decision with its own rationale, and silently switching to the other
+ * candidate (e.g. `OfferMatched` → borrowerOfferId) passes the any-alias test
+ * while the intended history view loses its rows. Keyed '<Event>.<field>' →
+ * the ABI input path the mapping must read. Only mapped multi-alias pairs
+ * belong here — the coverage suite fails a mapped multi-alias pair with no
+ * entry, and fails an entry whose pair is no longer carried, no longer
+ * multi-alias, or no longer mapped.
+ */
+export const INTENDED_REFERENCE_ALIAS = {
+  // #600 — a matcher-driven fill calls acceptOfferInternal(borrowerOfferId),
+  // so the companion OfferAccepted already attributes the loan to the
+  // BORROWER offer; this event is the LENDER offer's only link to its matched
+  // child, and the row is deliberately indexed under it.
+  'OfferMatched.offerId': 'lenderOfferId',
+  // Leg A is the canonical loanId for the activity row (the dashboard's
+  // loan-timeline query keys on this column); legs B and the optional C stay
+  // in args_json for clients that need the full multi-leg payload.
+  'InternalMatchExecuted.loanId': 'loanIdA',
+};
+
 /** Does this ABI input name populate `field`? */
 export const isAliasOf = (field, name) =>
   typeof name === 'string' &&
