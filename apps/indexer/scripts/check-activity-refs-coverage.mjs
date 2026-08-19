@@ -2371,6 +2371,38 @@ if (!fnNode) {
         return true;
       }
       if (ts.isPrefixUnaryExpression(e)) return isPinned(e.operand, from, depth + 1);
+      // A COMPUTED constant is as pinned as the literal it folds to (Codex
+      // round-65 P2): `999 + 0` is `999` with an arithmetic disguise, and
+      // treating the unrecognized BinaryExpression as "not pinned" accepted
+      // it. Fold the simple expression shapes: an operation over pinned
+      // operands is pinned. Comma and assignment expressions take the value
+      // of their RIGHT side, so only that side decides.
+      if (ts.isBinaryExpression(e)) {
+        const k = e.operatorToken.kind;
+        if (
+          k === ts.SyntaxKind.CommaToken ||
+          (k >= ts.SyntaxKind.FirstAssignment &&
+            k <= ts.SyntaxKind.LastAssignment)
+        ) {
+          return isPinned(e.right, from, depth + 1);
+        }
+        return (
+          isPinned(e.left, from, depth + 1) &&
+          isPinned(e.right, from, depth + 1)
+        );
+      }
+      if (ts.isConditionalExpression(e)) {
+        return (
+          isPinned(e.condition, from, depth + 1) &&
+          isPinned(e.whenTrue, from, depth + 1) &&
+          isPinned(e.whenFalse, from, depth + 1)
+        );
+      }
+      if (ts.isTemplateExpression(e)) {
+        return e.templateSpans.every((sp) =>
+          isPinned(sp.expression, from, depth + 1),
+        );
+      }
       if (ts.isIdentifier(e)) {
         const decl = nearestDeclIn(from, e.text, sourceFile);
         if (!decl || decl === OPAQUE_BINDING) return false;
@@ -2441,8 +2473,49 @@ if (!fnNode) {
      * a SPREAD of another collection, or a per-item push INSIDE A LOOP — which
      * is what the live decode loop does, one decoded log at a time.
      */
+    // Re-entrancy guard for the spread-source proof below: `a.push(...b)`
+    // proven by `b.push(...a)` is a cycle of two empties vouching for each
+    // other, and the recursion through `everFilledShallow` must not chase it.
+    const spreadProofInFlight = new Set();
     const addsWholeCollection = (call) => {
-      if ((call.arguments ?? []).some((a) => ts.isSpreadElement(a))) return true;
+      // A spread is only as good as its SOURCE (Codex round-65 P2):
+      // `noLogs.push(...[])` is an insertion by syntax that inserts nothing,
+      // and any `SpreadElement` was accepted as proof the batch received the
+      // whole decoded collection. The source is resolved — through the const
+      // chain — and must itself provably hold rows (a non-empty literal) or
+      // have been filled with some (the same insertion test, applied to it).
+      // Anything this walk cannot follow is refused, per this check's
+      // posture: an unprovable fill has not established coverage.
+      const spreadHoldsRows = (node, from, depth = 0) => {
+        if (!node || depth > 8) return false;
+        const e = unwrapAssertions(node);
+        if (ts.isArrayLiteralExpression(e)) {
+          return e.elements.length > 0;
+        }
+        if (ts.isIdentifier(e)) {
+          if (spreadProofInFlight.has(e.text)) return false;
+          spreadProofInFlight.add(e.text);
+          try {
+            const d = nearestDeclIn(from, e.text, sourceFile);
+            if (!d || d === OPAQUE_BINDING) return false;
+            if (everFilledShallow(e.text, d, call.getStart(sourceFile))) {
+              return true;
+            }
+            return d.initializer
+              ? spreadHoldsRows(d.initializer, d, depth + 1)
+              : false;
+          } finally {
+            spreadProofInFlight.delete(e.text);
+          }
+        }
+        return false;
+      };
+      const spreads = (call.arguments ?? []).filter((a) =>
+        ts.isSpreadElement(a),
+      );
+      if (spreads.length > 0) {
+        return spreads.some((a) => spreadHoldsRows(a.expression, call));
+      }
       for (let cur = call; cur && cur !== sourceFile; cur = cur.parent) {
         const p = cur.parent;
         if (!p) break;
@@ -2826,14 +2899,37 @@ if (!fnNode) {
           if (!levels.length) return null;
           const seekLevel = (fn, callAt) => {
           let hit = null;
+          // The SQL argument through a CONST STRING ALIAS too (Codex
+          // round-65 P2): `const earlyCursorSql = 'UPDATE indexer_cursor …';
+          // env.DB.exec(earlyCursorSql)` advances the cursor with an argument
+          // whose SOURCE TEXT is just the identifier, so the regex never saw
+          // the SQL. Resolve an identifier argument through the bounded
+          // const chain to the expression it names before testing — the same
+          // treatment const-bound batch arrays already get.
+          const sqlTextOfArg = (arg) => {
+            if (!arg) return '';
+            let cur = unwrapAssertions(arg);
+            for (let hop = 0; hop < 4 && cur; hop += 1) {
+              if (!ts.isIdentifier(cur)) break;
+              const decl = nearestDeclIn(cur, cur.text, fn);
+              if (!decl || decl === OPAQUE_BINDING || !decl.initializer) break;
+              const list = decl.parent;
+              if (
+                !ts.isVariableDeclarationList(list) ||
+                (list.flags & ts.NodeFlags.Const) === 0
+              ) {
+                break;
+              }
+              cur = unwrapAssertions(decl.initializer);
+            }
+            return cur ? cur.getText(sourceFile) : '';
+          };
           const seek = (n) => {
             if (hit) return;
             // don't descend into other functions declared in this body
             if (n !== fn.body && isFunctionLike(n)) return;
             if (ts.isCallExpression(n)) {
-              const raw = n.arguments?.[0]
-                ? n.arguments[0].getText(sourceFile)
-                : '';
+              const raw = sqlTextOfArg(n.arguments?.[0]);
               // `D1Database.exec(sql)` runs the SQL DIRECTLY (Codex round-63
               // P2) — no prepare/bind/run chain to chase, the execution IS
               // this call, so its position joins the ordering set as-is.
@@ -3081,10 +3177,55 @@ if (!fnNode) {
         if (!p) return false;
         if (ts.isVariableDeclaration(p) && p.name === n) return true;
         if (ts.isParameter(p) && p.name === n) return true;
+        if (ts.isBindingElement(p) && p.name === n) return true;
+        // EVERY assignment operator, not just plain `=` (Codex round-65 P2).
+        // `activityEvents *= 0` zeroes the count the caller consumes and
+        // `++`/`--` move it off the ledger's value, yet both were counted as
+        // READS because only EqualsToken was recognized — a compound
+        // assignment or unary update is a rebinding first, whatever it also
+        // reads on the way.
         if (
           ts.isBinaryExpression(p) &&
-          p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          p.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          p.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
           unwrapAssertions(p.left) === n
+        ) {
+          return true;
+        }
+        if (
+          (ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) &&
+          (p.operator === ts.SyntaxKind.PlusPlusToken ||
+            p.operator === ts.SyntaxKind.MinusMinusToken) &&
+          p.operand === n
+        ) {
+          return true;
+        }
+        // A destructuring-assignment target (`[activityEvents] = [0]`,
+        // `({ n: activityEvents } = { n: 0 })`) rebinds the identifier just
+        // as surely: climb the pattern shapes and ask whether the pattern
+        // sits on the LEFT of an assignment.
+        let inner = n;
+        let outer = p;
+        while (
+          outer &&
+          (ts.isArrayLiteralExpression(outer) ||
+            ts.isObjectLiteralExpression(outer) ||
+            (ts.isPropertyAssignment(outer) && outer.initializer === inner) ||
+            ts.isShorthandPropertyAssignment(outer) ||
+            ts.isSpreadElement(outer) ||
+            ts.isSpreadAssignment(outer) ||
+            ts.isParenthesizedExpression(outer))
+        ) {
+          inner = outer;
+          outer = outer.parent;
+        }
+        if (
+          inner !== n &&
+          outer &&
+          ts.isBinaryExpression(outer) &&
+          outer.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          outer.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+          unwrapAssertions(outer.left) === inner
         ) {
           return true;
         }
@@ -3420,6 +3561,39 @@ if (!fnNode) {
           }
           return false;
         };
+        // Resolve an identifier through the same bounded const-alias chain to
+        // the MEMBER ACCESS it copies, or null. `const splice = logs.splice`
+        // extracts the mutator into a plain name, and every check downstream
+        // that asks "is this a property access on a mutator?" would otherwise
+        // stop at the identifier (Codex round-65 P2).
+        const resolveMemberAliasAccess = (expr) => {
+          const seen = new Set();
+          let cur = unwrapAssertions(expr);
+          for (let hops = 0; hops < 8; hops += 1) {
+            if (
+              ts.isPropertyAccessExpression(cur) ||
+              ts.isElementAccessExpression(cur)
+            ) {
+              return cur;
+            }
+            if (!ts.isIdentifier(cur)) return null;
+            if (seen.has(cur.text)) return null;
+            seen.add(cur.text);
+            const bound = resolveNameInScopes(p, cur.text, {
+              stopAt: ledgerNode,
+              shadowSentinel: OPAQUE_BINDING,
+              notAShadow: (scope) => scope === ledgerNode,
+            });
+            if (bound === null || bound === OPAQUE_BINDING) return null;
+            const list = bound.parent;
+            const rebindable =
+              !ts.isVariableDeclarationList(list) ||
+              (list.flags & ts.NodeFlags.Const) === 0;
+            if (rebindable || !bound.initializer) return null;
+            cur = unwrapAssertions(bound.initializer);
+          }
+          return null;
+        };
         // An alias is only worth as much as what it copies. `const` settles the
         // aliases themselves; the parameter has to be asked, since
         // `logs = logs.slice(0, 1)` ahead of the loop diminishes the batch under
@@ -3582,6 +3756,19 @@ if (!fnNode) {
             // round-64 P2) — the same invocation rule as the case scan.
             if (ts.isTaggedTemplateExpression(n)) {
               let tag = unwrapAssertions(n.tag);
+              // A tag PRODUCED BY A CALL (Codex round-65 P2):
+              // `makePoisonTag()\`\`` invokes whatever the factory returned,
+              // and the ordinary traversal visits the factory while never
+              // seeing the returned function that actually runs as the tag.
+              // Rejected conservatively — a computed tag cannot be classified
+              // here, and nothing between decode and the loop needs one.
+              if (ts.isCallExpression(tag) || ts.isNewExpression(tag)) {
+                why =
+                  'a template tag produced by a call expression runs a ' +
+                  'function this walk cannot see (the factory\'s return ' +
+                  'value is invoked as the tag)';
+                return;
+              }
               if (ts.isIdentifier(tag)) {
                 const resolved = resolveInvokedCallee(tag, n);
                 if (resolved) tag = resolved;
@@ -3702,15 +3889,26 @@ if (!fnNode) {
               // is the only point where the alias is still visible. Both the
               // receiver chain's root and the thisArg identify the batch
               // (`Array.prototype.splice.bind(logs)` roots at Array).
+              // ...and through an EXTRACTED alias of the mutator too (Codex
+              // round-65 P2): `const splice = logs.splice; splice.bind(logs)`
+              // hosts the `.bind` on a plain identifier, so the
+              // property-access requirement above never fired. Resolve the
+              // host through the const-alias chain back to the member access
+              // it copies before asking whether it names a mutator.
+              const bindHostAccess =
+                member === 'bind' && host
+                  ? ts.isPropertyAccessExpression(host) ||
+                    ts.isElementAccessExpression(host)
+                    ? host
+                    : resolveMemberAliasAccess(host)
+                  : null;
               if (
                 member === 'bind' &&
-                host &&
-                (ts.isPropertyAccessExpression(host) ||
-                  ts.isElementAccessExpression(host)) &&
-                memberNameOf(host) !== null &&
-                MEMBERSHIP_MUTATORS.includes(memberNameOf(host))
+                bindHostAccess &&
+                memberNameOf(bindHostAccess) !== null &&
+                MEMBERSHIP_MUTATORS.includes(memberNameOf(bindHostAccess))
               ) {
-                let broot = unwrapAssertions(host.expression);
+                let broot = unwrapAssertions(bindHostAccess.expression);
                 while (
                   ts.isPropertyAccessExpression(broot) ||
                   ts.isElementAccessExpression(broot)
@@ -3725,7 +3923,7 @@ if (!fnNode) {
                   (bThis && ts.isIdentifier(bThis) && namesTheBatch(bThis))
                 ) {
                   why =
-                    `\`${memberNameOf(host)}\` is BOUND to the batch through \`bind\` — ` +
+                    `\`${memberNameOf(bindHostAccess)}\` is BOUND to the batch through \`bind\` — ` +
                     'the bound mutator changes which rows the batch holds wherever it is later invoked, ' +
                     'under a name this walk cannot follow';
                   return;
@@ -4732,6 +4930,7 @@ if (!fnNode) {
           // same receiver validation `preparedOnD1` applies, since
           // `fake.batch([statement])` returning a changes stub executes
           // nothing while reporting success.
+          let viaBatch = false;
           if (execNode === null && mem === 'batch' && preparedOnD1(n)) {
             for (const bArg of n.arguments ?? []) {
               let arr = unwrapAssertions(bArg);
@@ -4764,12 +4963,68 @@ if (!fnNode) {
                 }
                 if (receiverIsTracked(root)) {
                   execNode = n;
+                  viaBatch = true;
                   break;
                 }
               }
               if (execNode) break;
             }
           }
+          // A batch execution only COUNTS when its result's entry is
+          // extracted (Codex round-65 P2): `await env.DB.batch([statement])`
+          // followed by `const result = { meta: { changes: 0 } }` executes
+          // the row and returns a fabricated zero, so the scan suppresses
+          // `activity.appended` while D1 holds the write. The awaited batch
+          // value must be destructured, indexed directly, or bound to a
+          // const whose entries are later read — a discarded batch result
+          // cannot be the count the ledger returns.
+          const batchEntryExtracted = (awaitExpr) => {
+            let child = awaitExpr;
+            let q = awaitExpr.parent;
+            while (q && isTransparentWrapper(q)) {
+              child = q;
+              q = q.parent;
+            }
+            if (!q) return false;
+            if (
+              (ts.isElementAccessExpression(q) ||
+                ts.isPropertyAccessExpression(q)) &&
+              q.expression === child
+            ) {
+              return true;
+            }
+            if (ts.isVariableDeclaration(q) && q.initializer === child) {
+              if (ts.isArrayBindingPattern(q.name)) return true;
+              if (ts.isIdentifier(q.name)) {
+                const bName = q.name.text;
+                let read = false;
+                const scanReads = (m) => {
+                  if (read) return;
+                  if (m !== body && isFunctionLike(m)) return;
+                  if (
+                    ts.isElementAccessExpression(m) ||
+                    ts.isPropertyAccessExpression(m)
+                  ) {
+                    const hostI = unwrapAssertions(m.expression);
+                    if (
+                      ts.isIdentifier(hostI) &&
+                      hostI.text === bName &&
+                      hostI.getStart(sourceFile) > q.getStart(sourceFile) &&
+                      nearestDeclIn(hostI, bName, body) === q &&
+                      guardedReason(m, body) === null
+                    ) {
+                      read = true;
+                      return;
+                    }
+                  }
+                  ts.forEachChild(m, scanReads);
+                };
+                scanReads(body);
+                return read;
+              }
+            }
+            return false;
+          };
           if (
             execNode !== null &&
             // ...on a path that can RUN (Codex round-59 P2): the executor under
@@ -4780,7 +5035,9 @@ if (!fnNode) {
           ) {
             for (let q = execNode.parent, child = execNode; q; child = q, q = q.parent) {
               if (isTransparentWrapper(q)) continue;
-              if (ts.isAwaitExpression(q) && q.expression === child) found = execNode;
+              if (ts.isAwaitExpression(q) && q.expression === child) {
+                if (!viaBatch || batchEntryExtracted(q)) found = execNode;
+              }
               break;
             }
             if (found) return;
@@ -6237,6 +6494,18 @@ const isNullLiteral = (expr) =>
         // The tag resolves like any invoked callee (aliases included).
         if (ts.isTaggedTemplateExpression(n)) {
           let tag = unwrapAssertions(n.tag);
+          // A tag PRODUCED BY A CALL (Codex round-65 P2):
+          // `makePoisonTag()\`\`` invokes the factory's returned function as
+          // the tag, and this traversal visits the factory while never seeing
+          // that returned function run. Refused conservatively — a computed
+          // tag cannot be classified, and the sound cheap answer to code this
+          // scan cannot follow is the same one every shadow case takes.
+          if (ts.isCallExpression(tag) || ts.isNewExpression(tag)) {
+            found =
+              'invokes a template tag built by a call expression, whose ' +
+              'returned function this checker cannot inspect for writes to';
+            return;
+          }
           if (ts.isIdentifier(tag)) {
             const resolved = resolveInvokedCallee(tag, n);
             if (resolved) tag = resolved;
@@ -6371,6 +6640,47 @@ const isNullLiteral = (expr) =>
           // instance members alike: `class P { [(args.loanId = 999n, 'x')]()
           // {} }` runs the key expression the moment the class is declared,
           // while this branch scanned only the static parts.
+          // DECORATORS evaluate at class definition too (Codex round-65 P2)
+          // — class, member, and member-parameter decorators alike:
+          // `@poisonClass class Innocent {}` INVOKES the decorator function
+          // synchronously before this branch's early return, so the decorator
+          // is treated as an invocation (resolved like any callee, body and
+          // parameter defaults walked), not merely an expression. A decorator
+          // built by a CALL (`@makeDecorator()`) applies the factory's
+          // returned function, which this scan cannot see — refused the same
+          // way a computed template tag is.
+          const decoratorsOf = (node) =>
+            (ts.canHaveDecorators?.(node) ? ts.getDecorators?.(node) : null) ??
+            (node.modifiers ?? []).filter((m) => ts.isDecorator(m));
+          const walkDecorator = (dec) => {
+            let dx = unwrapAssertions(dec.expression);
+            if (ts.isCallExpression(dx) || ts.isNewExpression(dx)) {
+              found =
+                'applies a decorator built by a call expression, whose ' +
+                'returned function this checker cannot inspect for writes to';
+              return;
+            }
+            if (ts.isIdentifier(dx)) {
+              const resolved = resolveInvokedCallee(dx, dec);
+              if (resolved) dx = resolved;
+            }
+            if (isFunctionLike(dx) && dx.body) {
+              for (const p2 of dx.parameters ?? []) {
+                if (p2.initializer) walk(p2.initializer);
+                if (found) return;
+              }
+              const previousLimit = syncLimit;
+              syncLimit = Math.min(syncLimit, fnSyncPrefixEnd(dx, sourceFile));
+              walk(dx.body);
+              syncLimit = previousLimit;
+              return;
+            }
+            walk(dec.expression);
+          };
+          for (const dec of decoratorsOf(n)) {
+            walkDecorator(dec);
+            if (found) return;
+          }
           for (const h of n.heritageClauses ?? []) {
             for (const t of h.types ?? []) {
               walk(t.expression);
@@ -6378,6 +6688,16 @@ const isNullLiteral = (expr) =>
             }
           }
           for (const member of n.members ?? []) {
+            for (const dec of decoratorsOf(member)) {
+              walkDecorator(dec);
+              if (found) return;
+            }
+            for (const prm of member.parameters ?? []) {
+              for (const dec of decoratorsOf(prm)) {
+                walkDecorator(dec);
+                if (found) return;
+              }
+            }
             if (member.name && ts.isComputedPropertyName(member.name)) {
               walk(member.name.expression);
               if (found) return;
