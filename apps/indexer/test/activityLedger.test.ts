@@ -30,6 +30,12 @@ function fakeDb(opts?: {
   changesFor?: (insertOrdinal: number) => number;
 }) {
   const statements: Recorded[] = [];
+  // Statements whose run() actually EXECUTED — recorded separately from the
+  // merely-bound set (Codex round-71 P2): a bound-but-never-run INSERT is a
+  // row that never reaches D1, and counting it as a write let a fabricated
+  // result stand in for an execution. The one-row-per-log assertions read
+  // this set; `statements` remains for SELECT-shape assertions.
+  const executed: Recorded[] = [];
   let insertOrdinal = 0;
   const db = {
     prepare(sql: string) {
@@ -38,6 +44,7 @@ function fakeDb(opts?: {
           statements.push({ sql, binds });
           return {
             async run() {
+              executed.push({ sql, binds });
               if (/INSERT[\s\S]*INTO\s+activity_events/i.test(sql)) {
                 insertOrdinal += 1;
                 return { meta: { changes: opts?.changesFor?.(insertOrdinal) ?? 1 } };
@@ -45,12 +52,15 @@ function fakeDb(opts?: {
               return { meta: { changes: 1 } };
             },
             async all() {
+              executed.push({ sql, binds });
               return { results: opts?.selectResults ?? [] };
             },
             async first() {
+              executed.push({ sql, binds });
               return (opts?.selectResults ?? [])[0] ?? null;
             },
             async raw() {
+              executed.push({ sql, binds });
               return [];
             },
           };
@@ -58,7 +68,7 @@ function fakeDb(opts?: {
       };
     },
   };
-  return { statements, db };
+  return { statements, executed, db };
 }
 
 const CHAIN_ID = 84532;
@@ -95,7 +105,7 @@ describe('recordActivityEvents — executed against a recording DB', () => {
       // exactly what the coverage suite polices on the mapping side
       makeLog('SomeEventNobodyMapped', { foo: 7n }, 3),
     ];
-    const { statements, db } = fakeDb();
+    const { executed, db } = fakeDb();
     const inserted = await recordActivityEvents(
       logs,
       { DB: db } as never,
@@ -103,7 +113,7 @@ describe('recordActivityEvents — executed against a recording DB', () => {
       new Map([[logs[0].blockNumber, 111]]),
     );
 
-    const inserts = activityInserts(statements);
+    const inserts = activityInserts(executed);
     expect(inserts).toHaveLength(logs.length);
     expect(inserted).toBe(logs.length);
 
@@ -127,22 +137,25 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     expect(inserts[2].binds[5]).toBeNull();
   });
 
-  it('records one row per event for EVERY reference-carrying surface event', async () => {
+  it('records one row per event for EVERY compiled event', async () => {
     // The one-insert-per-log contract over the WHOLE derived surface, not a
     // hand-picked pair (Codex round-70 P2): `recordActivityEvents` carries
     // event-specific branches (the OfferConsumedBySale enrichment today),
     // and a future branch that skips or suppresses an insert for some other
     // real event must fail here — a two-event batch would never see it.
-    const events = [...surface.carries.keys()].sort();
+    // ALL compiled events, not only the reference-carrying subset (Codex
+    // round-71 P2): actor-only events (Transfer, vault deposits, rewards)
+    // traverse the same recording path and must each land a row too.
+    const events = [...surface.argShapes.keys()].sort();
     const logs = events.map((e, i) => makeLog(e, synthesizeArgs(e), i + 1));
-    const { statements, db } = fakeDb();
+    const { executed, db } = fakeDb();
     const inserted = await recordActivityEvents(
       logs,
       { DB: db } as never,
       CHAIN_ID,
       new Map(),
     );
-    const inserts = activityInserts(statements);
+    const inserts = activityInserts(executed);
     expect(inserts).toHaveLength(logs.length);
     expect(inserted).toBe(logs.length);
     logs.forEach((log, i) => {
@@ -162,9 +175,9 @@ describe('recordActivityEvents — executed against a recording DB', () => {
       makeLog('LoanStatusChanged', { loanId: 3n, from: 0, to: 1 }, 3),
     ];
     // the second insert is a replay the unique index swallows
-    const { statements, db } = fakeDb({ changesFor: (n) => (n === 2 ? 0 : 1) });
+    const { executed, db } = fakeDb({ changesFor: (n) => (n === 2 ? 0 : 1) });
     const inserted = await recordActivityEvents(logs, { DB: db } as never, CHAIN_ID, new Map());
-    expect(activityInserts(statements)).toHaveLength(3); // still attempted per log
+    expect(activityInserts(executed)).toHaveLength(3); // still executed per log
     expect(inserted).toBe(2); // but only the landed rows are counted
   });
 
@@ -203,11 +216,11 @@ describe('recordActivityEvents — executed against a recording DB', () => {
 
   it('enriches OfferConsumedBySale args with the offer creator for the participants walk', async () => {
     const logs = [makeLog('OfferConsumedBySale', { offerId: 9n, executor: '0xEXEC' }, 1)];
-    const { statements, db } = fakeDb({
+    const { executed, db } = fakeDb({
       selectResults: [{ offer_id: 9, creator: '0xborrower' }],
     });
     await recordActivityEvents(logs, { DB: db } as never, CHAIN_ID, new Map());
-    const [insert] = activityInserts(statements);
+    const [insert] = activityInserts(executed);
     expect(insert).toBeDefined();
     expect(String(insert.binds[8])).toContain('"creator":"0xborrower"');
     // ...and the creator lookup bound EXACTLY the chain id followed by the
@@ -215,7 +228,7 @@ describe('recordActivityEvents — executed against a recording DB', () => {
     // of bindings would keep this green while a production lookup that
     // dropped the ids or left placeholders unbound returns no creator — or
     // fails the whole batch — on real D1.
-    const select = statements.find((s) => /FROM offers/i.test(s.sql));
+    const select = executed.find((s) => /FROM offers/i.test(s.sql));
     expect(select?.binds).toEqual([CHAIN_ID, 9]);
     expect((select?.sql.match(/\?/g) ?? []).length).toBe(select?.binds.length);
   });

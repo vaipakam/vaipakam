@@ -291,7 +291,8 @@ export const isAliasOf = (field, name) =>
  *   carries        eventName -> Set<field>                      (loanId/offerId)
  *   aliasNames     eventName -> Map<field, Set<ABI input path>> (what can populate it)
  *   eventInputs    eventName -> signature string                (overload detection)
- *   argShapes      eventName -> [{path, type}]                  (for args synthesis)
+ *   argShapes      eventName -> Map<signature, [{path, type}]>  (for args synthesis;
+ *                  one layout per DISTINCT signature, so every overload is present)
  *   arrayOnlyRefs  '<Event>.<field>' -> path                    (array-only references)
  *   abiConflicts   [{kind, event, message}]                     (ABI-side problems)
  *
@@ -596,15 +597,6 @@ export function deriveActivityRefsSurface() {
       }
       collect(item.inputs, '');
 
-      // Leaf argument shapes, for callers that SYNTHESIZE a decoded-args bag and
-      // EXECUTE the real mapper against it (the round-69 redesign): every dotted
-      // path with its ABI type. Tuple parents are recorded by `collect` too but
-      // carry type 'tuple'; synthesis skips them — the leaves create the nesting.
-      argShapes.set(
-        item.name,
-        names.map((n) => ({ path: n, type: typeOf.get(n) ?? '' })),
-      );
-
       // An overloaded event name is two different argument bags reaching ONE case
       // (Codex round-8 P2). `decodeEventLog` can produce either, so a mapper keyed
       // on the name cannot be right for both unless they agree. Rejected rather
@@ -656,6 +648,25 @@ export function deriveActivityRefsSurface() {
         });
       }
       eventInputs.set(item.name, signature);
+
+      // Leaf argument shapes, for callers that SYNTHESIZE a decoded-args bag
+      // and EXECUTE the real mapper against it (the round-69 redesign): every
+      // dotted path with its ABI type. Tuple parents are recorded by `collect`
+      // too but carry type 'tuple'; synthesis skips them — the leaves create
+      // the nesting. Keyed per SIGNATURE, not per name (Codex round-71 P2):
+      // a name-keyed map kept only the last-parsed overload's layout, so an
+      // overloaded event's OTHER layout was never synthesized and a mapping
+      // reading a field unique to it went unexecuted. The same event repeated
+      // across member ABI files with the same signature dedupes here.
+      let layouts = argShapes.get(item.name);
+      if (!layouts) {
+        layouts = new Map();
+        argShapes.set(item.name, layouts);
+      }
+      layouts.set(
+        signature,
+        names.map((n) => ({ path: n, type: typeOf.get(n) ?? '' })),
+      );
       for (const field of REF_FIELDS) {
         // Shape-matching applies to the LAST path segment: `fields.newLoanId` is a
         // loan reference for the same reason `newLoanId` is.

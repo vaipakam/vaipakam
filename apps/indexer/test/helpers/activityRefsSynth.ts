@@ -36,12 +36,25 @@ function valueFor(event: string, path: string, type: string): unknown {
   return `0x${'00'.repeat(32)}`;
 }
 
+/** Every distinct argument layout the ABI declares for `event` — one per
+ *  signature, so an overloaded event contributes each of its layouts (Codex
+ *  round-71 P2: keeping only the last-parsed layout left the other overload's
+ *  fields unsynthesized and therefore unexecuted). */
+export function layoutsOf(event: string): Array<Array<{ path: string; type: string }>> {
+  return [...(surface.argShapes.get(event)?.values() ?? [])];
+}
+
 /** A decoded-args bag for `event`, every ABI leaf populated by type. Numeric
  *  scalars get the planted unique id; everything else gets an inert value of
- *  the right JS shape (what viem would hand the mapper). */
-export function synthesizeArgs(event: string): Record<string, unknown> {
+ *  the right JS shape (what viem would hand the mapper). Non-overloaded
+ *  events have exactly one layout; pass `layout` to synthesize a specific
+ *  overload's shape. */
+export function synthesizeArgs(
+  event: string,
+  layout?: Array<{ path: string; type: string }>,
+): Record<string, unknown> {
   const args: Record<string, unknown> = {};
-  for (const { path, type } of surface.argShapes.get(event) ?? []) {
+  for (const { path, type } of layout ?? layoutsOf(event)[0] ?? []) {
     if (type === 'tuple') continue; // parents materialize via their leaves
     const segs = path.split('.');
     let host = args;

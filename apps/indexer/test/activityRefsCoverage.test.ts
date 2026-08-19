@@ -36,7 +36,7 @@ import {
   DELIBERATELY_NOT_SCOPED,
   REF_FIELDS,
 } from '../scripts/lib/activity-refs-surface.mjs';
-import { expectedIds, surface, synthesizeArgs } from './helpers/activityRefsSynth';
+import { expectedIds, layoutsOf, surface, synthesizeArgs } from './helpers/activityRefsSynth';
 
 const { carries, arrayOnlyRefs, abiConflicts, eventInputs } = surface;
 
@@ -74,13 +74,19 @@ describe('activity-refs coverage — executed against the real mapper', () => {
     // entry is still executed. Guard against the check going vacuous the day
     // the overload is cleaned up: skip silently only when there are none.
     for (const event of overloadedOutsideSurface) {
-      expect(
-        pluckActivityRefs(event, synthesizeArgs(event)),
-        `${event} is overloaded — mapping it under one layout misreads the other`,
-      ).toEqual({ actor: null, loanId: null, offerId: null });
+      // EVERY layout, not just the last-parsed one (Codex round-71 P2): a
+      // mapping that reads a field unique to one overload only misbehaves
+      // when THAT layout's bag is handed in, so each distinct signature is
+      // synthesized and executed.
+      const layouts = layoutsOf(event);
+      expect(layouts.length).toBeGreaterThan(1);
+      for (const layout of layouts) {
+        expect(
+          pluckActivityRefs(event, synthesizeArgs(event, layout)),
+          `${event} is overloaded — mapping it under one layout misreads the other`,
+        ).toEqual({ actor: null, loanId: null, offerId: null });
+      }
     }
-    // eventInputs holds the LAST-parsed signature per name; nothing further
-    // to assert here — the conflict record itself is what flags the shape.
     expect(eventInputs.size).toBeGreaterThan(0);
   });
 
@@ -88,14 +94,7 @@ describe('activity-refs coverage — executed against the real mapper', () => {
     const gaps: string[] = [];
     const staleNowMapped: string[] = [];
     for (const [event, fields] of [...carries].sort((a, b) => a[0].localeCompare(b[0]))) {
-      const args = synthesizeArgs(event);
-      // The mapper must not MUTATE the decoded arguments (Codex round-70 P2):
-      // `recordActivityEvents` serializes `args_json` only after calling it,
-      // so a side effect here corrupts the persisted bag while every returned
-      // reference still checks out. structuredClone carries bigints.
-      const before = structuredClone(args);
-      const refs = pluckActivityRefs(event, args);
-      expect(args, `${event} — the mapper mutated the decoded arguments`).toEqual(before);
+      const refs = pluckActivityRefs(event, synthesizeArgs(event));
       for (const field of fields) {
         const got = (refs as Record<string, unknown>)[field];
         const planted = expectedIds(event, field);
@@ -155,13 +154,43 @@ describe('activity-refs coverage — executed against the real mapper', () => {
     expect(dead).toEqual([]);
   });
 
-  it('returns a lowercase address or null for actor, for every event in the surface', () => {
+  it('never mutates the decoded arguments, for ANY compiled event', () => {
+    // The mapper must not MUTATE the decoded arguments (Codex round-70 P2):
+    // `recordActivityEvents` serializes `args_json` only after calling it,
+    // so a side effect here corrupts the persisted bag while every returned
+    // reference still checks out. Over EVERY compiled event and layout, not
+    // only the reference-carrying ones (Codex round-71 P2) — the actor-only
+    // mappings (Transfer, vault deposits, reward events) run the same code
+    // path and their bags persist the same way. structuredClone carries
+    // bigints.
     const bad: string[] = [];
-    for (const event of carries.keys()) {
-      const { actor } = pluckActivityRefs(event, synthesizeArgs(event));
-      const ok =
-        actor === null || (typeof actor === 'string' && actor === actor.toLowerCase());
-      if (!ok) bad.push(`${event} — actor was ${String(actor)}`);
+    for (const event of surface.argShapes.keys()) {
+      for (const layout of layoutsOf(event)) {
+        const args = synthesizeArgs(event, layout);
+        const before = structuredClone(args);
+        pluckActivityRefs(event, args);
+        try {
+          expect(args).toEqual(before);
+        } catch {
+          bad.push(`${event} — the mapper mutated the decoded arguments`);
+        }
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('returns a lowercase 0x-address or null for actor, for ANY compiled event', () => {
+    // The full address SHAPE, not just lowercase-ness (Codex round-71 P2): a
+    // mapping that lowercases a non-address argument — or returns a constant
+    // like 'not-an-address' — persists an actor no wallet filter can ever
+    // match, so the row disappears from actor-scoped activity.
+    const bad: string[] = [];
+    for (const event of surface.argShapes.keys()) {
+      for (const layout of layoutsOf(event)) {
+        const { actor } = pluckActivityRefs(event, synthesizeArgs(event, layout));
+        const ok = actor === null || /^0x[0-9a-f]{40}$/.test(actor as string);
+        if (!ok) bad.push(`${event} — actor was ${String(actor)}`);
+      }
     }
     expect(bad).toEqual([]);
   });
