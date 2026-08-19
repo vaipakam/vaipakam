@@ -1591,6 +1591,92 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    // ─── #1810: bind the reviewed quote to the submitted listing ─────────────
+
+    /// @dev The happy path: quote and listing in the same block, so the
+    ///      recorded bounds equal the reviewed ones exactly — equality must
+    ///      PASS (only adverse drift is refused).
+    function test_1810_boundListingAcceptsTheReviewedQuote() public {
+        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
+            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld
+        );
+        vm.clearMockedCalls();
+        (uint256 recFloor, uint256 recHeld, bool recorded,) =
+            TestMutatorFacet(address(diamond)).getSaleListingBoundsRaw(activeLoanId);
+        assertTrue(recorded, "the bound listing recorded its bounds");
+        assertEq(recFloor, quotedFloor, "recorded floor equals the reviewed quote");
+        assertEq(recHeld, quotedHeld, "recorded ceiling equals the reviewed quote");
+    }
+
+    /// @dev Time passing between quote and mining is the mildest adverse
+    ///      drift: the forfeiture leg accrues, the projected cost rises, and
+    ///      the listing would record a floor BELOW the one the seller
+    ///      reviewed. The bound entry refuses it; the unbound entry would
+    ///      have silently recorded the worse figure — which is the seam this
+    ///      entry point closes.
+    function test_1810_boundListingRefusesAdverseFloorDrift() public {
+        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
+        vm.warp(block.timestamp + 1 days);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        // Partial revert: the recorded-floor argument depends on the exact
+        // warped second and pinning it would make the test brittle for no
+        // added proof — the SELECTOR is what shows the bound fired rather
+        // than some earlier listing guard.
+        vm.expectPartialRevert(IVaipakamErrors.ListingFloorBelowReviewed.selector);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
+            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Interest parked into held-for-lender between quote and mining
+    ///      enlarges what transfers with the position — the ceiling the
+    ///      listing would record exceeds the reviewed one, and the bound
+    ///      entry refuses with both figures named.
+    function test_1810_boundListingRefusesNewParkAboveReviewedCeiling() public {
+        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
+        assertEq(quotedHeld, 0, "fixture starts with nothing held");
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ListingHeldAboveReviewed.selector,
+                1e6,
+                0
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
+            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Better-than-reviewed passes: a seller who reviewed a LOWER floor
+    ///      and a HIGHER ceiling than the listing records is strictly better
+    ///      off, and refusing that would block ordinary favorable drift.
+    function test_1810_boundListingPassesOnFavorableDrift() public {
+        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
+        assertGt(quotedFloor, 0, "fixture floor is nonzero, so a weaker review exists");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
+            activeLoanId, 500, true, 7 days, quotedFloor - 1, quotedHeld + 1
+        );
+        vm.clearMockedCalls();
+        (,, bool recorded,) =
+            TestMutatorFacet(address(diamond)).getSaleListingBoundsRaw(activeLoanId);
+        assertTrue(recorded, "the listing landed despite the weaker review");
+    }
+
     /// @dev A listing made before the bounds existed records none, and must keep
     ///      completing exactly as it did. The recorded-flag is what makes this
     ///      distinguishable from a listing whose ceiling is legitimately zero.

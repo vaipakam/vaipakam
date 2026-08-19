@@ -207,6 +207,14 @@ contract RedeployFacets is Script {
         // new (Add); on a pre-#594 diamond all five would be new (Add).
         (bytes4[] memory consToAdd, bytes4[] memory consToReplace) =
             _partitionByRouting(diamond, _consolidationSelectors());
+        // #1810 — EarlyWithdrawalFacet gained `createLoanSaleOfferBound`, so
+        // its list is partitioned like the others: on a pre-#1810 diamond the
+        // three older selectors are routed (Replace) and the bound entry is
+        // new (Add); the routed subset is never empty (createLoanSaleOffer is
+        // routed on every existing diamond), so the fixed Replace slot below
+        // stays valid.
+        (bytes4[] memory ewToAdd, bytes4[] memory ewToReplace) =
+            _partitionByRouting(diamond, _earlyWithdrawalSelectors());
         // #1817 r9 — the accumulator's surface, same Add/Replace-by-routing
         // split: on a current diamond all four are routed (Replace); on a
         // pre-RL-1 diamond `rollupUserDiscountLocal` is new (Add) — the half
@@ -276,6 +284,7 @@ contract RedeployFacets is Script {
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
+            (ewToAdd.length > 0 ? 1 : 0) +
             (accToAdd.length > 0 ? 1 : 0) + (accToReplace.length > 0 ? 1 : 0) +
             (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0) +
             (profToAdd.length > 0 ? 1 : 0) + (profToReplace.length > 0 ? 1 : 0) +
@@ -292,7 +301,7 @@ contract RedeployFacets is Script {
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
         cuts[3] = _replace(address(precloseFacet), _precloseSelectors());
-        cuts[4] = _replace(address(earlyWithdrawalFacet), _earlyWithdrawalSelectors());
+        cuts[4] = _replace(address(earlyWithdrawalFacet), ewToReplace);
         // #658 — triggerLiquidationSplit is already routed on a current diamond
         // (relocated to RiskSplitLiquidationFacet in #66/#633), so a plain
         // Replace repoints it to the refreshed bytecode.
@@ -328,6 +337,11 @@ contract RedeployFacets is Script {
         }
         if (consToAdd.length > 0) {
             cuts[idx++] = _add(address(consolidationFacet), consToAdd);
+        }
+        // #1810 — the quote-bound listing entry is an Add on any pre-#1810
+        // diamond (the routed subset went through the fixed Replace above).
+        if (ewToAdd.length > 0) {
+            cuts[idx++] = _add(address(earlyWithdrawalFacet), ewToAdd);
         }
         // #1817 r9 — route the accumulator's surface. The Add branch is the one
         // that matters on a pre-RL-1 diamond: without it the refreshed sale
@@ -408,6 +422,8 @@ contract RedeployFacets is Script {
         console.log("DiamondCut applied: 9 facets replaced + partitioned Claim/HF/Cons.");
         console.log("  HF selectors added:   ", hfToAdd.length);
         console.log("  HF selectors replaced:", hfToReplace.length);
+        console.log("  EarlyWithdrawal selectors added: ", ewToAdd.length);
+        console.log("  EarlyWithdrawal selectors repl.: ", ewToReplace.length);
         console.log("  Cons selectors added: ", consToAdd.length);
         console.log("  Cons selectors repl.: ", consToReplace.length);
         console.log("  Accumulator selectors added: ", accToAdd.length);
@@ -574,7 +590,7 @@ contract RedeployFacets is Script {
     }
 
     function _earlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #1123 (Codex #1126 r4 P1) — `completeLoanSaleInternal` (the
@@ -596,6 +612,10 @@ contract RedeployFacets is Script {
         // facet's WHOLE routed surface (#778/#779) — which, since the #1780
         // split moved `sellLoanViaBuyOffer` to its own facet, is these 3.
         s[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        // #1810 — the quote-bound listing entry. NEW, so this list is now cut
+        // via the Add/Replace-by-routing partition rather than a fixed Replace
+        // (a Replace reverts on an unrouted selector on any pre-#1810 target).
+        s[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
     }
 
     /// @dev #1780 — the direct lender-exit route's whole routed surface.

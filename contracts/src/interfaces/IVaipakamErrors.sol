@@ -1006,6 +1006,23 @@ interface IVaipakamErrors {
     /// @param maxHeld The ceiling recorded on the listing.
     /// @param actual  The balance that would transfer now.
     error SaleAboveHeldCeiling(uint256 maxHeld, uint256 actual);
+    /// @notice #1810 — the listing would record a seller floor BELOW the quote
+    ///         the seller reviewed, so state moved against them between quote
+    ///         and listing (a partial repayment is enough — it disqualifies
+    ///         the paid-through mark and widens the forfeiture).
+    /// @dev    Raised only by `createLoanSaleOfferBound`; the unbound entry
+    ///         records whatever the arithmetic comes to. Adverse drift only —
+    ///         a floor above the reviewed one passes.
+    /// @param recorded The floor the listing would record now.
+    /// @param reviewed The floor the seller was quoted.
+    error ListingFloorBelowReviewed(uint256 recorded, uint256 reviewed);
+    /// @notice #1810 — the listing would record a held-transfer ceiling ABOVE
+    ///         the quote the seller reviewed (interest parked into
+    ///         held-for-lender between quote and listing enlarges what
+    ///         transfers with the position).
+    /// @param recorded The ceiling the listing would record now.
+    /// @param reviewed The ceiling the seller was quoted.
+    error ListingHeldAboveReviewed(uint256 recorded, uint256 reviewed);
     /// @notice #951 (Codex #959) — a loan already has a live sale listing. Only
     ///         one listing per loan at a time: `loanToSaleOfferId` is cleared on
     ///         cancel (OfferCancelFacet) and on completion, so a re-list after

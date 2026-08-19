@@ -1991,12 +1991,15 @@ contract DeployDiamond is Script {
     }
 
     function _getEarlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #951 (Codex #959) — cross-facet completion entry for the
         // accept-then-complete auto-link (skips the outer nonReentrant guard).
         s[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        // #1810 — quote-bound listing creation (adverse-drift check against
+        // the reviewed quote); the unbound entry stays routed unchanged.
+        s[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
     }
 
     /// @dev #1780 — the direct lender-exit route's own facet. One selector, but
