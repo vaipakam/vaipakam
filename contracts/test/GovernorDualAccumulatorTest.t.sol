@@ -1473,6 +1473,47 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1699 r20 P1 — an UNPRICED preflight defers. With the
+    ///      cumulative cursor 730–1460 days behind, the preflight's bounded
+    ///      advance leaves the entry unpriced (preFresh reads zero, the
+    ///      backing-defer passes vacuously) while the settle's own second
+    ///      bounded advance completes — processing the entry under a
+    ///      transient backing clamp and losing the recoverable remainder.
+    function testP1bFarBehindLegacyForfeitDefersWhileUnpriced() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        // Wholly-legacy, FAR out: the cursor starts ~1400 days behind the
+        // entry end, so one bounded advance cannot price it.
+        _seedPriorDays(1410);
+        uint256 id = _seedEntry(alice, 110, 1400, 1405);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(110, id);
+        _mut().setInteractionPoolPaidOut(0);
+
+        // BACKING DIP active: the state where settling early loses value.
+        uint256 bucketBefore = _mut().getRecycleBucketRaw();
+        _mut().setRecycleBucketRaw(vpfi.balanceOf(address(diamond)));
+
+        // Call 1: preflight advances its bounded stretch but cannot price —
+        // the sweep must DEFER, never let the settle's second advance
+        // complete under the dip.
+        uint256 first = _facet().sweepForfeitedInteractionRewards(110);
+        assertEq(first, 0, "an unpriced preflight defers");
+        assertFalse(
+            _mut().getRewardEntryProcessedRaw(id),
+            "the entry is intact - nothing settled under the dip"
+        );
+
+        // Backing recovers -> a later sweep (advance now caught up) settles
+        // the WHOLE value.
+        _mut().setRecycleBucketRaw(bucketBefore);
+        uint256 second = _facet().sweepForfeitedInteractionRewards(110);
+        assertGt(second, 0, "and the full value settles once priced+backed");
+        assertTrue(
+            _mut().getRewardEntryProcessedRaw(id),
+            "terminalising with nothing lost"
+        );
+    }
+
     function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);

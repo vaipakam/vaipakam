@@ -2777,7 +2777,18 @@ library LibInteractionRewards {
                 }
             }
             {
-                (, EntrySplit memory pre, , ) = _entryPriceCore(s, id, e);
+                (, EntrySplit memory pre, , EntryPriceState memory pst) =
+                    _entryPriceCore(s, id, e);
+                // #1699 r20 P1 — an UNPRICED preflight defers outright. The
+                // bounded cumulative advance above may not reach the entry's
+                // end when the cursor is far behind; `preFresh` then reads a
+                // meaningless zero, the backing-defer test passes vacuously,
+                // and {_processEntryWhole}'s own SECOND bounded advance can
+                // complete the pricing and settle under a transient backing
+                // clamp — permanently losing the recoverable remainder. The
+                // policy can only act on a price it actually has; an empty
+                // window still proceeds (it settles to zero harmlessly).
+                if (!pst.priced && !pst.emptyWindow) return (0, 0, 0, 0);
                 uint256 preFresh = pre.total - pre.recycled;
                 if (preFresh > freshHeadroom && freshRecoverable) {
                     return (0, 0, 0, 0);

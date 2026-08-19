@@ -189,6 +189,14 @@ TARGETS = [
         "test/GovernorDualAccumulatorTest.t.sol",
         "testP1bSpanningForfeitLegacyLegDefersOnABackingDip",
     ),
+    (
+        "an UNPRICED wholly-legacy preflight defers the forfeit settle",
+        "libraries/LibInteractionRewards.sol",
+        "                if (!pst.priced && !pst.emptyWindow) return (0, 0, 0, 0);",
+        "                // unpriced-preflight gate removed by mutant",
+        "test/GovernorDualAccumulatorTest.t.sol",
+        "testP1bFarBehindLegacyForfeitDefersWhileUnpriced",
+    ),
 ]
 
 # Proven EQUIVALENT: expected to SURVIVE, each with recorded evidence.

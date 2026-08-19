@@ -360,6 +360,13 @@ defer can happen BEFORE the irreversible settle), and only the monotone
 69M cap terminally trims. The rule now holds uniformly across every leg
 of every settlement path.
 
+Round 20 (P1) closed the last seam in it: the wholly-legacy preflight can
+be UNPRICED when the cumulative cursor sits more than one bounded advance
+behind, and an unpriced preflight now defers outright. A budget policy
+can only act on a price it actually has — letting the settle's own second
+bounded advance complete the pricing under a transient backing clamp was
+silently spending the recoverable remainder.
+
 ## Testing
 
 The expiry fixture is unusually easy to make vacuous: **five distinct
