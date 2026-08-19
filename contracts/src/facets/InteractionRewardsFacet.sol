@@ -79,8 +79,10 @@ contract InteractionRewardsFacet is
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert VPFITokenNotSet();
 
-        LibInteractionRewards.EntrySplit memory sweepSplit =
-            LibInteractionRewards.sweepForfeitedByLoanId(loanId);
+        (
+            LibInteractionRewards.EntrySplit memory sweepSplit,
+            uint256 armedCapped
+        ) = LibInteractionRewards.sweepForfeitedByLoanId(loanId);
         uint256 treasuryDelta = sweepSplit.total;
         if (treasuryDelta == 0) return 0;
 
@@ -96,7 +98,23 @@ contract InteractionRewardsFacet is
         // ONLY when there is nothing recycled to release (Codex #1315 P2:
         // a post-arming forfeit with a recycled component must still be
         // sweepable at fresh exhaustion, or its commitment stays stuck).
-        uint256 freshSwept = sweepSplit.total - sweepSplit.recycled;
+        // Codex #1699 r17 P1 — the ARMED portion this sweep settles is the
+        // D1-CAPPED figure, because that is what Base's commitment report
+        // funds (`min(rawPay, cap)` per day) and therefore all a remittance
+        // will EVER deliver. The cap-trimmed excess was written off at
+        // report time on Base — no later remittance owes it — so it is
+        // written off here too, exactly as the report did: it never spends
+        // the pool, never credits the bucket, and never charges the
+        // delivered bound. Its COMMITMENT still retires in full below
+        // (`consumeArmedFresh` takes the RAW figure), the same
+        // owed-vs-moved split every other terminal path keeps. Gating on
+        // the raw figure demanded allowance that could never arrive,
+        // permanently wedging every capped forfeited entry.
+        uint256 armedTrimmed = sweepSplit.armedFresh > armedCapped
+            ? sweepSplit.armedFresh - armedCapped
+            : 0;
+        uint256 freshSwept =
+            sweepSplit.total - sweepSplit.recycled - armedTrimmed;
         if (remaining == 0 && sweepSplit.recycled == 0) {
             revert InteractionPoolExhausted();
         }
@@ -138,9 +156,9 @@ contract InteractionRewardsFacet is
         // Computed here so the gate and the charge below cannot diverge: one
         // expression, read twice.
         uint256 armedPaid;
-        if (freshSwept != 0 && sweepSplit.armedFresh != 0) {
+        if (freshSwept != 0 && armedCapped != 0) {
             if (freshSwept >= freshWanted) {
-                armedPaid = sweepSplit.armedFresh;
+                armedPaid = armedCapped;
             } else {
                 // Codex #1699 r1 P2 — round the pro-rata share UP. Flooring
                 // per sweep discards the remainder every call
@@ -150,10 +168,10 @@ contract InteractionRewardsFacet is
                 // a stored accumulator and a retry-reconciliation rule;
                 // ceiling is the closed-form alternative and errs by at most
                 // one wei in the direction that TIGHTENS the bound.
-                uint256 num0 = sweepSplit.armedFresh * freshSwept;
+                uint256 num0 = armedCapped * freshSwept;
                 armedPaid = (num0 + freshWanted - 1) / freshWanted;
-                if (armedPaid > sweepSplit.armedFresh) {
-                    armedPaid = sweepSplit.armedFresh;
+                if (armedPaid > armedCapped) {
+                    armedPaid = armedCapped;
                 }
             }
         }

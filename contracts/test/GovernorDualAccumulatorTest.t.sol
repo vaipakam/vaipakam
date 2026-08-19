@@ -1378,6 +1378,61 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1699 r17 P1 — the forfeit sweep gates on the D1-CAPPED
+    ///      armed figure, because that is the liability Base's commitment
+    ///      report states (`min(rawPay, cap)` per day) and therefore all a
+    ///      remittance will ever fund. Gating on the raw figure demanded
+    ///      allowance that could never arrive: a capped forfeited entry —
+    ///      and its commitment — wedged permanently.
+    function testP1bForfeitSweepGatesOnTheCappedLiability() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+        assertEq(recycled5, 0, "LIVE: and NO recycled share");
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        _mut().setChainDayFundingRaw(5, uint32(CHAIN_ARB), floor5 / 2, 0);
+
+        uint64 loanId = 107;
+        uint256 id = _seedEntry(alice, loanId, 5, 6); // wholly armed
+        _mut().setLoanActiveLenderEntryId(loanId, id);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+        _accrueExec(ids, 30 days);
+
+        // Measure the RAW armed value while the entry is still claimable
+        // (the need excludes forfeited entries) and the cap is neutral.
+        uint256 raw = _lens().getUserArmedFreshNeed(alice);
+        assertGt(raw, 0, "LIVE: the entry carries a raw armed value");
+
+        // Bind the D1 cap BELOW the raw value, then forfeit. Base's report
+        // funds only min(raw, cap) = cap for this day — deliver EXACTLY
+        // that, which is all any remittance will ever owe.
+        uint256 cap = raw / 2;
+        _mut().setDayUserSideCapRaw(5, cap);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setArmedFreshLedgerRaw(cap, 0);
+
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(loanId);
+        assertGt(
+            swept,
+            0,
+            "a capped forfeit settles on the capped liability, never wedging"
+        );
+        // STORED state: the delivered bound is charged EXACTLY the capped
+        // figure — the raw figure would both have reverted the gate above
+        // and spent delivered funding that never arrived.
+        assertEq(
+            _mut().getArmedFreshPaidRaw(),
+            cap,
+            "and the bound is charged the capped figure, no more"
+        );
+    }
+
     function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);

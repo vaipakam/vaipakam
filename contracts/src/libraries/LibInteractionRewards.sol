@@ -2633,9 +2633,50 @@ library LibInteractionRewards {
      * @return toTreasury Aggregated {EntrySplit} of the forfeits (the facet
      *                    splits fresh-credit vs recycled-release — PR-3c).
      */
+    /// @dev Codex #1699 r17 P1 — the D1-capped armed sum for a forfeited
+    ///      entry's REMAINING armed days: per day, `min(rawPay, C_side)`,
+    ///      the EXACT liability form Base's commitment report states
+    ///      ({LibCommitmentReport}: `liabilityAdd += rawPay < cap ? rawPay
+    ///      : cap`). A remittance only ever funds that figure — the report
+    ///      wrote the excess off at report time and no later remittance owes
+    ///      it — so a forfeit gate or delivered charge measured at the RAW
+    ///      armed value demands allowance that can never arrive, wedging the
+    ///      permissionless sweep and its commitment permanently.
+    function _forfeitArmedCapped(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e
+    ) private view returns (uint256 capped) {
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        if (armedFrom == 0 || e.endDay <= armedFrom) return 0;
+        uint256 d = _shareOfPoolCursorDay(s, id, e);
+        bool lender = e.side == LibVaipakam.RewardSide.Lender;
+        for (; d < e.endDay; ) {
+            // The per-day ARMED value from the same cumulative rows
+            // {_entryWindowSplitFrom} prices the whole window with — the
+            // mirror's own pricing truth — never the raw RPN delta, which
+            // is a different series and reads zero on a mirror whose armed
+            // value arrived by broadcast.
+            uint256 cumEnd = lender
+                ? s.cumMinArmedLenderRpn18[d]
+                : s.cumMinArmedBorrowerRpn18[d];
+            uint256 cumPrev = lender
+                ? s.cumMinArmedLenderRpn18[d - 1]
+                : s.cumMinArmedBorrowerRpn18[d - 1];
+            uint256 rawPay = cumEnd > cumPrev
+                ? (e.perDayNumeraire18 * (cumEnd - cumPrev)) / 1e18
+                : 0;
+            uint256 cap = lender
+                ? s.dayUserSideCapLenderVpfi18[d]
+                : s.dayUserSideCapBorrowerVpfi18[d];
+            capped += rawPay < cap ? rawPay : cap;
+            unchecked { ++d; }
+        }
+    }
+
     function sweepForfeitedByLoanId(uint256 loanId)
         internal
-        returns (EntrySplit memory toTreasury)
+        returns (EntrySplit memory toTreasury, uint256 armedCapped)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
@@ -2647,12 +2688,31 @@ library LibInteractionRewards {
         // derived) — a permissionless sweep can never touch a payable entry.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
         if (lenderId != 0 && _isForfeited(s, s.rewardEntries[lenderId])) {
+            // r17 P1 — the capped figure is read AFTER the settle, because
+            // {_processEntryWhole} is what extends the cumulative RPN (the
+            // per-day armed rows this read prices from — before it they are
+            // simply unmaterialized and read zero). The settle never moves
+            // the claim cursor, so the window priced is byte-identical;
+            // gating on processed-became-TRUE scopes the read to entries
+            // this sweep genuinely settled (a zero-price retryable settle
+            // contributes nothing, exactly like the split it returns).
+            bool was = !s.rewardEntries[lenderId].processed;
             (, EntrySplit memory t) = _processEntryWhole(s, lenderId);
+            if (was && s.rewardEntries[lenderId].processed) {
+                armedCapped +=
+                    _forfeitArmedCapped(s, lenderId, s.rewardEntries[lenderId]);
+            }
             _foldSplit(toTreasury, t);
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
         if (borrowerId != 0 && _isForfeited(s, s.rewardEntries[borrowerId])) {
+            bool was = !s.rewardEntries[borrowerId].processed;
             (, EntrySplit memory t) = _processEntryWhole(s, borrowerId);
+            if (was && s.rewardEntries[borrowerId].processed) {
+                armedCapped += _forfeitArmedCapped(
+                    s, borrowerId, s.rewardEntries[borrowerId]
+                );
+            }
             _foldSplit(toTreasury, t);
         }
 
@@ -2664,7 +2724,14 @@ library LibInteractionRewards {
         uint256 olen = orphaned.length;
         for (uint256 i = 0; i < olen; ) {
             if (_isForfeited(s, s.rewardEntries[orphaned[i]])) {
+                // r17 P1 — same read-after-settle as the two pointers above.
+                bool was = !s.rewardEntries[orphaned[i]].processed;
                 (, EntrySplit memory t) = _processEntryWhole(s, orphaned[i]);
+                if (was && s.rewardEntries[orphaned[i]].processed) {
+                    armedCapped += _forfeitArmedCapped(
+                        s, orphaned[i], s.rewardEntries[orphaned[i]]
+                    );
+                }
                 _foldSplit(toTreasury, t);
             }
             unchecked { ++i; }
@@ -2850,52 +2917,69 @@ library LibInteractionRewards {
         // (The read-only countdown mirror cannot advance and keeps its
         // documented optimistic-estimate caveat; this sweep is the
         // authority.)
-        uint256 fundingNeed = userClaimFundingNeed(s, e.user);
-        // Codex #1699 r2 P1 — the MIRROR delivered bound belongs in this
-        // predicate, not only at the terminal.
-        //
-        // The horizon clock measures time during which the claimant COULD
-        // have claimed. If delivered funding cannot cover this entry's armed
-        // share, their own walk defers and they cannot be paid — so time
-        // spent in that state is not executable time. Checking it only at the
-        // terminal let an entry bank its full horizon+notice while unpayable
-        // and then expire the instant funding arrived, without the claimant
-        // ever getting the configured window.
-        //
-        // This is the w4 rule applied to a new clock: a bounded remediation
-        // window must not run while the remedy path is structurally
-        // unreachable. Reads the STORAGE bound deliberately — the batch-local
-        // allowance is about how much one sweep may spend, whereas this asks
-        // whether the entry is payable AT ALL.
-        // Codex #1699 r3 P1 — the AGGREGATE requirement, not this entry's own.
-        // The claim groups a user's entries and defers the whole group, so a
-        // per-entry test would keep the clock running through exactly the
-        // state in which the claimant cannot be paid.
-        uint256 armedNeed = _userArmedFreshNeed(s, e.user);
-        bool deliveredPayable = armedNeed == 0
-            || !LibVaipakam.isMirrorRewardChain(s)
-            || armedNeed <= deliveredFreshBound(s);
-        bool executable = !_recycledDrought(s, e.user) &&
-            _poolCappedPayable(toUser) != 0 &&
-            deliveredPayable &&
-            !LibVaipakam.isSanctionedAddress(e.user) &&
-            !LibPausable.paused() &&
-            IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            fundingNeed;
-
         uint64 lastObs = s.rewardEntryExecObsAt[id];
 
-        if (!executable && !removed) {
-            // Observed non-executable. Before the first executable
-            // observation there is no clock to break (stay unstarted).
-            // Afterwards, record the block and advance the stamp so the
-            // interval spanning this OBSERVED outage — however short — is
-            // never credited on recovery (Codex #1317 r8).
-            if (lastObs != 0) {
-                s.rewardEntryObsBlocked[id] = true;
-                s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+        // Codex #1699 r17 P2 — the executability probe runs ONLY where its
+        // answer can gate something: BEFORE the removal point. Past it the
+        // gates are bypassed anyway, yet the probe still performed two
+        // expensive dry runs (`userClaimFundingNeed` and the armed-need
+        // aggregate, each pricing the user's whole worklists) — so a user
+        // with enough reward history could make a removed entry's remaining
+        // settlement run out of gas, stranding it exactly where the claim
+        // path already skips it.
+        if (!removed) {
+            uint256 fundingNeed = userClaimFundingNeed(s, e.user);
+            // Codex #1699 r2 P1 — the MIRROR delivered bound belongs in this
+            // predicate, not only at the terminal.
+            //
+            // The horizon clock measures time during which the claimant COULD
+            // have claimed. If delivered funding cannot cover this entry's
+            // armed share, their own walk defers and they cannot be paid — so
+            // time spent in that state is not executable time. Checking it
+            // only at the terminal let an entry bank its full horizon+notice
+            // while unpayable and then expire the instant funding arrived,
+            // without the claimant ever getting the configured window.
+            //
+            // This is the w4 rule applied to a new clock: a bounded
+            // remediation window must not run while the remedy path is
+            // structurally unreachable. Reads the STORAGE bound deliberately —
+            // the batch-local allowance is about how much one sweep may
+            // spend, whereas this asks whether the entry is payable AT ALL.
+            // Codex #1699 r3 P1 — the AGGREGATE requirement, not this entry's
+            // own. The claim groups a user's entries and defers the whole
+            // group, so a per-entry test would keep the clock running through
+            // exactly the state in which the claimant cannot be paid.
+            //
+            // r17 P2 — computed LAZILY and mirror-only, exactly as the view
+            // path ({_entryExecutableNow}) already scopes it: off-mirror the
+            // bound cannot bind, so pricing the aggregate there was pure
+            // gas exposure.
+            bool deliveredPayable = true;
+            if (LibVaipakam.isMirrorRewardChain(s)) {
+                uint256 armedNeed = _userArmedFreshNeed(s, e.user);
+                deliveredPayable = armedNeed == 0
+                    || armedNeed <= deliveredFreshBound(s);
             }
-            return (expired, 0, 0);
+            bool executable = !_recycledDrought(s, e.user) &&
+                _poolCappedPayable(toUser) != 0 &&
+                deliveredPayable &&
+                !LibVaipakam.isSanctionedAddress(e.user) &&
+                !LibPausable.paused() &&
+                IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
+                fundingNeed;
+
+            if (!executable) {
+                // Observed non-executable. Before the first executable
+                // observation there is no clock to break (stay unstarted).
+                // Afterwards, record the block and advance the stamp so the
+                // interval spanning this OBSERVED outage — however short — is
+                // never credited on recovery (Codex #1317 r8).
+                if (lastObs != 0) {
+                    s.rewardEntryObsBlocked[id] = true;
+                    s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+                }
+                return (expired, 0, 0);
+            }
         }
 
         uint256 hSec = uint256(horizonDays) * 1 days;

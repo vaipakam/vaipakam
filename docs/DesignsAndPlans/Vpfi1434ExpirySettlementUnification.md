@@ -299,6 +299,30 @@ dangerous direction — an expiry clock accruing while the live claim
 still defers on delivered allowance. A reservation must equal what the
 predecessor leg actually spends: no less, and no more.
 
+Round 17 (on the merged tree) found the family's LAST members on two
+OTHER paths, P1 + P2. The P1 is the forfeit-path twin of the whole
+r13–r16 arc: the forfeit sweep's delivered gate demanded the RAW armed
+figure while Base's commitment report funds only `min(rawPay, cap)` per
+day — allowance no remittance will ever deliver, so a D1-capped
+forfeited entry (and its commitment) wedged permanently. The sweep now
+measures the capped liability (`_forfeitArmedCapped`, mirroring the
+report's form exactly): the capped figure gates, credits and charges;
+the cap-trimmed excess is written off precisely as Base wrote it off at
+report time; and the RAW commitment still retires — the same
+owed-vs-moved split every terminal path keeps. The P2: the
+executability probe (two whole-worklist dry runs) ran even where its
+answer gates nothing — post-removal and, for the delivered half,
+off-mirror — a gas-DoS surface that could strand a removed entry's
+settlement; both probes now run lazily, pre-removal only, delivered
+mirror-only, exactly as the countdown view already scoped them.
+
+A process note recorded here deliberately: the session-scratchpad
+mutation harness was lost to a power outage mid-round-17. It is rebuilt
+INTO THE REPO at `script/mutation/p1b_mutants.py` (19 exact
+fix-reversion mutants + the proven-equivalent pair with evidence); the
+earliest rounds' mutants — kills recorded per-round on PR #1699 — are
+re-derived in a follow-up rather than reconstructed from memory.
+
 ## Testing
 
 The expiry fixture is unusually easy to make vacuous: **five distinct

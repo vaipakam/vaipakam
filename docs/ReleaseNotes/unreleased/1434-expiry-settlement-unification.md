@@ -109,6 +109,23 @@ one. The practical consequences:
   reserves headroom too — while remaining excluded from the pending
   figure shown to the user, who receives nothing from it.
 
+- **A forfeited reward is settled against what the cross-chain funding
+  actually owes.** The permissionless sweep that finalizes forfeited
+  rewards used to require cross-chain funding to cover the reward's raw
+  value, but the funding schedule only ever remits the capped figure —
+  so a capped forfeited reward could never be finalized at all. The
+  sweep now settles exactly the capped amount (the same figure the
+  funding schedule states), writes off the capped-away remainder just as
+  the schedule already did, and still retires the full obligation.
+
+- **Routine sweeps no longer pay for questions whose answers cannot
+  matter.** The eligibility probe — an expensive simulation of the
+  owner's whole claim — now runs only where its answer can change the
+  outcome: before a reward's removal point, and its cross-chain half
+  only on chains where that bound applies. Previously it ran
+  unconditionally, letting a large enough reward history make an
+  otherwise valid sweep run out of gas.
+
 - **A removed reward shows no countdown either.** The Claim Center's
   removal countdown is a deadline for the owner to act on; once removal
   has begun that deadline has passed, and continuing to show it — possibly
