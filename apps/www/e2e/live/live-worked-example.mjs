@@ -33,10 +33,12 @@
  *
  * Exits non-zero if any check fails, so it can gate a release step.
  *
- * KNOWN ENVIRONMENT LIMITATION (#1777): this cannot run from a Claude
- * Code remote container. Chromium gets `ERR_CONNECTION_RESET` on every
- * navigation through the agent proxy while `curl` to the same URL
- * through the same proxy returns 200. Run it from an operator machine.
+ * Runs from an operator machine with no extra setup. The Claude Code
+ * remote container can run it too (#1777, formerly believed impossible
+ * there): it needs two host-side preparations plus the
+ * `PW_CHROMIUM_EXE` / `PW_PROXY` overrides below — see "Running from
+ * the agent container" in this directory's README for the steps and
+ * the diagnosis behind them.
  */
 import { chromium } from 'playwright';
 
@@ -115,7 +117,28 @@ const skip = (name, why) => {
   console.log(`SKIP  ${name} — ${why}`);
 };
 
-const browser = await chromium.launch();
+/**
+ * Optional launch overrides for constrained environments (#1777):
+ *
+ *   PW_CHROMIUM_EXE — path to a Chromium binary, for hosts whose
+ *     installed browser build does not match the pinned Playwright
+ *     version (the Claude Code container ships /opt/pw-browsers/chromium
+ *     for exactly this).
+ *   PW_PROXY — an HTTP proxy for all page traffic, for hosts whose only
+ *     egress is a proxy (same container). Chromium does not read
+ *     HTTPS_PROXY on its own, so without this the drive dials direct
+ *     and dies before observing anything.
+ *
+ * Neither changes what the drive observes — an operator machine with a
+ * matching browser and direct egress sets neither and runs as before.
+ * The container needs two host-side preparations besides these vars;
+ * they are documented in the README's "Running from the agent
+ * container" section.
+ */
+const browser = await chromium.launch({
+  ...(process.env.PW_CHROMIUM_EXE ? { executablePath: process.env.PW_CHROMIUM_EXE } : {}),
+  ...(process.env.PW_PROXY ? { proxy: { server: process.env.PW_PROXY } } : {}),
+});
 // Pin the locale. Every expectation here — the figure strings, the knob
 // text, the no-results regex — is English. On an operator machine set to
 // a supported non-English locale the site renders `0,2` and a localised

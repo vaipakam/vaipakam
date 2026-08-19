@@ -133,13 +133,21 @@ Public-navigation requirements:
   successfully accept the published snapshot do — a page whose own read
   fails renders the same shipped values these artefacts carry.
   "Current as of its build" is therefore NOT a property these artefacts
-  have, and nothing may claim it for them. Whether they should instead
-  fetch the published configuration when they are produced — making
-  publication depend on a network read, with everything that implies for
-  a build the configuration service cannot answer — is a deliberate,
-  still-open decision; until it is made, the honest description above is
-  the specified behaviour, and any surface describing these artefacts
-  must say what they carry rather than imply currency
+  have, and nothing may claim it for them, and any surface describing
+  them must say what they carry rather than imply currency
+- the machine-readable copies must NOT be produced by reading the
+  published configuration at publication time. Doing so would not make
+  them current — it would move their staleness from release to
+  publication while making publication depend on a service that can be
+  unavailable, and making two publications of the same source produce
+  different artefacts. A consumer that needs current figures is instead
+  told where to read them: the crawler index must advertise the live
+  configuration endpoint alongside the documents, name the chain it
+  describes, and state plainly that the documents carry starting rates
+  while that endpoint carries current ones. Static documents plus a
+  named live endpoint is the same division the site already publishes
+  for offer and loan data, and it keeps the documentation surface free
+  of the protocol-data dependencies that belong to the read API
 - a failed or aged-out configuration read is retried when the reader
   gives the page a natural opportunity — visiting another page, or
   returning to a tab left in the background — rather than the session
@@ -719,7 +727,7 @@ Governance-configuration visibility:
 - pages that always present English content, whatever locale prefix the reader arrived through, should format their embedded values as English, so a figure never uses another language's conventions or digits inside an English sentence
 - a page that falls back to English because a translation is missing should likewise format its embedded values as English
 - the documentation search index should hold the same rendered figures the reader sees, formatted for the same document, so searching for a value visible on a page finds that page
-- the machine-readable copies of the docs that the site publishes for automated consumers should carry resolved values formatted for the document's language and never expose the embedding syntax. They carry the value set shipped with the site rather than the live configuration the rendered pages follow, so they match the human-facing pages exactly while the published configuration equals the shipped values, and after a retune they lag the pages that successfully loaded the published configuration — a page whose own read fails renders the same shipped values, and the two surfaces coincide again. The divergence is specified and stated, not a defect, unless and until the open decision above changes what the copies resolve against
+- the machine-readable copies of the docs that the site publishes for automated consumers should carry resolved values formatted for the document's language and never expose the embedding syntax. They carry the value set shipped with the site rather than the live configuration the rendered pages follow, so they match the human-facing pages exactly while the published configuration equals the shipped values, and after a retune they lag the pages that successfully loaded the published configuration — a page whose own read fails renders the same shipped values, and the two surfaces coincide again. The divergence is specified and stated, not a defect: the copies resolve against the shipped value set by design, and a consumer needing the current figures is pointed to the live configuration endpoint named in the crawler index
 
 Foundational frontend migration requirements:
 

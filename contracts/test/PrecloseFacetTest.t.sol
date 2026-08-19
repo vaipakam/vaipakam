@@ -874,6 +874,95 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #1503 item 25, borrower side — the position-token → loan reverse
+    ///      index is keyed by POSITION TOKEN, not by side, and an obligation
+    ///      transfer supersedes the borrower token exactly the way a lender
+    ///      sale supersedes the lender token. Before the rekey the incoming
+    ///      borrower's fresh token resolved to nothing while the departed
+    ///      borrower's still resolved to the live loan. Raw-read probe because
+    ///      this file's diamond mocks mint/burn (tokens are not enumerable).
+    function testTransferObligationRekeysPositionIndex() public {
+        uint256 oldTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId;
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(oldTokenId),
+            activeLoanId,
+            "precondition: creation indexed the departing borrower's token"
+        );
+
+        vm.prank(newBorrower);
+        uint256 validOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+
+        // Pre-set the departing borrower's paid-notification flag: the
+        // handover must clear it (each holder pays separately — Codex #1818
+        // r4 P2 found the reset comparing new-vs-new because the facet
+        // rewrites `loan.borrower` before the migration helper runs).
+        {
+            LibVaipakam.Loan memory l0 =
+                LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+            l0.borrowerNotifBilled = true;
+            TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l0);
+        }
+
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+
+        assertFalse(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerNotifBilled,
+            "obligation handover resets the paid-notification flag"
+        );
+
+        uint256 newTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId;
+        assertTrue(newTokenId != oldTokenId, "transfer minted a fresh token id");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(newTokenId),
+            activeLoanId,
+            "incoming borrower's token resolves to the loan"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(oldTokenId),
+            0,
+            "departed borrower's token no longer resolves"
+        );
+        vm.clearMockedCalls();
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // #671 phase 2 (#728 PR-2c) — progressive-risk gate on the INCOMING
     // borrower of an obligation transfer. transferObligationViaOffer makes
@@ -1488,7 +1577,11 @@ contract PrecloseFacetTest is Test {
     }
 
     /// @dev #1001 (S3, Codex #1070) — while an offset is live, listing the lender
-    ///      position for sale is rejected (two concurrent close-outs of one loan).
+    ///      position for sale is rejected: a sale starts its own settlement of a
+    ///      loan that already has one in flight. (Wording corrected in #1503 item
+    ///      21 — this used to say "two concurrent close-outs", which reads as
+    ///      though the position changing hands is the problem. It is not; a bare
+    ///      lender-NFT transfer during a live offset is supported.)
     function testCreateLoanSaleRejectedWhileOffsetLive() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(99)));
         vm.prank(borrower);

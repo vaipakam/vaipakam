@@ -83,6 +83,19 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "restampUserVpfiLocalInternal",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "CollateralConsolidated",
     "inputs": [
@@ -1308,6 +1321,38 @@
     "type": "error",
     "name": "LiquidationFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ListingFloorBelowReviewed",
+    "inputs": [
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ListingHeldAboveReviewed",
+    "inputs": [
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

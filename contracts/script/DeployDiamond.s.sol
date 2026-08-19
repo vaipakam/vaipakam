@@ -1824,13 +1824,14 @@ contract DeployDiamond is Script {
 
     /// #594 — standalone holder-only consolidation entry points.
     function _getConsolidationFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         s[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         s[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
         s[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
         s[4] = ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector;
         s[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
+        s[6] = ConsolidationFacet.restampUserVpfiLocalInternal.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
@@ -2007,12 +2008,15 @@ contract DeployDiamond is Script {
     }
 
     function _getEarlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #951 (Codex #959) — cross-facet completion entry for the
         // accept-then-complete auto-link (skips the outer nonReentrant guard).
         s[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        // #1810 — quote-bound listing creation (adverse-drift check against
+        // the reviewed quote); the unbound entry stays routed unchanged.
+        s[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
     }
 
     /// @dev #1780 — the direct lender-exit route's own facet. One selector, but

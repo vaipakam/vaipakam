@@ -1285,6 +1285,38 @@
   },
   {
     "type": "error",
+    "name": "ListingFloorBelowReviewed",
+    "inputs": [
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ListingHeldAboveReviewed",
+    "inputs": [
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "LoanInitiationFailed",
     "inputs": []
   },
@@ -1414,6 +1446,11 @@
         "internalType": "uint64"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "OffsetActiveOnLoan",
+    "inputs": []
   },
   {
     "type": "error",

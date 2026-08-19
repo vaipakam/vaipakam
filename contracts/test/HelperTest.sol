@@ -92,7 +92,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](183);
+        selectors = new bytes4[](192);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -239,6 +239,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setHeldForLenderRaw.selector;
         selectors[n++] = TestMutatorFacet.setSaleProceedsEscrowRaw.selector;
         selectors[n++] = TestMutatorFacet.clearSaleListingBoundsRaw.selector;
+        selectors[n++] = TestMutatorFacet.getSaleListingBoundsRaw.selector;
         selectors[n++] = TestMutatorFacet.setLenderPaidThroughRaw.selector;
         // #1801 — the two DISQUALIFICATION seeds: a mark recorded against a
         // principal the loan no longer carries, and the sticky freeze void.
@@ -353,6 +354,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.getForfeitedLenderEntryIds.selector;
         selectors[n++] = TestMutatorFacet.setOfferConsumedBySaleRaw.selector; // #955
         selectors[n++] = TestMutatorFacet.setLoanToSaleOfferIdRaw.selector; // #951 (Codex #959 r5)
+        selectors[n++] = TestMutatorFacet.setLoanToOffsetOfferIdRaw.selector; // #1503 item 21
         selectors[n++] = TestMutatorFacet.tierLiquidationLtvBpsFor.selector; // #999 (S1) tier-0 remap probe
         selectors[n++] = TestMutatorFacet.setRentalBufferBpsRaw.selector; // #1004 (S8) rental late-fee buffer cap
         selectors[n++] = TestMutatorFacet.setLoanInitMaxLtvBpsRaw.selector; // #900 (S15) per-asset init-LTV cap
@@ -371,6 +373,15 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.callMigrateActiveHeld.selector;
         // #1144 — offer→loan link pin for the syncPrepaySaleOffer Scenario-B test.
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanId.selector;
+        // #1503 item 25 — raw read of the position-token → loan reverse index.
+        selectors[n++] = TestMutatorFacet.getLoanIdByPositionTokenIdRaw.selector;
+        // #1503 item 25, Codex #1818 r3 P2 — grandfathered-index fabrication +
+        // raw reads for the one-time scan-repair tests.
+        selectors[n++] = TestMutatorFacet.clearLoanIndexRegimeRaw.selector;
+        selectors[n++] = TestMutatorFacet.removeUserLoanIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.pushUserLoanIdsRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLoanHolderIndexExactRaw.selector;
+        selectors[n++] = TestMutatorFacet.getUserLoanIndexedRaw.selector;
         // #1008 (S13) — entry-path per-day-cap test scaffolding.
         selectors[n++] = TestMutatorFacet.closeRewardEntryRaw.selector;
         selectors[n++] = TestMutatorFacet.setDayCapThreshold18.selector;
@@ -383,6 +394,9 @@ contract HelperTest {
         // RL-1 — claim-to-vault delivery test scaffolding.
         selectors[n++] = TestMutatorFacet.setMandatoryVaultVersionRaw.selector;
         selectors[n++] = TestMutatorFacet.getStakeRollupStateRaw.selector;
+        // #1817 — establish a genuine pre-existing staker lifecycle before a
+        // flow that must reset it at a mid-transaction zero balance.
+        selectors[n++] = TestMutatorFacet.restampUserVpfiRaw.selector;
         // Governor PR-3a — recycle-bucket forfeit-routing scaffolding.
         selectors[n++] = TestMutatorFacet.setRewardEntryForfeitedRaw.selector;
         // Governor PR-3b — day-pool stamp test scaffolding.
@@ -1207,7 +1221,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         selectors[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         selectors[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
@@ -1216,6 +1230,7 @@ contract HelperTest {
             .restampCollateralVpfiAfterWithdraw
             .selector;
         selectors[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
+        selectors[6] = ConsolidationFacet.restampUserVpfiLocalInternal.selector;
     }
 
     function getDefaultedFacetSelectors()
@@ -1445,11 +1460,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         selectors[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #951 (Codex #959) — cross-facet completion entry.
         selectors[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        // #1810 — quote-bound listing creation.
+        selectors[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
         return selectors;
     }
 
@@ -1532,7 +1549,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](50);
+        selectors = new bytes4[](51);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1607,6 +1624,10 @@ contract HelperTest {
         selectors[47] = MetricsFacet.getUserPositionLoansPaginated.selector;
         selectors[48] = MetricsFacet.getUserPositionOffersPaginated.selector;
         selectors[49] = MetricsFacet.getOfferState.selector; // #955 (#921 item 4)
+        // #1503 item 25 — routed in DeployDiamond since #769; the test diamond
+        // lagged, surfacing when the item-25 rekey test read the buyer's
+        // position through it.
+        selectors[50] = MetricsFacet.getUserPositionLoans.selector;
         return selectors;
     }
 
