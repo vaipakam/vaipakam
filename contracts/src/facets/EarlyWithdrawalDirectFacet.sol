@@ -425,7 +425,9 @@ contract EarlyWithdrawalDirectFacet is
         // lifecycle never resets and the day's minimum never records the
         // zero, so re-credited held VPFI would inherit the buyer's pre-sale
         // tier tenure. Stamping the trough makes the zero observable; the
-        // final stamp after the credits remains.
+        // final stamp after the credits remains. When the offer escrowed
+        // MORE than the principal, the excess refund below is the last
+        // debit and carries its own re-stamp (r4 P1).
         if (loan.principalAsset == s.vpfiToken) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -464,6 +466,24 @@ contract EarlyWithdrawalDirectFacet is
                 ),
                 VaultWithdrawFailed.selector
             );
+            // #1817 (Codex #1819 r4 P1) — with an oversized offer this
+            // refund is the buyer's LAST vault debit, so the true trough is
+            // HERE, not at the principal pull: the earlier stamp records the
+            // still-positive excess, and the balance only reaches its
+            // minimum once that excess leaves (zero when no shortfall was
+            // credited above). Re-stamp so the post-refund balance is
+            // observed before the held migration re-credits. Gated on the
+            // refund actually firing — with no excess the principal-pull
+            // stamp already sat at the last debit.
+            if (loan.principalAsset == s.vpfiToken) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        ConsolidationFacet.restampUserVpfiInternal.selector,
+                        buyOffer.creator
+                    ),
+                    bytes4(0)
+                );
+            }
         }
 
         // #597 — release the old lender's held-for-lender VPFI reservation

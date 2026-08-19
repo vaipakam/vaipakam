@@ -4170,6 +4170,64 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @notice #1817, Codex #1819 r4 P1 — with an OVERSIZED buy offer the
+    ///         buyer's last vault debit is the EXCESS REFUND, not the
+    ///         principal pull: the principal-pull stamp records the
+    ///         still-positive excess, and only after the refund does the
+    ///         balance reach its true minimum (zero here — no rate
+    ///         shortfall). The refund leg must re-stamp, or the pre-sale
+    ///         stake tenure survives an actual zero.
+    function test_1817_directSaleOversizedOfferTroughAtExcessRefund() public {
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+
+        uint256 held = 500 ether;
+        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(oldVault, held);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
+
+        // Grow the buy offer past the principal and fund the difference in
+        // the buyer's vault, as the larger creation escrow would have. The
+        // principal pull now leaves `extra` behind, so the buyer's zero
+        // only appears after the refund withdraws it.
+        uint256 extra = 100 ether;
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.amount = o.amount + extra;
+        o.amountMax = o.amount;
+        o.durationDays = 7;
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+        address buyerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
+        ERC20Mock(mockERC20).mint(buyerVault, extra);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            newLender, mockERC20, ERC20Mock(mockERC20).balanceOf(buyerVault)
+        );
+
+        TestMutatorFacet(address(diamond)).restampUserVpfiRaw(newLender);
+        (uint40 buyerStart0, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertTrue(buyerStart0 != 0, "fixture: buyer is an active staker pre-sale");
+
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+
+        (uint40 buyerStart1, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertEq(
+            buyerStart1,
+            uint40(block.timestamp),
+            "buyer's stake start RESET - the post-refund zero was observed"
+        );
+        assertTrue(
+            buyerStart1 != buyerStart0,
+            "pre-sale tenure does not survive the post-refund zero"
+        );
+    }
+
     /// @notice #1817 (#1503 item 27) — LISTED-route mirror of the direct-sale
     ///         restamp test: `completeLoanSale`'s VPFI settlement block must
     ///         checkpoint the seller (captured pre-migration) and the buyer.
