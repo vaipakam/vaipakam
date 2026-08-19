@@ -7,12 +7,13 @@ held, for as long as they actually held it. Deposits, withdrawals, fee
 payments, and claim consolidation all did this. A lender position sale did
 not — on either route.
 
-A sale settled in VPFI moves it through both vaults at once: the held-back
-VPFI attached to the loan leaves the seller and lands with the buyer, and the
-purchase itself debits the buyer and pays the seller. Until now that whole
-settlement happened without either party's tier clock being touched. The
-seller's departed balance kept earning discount history as if it had never
-left; the buyer's new balance went uncounted. Both errors silently corrected
+A sale settled in VPFI moves vaulted VPFI on both sides at once: the held-back
+VPFI attached to the loan leaves the seller's vault and lands in the buyer's,
+and the purchase debits the buyer's vaulted escrow. (The sale price itself is
+paid to the seller's wallet, outside the vault.) Until now that settlement
+happened without either party's tier clock being touched. The seller's
+departed held balance kept earning discount history as if it had never left;
+the buyer's new balance went uncounted. Both errors silently corrected
 themselves only at each user's next unrelated vault movement, which could be
 much later or never — and until then one side was quietly over-priced and the
 other under-priced on every fee the tier touches.
