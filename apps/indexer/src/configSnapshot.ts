@@ -177,6 +177,49 @@ export function serializeTuple(values: readonly unknown[]): string {
 }
 
 /**
+ * Field names for a getter's return tuple, taken from the COMPILED ABI
+ * — never hand-typed. `ProjectDetailsREADME` ("Worker ABI Sync") bans
+ * hand-written positional tuples precisely because an inserted or
+ * renamed field breaks readers silently; a public endpoint serving an
+ * unlabelled tuple exports that fragility to every consumer, so the
+ * labels have to come from the same artefact the read came from.
+ *
+ * Returns null if the getter or any output name is missing, which
+ * suppresses the labelled view rather than guessing at it.
+ */
+function abiOutputNames(functionName: string): readonly string[] | null {
+  const entry = (DIAMOND_ABI_VIEM as readonly unknown[]).find(
+    (e): e is { type: string; name: string; outputs?: readonly { name?: string }[] } =>
+      typeof e === 'object' &&
+      e !== null &&
+      (e as { type?: string }).type === 'function' &&
+      (e as { name?: string }).name === functionName,
+  );
+  const outputs = entry?.outputs;
+  if (!outputs || outputs.length === 0) return null;
+  const names = outputs.map((o) => o.name ?? '');
+  return names.every((n) => n.length > 0) ? names : null;
+}
+
+/**
+ * Zip a stored positional tuple with its ABI field names.
+ *
+ * Length mismatch means the stored row predates an ABI change (or
+ * follows one), and that is exactly the case where labelling by
+ * position would attach the wrong name to a real number — so it yields
+ * null and the caller omits the labelled view entirely. A consumer that
+ * sees no labels can still read `bundle`; a consumer shown
+ * `treasuryFeeBps` pointing at the wrong slot has no way to notice.
+ */
+function labelTuple(
+  values: readonly unknown[],
+  names: readonly string[] | null,
+): Record<string, unknown> | null {
+  if (names === null || names.length !== values.length) return null;
+  return Object.fromEntries(names.map((n, i) => [n, values[i]]));
+}
+
+/**
  * Refresh the snapshot row for one chain if warranted. Called at the
  * end of a successful scan, AFTER the cursor advance — a failure here
  * logs and returns (fail-open; the row simply stays at its previous
@@ -364,7 +407,16 @@ export async function maybeRefreshProtocolConfig(opts: {
 }
 
 /** GET /config/:chainId — the display snapshot. `available: false` when
- *  the chain has no row yet (apps fall back to their chain read). */
+ *  the chain has no row yet (apps fall back to their chain read).
+ *
+ *  Serves the raw positional `bundle`/`masterFlags` AND a labelled
+ *  `values`/`flags` view of the same numbers (#1664 item 3). The
+ *  positional arrays are what the apps' decoders read and stay the
+ *  wire contract; the labelled view is additive, and exists because
+ *  this endpoint is public and advertised to automated consumers in
+ *  `llms.txt` — an outside reader has no decoder and cannot tell which
+ *  slot is the treasury fee. Labels are derived from the compiled ABI
+ *  and omitted rather than guessed when they cannot be trusted. */
 export async function handleConfigSnapshot(
   chainId: number,
   env: Env,
@@ -382,11 +434,20 @@ export async function handleConfigSnapshot(
         updated_at: number;
       }>();
     if (!row) return jsonResponse({ chainId, available: false });
+    const bundle = JSON.parse(row.bundle_json) as unknown[];
+    const masterFlags = JSON.parse(row.master_flags_json) as boolean[];
+    const values = labelTuple(bundle, abiOutputNames('getProtocolConfigBundle'));
+    const flags = labelTuple(masterFlags, abiOutputNames('getMasterFlags'));
     return jsonResponse({
       chainId,
       available: true,
-      bundle: JSON.parse(row.bundle_json) as unknown[],
-      masterFlags: JSON.parse(row.master_flags_json) as boolean[],
+      bundle,
+      masterFlags,
+      // Omitted, not empty, when the labels cannot be trusted — an
+      // absent key reads as "not available here"; `{}` would read as
+      // "this snapshot has no fields", which is false.
+      ...(values ? { values } : {}),
+      ...(flags ? { flags } : {}),
       sourceBlock: row.source_block,
       updatedAt: row.updated_at,
     });

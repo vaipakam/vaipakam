@@ -49,7 +49,12 @@ const API_INDEX = {
     { method: 'GET', path: '/claimables/{address}', description: 'Claimable payouts for a wallet.' },
     { method: 'GET', path: '/claim-candidates/{address}', description: 'Claim-candidate hints for a wallet.' },
     { method: 'GET', path: '/notifications/{address}', description: "A wallet's loan-update notification feed." },
-    { method: 'GET', path: '/config/{chainId}', description: 'Protocol display-config snapshot for a chain.' },
+    {
+      method: 'GET',
+      path: '/config/{chainId}',
+      description:
+        "Protocol display-config snapshot for a chain — current fee rates, discount tiers and thresholds, name-keyed under `values` (the positional `bundle` mirrors the contract getter). The published docs carry the protocol's compiled starting rates and do not follow a governance retune; these do.",
+    },
   ],
 } as const;
 

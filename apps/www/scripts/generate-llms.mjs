@@ -44,6 +44,16 @@ const ORIGIN = (
   process.env.VITE_WWW_PUBLIC_ORIGIN ?? 'https://vaipakam.com'
 ).replace(/\/+$/, '');
 
+/**
+ * The chain whose published configuration the rendered docs follow —
+ * the SAME env var and default `useProtocolConfig` reads, so the live
+ * endpoint this index advertises describes the deployment the docs
+ * describe. Pointing a crawler at a different chain than the prose
+ * would hand it correct-looking figures for someone else's deployment
+ * (#1664 items 3 + 4).
+ */
+const DOCS_CONFIG_CHAIN_ID = process.env.VITE_DOCS_CONFIG_CHAIN_ID ?? '84532';
+
 /** content subdir → public URL slug. Locale suffixes carry over
  *  (`Overview.ta.md` → `overview.ta.md`). */
 const DOC_SETS = [
@@ -122,6 +132,7 @@ https://indexer.vaipakam.com — fetch these instead of scraping the app:
 - [GET /offers/markets](https://indexer.vaipakam.com/offers/markets): quotable (pair, tenor) markets
 - [GET /loans/stats](https://indexer.vaipakam.com/loans/stats): loan counts by status
 - [GET /loans/timeseries](https://indexer.vaipakam.com/loans/timeseries): historical loan activity
+- [GET /config/{chainId}](https://indexer.vaipakam.com/config/${DOCS_CONFIG_CHAIN_ID}): the live protocol configuration — fee rates, discount tiers, thresholds — under a name-keyed \`values\` object. **The docs above carry the protocol's compiled starting rates, which do not follow a governance retune; read this endpoint for the current figures.** Each chain runs an independently tunable deployment, so these are per-chain; the link points at the one the docs describe
 - [GET /](https://indexer.vaipakam.com/): self-describing index of every public endpoint
 
 ## Apps
