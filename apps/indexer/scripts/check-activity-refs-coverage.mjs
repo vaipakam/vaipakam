@@ -758,7 +758,65 @@ const guardedReason = (node, stopAt) => {
       (ts.isForOfStatement(p) || ts.isForInStatement(p)) &&
       cur === p.statement &&
       (() => {
-        const it = unwrapAssertions(p.expression);
+        // ...and through a CONST BINDING of one (Codex round-66 P2):
+        // `const never: number[] = []; for (const _ of never)` runs the
+        // body exactly as often as the inline literal does. The identifier
+        // is resolved through the bounded const chain, and the verdict is
+        // withheld the moment the name is TOUCHED anywhere — used as a
+        // member-access receiver, a call argument, or an assignment
+        // target — because any of those can have filled it. Erring that
+        // way costs only the status quo (an ordinary loop); the opposite
+        // error would refuse a loop that runs.
+        let it = unwrapAssertions(p.expression);
+        for (let hop = 0; hop < 4 && ts.isIdentifier(it); hop += 1) {
+          const decl = nearestDeclIn(it, it.text, sourceFile);
+          if (!decl || decl === OPAQUE_BINDING || !decl.initializer) return false;
+          const list = decl.parent;
+          if (
+            !ts.isVariableDeclarationList(list) ||
+            (list.flags & ts.NodeFlags.Const) === 0
+          ) {
+            return false;
+          }
+          const name = it.text;
+          const loopIterable = it;
+          let touched = false;
+          const scanTouch = (m) => {
+            if (touched) return;
+            if (
+              ts.isIdentifier(m) &&
+              m.text === name &&
+              m !== decl.name &&
+              m !== loopIterable
+            ) {
+              const q = m.parent;
+              if (
+                (ts.isPropertyAccessExpression(q) ||
+                  ts.isElementAccessExpression(q)) &&
+                q.expression === m
+              ) {
+                touched = true;
+              } else if (
+                ts.isCallExpression(q) &&
+                q.arguments &&
+                q.arguments.includes(m)
+              ) {
+                touched = true;
+              } else if (
+                ts.isBinaryExpression(q) &&
+                q.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+                q.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+                q.left === m
+              ) {
+                touched = true;
+              }
+            }
+            ts.forEachChild(m, scanTouch);
+          };
+          scanTouch(sourceFile);
+          if (touched) return false;
+          it = unwrapAssertions(decl.initializer);
+        }
         return ts.isArrayLiteralExpression(it) && it.elements.length === 0;
       })()
     ) {
@@ -1523,7 +1581,30 @@ const bindsShadowable = (name) => {
  */
 const mutatingCallTarget = (n) => {
   if (!ts.isCallExpression(n) || n.arguments.length === 0) return null;
-  const callee = unwrapAssertions(n.expression);
+  let callee = unwrapAssertions(n.expression);
+  // Through an EXTRACTED alias too (Codex round-66 P2): `const assign =
+  // Object.assign; assign(args, …)` writes through argument zero exactly as
+  // the dotted form does, and an identifier callee matched nothing here.
+  // Resolve it through the bounded const chain back to the member access
+  // the name copies before asking whether it is a listed mutator.
+  if (ts.isIdentifier(callee)) {
+    let cur = callee;
+    for (let hop = 0; hop < 4 && ts.isIdentifier(cur); hop += 1) {
+      const decl = nearestDeclIn(cur, cur.text, sourceFile);
+      if (!decl || decl === OPAQUE_BINDING || !decl.initializer) break;
+      const list = decl.parent;
+      if (
+        !ts.isVariableDeclarationList(list) ||
+        (list.flags & ts.NodeFlags.Const) === 0
+      ) {
+        break;
+      }
+      cur = unwrapAssertions(decl.initializer);
+    }
+    if (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+      callee = cur;
+    }
+  }
   const memberName = memberNameOf(callee);
   if (memberName === null) return null;
   const host = unwrapAssertions(callee.expression);
@@ -2392,6 +2473,30 @@ if (!fnNode) {
         );
       }
       if (ts.isConditionalExpression(e)) {
+        // A STATICALLY SELECTED branch decides alone (Codex round-66 P2):
+        // `true ? 999 : chainId` is `999` — the live binding in the dead
+        // arm kept the whole expression reading as unpinned. Resolve the
+        // condition's truthiness where a literal (or a const chain to one)
+        // makes it knowable; only when it is genuinely unknowable does the
+        // both-branches rule below apply.
+        const conditionTruth = (() => {
+          let c = unwrapAssertions(e.condition);
+          for (let hop = 0; hop < 4; hop += 1) {
+            if (c.kind === ts.SyntaxKind.TrueKeyword) return true;
+            if (c.kind === ts.SyntaxKind.FalseKeyword) return false;
+            if (ts.isNumericLiteral(c)) return Number(c.text) !== 0;
+            if (ts.isStringLiteralLike(c)) return c.text.length > 0;
+            if (c.kind === ts.SyntaxKind.NullKeyword) return false;
+            if (!ts.isIdentifier(c)) return null;
+            const decl = nearestDeclIn(from, c.text, sourceFile);
+            if (!decl || decl === OPAQUE_BINDING || !decl.initializer) return null;
+            if (reassignedAfterDeclaration(c.text, decl)) return null;
+            c = unwrapAssertions(decl.initializer);
+          }
+          return null;
+        })();
+        if (conditionTruth === true) return isPinned(e.whenTrue, from, depth + 1);
+        if (conditionTruth === false) return isPinned(e.whenFalse, from, depth + 1);
         return (
           isPinned(e.condition, from, depth + 1) &&
           isPinned(e.whenTrue, from, depth + 1) &&
@@ -2490,7 +2595,17 @@ if (!fnNode) {
         if (!node || depth > 8) return false;
         const e = unwrapAssertions(node);
         if (ts.isArrayLiteralExpression(e)) {
-          return e.elements.length > 0;
+          // NON-EMPTY is not WHOLE (Codex round-66 P2): `push(...[allLogs[0]!])`
+          // is a one-element literal that satisfies "holds rows" while the
+          // rest of the batch is dropped and the cursor advances past it.
+          // A literal counts only when it re-spreads a collection that
+          // itself qualifies (`[...allLogs]`); enumerated elements prove
+          // presence, not coverage, and this check's question is coverage.
+          return e.elements.some(
+            (el) =>
+              ts.isSpreadElement(el) &&
+              spreadHoldsRows(el.expression, from, depth + 1),
+          );
         }
         if (ts.isIdentifier(e)) {
           if (spreadProofInFlight.has(e.text)) return false;
@@ -2922,7 +3037,43 @@ if (!fnNode) {
               }
               cur = unwrapAssertions(decl.initializer);
             }
-            return cur ? cur.getText(sourceFile) : '';
+            // FOLD a static string before handing it to the regex (Codex
+            // round-66 P2): `'UPDATE ' + 'indexer_cursor …'` executes as one
+            // statement while its SOURCE text carries quote-plus-quote
+            // tokens that interrupt the match. Literals, no-substitution
+            // templates, `+` concatenations of static parts, and const
+            // identifiers folding to one all collapse to their runtime
+            // value; anything dynamic falls back to source text, which can
+            // only over-match (the safe direction here).
+            const staticStringOf = (node, depth = 0) => {
+              if (!node || depth > 8) return null;
+              const x = unwrapAssertions(node);
+              if (ts.isStringLiteralLike(x)) return x.text;
+              if (
+                ts.isBinaryExpression(x) &&
+                x.operatorToken.kind === ts.SyntaxKind.PlusToken
+              ) {
+                const l = staticStringOf(x.left, depth + 1);
+                const r = staticStringOf(x.right, depth + 1);
+                return l !== null && r !== null ? l + r : null;
+              }
+              if (ts.isIdentifier(x)) {
+                const d = nearestDeclIn(x, x.text, fn);
+                if (!d || d === OPAQUE_BINDING || !d.initializer) return null;
+                const dl = d.parent;
+                if (
+                  !ts.isVariableDeclarationList(dl) ||
+                  (dl.flags & ts.NodeFlags.Const) === 0
+                ) {
+                  return null;
+                }
+                return staticStringOf(d.initializer, depth + 1);
+              }
+              return null;
+            };
+            if (!cur) return '';
+            const folded = staticStringOf(cur);
+            return folded !== null ? folded : cur.getText(sourceFile);
           };
           const seek = (n) => {
             if (hit) return;
@@ -3173,7 +3324,20 @@ if (!fnNode) {
       // satisfied by the very shape round 47 demonstrated.
       let reads = 0;
       const isWriteOccurrence = (n) => {
-        const p = n.parent;
+        // Climb TRANSPARENT WRAPPERS first (Codex round-66 P2):
+        // `(activityEvents as number) = 0` puts the assertion between the
+        // identifier and the assignment, so every parent-shape test below
+        // saw an AsExpression and counted the occurrence as a read. The
+        // wrapper chain is the identifier for classification purposes.
+        let w = n;
+        while (
+          w.parent &&
+          isTransparentWrapper(w.parent) &&
+          w.parent.expression === w
+        ) {
+          w = w.parent;
+        }
+        const p = w.parent;
         if (!p) return false;
         if (ts.isVariableDeclaration(p) && p.name === n) return true;
         if (ts.isParameter(p) && p.name === n) return true;
@@ -3196,7 +3360,7 @@ if (!fnNode) {
           (ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p)) &&
           (p.operator === ts.SyntaxKind.PlusPlusToken ||
             p.operator === ts.SyntaxKind.MinusMinusToken) &&
-          p.operand === n
+          unwrapAssertions(p.operand) === n
         ) {
           return true;
         }
@@ -3204,7 +3368,7 @@ if (!fnNode) {
         // `({ n: activityEvents } = { n: 0 })`) rebinds the identifier just
         // as surely: climb the pattern shapes and ask whether the pattern
         // sits on the LEFT of an assignment.
-        let inner = n;
+        let inner = w;
         let outer = p;
         while (
           outer &&
@@ -3756,19 +3920,6 @@ if (!fnNode) {
             // round-64 P2) — the same invocation rule as the case scan.
             if (ts.isTaggedTemplateExpression(n)) {
               let tag = unwrapAssertions(n.tag);
-              // A tag PRODUCED BY A CALL (Codex round-65 P2):
-              // `makePoisonTag()\`\`` invokes whatever the factory returned,
-              // and the ordinary traversal visits the factory while never
-              // seeing the returned function that actually runs as the tag.
-              // Rejected conservatively — a computed tag cannot be classified
-              // here, and nothing between decode and the loop needs one.
-              if (ts.isCallExpression(tag) || ts.isNewExpression(tag)) {
-                why =
-                  'a template tag produced by a call expression runs a ' +
-                  'function this walk cannot see (the factory\'s return ' +
-                  'value is invoked as the tag)';
-                return;
-              }
               if (ts.isIdentifier(tag)) {
                 const resolved = resolveInvokedCallee(tag, n);
                 if (resolved) tag = resolved;
@@ -3778,6 +3929,17 @@ if (!fnNode) {
                   if (p2.initializer) walk(p2.initializer, true);
                 }
                 walk(tag.body, true);
+              } else {
+                // EVERY tag this walk cannot resolve to a function body is
+                // refused (Codex rounds 65 + 66 — first a factory CALL, then
+                // an object METHOD; enumerating shapes loses this race). A
+                // tag runs synchronously, so an unclassifiable one is
+                // unclassifiable CODE on this path, and nothing between
+                // decode and the loop needs a computed tag.
+                why =
+                  'a template tag this walk cannot resolve to a local ' +
+                  'function runs code it cannot see';
+                return;
               }
               if (why) return;
             }
@@ -4986,17 +5148,72 @@ if (!fnNode) {
               q = q.parent;
             }
             if (!q) return false;
+            const entryFlows = (accessNode) => {
+              let child = accessNode;
+              for (let up = accessNode.parent; up; child = up, up = up.parent) {
+                if (isTransparentWrapper(up)) continue;
+                if (
+                  (ts.isPropertyAccessExpression(up) ||
+                    ts.isElementAccessExpression(up)) &&
+                  up.expression === child
+                ) {
+                  continue;
+                }
+                if (ts.isBinaryExpression(up)) {
+                  const k = up.operatorToken.kind;
+                  if (
+                    k >= ts.SyntaxKind.FirstAssignment &&
+                    k <= ts.SyntaxKind.LastAssignment
+                  ) {
+                    return up.right === child || up.left !== child;
+                  }
+                  continue;
+                }
+                if (ts.isConditionalExpression(up)) continue;
+                if (ts.isPrefixUnaryExpression(up)) continue;
+                if (ts.isVariableDeclaration(up)) return up.initializer === child;
+                if (ts.isReturnStatement(up)) return true;
+                if (
+                  (ts.isIfStatement(up) ||
+                    ts.isWhileStatement(up) ||
+                    ts.isDoStatement(up)) &&
+                  up.expression === child
+                ) {
+                  return true;
+                }
+                if (ts.isCallExpression(up) || ts.isNewExpression(up)) {
+                  return false;
+                }
+                if (ts.isExpressionStatement(up)) return false;
+                return false;
+              }
+              return false;
+            };
             if (
               (ts.isElementAccessExpression(q) ||
                 ts.isPropertyAccessExpression(q)) &&
               q.expression === child
             ) {
-              return true;
+              // ...and the directly-indexed entry must FLOW too (same
+              // round-66 rule as the bound form below): `(await
+              // env.DB.batch([s]))[0]` handed straight to a log call is the
+              // identical discard one syntax shape earlier.
+              return entryFlows(q);
             }
             if (ts.isVariableDeclaration(q) && q.initializer === child) {
               if (ts.isArrayBindingPattern(q.name)) return true;
               if (ts.isIdentifier(q.name)) {
                 const bName = q.name.text;
+                // The entry must FLOW somewhere the count can come from
+                // (Codex round-66 P2): `console.log(batchResults[0])` is an
+                // element read whose value goes to a log line, and the
+                // fabricated `result` still decides what the ledger
+                // returns. Climb from the access through wrappers, further
+                // member reads, `??`/`||` fallbacks, comparisons and
+                // conditionals: landing in a declaration initializer, an
+                // assignment's right side, a return, or a branch condition
+                // is value flow; landing as a CALL ARGUMENT or a bare
+                // statement is not.
                 let read = false;
                 const scanReads = (m) => {
                   if (read) return;
@@ -5011,7 +5228,8 @@ if (!fnNode) {
                       hostI.text === bName &&
                       hostI.getStart(sourceFile) > q.getStart(sourceFile) &&
                       nearestDeclIn(hostI, bName, body) === q &&
-                      guardedReason(m, body) === null
+                      guardedReason(m, body) === null &&
+                      entryFlows(m)
                     ) {
                       read = true;
                       return;
@@ -6494,21 +6712,21 @@ const isNullLiteral = (expr) =>
         // The tag resolves like any invoked callee (aliases included).
         if (ts.isTaggedTemplateExpression(n)) {
           let tag = unwrapAssertions(n.tag);
-          // A tag PRODUCED BY A CALL (Codex round-65 P2):
-          // `makePoisonTag()\`\`` invokes the factory's returned function as
-          // the tag, and this traversal visits the factory while never seeing
-          // that returned function run. Refused conservatively — a computed
-          // tag cannot be classified, and the sound cheap answer to code this
-          // scan cannot follow is the same one every shadow case takes.
-          if (ts.isCallExpression(tag) || ts.isNewExpression(tag)) {
-            found =
-              'invokes a template tag built by a call expression, whose ' +
-              'returned function this checker cannot inspect for writes to';
-            return;
-          }
           if (ts.isIdentifier(tag)) {
             const resolved = resolveInvokedCallee(tag, n);
             if (resolved) tag = resolved;
+          }
+          // EVERY tag this scan cannot resolve to a function body is refused
+          // (Codex rounds 65 + 66 — first a factory CALL, then an object
+          // METHOD; enumerating rejected shapes loses this race). A tag runs
+          // synchronously, so an unclassifiable one is unclassifiable code
+          // beside the accepted mapping — the sound cheap answer is the one
+          // every shadow case takes.
+          if (!(isFunctionLike(tag) && tag.body && !tag.asteriskToken)) {
+            found =
+              'invokes a template tag this checker cannot resolve to a ' +
+              'local function, hiding possible writes to';
+            return;
           }
           if (isFunctionLike(tag) && tag.body && !tag.asteriskToken) {
             for (const p2 of tag.parameters ?? []) {
