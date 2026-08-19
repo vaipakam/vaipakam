@@ -107,7 +107,8 @@ contract EarlyWithdrawalDirectFacet is
     error OfferExpired(uint256 offerId, uint64 expiresAt);
 
     /// @notice The loan being sold has a live Preclose Option-3 offset offer on
-    ///         it; the offset must be cancelled or completed first. Mirrors
+    ///         it. Cancel the offset to reopen this route — completing it
+    ///         settles the loan instead, leaving no position to sell. Mirrors
     ///         `EarlyWithdrawalFacet.OffsetActiveOnLoan` (same name, no args ⇒
     ///         same EVM selector), declared here rather than shared because the
     ///         #1780 split left the two sale hosts as separate contracts — the

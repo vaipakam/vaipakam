@@ -15,8 +15,14 @@ completion pays whoever holds the lender side at that moment. Ownership moving
 is safe. What is refused is starting a second settlement while one is pending.
 
 It now refuses, with the same error the listing route uses, so a caller sees
-identical revert data whichever route turned them away. The remedy is to cancel
-or complete the offset first, then sell.
+identical revert data whichever route turned them away.
+
+The remedy is specifically to **cancel** the offset, not to wait for it. If the
+offset instead completes, it settles the loan outright — the position the lender
+wanted to sell no longer exists, and the sale is moot rather than merely
+deferred. A lender who wants to exit by selling therefore needs the offset
+withdrawn; a lender who is content to be paid out simply lets it complete. Those
+are two different outcomes and only the first ends with a sale.
 
 **One consequence is worth stating plainly rather than leaving for someone to
 discover.** Only the borrower who created an offset can cancel it: offsets are

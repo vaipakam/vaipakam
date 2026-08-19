@@ -87,7 +87,8 @@ contract EarlyWithdrawalFacet is
     error SaleOfferNotAccepted();
     /// @notice #1001 (S3, Codex #1070) — the lender position can't be listed for
     ///         sale while a Preclose Option-3 offset offer is live on the loan;
-    ///         the offset must be cancelled or completed first.
+    ///         cancel the offset to reopen this route — completing it instead
+    ///         settles the loan, so there is no position left to list.
     error OffsetActiveOnLoan();
     /// @notice #951 (Codex #959 round-2) — Phase 1 lender-sale is limited to loans
     ///         with ERC-20 collateral. The sale vehicle escrows no fresh collateral
@@ -217,7 +218,9 @@ contract EarlyWithdrawalFacet is
         // #1001 (S3, Codex #1070) — refuse to list the lender position for sale
         // while a Preclose Option-3 offset offer is live on this loan. A sale is a
         // second SETTLEMENT of a loan that already has one in flight, and the two
-        // would race. The offset must be cancelled or completed first.
+        // would race. Either outcome clears the link, but only CANCELLING
+        // leaves something to sell: a completed offset terminalises the loan
+        // Active -> Repaid, and both sale routes require Active.
         //
         // NOT "short-lived" (#1503 item 21): `_buildOffsetParams` leaves an
         // offset GTC on purpose (#1032 L-c), and `cancelOffer` lets a third

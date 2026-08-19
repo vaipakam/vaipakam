@@ -1754,9 +1754,11 @@ Alice may cancel her offsetting offer while it is still un-matched. Because post
 
 ##### Mutual exclusion while an offset is live
 
-While an offset offer is linked to a loan, four specific routes are refused until the offset is completed or cancelled: putting the lender position up for sale, selling the lender position outright in a single step, transferring the borrower obligation to a new borrower, and editing the linked offset offer's terms. The offset offer is immutable once linked — its terms are pinned to the loan it offsets.
+While an offset offer is linked to a loan, four specific routes are refused until the offset is completed or cancelled. **They are refused for two different reasons, and conflating them would be a mistake.**
 
-The reason each is refused is that it would start a **second settlement** of a loan that already has one in flight, and the two would race. That is the test to apply to any new route.
+Three of them — putting the lender position up for sale, selling the lender position outright in a single step, and transferring the borrower obligation to a new borrower — would each start a **second settlement** of a loan that already has one in flight, and the two would race. That is the test to apply to a new route that moves value or hands over a side of the loan.
+
+The fourth is different: **editing the linked offset offer's terms** is refused because the offer is a settlement vehicle bound to a specific loan, and changing its amount, collateral or maturity would leave the vehicle describing something other than the loan it is meant to settle. That is a desynchronisation rule, not a mutual-exclusion one, and it holds regardless of how many settlements are in flight — the offer is immutable once linked, its terms pinned to the loan it offsets. A future maintainer must not relax that immutability on the grounds that a mutation "is not a second settlement"; it never was.
 
 **This is a list of guarded routes, not a general mutual-exclusion guarantee, and callers must not read it as one.** Other paths can still make the loan terminal while an offset stays linked — a refinance does not consult the offset link at all, and ordinary repayment or default can close the loan out from under it. Those are handled downstream rather than by refusal at the entry point. A caller that needs "nothing else can settle this loan right now" does not get it from this rule.
 
