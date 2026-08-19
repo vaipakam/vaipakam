@@ -1398,6 +1398,81 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1699 r19 P1(a) — a wholly-legacy forfeit is clamped to
+    ///      the remaining 69M headroom: a permissionless sweep must never
+    ///      push the fresh-payout ledger past the lifetime cap. The trim is
+    ///      terminal (monotone budget, no claimant).
+    function testP1bWhollyLegacyForfeitClampsToTheHeadroom() public {
+        // Wholly pre-cutover: never arm. The entry settles whole O(1).
+        _cfg().setRewardClaimHorizonDays(180);
+        _seedPriorDays(6);
+        uint256 id = _seedEntry(alice, 108, 2, 5);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(108, id);
+
+        // LIVE: measure the unclamped value.
+        uint256 snap = vm.snapshotState();
+        _mut().setInteractionPoolPaidOut(0);
+        uint256 full = _facet().sweepForfeitedInteractionRewards(108);
+        vm.revertToState(snap);
+        assertGt(full, 0, "LIVE: the entry carries legacy value");
+
+        // Pool headroom = half the value; ample backing means the CAP is
+        // the binding (monotone) constraint, so the sweep settles clamped.
+        uint256 headroom = full / 2;
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
+        );
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(108);
+        assertEq(
+            swept,
+            headroom,
+            "the sweep credits exactly the remaining headroom, never past it"
+        );
+        assertTrue(
+            _mut().getRewardEntryProcessedRaw(id),
+            "and the cap trim is terminal"
+        );
+    }
+
+    /// @dev Codex #1699 r19 P1(b) — a spanning forfeit's legacy leg DEFERS
+    ///      on a backing-bound shortfall with the cursor untouched; stamping
+    ///      would strand the unbacked remainder despite that budget
+    ///      refilling with the next inflow.
+    function testP1bSpanningForfeitLegacyLegDefersOnABackingDip() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 0);
+        assertGt(floor5, 0, "armed day has a fresh floor");
+        assertEq(recycled5, 0, "LIVE: and NO recycled share");
+
+        uint256 id = _seedEntry(alice, 109, 4, 6); // legacy day 4 + armed 5
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(109, id);
+        _mut().setInteractionPoolPaidOut(0);
+
+        // The DIP: bucket levelled to the whole balance -> backing room 0
+        // while the pool is wide open — the shortfall is backing-caused.
+        uint256 bucketBefore = _mut().getRecycleBucketRaw();
+        _mut().setRecycleBucketRaw(vpfi.balanceOf(address(diamond)));
+        uint256 dip = _facet().sweepForfeitedInteractionRewards(109);
+        assertEq(dip, 0, "a backing-bound legacy leg defers");
+        assertEq(
+            _mut().getRewardEntryClaimNextDayRaw(id),
+            0,
+            "with the cursor untouched, so nothing is stranded"
+        );
+
+        // Backing recovers -> the SAME leg settles in full.
+        _mut().setRecycleBucketRaw(bucketBefore);
+        uint256 settled = _facet().sweepForfeitedInteractionRewards(109);
+        assertGt(settled, 0, "and settles fully once backing recovers");
+        assertEq(
+            _mut().getRewardEntryClaimNextDayRaw(id),
+            5,
+            "stamping the cursor only when the leg genuinely settled"
+        );
+    }
+
     function testExpiryReapsExactlyTheRemainingWindow() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);

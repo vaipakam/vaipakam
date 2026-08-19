@@ -124,7 +124,11 @@ one. The practical consequences:
   exhausted. Operators also get a safer maintenance path: re-running the
   full facet refresh on an already-migrated deployment no longer stops
   mid-way asking for migration inputs that only ever applied to the
-  first run.
+  first run. The same budget discipline covers the parts of a forfeited
+  reward that predate the daily engine: their settlement never pushes
+  the emissions ledger past the lifetime cap, and a temporary backing
+  shortage makes them wait rather than silently forfeiting the
+  recoverable remainder.
 
 - **A forfeited reward is settled against what the cross-chain funding
   actually owes.** The permissionless sweep that finalizes forfeited

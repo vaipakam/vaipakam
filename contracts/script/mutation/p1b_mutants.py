@@ -173,6 +173,22 @@ TARGETS = [
         "test/GovernorDualAccumulatorTest.t.sol",
         "testP1bSweepSucceedsWhenPostCapChargeFits",
     ),
+    (
+        "a wholly-legacy forfeit clamps to the remaining pool headroom",
+        "libraries/LibInteractionRewards.sol",
+        "            uint256 wholeFresh = t.total - t.recycled;\n            if (wholeFresh > freshHeadroom) wholeFresh = freshHeadroom;",
+        "            uint256 wholeFresh = t.total - t.recycled;",
+        "test/GovernorDualAccumulatorTest.t.sol",
+        "testP1bWhollyLegacyForfeitClampsToTheHeadroom",
+    ),
+    (
+        "a spanning forfeit's legacy leg defers on a backing-bound shortfall",
+        "libraries/LibInteractionRewards.sol",
+        "                if (freshRecoverable) return (0, 0, 0, 0);\n                legacyFresh = freshHeadroom;",
+        "                legacyFresh = freshHeadroom;",
+        "test/GovernorDualAccumulatorTest.t.sol",
+        "testP1bSpanningForfeitLegacyLegDefersOnABackingDip",
+    ),
 ]
 
 # Proven EQUIVALENT: expected to SURVIVE, each with recorded evidence.

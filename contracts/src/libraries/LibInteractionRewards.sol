@@ -2760,9 +2760,33 @@ library LibInteractionRewards {
         // Wholly pre-cutover: no armed day exists, so the O(1) whole settle
         // is exact — all-fresh legacy, no delivered bound (nothing was ever
         // remitted for pre-arming days), commitment-free.
+        //
+        // #1699 r19 P1 — priced FIRST (a view read) so the budget policy can
+        // apply BEFORE the irreversible whole-settle: a backing-bound
+        // shortfall DEFERS (that budget refills; settling now would strand
+        // the unbacked remainder behind `processed`), and a cap-bound one
+        // terminally trims the credited amount — the pool ledger must never
+        // be pushed past the lifetime cap by a permissionless sweep.
         if (armedFrom == 0 || e.endDay <= armedFrom) {
+            if (_entryClaimable(s, e) && e.startDay < e.endDay) {
+                uint256 need = e.endDay - 1;
+                if (e.side == LibVaipakam.RewardSide.Lender) {
+                    if (s.cumLenderCursor < need) advanceCumLenderThrough(need);
+                } else if (s.cumBorrowerCursor < need) {
+                    advanceCumBorrowerThrough(need);
+                }
+            }
+            {
+                (, EntrySplit memory pre, , ) = _entryPriceCore(s, id, e);
+                uint256 preFresh = pre.total - pre.recycled;
+                if (preFresh > freshHeadroom && freshRecoverable) {
+                    return (0, 0, 0, 0);
+                }
+            }
             (, EntrySplit memory t) = _processEntryWhole(s, id);
-            return (t.total - t.recycled, t.recycled, 0, 0);
+            uint256 wholeFresh = t.total - t.recycled;
+            if (wholeFresh > freshHeadroom) wholeFresh = freshHeadroom;
+            return (wholeFresh, t.recycled, 0, 0);
         }
 
         if (e.startDay < armedFrom && s.rewardEntryClaimNextDay[id] == 0) {
@@ -2782,9 +2806,16 @@ library LibInteractionRewards {
             if (!st.priced) return (0, 0, 0, 0); // globals not final: retry
             uint256 legacyFresh =
                 tSplit.total - tSplit.recycled - tSplit.armedFresh;
-            // The 69M trim on a forfeit's legacy leg is terminal (monotone
-            // budget, no claimant): credit what fits, write off the rest.
-            if (legacyFresh > freshHeadroom) legacyFresh = freshHeadroom;
+            if (legacyFresh > freshHeadroom) {
+                // #1699 r19 P1 — the per-source rule, here too: a
+                // BACKING-bound shortfall DEFERS with the cursor untouched
+                // (stamping would strand the unbacked remainder forever,
+                // despite that budget refilling with the next inflow); only
+                // the monotone 69M cap terminally trims — credit what fits,
+                // write off the rest.
+                if (freshRecoverable) return (0, 0, 0, 0);
+                legacyFresh = freshHeadroom;
+            }
             s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
             return (legacyFresh, 0, 0, 0);
         }

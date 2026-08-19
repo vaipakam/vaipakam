@@ -348,6 +348,18 @@ front of it.
 With this, every settlement consumer — claim, expiry, forfeit — prices
 through the one engine. That is the design's end state.
 
+Round 19 (2×P1) applied the budget discipline to the two LEGACY branches
+the r18 chunk walker had left outside it: the wholly-legacy whole-settle
+returned its full fresh without the headroom clamp (a permissionless
+sweep could push the payout ledger past the lifetime cap), and the
+spanning leg's clamp truncated even when BACKING was the binder —
+stranding the recoverable remainder behind the stamped cursor. Both now
+follow the per-source rule end to end: backing-bound shortfalls defer
+untouched (the wholly-legacy branch prices first, as a view, so the
+defer can happen BEFORE the irreversible settle), and only the monotone
+69M cap terminally trims. The rule now holds uniformly across every leg
+of every settlement path.
+
 ## Testing
 
 The expiry fixture is unusually easy to make vacuous: **five distinct
