@@ -1415,6 +1415,15 @@ contract LenderIntentMatchTest is SetupTest {
             })
         );
 
+        // Pre-set the seller-paid notification flag: a GENUINE holder change
+        // must clear it (each holder pays separately — Codex #1818 r2 P2).
+        {
+            LibVaipakam.Loan memory l0 =
+                LoanFacet(address(diamond)).getLoanDetails(loanId);
+            l0.lenderNotifBilled = true;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l0);
+        }
+
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             loanId, buyOfferId
@@ -1424,6 +1433,10 @@ contract LenderIntentMatchTest is SetupTest {
             _livePrincipal(),
             0,
             "cap released at SALE time, not at the buyer's eventual claim"
+        );
+        assertFalse(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lenderNotifBilled,
+            "a genuine holder change resets the paid-notification flag"
         );
         (, uint256 t1) = _rollable();
         assertEq(t1, 0, "de-registered from the roll-discovery set");
@@ -1510,6 +1523,13 @@ contract LenderIntentMatchTest is SetupTest {
             })
         );
 
+        {
+            LibVaipakam.Loan memory l0 =
+                LoanFacet(address(diamond)).getLoanDetails(loanId);
+            l0.lenderNotifBilled = true;
+            TestMutatorFacet(address(diamond)).setLoan(loanId, l0);
+        }
+
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             loanId, buyOfferId
@@ -1519,6 +1539,10 @@ contract LenderIntentMatchTest is SetupTest {
             _livePrincipal(),
             PRINCIPAL,
             "a self-purchase must not free the exposure cap"
+        );
+        assertTrue(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lenderNotifBilled,
+            "a self-purchase keeps the same holder's paid flag (Codex #1818 r2)"
         );
         (, uint256 t) = _rollable();
         assertEq(t, 1, "the origin marker is retained");

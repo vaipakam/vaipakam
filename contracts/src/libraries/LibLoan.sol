@@ -104,8 +104,11 @@ library LibLoan {
         // Item 25's notification-policy half, decided as "each holder pays
         // separately": the flag is reset so the incoming lender cannot consume
         // notification service funded by the seller's VPFI tariff, and is
-        // billed on their own first use instead.
-        loan.lenderNotifBilled = false;
+        // billed on their own first use instead. Only when the holder actually
+        // CHANGES (Codex #1818 r2 P2) — the supported self-purchase keeps the
+        // same economic holder, and clearing their own paid flag would bill
+        // them twice for service they already funded.
+        if (newLender != loan.lender) loan.lenderNotifBilled = false;
 
         loan.lender = newLender;
         loan.lenderTokenId = newTokenId;
@@ -211,7 +214,7 @@ library LibLoan {
         // #1503 item 25, borrower side — same list-view discovery as the
         // lender half, same dedup, same notification policy.
         _indexLoanForHolder(s, loan.borrower, newBorrower, loan.lender, loanId);
-        loan.borrowerNotifBilled = false;
+        if (newBorrower != loan.borrower) loan.borrowerNotifBilled = false;
 
         loan.borrower = newBorrower;
         loan.borrowerTokenId = newTokenId;
