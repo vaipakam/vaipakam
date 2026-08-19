@@ -450,4 +450,24 @@ library LibConsolidation {
         uint256 bal = s.protocolTrackedVaultBalance[user][vpfi];
         LibVPFIDiscount.rollupUserDiscount(user, bal);
     }
+
+    /// @notice Broadcast-FREE twin of {restampUserVpfi} (#1817, Codex #1819
+    ///         r7). An INTERMEDIATE checkpoint inside a multi-movement
+    ///         settlement (a sale's debit trough, a self-sale's
+    ///         held-withdrawal dip) exists to make a transient balance
+    ///         observable to the accumulator — no observer can use the
+    ///         intermediate tier tuple, so pushing it cross-chain would
+    ///         charge the shared CCIP budget once per checkpoint and could
+    ///         revert the whole settlement when the budget covers the first
+    ///         message but not the second. The FINAL stamp of the affected
+    ///         party carries the broadcast; the next broadcasting mutation
+    ///         picks up anything a local-only sequence left unpushed — the
+    ///         same contract `vaultCreditFromDiamondERC20` documents.
+    function restampUserVpfiLocal(address user) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vpfi = s.vpfiToken;
+        if (vpfi == address(0)) return;
+        uint256 bal = s.protocolTrackedVaultBalance[user][vpfi];
+        LibVPFIDiscount.rollupUserDiscountLocal(user, bal);
+    }
 }

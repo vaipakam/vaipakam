@@ -51,6 +51,7 @@ copying what the code does.
 | 2026-07-02 | `apps/defi` Create Offer NFT-rental daily fee (`offerSchema.toCreateOfferPayload` non-ERC20 amount path) | WebsiteReadme "Key UX Requirements" (amounts in human token units) | The form hint says the daily rental fee is entered "in whole tokens", but the NFT-leg payload passes the typed number through UNSCALED — a user typing "10" lists a daily fee of 10 wei of the prepay asset, mispricing every rental created through the form. apps/alpha02 scales by the payment asset's decimals instead (PR #887); the two live apps now diverge and defi's behaviour looks like the bug. | pending triage |
 | 2026-07-15 | `LibVPFIDiscount.settleBorrowerLifProper` — consent-off zeros an already-prepaid borrower LIF rebate (forfeits `vpfiHeld` to treasury), reachable on mirrors via the `(0,0)` tier broadcast | TokenomicsTechSpec §6a | **Pass-2 E2 — RE-OPENED.** Originally triaged "UPDATE SPEC — carve out the prepaid rebate", but the code confiscates it (instantaneous effective-discount read at settlement, T-087). Needs owner re-decision: FIX CODE (snapshot/floor the prepaid rebate basis) OR ACCEPT + describe the confiscation. | #1255 |
 | 2026-08-17 | §9 lender-exit hardening DEPTH — the cross-cutting rules built out for Option 2 (the listed sale) were written into **that option's** section rather than the `### General Rules for All Lender Early Withdrawal Options` section that already exists for shared rules | `ProjectDetailsREADME.md` §9 | Option 1 (the direct instant-exit sale) is fully specified — participants, preconditions, accrued-interest forfeiture, principal recovery, rate-shortfall handling, frontend warning, ordered contract actions, borrower impact — and is referenced by name-in-words from Option 2's own rules. What it never received is the hardening Option 2 accumulated through #1503: offer-deadline, party-owing-itself, maturity-entry and one-live-route-per-position were each stated under Option 2 only, so an Option-1 reader never met them. That asymmetry, not any absence, is the mechanism behind #1503 items 8, 17, 21 and 24 | **RESOLVED (2026-08-17)** — the four genuinely cross-cutting rules are lifted into §9's General Rules, phrased route-neutrally and as intent, with the reasoning stated in the spec itself. Genuinely listing-specific rules (finite window, signed floor, teardown, quiet period) stay under Option 2. **Supersedes a WRONG entry** that claimed the route was absent from the spec — see the detail section | #1780; behaviour → #1503 |
+| 2026-08-19 | Offer-lifecycle VPFI vault movements without a tier restamp — `OfferCreateFacet`'s creator escrow pull (wallet → vault), `OfferCancelFacet` / `OfferMutateFacet`'s escrow returns (vault → wallet), and the listed-sale ACCEPT-time price pull (buyer vault → Diamond `saleProceedsEscrow`). The restamp is wired **per mutation site** (`vaultDepositERC20` / `vaultWithdrawERC20` are deliberately restamp-free primitives), and these sites never call the rollup | TokenomicsTechSpec — the shared time-weighted-tier rule: every vault VPFI movement re-records the balance at that moment | The spec states the intent correctly; the code covers most sites but not these. A user whose offer escrows or receives VPFI is priced on a balance they no longer hold (or not priced on one they now do) until their next unrelated restamping movement. #1819 closed the SETTLEMENT half of the sale routes; the accept-time escrow pull and the offer-lifecycle paths remain. The spec rule is kept as intent — narrowing it to the covered sites would make it satisfiable while the mispricing persists, which is the thing the rule is about | **OPEN** — checkpoints deferred to #1820 (found scoping #1819's release claim) |
 
 
 ## Resolved findings
@@ -422,3 +423,43 @@ where its successor inherits these invariants; if it is removed, they stay corre
 for whatever remains. Either way they now live in the place that does not need
 rewriting when the route list changes — which is the point of putting them there
 rather than duplicating them into Option 1.
+
+
+## Offer-lifecycle VPFI vault movements skip the tier restamp (#1817 r3 → #1820)
+
+Found while scoping #1819's release-note claim. The fragment's first draft said
+the sale routes were the only uncovered vault movement ("deposits, withdrawals,
+fee payments, claim consolidation all did this"), and Codex asked for the claim
+to be either scoped or made true. Checking made it clear the claim was too
+broad: the tier restamp is wired **at each mutation site**, not inside the
+vault primitives — `vaultDepositERC20` / `vaultWithdrawERC20` move funds and
+tick the tracked counter but never touch the accumulator (the one primitive
+that does restamp is `vaultCreditFromDiamondERC20`, the protocol-payout credit
+path). So coverage is exactly the set of call sites someone wired, and three
+groups of sites were never wired:
+
+- **Offer creation** — the creator's lending asset (or ERC-20 collateral) is
+  pulled into their vault at `createOffer`. VPFI in, no restamp.
+- **Offer cancellation / mutation** — the escrow leaves the vault again. VPFI
+  out, no restamp.
+- **Listed-sale accept** — the buyer's sale price is pulled from their vault
+  into Diamond custody when they accept a loan-sale listing, before the
+  completion step #1819 instrumented. VPFI out, no restamp at the pull.
+
+The divergence direction matters: the spec's shared rule ("every vault VPFI
+movement re-records the balance at that moment") is the **intent**, stated
+before these sites existed, and the code fell short of it — this is a code gap,
+not a stale spec. The rule is deliberately NOT narrowed to the covered sites:
+a spec that enumerated the wired call sites would be satisfied by the very
+mispricing the rule exists to prevent (the same reasoning as the locale-audit
+entry above — presence of the mechanism is not the property the sentence is
+about).
+
+Disposition: #1819's release fragment now scopes its claim to the flows the
+tier system actually wires up and names this remainder explicitly; the
+checkpoints themselves are deferred to #1820 rather than silently widened into
+that PR (each site needs its own targeted test and an EIP-170 re-check on the
+touched facets, and the offer facets are not otherwise in #1819's blast
+radius). #1820 also carries the instruction to re-audit every remaining
+vault-movement call site for VPFI reachability rather than trusting this
+enumeration to be exhaustive.
