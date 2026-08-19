@@ -463,6 +463,51 @@ const CURSOR_ADVANCE_SQL =
  */
 const D1_EXECUTORS = ['run', 'all', 'first', 'raw'];
 
+/**
+ * Whether a STATEMENT always leaves its enclosing flow — by return, throw, or
+ * an unlabelled break/continue — however it is nested (Codex round-58 P2).
+ *
+ * Loops and switches are deliberately opaque: a `break` inside them exits THEM,
+ * not the surrounding flow, so nothing nested under one can prove the
+ * surrounding flow exits. Conditions are decided only for literal
+ * `true`/`false`, the same line the constant-false loop rule draws; anything
+ * computed keeps both branches possible, which is the conservative direction
+ * for a reachability question.
+ */
+const stmtAlwaysExits = (s) => {
+  if (!s) return false;
+  if (
+    ts.isReturnStatement(s) ||
+    ts.isThrowStatement(s) ||
+    ts.isBreakStatement(s) ||
+    ts.isContinueStatement(s)
+  ) {
+    return true;
+  }
+  if (ts.isBlock(s)) return s.statements.some(stmtAlwaysExits);
+  if (ts.isLabeledStatement(s)) return stmtAlwaysExits(s.statement);
+  if (ts.isIfStatement(s)) {
+    const k = (s.expression && unwrapAssertions(s.expression).kind) ?? null;
+    if (k === ts.SyntaxKind.TrueKeyword) return stmtAlwaysExits(s.thenStatement);
+    if (k === ts.SyntaxKind.FalseKeyword) {
+      return s.elseStatement ? stmtAlwaysExits(s.elseStatement) : false;
+    }
+    return (
+      Boolean(s.elseStatement) &&
+      stmtAlwaysExits(s.thenStatement) &&
+      stmtAlwaysExits(s.elseStatement)
+    );
+  }
+  if (ts.isTryStatement(s)) {
+    if (s.finallyBlock && s.finallyBlock.statements.some(stmtAlwaysExits)) return true;
+    return (
+      s.tryBlock.statements.some(stmtAlwaysExits) &&
+      (!s.catchClause || s.catchClause.block.statements.some(stmtAlwaysExits))
+    );
+  }
+  return false;
+};
+
 const stripSqlComments = (text) =>
   text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
 
@@ -523,6 +568,15 @@ const guardedReason = (node, stopAt) => {
         if (ts.isReturnStatement(s)) return 'after an unconditional `return`, so it is never reached';
         if (ts.isBreakStatement(s) || ts.isContinueStatement(s)) {
           return 'after an unconditional loop exit, so it is never reached';
+        }
+        // A COMPOUND statement that always exits blocks the flow just as a bare
+        // one does (Codex round-58 P2): `if (true) return 0;` at the top of the
+        // ledger left every statement below it dead while this loop, checking
+        // only top-level syntax kinds, saw an innocent `if`. Same recursive
+        // always-exit analysis `alwaysThrows` applies to handlers, applied to
+        // preceding siblings.
+        if (stmtAlwaysExits(s)) {
+          return 'after a statement that always exits its flow, so it is never reached';
         }
       }
     }
@@ -880,6 +934,19 @@ const syncCutoffOf = (expr, sourceFile) => {
   if (callee && ts.isIdentifier(callee)) {
     callee = resolveInvokedCallee(callee, e);
   }
+  return fnSyncPrefixEnd(callee, sourceFile);
+};
+
+/**
+ * The position after which a given FUNCTION NODE's body no longer runs
+ * synchronously once invoked — Infinity for a non-async function (all of it
+ * runs), the first reachable `await` for an async one.
+ *
+ * Split out of {syncCutoffOf} so callback bodies (Codex round-58 P2) get the
+ * same async treatment as callee bodies — one prefix rule, two invocation
+ * shapes.
+ */
+const fnSyncPrefixEnd = (callee, sourceFile) => {
   if (!callee || !isFunctionLike(callee) || !callee.body || !ts.isBlock(callee.body)) {
     return Infinity;
   }
@@ -923,6 +990,49 @@ const syncCutoffOf = (expr, sourceFile) => {
     if (awaitAt !== null) return awaitAt;
   }
   return Infinity;
+};
+
+/**
+ * The callback FUNCTIONS a call invokes synchronously before it returns —
+ * `logs.forEach(cb)`, `[0].map(cb)`, `arr.sort(cmp)` (Codex round-58 P2).
+ *
+ * Every scan that stops at function-like nodes treats a callback as inert,
+ * which is right for a handler something stores and wrong for the synchronous
+ * collection methods: their callbacks run to completion before the next
+ * statement, so `[0].forEach(() => { args.loanId = 999n })` mutates the
+ * decoded bag exactly as an IIFE does. Matched by MEMBER NAME, not receiver
+ * type — a custom object whose `.forEach` defers its callback would produce a
+ * false rejection at worst, never a hidden mutation, which is the right way
+ * round for a guard.
+ *
+ * A named callback (`logs.forEach(mutate)`) resolves through
+ * {resolveInvokedCallee}, the round-54/56 rule that invocation shapes must
+ * agree on.
+ */
+const SYNC_CALLBACK_METHODS = new Set([
+  'forEach', 'map', 'filter', 'find', 'findIndex', 'findLast', 'findLastIndex',
+  'some', 'every', 'reduce', 'reduceRight', 'flatMap', 'sort', 'toSorted',
+  'replace', 'replaceAll',
+]);
+const syncCallbackFunctionsOf = (expr) => {
+  const e = unwrapForInvocation(expr);
+  if (!e || !ts.isCallExpression(e)) return [];
+  const callee = unwrapForInvocation(e.expression);
+  if (
+    !callee ||
+    !(ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))
+  ) {
+    return [];
+  }
+  const via = memberNameOf(callee);
+  if (via === null || !SYNC_CALLBACK_METHODS.has(via)) return [];
+  const fns = [];
+  for (const a of e.arguments) {
+    let f = unwrapForInvocation(a);
+    if (f && ts.isIdentifier(f)) f = resolveInvokedCallee(f, e);
+    if (f && isFunctionLike(f) && f.body) fns.push(f);
+  }
+  return fns;
 };
 
 /** `unwrapAssertions`, usable before it is defined below. */
@@ -2830,6 +2940,44 @@ if (!fnNode) {
                 return;
               }
             }
+            // ANY write through the batch — `logs[1] = logs[0]`, `logs[i].args
+            // = …`, `delete logs[0]` — replaces or corrupts a member the loop
+            // is about to record (Codex round-58 P2). The guard knew the named
+            // mutator methods and the `.length` assignment, and an indexed
+            // write is neither: the second decoded event silently becomes a
+            // duplicate of the first, its INSERT OR IGNORE is ignored, and the
+            // cursor advances past the row that was never written. Rooted
+            // through the whole access chain and resolved via namesTheBatch,
+            // so an alias is not a way around it.
+            {
+              const target = ts.isBinaryExpression(n) &&
+                  ts.isAssignmentOperator?.(n.operatorToken.kind)
+                ? n.left
+                : (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
+                    (n.operator === ts.SyntaxKind.PlusPlusToken ||
+                      n.operator === ts.SyntaxKind.MinusMinusToken)
+                  ? n.operand
+                  : ts.isDeleteExpression(n)
+                    ? n.expression
+                    : null;
+              if (target) {
+                let root = unwrapAssertions(target);
+                let touchesMember = false;
+                while (
+                  ts.isPropertyAccessExpression(root) ||
+                  ts.isElementAccessExpression(root)
+                ) {
+                  touchesMember = true;
+                  root = unwrapAssertions(root.expression);
+                }
+                if (touchesMember && ts.isIdentifier(root) && namesTheBatch(root)) {
+                  why =
+                    `a write through \`${root.text}[…]\` replaces or corrupts a batch member` +
+                    (root.text === batchParamName ? '' : ` (\`${root.text}\` is the batch)`);
+                  return;
+                }
+              }
+            }
             // a reassignment of the batch itself
             if (
               ts.isBinaryExpression(n) &&
@@ -3398,6 +3546,103 @@ if (!fnNode) {
           '  enough to slip past a check that watches only the name in the call. Leave\n' +
           '  the decoded arguments alone, or update this script — do not delete the\n' +
           '  check.',
+      );
+      process.exit(1);
+    }
+    // ...and not through the loop item's OWN property either (Codex round-58
+    // P2). The alias set holds identifier bindings that point at the bag, and
+    // `log.args.loanId = 999n` written BEFORE the binding is taken mutates the
+    // same object through a root no alias covers — `args` still points at it,
+    // so the mapper and the persisted row read the poisoned value. The write
+    // is matched through the whole access chain (`log.args`, `log['args']`,
+    // deeper members) with the loop binding resolved, not text-matched; a
+    // computed first hop counts too, since it COULD be `args` and a guard
+    // errs toward catching.
+    const mutatesItemArgs = (() => {
+      const bound = init.getStart(sourceFile);
+      let hit = false;
+      const firstHopOf = (t) => {
+        // Walks `<root>.<hop1>.<hop2>…`; returns { root, hop1 } where hop1 is
+        // the member name nearest the root, or undefined when computed.
+        let cur = unwrapAssertions(t);
+        let hop = undefined;
+        let hopKnown = true;
+        while (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+          if (ts.isPropertyAccessExpression(cur)) {
+            hop = cur.name.text;
+            hopKnown = true;
+          } else {
+            const k = unwrapAssertions(cur.argumentExpression);
+            if (ts.isStringLiteralLike(k)) {
+              hop = k.text;
+              hopKnown = true;
+            } else {
+              hop = undefined;
+              hopKnown = false;
+            }
+          }
+          cur = unwrapAssertions(cur.expression);
+        }
+        return { root: cur, hop, hopKnown };
+      };
+      const isItemArgsChain = (t, at) => {
+        const { root, hop, hopKnown } = firstHopOf(t);
+        if (!ts.isIdentifier(root) || root.text !== loopVar.name) return false;
+        if (nearestDecl(at, root.text) !== null) return false; // shadowed
+        return hopKnown ? hop === ARGS_PROP : true;
+      };
+      const walk = (n) => {
+        if (hit) return;
+        if (n.getStart(sourceFile) >= bound) return;
+        if (ts.isCallExpression(n) && n.arguments.length > 0) {
+          const callee = unwrapAssertions(n.expression);
+          const memberName = memberNameOf(callee);
+          if (memberName !== null) {
+            const host = unwrapAssertions(callee.expression);
+            const mutators = ts.isIdentifier(host) && host.text === 'Object'
+              ? ['assign', 'defineProperty', 'defineProperties', 'setPrototypeOf']
+              : ts.isIdentifier(host) && host.text === 'Reflect'
+                ? ['set', 'defineProperty', 'deleteProperty', 'setPrototypeOf']
+                : [];
+            if (mutators.includes(memberName) && isItemArgsChain(n.arguments[0], n)) {
+              hit = true;
+              return;
+            }
+          }
+        }
+        const target =
+          ts.isBinaryExpression(n) && ts.isAssignmentOperator?.(n.operatorToken.kind)
+            ? n.left
+            : (ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) &&
+                (n.operator === ts.SyntaxKind.PlusPlusToken ||
+                  n.operator === ts.SyntaxKind.MinusMinusToken)
+              ? n.operand
+              : ts.isDeleteExpression(n)
+                ? n.expression
+                : null;
+        if (target) {
+          const t = unwrapAssertions(target);
+          if (
+            (ts.isPropertyAccessExpression(t) || ts.isElementAccessExpression(t)) &&
+            isItemArgsChain(t, n)
+          ) {
+            hit = true;
+            return;
+          }
+        }
+        ts.forEachChild(n, walk);
+      };
+      walk(loopVar.body);
+      return hit;
+    })();
+    if (mutatesItemArgs) {
+      console.error(
+        `[check-activity-refs-coverage] ${LEDGER_FN}() writes through\n` +
+          `  \`${loopVar.name}.${ARGS_PROP}\` before handing the decoded arguments to\n` +
+          '  pluckActivityRefs. The alias bindings still point at that same object, so\n' +
+          '  the mapper and the persisted row read the poisoned value while every count\n' +
+          '  here stays identical. Leave the decoded arguments alone, or update this\n' +
+          '  script — do not delete the check.',
       );
       process.exit(1);
     }
@@ -4646,18 +4891,27 @@ const isNullLiteral = (expr) =>
         const descend = (node, depth) => {
           if (outerShadow || depth > 8 || !node || seen.has(node)) return;
           seen.add(node);
+          // ...and callbacks of synchronous collection methods run just as
+          // surely as an invoked callee (Codex round-58 P2) — one invocation
+          // rule, both shapes.
+          const bodies = [];
           const invoked = invokedFunctionBodyOf(node);
-          if (!invoked) return;
-          walkOuter(invoked);
-          if (outerShadow) return;
-          // Statement bodies hold their invoked calls one level in.
-          const inner = [];
-          const collect = (m) => {
-            if (ts.isCallExpression(m)) inner.push(m);
-            if (!isFunctionLike(m) || m === invoked) ts.forEachChild(m, collect);
-          };
-          ts.forEachChild(invoked, collect);
-          for (const c of inner) descend(c, depth + 1);
+          if (invoked) bodies.push(invoked);
+          for (const cb of syncCallbackFunctionsOf(node)) bodies.push(cb.body);
+          if (!bodies.length) return;
+          for (const body of bodies) {
+            walkOuter(body);
+            if (outerShadow) return;
+            // Statement bodies hold their invoked calls one level in.
+            const inner = [];
+            const collect = (m) => {
+              if (ts.isCallExpression(m)) inner.push(m);
+              if (!isFunctionLike(m) || m === body) ts.forEachChild(m, collect);
+            };
+            ts.forEachChild(body, collect);
+            for (const c of inner) descend(c, depth + 1);
+            if (outerShadow) return;
+          }
         };
         descend(param.initializer, 0);
       }
@@ -4975,6 +5229,18 @@ const isNullLiteral = (expr) =>
           const previousLimit = syncLimit;
           syncLimit = Math.min(syncLimit, syncCutoffOf(n, sourceFile));
           walk(invokedHere);
+          syncLimit = previousLimit;
+          if (found) return;
+        }
+        // A callback handed to a synchronous collection method RUNS before the
+        // next statement (Codex round-58 P2): `[0].forEach(() => { args.loanId
+        // = 999n })` mutates the bag exactly as an IIFE does, and this scan
+        // treated every callback as inert. Same async-prefix rule as the IIFE
+        // descent, per callback.
+        for (const cb of syncCallbackFunctionsOf(n)) {
+          const previousLimit = syncLimit;
+          syncLimit = Math.min(syncLimit, fnSyncPrefixEnd(cb, sourceFile));
+          walk(cb.body);
           syncLimit = previousLimit;
           if (found) return;
         }
