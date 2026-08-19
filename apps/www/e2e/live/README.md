@@ -65,13 +65,23 @@ worth knowing because the visible error points away from both causes:
 
 2. **Chromium must trust the proxy's re-terminating CA** via the NSS
    user store — the container's `~/.pki/nssdb` exists but does not
-   contain it. `certutil` is not installed; fetch `libnss3-tools` as a
-   `.deb` (the Ubuntu archive is reachable through the proxy) and
-   `dpkg -x` it somewhere scratch, then:
+   contain it. `certutil` is not installed and `apt-get install` is not
+   available, so fetch `libnss3-tools` as a `.deb` (the Ubuntu archive
+   is reachable through the proxy) and run the extracted binary by
+   path — `dpkg -x` does not put it on `PATH`:
 
    ```bash
-   certutil -A -d sql:$HOME/.pki/nssdb -n "CCR Agent Proxy CA" -t "C,," \
-     -i /root/.ccr/agent-proxy-ca.crt
+   cd /tmp
+   # Pick the current noble version from the pool listing — exact
+   # filenames rotate as the package is updated:
+   curl -sS https://archive.ubuntu.com/ubuntu/pool/main/n/nss/ \
+     | grep -o 'libnss3-tools[^"]*amd64\.deb' | sort -u
+   curl -sSLO https://archive.ubuntu.com/ubuntu/pool/main/n/nss/<picked-filename>
+   dpkg -x <picked-filename> nsstools
+   ./nsstools/usr/bin/certutil -A -d sql:$HOME/.pki/nssdb \
+     -n "CCR Agent Proxy CA" -t "C,," -i /root/.ccr/agent-proxy-ca.crt
+   # Confirm it landed:
+   ./nsstools/usr/bin/certutil -L -d sql:$HOME/.pki/nssdb
    ```
 
 Then run with the two launch overrides the drives honour:

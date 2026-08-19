@@ -33,10 +33,12 @@
  *
  * Exits non-zero if any check fails, so it can gate a release step.
  *
- * KNOWN ENVIRONMENT LIMITATION (#1777): this cannot run from a Claude
- * Code remote container. Chromium gets `ERR_CONNECTION_RESET` on every
- * navigation through the agent proxy while `curl` to the same URL
- * through the same proxy returns 200. Run it from an operator machine.
+ * Runs from an operator machine with no extra setup. The Claude Code
+ * remote container can run it too (#1777, formerly believed impossible
+ * there): it needs two host-side preparations plus the
+ * `PW_CHROMIUM_EXE` / `PW_PROXY` overrides below — see "Running from
+ * the agent container" in this directory's README for the steps and
+ * the diagnosis behind them.
  */
 import { chromium } from 'playwright';
 
