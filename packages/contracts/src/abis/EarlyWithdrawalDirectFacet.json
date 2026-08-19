@@ -1396,6 +1396,11 @@
   },
   {
     "type": "error",
+    "name": "OffsetActiveOnLoan",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OnlyMirrorRewardChain",
     "inputs": []
   },

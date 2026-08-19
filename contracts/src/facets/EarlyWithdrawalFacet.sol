@@ -87,7 +87,8 @@ contract EarlyWithdrawalFacet is
     error SaleOfferNotAccepted();
     /// @notice #1001 (S3, Codex #1070) — the lender position can't be listed for
     ///         sale while a Preclose Option-3 offset offer is live on the loan;
-    ///         the offset must be cancelled or completed first.
+    ///         cancel the offset to reopen this route — completing it instead
+    ///         settles the loan, so there is no position left to list.
     error OffsetActiveOnLoan();
     /// @notice #951 (Codex #959 round-2) — Phase 1 lender-sale is limited to loans
     ///         with ERC-20 collateral. The sale vehicle escrows no fresh collateral
@@ -215,10 +216,27 @@ contract EarlyWithdrawalFacet is
         // genuine re-list is still allowed.
         if (s.loanToSaleOfferId[loanId] != 0) revert SaleOfferAlreadyExists();
         // #1001 (S3, Codex #1070) — refuse to list the lender position for sale
-        // while a Preclose Option-3 offset offer is live on this loan. The offset
-        // pays the CURRENT lender at completion; letting the position change hands
-        // mid-offset entangles two concurrent close-outs of the same loan. The
-        // offset must be cancelled or completed first (it is short-lived).
+        // while a Preclose Option-3 offset offer is live on this loan. A sale is a
+        // second SETTLEMENT of a loan that already has one in flight, and the two
+        // would race. Either outcome clears the link, but only CANCELLING
+        // leaves something to sell: a completed offset terminalises the loan
+        // Active -> Repaid, and both sale routes require Active.
+        //
+        // NOT "short-lived" (#1503 item 21): `_buildOffsetParams` leaves an
+        // offset GTC on purpose (#1032 L-c), and `cancelOffer` lets a third
+        // party clean up only an EXPIRED offer — so a GTC link is
+        // creator-cancellable only, and an unaccepted offset can sit on the loan
+        // for its whole life. Brevity is the borrower's intent, not an enforced
+        // property, and the consequence — a borrower-side veto over both
+        // protocol-mediated lender exits — is tracked in #1814.
+        //
+        // Corrected wording (#1503 item 21): this comment used to say the conflict
+        // was the position "changing hands", which is not what makes it unsafe —
+        // the offset locks only the BORROWER NFT, and `_completeOffsetImpl`
+        // deliberately re-anchors to a lender NFT transferred while it was live.
+        // A bare transfer is supported; a second settlement is not. The old
+        // phrasing was copied verbatim into the direct route's new guard before
+        // review caught it, which is why it is fixed at the source too.
         if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetActiveOnLoan();
         // #1503 PR-E (design item 11) — fail fast rather than publish a
         // listing that could not lawfully be filled. The BINDING check is
