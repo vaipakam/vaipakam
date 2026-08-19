@@ -166,12 +166,12 @@ TARGETS = [
         "testP1bForfeitReservationIsLegacyOnly",
     ),
     (
-        "the forfeit sweep gates on the D1-CAPPED liability",
+        "the forfeit charges the bound by DELIVERED, never by owed",
         "facets/InteractionRewardsFacet.sol",
-        "            if (freshSwept >= freshWanted) {\n                armedPaid = armedCapped;",
-        "            if (freshSwept >= freshWanted) {\n                armedPaid = sweepSplit.armedFresh;",
+        "        if (armedDelivered != 0 && LibVaipakam.isMirrorRewardChain(s)) {\n            s.rewardBudgetArmedFreshPaid += armedDelivered;",
+        "        if (armedDelivered != 0 && LibVaipakam.isMirrorRewardChain(s)) {\n            s.rewardBudgetArmedFreshPaid += armedOwed;",
         "test/GovernorDualAccumulatorTest.t.sol",
-        "testP1bForfeitSweepGatesOnTheCappedLiability",
+        "testP1bSweepSucceedsWhenPostCapChargeFits",
     ),
 ]
 

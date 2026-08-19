@@ -1172,6 +1172,17 @@ contract RewardReporterFacet is
     /// @custom:event-category state-change/reward-compensation
     event ArmedFreshPaidSeeded(uint256 amount);
 
+    /// @notice #1699 r18 P2 — whether the one-shot paid-history seed has run.
+    ///         Exists so the maintained refresh can SKIP the migration block
+    ///         on an already-seeded Diamond instead of demanding obsolete
+    ///         migration inputs mid-refresh, paused. (The earlier position —
+    ///         "the one-shot revert IS the signal" — required reaching the
+    ///         seed call at all; the input-validation require sat in front of
+    ///         it and wedged every rerun.)
+    function armedFreshPaidSeeded() external view returns (bool) {
+        return LibVaipakam.storageSlot().armedFreshPaidSeeded;
+    }
+
     /**
      * @notice #1434 P1-b (Codex #1699 r2) — ONE-SHOT migration seed for the
      *         delivered-fresh bound's PAID side on an in-place-upgraded

@@ -109,6 +109,23 @@ one. The practical consequences:
   reserves headroom too — while remaining excluded from the pending
   figure shown to the user, who receives nothing from it.
 
+- **Forfeited rewards now settle through the same engine as everything
+  else.** The last path that still worked out its own settlement — the
+  sweep that finalizes forfeited rewards — now prices each armed day
+  through the shared settlement engine: the same daily ceilings, the
+  same split between newly-emitted and recycled value, the same
+  cross-chain funding bound, and a bounded amount of work per call with
+  progress saved between calls (a very long reward settles across
+  several sweeps instead of needing one impossibly large transaction).
+  Two visible consequences: a sweep that cannot yet be funded
+  cross-chain simply makes no progress and succeeds later (previously
+  the whole call failed), and a forfeited reward whose value rounds to
+  nothing still closes out cleanly when the emissions schedule is
+  exhausted. Operators also get a safer maintenance path: re-running the
+  full facet refresh on an already-migrated deployment no longer stops
+  mid-way asking for migration inputs that only ever applied to the
+  first run.
+
 - **A forfeited reward is settled against what the cross-chain funding
   actually owes.** The permissionless sweep that finalizes forfeited
   rewards used to require cross-chain funding to cover the reward's raw

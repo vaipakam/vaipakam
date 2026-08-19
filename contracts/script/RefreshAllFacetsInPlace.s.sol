@@ -109,6 +109,8 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 ///      spendable again.
 interface IArmedFreshPaidSeed {
     function seedArmedFreshPaid(uint256 amount) external;
+
+    function armedFreshPaidSeeded() external view returns (bool);
 }
 
 /// @dev #1434 P1-b — declared so the refresh can match THIS revert and only
@@ -840,7 +842,18 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // a wiring site and an ABI re-export to learn something the existing
         // guard already tells us — and a rerun of this refresh (which happens)
         // must not abort on a chain that is simply already seeded.
-        {
+        // Codex #1699 r18 P2 — an ALREADY-SEEDED Diamond skips the whole
+        // migration block, so a routine rerun needs no migration inputs at
+        // all. The input-validation require below used to sit in front of
+        // the seed call whose AlreadySeeded catch made reruns idempotent —
+        // wedging every rerun, paused, on a now-obsolete question. The
+        // on-chain flag is authoritative and the facet cut above has already
+        // routed its getter.
+        if (IArmedFreshPaidSeed(diamond).armedFreshPaidSeeded()) {
+            console.log(
+                "P1-b: armed-fresh paid history already seeded - skipped"
+            );
+        } else {
             // Codex #1699 r4 P1 — the seed must be stated, never defaulted.
             //
             // This migration is IRREVERSIBLE: the seed adds to the paid

@@ -76,166 +76,75 @@ contract InteractionRewardsFacet is
         if (s.interactionLaunchTimestamp == 0) {
             revert InteractionEmissionsNotStarted();
         }
-        address vpfi = s.vpfiToken;
-        if (vpfi == address(0)) revert VPFITokenNotSet();
+        if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
+
+        // #1699 r18 — the forfeit armed leg settles through the day engine
+        // (see {LibInteractionRewards.sweepForfeitedByLoanId}). This facet
+        // now only assembles the engine's budgets — identically to the
+        // expiry facet, one bound per source — and books what the engine
+        // reports back. The hand-rolled gate, pro-rata attribution and
+        // aggregate pool clamp are gone: the engine caps, splits and bounds
+        // PER DAY, defers what is recoverable (delivered, backing) and
+        // truncates only against the monotone 69M cap.
+        uint256 paidOut = s.interactionPoolPaidOut;
+        uint256 headroom;
+        bool freshRecoverable;
+        {
+            uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
+            headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+                ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
+                : 0;
+            (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
+            freshRecoverable = backingRoom < headroom;
+            if (backingRoom < headroom) headroom = backingRoom;
+        }
+        uint256 allowance = LibVaipakam.isMirrorRewardChain(s)
+            ? LibInteractionRewards.deliveredFreshBound(s)
+            : type(uint256).max;
 
         (
-            LibInteractionRewards.EntrySplit memory sweepSplit,
-            uint256 armedCapped
-        ) = LibInteractionRewards.sweepForfeitedByLoanId(loanId);
-        uint256 treasuryDelta = sweepSplit.total;
-        if (treasuryDelta == 0) return 0;
+            uint256 freshCredited,
+            uint256 recycledReleased,
+            uint256 armedOwed,
+            uint256 armedDelivered
+        ) = LibInteractionRewards.sweepForfeitedByLoanId(
+            loanId, headroom, allowance, freshRecoverable
+        );
+        // r18 P2 — NO unconditional exhaustion revert: a zero-liability
+        // forfeit (dust cap, zero-flooring days) must still retire at pool
+        // exhaustion, and a deferred day is a retryable wait, not an error.
+        // "Nothing happened" is a zero return, exactly like the expiry batch.
+        swept = freshCredited + recycledReleased;
+        if (swept == 0 && armedOwed == 0) return 0;
 
-        uint256 paidOut = s.interactionPoolPaidOut;
-        // #776 — reserve remitted-to-mirror VPFI (see {claimInteractionRewards}).
-        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
-        uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
-            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
-            : 0;
-
-        // PR-3c — the 69M cap + truncation govern the FRESH share only;
-        // the recycled share is bucket-backed. Exhaustion blocks the sweep
-        // ONLY when there is nothing recycled to release (Codex #1315 P2:
-        // a post-arming forfeit with a recycled component must still be
-        // sweepable at fresh exhaustion, or its commitment stays stuck).
-        // Codex #1699 r17 P1 — the ARMED portion this sweep settles is the
-        // D1-CAPPED figure, because that is what Base's commitment report
-        // funds (`min(rawPay, cap)` per day) and therefore all a remittance
-        // will EVER deliver. The cap-trimmed excess was written off at
-        // report time on Base — no later remittance owes it — so it is
-        // written off here too, exactly as the report did: it never spends
-        // the pool, never credits the bucket, and never charges the
-        // delivered bound. Its COMMITMENT still retires in full below
-        // (`consumeArmedFresh` takes the RAW figure), the same
-        // owed-vs-moved split every other terminal path keeps. Gating on
-        // the raw figure demanded allowance that could never arrive,
-        // permanently wedging every capped forfeited entry.
-        uint256 armedTrimmed = sweepSplit.armedFresh > armedCapped
-            ? sweepSplit.armedFresh - armedCapped
-            : 0;
-        uint256 freshSwept =
-            sweepSplit.total - sweepSplit.recycled - armedTrimmed;
-        if (remaining == 0 && sweepSplit.recycled == 0) {
-            revert InteractionPoolExhausted();
+        s.interactionPoolPaidOut = paidOut + freshCredited;
+        // The commitment retires by what each chunk OWED (cappedOff
+        // included) — never merely what moved (the r10 rule).
+        if (armedOwed != 0) {
+            LibInteractionRewards.consumeArmedFresh(armedOwed);
         }
-        // Codex #1699 r1 P1 — ENFORCE the delivered bound here, before any of
-        // this sweep's effects become final.
-        //
-        // `sweepForfeitedByLoanId` above has already processed the entries, so
-        // charging the bound afterwards (as the first revision did) records an
-        // overspend instead of preventing one: a permissionless caller could
-        // absorb armed fresh that was never delivered, backed by VPFI the
-        // Diamond holds for other obligations. Reverting rolls the whole
-        // sweep back, which is the right shape for a DELIVERED shortfall —
-        // it is a satisfiable wait, retryable the moment funding lands, not a
-        // permanent refusal.
-        //
-        // Armed fresh only: a forfeit's PRE-`D*` fresh predates arming and no
-        // remittance ever funded it, so bounding that would strand ordinary
-        // forfeits on every mirror. And the recycled leg is untouched for the
-        // same reason the exhaustion check above spares it — it never left the
-        // bucket, so it needs no delivered backing and its commitment must
-        // still be releasable.
-        uint256 freshWanted = freshSwept;
-        if (freshSwept > remaining) freshSwept = remaining;
-
-        // Codex #1699 r2 P2 — gate on what this sweep will ACTUALLY charge,
-        // not on its nominal armed share.
-        //
-        // The clamp above may truncate the fresh spend, and the charge below
-        // is the resulting pro-rata armed portion. Testing the nominal share
-        // made the gate too STRICT in the opposite direction: near 69M
-        // exhaustion a mixed pre-/post-arming forfeiture could revert even
-        // though the amount it would really charge fits the allowance, leaving
-        // the entry AND its commitment stuck waiting for delivery that is
-        // unnecessary — and that could never help, since the binding limit
-        // there is the monotone cap. A bound can fail by refusing too much as
-        // well as by permitting too much; the first revision only guarded the
-        // second.
-        //
-        // Computed here so the gate and the charge below cannot diverge: one
-        // expression, read twice.
-        uint256 armedPaid;
-        if (freshSwept != 0 && armedCapped != 0) {
-            if (freshSwept >= freshWanted) {
-                armedPaid = armedCapped;
-            } else {
-                // Codex #1699 r1 P2 — round the pro-rata share UP. Flooring
-                // per sweep discards the remainder every call
-                // (`armedFresh = 1, freshWanted = 2, freshSwept = 1` records
-                // ZERO), and repeating that shape lets delivered funding be
-                // reused without limit. Carrying dust across calls would need
-                // a stored accumulator and a retry-reconciliation rule;
-                // ceiling is the closed-form alternative and errs by at most
-                // one wei in the direction that TIGHTENS the bound.
-                uint256 num0 = armedCapped * freshSwept;
-                armedPaid = (num0 + freshWanted - 1) / freshWanted;
-                if (armedPaid > armedCapped) {
-                    armedPaid = armedCapped;
-                }
-            }
-        }
-        if (armedPaid != 0 && LibVaipakam.isMirrorRewardChain(s)) {
-            uint256 allowance = LibInteractionRewards.deliveredFreshBound(s);
-            if (armedPaid > allowance) {
-                revert DeliveredFreshShortfall(armedPaid, allowance);
-            }
-        }
-        swept = freshSwept + sweepSplit.recycled;
-        s.interactionPoolPaidOut = paidOut + freshSwept;
-
-        // PR-3c consume-at-sweep: retire the FULL armed-fresh commitment —
-        // the entries are processed either way (see the claim path note).
-        LibInteractionRewards.consumeArmedFresh(sweepSplit.armedFresh);
-
-        // #1434 P1-b — charge the mirror's delivered-fresh bound with the
-        // ARMED portion of what this sweep actually spent.
-        //
-        // Unlike the expiry batch (all-or-nothing per entry), the cap here can
-        // truncate PARTIALLY, so the armed share of the surviving spend has to
-        // be attributed. This uses PRO-RATA, deliberately:
-        //
-        //   • The truncation is a pool-exhaustion clamp on the aggregate. It
-        //     expresses no preference between the armed and unarmed days
-        //     inside the sweep, so scaling both by the same factor is the
-        //     neutral reading of what was paid.
-        //   • The FRESH-FIRST precedent nearby ({_applyLoanSideCap}, and the
-        //     trim in {_dayCaps}) is NOT authority for armed-first here: it
-        //     attributes fresh-vs-RECYCLED, and it is fresh-first only because
-        //     `_applyLoanSideCap` genuinely fills headroom from fresh before
-        //     recycled. No comparable ordering exists between armed and
-        //     unarmed fresh, so borrowing that rule would invent one.
-        //
-        // Both mis-attributions are harmful, which is why this is stated
-        // rather than defaulted: over-charging shrinks the bound permanently
-        // and would eventually defer fully-funded days (a wedge), while
-        // under-charging lets a mirror pay armed fresh it never received.
-        // `consumeArmedFresh`'s argument is again NOT the figure — it is the
-        // full commitment, cap-truncated remainder included.
-        // Charge the SAME figure the gate above tested — computed once,
-        // read twice, so the amount refused and the amount recorded can never
-        // diverge. (The rounding rationale lives with that computation.)
-        if (armedPaid != 0 && LibVaipakam.isMirrorRewardChain(s)) {
-            s.rewardBudgetArmedFreshPaid += armedPaid;
+        // #1434 P1-b — charge the mirror's delivered bound with the armed
+        // fresh that actually moved, which the engine attributed per day.
+        if (armedDelivered != 0 && LibVaipakam.isMirrorRewardChain(s)) {
+            s.rewardBudgetArmedFreshPaid += armedDelivered;
         }
 
         // Governor PR-3a/PR-3c (#1217 §4) — forfeit source split: the
         // FRESH share stays in Diamond custody and credits the recycle
         // bucket (genuine absorption); the RECYCLED share never left the
         // bucket, so its commitment releases with ZERO new credit.
-        // refId = the swept loan for per-loan observability.
-        if (freshSwept > 0) {
+        if (freshCredited > 0) {
             LibVpfiRecycle.credit(
                 LibVpfiRecycle.RecycleSource.ForfeitedReward,
                 loanId,
-                freshSwept
+                freshCredited
             );
         }
-        if (sweepSplit.recycled > 0) {
+        if (recycledReleased > 0) {
             LibVpfiRecycle.releaseCommitment(
                 LibVpfiRecycle.RecycleSource.ForfeitedReward,
                 loanId,
-                sweepSplit.recycled
+                recycledReleased
             );
         }
     }

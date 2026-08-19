@@ -323,6 +323,31 @@ fix-reversion mutants + the proven-equivalent pair with evidence); the
 earliest rounds' mutants — kills recorded per-round on PR #1699 — are
 re-derived in a follow-up rather than reconstructed from memory.
 
+Round 18 (2×P1, 2×P2) closed the loop the design opened: **the forfeit
+armed leg was the last path still owning its own settlement**, and r17's
+hand-rolled capped scan walked straight into the catalogued rounds-1–5
+anti-pattern — it mis-attributed the split (the `cumMinArmed*` series is
+the COMBINED armed reward, so capping it and calling the result "fresh"
+demanded delivered allowance for recycled value no remittance funds) and
+scanned every remaining day unbounded. The remedy is the r6 remedy:
+forfeited entries' armed days now settle through `processUserSideDay` +
+`_persistDay` in per-day chunks with a persistent cursor — D1-capped,
+split-attributed, delivered-bounded, gas-bounded — while the pre-cutover
+legs keep their O(1) settles. Two semantic consequences, both stated
+deliberately: a DELIVERED shortfall now defers per day (partial progress
+persists; r2's whole-sweep revert is retired with its guarantee intact,
+enforced per day), and the unconditional pool-exhaustion revert is gone
+(a zero-liability forfeit must still retire at exhaustion — the r18 P2).
+The refresh script's migration block now gates on the on-chain
+`armedFreshPaidSeeded` flag (new one-view getter) so a routine rerun of
+an already-seeded Diamond no longer wedges paused demanding obsolete
+inputs — the earlier "the one-shot revert IS the signal" position
+required reaching the seed call at all, and the input require sat in
+front of it.
+
+With this, every settlement consumer — claim, expiry, forfeit — prices
+through the one engine. That is the design's end state.
+
 ## Testing
 
 The expiry fixture is unusually easy to make vacuous: **five distinct

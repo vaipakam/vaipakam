@@ -2633,109 +2633,213 @@ library LibInteractionRewards {
      * @return toTreasury Aggregated {EntrySplit} of the forfeits (the facet
      *                    splits fresh-credit vs recycled-release — PR-3c).
      */
-    /// @dev Codex #1699 r17 P1 — the D1-capped armed sum for a forfeited
-    ///      entry's REMAINING armed days: per day, `min(rawPay, C_side)`,
-    ///      the EXACT liability form Base's commitment report states
-    ///      ({LibCommitmentReport}: `liabilityAdd += rawPay < cap ? rawPay
-    ///      : cap`). A remittance only ever funds that figure — the report
-    ///      wrote the excess off at report time and no later remittance owes
-    ///      it — so a forfeit gate or delivered charge measured at the RAW
-    ///      armed value demands allowance that can never arrive, wedging the
-    ///      permissionless sweep and its commitment permanently.
-    function _forfeitArmedCapped(
-        LibVaipakam.Storage storage s,
-        uint256 id,
-        LibVaipakam.RewardEntry storage e
-    ) private view returns (uint256 capped) {
-        uint256 armedFrom = s.governorCommitArmedFromDay;
-        if (armedFrom == 0 || e.endDay <= armedFrom) return 0;
-        uint256 d = _shareOfPoolCursorDay(s, id, e);
-        bool lender = e.side == LibVaipakam.RewardSide.Lender;
-        for (; d < e.endDay; ) {
-            // The per-day ARMED value from the same cumulative rows
-            // {_entryWindowSplitFrom} prices the whole window with — the
-            // mirror's own pricing truth — never the raw RPN delta, which
-            // is a different series and reads zero on a mirror whose armed
-            // value arrived by broadcast.
-            uint256 cumEnd = lender
-                ? s.cumMinArmedLenderRpn18[d]
-                : s.cumMinArmedBorrowerRpn18[d];
-            uint256 cumPrev = lender
-                ? s.cumMinArmedLenderRpn18[d - 1]
-                : s.cumMinArmedBorrowerRpn18[d - 1];
-            uint256 rawPay = cumEnd > cumPrev
-                ? (e.perDayNumeraire18 * (cumEnd - cumPrev)) / 1e18
-                : 0;
-            uint256 cap = lender
-                ? s.dayUserSideCapLenderVpfi18[d]
-                : s.dayUserSideCapBorrowerVpfi18[d];
-            capped += rawPay < cap ? rawPay : cap;
-            unchecked { ++d; }
-        }
-    }
 
-    function sweepForfeitedByLoanId(uint256 loanId)
+    /// @dev #1699 r18 (2×P1) — THE FORFEIT ARMED LEG SETTLES THROUGH THE DAY
+    ///      PRIMITIVE, exactly as expiry has since r6 and for the same
+    ///      reason: r17's hand-rolled capped scan was the rounds-1–5
+    ///      anti-pattern on a third path. It mis-attributed the split (the
+    ///      `cumMinArmed*` series is the COMBINED armed reward — fresh plus
+    ///      recycled — so capping it and calling the result "fresh" demanded
+    ///      delivered allowance for recycled value no remittance funds) and
+    ///      it scanned every remaining day in one transaction with no bound
+    ///      or cursor (a multi-year entry could never complete its final
+    ///      sweep). The engine already does all of it: the worklist admits
+    ///      forfeited entries, the pricing's forfeit arm routes them to the
+    ///      treasury leg, and each day gets the D1 cap, the per-day
+    ///      fresh/recycled attribution, the delivered bound, and a
+    ///      PERSISTENT cursor — so a long entry settles across calls with
+    ///      bounded gas, and {_persistDay} marks it processed when its
+    ///      window completes.
+    ///
+    ///      One chunk (one armed day) per entry per call; the pre-cutover
+    ///      legs keep their O(1) settles (a wholly-legacy entry has no armed
+    ///      day at all; a spanning entry settles its legacy slice and stamps
+    ///      the cursor to `armedFrom`, the claim's own composition).
+    ///
+    ///      A DELIVERED shortfall now DEFERS the day (the engine's native
+    ///      shape — partial progress persists and the day retries when
+    ///      funding lands) instead of r2's whole-sweep revert; the guarantee
+    ///      is unchanged — no unbacked armed spend — enforced per day by
+    ///      the bound the engine applies. A backing-bound fresh trim defers
+    ///      too (`freshRecoverable`, the same per-source rule as expiry); a
+    ///      69M-cap trim truncates terminally — a forfeit has no claimant
+    ///      whose open claim a defer would protect.
+    /// @return freshCredited    Fresh that actually moves this call.
+    /// @return recycledReleased Recycled commitment released this call.
+    /// @return armedOwed        Armed commitment to retire (cappedOff incl.).
+    /// @return armedDelivered   Armed fresh charging the mirror bound.
+    function sweepForfeitedByLoanId(
+        uint256 loanId,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        bool freshRecoverable
+    )
         internal
-        returns (EntrySplit memory toTreasury, uint256 armedCapped)
+        returns (
+            uint256 freshCredited,
+            uint256 recycledReleased,
+            uint256 armedOwed,
+            uint256 armedDelivered
+        )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        // #1061 P1 — the sweep DISCARDS `_processEntry`'s `toUser`, so it must
-        // only ever process FORFEITED entries. Otherwise a payable entry made
-        // claimable by the loan-terminal fallback ({_entryClaimable}) would be
-        // marked `processed` with nothing transferred, destroying the user's
-        // reward. Skip any entry that isn't forfeited (explicit or terminal-
-        // derived) — a permissionless sweep can never touch a payable entry.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
         if (lenderId != 0 && _isForfeited(s, s.rewardEntries[lenderId])) {
-            // r17 P1 — the capped figure is read AFTER the settle, because
-            // {_processEntryWhole} is what extends the cumulative RPN (the
-            // per-day armed rows this read prices from — before it they are
-            // simply unmaterialized and read zero). The settle never moves
-            // the claim cursor, so the window priced is byte-identical;
-            // gating on processed-became-TRUE scopes the read to entries
-            // this sweep genuinely settled (a zero-price retryable settle
-            // contributes nothing, exactly like the split it returns).
-            bool was = !s.rewardEntries[lenderId].processed;
-            (, EntrySplit memory t) = _processEntryWhole(s, lenderId);
-            if (was && s.rewardEntries[lenderId].processed) {
-                armedCapped +=
-                    _forfeitArmedCapped(s, lenderId, s.rewardEntries[lenderId]);
-            }
-            _foldSplit(toTreasury, t);
+            (uint256 f, uint256 r, uint256 o, uint256 d) =
+                _forfeitEntryChunk(
+                    s, lenderId, freshHeadroom, deliveredAllowance,
+                    freshRecoverable
+                );
+            freshCredited += f; recycledReleased += r;
+            armedOwed += o; armedDelivered += d;
+            freshHeadroom = freshHeadroom > f ? freshHeadroom - f : 0;
+            deliveredAllowance =
+                deliveredAllowance > d ? deliveredAllowance - d : 0;
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
         if (borrowerId != 0 && _isForfeited(s, s.rewardEntries[borrowerId])) {
-            bool was = !s.rewardEntries[borrowerId].processed;
-            (, EntrySplit memory t) = _processEntryWhole(s, borrowerId);
-            if (was && s.rewardEntries[borrowerId].processed) {
-                armedCapped += _forfeitArmedCapped(
-                    s, borrowerId, s.rewardEntries[borrowerId]
+            (uint256 f, uint256 r, uint256 o, uint256 d) =
+                _forfeitEntryChunk(
+                    s, borrowerId, freshHeadroom, deliveredAllowance,
+                    freshRecoverable
                 );
-            }
-            _foldSplit(toTreasury, t);
+            freshCredited += f; recycledReleased += r;
+            armedOwed += o; armedDelivered += d;
+            freshHeadroom = freshHeadroom > f ? freshHeadroom - f : 0;
+            deliveredAllowance =
+                deliveredAllowance > d ? deliveredAllowance - d : 0;
         }
-
-        // #953 (Codex) — also drain lender entries that a position sale orphaned
-        // from the active pointer (see `transferLenderEntry`). Each is forfeited,
-        // so `_processEntry` routes it to treasury; it is idempotent, so an entry
-        // already processed by a prior sweep or a later un-flagged claim adds 0.
+        // #953 (Codex) — lender entries a position sale orphaned from the
+        // active pointer. Forfeited by construction; a processed one adds 0.
         uint256[] storage orphaned = s.loanForfeitedLenderEntryIds[loanId];
         uint256 olen = orphaned.length;
         for (uint256 i = 0; i < olen; ) {
             if (_isForfeited(s, s.rewardEntries[orphaned[i]])) {
-                // r17 P1 — same read-after-settle as the two pointers above.
-                bool was = !s.rewardEntries[orphaned[i]].processed;
-                (, EntrySplit memory t) = _processEntryWhole(s, orphaned[i]);
-                if (was && s.rewardEntries[orphaned[i]].processed) {
-                    armedCapped += _forfeitArmedCapped(
-                        s, orphaned[i], s.rewardEntries[orphaned[i]]
+                (uint256 f, uint256 r, uint256 o, uint256 d) =
+                    _forfeitEntryChunk(
+                        s, orphaned[i], freshHeadroom, deliveredAllowance,
+                        freshRecoverable
                     );
-                }
-                _foldSplit(toTreasury, t);
+                freshCredited += f; recycledReleased += r;
+                armedOwed += o; armedDelivered += d;
+                freshHeadroom = freshHeadroom > f ? freshHeadroom - f : 0;
+                deliveredAllowance =
+                    deliveredAllowance > d ? deliveredAllowance - d : 0;
             }
             unchecked { ++i; }
         }
+    }
+
+    /// @dev One forfeited entry's settlement CHUNK — the expiry dispatch
+    ///      (r8's three-way) minus the horizon machinery, because a forfeit
+    ///      has no claimant clock: a wholly-legacy entry settles whole O(1);
+    ///      a spanning entry settles its legacy slice and stamps the cursor;
+    ///      an armed day settles through {processUserSideDay} +
+    ///      {_persistDay}, which caps, splits, bounds and advances — and
+    ///      marks the entry processed when the window completes.
+    function _forfeitEntryChunk(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        bool freshRecoverable
+    )
+        private
+        returns (
+            uint256 freshCredited,
+            uint256 recycledReleased,
+            uint256 armedOwed,
+            uint256 armedDelivered
+        )
+    {
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (e.processed) return (0, 0, 0, 0);
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+
+        // Wholly pre-cutover: no armed day exists, so the O(1) whole settle
+        // is exact — all-fresh legacy, no delivered bound (nothing was ever
+        // remitted for pre-arming days), commitment-free.
+        if (armedFrom == 0 || e.endDay <= armedFrom) {
+            (, EntrySplit memory t) = _processEntryWhole(s, id);
+            return (t.total - t.recycled, t.recycled, 0, 0);
+        }
+
+        if (e.startDay < armedFrom && s.rewardEntryClaimNextDay[id] == 0) {
+            // Spanning bootstrap: settle the pre-cutover slice and stamp the
+            // cursor to `armedFrom` — the claim's own composition. The
+            // engine owns everything after the stamp.
+            if (_entryClaimable(s, e) && e.startDay < e.endDay) {
+                uint256 need = e.endDay - 1;
+                if (e.side == LibVaipakam.RewardSide.Lender) {
+                    if (s.cumLenderCursor < need) advanceCumLenderThrough(need);
+                } else if (s.cumBorrowerCursor < need) {
+                    advanceCumBorrowerThrough(need);
+                }
+            }
+            (, EntrySplit memory tSplit, , EntryPriceState memory st) =
+                _entryPriceCore(s, id, e);
+            if (!st.priced) return (0, 0, 0, 0); // globals not final: retry
+            uint256 legacyFresh =
+                tSplit.total - tSplit.recycled - tSplit.armedFresh;
+            // The 69M trim on a forfeit's legacy leg is terminal (monotone
+            // budget, no claimant): credit what fits, write off the rest.
+            if (legacyFresh > freshHeadroom) legacyFresh = freshHeadroom;
+            s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
+            return (legacyFresh, 0, 0, 0);
+        }
+
+        // Extend the cumulative RPN so the day rows are materialized — the
+        // one write {_processEntryWhole} used to make on this path, and the
+        // reason its own pricing worked. The advance is internally bounded
+        // (the same chunked helper every settling caller uses), so a long
+        // backlog materializes across calls exactly like the days settle.
+        if (_entryClaimable(s, e) && e.startDay < e.endDay) {
+            uint256 need = e.endDay - 1;
+            if (e.side == LibVaipakam.RewardSide.Lender) {
+                if (s.cumLenderCursor < need) advanceCumLenderThrough(need);
+            } else if (s.cumBorrowerCursor < need) {
+                advanceCumBorrowerThrough(need);
+            }
+        }
+        uint256 d = _shareOfPoolCursorDay(s, id, e);
+        if (d >= e.endDay) return (0, 0, 0, 0);
+        // An armed day whose ShareOfPool stamp has not landed defers — the
+        // wait clears when the broadcast arrives.
+        if (s.dayCapMode[d] != LibVaipakam.CapMode.ShareOfPool) {
+            return (0, 0, 0, 0);
+        }
+
+        uint256[] memory set = new uint256[](1);
+        set[0] = id;
+        (DayCharge memory charge, DaySlice[] memory slices) =
+            processUserSideDay(
+                e.user,
+                d,
+                set,
+                PoolBudget({
+                    fresh: freshHeadroom,
+                    recycled: s.recycleBucket,
+                    deliveredFresh: deliveredAllowance
+                }),
+                _noDryRun()
+            );
+        // A deferred day (delivered shortfall, recycled drought, unready
+        // row) credits nothing and stays retryable — the engine's native
+        // satisfiable-wait shape.
+        if (!charge.advanced) return (0, 0, 0, 0);
+        // A BACKING-bound fresh trim defers: that budget refills with any
+        // custody inflow, so truncating on it would discard value one block
+        // of patience recovers — the per-source rule expiry applies. Only
+        // the 69M cap truncates terminally, natively via `cappedOff`.
+        if (charge.freshShortfall != 0 && freshRecoverable) {
+            return (0, 0, 0, 0);
+        }
+        _persistDay(s, e.user, e.side, d, set, slices);
+        freshCredited = charge.toTreasury.armedFresh;
+        recycledReleased = charge.toTreasury.recycled;
+        armedOwed = charge.toTreasury.armedFresh + charge.cappedOff.armedFresh;
+        armedDelivered = freshCredited;
     }
 
 

@@ -251,112 +251,80 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
-    /// @dev #1434 P1-b — the forfeit sweep charges the delivered bound with
-    ///      the ARMED portion of what it actually spent.
-    ///
-    ///      This is the slice's least self-evident decision and is flagged for
-    ///      review. Unlike the expiry batch (all-or-nothing per entry, so the
-    ///      armed share is exact), this sweep can truncate PARTIALLY against
-    ///      the 69M headroom, so the armed share of the surviving spend must
-    ///      be ATTRIBUTED. It uses PRO-RATA: the truncation is an aggregate
-    ///      exhaustion clamp that expresses no preference between the armed
-    ///      and unarmed days inside the sweep, so scaling both by one factor
-    ///      is the neutral reading. FRESH-FIRST is deliberately NOT borrowed
-    ///      from `_applyLoanSideCap` — that rule attributes fresh-vs-RECYCLED
-    ///      and is fresh-first only because the cap genuinely fills from fresh
-    ///      first; no such ordering exists between armed and unarmed fresh.
-    ///
-    ///      Both mis-attributions are harmful, which is why this is pinned:
-    ///      over-charging shrinks the bound permanently and would eventually
-    ///      defer fully-funded days, while under-charging lets a mirror pay
-    ///      armed fresh it never received.
+    /// @dev #1434 P1-b (Codex #1699 r5 P2, reshaped by r18) — the mirror
+    ///      bound is charged by the ARMED fresh that actually moved, never
+    ///      by the unarmed (legacy) fresh. Under the engine the two legs
+    ///      settle in separate chunks, so the property is now directly
+    ///      observable per chunk instead of inferred from a pro-rata of a
+    ///      clamped aggregate: the legacy chunk charges NOTHING, and the
+    ///      armed chunk charges exactly its own credited fresh.
     function testP1bForfeitSweepChargesArmedPortionOfWhatItSpent() public {
-        // Arm + finalize while still CANONICAL — finalization is Base-only,
-        // so flipping to the mirror first reverts `NotCanonicalRewardChain`.
-        _armAndFinalize(5, 700 ether);
+        // Arm + finalize while still CANONICAL — finalization is Base-only.
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
 
         vm.chainId(CHAIN_ARB);
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(false);
+        _mut().setChainDayFundingRaw(
+            5, uint32(CHAIN_ARB), floor5 / 2, recycled5 / 2
+        );
 
-        // MIXED ARMING — the entry starts at day 4, one day BEFORE arming, so
-        // its fresh is part legacy and part armed (`armedFresh < freshWanted`).
-        //
-        // This shape is load-bearing and two earlier restagings failed without
-        // it. With an all-armed entry `armedFresh == freshWanted`, and the two
-        // attribution rules become ALGEBRAICALLY IDENTICAL: pro-rata
-        // `armedFresh x freshSwept / freshWanted` reduces to `freshSwept`,
-        // which is exactly what armed-first `min(armedFresh, freshSwept)`
-        // returns under any clamp. No amount of clamp tuning can separate
-        // them; only a mixed window can.
+        // MIXED ARMING — legacy day 4 + armed day 5, so the two legs are
+        // genuinely distinct quantities.
         uint256 id = _seedEntry(alice, 77, 4, 6);
         _mut().setRewardEntryForfeitedRaw(id);
         _mut().setLoanActiveLenderEntryId(77, id);
+        _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
 
-        // Delivered funding is abundant, so the DELIVERED bound never binds
-        // here — the clamp under test is the 69M headroom's.
-        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
-
-        // Establish what the sweep WOULD spend unclamped.
-        uint256 snap = vm.snapshotState();
+        // Chunk 1: the LEGACY leg settles and stamps the cursor. Pre-arming
+        // fresh was never delivered, so it must charge the bound NOTHING.
         vm.prank(makeAddr("keeper"));
-        uint256 fullSweep = _facet().sweepForfeitedInteractionRewards(77);
-        uint256 fullCharge = _mut().getArmedFreshPaidRaw();
-        vm.revertToState(snap);
-
-        assertGt(fullSweep, 0, "LIVE: the sweep genuinely moves value");
-        assertGt(fullCharge, 0, "LIVE: and charges the bound when unclamped");
-
-        // Now force a PARTIAL truncation: leave headroom for only part of the
-        // fresh share. This is the ONLY state in which pro-rata and
-        // armed-first differ — with slack headroom both compute the same
-        // number, which is exactly why the first version of this test let the
-        // armed-first mutant survive.
-        uint256 cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
-        uint256 headroom = fullSweep / 4;
-        _mut().setInteractionPoolPaidOut(cap - headroom);
-
-        vm.prank(makeAddr("keeper"));
-        uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
-        uint256 charged = _mut().getArmedFreshPaidRaw();
-
-        assertLt(swept, fullSweep, "LIVE: the headroom genuinely truncated");
-        // The discriminating assertion: pro-rata SCALES the armed share by the
-        // truncation ratio, while armed-first would pass the armed portion
-        // through WHOLE (it fits inside the surviving spend). Asserting the
-        // charge is merely "less than unclamped" is satisfied by BOTH rules —
-        // that is precisely why the first version of this test let the mutant
-        // live. Compare against armed-first's answer directly.
-        uint256 armedFirst = fullCharge <= swept ? fullCharge : swept;
-        assertLt(
-            charged,
-            armedFirst,
-            "pro-rata scales the armed charge; armed-first would not"
+        uint256 legacySwept = _facet().sweepForfeitedInteractionRewards(77);
+        assertGt(legacySwept, 0, "LIVE: the legacy leg settles");
+        assertEq(
+            _mut().getArmedFreshPaidRaw(),
+            0,
+            "the unarmed leg never charges the delivered bound"
         );
-        assertGt(charged, 0, "but a truncated sweep still charges its share");
+        assertFalse(
+            _mut().getRewardEntryProcessedRaw(id),
+            "LIVE: the armed tail is still owed"
+        );
+
+        // Chunk 2: the ARMED day settles through the engine and charges the
+        // bound by exactly what it credited.
+        vm.prank(makeAddr("keeper"));
+        uint256 armedSwept = _facet().sweepForfeitedInteractionRewards(77);
+        assertGt(armedSwept, 0, "LIVE: the armed day settles");
+        uint256 paid = _mut().getArmedFreshPaidRaw();
+        assertGt(paid, 0, "the armed chunk charges the bound");
+        assertLe(
+            paid,
+            armedSwept,
+            "and by no more than what that chunk actually moved"
+        );
+        assertTrue(
+            _mut().getRewardEntryProcessedRaw(id),
+            "and the entry terminalises once both legs settled"
+        );
     }
 
-    /// @dev #1434 P1-b (Codex #1699 r1 P1) — the forfeit sweep REFUSES when the
-    ///      delivered bound cannot cover its armed fresh, and refuses BEFORE
-    ///      any of its effects are final.
-    ///
-    ///      The first revision charged the bound AFTER `sweepForfeitedByLoanId`
-    ///      had already processed the entries, which records an overspend
-    ///      rather than preventing one: a permissionless caller could absorb
-    ///      armed fresh that was never delivered, backed by VPFI the Diamond
-    ///      holds for other obligations.
-    ///
-    ///      Asserting the revert alone would NOT establish the rollback — the
-    ///      entry could still have been consumed by a partially-applied call.
-    ///      So this also proves the sweep is STILL AVAILABLE afterwards, and
-    ///      that it succeeds once funding lands. A refusal that cannot clear
-    ///      would be a wedge; this one is a satisfiable wait.
+    /// @dev #1434 P1-b (Codex #1699 r2 P1, reshaped by r18) — a mirror
+    ///      forfeit whose armed fresh is undelivered must not spend it. The
+    ///      r2 shape was a whole-sweep revert; the engine's shape (r18) is a
+    ///      PER-DAY DEFER: the sweep returns zero progress, every ledger is
+    ///      untouched, the entry stays intact, and the SAME call succeeds
+    ///      once funding lands. Same guarantee — no unbacked armed spend —
+    ///      now with partial progress preserved on multi-day entries.
     function testP1bForfeitSweepRefusesWhenDeliveredIsShort() public {
-        _armAndFinalize(5, 700 ether);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
 
         vm.chainId(CHAIN_ARB);
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(false);
+        _mut().setChainDayFundingRaw(
+            5, uint32(CHAIN_ARB), floor5 / 2, recycled5 / 2
+        );
 
         uint256 id = _seedEntry(alice, 77, 5, 6);
         _mut().setRewardEntryForfeitedRaw(id);
@@ -369,17 +337,19 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 bucketBefore = _cfg().getRecycleBucket();
 
         vm.prank(makeAddr("keeper"));
-        vm.expectRevert();
-        _facet().sweepForfeitedInteractionRewards(77);
-
-        // Nothing moved — the refusal happened before any effect landed.
+        uint256 swept0 = _facet().sweepForfeitedInteractionRewards(77);
+        assertEq(swept0, 0, "an unfunded armed day DEFERS - nothing settles");
         assertEq(
             _cfg().getRecycleBucket(),
             bucketBefore,
-            "a refused sweep absorbs nothing"
+            "a deferred sweep absorbs nothing"
         );
         assertEq(
             _mut().getArmedFreshPaidRaw(), 0, "and charges the bound nothing"
+        );
+        assertFalse(
+            _mut().getRewardEntryProcessedRaw(id),
+            "LIVE: the entry is intact, not consumed"
         );
 
         // FUNDED: the same call now succeeds, so the refusal was a wait and
@@ -428,65 +398,60 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertEq(after_, 600 ether, "a refused re-seed changes nothing");
     }
 
-    /// @dev #1434 P1-b (Codex #1699 r2 P2) — the sweep must gate on what it
-    ///      will ACTUALLY charge, so a forfeiture whose post-cap charge fits
-    ///      still goes through.
-    ///
-    ///      This guards the bound's OTHER failure direction. The round-1 gate
-    ///      tested the sweep's NOMINAL armed share while the code charges only
-    ///      the post-cap pro-rata portion, so near 69M exhaustion a mixed
-    ///      forfeiture could revert although its real charge fit — leaving the
-    ///      entry and its commitment stuck, waiting on delivery that could
-    ///      never help (the binding limit there is the monotone cap).
-    ///
-    ///      A test that only checks "the gate refuses when short" would pass
-    ///      against that regression, which is exactly how it shipped.
+    /// @dev #1434 P1-b (Codex #1699 r2 P2, reshaped by r18) — near 69M
+    ///      exhaustion the sweep settles what fits and charges the bound by
+    ///      the CREDITED figure, never the nominal one. The engine truncates
+    ///      the armed day's fresh via `cappedOff` (monotone budget), still
+    ///      advances, and charges delivered funding only for what moved.
     function testP1bSweepSucceedsWhenPostCapChargeFits() public {
-        _armAndFinalize(5, 700 ether);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
 
         vm.chainId(CHAIN_ARB);
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(false);
+        _mut().setChainDayFundingRaw(
+            5, uint32(CHAIN_ARB), floor5 / 2, recycled5 / 2
+        );
 
-        // Mixed arming so armedFresh < freshWanted, then squeeze the 69M
-        // headroom so the fresh spend truncates hard.
         uint256 id = _seedEntry(alice, 77, 4, 6);
         _mut().setRewardEntryForfeitedRaw(id);
         _mut().setLoanActiveLenderEntryId(77, id);
-
-        uint256 snap = vm.snapshotState();
         _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
+
+        // Measure the UNCLAMPED armed charge first (both chunks, abundant).
+        uint256 snap = vm.snapshotState();
+        vm.prank(makeAddr("keeper"));
+        _facet().sweepForfeitedInteractionRewards(77);
         vm.prank(makeAddr("keeper"));
         uint256 full = _facet().sweepForfeitedInteractionRewards(77);
-        // Unclamped, the charge IS the nominal armed share — no extra getter
-        // needed, and it is measured rather than assumed.
         uint256 nominalArmed = _mut().getArmedFreshPaidRaw();
         vm.revertToState(snap);
-        assertGt(full, 0, "LIVE: this forfeiture genuinely sweeps");
-        assertGt(nominalArmed, 0, "LIVE: and it carries an armed share");
+        assertGt(full, 0, "LIVE: the armed day genuinely sweeps");
+        assertGt(nominalArmed, 0, "LIVE: and it carries an armed charge");
 
-        // Headroom for only a quarter of the fresh, and a delivered allowance
-        // far below the NOMINAL armed share but above the POST-CAP charge.
+        // Settle the legacy leg with the pool open, then SQUEEZE the 69M
+        // headroom to a sliver of the armed charge.
+        vm.prank(makeAddr("keeper"));
+        _facet().sweepForfeitedInteractionRewards(77);
+        uint256 sliver = nominalArmed / 4;
         _mut().setInteractionPoolPaidOut(
-            LibVaipakam.VPFI_INTERACTION_POOL_CAP - (full / 4)
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - sliver
         );
-        // The allowance must sit BELOW the nominal armed share and ABOVE the
-        // post-cap charge — that gap is the ONLY state where gating on the
-        // nominal figure differs from gating on what is actually charged.
-        // Asserted, not assumed: without the gap both rules agree and this
-        // test cannot see the difference (a mutation run caught exactly that).
-        uint256 allowance = nominalArmed / 2;
-        assertGt(nominalArmed, allowance, "LIVE: nominal exceeds the allowance");
-        _mut().setArmedFreshLedgerRaw(allowance, 0);
 
+        // The armed chunk still settles — the cap trim is terminal, not a
+        // wedge — and charges the bound by the truncated figure only.
         vm.prank(makeAddr("keeper"));
         uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
-
-        assertGt(swept, 0, "the truncated sweep is NOT refused");
-        assertLe(
-            _mut().getArmedFreshPaidRaw(),
-            allowance,
-            "and charges no more than the allowance it was gated on"
+        assertGt(swept, 0, "a cap-truncated forfeit still settles");
+        uint256 paid = _mut().getArmedFreshPaidRaw();
+        assertLt(
+            paid,
+            nominalArmed,
+            "and the bound is charged the CREDITED figure, not the nominal"
+        );
+        assertTrue(
+            _mut().getRewardEntryProcessedRaw(id),
+            "and the entry terminalises rather than wedging"
         );
     }
 
