@@ -470,7 +470,18 @@ contract EarlyWithdrawalDirectFacet is
         // This is the guard-remembered-twice shape recorded on #1503: the
         // release exists, is correct, and was simply never applied to the direct
         // sibling — like the GTT expiry (#1772) and the offset guard (#1813).
-        if (s.intentOrigin[loanId].owner != address(0)) {
+        //
+        // ...UNLESS the buyer IS the origin owner (Codex #1818 r1 P1): selling
+        // to yourself through your own standing buy offer leaves you the lender
+        // of a live intent loan, and releasing here would free its full
+        // principal from your `MAX_EXPOSURE` cap while the exposure is still
+        // real — a self-trade that mints headroom. The marker and the counter
+        // are retained; the loan simply remains what it was, an intent fill
+        // held by its origin owner.
+        if (
+            s.intentOrigin[loanId].owner != address(0) &&
+            s.intentOrigin[loanId].owner != buyOffer.creator
+        ) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     LenderIntentFacet.releaseIntentExposure.selector, loanId

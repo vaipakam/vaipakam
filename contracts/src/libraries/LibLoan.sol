@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRevert} from "./LibRevert.sol";
 import {LibEntitlement} from "./LibEntitlement.sol";
+import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 
@@ -95,6 +96,16 @@ library LibLoan {
         // listed route, the direct route, and anything added later. That is the
         // shape of the guard-remembered-twice defect recorded on #1503.
         _rekeyPositionIndex(s, loan.lenderTokenId, newTokenId, loanId);
+        // #1503 item 25, second half (Codex #1818 r1 P2) — the token mapping
+        // above serves NFT-keyed discovery; the dashboard and history views
+        // walk `userLoanIds`, so the buyer must also receive the REAL loan id
+        // there or the acquired position is absent from every list view.
+        _indexLoanForHolder(s, loan.lender, newLender, loan.borrower, loanId);
+        // Item 25's notification-policy half, decided as "each holder pays
+        // separately": the flag is reset so the incoming lender cannot consume
+        // notification service funded by the seller's VPFI tariff, and is
+        // billed on their own first use instead.
+        loan.lenderNotifBilled = false;
 
         loan.lender = newLender;
         loan.lenderTokenId = newTokenId;
@@ -113,6 +124,40 @@ library LibLoan {
     ) private {
         if (oldTokenId != 0) delete s.loanIdByPositionTokenId[oldTokenId];
         if (newTokenId != 0) s.loanIdByPositionTokenId[newTokenId] = loanId;
+    }
+
+    /// @dev Appends `loanId` to the INCOMING holder's `userLoanIds` with O(1)
+    ///      dedup via `userLoanIndexed` — item 25 forbids reusing the
+    ///      consolidation path's linear lifetime-array scan, whose gas grows
+    ///      with the buyer's history and can turn a funded-looking fill into a
+    ///      seller-burning revert.
+    ///
+    ///      Grandfathered rows (loans created before the map shipped) have
+    ///      their parties in the array but not the map. Two facts close that
+    ///      seam without a scan: the OUTGOING holder is indexed by
+    ///      construction — creation put them there, or their own acquisition
+    ///      did — so their map bit can be set on the way out (which makes an
+    ///      A→B→A reacquisition dedup correctly); and the loan's CURRENT
+    ///      counterparty is indexed for the same reason, so an incoming holder
+    ///      who IS the counterparty (a borrower buying the lender side) is
+    ///      marked rather than re-appended.
+    ///
+    ///      Also marks a first-time buyer as a seen protocol user — the
+    ///      creation path does this for original parties, and item 25 requires
+    ///      it of migration.
+    function _indexLoanForHolder(
+        LibVaipakam.Storage storage s,
+        address outgoing,
+        address incoming,
+        address counterparty,
+        uint256 loanId
+    ) private {
+        s.userLoanIndexed[outgoing][loanId] = true;
+        LibMetricsHooks.markUserSeen(s, incoming);
+        if (s.userLoanIndexed[incoming][loanId]) return;
+        s.userLoanIndexed[incoming][loanId] = true;
+        if (incoming == counterparty) return; // indexed at creation/migration
+        s.userLoanIds[incoming].push(loanId);
     }
 
     /// @dev Replaces the borrower on an existing loan. Symmetric to
@@ -163,6 +208,10 @@ library LibLoan {
         // in the symmetric half of the same helper, and splitting it would leave
         // a known gap open for the sake of matching the audit's wording.
         _rekeyPositionIndex(s, loan.borrowerTokenId, newTokenId, loanId);
+        // #1503 item 25, borrower side — same list-view discovery as the
+        // lender half, same dedup, same notification policy.
+        _indexLoanForHolder(s, loan.borrower, newBorrower, loan.lender, loanId);
+        loan.borrowerNotifBilled = false;
 
         loan.borrower = newBorrower;
         loan.borrowerTokenId = newTokenId;

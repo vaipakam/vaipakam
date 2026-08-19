@@ -632,6 +632,14 @@ contract EarlyWithdrawalFacetTest is Test {
             0,
             "seller's superseded token no longer resolves"
         );
+        // Item 25's list-view half (Codex #1818 r1 P2): the acquired REAL loan
+        // id lands in the buyer's `userLoanIds`, which is what the dashboard
+        // and history views walk.
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(newLender),
+            1,
+            "acquired loan appended to the buyer's user-loan index"
+        );
     }
 
     // ─── #1503 item 28: settled interest nets out of the forfeiture ──────────

@@ -497,6 +497,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.Loan storage loan = s.loans[ctx.loanId];
         s.userLoanIds[loan.lender].push(ctx.loanId);
         s.userLoanIds[loan.borrower].push(ctx.loanId);
+        // #1503 item 25 — mirror the pushes into the O(1) membership map so a
+        // later position migration can dedup its append without scanning the
+        // lifetime array.
+        s.userLoanIndexed[loan.lender][ctx.loanId] = true;
+        s.userLoanIndexed[loan.borrower][ctx.loanId] = true;
 
         _applyRentalPrepayIfNft(ctx.loanId, ctx.offerId);
         _maybeRunInitialRiskGates(ctx);

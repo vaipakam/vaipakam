@@ -1443,5 +1443,94 @@ contract LenderIntentMatchTest is SetupTest {
             }
         }
         assertTrue(found, "buyer's new position token resolves to the loan");
+
+        // #1503 item 25, list-view half (Codex #1818 r1 P2) — the dashboard and
+        // history views walk `userLoanIds`, so the acquired REAL loan id must
+        // appear in the buyer's index, not only behind their position token.
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(posBuyer),
+            1,
+            "acquired loan appended to the buyer's user-loan index"
+        );
+    }
+
+    /// @dev Codex #1818 r1 P1 — a self-purchase must not free the exposure cap.
+    ///      The origin owner posts their own standing buy offer and sells the
+    ///      intent loan to themselves: they remain the lender of a live intent
+    ///      fill, so releasing `lenderIntentLivePrincipal` would mint headroom
+    ///      under MAX_EXPOSURE out of a trade that changed nothing real. The
+    ///      marker and counter are retained; and the loan-index dedup means no
+    ///      duplicate entry lands in their own history either.
+    function test_directSale_selfBuybackRetainsExposure() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("sbBorrower");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        assertEq(_livePrincipal(), PRINCIPAL, "fill counted against the cap");
+        uint256 loansBefore = MetricsFacet(address(diamond)).getUserLoanCount(lender);
+
+        LibVaipakam.Loan memory pre =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        ERC20Mock(mockERC20).mint(lender, 2 * PRINCIPAL);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), 2 * PRINCIPAL);
+        vm.prank(lender);
+        uint256 buyOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: pre.interestRateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: pre.collateralAmount,
+                durationDays: pre.durationDays,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: pre.prepayAsset,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: pre.interestRateBps,
+                collateralAmountMax: pre.collateralAmount,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            loanId, buyOfferId
+        );
+
+        assertEq(
+            _livePrincipal(),
+            PRINCIPAL,
+            "a self-purchase must not free the exposure cap"
+        );
+        (, uint256 t) = _rollable();
+        assertEq(t, 1, "the origin marker is retained");
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lender,
+            lender,
+            "still the origin owner's loan"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(lender),
+            loansBefore,
+            "no duplicate index entry from reacquiring an already-indexed loan"
+        );
     }
 }

@@ -6861,6 +6861,22 @@ library LibVaipakam {
         ///         enforcing a stale projection there would refuse their own
         ///         deliberate act.
         mapping(uint256 => uint256) saleListingBoundsExpiry;
+        /// @notice O(1) membership map over `userLoanIds` (#1503 item 25,
+        ///         Codex #1818 r1 P2): true when `loanId` is already present in
+        ///         `userLoanIds[user]`, so a position migration can append the
+        ///         acquired loan to the buyer's index WITHOUT the linear
+        ///         lifetime-array scan the consolidation path uses — item 25
+        ///         names that scan as the thing a high-volume buyer could turn
+        ///         into an out-of-gas seller-burning revert.
+        ///
+        ///         Populated at loan creation for both original parties going
+        ///         forward. Loans created BEFORE this field shipped have their
+        ///         parties in the array but not the map; the migration writer
+        ///         (`LibLoan._indexLoanForHolder`) closes that seam by marking
+        ///         the OUTGOING holder (indexed by construction — creation or
+        ///         their own acquisition) and the current counterparty, so a
+        ///         reacquisition never double-appends a grandfathered row.
+        mapping(address => mapping(uint256 => bool)) userLoanIndexed;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

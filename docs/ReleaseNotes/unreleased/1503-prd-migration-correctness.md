@@ -19,6 +19,19 @@ position migration passes through, rather than at each route that happens to
 move a position — the point being that a future route inherits the correct
 behaviour instead of having to remember it.
 
+**A bought position was also absent from the buyer's own loan lists.** Finding
+the position by its token is half of discovery; the dashboard and history views
+enumerate a per-user loan list instead, and a sale never added the acquired
+loan to the buyer's. A listing buyer saw only the temporary sale vehicle there,
+and an instant-sale buyer saw nothing at all. The migration now appends the
+real loan to the buyer's list, with constant-cost de-duplication so a frequent
+buyer's growing history can never make a fill run out of gas, and a first-time
+buyer is counted as a protocol user the way an ordinary borrower or lender is.
+One policy question this surfaced is decided rather than left implicit: the
+paid-notification flag does not travel with a sold position, so a buyer cannot
+consume notification service the seller had funded — each holder pays for
+their own.
+
 **A seller's lending capacity stayed reserved after they exited.** A lender who
 sets a standing intent has a cap on how much principal they can have live at
 once. When they exit a loan through the listed sale route, that cap is freed
@@ -27,6 +40,13 @@ capacity hostage to an action the buyer may never take. The instant sale route
 never did this, so a seller who exited that way kept the exited loan counting
 against their own limit — quietly reducing how much they could lend, with no
 error and nothing to indicate why.
+
+One exception to that release, on both routes, closed during review: selling
+the position to *yourself* through your own standing offer is a trade that
+changes nothing real — you remain the lender of a live intent-funded loan —
+and freeing the cap for it would have been a way to mint lending headroom out
+of a self-trade. A self-purchase now leaves the cap, and the loan's
+intent-origin marker, exactly as they were.
 
 Neither of these is a loss of funds. Both are the same shape as several recent
 fixes on the lender-exit paths: a mechanism that exists, is correct, and was
