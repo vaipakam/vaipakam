@@ -15,12 +15,20 @@ rather than from a maintained list, and fails when an event carrying a loan or
 offer reference neither files it nor is listed as deliberately unfiled with a
 stated reason. It recognises a reference by the shape of its name, including inside
 nested structures, so an event that calls one `oldLoanId` or `fields.refinanceTargetLoanId`
-is covered without anyone remembering to extend a list; it checks each reference
-separately, since an event can attach one and drop the other; and it requires the
-filing to read the decoded value unconditionally, so a guarded path with an empty
-fallback is reported rather than counted. It also flags entries in the exemption
-list that have gone stale, because a list that outlives its subject re-opens the
-hole it documented.
+is covered without anyone remembering to extend a list; and it checks each
+reference separately, since an event can attach one and drop the other. Whether
+each filing actually works is then verified by **running the real code**: for
+every covered event, the actual lookup is executed against a synthetic decoded
+event planted with known ids, and the check passes only when the planted id
+comes back out — so a filing that reads the wrong argument, returns a constant,
+or only works on some path fails the same way a missing one does. The recording
+step is exercised the same way: a synthetic batch must produce exactly one
+stored row per event with its references attached. It also flags entries in the
+exemption list that have gone stale, because a list that outlives its subject
+re-opens the hole it documented. (An earlier iteration of this change tried to
+establish the same guarantees by analysing the source code's syntax instead of
+running it; review kept finding code shapes the analysis missed, so it was
+replaced with the executed form, which has no shapes to miss.)
 
 Measuring the platform this way found **sixty** event-and-reference pairs already
 in the blank state, several of them things a user would plainly expect on a loan's
