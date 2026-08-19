@@ -4055,7 +4055,10 @@ async function flipLoanStatus(
 // Unified activity event ledger.
 // ──────────────────────────────────────────────────────────────────
 
-async function recordActivityEvents(
+// Exported for test/activityLedger.test.ts, which EXECUTES it against a
+// recording DB stub — the behavioral half of the #1794 coverage guardrail
+// (one insert per decoded log, references bound, count returned).
+export async function recordActivityEvents(
   logs: DecodedLog[],
   env: Env,
   chainId: number,
