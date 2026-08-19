@@ -44,6 +44,28 @@ const ORIGIN = (
   process.env.VITE_WWW_PUBLIC_ORIGIN ?? 'https://vaipakam.com'
 ).replace(/\/+$/, '');
 
+/**
+ * The chain whose published configuration the rendered docs follow —
+ * the SAME env var and default `useProtocolConfig` reads, so the live
+ * endpoint this index advertises describes the deployment the docs
+ * describe. Pointing a crawler at a different chain than the prose
+ * would hand it correct-looking figures for someone else's deployment
+ * (#1664 items 3 + 4).
+ */
+const DOCS_CONFIG_CHAIN_ID = process.env.VITE_DOCS_CONFIG_CHAIN_ID ?? '84532';
+
+/**
+ * The indexer this build's pages actually read — same env var, default
+ * and trailing-slash normalisation as `useProtocolConfig` (Codex #1821
+ * r1 P2). Hard-coding production here made a preview or self-hosted
+ * build advertise an indexer its own pages never consult: the chain id
+ * would agree while the SERVICE did not, which is the same "figures for
+ * someone else's deployment" failure the chain pin exists to prevent.
+ */
+const INDEXER_ORIGIN = (
+  process.env.VITE_INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com'
+).replace(/\/+$/, '');
+
 /** content subdir → public URL slug. Locale suffixes carry over
  *  (`Overview.ta.md` → `overview.ta.md`). */
 const DOC_SETS = [
@@ -115,14 +137,15 @@ Key facts:
 ## Live protocol data (public JSON API)
 
 Read-only, keyless, CORS-open endpoints served by the indexer at
-https://indexer.vaipakam.com — fetch these instead of scraping the app:
+${INDEXER_ORIGIN} — fetch these instead of scraping the app:
 
-- [GET /offers/stats](https://indexer.vaipakam.com/offers/stats): open-offer counts and totals
-- [GET /offers/active](https://indexer.vaipakam.com/offers/active): the live offer book
-- [GET /offers/markets](https://indexer.vaipakam.com/offers/markets): quotable (pair, tenor) markets
-- [GET /loans/stats](https://indexer.vaipakam.com/loans/stats): loan counts by status
-- [GET /loans/timeseries](https://indexer.vaipakam.com/loans/timeseries): historical loan activity
-- [GET /](https://indexer.vaipakam.com/): self-describing index of every public endpoint
+- [GET /offers/stats](${INDEXER_ORIGIN}/offers/stats): open-offer counts and totals
+- [GET /offers/active](${INDEXER_ORIGIN}/offers/active): the live offer book
+- [GET /offers/markets](${INDEXER_ORIGIN}/offers/markets): quotable (pair, tenor) markets
+- [GET /loans/stats](${INDEXER_ORIGIN}/loans/stats): loan counts by status
+- [GET /loans/timeseries](${INDEXER_ORIGIN}/loans/timeseries): historical loan activity
+- [GET /config/{chainId}](${INDEXER_ORIGIN}/config/${DOCS_CONFIG_CHAIN_ID}): the live protocol configuration — fee rates, discount tiers, thresholds — under a name-keyed \`values\` object. **The docs above carry the protocol's compiled starting rates, which do not follow a governance retune; read this endpoint for the current figures.** Check \`updatedAt\` (unix seconds) before treating them as current, and skip a response flagged \`stale\` — that means the indexer knows the row predates a governance change it has not yet re-read. These are the RAW configured values: a per-party fee discount is additionally capped at 5000 BPS (50%) when applied, so a \`tierDiscountBps\` above that ceiling is not what any user receives. Each chain runs an independently tunable deployment, so the figures are per-chain; the link points at the one the docs describe
+- [GET /](${INDEXER_ORIGIN}/): self-describing index of every public endpoint
 
 ## Apps
 

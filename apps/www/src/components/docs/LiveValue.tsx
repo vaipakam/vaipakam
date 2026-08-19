@@ -59,9 +59,13 @@
  * default. NOT "current as of its build": the defaults are pinned to
  * the protocol's compiled starting rates, and a governance retune moves
  * live configuration rather than those rates, so the exports do not
- * follow a retune even across rebuilds (#1664 item 3 — whether they
- * should fetch the snapshot at build time is a deliberate open
- * decision).
+ * follow a retune even across rebuilds. That is now settled rather than
+ * open (#1664 item 3): they are NOT to fetch the snapshot at publish
+ * time — that would trade release-staleness for publish-staleness while
+ * making the build depend on a service that can be down and producing
+ * different artefacts from one source. Consumers needing current
+ * figures are pointed at the live config endpoint, which `llms.txt`
+ * advertises beside the documents.
  */
 
 import { DOCS_CHAIN_LABEL, useProtocolConfig } from '../../hooks/useProtocolConfig';
