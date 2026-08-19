@@ -1359,6 +1359,31 @@ const resolveConstructedClass = (ident, from, depth = 0) => {
   return null;
 };
 
+/**
+ * Does this constructor identifier denote the global `Promise` — directly, or
+ * through bounded const aliases (Codex round-64 P2)? `const P = Promise;
+ * new P(executor)` invokes the executor exactly as the direct spelling does,
+ * and the exact-name gate skipped it. The literal name counts even when a
+ * local binding shadows it: a callback that mutates the decoded arguments is
+ * suspicious under any constructor, so the asymmetry errs toward walking it.
+ */
+const denotesPromise = (identNode) => {
+  let cur = identNode;
+  for (let hop = 0; hop < 4 && cur && ts.isIdentifier(cur); hop += 1) {
+    if (cur.text === 'Promise') return true;
+    const d = nearestDeclIn(cur, cur.text, cur.getSourceFile());
+    if (!d || d === OPAQUE_BINDING || !d.initializer) return false;
+    if (
+      !ts.isVariableDeclarationList(d.parent) ||
+      (d.parent.flags & ts.NodeFlags.Const) === 0
+    ) {
+      return false;
+    }
+    cur = unwrapAssertions(d.initializer);
+  }
+  return false;
+};
+
 const unwrapAssertions = (t) => {
   while (
     ts.isParenthesizedExpression(t) ||
@@ -3088,13 +3113,13 @@ if (!fnNode) {
       })();
       const readRoot = scanFn ? scanFn.body : sourceFile;
       const boundDecl = nearestDeclIn(bound, bound.text, scanFn ?? sourceFile);
+      let reboundAfterUse = false;
       const countReads = (n) => {
         if (n !== readRoot && isFunctionLike(n)) return;
         if (
           ts.isIdentifier(n) &&
           n.text === bound.text &&
           n !== bound &&
-          !isWriteOccurrence(n) &&
           n.getStart(sourceFile) > resultAt &&
           (boundDecl === null ||
             nearestDeclIn(n, bound.text, scanFn ?? sourceFile) === boundDecl) &&
@@ -3104,17 +3129,39 @@ if (!fnNode) {
           // every other occurrence check here already refuses.
           guardedReason(n, readRoot) === null
         ) {
-          reads += 1;
+          if (isWriteOccurrence(n)) {
+            // A read does not prove the value the scan REPORTS is still the
+            // ledger's (Codex round-64 P2): read it once for a log line,
+            // then assign zero, and the count the caller consumes is a
+            // constant while the read check stays satisfied. Any reachable
+            // reassignment after the result lands is refused outright.
+            reboundAfterUse = true;
+          } else {
+            reads += 1;
+          }
         }
         ts.forEachChild(n, countReads);
       };
       countReads(readRoot);
-      return reads === 0 ? bound.text : null;
+      if (reboundAfterUse) return { rebound: bound.text };
+      return reads === 0 ? { unread: bound.text } : null;
     })();
+    if (unusedResult && unusedResult.rebound) {
+      console.error(
+        `[check-activity-refs-coverage] ${LEDGER_FN}()'s result binding\n` +
+          `  \`${unusedResult.rebound}\` is REASSIGNED after the result lands.\n` +
+          '  A read before the reassignment does not make the count the scan reports the\n' +
+          '  ledger\'s: whatever is assigned afterwards is what the caller consumes, and a\n' +
+          '  constant zero there suppresses the `activity.appended` notification while every\n' +
+          '  count in this script stays identical. Keep the binding const, or update this\n' +
+          '  script — do not delete the check.',
+      );
+      process.exit(1);
+    }
     if (unusedResult) {
       console.error(
         `[check-activity-refs-coverage] ${LEDGER_FN}()'s result is bound to\n` +
-          `  \`${unusedResult}\` and never read again.\n` +
+          `  \`${unusedResult.unread}\` and never read again.\n` +
           '  The rows may well be written, but the COUNT the scan reports is what decides\n' +
           '  whether an `activity.appended` notification goes out — a dangling binding beside\n' +
           '  a hard-coded zero leaves every client holding stale activity while every count in\n' +
@@ -3531,13 +3578,29 @@ if (!fnNode) {
               for (const dflt of invokedParamDefaultsOf(n)) walk(dflt, true);
               if (why) return;
             }
+            // A TAGGED TEMPLATE invokes its tag synchronously (Codex
+            // round-64 P2) — the same invocation rule as the case scan.
+            if (ts.isTaggedTemplateExpression(n)) {
+              let tag = unwrapAssertions(n.tag);
+              if (ts.isIdentifier(tag)) {
+                const resolved = resolveInvokedCallee(tag, n);
+                if (resolved) tag = resolved;
+              }
+              if (isFunctionLike(tag) && tag.body && !tag.asteriskToken) {
+                for (const p2 of tag.parameters ?? []) {
+                  if (p2.initializer) walk(p2.initializer, true);
+                }
+                walk(tag.body, true);
+              }
+              if (why) return;
+            }
             // `new Promise(executor)` runs its executor synchronously
             // (Codex round-63 P2) — the case scan learned this in round 62;
             // this walk, asking the same run-before-the-return question of
             // the batch, had not. Named executors resolve like any callee.
             if (ts.isNewExpression(n)) {
               const pc = unwrapAssertions(n.expression);
-              if (ts.isIdentifier(pc) && pc.text === 'Promise') {
+              if (ts.isIdentifier(pc) && denotesPromise(pc)) {
                 for (const pArg of n.arguments ?? []) {
                   let ex = unwrapAssertions(pArg);
                   if (ts.isIdentifier(ex)) {
@@ -3627,6 +3690,44 @@ if (!fnNode) {
                     (thisArg.text === batchParamName
                       ? ''
                       : ` (\`${thisArg.text}\` is the batch)`);
+                  return;
+                }
+              }
+              // `.bind()` of a membership mutator to the batch is refused at
+              // the BINDING (Codex round-64 P2): `const dropRows =
+              // logs.splice.bind(logs); dropRows(1)` mutates through a plain
+              // function value this walk cannot classify at the call site.
+              // Conservative on purpose — a bound batch mutator has no
+              // legitimate use this ledger needs, and rejecting its creation
+              // is the only point where the alias is still visible. Both the
+              // receiver chain's root and the thisArg identify the batch
+              // (`Array.prototype.splice.bind(logs)` roots at Array).
+              if (
+                member === 'bind' &&
+                host &&
+                (ts.isPropertyAccessExpression(host) ||
+                  ts.isElementAccessExpression(host)) &&
+                memberNameOf(host) !== null &&
+                MEMBERSHIP_MUTATORS.includes(memberNameOf(host))
+              ) {
+                let broot = unwrapAssertions(host.expression);
+                while (
+                  ts.isPropertyAccessExpression(broot) ||
+                  ts.isElementAccessExpression(broot)
+                ) {
+                  broot = unwrapAssertions(broot.expression);
+                }
+                const bThis = n.arguments.length > 0
+                  ? unwrapAssertions(n.arguments[0])
+                  : null;
+                if (
+                  (ts.isIdentifier(broot) && namesTheBatch(broot)) ||
+                  (bThis && ts.isIdentifier(bThis) && namesTheBatch(bThis))
+                ) {
+                  why =
+                    `\`${memberNameOf(host)}\` is BOUND to the batch through \`bind\` — ` +
+                    'the bound mutator changes which rows the batch holds wherever it is later invoked, ' +
+                    'under a name this walk cannot follow';
                   return;
                 }
               }
@@ -4626,8 +4727,12 @@ if (!fnNode) {
           // An awaited `DB.batch([statement])` EXECUTES the tracked statement
           // too (Codex round-63 P2) — a valid batching refactor was reported
           // as "never executed". Array elements (through const array
-          // bindings) whose chain root resolves to this binding count.
-          if (execNode === null && mem === 'batch') {
+          // bindings) whose chain root resolves to this binding count. The
+          // batch must sit on the REAL D1 binding (Codex round-64 P2) — the
+          // same receiver validation `preparedOnD1` applies, since
+          // `fake.batch([statement])` returning a changes stub executes
+          // nothing while reporting success.
+          if (execNode === null && mem === 'batch' && preparedOnD1(n)) {
             for (const bArg of n.arguments ?? []) {
               let arr = unwrapAssertions(bArg);
               for (let hop = 0; hop < 4 && ts.isIdentifier(arr); hop += 1) {
@@ -6126,6 +6231,28 @@ const isNullLiteral = (expr) =>
             if (found) return;
           }
         }
+        // A TAGGED TEMPLATE invokes its tag synchronously (Codex round-64
+        // P2): `poison\`\`` runs the tag's body exactly as `poison([''])`
+        // would, and this traversal only followed ordinary call/new shapes.
+        // The tag resolves like any invoked callee (aliases included).
+        if (ts.isTaggedTemplateExpression(n)) {
+          let tag = unwrapAssertions(n.tag);
+          if (ts.isIdentifier(tag)) {
+            const resolved = resolveInvokedCallee(tag, n);
+            if (resolved) tag = resolved;
+          }
+          if (isFunctionLike(tag) && tag.body && !tag.asteriskToken) {
+            for (const p2 of tag.parameters ?? []) {
+              if (p2.initializer) walk(p2.initializer);
+              if (found) return;
+            }
+            const previousLimit = syncLimit;
+            syncLimit = Math.min(syncLimit, fnSyncPrefixEnd(tag, sourceFile));
+            walk(tag.body);
+            syncLimit = previousLimit;
+            if (found) return;
+          }
+        }
         // A callback handed to a synchronous collection method RUNS before the
         // next statement (Codex round-58 P2): `[0].forEach(() => { args.loanId
         // = 999n })` mutates the bag exactly as an IIFE does, and this scan
@@ -6164,7 +6291,8 @@ const isNullLiteral = (expr) =>
           // other invoked callback. If a local binding shadows `Promise`,
           // walking the callback can only flag a function that mutates the
           // decoded arguments — suspicious under any constructor.
-          if (ts.isIdentifier(cls) && cls.text === 'Promise') {
+          // ...reached through const ALIASES too (Codex round-64 P2).
+          if (ts.isIdentifier(cls) && denotesPromise(cls)) {
             for (const pArg of n.arguments ?? []) {
               let executor = unwrapAssertions(pArg);
               // A NAMED executor is invoked just as synchronously (Codex
@@ -6238,7 +6366,22 @@ const isNullLiteral = (expr) =>
         // declaration as "a function-like thing nothing calls". Only the static
         // parts run at declaration; methods genuinely do not.
         if (ts.isClassDeclaration(n) || ts.isClassExpression(n)) {
+          // COMPUTED member names and the extends EXPRESSION evaluate at
+          // class definition too (Codex round-64 P2) — for static and
+          // instance members alike: `class P { [(args.loanId = 999n, 'x')]()
+          // {} }` runs the key expression the moment the class is declared,
+          // while this branch scanned only the static parts.
+          for (const h of n.heritageClauses ?? []) {
+            for (const t of h.types ?? []) {
+              walk(t.expression);
+              if (found) return;
+            }
+          }
           for (const member of n.members ?? []) {
+            if (member.name && ts.isComputedPropertyName(member.name)) {
+              walk(member.name.expression);
+              if (found) return;
+            }
             const isStatic = (member.modifiers ?? []).some(
               (m) => m.kind === ts.SyntaxKind.StaticKeyword,
             );
