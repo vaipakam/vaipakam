@@ -107,6 +107,10 @@ patrón de abuso en el que un usuario podría recargar VPFI justo
 antes del cierre de un préstamo, capturar el descuento del nivel
 completo y retirar segundos después.
 
+**Eso vale para la comisión de rendimiento del prestamista.** La tasa del
+prestatario para la comisión de iniciación se lee una sola vez al aceptarse el
+préstamo; después, ni un retiro ni una recarga la mueven.
+
 El descuento se aplica a la comisión por rendimiento del prestamista
 en la liquidación, y a la Loan Initiation Fee del prestatario, donde
 es una **reducción directa de la comisión que pagas en el activo

@@ -352,7 +352,7 @@
     "preconnect": {
       "whatTitle": "¿Qué es VPFI?",
       "discountTitle": "Descuento de comisiones por niveles",
-      "discountBody": "El VPFI que mantienes en tu Vaipakam Vault personal te da un descuento ponderado por tiempo en las comisiones del protocolo Vaipakam — aplicado automáticamente cuando se liquida cada préstamo, sin paso de claim separado:",
+      "discountBody": "El VPFI que mantienes en tu vault de Vaipakam obtiene un descuento escalonado sobre las comisiones de protocolo. Requiere el consentimiento de descuento activado y, para el prestatario, un activo prestado líquido. Un depósito nuevo sólo cuenta tras un periodo mínimo de tenencia, y se aplica el nivel más bajo que mantuviste en la ventana reciente — recargar justo antes de un préstamo no lo sube:",
       "discountBullet1": "Prestamistas: un descuento sobre la parte de tesorería tomada del interés ganado. Cuanto más VPFI hayas mantenido durante la vida del préstamo, menor será la deducción.",
       "discountBullet2": "Prestatarios: un descuento sobre la comisión de inicio del préstamo — aplicado directamente a la comisión que pagas al aceptarse el préstamo, no devuelto después.",
       "howTitle": "Cómo funciona",
@@ -986,7 +986,7 @@
       },
       "vpfi-discount": {
         "q": "¿Cómo funciona el descuento VPFI?",
-        "a1": "El VPFI mantenido en los vaults de Vaipakam sitúa automáticamente al titular en un nivel de descuento, y un único consentimiento a nivel de plataforma cubre tanto la rama del prestatario (iniciación) como la del prestamista (rendimiento). Para el prestatario el descuento es una reducción directa de la propia comisión de iniciación, cobrada en el activo del préstamo — no se descuenta VPFI para pagarla y no se devuelve nada después, así que recibe el principal menos la comisión reducida. El descuento de rendimiento del prestamista se entrega igual por defecto; si hay una referencia de precio de VPFI configurada y el prestamista tiene suficiente VPFI registrado, puede liquidarse en VPFI desde su vault, dejándole la comisión íntegra en el activo del préstamo. La reducción del prestatario requiere el consentimiento de descuento (o una adhesión al arancel, que cuenta como consentimiento) y un activo prestado líquido; sin cualquiera de los dos se cobra la comisión completa.",
+        "a1": "El VPFI mantenido en los vaults de Vaipakam obtiene un nivel de descuento, y un consentimiento a nivel de plataforma cubre la rama del prestatario (iniciación) y la del prestamista (rendimiento). El nivel no es inmediato: un depósito nuevo debe mantenerse un periodo mínimo (tres días por defecto) antes de contar, y se aplica el nivel MÁS BAJO que hayas mantenido en la ventana de historial reciente, así que recargar justo antes de un préstamo no lo sube. Para el prestatario el descuento es una reducción directa de la comisión de iniciación, cobrada en el activo del préstamo al aceptarse; no se descuenta VPFI para pagarla y no se devuelve nada después. Requiere además el consentimiento (o una adhesión al arancel, que cuenta como tal) y un activo prestado líquido; sin cualquiera de ellos se cobra la comisión completa. El descuento de rendimiento del prestamista se entrega igual por defecto. Si hay una referencia de precio de VPFI configurada, se liquida en VPFI desde su vault — y si no tiene suficiente, paga la comisión de rendimiento completa en lugar de volver a la reducción directa.",
         "tableTier": "Nivel",
         "tableVault": "VPFI en custodia",
         "tableDiscount": "Descuento",

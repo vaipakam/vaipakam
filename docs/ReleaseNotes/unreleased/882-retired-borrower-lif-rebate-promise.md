@@ -59,13 +59,16 @@ directly at one of them via an anchor link may read it without that scope. They
 are not false (they describe what happens to a rebate that exists), but they are
 not self-contained, and closing that is follow-up work.
 
-**Two connected-app surfaces are deliberately untouched and need a decision.**
+**Several connected-app surfaces are deliberately untouched and need a decision.**
 The offer-creation screen still advertises the retired rebate to a borrower at the
-moment they are choosing terms; and the Dashboard's consent control still tells
-them, at the moment they enable the setting, that doing so may take VPFI from
-their vault to pay the initiation fee — which it no longer does. Both are app
-copy rather than documentation and sat outside this change's agreed scope, so
-they are recorded rather than edited here.
+moment they are choosing terms; the Dashboard's consent control still tells them,
+at the moment they enable the setting, that doing so may take VPFI from their
+vault to pay the initiation fee; and the Claim Center's own borrower help text
+still says that a default or liquidation leaves an unused rebate to collect. All
+are app copy rather than documentation and sat outside this change's agreed
+scope, so they are recorded rather than edited here — and the list is written as
+"several" rather than a count, because every attempt to enumerate these surfaces
+so far has found one more.
 
 The claim display itself needed no change: it reads each loan's actual held amount
 and shows a rebate only where one exists, which was already correct for both old

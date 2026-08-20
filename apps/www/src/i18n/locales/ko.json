@@ -352,7 +352,7 @@
     "preconnect": {
       "whatTitle": "VPFI란?",
       "discountTitle": "단계별 수수료 할인",
-      "discountBody": "개인 Vault에 보유한 VPFI는 Vaipakam 프로토콜 수수료에 시간 가중 할인을 제공합니다 — 각 loan settlement 때 별도 claim 단계 없이 자동 적용됩니다:",
+      "discountBody": "Vaipakam Vault에 보유한 VPFI는 프로토콜 수수료에 대한 등급별 할인을 받습니다. 할인 동의가 켜져 있어야 하고, 차입자라면 lending asset이 유동적이어야 합니다. 새 예치금은 짧은 최소 보유 기간이 지나야 인정되며, 적용되는 등급은 최근 구간에서 보유한 가장 낮은 등급입니다 — loan 직전에 채워도 올라가지 않습니다:",
       "discountBullet1": "Lender: earned interest에 대한 treasury share가 할인됩니다. Loan 기간 동안 VPFI를 오래 보유할수록 treasury cut이 줄어듭니다.",
       "discountBullet2": "Borrower: Loan Initiation Fee 할인 — loan이 accept될 때 내는 수수료에서 직접 차감되며, 나중에 돌려주는 방식이 아닙니다.",
       "howTitle": "작동 방식",
@@ -986,7 +986,7 @@
       },
       "vpfi-discount": {
         "q": "VPFI 할인은 어떻게 동작하나요?",
-        "a1": "Vaipakam Vault에 보유한 VPFI는 보유자를 자동으로 할인 등급에 배치하며, 한 번의 플랫폼 수준 동의로 차입자 측(개시 수수료)과 대여자 측(이자 수수료)이 모두 적용됩니다. 차입자의 경우 할인은 개시 수수료 자체를 직접 깎아주는 방식이고 해당 loan의 자산으로 부과되며 — 이를 내기 위해 VPFI가 차감되지 않고 이후에 돌려주는 것도 없으므로, 차입자는 원금에서 할인된 수수료를 뺀 금액을 받습니다. 대여자의 이자 수수료 할인도 기본적으로는 같은 방식이지만, VPFI 가격 기준이 설정되어 있고 대여자가 충분한 추적 VPFI를 보유한 경우에는 대여자의 Vault에서 VPFI로 정산되어 대여자가 대출 자산 수수료 전액을 그대로 가질 수 있습니다. 차입자의 감액에는 할인 동의(또는 동의에 해당하는 tariff opt-in)와 유동적인 lending asset이 필요하며, 둘 중 하나라도 없으면 수수료 전액이 부과됩니다.",
+        "a1": "Vaipakam Vault에 보유한 VPFI는 할인 등급을 얻으며, 한 번의 플랫폼 수준 동의로 차입자 측(개시)과 대여자 측(이자)이 모두 적용됩니다. 등급은 즉시 적용되지 않습니다. 새 예치금은 최소 기간(기본 3일) 보유해야 인정되고, 적용되는 등급은 최근 history window에서 보유한 가장 낮은 등급입니다 — loan 직전에 채워 넣어도 올라가지 않습니다. 차입자의 경우 할인은 개시 수수료를 직접 깎아주는 방식이며 accept 시 lending asset으로 부과되고, 이를 위해 VPFI가 차감되거나 나중에 돌려주는 일은 없습니다. 또한 동의(또는 동의에 해당하는 tariff opt-in)와 유동적인 lending asset이 필요하며, 둘 중 하나라도 없으면 전액이 부과됩니다. 대여자의 이자 할인도 기본적으로 같은 방식입니다. VPFI 가격 기준이 설정되어 있으면 대여자의 Vault에서 VPFI로 정산되며 — 잔액이 부족하면 직접 감액으로 돌아가지 않고 이자 수수료 전액을 냅니다.",
         "tableTier": "등급",
         "tableVault": "Vault 내 VPFI",
         "tableDiscount": "할인",

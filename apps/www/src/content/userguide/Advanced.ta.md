@@ -102,6 +102,10 @@ balance அடிப்படையில் rate-ஐ உடனடியாக r
 VPFI-ஐ top up செய்து full-tier discount-ஐப் பெற்று, சில நொடிகளில்
 withdraw செய்யும் exploit pattern-ஐ இது தடுக்கிறது.
 
+**மேலே சொன்னது lender yield fee பற்றியது.** Borrower-ன் தொடக்கக் கட்டண
+விகிதம் loan accept ஆகும்போது ஒரே ஒரு முறை படிக்கப்படுகிறது; அதன் பிறகு
+withdraw-ஓ top up-ஓ அதை மாற்றாது.
+
 Discount settlement-இல் lender yield fee-க்கு பொருந்தும்; borrower-க்கு
 Loan Initiation Fee-ல் பொருந்தும் — அங்கே அது நீங்கள் lending asset-இல்
 செலுத்தும் **கட்டணத்திலேயே நேரடியான குறைப்பு**, loan accept ஆகும்போது

@@ -99,6 +99,10 @@ grace window はありません。これにより、loan 終了直前に VPFI �
 top up して full-tier discount を取り、数秒後に withdraw する
 exploit pattern を防ぎます。
 
+**これは lender yield fee についての説明です。** 借り手の開始手数料の
+レートは loan の accept 時に一度だけ読み取られ、その後は withdraw も
+top up もそれを動かしません。
+
 discount は settlement 時の lender yield fee と borrower の
 Loan Initiation Fee に適用されます。後者では、**lending asset で
 支払う手数料そのものの直接的な減額**として、loan の accept 時に

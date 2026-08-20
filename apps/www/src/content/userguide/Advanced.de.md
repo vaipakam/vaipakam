@@ -108,6 +108,10 @@ wird das Muster geschlossen, bei dem ein Nutzer kurz vor Loan-Ende
 VPFI aufladen, den vollen Tier-Rabatt mitnehmen und Sekunden später
 wieder abheben könnte.
 
+**Das gilt für die Lender-Yield-Fee.** Der Satz des Borrowers für die
+Initiation-Fee wird einmal bei Annahme des Loans gelesen; danach ändert ihn
+weder eine Abhebung noch eine Aufstockung.
+
 Der Rabatt gilt für die Lender-Yield-Fee beim Settlement und für
 die Borrower-Loan-Initiation-Fee — dort als **direkte Minderung
 der Gebühr, die du im Lending-Asset zahlst**, angewendet bei

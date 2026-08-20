@@ -101,6 +101,10 @@ tier जारी रहे। इससे वह exploit pattern बंद ह
 user loan खत्म होने से ठीक पहले VPFI top up करके पूरा-tier
 discount ले और कुछ seconds बाद withdraw कर ले।
 
+**यह lender के yield fee के बारे में है।** Borrower की initiation fee की दर
+loan accept होते समय एक बार पढ़ी जाती है; उसके बाद न withdraw से बदलती है, न
+top up से।
+
 discount lender के yield fee पर settlement के समय और borrower
 की Loan Initiation Fee पर लागू होता है — वहाँ यह **उस fee में
 सीधी कटौती** है जो आप lending asset में चुकाते हैं, और यह loan

@@ -92,13 +92,19 @@ Tier ladder:
 | 4    | > `{liveValue:tier4Min}`         | `{liveValue:tier4DiscountBps}`%   |
 
 Tier is computed against your **post-change** vault balance the
-moment you deposit or withdraw VPFI, then time-weighted across
-each loan's lifetime. An unstake re-stamps the rate at the new
-lower balance immediately for every open loan you're on — there
-is no grace window where your old (higher) tier still applies.
-This closes the gaming pattern where a user could top up VPFI
-just before a loan ends, capture the full-tier discount, and
-withdraw seconds later.
+moment you deposit or withdraw VPFI. **For the lender yield fee**
+it is then time-weighted across each loan's lifetime: an unstake
+re-stamps the rate at the new lower balance immediately for every
+open loan you're on, with no grace window where your old (higher)
+tier still applies. This closes the gaming pattern where a user
+could top up VPFI just before a loan ends, capture the full-tier
+discount, and withdraw seconds later.
+
+**The borrower's initiation-fee rate is read once, when the loan
+is accepted**, so nothing you do afterwards moves it — neither a
+withdrawal nor a top-up. The anti-gaming protection on that side
+is the minimum holding period and the history clamp described
+above, not the lifetime weighting.
 
 The discount applies to the lender yield fee at settlement, and
 to the borrower Loan Initiation Fee — where it is a **direct
@@ -425,9 +431,10 @@ cannot move assets.
 - **Illiquid-collateral defaults** — default transfers your
   full collateral to the lender. There is no leftover claim at
   all. On a loan still using the retired VPFI fee path, the VPFI
-  held against its initiation fee is **forfeited to treasury** on
-  default — it is not returned to you, so there is nothing left
-  to collect.
+  held against its initiation fee is **forfeited** on default —
+  it goes to the protocol (and, on a matcher-created loan, the
+  matcher's configured share of it goes to the matcher), never
+  back to you, so there is nothing left to collect.
 
 <a id="create-offer.advanced-options"></a>
 

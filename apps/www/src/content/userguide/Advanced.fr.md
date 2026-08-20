@@ -106,6 +106,10 @@ d'abus où un utilisateur pourrait recharger du VPFI juste
 avant la fin d'un prêt, capturer la remise du tier complet, et
 retirer quelques secondes plus tard.
 
+**Cela vaut pour le yield-fee du prêteur.** Le taux de l'emprunteur sur les
+frais d'initiation est lu une seule fois, à l'acceptation du prêt ; ensuite, ni
+un retrait ni un rechargement ne le modifient.
+
 La remise s'applique au yield-fee du prêteur au moment du
 règlement et au Loan Initiation Fee de l'emprunteur, où elle est
 une **réduction directe des frais que tu paies dans l'actif

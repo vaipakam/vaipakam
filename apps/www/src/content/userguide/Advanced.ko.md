@@ -92,6 +92,9 @@ tier가 계속 적용되는 grace window는 없습니다. 이는 loan 종료 직
 VPFI를 top up해 full-tier discount를 받고 몇 초 뒤 withdraw하는 exploit
 pattern을 막습니다.
 
+**위 내용은 lender yield fee에 대한 것입니다.** 차입자의 개시 수수료율은
+loan이 accept될 때 한 번만 읽히며, 이후 withdraw나 top up으로 바뀌지 않습니다.
+
 discount는 settlement 시 lender yield fee와 borrower의 Loan Initiation
 Fee에 적용됩니다. 후자에서는 **당신이 lending asset으로 내는 수수료
 자체를 직접 깎아주는 방식**이며, loan이 accept될 때 적용됩니다. 그

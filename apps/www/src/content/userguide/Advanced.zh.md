@@ -89,6 +89,9 @@ balance re-stamp rate — 没有让旧的 (更高) tier 继续适用的 grace
 window。这会关闭一种 exploit pattern：在 loan 即将结束时临时 top up
 VPFI 以拿到 full-tier discount，然后几秒钟后 withdraw。
 
+**以上针对的是 lender yield fee。** Borrower 的发起费费率在 loan 被 accept 时
+读取一次，此后 withdraw 或 top up 都不会改变它。
+
 discount 在 settlement 时适用于 lender yield fee，也适用于 borrower
 Loan Initiation Fee——就后者而言，它是**对您以 lending asset 支付的费用的直接减免**，在 loan 被 accept 时生效。不会从您的 vault 中扣除 VPFI 来支付该费用，之后也没有任何 rebate 可以 claim。
 
