@@ -155,22 +155,35 @@ page in both modes, strictly informational:
   marked as the default that costs nothing in sale forfeitures — and
   worded conditionally, never as a promise — and **cadence-aware**,
   because on a loan with a periodic interest schedule the lender is
-  paid interest DURING the term, not only at the end (a partial
-  repayment can also settle interest early). Two shapes, chosen from
-  the loan's own schedule rather than assumed:
-  - *No schedule (interest settles at the close)*: "Nothing to do — if
-    the borrower repays, you claim the principal plus the agreed
-    interest at the end; if they don't, the normal default process
-    applies and recovery can be less."
+  paid interest DURING the term, not only at the end. **Three** shapes,
+  chosen from the loan's own terms rather than assumed:
+  - *No schedule, no partial repayment (interest settles at the
+    close)*: "Nothing to do — if the borrower repays, you claim the
+    principal plus the agreed interest at the end; if they don't, the
+    normal default process applies and recovery can be less."
   - *Periodic schedule*: "Nothing to do — interest is paid to you on
     the loan's own schedule as the borrower settles it, and you claim
     the principal plus whatever interest is still outstanding at the
     end; if they don't repay, the normal default process applies and
     recovery can be less."
+  - *No schedule but partial repayment allowed*: the at-close sentence
+    plus the fact that each part the borrower repays early brings that
+    share of the principal and the interest built up on it to the
+    lender AT THE TIME rather than at the end.
 
-  A single end-of-term sentence on a periodically-settling loan
-  misstates WHEN the lender gets paid, which is exactly the fact this
-  row exists to convey. The sale rows follow, each with its cost
+  The third shape was originally folded into the first as a
+  parenthetical ("a partial repayment can also settle interest early"),
+  which is the same mistake one door over: a partial-repay loan pays the
+  lender during the term just as surely as a periodic one does, so the
+  plain at-close sentence states the timing wrongly for it. Cadence is
+  checked first — a periodic schedule already conveys mid-term payment
+  and subsumes the partial case, so only a NO-cadence loan needs the
+  third shape.
+
+  A single end-of-term sentence on a loan that pays mid-term misstates
+  WHEN the lender gets paid, which is exactly the fact this row exists
+  to convey. While the terms are still being read the row says so
+  rather than picking a shape. The sale rows follow, each with its cost
   stated up front.
 - Each sale row carries the cost disclosure for the settlement model
   that is actually being offered. For the generic-offer model, that is

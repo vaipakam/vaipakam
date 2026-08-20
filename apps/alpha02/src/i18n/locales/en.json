@@ -1009,6 +1009,7 @@
       "options": {
         "wait": "Wait for the loan to run its course",
         "waitDescAtClose": "Nothing to do — if the borrower repays, you claim the principal plus the agreed interest at the end. If they don’t, the normal default process applies and recovery can be less.",
+        "waitDescAtClosePartial": "Nothing to do — if the borrower repays, you claim the principal plus the agreed interest at the end. This loan also lets them repay part of it early, and when they do, that share of the principal and the interest built up on it reach you at the time rather than at the end. If they don’t repay, the normal default process applies and recovery can be less.",
         "waitDescPeriodic": "Nothing to do — interest is paid to you on this loan’s own schedule as the borrower settles it, and you claim the principal plus whatever interest is still outstanding at the end. If they don’t repay, the normal default process applies and recovery can be less.",
         "waitDescChecking": "Nothing to do — we’re still reading this loan’s interest schedule, which decides whether you’re paid during the term or only at the end.",
         "waitCost": "Costs nothing — this is the default.",
@@ -1021,7 +1022,9 @@
         "listCost": "Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Open the tool for the actual figures.",
         "listStructural": "While the listing stands, your position can’t be transferred, and it also holds two of the BORROWER’s options on this loan — the protocol refuses their collateral withdrawal and their offset exit, both to protect the buyer’s signed terms. Their repayments, full or partial, stay open. The holds end when a buyer completes or you cancel; if the listing simply expires, they stay in place until someone runs the cleanup that clears it.",
         "listAlreadyListed": "Already listed — this position is on sale now. The listing card below shows its terms and lets you cancel it.",
+        "listAlreadyListedNoCancel": "Already listed — this position is on sale now. It was listed from another device, so it can’t be cancelled here; cancel it where it was listed. The card below shows what this device can still see about it.",
         "sellNowAlreadyListed": "Not available while this position is listed for sale — cancel the listing first, using the card below.",
+        "sellNowAlreadyListedNoCancel": "Not available while this position is listed for sale. The listing was made from another device, so it can’t be cancelled here — cancel it where it was listed.",
         "saleLockChecking": "Checking whether this position is already listed…",
         "listUnavailableNetwork": "Not available on this network yet — the listing tools aren’t published to this deployment.",
         "listUnavailableNft": "Not available for this position — listing currently supports loans backed by ERC-20 collateral only.",

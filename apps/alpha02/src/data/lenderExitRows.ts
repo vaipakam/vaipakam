@@ -66,6 +66,17 @@ export interface LenderExitRow {
   cost?: string;
   /** Structural facts true even when the row IS available. */
   note?: string;
+  /** Keep `cost` visible even though `unavailable` is set.
+   *
+   *  The r2 rule — cost is noise on an option that cannot be taken —
+   *  is right in general and WRONG for a live listing (Codex r5 P1). A
+   *  listed position is not an option declined; it is a sale already in
+   *  flight, which a buyer can complete at any moment. The held-balance
+   *  transfer and the reward forfeiture are then PENDING CONSEQUENCES
+   *  rather than hypothetical prices, and `LoanSalePendingCard` reports
+   *  the settlement pull and funding status but neither loss — so
+   *  hiding the line removes the only place they are stated. */
+  costStillApplies?: boolean;
   /** Present ⇒ the row is not takeable and this says why. */
   unavailable?: string;
   /** Absent on the wait row — there is nothing to jump to. */
@@ -75,6 +86,16 @@ export interface LenderExitRow {
 export interface LenderExitInput {
   /** 0 = no periodic schedule; `undefined` = live read in flight. */
   periodicInterestCadence: number | undefined;
+  /** Whether the loan permits partial repayment. Affects the WAIT row's
+   *  timing claim, not any sale row: `repayPartial` pays the lender
+   *  that share of principal plus its accrued interest immediately,
+   *  while the loan stays active — so "you claim at the end" is false
+   *  for these loans even with no periodic schedule (Codex r4 P2). */
+  allowsPartialRepay: boolean;
+  /** A live listing whose offer record this device cannot recover: the
+   *  pending card below then offers no cancel, so the row must not
+   *  promise one (Codex r5 P2). */
+  saleListingCancellable: boolean;
   /** Chain-anchored only — never a device clock. */
   pastDue: boolean;
   listingSupportedOnChain: boolean;
@@ -88,12 +109,18 @@ export interface LenderExitInput {
 export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
   const o = copy.lenderExit.options;
 
+  // Cadence first: a periodic schedule already says the lender is paid
+  // during the term, which subsumes the partial-repay case. Only a
+  // NO-cadence loan needs the partial variant to avoid claiming that
+  // nothing reaches the lender before maturity.
   const waitDesc =
     input.periodicInterestCadence === undefined
       ? o.waitDescChecking
       : input.periodicInterestCadence !== 0
         ? o.waitDescPeriodic
-        : o.waitDescAtClose;
+        : input.allowsPartialRepay
+          ? o.waitDescAtClosePartial
+          : o.waitDescAtClose;
 
   // Invariant 2 — structural refusal first.
   const pastDueOr = (reason: string | undefined) =>
@@ -111,14 +138,23 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       title: o.sellNow,
       desc: o.sellNowDesc,
       cost: o.sellNowCost,
+      // Same reasoning as the listing row: while a listing stands, the
+      // buyer completing it incurs these same losses, and this row's
+      // cost line carries the identical disclosure.
+      costStillApplies: input.saleLock === 'listed',
       unavailable: pastDueOr(
         input.saleLock === 'checking'
           ? o.saleLockChecking
           : input.saleLock === 'listed'
             ? // The direct sale is refused while a listing stands, and
               // the page suppresses the instant-exit card entirely —
-              // so without this the jump scrolled to no element.
-              o.sellNowAlreadyListed
+              // so without this the jump scrolled to no element. The
+              // cancellable split is the same one the listing row
+              // makes: this row NAMES the cancel as the fix, so it
+              // must not name one this device cannot perform.
+              input.saleListingCancellable
+              ? o.sellNowAlreadyListed
+              : o.sellNowAlreadyListedNoCancel
           : input.instantSellCandidates === 'checking'
           ? copy.lenderExit.checking
           : input.instantSellCandidates === 'none'
@@ -137,6 +173,8 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       desc: o.listDesc,
       cost: o.listCost,
       note: o.listStructural,
+      // A live listing is a sale in flight, not a declined option.
+      costStillApplies: input.saleLock === 'listed',
       // Most structural reason wins, so a lender hears the thing they
       // cannot change before the thing they can. "Already listed" leads
       // because it is the one state with nothing to fix and something
@@ -145,7 +183,9 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
         input.saleLock === 'checking'
           ? o.saleLockChecking
           : input.saleLock === 'listed'
-            ? o.listAlreadyListed
+            ? input.saleListingCancellable
+              ? o.listAlreadyListed
+              : o.listAlreadyListedNoCancel
           : !input.listingSupportedOnChain
             ? o.listUnavailableNetwork
             : input.collateralIsNft

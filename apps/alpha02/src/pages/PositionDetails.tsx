@@ -2667,6 +2667,24 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           rentals in Phase 1. */}
       {role === 'lender' &&
       row.status === 'active' &&
+      // Codex r4 P2 — the INDEXED row saying `active` is not enough.
+      // Reconciliation (`effectivelyActive`) consults only
+      // `liveStatus.data`, so when that read fails or holds an older
+      // Active result while `bannerTerms` has already returned a
+      // TERMINAL live status, an unclaimed lender kept this card after
+      // an early repayment or default — and before the indexed maturity
+      // both sale rows showed as available, against contracts that
+      // reject the terminal loan with `LoanNotActive`.
+      //
+      // Blocks only on an AFFIRMATIVE terminal answer, never on a
+      // missing one: `bannerTerms.data === undefined` leaves the card
+      // mounted. Failing closed on an unanswered read is the
+      // permanent-dead-end trap this card has already met twice.
+      !(
+        bannerTerms.data !== undefined &&
+        bannerTerms.data.live.status !== LoanStatus.Active &&
+        bannerTerms.data.live.status !== LoanStatus.FallbackPending
+      ) &&
       !soldThisSession &&
       !isRental &&
       !(sanctions.ready && sanctions.flagged) ? (
@@ -2721,6 +2739,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           }
           listingSupportedOnChain={loanSaleListingEnabled(readChain.chainId)}
           collateralIsNft={collateralIsNft}
+          // Wait-row timing only: a partial repay pays the lender that
+          // share plus its accrued interest DURING the term, so the
+          // at-close wording is false for these loans (Codex r4 P2).
+          allowsPartialRepay={row.allowsPartialRepay}
+          // The pending card offers no cancel when it cannot recover
+          // the listing's offer record, so the row must not promise one
+          // (Codex r5 P2). Mirrors that card's own `pendingNoId` gate.
+          saleListingCancellable={sale.state?.offerId != null}
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
           // if it errors. Collapsing that to `false` showed BOTH sale
@@ -2757,7 +2783,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // deferred pre-checks. Until then the listing tool still
           // refuses `OffsetActiveOnLoan` correctly; the cost is a
           // wasted click, not a wrong action.
-          borrowerOffsetPending={offsetPend.pending}
+          // Passed as a LITERAL, not as `offsetPend.pending`: reading
+          // the hook here would look wired while being structurally
+          // false, which is the exact unknown-presented-as-known shape
+          // this card keeps getting caught by. A literal makes the gap
+          // legible to the next reader.
+          borrowerOffsetPending={false}
           // 'unknown' on purpose — the candidate list comes from
           // `useActiveOffers`, a full page walk this page does not
           // otherwise make. Hoisting it would put that walk on every

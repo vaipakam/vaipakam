@@ -14,6 +14,8 @@ const base: LenderExitInput = {
   pastDue: false,
   listingSupportedOnChain: true,
   collateralIsNft: false,
+  allowsPartialRepay: false,
+  saleListingCancellable: true,
   saleLock: 'clear',
   heldVpfiUnresolved: false,
   borrowerOffsetPending: false,
@@ -38,6 +40,8 @@ describe('wait row — ordering and framing', () => {
       pastDue: true,
       listingSupportedOnChain: false,
       collateralIsNft: true,
+      allowsPartialRepay: true,
+      saleListingCancellable: false,
       saleLock: 'listed',
       heldVpfiUnresolved: true,
       borrowerOffsetPending: true,
@@ -298,5 +302,98 @@ describe("sale lock 'unknown' — a read that cannot run is not a read in flight
   it('does not withhold the Basic-mode switch — the tools are still reachable', () => {
     expect(hasJumpableRow(buildLenderExitRows({ ...base, saleLock: 'unknown' })))
       .toBe(true);
+  });
+});
+
+describe('wait row — partial repay also pays during the term (Codex r4 P2)', () => {
+  // `repayPartial` transfers that share of principal plus the interest
+  // built up on it immediately, while the loan stays active. So the
+  // plain at-close sentence states the timing wrongly for these loans —
+  // the same defect the cadence split exists to avoid, by a second route.
+  it('uses the partial variant on a no-cadence loan that permits partial repay', () => {
+    expect(
+      rowFor({ periodicInterestCadence: 0, allowsPartialRepay: true }, 'wait').desc,
+    ).toBe(o.waitDescAtClosePartial);
+  });
+
+  it('keeps the plain at-close shape when partial repay is NOT permitted', () => {
+    expect(
+      rowFor({ periodicInterestCadence: 0, allowsPartialRepay: false }, 'wait').desc,
+    ).toBe(o.waitDescAtClose);
+  });
+
+  it('lets cadence win — a periodic schedule already says "during the term"', () => {
+    expect(
+      rowFor({ periodicInterestCadence: 2, allowsPartialRepay: true }, 'wait').desc,
+    ).toBe(o.waitDescPeriodic);
+  });
+
+  it('still says checking when the schedule is unknown, whatever partial says', () => {
+    expect(
+      rowFor({ periodicInterestCadence: undefined, allowsPartialRepay: true }, 'wait')
+        .desc,
+    ).toBe(o.waitDescChecking);
+  });
+});
+
+describe('listed row — do not promise a cancel the pending card withholds (Codex r5 P2)', () => {
+  it('promises cancellation only when the listing record is recoverable', () => {
+    expect(
+      rowFor({ saleLock: 'listed', saleListingCancellable: true }, 'list').unavailable,
+    ).toBe(o.listAlreadyListed);
+  });
+
+  it('points elsewhere when it is not — matching the pending card’s own refusal', () => {
+    expect(
+      rowFor({ saleLock: 'listed', saleListingCancellable: false }, 'list').unavailable,
+    ).toBe(o.listAlreadyListedNoCancel);
+  });
+
+  // The sell-now row NAMES the cancel as the fix ("cancel the listing
+  // first"), so the identical split applies one row up. Fixing only
+  // the listing row would leave the same wrong instruction directly
+  // above the corrected one.
+  it('applies the same split to the sell-now row, which names the cancel as the fix', () => {
+    expect(
+      rowFor({ saleLock: 'listed', saleListingCancellable: true }, 'sell-now')
+        .unavailable,
+    ).toBe(o.sellNowAlreadyListed);
+    expect(
+      rowFor({ saleLock: 'listed', saleListingCancellable: false }, 'sell-now')
+        .unavailable,
+    ).toBe(o.sellNowAlreadyListedNoCancel);
+  });
+
+  it('lets past-due still outrank both listed variants on both rows', () => {
+    for (const cancellable of [true, false]) {
+      for (const key of ['sell-now', 'list'] as const) {
+        expect(
+          rowFor(
+            { saleLock: 'listed', saleListingCancellable: cancellable, pastDue: true },
+            key,
+          ).unavailable,
+        ).toBe(copy.lenderExit.pastDue);
+      }
+    }
+  });
+});
+
+describe('cost survives a live listing (Codex r5 P1)', () => {
+  // A listed position is a sale in FLIGHT, not a declined option: the
+  // held-balance transfer and reward forfeiture are pending
+  // consequences, and LoanSalePendingCard states neither.
+  it('keeps the cost line on both sale rows while listed, despite being unavailable', () => {
+    const rows = buildLenderExitRows({ ...base, saleLock: 'listed' });
+    for (const key of ['sell-now', 'list']) {
+      const row = rows.find((r) => r.key === key)!;
+      expect(row.unavailable).toBeDefined();
+      expect(row.costStillApplies).toBe(true);
+    }
+  });
+
+  it('does NOT keep it for an option merely unavailable for another reason', () => {
+    const row = rowFor({ collateralIsNft: true }, 'list');
+    expect(row.unavailable).toBe(o.listUnavailableNft);
+    expect(row.costStillApplies).toBe(false);
   });
 });

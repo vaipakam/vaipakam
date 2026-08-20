@@ -2214,6 +2214,7 @@
       "options": {
         "wait": "Den Kredit auslaufen lassen",
         "waitDescAtClose": "Nichts zu tun – zahlt der Kreditnehmer zurück, fordern Sie am Ende den Kapitalbetrag plus die vereinbarten Zinsen an. Zahlt er nicht, greift das übliche Ausfallverfahren und die Rückgewinnung kann geringer ausfallen.",
+        "waitDescAtClosePartial": "Nichts zu tun – zahlt der Kreditnehmer zurück, fordern Sie am Ende den Kapitalbetrag plus die vereinbarten Zinsen an. Dieses Darlehen erlaubt ihm zudem Teilrückzahlungen: Der jeweilige Anteil am Kapital und die darauf aufgelaufenen Zinsen erreichen Sie dann sofort statt erst am Ende. Zahlt er nicht, greift das übliche Ausfallverfahren und die Rückgewinnung kann geringer ausfallen.",
         "waitDescPeriodic": "Nichts zu tun – die Zinsen werden Ihnen nach dem eigenen Zahlungsplan dieses Kredits ausgezahlt, sobald der Kreditnehmer sie begleicht, und am Ende fordern Sie den Kapitalbetrag plus alle noch offenen Zinsen an. Zahlt er nicht zurück, greift das übliche Ausfallverfahren und die Rückgewinnung kann geringer ausfallen.",
         "waitDescChecking": "Nichts zu tun – wir lesen noch den Zinsplan dieses Kredits aus, der bestimmt, ob Sie während der Laufzeit oder erst am Ende bezahlt werden.",
         "waitCost": "Kostet nichts – das ist die Standardoption.",
@@ -2226,11 +2227,13 @@
         "listCost": "Kostet den GRÖSSEREN der beiden Beträge: die bisher aufgelaufenen Zinsen oder den Zinsaufschlag des Käufers – niemals beides. Darüber hinaus geht jedes bereits für Sie zurückgehaltene Guthaben dieses Kredits an den Käufer über, und Ihr offener Belohnungseintrag für diese Position verfällt. Öffnen Sie das Werkzeug für die tatsächlichen Beträge.",
         "listStructural": "Solange das Inserat besteht, kann Ihre Position nicht übertragen werden, und es hält außerdem zwei Optionen des KREDITNEHMERS bei diesem Kredit zurück: Das Protokoll verweigert die Entnahme seiner Sicherheit und seinen Ausstieg per Verrechnung – beides, um die vom Käufer signierten Konditionen zu schützen. Seine Rückzahlungen, ganz oder teilweise, bleiben möglich. Die Sperren enden, wenn ein Käufer abschließt oder Sie stornieren; läuft das Inserat einfach ab, bestehen sie fort, bis jemand die Bereinigung ausführt, die es entfernt.",
         "listAlreadyListed": "Bereits inseriert – diese Position steht derzeit zum Verkauf. Die Inseratskarte unten zeigt die Konditionen und erlaubt die Stornierung.",
+        "listAlreadyListedNoCancel": "Bereits inseriert – diese Position steht derzeit zum Verkauf. Das Inserat wurde von einem anderen Gerät erstellt und kann hier nicht storniert werden; stornieren Sie es dort, wo es erstellt wurde. Die Karte unten zeigt, was dieses Gerät noch davon sehen kann.",
         "listUnavailableNetwork": "In diesem Netzwerk noch nicht verfügbar – die Inseratswerkzeuge sind hier nicht ausgerollt.",
         "listUnavailableNft": "Für diese Position nicht verfügbar – das Inserieren unterstützt derzeit nur Kredite mit ERC-20-Sicherheiten.",
         "listUnavailableHeldVpfi": "Nicht verfügbar, solange der offene VPFI-Saldo dieser Position nicht ausgeglichen ist – ein Inserat braucht eine eindeutige Abwicklungsidentität. In der Zwischenzeit bleiben der sofortige Verkauf und das Abwarten bis zum Kreditende möglich.",
         "listUnavailableOffsetPending": "Nicht verfügbar, solange der Kreditnehmer einen verknüpften Ausstieg bei diesem Kredit offen hat – dieser muss zuerst abgeschlossen oder storniert werden.",
         "sellNowAlreadyListed": "Nicht verfügbar, solange diese Position zum Verkauf inseriert ist – stornieren Sie das Inserat zuerst über die Karte unten.",
+        "sellNowAlreadyListedNoCancel": "Nicht verfügbar, solange diese Position zum Verkauf inseriert ist. Das Inserat wurde von einem anderen Gerät erstellt und kann hier nicht storniert werden – stornieren Sie es dort, wo es erstellt wurde.",
         "saleLockChecking": "Wird geprüft, ob diese Position bereits inseriert ist…"
       },
       "pastDue": "Dieser Kredit ist überfällig – der Kreditnehmer zahlt ihn zurück oder das Ausfallverfahren löst ihn auf. Neue Verkäufe können jetzt nicht mehr gestartet werden.",

@@ -1927,6 +1927,14 @@ const copySource = {
       // convey. Both are conditional — neither promises repayment.
       waitDescAtClose:
         'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest at the end. If they don’t, the normal default process applies and recovery can be less.',
+      // Codex r4 P2 — a partial-repay loan pays the lender DURING the
+      // term even with no periodic schedule: `repayPartial` transfers
+      // that share of principal plus the interest built up on it right
+      // away. The plain at-close sentence states the timing wrongly for
+      // those loans, which is the same defect the cadence split exists
+      // to avoid, arriving by a second route.
+      waitDescAtClosePartial:
+        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest at the end. This loan also lets them repay part of it early, and when they do, that share of the principal and the interest built up on it reach you at the time rather than at the end. If they don’t repay, the normal default process applies and recovery can be less.',
       waitDescPeriodic:
         'Nothing to do — interest is paid to you on this loan’s own schedule as the borrower settles it, and you claim the principal plus whatever interest is still outstanding at the end. If they don’t repay, the normal default process applies and recovery can be less.',
       waitDescChecking:
@@ -1971,12 +1979,28 @@ const copySource = {
         'While the listing stands, your position can’t be transferred, and it also holds two of the BORROWER’s options on this loan — the protocol refuses their collateral withdrawal and their offset exit, both to protect the buyer’s signed terms. Their repayments, full or partial, stay open. The holds end when a buyer completes or you cancel; if the listing simply expires, they stay in place until someone runs the cleanup that clears it.',
       listAlreadyListed:
         'Already listed — this position is on sale now. The listing card below shows its terms and lets you cancel it.',
+      // Codex r5 P2 — the line above promises a cancel the pending card
+      // does not offer when it cannot recover the listing's record
+      // (`pendingNoId`: "listed from another device, so cancelling here
+      // isn't available"). Two surfaces contradicting each other about
+      // what a lender can do to a live sale is worse than either being
+      // vague, so this variant matches what the card below will
+      // actually show.
+      listAlreadyListedNoCancel:
+        'Already listed — this position is on sale now. It was listed from another device, so it can’t be cancelled here; cancel it where it was listed. The card below shows what this device can still see about it.',
       // Codex r1 P2 — the direct sale is refused too while a listing
       // stands (`SaleOfferAlreadyExists`), AND the page suppresses the
       // instant-exit card entirely, so this row's jump would have
       // scrolled to nothing at all.
       sellNowAlreadyListed:
         'Not available while this position is listed for sale — cancel the listing first, using the card below.',
+      // Same correction as `listAlreadyListedNoCancel`, one row over:
+      // this row named the cancel as the fix, so it must not name a
+      // cancel this device cannot perform. Fixing only the listing row
+      // would have left the identical wrong instruction on the row
+      // directly above it.
+      sellNowAlreadyListedNoCancel:
+        'Not available while this position is listed for sale. The listing was made from another device, so it can’t be cancelled here — cancel it where it was listed.',
       // Codex r1 P2 — the listing lock read is authoritative for BOTH
       // sale paths, so an unanswered read must not read as "clear".
       saleLockChecking:

@@ -2214,6 +2214,7 @@
       "options": {
         "wait": "Laisser le prêt suivre son cours",
         "waitDescAtClose": "Rien à faire : si l’emprunteur rembourse, vous réclamez le principal plus les intérêts convenus à la fin. S’il ne rembourse pas, la procédure de défaut habituelle s’applique et le recouvrement peut être moindre.",
+        "waitDescAtClosePartial": "Rien à faire : si l’emprunteur rembourse, vous réclamez le principal plus les intérêts convenus à la fin. Ce prêt lui permet aussi de rembourser par tranches, et chaque tranche — sa part du principal et les intérêts accumulés dessus — vous parvient à ce moment-là plutôt qu’à l’échéance. S’il ne rembourse pas, la procédure de défaut habituelle s’applique et le recouvrement peut être moindre.",
         "waitDescPeriodic": "Rien à faire : les intérêts vous sont versés selon l’échéancier propre à ce prêt, au fur et à mesure que l’emprunteur les règle, et vous réclamez à la fin le principal plus les intérêts encore dus. S’il ne rembourse pas, la procédure de défaut habituelle s’applique et le recouvrement peut être moindre.",
         "waitDescChecking": "Rien à faire : nous lisons encore l’échéancier d’intérêts de ce prêt, qui détermine si vous êtes payé pendant la durée ou seulement à la fin.",
         "waitCost": "Ne coûte rien : c’est l’option par défaut.",
@@ -2226,11 +2227,13 @@
         "listCost": "Coûte le PLUS ÉLEVÉ des deux : les intérêts accumulés à ce jour ou le complément de taux de l’acheteur — jamais les deux. En plus de cela, tout solde déjà retenu pour vous sur ce prêt passe à l’acheteur, et votre entrée de récompense en attente pour cette position est perdue. Ouvrez l’outil pour les montants réels.",
         "listStructural": "Tant que l’annonce est active, votre position ne peut pas être transférée, et elle bloque aussi deux des options de l’EMPRUNTEUR sur ce prêt : le protocole refuse le retrait de sa garantie et sa sortie par compensation, dans les deux cas pour protéger les termes signés par l’acheteur. Ses remboursements, totaux ou partiels, restent possibles. Les blocages prennent fin lorsqu’un acheteur conclut ou que vous annulez ; si l’annonce expire simplement, ils demeurent jusqu’à ce que quelqu’un lance le nettoyage qui la supprime.",
         "listAlreadyListed": "Déjà publiée : cette position est actuellement en vente. La carte d’annonce ci-dessous en montre les termes et permet de l’annuler.",
+        "listAlreadyListedNoCancel": "Déjà publiée : cette position est actuellement en vente. Elle a été mise en vente depuis un autre appareil, elle ne peut donc pas être annulée ici ; annulez-la là où elle a été publiée. La carte ci-dessous montre ce que cet appareil peut encore en voir.",
         "listUnavailableNetwork": "Pas encore disponible sur ce réseau : les outils de publication ne sont pas déployés ici.",
         "listUnavailableNft": "Indisponible pour cette position : la publication ne prend pour l’instant en charge que les prêts adossés à une garantie ERC-20.",
         "listUnavailableHeldVpfi": "Indisponible tant que le solde VPFI en attente de cette position n’est pas apuré : une annonce exige une identité de règlement unique. Entre-temps, vendre maintenant ou attendre la clôture du prêt restent possibles.",
         "listUnavailableOffsetPending": "Indisponible tant que l’emprunteur a une sortie liée en attente sur ce prêt : elle doit d’abord aboutir ou être annulée.",
         "sellNowAlreadyListed": "Indisponible tant que cette position est mise en vente — annulez d’abord l’annonce via la carte ci-dessous.",
+        "sellNowAlreadyListedNoCancel": "Indisponible tant que cette position est mise en vente. L’annonce a été créée depuis un autre appareil et ne peut pas être annulée ici — annulez-la là où elle a été publiée.",
         "saleLockChecking": "Vérification : cette position est-elle déjà mise en vente…"
       },
       "pastDue": "Ce prêt a dépassé son échéance : l’emprunteur le rembourse ou la procédure de défaut le résout. Aucune nouvelle vente ne peut être lancée maintenant.",

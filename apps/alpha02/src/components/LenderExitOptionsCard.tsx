@@ -61,6 +61,10 @@ export function LenderExitOptionsCard({
   listingSupportedOnChain: boolean;
   /** Phase 1 listing is ERC-20-collateral only. */
   collateralIsNft: boolean;
+  /** Wait-row timing only — see `LenderExitInput.allowsPartialRepay`. */
+  allowsPartialRepay: boolean;
+  /** Whether the pending card below can actually offer a cancel. */
+  saleListingCancellable: boolean;
   /** Whether this position already carries a live listing. A TRI-STATE
    *  (`SaleLockState`), not a boolean: the lock refuses BOTH sale paths
    *  (`SaleOfferAlreadyExists`, and the page unmounts the instant-exit
@@ -81,7 +85,15 @@ export function LenderExitOptionsCard({
    *  instead of silently absent. */
   heldVpfiUnresolved: boolean;
   /** The borrower has a linked exit (preclose offset) pending — the
-   *  protocol refuses a listing until it clears. */
+   *  protocol refuses a listing until it clears (`OffsetActiveOnLoan`).
+   *
+   *  KNOWN GAP, same shape as `heldVpfiUnresolved`: every caller passes
+   *  `false` today. `useOffsetPending` seeds from a browser-LOCAL
+   *  marker written by the borrower's own session, so a lender's
+   *  browser has nothing to read; surfacing it needs a chain read of
+   *  the loan→offset-offer link, tracked with the other deferred
+   *  pre-checks. Until then the listing tool still refuses correctly —
+   *  the cost is a wasted click, not a wrong action. */
   borrowerOffsetPending: boolean;
   /** See `InstantSellCandidates`. `'unknown'` is today's Basic-mode
    *  answer and is deliberate: the candidate list comes from
@@ -115,7 +127,7 @@ export function LenderExitOptionsCard({
             <div className="row-main">
               <div className="row-title">{row.title}</div>
               <div className="row-sub">{row.desc}</div>
-              {row.cost && !row.unavailable ? (
+              {row.cost && (!row.unavailable || row.costStillApplies) ? (
                 <div className="row-sub muted">{row.cost}</div>
               ) : null}
               {/* Codex r2 P2 — the structural note renders INDEPENDENTLY
@@ -130,10 +142,16 @@ export function LenderExitOptionsCard({
                   lock and cancellation but never the borrower impact,
                   so nothing else on the page says it.
 
-                  `cost` stays availability-gated on purpose: it
-                  describes what taking the option WOULD cost, which is
-                  noise on an option that cannot be taken. The note
-                  describes what is happening RIGHT NOW. */}
+                  `cost` is availability-gated, but NOT unconditionally
+                  — see `costStillApplies` (Codex r5 P1). The r2 rule
+                  said cost is noise on an option that cannot be taken,
+                  which is right in general and wrong for a live
+                  listing: that is a sale in FLIGHT, not an option
+                  declined, so its losses are pending consequences
+                  rather than hypothetical prices. Three tiers, then:
+                  `desc` and `note` always; `cost` when the option is
+                  takeable OR already committed; the `unavailable`
+                  reason only when it is neither. */}
               {row.note ? (
                 <div className="row-sub muted">{row.note}</div>
               ) : null}
