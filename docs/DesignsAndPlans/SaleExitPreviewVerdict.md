@@ -1,5 +1,10 @@
 # One verdict for "can this lender exit, and if not, why"
 
+**Status: proposal, not a decision — REVISED after review.** Three Codex
+rounds on #1847 returned nine findings, two of which were plain factual errors
+in the first draft and one of which weakens the recommendation itself. §9
+lists what changed.
+
 **Status: proposal, not a decision.** It exists because #1841 has
 accumulated **ten** deferred items that all wait on the same choice, and
 answering them one at a time has been demonstrably worse than answering
@@ -85,43 +90,133 @@ problem, for one of the same ten items.
 
 ## 4. The proposal
 
+> **Revised after review (#1847, three rounds, nine findings).** The first
+> draft of this section contained a factual error about the pause rules and
+> under-specified most of the ABI. Both are corrected below, and §7's
+> recommendation is weakened as a result. The original is in this file's
+> history; it is not preserved inline, because a design doc that carries its
+> own retracted claims invites someone to read the wrong half.
+
 A **sibling** view on `RiskPreviewFacet`:
 
 ```
 saleExitPreview(uint256 loanId, address lender)
-  → (uint16 directBlockers, uint16 listBlockers, uint64 cooldownUntil,
-     uint64 listingExpiresAt, uint8 admissionCode)
+  → (uint16 directBlockers,      // bit meanings fixed below
+     uint16 listBlockers,
+     uint16 checkedMask,         // which bits this build actually classified
+     uint8  admissionCode,       // 0 = clear; type(uint8).max = unmeasurable
+     uint256 admissionA,         // saleAdmission's diagnostic payload,
+     uint256 admissionB,         //   carried through, not discarded
+     uint64  cooldownUntil,      // 0 = none
+     uint64  listingExpiresAt,   // 0 = no listing OR legacy GTC — see below
+     uint8   temporalVerdict)    // chain-evaluated; see "no device clocks"
 ```
 
-Two bitmaps rather than one, because **the two exits refuse
-differently** — the direct sale has no window bound and no kill switch,
-the listing has both — and a single verdict would force callers to
-re-derive which blockers apply to which row. That re-derivation is the
-shadow copy again, in miniature.
+Wider than the first draft, and every added field answers a specific way the
+narrow version would have failed.
 
-Timestamps returned as values, not folded into flags, for the reason the
-cooldown revert already carries `availableAt`: `LoanSaleFlow` renders
-the reopening *time*, and a boolean "on cooldown" would be strictly less
-useful than what a lender gets today on entry. A design that made the
-card worse than the tool would defeat its purpose.
+### 4.1 Bit assignments are part of the ABI
+
+Every bit position and meaning is fixed here and in one shared Solidity
+constant, not chosen independently by the contract and the client. Two sides
+picking their own assignments compile and decode the same `uint16` perfectly
+while disagreeing about what it says — the shadow-copy failure this selector
+exists to end, reproduced inside the fix. Bits are append-only; a retired
+blocker leaves its bit permanently burned.
+
+### 4.2 Both routes pause — the earlier claim was wrong
+
+The first draft justified two bitmaps partly on "the direct sale has no kill
+switch". **That is false.** `EarlyWithdrawalDirectFacet:196-197` calls
+`LibFacet.requireAssetNotPaused` on both the principal and collateral legs,
+and both routes are `whenNotPaused`. A pause blocks both, so the pause bits
+belong in **both** bitmaps; assigning them only to the listing map would
+report the direct route available during exactly the outage the operator
+paused for.
+
+Two bitmaps still earn their place — the listing route carries a window bound
+and a relist cooldown the direct route does not — but the split is now drawn
+from the entry points rather than from memory. The lesson generalises: this
+document argued that shadow copies of protocol rules drift, while containing
+one.
+
+### 4.3 No device clocks, and the GTC sentinel is genuinely ambiguous
+
+Returning raw timestamps forces the caller to compare them against something.
+An `eth_call` result carries no block timestamp, so the client would either
+make the extra latest-block read this design claims to avoid, or use the
+device clock — re-creating precisely the drift excluded as item 10.
+
+So the view returns a **chain-evaluated** `temporalVerdict` alongside the
+display timestamps: the contract compares against `block.timestamp`, and the
+timestamps remain only so the tools can render *when* a cooldown lifts.
+
+`listingExpiresAt == 0` cannot be interpreted client-side at all, and this is
+not a nicety. For a legacy GTC listing the protocol itself holds two
+contradictory readings: `isOfferExpired` short-circuits **false** forever,
+while `OfferCancelFacet.teardownStaleSaleListing` (`:587-595`) admits that same
+sentinel to teardown **immediately**. A client choosing either reading is
+wrong half the time. `temporalVerdict` carries the classification the sale
+paths actually use, and the sentinel stays a display value.
+
+### 4.4 An unmeasurable admission is a distinct answer
+
+`saleAdmission` can revert when the health-factor or LTV measurement fails.
+`LibSaleSolvency.saleSolvency` already converts that to `type(uint8).max`
+rather than propagating, and this view adopts the same convention: an oracle
+failure must neither revert the whole aggregate call nor read as "no blocker".
+
+This matters most where it is easiest to skip. The card's entire claim is to
+be right about availability; if it silently reports "clear" during an oracle
+outage, it is wrong in the one operational mode where a lender most needs a
+straight answer.
+
+`admissionA` / `admissionB` are carried through rather than dropped: codes 1–5
+use them for observed-vs-required values and code 6 distinguishes an
+unpriceable collateral leg from an unpriceable principal leg. Discarding them
+would force a second `saleAdmission` call — defeating the one-call claim — or
+collapse distinct causes into generic copy, defeating the point of explaining
+why.
+
+### 4.5 `checkedMask` — unclassified must not read as clear
+
+A staged rollout is the obvious way to land this, and it is a trap: with a
+plain bitmap, "this build has not classified blocker 5 yet" and "blocker 5 is
+clear" are the same zero bits. That re-creates false availability, which is
+the defect the proposal exists to remove.
+
+`checkedMask` makes the distinction explicit. A caller may treat a route as
+available only when the relevant bits are both **checked** and **clear**;
+anything unchecked renders as unknown, not as permission. This also makes a
+partial first pass safe to ship, which the original plan quietly was not.
+
+### 4.6 Shared classifiers, or this is just a second copy
+
+A sibling view alone does **not** remove the shadow copy. Several
+classifications live in inline or private guard logic today —
+`LibConsolidation._isExcludedLive` is `private`, and the listing-expiry bound
+is inline — so `saleExitPreview` would have to reproduce those predicates and
+could drift from them exactly as the client did.
+
+The design is therefore only sound if it also **extracts those predicates into
+shared internal classifiers that the mutating guards themselves consume**. If
+that extraction is out of scope, so is this proposal: without it we would be
+building a second source of truth and calling it a single one.
 
 **Deliberately NOT in scope:**
 
 - **Item 9** (candidate matching) — a book walk, not a per-loan read, so a
-  per-loan view cannot answer it in either mode. Worth separating the two
-  modes, though, because only one is a real gap: in Basic nobody has
-  walked the book; in Advanced the sale tool already has, and the chooser
-  discards the result. The Advanced half needs no new read at all — it
-  needs the tool's derivation shared rather than copied — and is tracked
-  on its own, outside this proposal.
-- **Item 10** (tick resolution) — a client clock change, fixed at the
-  shared anchor.
-- **Pricing.** The preview says *whether*, never *how much*. Quotes stay
-  with the tools that own their freshness.
+  per-loan view cannot answer it in either mode. Only the Basic half is a real
+  gap: in Advanced the sale tool has already walked the book and the chooser
+  discards the result, which needs the tool's derivation shared rather than
+  copied and is tracked separately (#1849).
+- **Item 10** (tick resolution) — a client clock change, fixed at the shared
+  anchor.
+- **Pricing.** The preview says *whether*, never *how much*.
 
-**A sibling, not an extension of `saleAdmission`.** Widening that
-selector's return would break `LibSaleSolvency`, which the *mutating*
-guards call — a fund-moving path changed to improve a read-only one.
+**A sibling, not an extension of `saleAdmission`.** Widening that selector's
+return would break `LibSaleSolvency`, which the *mutating* guards call — a
+fund-moving path changed to improve a read-only one.
 
 ## 5. Costs, stated honestly
 
@@ -139,12 +234,18 @@ and the honest response is to keep the rows silent rather than to guess
 — which is what they do today.
 
 **A new selector to register.** `DeployDiamond`, `HelperTest`,
-`SetupTest`, `FacetSelectors` (RiskPreviewFacet already has a getter, so
-its parity case must be updated), and `rehearse-partial-refresh.sh`'s
-hard-coded `RISK_PREVIEW_SELECTORS` array. Five sites; CLAUDE.md names
-all of them, and the last one is a shell array whose own comment claims
-it mirrors the refresh scripts, which is true only while somebody keeps
-it so.
+`FacetSelectors` (RiskPreviewFacet already has a getter, so its parity case
+must be updated), `rehearse-partial-refresh.sh`'s hard-coded
+`RISK_PREVIEW_SELECTORS` array — and, the one that actually decides whether
+the client can call it, **regenerating `packages/contracts/src/abis/
+RiskPreviewFacet.json`** via `exportFrontendAbis.sh`.
+
+The first draft listed `SetupTest` here and omitted the ABI export. Both were
+wrong: `SetupTest.t.sol:495` consumes `helperTest.getRiskPreviewFacetSelectors()`
+and needs no edit of its own, so naming it was padding — while a selector
+routed on-chain but missing from the client ABI is unavailable to the very
+caller that motivated the work. Padding a list with a site that needs nothing,
+while omitting the one that gates the feature, is worse than a short list.
 
 ## 6. The case against, taken seriously
 
@@ -171,29 +272,81 @@ Today's card is neither — it makes availability claims from whatever
 data happened to be nearby. That is the actual defect behind eight
 rounds, and both options above fix it.
 
-## 7. Recommendation
+## 7. Rollout is per-chain, not per-selector
 
-**Preview-backed, and defer the decision to a human.**
+alpha02 talks to several heterogeneous Diamonds, and `LoanSaleFlow` already
+gates listing to Base Sepolia and Arbitrum Sepolia because BNB Testnet lacks
+an earlier cut. Registering a selector in the deploy scripts therefore says
+nothing about whether a given chain has it: call `saleExitPreview` on a chain
+that has not been re-cut and the Diamond raises `FunctionDoesNotExist`, making
+the proposed authority unavailable for **every** position there.
 
-The reason to prefer it over the smaller card: the Basic-mode lender is
-the one this whole feature exists for, and "switch to Advanced to find
-out whether you can do this" is a poor answer for someone who was shown
-the option in the first place. The switch CTA already has to predict
-whether tools will appear, so the card cannot fully escape availability
-even in the map-only design — it would just be less honest about it.
+So the card must treat "this Diamond does not serve the preview" as a
+first-class state — the same shape as `checkedMask`, one level up — and fall
+back to the map-only behaviour rather than to a spinner or a wrong verdict.
+Per-chain cut verification is a release gate, not an afterthought.
 
-But this is a product judgement about what an awareness surface owes its
-reader, and it carries a per-page RPC cost and a contract change. It
-should not be made inside a review loop, which is precisely why the ten
-items were deferred rather than patched.
+## 8. Recommendation — weakened by review, and honest about it
 
-**What I would do next, given a yes:** land items 1, 2, 4, 6, 7 first —
-the five that are pure storage reads with no new classification logic —
-and leave 3 (already exposed), 5 (needs the held-balance question
-answered separately) and 8 (needs the listing offer joined) to a second
-pass.
+**Preview-backed for LOAN-LEVEL eligibility only, and the decision still
+belongs to a human.**
 
-**What I would do given a no:** strip the card's availability claims to
-those it can answer from data the page already holds, and say in the
-copy that the tool performs the real check. That is a smaller diff than
-the eight rounds already spent.
+The first draft recommended this as the way to make the card an authority on
+availability. Review showed that claim is too strong, and the argument that
+depended on it does not survive intact.
+
+**What the preview cannot do.** For a Basic-mode lender with no compatible buy
+offer, `saleExitPreview` returns zero `directBlockers` while the direct exit is
+in fact unavailable: item 9 is out of scope and the function takes no offer id
+with which to judge a counterparty's expiry, shape or fillability. So the
+preview answers *"is this loan eligible to be sold"*, never *"can this lender
+sell it right now"*. Those are different questions, and the card asks the
+second.
+
+**What that costs the argument.** §6's case for the preview-backed option
+leaned on the switch CTA needing to predict whether tools would appear. It
+still does — but a loan-level verdict does not fully supply that prediction,
+so the preview narrows the map-only gap rather than closing it. I am not going
+to pretend otherwise to keep the recommendation tidy.
+
+**Why I still lean this way.** The eight loan-level blockers are the ones that
+are *permanent for the position* — paused asset, NFT collateral, cooldown,
+unconsolidatable held balance. A lender told "not right now, here is why" about
+those is being told something durable and true. Candidate matching is
+genuinely momentary and belongs with the tool that walks the book. Splitting on
+durability is defensible in a way that "the card knows everything" was not.
+
+**Adopting it means adopting §4.6.** Without extracting the shared classifiers
+the mutating guards consume, this is a second source of truth wearing the
+costume of a single one — and it would drift, exactly as the client did. That
+is now a precondition, not a refinement.
+
+**Given a yes:** land items 1, 2, 6, 7 first — pure storage reads with no new
+classification — behind `checkedMask`, with the per-chain gate from §7 in
+place. Items 4, 5 and 8 follow with the classifier extraction. Item 3 is
+already exposed.
+
+**Given a no:** strip the card's availability claims to what it can answer from
+data the page already holds, and say in the copy that the tool performs the
+real check. Fourteen review rounds on #1839 have now made that the *cheaper*
+option as well as a defensible one, which was not obvious when this document
+was written.
+
+## 9. What the review changed
+
+Recorded because the corrections are more useful than the proposal:
+
+- The direct route **does** enforce per-asset pauses (§4.2). Stated
+  confidently and wrongly, from memory rather than from the entry point.
+- Registration list padded with a site needing no change, missing the ABI
+  export that gates the whole feature (§5).
+- Timestamps without a chain-evaluated verdict push the caller onto a device
+  clock, re-creating an excluded item (§4.3).
+- The GTC sentinel is ambiguous **in the protocol itself**, not merely to the
+  client (§4.3).
+- A staged rollout would have shipped unclassified-reads-as-clear (§4.5).
+- A sibling view does not remove a shadow copy unless the guards share the
+  classifiers (§4.6).
+- The authority claim was too strong, which weakens §8's own argument.
+
+Seven of these would have survived into an implementation.
