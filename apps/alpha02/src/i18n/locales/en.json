@@ -1026,6 +1026,7 @@
         "sellNowAlreadyListed": "Not available while this position is listed for sale — cancel the listing first, using the card below.",
         "sellNowAlreadyListedNoCancel": "Not available while this position is listed for sale. The listing was made from another device, so it can’t be cancelled here — cancel it where it was listed.",
         "saleLockChecking": "Checking whether this position is already listed…",
+        "maturityUnknown": "Not available right now — we couldn’t confirm this loan’s due date, and a sale can’t be started once it has passed. This usually clears on its own in a moment.",
         "saleToolsChecking": "Not available yet — we’re still reading the fee terms that have to be disclosed before a sale can be started.",
         "saleToolsFailed": "Not available right now — the fee terms that have to be disclosed before a sale could not be read. Reload the page to try again.",
         "listUnavailableFlowDisabled": "Not available right now — new listings are paused on this deployment while an issue is looked into. Your position is unaffected and the other options still apply.",

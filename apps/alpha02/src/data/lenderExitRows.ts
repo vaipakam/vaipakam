@@ -75,6 +75,24 @@ export type SaleLockState = 'checking' | 'listed' | 'clear' | 'unknown';
  *  scrolled to a card that says the same thing in smaller type. */
 export type SaleToolsState = 'ready' | 'checking' | 'failed';
 
+/** Whether the loan has passed its due date.
+ *
+ *  A union rather than a boolean because there is a third answer, and
+ *  it was previously spelled `false` (Codex r6 P2). The maturity check
+ *  is chain-anchored from whichever live read has answered; in Basic
+ *  mode the strategy read is disabled, so if the always-on terms read
+ *  ERRORS there is no authoritative source left — and a boolean turned
+ *  that into "not past due", presenting both sale rows as available on
+ *  a position whose due date had never been established.
+ *
+ *  `'unknown'` fails CLOSED here, unlike `SaleLockState`'s `'unknown'`
+ *  which leaves the rows alone. The difference is whether a read that
+ *  COULD answer exists: the lock's unknown means no query can run at
+ *  all and never will, so waiting on it would be a permanent dead end;
+ *  maturity's unknown means a live query that is enabled for exactly
+ *  this case has not answered yet, so it clears on the next refetch. */
+export type MaturityState = 'past' | 'current' | 'unknown';
+
 export type LenderExitJumpTarget = 'early-exit-card' | 'loan-sale-card';
 
 export interface LenderExitRow {
@@ -114,8 +132,9 @@ export interface LenderExitInput {
    *  pending card below then offers no cancel, so the row must not
    *  promise one (Codex r5 P2). */
   saleListingCancellable: boolean;
-  /** Chain-anchored only — never a device clock. */
-  pastDue: boolean;
+  /** Chain-anchored only — never a device clock. See `MaturityState`
+   *  for why this is not a boolean. */
+  maturity: MaturityState;
   listingSupportedOnChain: boolean;
   /** Operator kill switch (`VITE_DISABLED_FLOWS`). Scoped to the
    *  LISTING row: `LoanSaleFlow` refuses and shows the incident
@@ -148,9 +167,17 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
           ? o.waitDescAtClosePartial
           : o.waitDescAtClose;
 
-  // Invariant 2 — structural refusal first.
+  // Invariant 2 — structural refusal first. The unknown arm fails
+  // CLOSED (Codex r6 P2): an unestablished due date is not evidence of
+  // a live one, and both contracts refuse an exit past maturity, so
+  // presenting the rows as takeable would be a claim made from a read
+  // that did not answer.
   const pastDueOr = (reason: string | undefined) =>
-    input.pastDue ? copy.lenderExit.pastDue : reason;
+    input.maturity === 'past'
+      ? copy.lenderExit.pastDue
+      : input.maturity === 'unknown'
+        ? copy.lenderExit.options.maturityUnknown
+        : reason;
 
   return [
     {

@@ -2235,6 +2235,7 @@
         "sellNowAlreadyListed": "No disponible mientras esta posición esté publicada en venta: cancela primero la publicación con la tarjeta de abajo.",
         "sellNowAlreadyListedNoCancel": "No disponible mientras esta posición esté publicada en venta. La publicación se hizo desde otro dispositivo, así que no se puede cancelar aquí: cancélala donde la publicaste.",
         "saleLockChecking": "Comprobando si esta posición ya está publicada…",
+        "maturityUnknown": "No disponible ahora mismo: no hemos podido confirmar la fecha de vencimiento de este préstamo, y una vez pasada no se puede iniciar una venta. Esto suele resolverse solo en un momento.",
         "saleToolsChecking": "Aún no disponible: seguimos leyendo las condiciones de comisión que deben comunicarse antes de poder iniciar una venta.",
         "saleToolsFailed": "No disponible ahora mismo: no se han podido leer las condiciones de comisión que deben comunicarse antes de una venta. Recarga la página para intentarlo de nuevo.",
         "listUnavailableFlowDisabled": "No disponible ahora mismo: las nuevas publicaciones están en pausa en este despliegue mientras se investiga una incidencia. Tu posición no se ve afectada y las demás opciones siguen vigentes."

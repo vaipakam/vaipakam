@@ -37,6 +37,7 @@ import {
   hasJumpableRow,
   type InstantSellCandidates,
   type LenderExitJumpTarget,
+  type MaturityState,
   type SaleLockState,
   type SaleToolsState,
 } from '../data/lenderExitRows';
@@ -56,8 +57,9 @@ export function LenderExitOptionsCard({
    *  when a periodically-settling lender is paid. */
   periodicInterestCadence: number | undefined;
   /** Chain-anchored. Past maturity BOTH sale rows flip to the past-due
-   *  line: a fully-elapsed term is refused at CREATION. */
-  pastDue: boolean;
+   *  line: a fully-elapsed term is refused at CREATION. Three-valued,
+   *  not a boolean — see `MaturityState`. */
+  maturity: MaturityState;
   /** The listing surface is not published to every deployment. */
   listingSupportedOnChain: boolean;
   /** Operator kill switch — LISTING row only. See the input's note. */

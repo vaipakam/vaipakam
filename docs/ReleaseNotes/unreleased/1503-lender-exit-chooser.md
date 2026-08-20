@@ -63,7 +63,11 @@ positional: while the fee terms that must be disclosed before any sale are
 still being read — or could not be read — both sale rows say so, because the
 tools themselves do not appear until that read lands; and if the operator has
 paused new listings on a deployment while looking into an issue, the listing
-row says that too, and says your position is unaffected. Past the due date both sale rows say plainly that
+row says that too, and says your position is unaffected. And if the loan's due
+date cannot be confirmed at all, both rows say **that**, rather than quietly
+treating an unanswered check as "not due yet" — a sale cannot be started past
+the due date, so a card that guessed there would be guessing about the one fact
+that closes both exits. Past the due date both sale rows say plainly that
 the loan is now resolved by repayment or the default process — no new sale can
 be started — so you are not sent looking for a narrower fix that could not help
 anyway.

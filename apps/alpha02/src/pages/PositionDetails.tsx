@@ -2739,25 +2739,61 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // and their jumps had nothing to scroll to. Both contracts
           // refuse a new exit at that boundary too, so the boundary
           // second belongs on the past-due side.
-          pastDue={
+          // THREE-valued (Codex r6 P2). The old `: false` tail was a
+          // verdict from a read that had not answered: `termsEndSec`
+          // and `bannerNowSec` both fall back to the INDEXER row and
+          // the DEVICE clock when `bannerTerms` has no data, and in
+          // Basic mode `loanLive` is disabled outright — so an errored
+          // terms read left the card asserting "not past due" with no
+          // authoritative source behind it, on the one question that
+          // refuses both exits.
+          //
+          // Not a dead end: `bannerTerms` is enabled for exactly this
+          // case (`lenderNeedsLiveTerms`), so unknown clears on the
+          // next refetch rather than persisting the way an un-runnable
+          // query would.
+          maturity={
             bannerTerms.data
               ? bannerNowSec >= termsEndSec
+                ? 'past'
+                : 'current'
               : loanLive.data
                 ? loanLive.data.chainNow >= loanEndTimeOf(loanLive.data.live)
-                : false
+                  ? 'past'
+                  : 'current'
+                : 'unknown'
           }
           // Sync env read (`VITE_DISABLED_FLOWS`), no query behind it.
           listingFlowDisabled={flowDisabled('post-offer')}
-          // Both sale tools — and both jump anchors — are held behind
-          // this read; see `SaleToolsState`. `feeEnt` is unconditional
-          // (loan id only), so it answers in Basic mode too and this
-          // cannot become a permanent unanswered state.
+          // EVERY prerequisite the anchored tools are gated on, not
+          // just the fee read (Codex r6 P2). The Advanced block takes
+          // its stand-in branch — omitting both anchors — on
+          // `!loanLive.data || !sanctions.ready` as well, and needs
+          // `principal` to mount at all, so keying only on `feeEnt`
+          // reported ready while the anchors were absent. That showed
+          // immediately on a Basic→Advanced switch and persisted
+          // through a `loanLive` error.
+          //
+          // `loanLive` is required ONLY in Advanced, and that
+          // asymmetry is the point rather than an oversight: the query
+          // is disabled in Basic, so demanding it there would pin both
+          // rows shut behind a read that is not running — the
+          // permanent-dead-end trap this card has hit twice. In Basic
+          // the mode-independent prerequisites are checkable and the
+          // rest becomes knowable on the switch, where the tool block
+          // states them itself.
           saleTools={
-            feeEnt.data !== undefined
-              ? 'ready'
-              : feeEnt.isError
+            feeEnt.data === undefined
+              ? feeEnt.isError
                 ? 'failed'
                 : 'checking'
+              : !sanctions.ready || !principal
+                ? 'checking'
+                : isAdvanced && !loanLive.data
+                  ? loanLive.isError
+                    ? 'failed'
+                    : 'checking'
+                  : 'ready'
           }
           listingSupportedOnChain={loanSaleListingEnabled(readChain.chainId)}
           collateralIsNft={collateralIsNft}

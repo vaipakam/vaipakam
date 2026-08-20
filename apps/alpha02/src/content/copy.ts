@@ -2009,6 +2009,13 @@ const copySource = {
       // fee-entitlement disclosure read, and their jump anchors go
       // with them. A row left available then rendered a jump to an
       // element that did not exist, and the click did nothing at all.
+      // Codex r6 P2 — the due date is chain-anchored from whichever
+      // live read answered; with neither answering there is no
+      // authoritative source, and reporting "not past due" would be a
+      // claim made from a read that did not happen. Fails closed: both
+      // contracts refuse an exit past maturity.
+      maturityUnknown:
+        'Not available right now — we couldn’t confirm this loan’s due date, and a sale can’t be started once it has passed. This usually clears on its own in a moment.',
       saleToolsChecking:
         'Not available yet — we’re still reading the fee terms that have to be disclosed before a sale can be started.',
       saleToolsFailed:

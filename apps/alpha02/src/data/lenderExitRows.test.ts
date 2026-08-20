@@ -11,7 +11,7 @@ const o = copy.lenderExit.options;
 /** A position with nothing blocking either sale path. */
 const base: LenderExitInput = {
   periodicInterestCadence: 0,
-  pastDue: false,
+  maturity: 'current',
   listingSupportedOnChain: true,
   listingFlowDisabled: false,
   saleTools: 'ready',
@@ -39,7 +39,7 @@ describe('wait row — ordering and framing', () => {
   it('is never marked unavailable, on any input', () => {
     const hostile: LenderExitInput = {
       periodicInterestCadence: undefined,
-      pastDue: true,
+      maturity: 'past',
       listingSupportedOnChain: false,
       listingFlowDisabled: true,
       saleTools: 'failed',
@@ -90,7 +90,7 @@ describe('wait row — cadence awareness (invariant 1)', () => {
 
 describe('past maturity outranks narrower reasons (invariant 2)', () => {
   it('flips BOTH sale rows to the past-due line', () => {
-    const rows = buildLenderExitRows({ ...base, pastDue: true });
+    const rows = buildLenderExitRows({ ...base, maturity: 'past' });
     expect(rows.find((r) => r.key === 'sell-now')!.unavailable).toBe(
       copy.lenderExit.pastDue,
     );
@@ -101,7 +101,7 @@ describe('past maturity outranks narrower reasons (invariant 2)', () => {
 
   it('does not report "no matching offers" past due — that would send the lender hunting for a fix that cannot help', () => {
     const row = rowFor(
-      { pastDue: true, instantSellCandidates: 'none' },
+      { maturity: 'past', instantSellCandidates: 'none' },
       'sell-now',
     );
     expect(row.unavailable).toBe(copy.lenderExit.pastDue);
@@ -109,7 +109,7 @@ describe('past maturity outranks narrower reasons (invariant 2)', () => {
   });
 
   it('does not report a listing blocker past due either', () => {
-    const row = rowFor({ pastDue: true, collateralIsNft: true }, 'list');
+    const row = rowFor({ maturity: 'past', collateralIsNft: true }, 'list');
     expect(row.unavailable).toBe(copy.lenderExit.pastDue);
     expect(row.unavailable).not.toBe(o.listUnavailableNft);
   });
@@ -203,7 +203,7 @@ describe('Basic-mode switch action', () => {
   it('withholds it when every sale row is unavailable — there would be nothing to switch to', () => {
     const rows = buildLenderExitRows({
       ...base,
-      pastDue: true,
+      maturity: 'past',
       instantSellCandidates: 'none',
     });
     expect(hasJumpableRow(rows)).toBe(false);
@@ -251,7 +251,7 @@ describe('sale lock — an unanswered read is not "clear" (Codex r1 P2)', () => 
     const rows = buildLenderExitRows({
       ...base,
       saleLock: 'checking',
-      pastDue: true,
+      maturity: 'past',
     });
     for (const key of ['sell-now', 'list']) {
       expect(rows.find((r) => r.key === key)!.unavailable).toBe(
@@ -298,7 +298,7 @@ describe("sale lock 'unknown' — a read that cannot run is not a read in flight
   });
 
   it('still yields to past due', () => {
-    expect(rowFor({ saleLock: 'unknown', pastDue: true }, 'list').unavailable).toBe(
+    expect(rowFor({ saleLock: 'unknown', maturity: 'past' }, 'list').unavailable).toBe(
       copy.lenderExit.pastDue,
     );
   });
@@ -373,7 +373,7 @@ describe('listed row — do not promise a cancel the pending card withholds (Cod
       for (const key of ['sell-now', 'list'] as const) {
         expect(
           rowFor(
-            { saleLock: 'listed', saleListingCancellable: cancellable, pastDue: true },
+            { saleLock: 'listed', saleListingCancellable: cancellable, maturity: 'past' },
             key,
           ).unavailable,
         ).toBe(copy.lenderExit.pastDue);
@@ -458,7 +458,7 @@ describe('the tools behind the rows (Codex r3 P2)', () => {
     for (const key of ['sell-now', 'list'] as const) {
       expect(
         rowFor(
-          { pastDue: true, listingFlowDisabled: true, saleTools: 'failed' },
+          { maturity: 'past', listingFlowDisabled: true, saleTools: 'failed' },
           key,
         ).unavailable,
       ).toBe(copy.lenderExit.pastDue);
@@ -490,5 +490,58 @@ describe('the tools behind the rows (Codex r3 P2)', () => {
         'list',
       ).unavailable,
     ).toBe(o.listUnavailableNft);
+  });
+});
+
+describe('an unestablished due date is not a live one (Codex r6 P2)', () => {
+  // `pastDue` used to be a boolean whose false arm covered BOTH "the
+  // chain says the term is running" and "no read answered". In Basic
+  // mode the strategy read is disabled outright, so an errored terms
+  // read left the card asserting a live term with nothing behind it —
+  // on the one question that refuses both exits.
+  it('holds both sale rows when maturity could not be established', () => {
+    for (const key of ['sell-now', 'list'] as const) {
+      expect(rowFor({ maturity: 'unknown' }, key).unavailable).toBe(
+        o.maturityUnknown,
+      );
+    }
+  });
+
+  it('says something different from the past-due line — the two are not the same claim', () => {
+    expect(rowFor({ maturity: 'unknown' }, 'list').unavailable).not.toBe(
+      copy.lenderExit.pastDue,
+    );
+  });
+
+  it('outranks every narrower reason, exactly as past-due does', () => {
+    expect(
+      rowFor(
+        {
+          maturity: 'unknown',
+          saleLock: 'listed',
+          listingFlowDisabled: true,
+          collateralIsNft: true,
+          instantSellCandidates: 'none',
+        },
+        'list',
+      ).unavailable,
+    ).toBe(o.maturityUnknown);
+    expect(
+      rowFor(
+        { maturity: 'unknown', instantSellCandidates: 'none' },
+        'sell-now',
+      ).unavailable,
+    ).toBe(o.maturityUnknown);
+  });
+
+  it('leaves the wait row alone — waiting needs no due date to be safe advice', () => {
+    const rows = buildLenderExitRows({ ...base, maturity: 'unknown' });
+    expect(rows.find((r) => r.key === 'wait')!.unavailable).toBeUndefined();
+  });
+
+  it('withholds the Advanced switch, since neither tool would be offered', () => {
+    expect(hasJumpableRow(buildLenderExitRows({ ...base, maturity: 'unknown' }))).toBe(
+      false,
+    );
   });
 });

@@ -2235,6 +2235,7 @@
         "sellNowAlreadyListed": "该头寸正在挂牌出售期间不可用——请先通过下方卡片取消挂牌。",
         "sellNowAlreadyListedNoCancel": "该头寸正在挂牌出售期间不可用。挂牌是在另一台设备上完成的，无法在此取消——请到挂牌的那台设备上取消。",
         "saleLockChecking": "正在检查该头寸是否已挂牌…",
+        "maturityUnknown": "当前不可用——我们无法确认这笔贷款的到期日，而一旦到期就无法发起出售。通常稍等片刻即可自行恢复。",
         "saleToolsChecking": "暂不可用——我们仍在读取出售前必须披露的费用条款。",
         "saleToolsFailed": "当前不可用——出售前必须披露的费用条款无法读取。请重新加载页面后再试。",
         "listUnavailableFlowDisabled": "当前不可用——本部署在排查问题期间已暂停新建挂牌。你的头寸不受影响，其他选项仍然适用。"
