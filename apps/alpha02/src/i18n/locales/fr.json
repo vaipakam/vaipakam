@@ -2204,6 +2204,35 @@
       "tariffPaidLine": "{{amount}} VPFI de tarif absorbés",
       "precloseNoRefundWarn": "Ce prêt porte un tarif Complet payé. Il a été calculé sur la durée complète à l'ouverture du prêt et n'est pas remboursé en cas de clôture anticipée.",
       "nftTravelNote": "Le mode de frais Complet du prêteur est attaché à la position elle-même — il voyage avec le NFT de position jusqu'à l'acheteur de cette position."
+    },
+    "lenderExit": {
+      "title": "Vos options en tant que prêteur",
+      "blurb": "Vous n’avez rien à faire avec cette position. Si vous souhaitez en sortir avant l’échéance, voici ce que cela coûte :",
+      "switchToAdvanced": "Afficher ces outils (bascule vers la vue Avancée)",
+      "switchNote": "Ces outils se trouvent dans la vue Avancée. Basculer vous garde sur cette page : rien n’est envoyé.",
+      "jump": "Aller à cette option",
+      "options": {
+        "wait": "Laisser le prêt suivre son cours",
+        "waitDescAtClose": "Rien à faire : si l’emprunteur rembourse, vous réclamez le principal plus les intérêts convenus à la fin. S’il ne rembourse pas, la procédure de défaut habituelle s’applique et le recouvrement peut être moindre.",
+        "waitDescPeriodic": "Rien à faire : les intérêts vous sont versés selon l’échéancier propre à ce prêt, au fur et à mesure que l’emprunteur les règle, et vous réclamez à la fin le principal plus les intérêts encore dus. S’il ne rembourse pas, la procédure de défaut habituelle s’applique et le recouvrement peut être moindre.",
+        "waitDescChecking": "Rien à faire : nous lisons encore l’échéancier d’intérêts de ce prêt, qui détermine si vous êtes payé pendant la durée ou seulement à la fin.",
+        "waitCost": "Ne coûte rien : c’est l’option par défaut.",
+        "sellNow": "Vendre votre position maintenant",
+        "sellNowDesc": "Vendez cette position directement à une offre de prêt en cours qui lui correspond. Vous êtes payé immédiatement sur des fonds déjà bloqués par ce prêteur, et ni le taux ni l’échéance de l’emprunteur ne changent.",
+        "sellNowCost": "Coûte le PLUS ÉLEVÉ des deux : les intérêts accumulés à ce jour ou le complément de taux de l’acheteur — jamais les deux.",
+        "sellNowNoOffers": "Aucune offre de prêt du carnet ne correspond à cette position pour l’instant — revenez plus tard, ou publiez-la ci-dessous.",
+        "list": "Mettre votre position en vente",
+        "listDesc": "Publiez cette position au taux que vous demandez et attendez un acheteur. La vente ne se règle que lorsque quelqu’un l’accepte.",
+        "listCost": "Coûte le PLUS ÉLEVÉ des deux : les intérêts accumulés à ce jour ou le complément de taux de l’acheteur — jamais les deux.",
+        "listStructural": "Tant que l’annonce est active, votre position ne peut pas être transférée, et elle bloque aussi les options de l’EMPRUNTEUR sur ce prêt : l’application retient son remboursement partiel et le protocole refuse le retrait de sa garantie, dans les deux cas pour protéger les termes signés par l’acheteur. Cela dure jusqu’à l’expiration de l’annonce, sa réalisation par un acheteur, ou son annulation par vous.",
+        "listAlreadyListed": "Déjà publiée : cette position est actuellement en vente. La carte d’annonce ci-dessous en montre les termes et permet de l’annuler.",
+        "listUnavailableNetwork": "Pas encore disponible sur ce réseau : les outils de publication ne sont pas déployés ici.",
+        "listUnavailableNft": "Indisponible pour cette position : la publication ne prend pour l’instant en charge que les prêts adossés à une garantie ERC-20.",
+        "listUnavailableHeldVpfi": "Indisponible tant que le solde VPFI en attente de cette position n’est pas apuré : une annonce exige une identité de règlement unique. Entre-temps, vendre maintenant ou attendre la clôture du prêt restent possibles.",
+        "listUnavailableOffsetPending": "Indisponible tant que l’emprunteur a une sortie liée en attente sur ce prêt : elle doit d’abord aboutir ou être annulée."
+      },
+      "pastDue": "Ce prêt a dépassé son échéance : l’emprunteur le rembourse ou la procédure de défaut le résout. Aucune nouvelle vente ne peut être lancée maintenant.",
+      "checking": "Vérification des options disponibles sur cette position…"
     }
   },
   "contractError": {

@@ -66,6 +66,7 @@ import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
+import { LenderExitOptionsCard } from '../components/LenderExitOptionsCard';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
@@ -2607,6 +2608,57 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         )
       ) : null}
 
+      {/* Lender awareness layer (LenderEarlyWithdrawalUXDesign, Layer 1)
+          — deliberately OUTSIDE the `isAdvanced` gate below, which is
+          the substance of this card. Until it existed, a lender in
+          Basic mode saw nothing at all about their position: not the
+          sale paths, and not the fact that waiting is itself a choice
+          that costs no sale forfeiture. Same placement rule as the
+          borrower's chooser, which also sits above its Advanced tools.
+
+          Flagged wallets still see nothing (Tier-1), and a rental is
+          excluded entirely — lender early withdrawal does not cover
+          rentals in Phase 1. */}
+      {role === 'lender' &&
+      row.status === 'active' &&
+      !soldThisSession &&
+      !isRental &&
+      !(sanctions.ready && sanctions.flagged) ? (
+        <LenderExitOptionsCard
+          isAdvanced={isAdvanced}
+          onSwitchToAdvanced={() => setMode('advanced')}
+          // Undefined while the live read is in flight — the card
+          // renders its neutral checking line rather than asserting
+          // the at-close shape, which would misstate WHEN a
+          // periodically-settling lender is paid.
+          periodicInterestCadence={
+            loanLive.data?.live.periodicInterestCadence
+          }
+          // Chain-anchored only, same rule as the borrower chooser's
+          // pastDueHint: a device clock or lagging indexer row must
+          // never flip the sale rows to "past due" while the
+          // chain-authoritative cards below still permit a sale.
+          pastDue={
+            loanLive.data
+              ? loanLive.data.chainNow > loanEndTimeOf(loanLive.data.live)
+              : false
+          }
+          listingSupportedOnChain={loanSaleListingEnabled(readChain.chainId)}
+          collateralIsNft={collateralIsNft}
+          alreadyListed={salePending}
+          // See the prop's own note: no cheap client read exists for
+          // the held-for-lender balance, so this stays false and the
+          // refusal surfaces in the listing tool instead.
+          heldVpfiUnresolved={false}
+          borrowerOffsetPending={offsetPend.pending}
+          // 'unknown' on purpose — the candidate list comes from
+          // `useActiveOffers`, a full page walk this page does not
+          // otherwise make. Hoisting it would put that walk on every
+          // lender who merely opens a position.
+          instantSellCandidates="unknown"
+        />
+      ) : null}
+
       {/* Lender strategy — early exit by selling the position into a
           matching open lending offer. Same gate conventions as the
           borrower block: flagged wallets see nothing (Tier-1),
@@ -2663,6 +2715,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               <span className="banner-body">{copy.tariff.nftTravelNote}</span>
             </div>
           ) : null}
+          {/* Anchor for the Layer-1 chooser's "sell now" jump. The flow
+              renders its own card, so the id lives on a wrapper rather
+              than being threaded through as a prop. */}
+          <div id="early-exit-card">
           <EarlyExitFlow
             row={row}
             live={loanLive.data.live}
@@ -2680,7 +2736,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             busy={busy}
             setBusy={setBusy}
           />
-          <section className="card">
+          </div>
+          {/* Anchor for the chooser's "list it" jump. */}
+          <section className="card" id="loan-sale-card">
             {loanSaleListingEnabled(readChain.chainId) ? (
               <LoanSaleFlow
                 row={row}

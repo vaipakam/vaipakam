@@ -1,0 +1,52 @@
+## Lenders can now see what their options are — including doing nothing
+
+If you have lent on a loan, the position page now opens with a card called
+"Your options as the lender", listing every way out of the position along with
+what each one costs.
+
+Until now, a lender in the simple view saw **nothing at all** about this. The
+sale tools existed, but they lived behind the Advanced view, so unless you had
+already switched over you would not learn that selling your position early was
+possible, what it would cost, or that waiting is itself a choice. The card is
+informational only — it never submits anything, and each row points at the tool
+that does the actual work.
+
+**Waiting is listed first, on purpose.** For a borrower, the useful thing to
+surface is the ways out of a debt. For a lender the situation is reversed: the
+position is already the thing that pays you, so the option that costs nothing in
+forfeited interest is to leave it alone. The card says so before it says
+anything about selling.
+
+That row is careful about two things. It never promises you will be repaid — it
+says what happens *if* the borrower repays, and what happens if they do not.
+And it describes **when** you get paid based on the loan's own schedule rather
+than assuming: on a loan that settles interest periodically you are paid during
+the term, not only at the end, so the card says that instead. While it is still
+reading the schedule it says so rather than guessing, because guessing would
+tell you something about your own money that is not yet known.
+
+**Each sale row states its cost before you open anything**: selling early costs
+the larger of the interest built up so far or the buyer's rate top-up — never
+both. The listing row goes further and says something sellers routinely do not
+expect: while your listing stands it also freezes the *borrower's* options on
+that loan — the app holds their partial repayment and the protocol refuses their
+collateral withdrawal, both to protect the terms the buyer signs.
+
+**Rows that are unavailable explain why, rather than disappearing.** A vanished
+row reads as "no such option". So the card names the reason instead: the listing
+tools are not deployed on this network, the collateral is an NFT and listing
+currently supports ERC-20 collateral only, the borrower has a linked exit
+pending, or the position is already listed (with a pointer to the card that can
+cancel it). Past the due date both sale rows say plainly that the loan is now
+resolved by repayment or the default process — no new sale can be started — so
+you are not sent looking for a narrower fix that could not help anyway.
+
+Two limits worth stating plainly. In the simple view the "sell now" row does not
+yet tell you whether a matching buyer exists right now; finding that out
+requires a sweep of every open offer, and doing it for every lender who merely
+opens a page would be a poor trade. Rather than guess, the row makes no claim
+and the tool it points to does the real check. Separately, a position carrying
+an unresolved VPFI balance cannot be listed, and that particular reason still
+appears when you try rather than up front on the card.
+
+The card is available in all nine translated languages.

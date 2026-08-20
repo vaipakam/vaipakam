@@ -1905,6 +1905,70 @@ const copySource = {
       'Your keeper master switch is off, so nothing can run even with this loan’s switch on — turn it on under Settings → Keeper permissions.',
   },
 
+  /** Lender-side Layer 1 awareness card (LenderEarlyWithdrawalUXDesign
+   *  §"Layer 1"). The inversion from the borrower chooser is the whole
+   *  point: the borrower's card promotes ways to ACT, this one promotes
+   *  the fact that doing nothing is the default that costs nothing in
+   *  sale forfeitures. Wait renders FIRST and is worded conditionally —
+   *  never as a promise of repayment. */
+  lenderExit: {
+    title: 'Your options as the lender',
+    blurb:
+      'You don’t have to do anything with this position. If you want out before the due date, here’s what that costs:',
+    switchToAdvanced: 'Show these tools (switches to Advanced view)',
+    switchNote:
+      'These tools live in the Advanced view. Switching keeps you on this page — nothing is submitted.',
+    jump: 'Go to this option',
+    options: {
+      wait: 'Wait for the loan to run its course',
+      // Two shapes, chosen from the loan's OWN schedule. A single
+      // end-of-term sentence on a periodically-settling loan misstates
+      // WHEN the lender is paid, which is the fact this row exists to
+      // convey. Both are conditional — neither promises repayment.
+      waitDescAtClose:
+        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest at the end. If they don’t, the normal default process applies and recovery can be less.',
+      waitDescPeriodic:
+        'Nothing to do — interest is paid to you on this loan’s own schedule as the borrower settles it, and you claim the principal plus whatever interest is still outstanding at the end. If they don’t repay, the normal default process applies and recovery can be less.',
+      waitDescChecking:
+        'Nothing to do — we’re still reading this loan’s interest schedule, which decides whether you’re paid during the term or only at the end.',
+      waitCost: 'Costs nothing — this is the default.',
+
+      sellNow: 'Sell your position now',
+      sellNowDesc:
+        'Sell this position straight into a standing lending offer that matches it. You’re paid immediately from funds already locked by that lender, and the borrower’s rate and due date don’t change.',
+      sellNowCost:
+        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both.',
+      sellNowNoOffers:
+        'No lending offer on the book matches this position right now — check back later, or list it below instead.',
+
+      list: 'List your position for sale',
+      listDesc:
+        'Publish this position at your asking rate and wait for a buyer. The sale settles only when someone accepts.',
+      listCost:
+        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both.',
+      // Cross-party disclosure: listing does not only lock the seller.
+      listStructural:
+        'While the listing stands, your position can’t be transferred, and it also holds the BORROWER’s options on this loan — the app holds their partial repayment and the protocol refuses their collateral withdrawal, both to protect the buyer’s signed terms. That lasts until the listing expires, a buyer completes, or you cancel.',
+      listAlreadyListed:
+        'Already listed — this position is on sale now. The listing card below shows its terms and lets you cancel it.',
+      listUnavailableNetwork:
+        'Not available on this network yet — the listing tools aren’t published to this deployment.',
+      listUnavailableNft:
+        'Not available for this position — listing currently supports loans backed by ERC-20 collateral only.',
+      listUnavailableHeldVpfi:
+        'Not available until this position’s outstanding VPFI balance is cleared — a listing needs a single settlement identity. Selling now, or waiting for the loan to close, stay open meanwhile.',
+      listUnavailableOffsetPending:
+        'Not available while the borrower has a linked exit pending on this loan — that has to complete or be cancelled first.',
+    },
+    // Past maturity BOTH sale rows flip to this: a fully-elapsed term
+    // is refused at creation, so advertising an exit that cannot be
+    // created would be a lie. Note this does NOT retire a listing that
+    // already went live — that surface keeps telling its own truth.
+    pastDue:
+      'This loan is past its due date — the borrower repays it or the default process resolves it. New sales can’t be started now.',
+    checking: 'Checking which of these are available on this position…',
+  },
+
   earlyExit: {
     receiptYouReceive: tmpl(
       '~{{toSeller}}, paid straight to your wallet in the same transaction — selling to offer #{{offerId}} at {{rate}} yearly. Nothing to claim afterwards.',
