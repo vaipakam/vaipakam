@@ -1035,6 +1035,7 @@
         "saleToolsChecking": "Not available yet — we’re still reading the details a sale needs before it can be started.",
         "saleToolsFailed": "Not available right now — one of the details a sale needs couldn’t be loaded. Reload the page to try again.",
         "listUnavailableFlowDisabled": "Not available right now — new listings are paused on this deployment while an issue is looked into. Your position is unaffected and the other options still apply.",
+        "listUnavailableTooClose": "Too close to the due date to list — a listing needs at least an hour before the loan matures. Selling into a standing offer still works.",
         "listUnavailableNetwork": "Not available on this network yet — the listing tools aren’t published to this deployment.",
         "listUnavailableNft": "Not available for this position — listing currently supports loans backed by ERC-20 collateral only.",
         "listUnavailableHeldVpfi": "Not available until this position’s outstanding VPFI balance is cleared — a listing needs a single settlement identity. Selling now, or waiting for the loan to close, stay open meanwhile.",

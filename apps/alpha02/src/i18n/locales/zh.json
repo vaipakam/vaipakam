@@ -1035,6 +1035,7 @@
         "saleToolsChecking": "尚不可用——我们仍在读取出售开始前所需的信息。",
         "saleToolsFailed": "当前不可用——出售所需的一项信息无法加载。请重新加载页面后再试。",
         "listUnavailableFlowDisabled": "当前不可用——本部署在排查问题期间已暂停新建挂牌。你的头寸不受影响，其他选项仍然适用。",
+        "listUnavailableTooClose": "距离到期日太近，无法挂单——挂单需要在贷款到期前至少一小时。仍可直接卖给现有报价。",
         "listUnavailableNetwork": "此网络暂不支持——挂牌工具尚未部署到该环境。",
         "listUnavailableNft": "此头寸不可用——挂牌目前仅支持以 ERC-20 抵押品担保的贷款。",
         "listUnavailableHeldVpfi": "在清算这笔头寸未结的 VPFI 余额之前不可用——挂牌需要单一的结算身份。在此期间，立即出售或等待贷款结束仍然可行。",

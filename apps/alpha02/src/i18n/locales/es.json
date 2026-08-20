@@ -1035,6 +1035,7 @@
         "saleToolsChecking": "Todavía no disponible: seguimos leyendo los datos que una venta necesita antes de poder iniciarse.",
         "saleToolsFailed": "No disponible ahora mismo: no se ha podido cargar uno de los datos que una venta necesita. Recarga la página para intentarlo de nuevo.",
         "listUnavailableFlowDisabled": "No disponible ahora mismo: las nuevas publicaciones están en pausa en este despliegue mientras se investiga una incidencia. Tu posición no se ve afectada y las demás opciones siguen vigentes.",
+        "listUnavailableTooClose": "Demasiado cerca de la fecha de vencimiento para publicar: un anuncio necesita al menos una hora antes de que venza el préstamo. Vender a una oferta existente sigue disponible.",
         "listUnavailableNetwork": "Todavía no disponible en esta red: las herramientas de publicación no están desplegadas aquí.",
         "listUnavailableNft": "No disponible para esta posición: por ahora la publicación solo admite préstamos respaldados por garantía ERC-20.",
         "listUnavailableHeldVpfi": "No disponible hasta que se liquide el saldo VPFI pendiente de esta posición: una publicación necesita una única identidad de liquidación. Mientras tanto, vender ahora o esperar a que el préstamo se cierre siguen disponibles.",

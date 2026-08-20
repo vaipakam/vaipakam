@@ -1035,6 +1035,7 @@
         "saleToolsChecking": "Pas encore disponible : nous lisons encore les informations dont une vente a besoin pour pouvoir démarrer.",
         "saleToolsFailed": "Indisponible pour l’instant : l’une des informations dont une vente a besoin n’a pas pu être chargée. Rechargez la page pour réessayer.",
         "listUnavailableFlowDisabled": "Indisponible pour l’instant : les nouvelles annonces sont suspendues sur ce déploiement le temps d’examiner un incident. Votre position n’est pas affectée et les autres options restent valables.",
+        "listUnavailableTooClose": "Trop proche de l’échéance pour publier une annonce : il faut au moins une heure avant la maturité du prêt. La vente à une offre existante reste possible.",
         "listUnavailableNetwork": "Pas encore disponible sur ce réseau : les outils de publication ne sont pas déployés ici.",
         "listUnavailableNft": "Indisponible pour cette position : la publication ne prend pour l’instant en charge que les prêts adossés à une garantie ERC-20.",
         "listUnavailableHeldVpfi": "Indisponible tant que le solde VPFI en attente de cette position n’est pas apuré : une annonce exige une identité de règlement unique. Entre-temps, vendre maintenant ou attendre la clôture du prêt restent possibles.",
