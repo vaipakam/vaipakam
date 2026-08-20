@@ -2985,7 +2985,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             !/^[1-9]\d*$/.test(String(loan.data.lenderTokenId))
               ? 'unknown'
               : sale.state === undefined
-                ? 'checking'
+                ? // A failed INITIAL read is `'unknown'`, not
+                  // `'checking'` (Codex r13 P2). With no successful
+                  // result to retain, "still checking" describes a
+                  // read that has already given up — the
+                  // permanent-spinner trap, in its third location.
+                  // Reusing `'unknown'` rather than adding a seventh
+                  // state: it already means "no claim, ask the tools",
+                  // which is exactly right, and this card's review
+                  // history is largely the cost of widening unions one
+                  // case at a time.
+                  sale.isError
+                  ? 'unknown'
+                  : 'checking'
                 : sale.state.listed === true
                   ? // Codex r10 P2 — this used to say a cached LISTED
                     // stays authoritative because "the lock clears only
@@ -3149,7 +3161,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </div>
           {/* Anchor for the chooser's "list it" jump. */}
           <section className="card" id="loan-sale-card">
-            {loanSaleListingEnabled(readChain.chainId) ? (
+            {/* NFT collateral joins the network gate rather than
+                getting a branch of its own (Codex r13 P2). The chooser
+                already marks the listing row unavailable for it, but
+                this block mounted the full form regardless, and
+                `EarlyWithdrawalFacet:275-281` rejects every submission
+                with `SaleOfferCollateralMustBeERC20` — the chooser and
+                its own destination contradicting each other, which is
+                the round-12 dead end with the surfaces swapped. */}
+            {loanSaleListingEnabled(readChain.chainId) && !collateralIsNft ? (
               <LoanSaleFlow
                 row={row}
                 live={loanLive.data.live}
@@ -3170,10 +3190,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               // Issue #951 — the on-chain listing entry point reverts
               // today; an honest note beats a form whose final wallet
               // step can never succeed.
+              // NFT collateral gets its own sentence: the network
+              // case is temporary and the collateral case is a scope
+              // limit, so one message cannot serve both without
+              // misdescribing one of them.
               <>
                 <h3 style={{ marginBottom: 4 }}>{copy.loanSale.title}</h3>
                 <p className="muted" style={{ margin: 0 }}>
-                  {copy.loanSale.listingUnavailable}
+                  {collateralIsNft
+                    ? copy.lenderExit.options.listUnavailableNft
+                    : copy.loanSale.listingUnavailable}
                 </p>
               </>
             )}
