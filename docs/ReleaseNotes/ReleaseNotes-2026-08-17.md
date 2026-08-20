@@ -1,7 +1,10 @@
 # Release Notes — 2026-08-17
 
-Three entries, and a theme runs through all of them: a check that cannot actually
-establish what it claims is worse than no check, because it reports success.
+Five entries. A theme runs through the first three: a check that cannot actually
+establish what it claims is worse than no check, because it reports success. The
+last two are about keeping a growing system honest with itself — splitting a
+component that had run out of room, and making every loan status change announce
+itself from the single place they all pass through.
 
 The first is about these notes. The tooling that assembles this file now verifies
 that each fragment it folds in belongs to the date on the file — something it never
@@ -310,3 +313,125 @@ per-loan history view could not find it. That is worst exactly where the
 announcement is most needed: the temporary bookkeeping loan a lender sale
 creates is named by no other announcement, so its history had no record of the
 change at all. It is now filed under its loan.
+
+## The marketing site gets a committed post-deploy drive, and the reason it cannot be run everywhere is now on record
+
+Changes to a published surface are supposed to be checked on the live site after
+they deploy — not on a preview, and not only through the automated checks that
+run before a merge. Until now the marketing site had no committed way to do
+that: whoever performed the check wrote the steps themselves and threw them away
+afterwards, so the next person began again from nothing.
+
+The drive for the recently changed worked example is now committed alongside the
+site, with a short guide covering how to run one and what belongs in a new one.
+The site changes in one small, deliberate way to support it — a browser
+document in which the published configuration has been consulted now states,
+in a machine-readable marker, whether it was accepted, described below — and
+in no other; what the pages display is untouched. The marker belongs to the
+browser document, not to a route: once written it survives in-app navigation,
+which is correct, because it records what this document's one shared
+configuration read concluded. Its absence means that read never ran in this
+document at all.
+
+### Why an automated pre-merge check is not enough here
+
+The figures in that passage are only correct once the deployed page has fetched
+the published configuration from a deployed service. Everything that runs before
+a merge — the build, the guards, an inspection of what actually shipped — can
+pass while the rendered page shows something different, because none of them
+involve the live fetch. That is the gap the live check exists to close, and
+closing it needs a real browser pointed at the real site.
+
+The pre-merge guards stay exactly as they are. They cover the half that can be
+checked early, and they remain the first thing to fail when something is wrong.
+
+### A check that survives a rate change
+
+The drive asks the search for whatever figure the page actually printed, rather
+than a figure written into the check itself. The property being tested is that
+the page and the search agree — pinning the expected number would quietly turn
+that into a test of one moment's configuration, and it would start failing for
+the wrong reason after any legitimate rate change.
+
+Where an exact value genuinely is the point, the check is skipped rather than
+failed when the live rates differ from the ones shipped with the site, and the
+live rates are printed so a skip can be read rather than guessed at. Skipped
+checks are counted in the closing tally too, so a partly-run check cannot
+report itself as a complete pass.
+
+### Why a fallback reading must not count as success
+
+Each figure on these pages has a value bundled with the site, kept deliberately
+in step with the protocol's own settings, for the moments when the published
+configuration cannot be reached. That makes a page served entirely from
+fallbacks look right — every number on it is correct — and distinguishable only
+by the marker each figure carries saying where it came from.
+
+That is exactly what a failed fetch produces. A check that accepts it would
+report success without ever having seen the published configuration it exists to
+confirm, so on the live site the drive now insists the figures be published ones,
+and only relaxes that when deliberately pointed somewhere without a
+configuration service behind it.
+
+Establishing this for every page the drive visits needed one small change to
+the site itself: each page that consults the published configuration now
+states, in a machine-readable marker, whether it accepted it or fell back to
+its bundled values — the same conclusion the page already reaches internally,
+exposed rather than guessed at. The marker is scoped to the browser document
+— it survives in-app navigation, since it records the document's one shared
+configuration read — and its absence means that read never ran in this
+document, which the check treats as "nothing ran" rather than as success. Review showed why nothing less suffices: two successive attempts to
+infer it from the outside each re-implemented part of the page's own acceptance
+rules and each got a case wrong. The page knows; the check now asks it.
+
+### One thing it cannot currently do
+
+The drive cannot be run from the automated agent environment at all: the browser
+there is unable to reach the internet through that environment's network policy,
+although ordinary command-line requests to the same address succeed. The
+underlying problem is recorded separately.
+
+This matters more than a tooling inconvenience. It means a change to a published
+surface can be reviewed, merged, deployed and confirmed present in what shipped,
+and still not have been looked at in the way the process asks for. The honest
+report in that situation is that the live check did not happen — not a
+substitute check described as though it had.
+
+## Forgetting a new component in the redeployment script is now caught before it ships
+
+Adding a new on-chain component to the platform means registering it in seven
+separate places. Until now the contributor guide named two of them. The other
+five are exactly where the most recent component addition went missing, and two
+of those five give no warning at all when you skip them — which is why that
+omission survived a full pre-deploy gate, a static guardrail suite and a
+compliance scan, all reporting green, and was caught only in review.
+
+The worse of the two silent ones is now loud. The script that refreshes every
+component in place already checked its own component count, and the check was
+worthless: it compared the count against a number written in the same file. Skip
+the component in both spots — which is what forgetting looks like, since you
+never touch either line — and the check passes. The script then refreshes
+everything except the new component, leaving that one running the code from
+before the change while everything around it moves on. That is the same
+half-applied hazard the script's own header warns about elsewhere.
+
+A new guardrail now compares that number against the list the rest of the
+deploy-safety suite already treats as authoritative, so the mismatch fails during
+an ordinary test run. The comparison lives in the test layer rather than inside
+the script, and that placement is deliberate: a script that runs against real
+deployments should not import test code in order to check itself, whereas a test
+may freely read the script. The number it reads was made visible for exactly that
+purpose.
+
+The contributor guide now lists all seven places, says what each one drives, and
+flags the two that fail silently rather than leaving a reader to discover it the
+hard way. A stale note in the script itself — claiming a count that had been
+wrong for ten components — is corrected too.
+
+One gap is left open on purpose and recorded rather than quietly skipped: the
+second silent failure, where a new component can be left out of the record of
+deployed addresses. The pre-deploy gate checks that every address it *did* record
+is of a known kind, which tells it nothing about an address never recorded at
+all. That check cannot be expressed in the contract language and belongs in the
+deploy gate script instead, so it is tracked as its own follow-up rather than
+bolted on here.
