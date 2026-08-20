@@ -1,4 +1,4 @@
-## A sold position now always carries its reward migration, and the sale's internal bookkeeping loan stops showing up in your history (PR #TBD)
+## A sold position now always carries its reward migration, and the sale's internal bookkeeping loan stops showing up in your history (PR #1825)
 
 Two independent defects on the lender position-sale routes, both about a sale
 leaving traces it shouldn't — or failing to leave one it promised.
