@@ -28,14 +28,16 @@ what their options are and what each costs, and jumps to the tool that
 performs the action. It does not submit anything.
 
 To say "this option is not available, and here is why", it has to
-reproduce judgements the **contracts** own. **Fifteen** review rounds on
+reproduce judgements the **contracts** own. **Seventeen** review rounds on
 #1839 have found, one at a time, that it was reproducing them wrongly or not
 at all. Every fix was correct in isolation. The count has never converged:
-12 → 5 → 1 → 5 → 3 → 2 → 2 → 7 → 3 → 4 → 3 → 3 → 2 → 2.
+12 → 5 → 1 → 5 → 3 → 2 → 2 → 7 → 3 → 4 → 3 → 3 → 2 → 2 → 1 → 2.
 
-Rounds 13 and 14 were caused by the fixes for rounds 12 and 13 — not by
-carelessness in them, but because each fix moved the boundary rather than
-removing it.
+**Four of those rounds were caused by the fixes for the rounds before them**
+(12→13, 13→14, 14→16, and the r17 cadence gap), and the shape was identical
+every time: a distinction drawn in one consumer of a question and not in its
+sibling. Not carelessness — each fix moved the boundary instead of removing
+it, and the new boundary is where the next round landed.
 
 The reason it did not come down is structural, not a matter of care.
 Each round made an unanswerable case *representable* — a new union, a
@@ -109,13 +111,14 @@ problem, for one of the same ten items.
 
 ## 4. The proposal
 
-> **Revised twice after review (#1847, four rounds, fourteen findings).** The
-> first draft contained a factual error about the pause rules and
-> under-specified most of the ABI. The revision that fixed those introduced
-> two defects of its own, corrected in turn. The recommendation in §8 is
-> weakened as a result. Neither superseded version is preserved inline — a
-> design doc carrying its own retracted claims invites someone to read the
-> wrong half; both are in this file's history.
+> **This section has been rewritten repeatedly under review.** The first draft
+> contained a factual error about the pause rules and under-specified most of
+> the ABI; the revisions that fixed those introduced further defects of their
+> own, corrected in turn. The recommendation in §8 is weakened as a result.
+> Superseded versions are not preserved inline — a design doc carrying its own
+> retracted claims invites someone to read the wrong half — and live in this
+> file's history. **The running tally is kept in ONE place, §9**, because
+> repeating it here went stale three revisions running.
 
 A **sibling** view on `RiskPreviewFacet`:
 
