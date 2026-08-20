@@ -76,10 +76,13 @@ its fallback path also blocks both sales, since a sale can only start on a loan
 running normally; the card stays, because waiting still applies. Two more
 reasons are operational rather than
 positional: while the details a sale needs before it can start are still being
-read — the fee terms that must be disclosed, and the loan's token information —
-both sale rows say so, because the tools themselves do not appear until those
-land. If one of those reads *fails* rather than lagging, the row names **which**
-one, so it never blames a read that worked. And if the operator has
+read, both sale rows say so, because the tools themselves do not appear until
+those reads land — and if one of them fails outright, the row says that instead,
+so the wait does not run forever. It deliberately does **not** say which detail
+was missing. Naming it went wrong three times in review, each time blaming a
+read that had actually worked, and a lender can do exactly one thing about any
+of them — reload — so the name was detail they could not use attached to a claim
+that could be wrong. And if the operator has
 paused new listings on a deployment while looking into an issue, the listing
 row says that too, and says your position is unaffected. And if the loan's due
 date cannot be confirmed at all, both rows say **that**, rather than quietly

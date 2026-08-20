@@ -2667,7 +2667,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           excluded entirely — lender early withdrawal does not cover
           rentals in Phase 1. */}
       {role === 'lender' &&
-      row.status === 'active' &&
+      // Codex r10 P2 — `fallback_pending` belongs here, not only
+      // `active`. r9 added copy telling a lender that a loan settling
+      // through its fallback path blocks both sales and that waiting
+      // still applies; a strict `active` gate made that copy reachable
+      // ONLY while the indexer was still behind, and unmounted the
+      // whole card the moment the indexer caught up — losing the
+      // explanation precisely when it became true. The live-status
+      // exclusion below already admits `FallbackPending`; this is the
+      // indexed half agreeing with it. Same pairing as
+      // `claimables.ts`'s open-loan test and the withdraw block above.
+      (row.status === 'active' || row.status === 'fallback_pending') &&
       // Codex r4 P2 — the INDEXED row saying `active` is not enough.
       // Reconciliation (`effectivelyActive`) consults only
       // `liveStatus.data`, so when that read fails or holds an older
@@ -2805,7 +2815,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           saleTools={
             feeEnt.data === undefined
               ? feeEnt.isError
-                ? 'failed-terms'
+                ? 'failed'
                 : 'checking'
               : !principal
                 ? // Codex r8 P2 — `principalMeta` exhausting its retry
@@ -2818,13 +2828,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   // the false cause was not — it still blamed a read
                   // that had SUCCEEDED.
                   principalMeta.isError
-                  ? 'failed-meta'
+                  ? 'failed'
                   : 'checking'
                 : !sanctions.ready
                   ? 'checking'
-                : isAdvanced && !loanLive.data
+                : // Codex r10 P2 — a THIRD prerequisite, landing in the
+                  // fee-terms sentence exactly as the token read had in
+                  // r8. That is what settled the question: the failure
+                  // states collapsed rather than growing a third name
+                  // to keep straight. See `SaleToolsState`.
+                  isAdvanced && !loanLive.data
                   ? loanLive.isError
-                    ? 'failed-terms'
+                    ? 'failed'
                     : 'checking'
                   : 'ready'
           }
@@ -2887,10 +2902,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               : sale.state === undefined
                 ? 'checking'
                 : sale.state.listed === true
-                  ? // A cached LISTED stays authoritative: the lock
-                    // clears only by cancel or teardown, both actions
-                    // this device would see.
-                    'listed'
+                  ? // Codex r10 P2 — this used to say a cached LISTED
+                    // stays authoritative because "the lock clears only
+                    // by cancel or teardown, both actions this device
+                    // would see". The premise is false, and in two
+                    // ways: a cancel can be made from ANOTHER device,
+                    // and the expired-listing teardown is
+                    // PERMISSIONLESS, so anyone at all can clear it.
+                    // Neither reaches this browser, so a failed poll
+                    // can leave `listed: true` cached over a position
+                    // that is already free — blocking both exits,
+                    // keeping the pending card, and naming sale losses
+                    // as still pending.
+                    //
+                    // Symmetric with the cached-CLEAR case below, and
+                    // for the identical reason: through a failed poll
+                    // neither answer is evidence. Back to 'checking' —
+                    // the read CAN answer, so it is a wait, not a dead
+                    // end.
+                    sale.isError
+                    ? 'checking'
+                    : 'listed'
                   : // A cached CLEAR does not (Codex r9 P2). Another
                     // device can list inside a failed-poll window, and
                     // offering both exits on a now-locked position

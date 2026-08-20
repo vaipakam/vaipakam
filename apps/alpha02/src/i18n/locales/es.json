@@ -2240,9 +2240,8 @@
         "saleFallbackPending": "No disponible mientras este préstamo se liquida por su vía alternativa: una venta solo puede iniciarse sobre un préstamo que funcione con normalidad. Esperar sigue siendo válido, y la liquidación del préstamo continúa.",
         "saleLockChecking": "Comprobando si esta posición ya está publicada…",
         "maturityUnknown": "No disponible ahora mismo: no hemos podido confirmar la fecha de vencimiento de este préstamo, y una vez pasada no se puede iniciar una venta. Esto suele resolverse solo en un momento.",
-        "saleToolsChecking": "Aún no disponible: seguimos leyendo las condiciones de comisión que deben comunicarse antes de poder iniciar una venta.",
-        "saleToolsFailed": "No disponible ahora mismo: no se han podido leer las condiciones de comisión que deben comunicarse antes de una venta. Recarga la página para intentarlo de nuevo.",
-        "saleToolsFailedMeta": "No disponible ahora mismo: no hemos podido cargar los datos del token de este préstamo, que una venta necesita para mostrarte los importes. Recarga la página para intentarlo de nuevo.",
+        "saleToolsChecking": "Todavía no disponible: seguimos leyendo los datos que una venta necesita antes de poder iniciarse.",
+        "saleToolsFailed": "No disponible ahora mismo: no se ha podido cargar uno de los datos que una venta necesita. Recarga la página para intentarlo de nuevo.",
         "listUnavailableFlowDisabled": "No disponible ahora mismo: las nuevas publicaciones están en pausa en este despliegue mientras se investiga una incidencia. Tu posición no se ve afectada y las demás opciones siguen vigentes."
       },
       "pastDue": "Este préstamo ha superado su fecha de vencimiento: el prestatario lo paga o lo resuelve el proceso de impago. Ya no se pueden iniciar ventas nuevas.",

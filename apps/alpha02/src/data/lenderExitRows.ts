@@ -76,8 +76,25 @@ export type SaleLockState = 'checking' | 'listed' | 'clear' | 'unknown';
 export type SaleToolsState =
   | 'ready'
   | 'checking'
-  | 'failed-terms'
-  | 'failed-meta';
+  /** A prerequisite read FAILED — deliberately not saying which.
+   *
+   *  This was two states (`failed-terms` / `failed-meta`) and became
+   *  one, which is the opposite direction to every other fix on this
+   *  card and needs its reason recorded. Naming the failed read
+   *  misfired TWICE: r8 routed a token-metadata failure into the fee
+   *  sentence, r9 fixed that by splitting, and r10 found a third
+   *  prerequisite (`loanLive`) landing in the fee sentence again. The
+   *  bug was never which name — it was that a NAME EXISTS to get
+   *  wrong, and each new prerequisite is another chance to get it
+   *  wrong silently.
+   *
+   *  Nothing is lost by dropping it. All three failures are transient
+   *  read failures with ONE remedy, and the lender cannot act
+   *  differently on any of them; the specific read is a diagnostic
+   *  fact, and this is an awareness card, not a diagnostic. Attributing
+   *  a cause bought precision the reader could not use, at the price of
+   *  a misstatement they could be misled by. */
+  | 'failed';
 
 /** Whether the loan has passed its due date.
  *
@@ -261,10 +278,8 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
             // order: the stand-in card replaces the tools only on the
             // branch a live listing has already taken over.
             input.saleTools !== 'ready'
-            ? input.saleTools === 'failed-terms'
-              ? o.saleToolsFailed
-              : input.saleTools === 'failed-meta'
-                ? o.saleToolsFailedMeta
+            ? input.saleTools === 'failed'
+                ? o.saleToolsFailed
                 : o.saleToolsChecking
           : input.instantSellCandidates === 'checking'
           ? copy.lenderExit.checking
@@ -310,10 +325,8 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
                 input.listingFlowDisabled
               ? o.listUnavailableFlowDisabled
               : input.saleTools !== 'ready'
-                ? input.saleTools === 'failed-terms'
-                  ? o.saleToolsFailed
-                  : input.saleTools === 'failed-meta'
-                    ? o.saleToolsFailedMeta
+                ? input.saleTools === 'failed'
+                    ? o.saleToolsFailed
                     : o.saleToolsChecking
               : input.heldVpfiUnresolved
                 ? o.listUnavailableHeldVpfi

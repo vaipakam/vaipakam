@@ -2039,16 +2039,19 @@ const copySource = {
       // contracts refuse an exit past maturity.
       maturityUnknown:
         'Not available right now — we couldn’t confirm this loan’s due date, and a sale can’t be started once it has passed. This usually clears on its own in a moment.',
+      // Codex r8/r9/r10 P2 — these two sentences used to NAME the read
+      // involved, and the name was wrong twice: r8 sent a token-metadata
+      // failure into a fee-terms sentence, r9 split them apart, r10
+      // found a THIRD prerequisite arriving in the fee sentence again.
+      // Naming a cause the reader cannot act on, and getting it wrong,
+      // is worse than naming none — so both now say what is true of
+      // every prerequisite, and the remedy, which is identical in each
+      // case. See `SaleToolsState` for why the states collapsed rather
+      // than growing a third name to keep straight.
       saleToolsChecking:
-        'Not available yet — we’re still reading the fee terms that have to be disclosed before a sale can be started.',
+        'Not available yet — we’re still reading the details a sale needs before it can be started.',
       saleToolsFailed:
-        'Not available right now — the fee terms that have to be disclosed before a sale could not be read. Reload the page to try again.',
-      // Codex r8/r9 P2 — my r8 fix routed a TOKEN-METADATA failure into
-      // the line above, whose only claim is about the fee read. That
-      // removed the permanent wait and kept a false cause: it blamed a
-      // read that had succeeded. Distinct state, distinct sentence.
-      saleToolsFailedMeta:
-        'Not available right now — we couldn’t load this loan’s token details, which a sale needs in order to show you amounts. Reload the page to try again.',
+        'Not available right now — one of the details a sale needs couldn’t be loaded. Reload the page to try again.',
       // Codex r3 P2 — the operator kill switch (`VITE_DISABLED_FLOWS`)
       // disables the listing action and shows an incident banner
       // inside the tool. Scoped to LISTING: the direct sale carries no

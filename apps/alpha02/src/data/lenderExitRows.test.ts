@@ -45,7 +45,7 @@ describe('wait row — ordering and framing', () => {
       maturity: 'past',
       listingSupportedOnChain: false,
       listingFlowDisabled: true,
-      saleTools: 'failed-terms',
+      saleTools: 'failed',
       collateralIsNft: true,
       allowsPartialRepay: true,
       saleCancel: 'no-elsewhere',
@@ -422,7 +422,7 @@ describe('the tools behind the rows (Codex r3 P2)', () => {
 
   it('says so when that read failed, rather than showing a spinner', () => {
     for (const key of ['sell-now', 'list'] as const) {
-      expect(rowFor({ saleTools: 'failed-terms' }, key).unavailable).toBe(
+      expect(rowFor({ saleTools: 'failed' }, key).unavailable).toBe(
         o.saleToolsFailed,
       );
     }
@@ -462,7 +462,7 @@ describe('the tools behind the rows (Codex r3 P2)', () => {
     for (const key of ['sell-now', 'list'] as const) {
       expect(
         rowFor(
-          { maturity: 'past', listingFlowDisabled: true, saleTools: 'failed-terms' },
+          { maturity: 'past', listingFlowDisabled: true, saleTools: 'failed' },
           key,
         ).unavailable,
       ).toBe(copy.lenderExit.pastDue);
@@ -472,25 +472,25 @@ describe('the tools behind the rows (Codex r3 P2)', () => {
   it('ranks the kill switch above the disclosure read, and both above position refusals', () => {
     expect(
       rowFor(
-        { listingFlowDisabled: true, saleTools: 'failed-terms', heldVpfiUnresolved: true },
+        { listingFlowDisabled: true, saleTools: 'failed', heldVpfiUnresolved: true },
         'list',
       ).unavailable,
     ).toBe(o.listUnavailableFlowDisabled);
     expect(
-      rowFor({ saleTools: 'failed-terms', heldVpfiUnresolved: true }, 'list').unavailable,
+      rowFor({ saleTools: 'failed', heldVpfiUnresolved: true }, 'list').unavailable,
     ).toBe(o.saleToolsFailed);
   });
 
   it('still ranks the network and collateral facts above both', () => {
     expect(
       rowFor(
-        { listingSupportedOnChain: false, listingFlowDisabled: true, saleTools: 'failed-terms' },
+        { listingSupportedOnChain: false, listingFlowDisabled: true, saleTools: 'failed' },
         'list',
       ).unavailable,
     ).toBe(o.listUnavailableNetwork);
     expect(
       rowFor(
-        { collateralIsNft: true, listingFlowDisabled: true, saleTools: 'failed-terms' },
+        { collateralIsNft: true, listingFlowDisabled: true, saleTools: 'failed' },
         'list',
       ).unavailable,
     ).toBe(o.listUnavailableNft);
@@ -645,34 +645,47 @@ describe('a fallback-pending loan admits no sale (Codex r8 P2)', () => {
   });
 });
 
-describe('a failed prerequisite names the right read (Codex r9 P2)', () => {
-  // My r8 fix removed the permanent wait but kept a false cause: a
-  // token-metadata failure was reported with the fee read's sentence,
-  // blaming a read that had succeeded.
-  it('blames the fee read only when the fee read failed', () => {
+describe('a failed prerequisite names no read at all (Codex r10 P2)', () => {
+  // Three rounds argued about WHICH read to blame: r8 sent a
+  // token-metadata failure into the fee sentence, r9 split them, r10
+  // found a third prerequisite arriving in the fee sentence again. The
+  // states collapsed instead — a name that does not exist cannot be
+  // wrong, and the reader could not act on it anyway.
+  it('reports one sentence for a failed prerequisite, whichever it was', () => {
     for (const key of ['sell-now', 'list'] as const) {
-      expect(rowFor({ saleTools: 'failed-terms' }, key).unavailable).toBe(
+      expect(rowFor({ saleTools: 'failed' }, key).unavailable).toBe(
         o.saleToolsFailed,
       );
     }
   });
 
-  it('names the token details when it is the metadata read that failed', () => {
-    for (const key of ['sell-now', 'list'] as const) {
-      const line = rowFor({ saleTools: 'failed-meta' }, key).unavailable;
-      expect(line).toBe(o.saleToolsFailedMeta);
-      expect(line).not.toBe(o.saleToolsFailed);
+  it('does not blame a specific read in that sentence', () => {
+    // The guard that keeps the collapse honest: if someone reintroduces
+    // an attribution, it has to survive being pointed at three
+    // different prerequisites, which is what kept failing.
+    for (const term of ['fee', 'token', 'loan details']) {
+      expect(o.saleToolsFailed.toLowerCase()).not.toContain(term);
     }
   });
 
-  it('keeps both failures ranked exactly where the single one was', () => {
-    for (const t of ['failed-terms', 'failed-meta'] as const) {
-      expect(rowFor({ saleTools: t, maturity: 'past' }, 'list').unavailable).toBe(
-        copy.lenderExit.pastDue,
+  it('separates a failed read from a slow one', () => {
+    for (const key of ['sell-now', 'list'] as const) {
+      expect(rowFor({ saleTools: 'checking' }, key).unavailable).toBe(
+        o.saleToolsChecking,
       );
-      expect(
-        rowFor({ saleTools: t, heldVpfiUnresolved: true }, 'list').unavailable,
-      ).not.toBe(o.listUnavailableHeldVpfi);
+      expect(rowFor({ saleTools: 'checking' }, key).unavailable).not.toBe(
+        o.saleToolsFailed,
+      );
     }
+  });
+
+  it('keeps the failure ranked exactly where it was', () => {
+    expect(
+      rowFor({ saleTools: 'failed', maturity: 'past' }, 'list').unavailable,
+    ).toBe(copy.lenderExit.pastDue);
+    expect(
+      rowFor({ saleTools: 'failed', heldVpfiUnresolved: true }, 'list')
+        .unavailable,
+    ).not.toBe(o.listUnavailableHeldVpfi);
   });
 });
