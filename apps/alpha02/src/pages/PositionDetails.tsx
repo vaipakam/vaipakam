@@ -973,15 +973,45 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // number; `LoanStatus` is a numeric enum and every other comparison
   // in this file already relies on that. Cast once here, at the single
   // point the value is resolved, rather than at each reader.
-  const resolvedLoanStatus = (
+  // Every healthy live answer, in rank order. Rank decides only when
+  // they disagree about a NON-terminal status — see below.
+  const liveStatusCandidates: (LoanStatus | undefined)[] = [
     loanLive.data && !loanLive.isError
-      ? loanLive.data.live.status
-      : liveStatus.data && !liveStatus.isError
-        ? liveStatus.data.status
-        : bannerTerms.data && !bannerTerms.isError
-          ? bannerTerms.data.live.status
-          : undefined
-  ) as LoanStatus | undefined;
+      ? (loanLive.data.live.status as LoanStatus)
+      : undefined,
+    liveStatus.data && !liveStatus.isError
+      ? (liveStatus.data.status as LoanStatus)
+      : undefined,
+    bannerTerms.data && !bannerTerms.isError
+      ? (bannerTerms.data.live.status as LoanStatus)
+      : undefined,
+  ];
+
+  /** The live status, with TERMINAL answers outranking rank itself.
+   *
+   *  Rank alone was wrong (Codex r13 P2). These queries poll at
+   *  different intervals — `liveStatus` every 30s, `loanLive` every
+   *  60s — so after a repayment or default the lower-ranked read can
+   *  hold the newer answer while the higher-ranked one still serves a
+   *  healthy, cached `Active`. Fixed precedence then ignored the
+   *  fresher truth for up to a poll, keeping the rows and both sale
+   *  tools open on a loan that had already settled.
+   *
+   *  The fix is not a freshness comparison, which would need
+   *  per-query timestamps this page does not track. It is that
+   *  terminal statuses are ABSORBING: a loan never returns to Active
+   *  from Repaid, Settled, Defaulted or InternalMatched. So a healthy
+   *  source reporting one cannot be wrong-because-stale — it can only
+   *  be ahead. Any healthy terminal answer therefore wins outright,
+   *  and rank decides only among the non-terminal ones, where the
+   *  same reasoning does not hold (a FallbackPending CAN cure back). */
+  const resolvedLoanStatus: LoanStatus | undefined =
+    liveStatusCandidates.find(
+      (st) =>
+        st !== undefined &&
+        st !== LoanStatus.Active &&
+        st !== LoanStatus.FallbackPending,
+    ) ?? liveStatusCandidates.find((st) => st !== undefined);
 
   /** Whether the loan is open enough for a SALE to be attempted.
    *
