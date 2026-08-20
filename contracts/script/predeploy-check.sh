@@ -158,6 +158,27 @@ else
   echo "  · node not installed — skipping (CI's contracts-fast job enforces it)"
 fi
 
+# ── 2c. Retired availability-formula guardrail (#1577) ────────────────
+# The per-chain commitment bound is subtraction-first. Two retired shapes keep
+# reappearing in comments — the pre-B3 bare form and the overflow-prone
+# addition form — and prose failed to hold the line three times inside a single
+# PR. This makes the claim executable instead of asserted; see the script header
+# for the history that motivated it.
+echo
+echo "[predeploy 2c/4] retired availability-formula guardrail (#1577)"
+if command -v python3 >/dev/null 2>&1; then
+  if python3 "$SCRIPT_DIR/check-commitment-formula.py"; then
+    : # the script prints its own OK line
+  else
+    echo "  ✗ a comment states a retired availability form — see above." >&2
+    echo "    Correct shapes: sat(consumed - released) <= reported, and" >&2
+    echo "    reported - sat(consumed - released) - netRepatriationDraw." >&2
+    FAIL=1
+  fi
+else
+  echo "  · python3 not installed — skipping"
+fi
+
 # ── 3. Deploy shell-script lint ───────────────────────────────────────
 echo
 echo "[predeploy 3/4] deploy shell-script lint"

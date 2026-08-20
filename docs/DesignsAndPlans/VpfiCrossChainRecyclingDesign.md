@@ -444,22 +444,35 @@ without a completeness claim, for the reason the paragraph above gives:
   (`released == 0`) is asserted rather than left implicit. They pass
   identically, which is the point: the bare form was true by fixture, not by
   invariant.
-- NatSpec and comments in `contracts/src/`. The **addition** form appeared in
-  exactly one of them — `getChainRecycledLedger`'s `@return availRecycled` doc,
-  which is the site an integrator reads. The rest carried the **bare** form:
-  the duplicate-chain-id comments in `RewardAggregatorFacet` and
-  `IVaipakamErrors`, `LibMeshFunding`'s availability cap, and every surviving
-  description of `_mirrorAvailable` as `reported − consumed` — a formula that
-  predates B3's release term and has been wrong since, in
-  `RewardAggregatorFacet`, `LibVpfiRecycle` and `LibVaipakam`.
+- NatSpec and comments across `contracts/src/` **and `contracts/test/`**,
+  carrying both retired shapes: the bare `reported − consumed` and the
+  overflow-prone `reported + released − consumed`.
 
-**The rule above earned itself again inside this very change.** A first pass
-corrected four `contracts/src/` restatements and stated that the code side was
-swept; an adversarial review then found four more — all of them describing
-`_mirrorAvailable` by its pre-B3 formula, and one of them in the same comment
-block a fix had already edited. That is the r10 failure repeating with different
-numbers, five lines below the paragraph warning about it, which is why neither a
-count nor a completeness claim is stated here.
+**The rule above earned itself three times inside this one change, so the claim
+was replaced by a check.** A first pass corrected four `contracts/src/`
+restatements and stated the code side was swept. An adversarial review found
+four more, all describing `_mirrorAvailable` by its pre-B3 formula, one of them
+in a comment block a fix had already edited. Review then found four more still —
+two of them the addition form, and some in `contracts/test/`, which the
+verifying grep had never searched. Each pass wrote a narrower claim than the
+previous one and each was falsified within a round.
+
+The lesson is not that the sweeps were careless; it is that **this proposition
+cannot be held true by prose.** So it is now executable:
+**`contracts/script/check-commitment-formula.py`** scans every comment block in
+`contracts/src` and `contracts/test`, joins multi-line comment runs (a formula
+split across two lines is one statement, and that is how the addition form
+survived a sweep), and fails on any retired shape. A block may name a retired
+form deliberately — to reject it, or to describe a past revision — by carrying
+`formula-check:allow <reason>`, with the reason on the marker's own line.
+
+It runs as step **2c** of `predeploy-check.sh`, and it was verified to fail on
+each of the three mutations it exists to catch: a reintroduced bare form, a
+reintroduced addition form, and an exemption marker with no reason. The third of
+those initially PASSED — the reason was being read from the joined block, so any
+marker followed by more comment text looked justified — which was found by
+mutating the guard rather than by reading it, and fixed. **No count and no
+completeness claim appears in this document, because the check is the claim.**
 
 **The bare form `consumedCumulative ≤ reportedCumulative` is FALSE and must not
 appear as a current claim anywhere.** That is the one thing worth stating here,

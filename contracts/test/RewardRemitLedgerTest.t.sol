@@ -1710,7 +1710,9 @@ contract RewardRemitLedgerTest is SetupTest {
     }
 
     /// @dev THE load-bearing invariant (design record §2f.2). Base derives a
-    ///      mirror's committable local funding as `reported − consumed`. If
+    ///      mirror's committable local funding from `reported`, net of the
+    ///      claim and repatriation draws ({LibVpfiRecycle.mirrorAvailRecycled}
+    ///      owns the operand order). If
     ///      relocated custody reached `reported`, Base would re-offer its own
     ///      already-spent top-up as that mirror's OWN funding and commit it
     ///      twice. The exclusion must survive the tokens being CONSUMED,

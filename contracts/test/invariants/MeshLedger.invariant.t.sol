@@ -73,6 +73,8 @@ import {HelperTest} from "../HelperTest.sol";
  *              overflows on a hostile report and reverts instead of
  *              comparing. The two forms are equal over the reals and
  *              different over `uint256`, and only `uint256` runs.
+ *              formula-check:allow names both retired forms to distinguish
+ *              them from the bound this suite actually asserts.
  *           2. B3 identity — `outstanding == instructed − retired` per chain,
  *              exact at every instant including with broadcasts in flight.
  *           3. Ceiling — `availRecycled ≤ reported` per chain. The property
@@ -311,6 +313,8 @@ contract MeshLedgerInvariant is Test {
     /// old name stated is the one the body below deliberately does NOT use,
     /// because it overflows on a near-max report. A name that states the
     /// wrong form is read far more often than the comment correcting it.
+    /// formula-check:allow quotes the superseded bare form to explain what
+    /// the release term replaced.
     function invariant_ClaimNetWithinReported() public view {
         uint32[3] memory cs = _chains();
         for (uint256 i; i < cs.length; ++i) {

@@ -5843,7 +5843,11 @@ library LibVaipakam {
         // `chainReleasedRecycledCommit` — BASE-ONLY per-chain ratchet of the
         //   reported RELEASE cumulative; clamped to the ratcheted retired
         //   figure and to `chainConsumedRecycled[c]`. It re-credits
-        //   availability: `avail_c = reported_c + released_c − consumed_c`.
+        //   availability by reducing the NET claim draw that is subtracted
+        //   from `reported_c` — see {LibVpfiRecycle.mirrorAvailRecycled} for
+        //   the operand order; it is subtraction-first and is not restated
+        //   as a sum here, because the sum form overflows on a hostile
+        //   report.
         //   The clamp is the load-bearing safety bound — `released_c ≤
         //   consumed_c` forces `avail_c ≤ chainReportedRecycled[c]`, so the
         //   self-heal can never re-offer the Base-funded custody d5

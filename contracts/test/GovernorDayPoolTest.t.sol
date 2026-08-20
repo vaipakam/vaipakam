@@ -333,8 +333,9 @@ contract GovernorDayPoolTest is SetupTest {
     }
 
     /// Armed day, two-pass funding with mirror LOCAL funding ON (B2-d3).
-    /// A mirror funds its target from its OWN reported-minus-consumed
-    /// availability first; Base tops up only the shortfall from its
+    /// A mirror funds its target from its OWN reported availability, net of
+    /// what Base has already instructed it to spend and of any repatriation
+    /// draw, first; Base tops up only the shortfall from its
     /// remaining fundable. The locally-funded share books into the per-chain
     /// ledgers and rides the wire as `recycleConsume`; Base's top-up books
     /// into the GLOBAL reservation — never both (design record §2e.4).
@@ -373,6 +374,8 @@ contract GovernorDayPoolTest is SetupTest {
             _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 40 ether, "reported cumulative");
         assertApproxEqAbs(consumed, 40 ether, 1e15, "instruction booked");
+        // formula-check:allow quotes the bare form to contrast it with the
+        // real bound.
         // SS7 #6 is the SUBTRACTION form `sat(consumed - released) <=
         // reported`, not the bare `consumed <= reported` (#1577): a
         // commitment released un-spent is legitimately re-committable, so

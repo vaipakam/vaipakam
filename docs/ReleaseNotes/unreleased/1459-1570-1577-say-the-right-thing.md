@@ -53,13 +53,24 @@ report. The name now matches the body — a name is read far more often than the
 comment correcting it.
 
 The descriptions in the contracts were corrected too, and there were more of them
-than the record of outstanding work listed. That record is now kept without a
-count, because this change demonstrated the reason for the rule: a first pass
-corrected four of them and said so, and a review then found four more — all
-describing the availability calculation by a formula that predates the release
-term, one of them inside a comment block the first pass had already edited. A
-count in a status note is a claim like any other, and it goes stale in the
-direction that stops the next person looking.
+than the record of outstanding work listed — repeatedly. A first pass corrected
+several and said the code was done; a review found more; a further review found
+more still, in test files the checking search had never looked at. Each pass
+wrote a narrower claim than the last, and each was wrong within a round.
+
+So the claim was replaced with a check. A small script now reads every comment in
+the contracts and the tests and fails if any of them states one of the retired
+forms, with an explicit, reasoned exemption for the places that name a wrong form
+deliberately — to reject it, or to describe what an older version did. It runs as
+part of the pre-deployment gate, and it was tested by reintroducing each mistake
+it exists to catch, including one case where the check itself turned out to
+accept an unexplained exemption. That hole was found by attacking the check
+rather than by reading it, and closed.
+
+The reason for the change of instrument is worth stating plainly: this is not a
+fact that can be kept true by careful writing. Every attempt to assert it went
+stale almost immediately, because the assertion and the thing asserted live in
+different places and only one of them is re-read.
 
 ## The treasury recycling rule is no longer filed inside one of its own footnotes (#1570)
 

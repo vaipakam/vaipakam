@@ -743,7 +743,9 @@ contract RewardAggregatorFacet is
     ///                              one is decremented by a cancellation ACK,
     ///                              never derived from two gross cumulatives
     ///                              (§7 #6's operand note). Every subtraction
-    ///                              SATURATES. Never computed as
+    ///                              SATURATES.
+    /// formula-check:allow the addition form is named here only to forbid it.
+    ///                              Never computed as
     ///                              `reported + released − consumed` (#1577):
     ///                              a reported cumulative is unbounded, so
     ///                              that addition overflows on a hostile
