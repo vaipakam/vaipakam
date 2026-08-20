@@ -48,6 +48,30 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
     ///      people to raise the threshold rather than read it.
     uint256 internal constant HEADROOM_WARN_BYTES = 1_024;
 
+    /// @dev #1842 — headroom below which a facet is reported as CRITICAL
+    ///      rather than merely near the limit.
+    ///
+    ///      The warn band above turned the pass/fail wall into a gradient,
+    ///      which was the right move and is not what this adds. What it does
+    ///      not do is RANK: measuring at `0501225c9` put SEVEN facets inside
+    ///      1 KB, and in a flat list the one with 32 bytes left reads exactly
+    ///      like the one with 1,008 — a report that lists without ordering,
+    ///      when the whole point is to be read at a glance by someone who has
+    ///      not been thinking about facet sizes.
+    ///
+    ///      256 bytes is chosen against what the band is FOR: a facet is out
+    ///      of room when the next ordinary change will not fit, and a guard
+    ///      plus its custom error is on the order of a couple of hundred
+    ///      bytes. `EarlyWithdrawalFacet` had 30 bytes when #1780 had to split
+    ///      it; #1835's deferred guard is 164 bytes against exactly 164 bytes
+    ///      free on `OfferAcceptFacet`. Both sit well inside this tier, and
+    ///      both were already blocking work by the time anyone measured.
+    ///
+    ///      Still a REPORT, for the reason the warn band is: a facet may
+    ///      legitimately run close for a while, and failing here would train
+    ///      people to raise the threshold rather than read it.
+    uint256 internal constant HEADROOM_CRITICAL_BYTES = 256;
+
     /// @notice Every facet's runtime bytecode must be within EIP-170.
     function test_EveryFacetUnderEip170SizeLimit() public view {
         string[74] memory facets = cutFacetNames();
@@ -69,36 +93,66 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
     ///         where enforcement belongs.
     function test_ReportFacetsNearSizeLimit() public view {
         string[74] memory facets = cutFacetNames();
-        uint256 tight;
-        for (uint256 i; i < facets.length; ++i) {
-            if (_reportIfNearLimit(facets[i])) ++tight;
-        }
-        if (_reportIfNearLimit("DiamondCutFacet")) ++tight;
-        if (tight == 0) {
-            console.log(
-                "facet headroom: all facets have >= 1024 bytes free"
-            );
+
+        // TWO passes, critical band first (#1842). The report is read top
+        // down by someone who did not come looking for it, so the facets
+        // that are actually out of room have to be the first lines — a
+        // single pass in `cutFacetNames()` order buries a 32-byte facet
+        // under whatever happens to precede it alphabetically.
+        uint256 critical = _reportBand(facets, 0, HEADROOM_CRITICAL_BYTES, "CRITICAL");
+        uint256 near = _reportBand(
+            facets, HEADROOM_CRITICAL_BYTES, HEADROOM_WARN_BYTES, "near limit"
+        );
+
+        if (critical + near == 0) {
+            console.log("facet headroom: all facets have >= 1024 bytes free");
         } else {
-            console.log("facet headroom: %s facet(s) within 1024 bytes of EIP-170", tight);
+            console.log(
+                "facet headroom: %s CRITICAL (< 256 bytes), %s more within 1024",
+                critical,
+                near
+            );
         }
     }
 
-    /// @dev Log `facet` when its remaining headroom is under the threshold.
+    /// @dev Report every facet whose headroom is in `[lo, hi)`, tagged with
+    ///      `label`. Returns the count so the caller can summarise.
+    ///      `DiamondCutFacet` is checked alongside the cut list for the same
+    ///      reason the limit test checks it: the Diamond's constructor
+    ///      installs it, so it never appears in `cutFacetNames()`.
+    function _reportBand(
+        string[74] memory facets,
+        uint256 lo,
+        uint256 hi,
+        string memory label
+    ) private view returns (uint256 found) {
+        for (uint256 i; i < facets.length; ++i) {
+            if (_reportIfInBand(facets[i], lo, hi, label)) ++found;
+        }
+        if (_reportIfInBand("DiamondCutFacet", lo, hi, label)) ++found;
+    }
+
+    /// @dev Log `facet` when its remaining headroom falls in `[lo, hi)`.
     ///      Returns whether it was reported, so the caller can summarise.
-    function _reportIfNearLimit(string memory facet)
-        private
-        view
-        returns (bool)
-    {
+    ///      Half-open on purpose: the bands must partition, or a facet
+    ///      exactly at the critical threshold would be counted in both and
+    ///      the summary would not add up to the number of lines above it.
+    function _reportIfInBand(
+        string memory facet,
+        uint256 lo,
+        uint256 hi,
+        string memory label
+    ) private view returns (bool) {
         bytes memory code = vm.getDeployedCode(
             string.concat(facet, ".sol:", facet)
         );
+        // Over the limit is the size TEST's business, not the report's —
+        // it fails there with a message naming the breach, and reporting it
+        // here as well would double-count it as a headroom warning.
         if (code.length == 0 || code.length > EIP170_LIMIT) return false;
         uint256 headroom = EIP170_LIMIT - code.length;
-        if (headroom >= HEADROOM_WARN_BYTES) return false;
-        console.log(
-            "  NEAR LIMIT: %s at %s bytes", facet, code.length
-        );
+        if (headroom < lo || headroom >= hi) return false;
+        console.log("  %s: %s at %s bytes", label, facet, code.length);
         console.log("              %s bytes headroom", headroom);
         return true;
     }
