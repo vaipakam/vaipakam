@@ -27,6 +27,9 @@ repay in parts — each part reaches you when it is paid, so the row says money
 can arrive before maturity rather than claiming you are paid only at the close.
 While it is still reading the schedule it says so rather than guessing, because
 guessing would tell you something about your own money that is not yet known.
+And if that read *fails* rather than merely being slow, it says so instead of
+leaving a "still checking" line up indefinitely, and points you at the loan's
+own terms — an answer that is not coming should not be dressed as one that is.
 
 **Each sale row states its cost before you open anything**, and states all of
 it: selling early costs the larger of the interest built up so far or the
