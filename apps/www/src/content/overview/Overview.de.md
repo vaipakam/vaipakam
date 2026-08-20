@@ -86,10 +86,11 @@ In dem Moment, in dem die Annahme erfolgt:
 
 Eine kleine **Kreditinitiierungsgebühr (`{liveValue:loanInitiationFeeBps}` %)** wird vom verliehenen
 Betrag abgezogen und an die Protokoll-Treasury weitergeleitet. Der
-Kreditnehmer erhält also `{liveValue:exampleBorrowerReceives}` USDC, nicht 1.000. (Wer **VPFI**
-hält, zahlt eine geringere Gebühr und behält damit mehr von den 1.000 —
-der Rabatt wird direkt von der Gebühr abgezogen, nicht später
-zurückerstattet. Mehr zu VPFI weiter unten.)
+Kreditnehmer erhält also `{liveValue:exampleBorrowerReceives}` USDC, nicht 1.000. (Wer **VPFI** hält, zahlt eine
+geringere Gebühr — sofern die Rabatt-Einstellung aktiviert ist und das
+verliehene Asset liquide ist — und behält damit mehr von den 1.000. Der
+Rabatt wird direkt von der Gebühr abgezogen, nicht später zurückerstattet.
+Mehr zu VPFI weiter unten.)
 
 ### Schritt 3 — Zeit vergeht; der Kreditnehmer zahlt zurück
 

@@ -719,11 +719,11 @@ Borrower claim इस आधार पर return करता है कि loan
   basket वापस; और अगर वह loan अब भी बंद किए गए VPFI fee रास्ते
   पर है, तो साथ में Loan Initiation Fee से time-weighted VPFI
   rebate भी।
-- **HF-liquidation या default** — सिर्फ़ unused VPFI Loan
-  Initiation Fee rebate — जो सिर्फ़ बंद किए गए रास्ते वाले loans
-  पर होता है — और जो इन terminal paths पर शून्य होता
-  है जब तक स्पष्ट रूप से preserve न किया गया हो। Collateral
-  पहले ही lender के पास चला गया होता है।
+- **HF-liquidation या default** — कुछ भी वापस नहीं मिलता।
+  Collateral पहले ही lender के पास चला गया होता है, और बंद किए
+  गए VPFI fee रास्ते वाले loan में initiation fee के बदले रखा
+  गया VPFI **treasury को ज़ब्त** हो जाता है, लौटाया नहीं जाता।
+  Rebate सिर्फ़ proper close पर वापस आता है।
 
 Borrower position NFT उसी transaction में burn होता है।
 

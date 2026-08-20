@@ -78,10 +78,11 @@ En el momento que acepta:
 
 Una pequeña **Comisión de iniciación del préstamo (`{liveValue:loanInitiationFeeBps}`%)** se descuenta
 del importe prestado y se envía al tesoro del protocolo. Así que el
-prestatario recibe `{liveValue:exampleBorrowerReceives}` USDC, no 1.000. (Tener **VPFI** reduce esta
-comisión, así que el prestatario conserva más de los 1.000 — el
-descuento se resta de la propia comisión y no se devuelve después.
-Más sobre VPFI más abajo.)
+prestatario recibe `{liveValue:exampleBorrowerReceives}` USDC, no 1.000. (Tener **VPFI** reduce esta comisión
+—siempre que el prestatario haya activado el ajuste de descuento y el activo
+prestado sea líquido— así que conserva más de los 1.000. El descuento se
+resta de la propia comisión y no se devuelve después. Más sobre VPFI más
+abajo.)
 
 ### Paso 3 — Pasa el tiempo; el prestatario devuelve
 

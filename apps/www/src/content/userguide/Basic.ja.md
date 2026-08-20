@@ -354,9 +354,9 @@ loan の cut は `{liveValue:treasuryFeeBps}`% です。loan が settle され�
 
 loan を full repay した場合、borrower claim は最初に lock した
 collateral を返します。default または liquidation の場合に
-戻るのは、Loan Initiation Fee からの unused VPFI rebate だけ
-です。しかもそれは、廃止された VPFI 手数料経路のままの loan に
-限られます — collateral 自体はすでに lender に渡っています。claim は
+戻るものはありません — collateral 自体はすでに lender に渡って
+おり、廃止された VPFI 手数料経路のままの loan では、Loan Initiation
+Fee のために保管されていた VPFI は treasury に没収され、返還されません。claim は
 あなたの borrower position NFT を atomically に consume します。
 
 ---
@@ -557,9 +557,9 @@ role-specific tabs で各 side の options を確認できます。今は
   は 1 transaction で、新しい principal から古い loan を返済
   します。collateral は vault から出ません。
 - **Claim** — loan が settle された後、full repayment なら
-  collateral を返し、default なら loan-initiation fee からの
-  leftover VPFI rebate を返します。これは廃止された VPFI 手数料
-  経路のままの loan にのみ存在します。
+  collateral を返します。default では返すものはありません:
+  collateral は lender に渡り、廃止された手数料経路で保管されていた
+  VPFI は treasury に没収されます。
 
 ---
 

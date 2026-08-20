@@ -309,9 +309,9 @@ lender position NFT — transaction 确认后，loan 的 lender 这一侧
 #### 如果您是 borrower
 
 如果您已经全额 repay loan，borrower claim 会返还您一开始锁定的
-collateral。如果发生 default 或 liquidation，则只返还 Loan
-Initiation Fee 中未使用的 VPFI rebate，且仅限仍在已停用的 VPFI
-费用路径上的 loan — collateral 本身已经转给 lender。claim 会 atomically consume 您的 borrower position NFT。
+collateral。如果发生 default 或 liquidation，则没有任何返还 —
+collateral 本身已经转给 lender，而仍在已停用 VPFI 费用路径上的 loan，
+其为 Loan Initiation Fee 托管的 VPFI 会被没收转入 treasury，而非退还。claim 会 atomically consume 您的 borrower position NFT。
 
 ---
 
@@ -489,8 +489,8 @@ default 会把您的全部 collateral 转给 lender，您没有后续 claim。
   transaction 中用新 principal 偿还旧 loan。Collateral 永不离开
   vault。
 - **Claim** — 一旦 loan settle，若已全额 repayment，则返还您的
-  collateral；若 default，则返还 Loan Initiation Fee 中剩余的 VPFI
-  rebate——这只存在于仍在已停用 VPFI 费用路径上的 loan。
+  collateral；若 default，则没有可返还的东西：collateral 已转给
+  lender，已停用费用路径下托管的 VPFI 会被没收转入 treasury。
 
 ---
 

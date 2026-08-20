@@ -416,10 +416,11 @@ cannot move assets.
   is permissionless — anyone can trigger it the instant your
   HF drops below 1.0.
 - **Illiquid-collateral defaults** — default transfers your
-  full collateral to the lender. There is no leftover claim;
-  only any unused VPFI Loan Initiation Fee rebate — which exists
-  only on a loan still using the retired VPFI fee path — which
-  you collect as the borrower at claim time.
+  full collateral to the lender. There is no leftover claim at
+  all. On a loan still using the retired VPFI fee path, the VPFI
+  held against its initiation fee is **forfeited to treasury** on
+  default — it is not returned to you, so there is nothing left
+  to collect.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -703,10 +704,11 @@ The borrower claim returns, depending on how the loan settled:
   the time-weighted Loan Initiation Fee rebate comes back with
   it; a loan opened under the current model has none, because
   its discount was already taken off the fee at acceptance.
-- **HF-liquidation or default** — only the unused VPFI Loan
-  Initiation Fee rebate, which exists only on the retired path
-  and on these terminal paths is zero unless explicitly
-  preserved. Collateral has already moved to the lender.
+- **HF-liquidation or default** — nothing. Collateral has
+  already moved to the lender, and on a loan still using the
+  retired VPFI fee path the VPFI held against its initiation fee
+  is forfeited to treasury rather than returned. A rebate comes
+  back only on a proper close.
 
 The borrower position NFT is burned in the same transaction.
 

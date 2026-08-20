@@ -722,10 +722,11 @@ Loan எவ்வாறு settle ஆனது என்பதைப் பொ�
   திரும்ப; அந்த loan இன்னும் நிறுத்தப்பட்ட VPFI கட்டண வழியில்
   இருந்தால், Loan Initiation Fee-இலிருந்து time-weighted VPFI
   rebate-உம் சேர்ந்து.
-- **HF-liquidation அல்லது default** — unused VPFI Loan Initiation Fee
-  rebate மட்டும் (நிறுத்தப்பட்ட வழியில் உள்ள loans-க்கு மட்டுமே); இந்த terminal paths-களில் explicitly preserve
-  செய்யப்படாவிட்டால் அது zero ஆகும். Collateral ஏற்கனவே lender-க்கு
-  நகர்ந்திருக்கும்.
+- **HF-liquidation அல்லது default** — எதுவும் திரும்ப வராது.
+  Collateral ஏற்கனவே lender-க்குச் சென்றிருக்கும்; நிறுத்தப்பட்ட VPFI
+  கட்டண வழியில் உள்ள loan-இல் தொடக்கக் கட்டணத்திற்காக வைக்கப்பட்டிருந்த
+  VPFI **treasury-க்கு பறிமுதல் ஆகும்**, திருப்பித் தரப்படாது. Rebate
+  proper close-இல் மட்டுமே திரும்பும்.
 
 Borrower position NFT அதே transaction-இல் burn செய்யப்படும்.
 

@@ -377,10 +377,10 @@ Seite des Loans vollständig abgeschlossen.
 Wenn du den Loan vollständig zurückgezahlt hast, gibt dein
 Borrower-Claim das Collateral zurück, das du am Anfang gesperrt
 hast. Bei Default oder Liquidation wird nur ein etwaiger
-ungenutzter VPFI-Rebate aus der Loan Initiation Fee zurückgegeben,
-und nur bei einem Loan, der noch auf dem eingestellten
-VPFI-Gebührenweg läuft — das Collateral selbst ist bereits an den
-Lender gegangen. Der
+nichts zurückgegeben — das Collateral ist bereits an den Lender
+gegangen, und bei einem Loan auf dem eingestellten
+VPFI-Gebührenweg wird das gegen die Loan Initiation Fee verwahrte
+VPFI an die Treasury verwirkt statt zurückgegeben. Der
 Claim verbraucht deinen Borrower-Position-NFT atomar.
 
 ---
@@ -590,9 +590,10 @@ mit einem kleinen Tooltip, das erklärt, warum.
   das Protokoll zahlt den alten Loan vom neuen Principal in einer
   Transaktion ab. Das Collateral verlässt nie den Vault.
 - **Claim** — sobald der Loan settled, gibt dein Collateral bei
-  voller Rückzahlung zurück. Bei Default gibt er einen etwaig übrig
-  gebliebenen VPFI-Rebate aus der Loan-Initiation-Fee zurück, den es
-  nur bei Loans auf dem eingestellten VPFI-Gebührenweg gibt.
+  voller Rückzahlung zurück. Bei Default gibt es nichts
+  zurückzugeben: das Collateral ging an den Lender, und VPFI, das
+  unter dem eingestellten Gebührenweg verwahrt war, wird an die
+  Treasury verwirkt.
 
 ---
 

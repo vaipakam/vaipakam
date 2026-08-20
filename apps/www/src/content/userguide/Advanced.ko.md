@@ -651,9 +651,10 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
 - **full repayment / preclose / refinance** — 내 collateral basket과
   폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 Loan Initiation
   Fee에서 나온 time-weighted VPFI rebate도 함께 받습니다.
-- **HF-liquidation 또는 default** — unused VPFI Loan Initiation Fee
-  rebate만 반환되며, 이는 폐지된 경로의 loan에만 존재합니다. 이 terminal paths에서는 명시적으로 preserve되지
-  않는 한 0입니다. collateral은 이미 lender에게 갔습니다.
+- **HF-liquidation 또는 default** — 반환되는 것이 없습니다. collateral은
+  이미 lender에게 갔고, 폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 개시
+  수수료를 위해 보관되던 VPFI는 **treasury로 몰수되어** 돌려주지 않습니다.
+  rebate는 정상 종료에서만 돌아옵니다.
 
 Borrower position NFT는 같은 transaction에서 burn됩니다.
 

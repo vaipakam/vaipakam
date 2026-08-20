@@ -370,10 +370,10 @@ ese lado del préstamo queda completamente cerrado.
 
 Si repagaste el préstamo en su totalidad, tu reclamación de
 prestatario devuelve el colateral que bloqueaste al inicio. En
-default o liquidación, sólo se devuelve el reembolso de VPFI no
-usado de la Loan Initiation Fee, y sólo en un préstamo que siga en
-la vía de comisión VPFI retirada —el colateral mismo ya se fue al
-prestamista. La reclamación consume tu NFT de posición de
+default o liquidación no se devuelve nada —el colateral ya se fue
+al prestamista, y en un préstamo que siga en la vía de comisión
+VPFI retirada el VPFI retenido contra la Loan Initiation Fee se
+pierde en favor del tesoro en lugar de devolverse. La reclamación consume tu NFT de posición de
 prestatario de forma atómica.
 
 ---
@@ -577,9 +577,9 @@ explicando por qué.
   protocolo paga el préstamo viejo desde el principal nuevo en una
   sola transacción. El colateral nunca sale del vault.
 - **Reclamar** — una vez que el préstamo se liquida, devuelve tu
-  colateral en caso de repago total. En caso de default devuelve
-  cualquier reembolso de VPFI no usado de la loan-initiation fee, que
-  sólo existe en préstamos que siguen en la vía retirada.
+  colateral en caso de repago total. En caso de default no hay nada
+  que devolver: el colateral se fue al prestamista y el VPFI retenido
+  bajo la vía retirada se pierde en favor del tesoro.
 
 ---
 

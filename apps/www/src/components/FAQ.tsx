@@ -596,29 +596,29 @@ const FAQS: FaqEntry[] = [
                 <td>1</td>
                 <td>≥ 100</td>
                 <td>10%</td>
-                <td>0.090%</td>
-                <td>0.90%</td>
+                <td>0.180%</td>
+                <td>1.80%</td>
               </tr>
               <tr>
                 <td>2</td>
                 <td>≥ 1,000</td>
                 <td>15%</td>
-                <td>0.085%</td>
-                <td>0.85%</td>
+                <td>0.170%</td>
+                <td>1.70%</td>
               </tr>
               <tr>
                 <td>3</td>
                 <td>{t("faq.entries.vpfi-discount.row3Vault")}</td>
                 <td>20%</td>
-                <td>0.080%</td>
-                <td>0.80%</td>
+                <td>0.160%</td>
+                <td>1.60%</td>
               </tr>
               <tr>
                 <td>4</td>
                 <td>{t("faq.entries.vpfi-discount.row4Vault")}</td>
                 <td>24%</td>
-                <td>0.076%</td>
-                <td>0.76%</td>
+                <td>0.152%</td>
+                <td>1.52%</td>
               </tr>
             </tbody>
           </table>

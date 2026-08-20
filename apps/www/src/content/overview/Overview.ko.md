@@ -78,7 +78,8 @@ Accept되는 순간:
 Loaned amount에서 작은 **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**가 차감되어 protocol
 treasury로 routed됩니다. 그래서 borrower는 1,000 USDC가 아니라 `{liveValue:exampleBorrowerReceives}` USDC를
 받습니다. (**VPFI**를 보유하면 이 fee가 줄어들어 borrower가 1,000 USDC 중
-더 많은 금액을 받습니다. 할인은 fee에서 직접 차감되며 나중에 돌려주는 방식이
+더 많은 금액을 받습니다 — 할인 설정을 켜 두었고 빌려주는 asset이 유동적인
+경우에 한합니다. 할인은 fee에서 직접 차감되며 나중에 돌려주는 방식이
 아닙니다 — VPFI는 아래에서 더 설명합니다.)
 
 ### Step 3 — 시간이 지나고 borrower가 repay합니다

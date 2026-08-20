@@ -78,8 +78,9 @@ Acceptされた瞬間に:
 Loaned amountから小さな**Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**が差し引かれ、
 protocol treasuryへ送られます。そのためborrowerが受け取るのは
 1,000 USDCではなく`{liveValue:exampleBorrowerReceives}` USDCです。（**VPFI**を保有していると
-このfeeが下がり、borrowerは1,000 USDCのうちより多くを受け取れます。割引は
-feeそのものから差し引かれ、後から返金されるものではありません — VPFIについては
+このfeeが下がり、borrowerは1,000 USDCのうちより多くを受け取れます。ただし
+割引設定を有効にしていること、貸し出す asset が流動的であることが条件です。
+割引はfeeそのものから差し引かれ、後から返金されるものではありません — VPFIについては
 後述します。）
 
 ### Step 3 — 時間が経ち、borrowerがrepayする

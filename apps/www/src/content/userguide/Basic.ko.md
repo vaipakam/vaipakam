@@ -335,9 +335,10 @@ loan은 완전히 close됩니다.
 #### 내가 borrower인 경우
 
 loan을 full repay했다면 borrower claim은 시작할 때 lock한 collateral을
-돌려줍니다. default 또는 liquidation 시에는 Loan Initiation Fee에서
-unused VPFI rebate만 반환되며, 그것도 폐지된 VPFI 수수료 경로에 남아
-있는 loan에 한합니다 — collateral 자체는 이미 lender에게 갔습니다.
+돌려줍니다. default 또는 liquidation 시에는 반환되는 것이 없습니다 —
+collateral 자체는 이미 lender에게 갔고, 폐지된 VPFI 수수료 경로에 남아
+있는 loan이라면 Loan Initiation Fee를 위해 보관되던 VPFI는 treasury로
+몰수되어 돌려주지 않습니다.
 claim은 borrower position NFT를 atomically consume합니다.
 
 ---
@@ -529,8 +530,8 @@ side의 options를 정리합니다. 지금 사용할 수 없는 buttons는 greye
   transaction으로 새 principal에서 옛 loan을 갚습니다. collateral은
   vault를 떠나지 않습니다.
 - **Claim** — loan이 settle되면 full repayment 시 collateral을 돌려주고,
-  default 시 loan-initiation fee에서 남은 VPFI rebate를 돌려줍니다. 이
-  rebate는 폐지된 VPFI 수수료 경로에 남아 있는 loan에만 존재합니다.
+  default 시에는 돌려줄 것이 없습니다: collateral은 lender에게 갔고,
+  폐지된 수수료 경로에서 보관되던 VPFI는 treasury로 몰수됩니다.
 
 ---
 
