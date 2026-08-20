@@ -40,11 +40,14 @@ also spells it a second way in the same file. An English-only search finds none 
 those.
 
 **The correction reaches the places a borrower actually looks.** Beyond the page
-that introduces the fee discount, three surfaces mattered more than the rest and
-each is now scoped: the **Claim Center** list a borrower reads to find out what a
+that introduces the fee discount, four surfaces mattered more than the rest and
+each is now corrected — including the site's **public FAQ**, which answered "how
+does the VPFI discount work?" by describing the retired mechanism outright, on
+the homepage and in the structured data search engines read: the **Claim Center** list a borrower reads to find out what a
 claim will pay them; the **illiquid-default** passage that tells them what is left
 after losing their collateral; and the **public marketing bullet** on the buy-VPFI
-page, which advertised the rebate as a reason to hold VPFI. The introductory
+page, which advertised the rebate as a reason to hold VPFI; and the FAQ answer
+just described. The introductory
 walkthrough also stopped offering the retired "pay the fee in VPFI and receive the
 full amount" route as a live choice.
 

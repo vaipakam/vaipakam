@@ -986,7 +986,7 @@
       },
       "vpfi-discount": {
         "q": "¿Cómo funciona el descuento VPFI?",
-        "a1": "El VPFI mantenido en la custodia de Vaipakam sitúa automáticamente al titular en un nivel de descuento. Un único consentimiento a nivel de plataforma cubre tanto la rama del prestatario (iniciación) como la del prestamista (rendimiento), y la comisión con descuento se descuenta automáticamente en VPFI desde la custodia — el prestatario recibe entonces el principal íntegro y el prestamista conserva el interés íntegro en la vía con descuento.",
+        "a1": "El VPFI mantenido en los vaults de Vaipakam sitúa automáticamente al titular en un nivel de descuento. Un único consentimiento a nivel de plataforma cubre tanto la rama del prestatario (iniciación) como la del prestamista (rendimiento). El descuento se aplica como una reducción directa de la propia comisión, cobrada en el activo del préstamo — no se descuenta VPFI del vault para pagarla, y no se devuelve nada después. El prestatario recibe por tanto el principal menos la comisión de iniciación reducida, y el prestamista conserva los intereses menos la comisión de rendimiento reducida.",
         "tableTier": "Nivel",
         "tableVault": "VPFI en custodia",
         "tableDiscount": "Descuento",

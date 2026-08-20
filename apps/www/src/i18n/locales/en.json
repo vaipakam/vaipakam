@@ -1503,7 +1503,7 @@
       },
       "vpfi-discount": {
         "q": "How does the VPFI discount work?",
-        "a1": "VPFI held in the Vaipakam Vaults automatically places the holder in a discount tier. One platform-level consent covers both the borrower (initiation) and lender (yield) legs, and the discounted fee is auto-deducted in VPFI from the vault — the borrower then receives the full principal and the lender keeps the full interest on the discount path.",
+        "a1": "VPFI held in the Vaipakam Vaults automatically places the holder in a discount tier. One platform-level consent covers both the borrower (initiation) and lender (yield) legs. The discount is applied as a direct reduction of the fee itself, charged in the loan's own asset — no VPFI is deducted from the vault to pay it, and nothing is returned afterwards. The borrower therefore receives the principal less the reduced initiation fee, and the lender keeps the interest less the reduced yield fee.",
         "tableTier": "Tier",
         "tableVault": "VPFI in the vault",
         "tableDiscount": "Discount",

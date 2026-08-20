@@ -986,7 +986,7 @@
       },
       "vpfi-discount": {
         "q": "Comment fonctionne la remise VPFI ?",
-        "a1": "Le VPFI détenu dans le vault Vaipakam place automatiquement le détenteur dans un palier de remise. Un consentement plateforme unique couvre à la fois la branche emprunteur (initiation) et la branche prêteur (rendement), et les frais remisés sont prélevés automatiquement en VPFI sur le vault — l'emprunteur reçoit alors le principal complet et le prêteur conserve l'intégralité des intérêts sur la voie remisée.",
+        "a1": "Le VPFI détenu dans les vaults Vaipakam place automatiquement le détenteur dans un palier de remise. Un consentement plateforme unique couvre à la fois la branche emprunteur (initiation) et la branche prêteur (rendement). La remise est appliquée comme une réduction directe des frais eux-mêmes, prélevés dans l'actif du prêt — aucun VPFI n'est débité du vault pour les payer, et rien n'est restitué ensuite. L'emprunteur reçoit donc le principal moins les frais d'initiation réduits, et le prêteur conserve les intérêts moins les frais de rendement réduits.",
         "tableTier": "Palier",
         "tableVault": "VPFI dans le vault",
         "tableDiscount": "Remise",

@@ -1130,7 +1130,7 @@ Otherwise that is the whole borrower path for a loan opened today: if you qualif
 
 - it is **additional**, never a substitute: the lending-asset fee is still charged (at your discounted rate);
 - the tariff is **not refundable and is not a rebate** — it is a fee, and it does not come back at settlement, on any outcome;
-- it is **opt-in and capped**: you authorise a maximum amount up front, and a fill that would exceed it is refused.
+- it is **opt-in and capped**: you authorise a maximum amount up front, and a fill quoting more than that is never charged silently — it is refused outright, unless you authorised a downgrade in advance, in which case the loan simply proceeds without the tariff.
 
 The tariff is credited into the protocol's recycling ledger, which is what extends how long the interaction-reward programme can keep running. It does not fund the fee discounts themselves — those are simply a smaller fee charged, never a payment out of the ledger. It is not a deposit, not a stake, and carries no expectation of return.
 
