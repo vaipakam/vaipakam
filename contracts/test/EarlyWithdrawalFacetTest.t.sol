@@ -1938,6 +1938,170 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
+    /// @dev #1503 design item 23 — a sale buyer binds the LIVE loan's
+    ///      behavioural terms, not the vehicle's.
+    ///
+    ///      The vehicle offer does not carry them: `_buildSaleParams` assigns
+    ///      only `useFullTermInterest`, so `allowsPartialRepay`,
+    ///      `allowsPrepayListing` and `periodicInterestCadence` took struct
+    ///      defaults. A buyer could therefore sign "this position does not allow
+    ///      partial repayment" against a loan that does, and the check PASSED —
+    ///      the vehicle genuinely said so. The binding was satisfied while
+    ///      asserting the reverse of the truth about the acquired position.
+    ///
+    ///      Signs `false` by hand rather than via `buildSaleTerms` (which now
+    ///      mirrors the loan) precisely to reconstruct what a pre-fix client
+    ///      would have sent.
+    ///      Sets the loan's flag BEFORE listing. In production these flags are
+    ///      written once at loan initiation, from the originating offer, and
+    ///      never again — so a real vehicle always snapshots final values, and
+    ///      the mutator here stands in for "this loan was originated permitting
+    ///      partial repay", not for a post-init change (which cannot happen).
+    function testSaleVehicleMirrorsLivePositionTerms() public {
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        uint256 saleOfferId = _listSaleOffer();
+
+        LibVaipakam.Offer memory vehicle =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        assertTrue(
+            vehicle.allowsPartialRepay,
+            "vehicle must carry the position's partial-repay term"
+        );
+    }
+
+    function testSaleAcceptRejectsStaleBehaviouralTerms() public {
+        // Position permits partial repay; the vehicle now says so too.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v2BehaviouralBuyer");
+
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        // What a pre-fix vehicle said, and what a client reading it would sign.
+        t.allowsPartialRepay = false;
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferAcceptFacet.OfferTermsMismatch.selector, uint8(18))
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev Companion to the above: binding the loan's ACTUAL value is accepted,
+    ///      so the guard rejects the falsehood rather than the field. Without
+    ///      this, a guard that rejected every sale accept would look correct.
+    function testSaleAcceptHonoursTrueBehaviouralTerms() public {
+        LibVaipakam.Loan memory pre =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        pre.allowsPartialRepay = true;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, pre);
+
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("v2BehaviouralBuyerOk");
+
+        // This one actually completes, so the buyer needs funding + the two
+        // approvals setUp gives its own actors (diamond for the pull, vault for
+        // the deposit). The reject case above needs none: it fails at the
+        // binding before any value moves, which is itself the ordering proof.
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+
+        // The vehicle mirrors the position, so building from the offer — which
+        // is what every client does — yields the position's real value.
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        assertTrue(t.allowsPartialRepay, "vehicle must carry the live term");
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1503 item 23 (Codex round 2, P1) — mirroring the cadence onto the
+    ///      vehicle must not put the position through ORIGINATION admission.
+    ///
+    ///      The vehicle is built from the position's CURRENT state — its
+    ///      `durationDays` is the days remaining, its `amount` the principal
+    ///      after any partial repay — so `_validatePeriodicCadence` asks
+    ///      "could this be originated today?", which an ordinary running
+    ///      position routinely fails. Here the whole 30-day loan is shorter
+    ///      than a Quarterly interval, so Filter 1 (`interval >= duration`)
+    ///      rejects it; the same shape reaches a real lender as an Annual loan
+    ///      one day after origination, or a multi-year loan aged under 365 days.
+    ///
+    ///      NEGATIVE CONTROL: with the `saleVehicleCreate` exemption removed,
+    ///      the listing reverts and this fails at `createLoanSaleOffer` — i.e.
+    ///      the lender's exit is gone for a position that is running normally.
+    function test_item23_periodicPositionStaysListableAfterMirroring() public {
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Quarterly;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        uint256 saleOfferId = _listSaleOffer();
+
+        LibVaipakam.Offer memory vehicle =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        assertEq(
+            uint8(vehicle.periodicInterestCadence),
+            uint8(LibVaipakam.PeriodicInterestCadence.Quarterly),
+            "exempt from admission, but the cadence must still be STORED"
+        );
+    }
+
+    /// @dev #1503 item 23 (Codex round 2, P1) — the companion to the test above,
+    ///      and the reason it proves anything. A guard that refused EVERY sale
+    ///      would satisfy the stale case while breaking the product, so pin that
+    ///      an ordinary listing — one whose vehicle mirrors, which is every
+    ///      listing created since — passes the same invariant untouched.
+    ///
+    ///      `testSaleAcceptHonoursTrueBehaviouralTerms` above already drives a
+    ///      full accept through it; this states the invariant directly on all
+    ///      three fields at once, including the cadence, which no accept test
+    ///      exercises.
+    function test_item23_afreshListingSatisfiesTheMirrorInvariant() public {
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        ld.allowsPrepayListing = true;
+        ld.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Quarterly;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        uint256 saleOfferId = _listSaleOffer();
+
+        LibVaipakam.Offer memory vehicle =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        LibVaipakam.Loan memory live =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(
+            vehicle.allowsPartialRepay, live.allowsPartialRepay, "partial repay must mirror"
+        );
+        assertEq(
+            vehicle.allowsPrepayListing, live.allowsPrepayListing, "prepay listing must mirror"
+        );
+        assertEq(
+            uint8(vehicle.periodicInterestCadence),
+            uint8(live.periodicInterestCadence),
+            "cadence must mirror"
+        );
+    }
+
     /// @dev #951 (Codex #959 round-6, P1) — the linked loan's OWN borrower cannot
     ///      buy the lender position of their own debt (it would leave an Active
     ///      loan with lender == borrower). The generic self-trade check only
