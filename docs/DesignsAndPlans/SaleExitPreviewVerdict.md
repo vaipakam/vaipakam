@@ -53,7 +53,7 @@ between that copy and the real rule.
 | 6 | Asset paused (principal) | `isAssetPaused(asset)` | a live read per leg |
 | 7 | Asset paused (collateral) | `isAssetPaused(asset)` | a live read per leg |
 | 8 | Listing fillability after expiry | the listing offer's `expiresAt` | `LoanSalePendingState` carries no expiry |
-| 9 | Instant-sell candidates (Basic) | the open-offer book | a full page walk |
+| 9 | Instant-sell candidates | the open-offer book | a full page walk in Basic; in Advanced, already walked and discarded |
 | 10 | Maturity tick resolution | — | not a read at all; a shared-clock change |
 
 Nine of the ten are **reads of Diamond storage**. Item 10 is not — it is
@@ -107,8 +107,13 @@ card worse than the tool would defeat its purpose.
 
 **Deliberately NOT in scope:**
 
-- **Item 9** (candidate matching) — a book walk, not a per-loan read.
-  Stays `'unknown'` in Basic mode.
+- **Item 9** (candidate matching) — a book walk, not a per-loan read, so a
+  per-loan view cannot answer it in either mode. Worth separating the two
+  modes, though, because only one is a real gap: in Basic nobody has
+  walked the book; in Advanced the sale tool already has, and the chooser
+  discards the result. The Advanced half needs no new read at all — it
+  needs the tool's derivation shared rather than copied — and is tracked
+  on its own, outside this proposal.
 - **Item 10** (tick resolution) — a client clock change, fixed at the
   shared anchor.
 - **Pricing.** The preview says *whether*, never *how much*. Quotes stay
