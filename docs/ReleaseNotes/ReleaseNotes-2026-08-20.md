@@ -238,8 +238,10 @@ an amount that a claim will decline to pay **for want of delivered funding**.
 Previously an estimate could promise a full day's reward while the claim paid
 nothing at all, because the estimate did not know what had been delivered.
 
-One limit is deliberately outside that guarantee: near the platform's lifetime
-emission ceiling an estimate can still read higher than the claim pays, because
-estimates do not model that ceiling — they are an upper bound with respect to
-it, by long-standing design. The new agreement is specifically about delivered
-funding, where the gap was not a bound but a wrong answer.
+One limit used to sit outside that guarantee: near the platform's lifetime
+emission ceiling an estimate could read higher than the claim would pay, because
+estimates did not model that ceiling. The other entry in these notes closes that
+gap — the pending preview and the readiness check now apply the schedule's
+remaining headroom exactly as a claim spends it — so the two figures agree at
+that boundary as well. The agreement described here is the separate one about
+delivered funding, where the gap was never a bound but a wrong answer.

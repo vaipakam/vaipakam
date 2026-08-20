@@ -1,11 +1,14 @@
 # Release Notes — 2026-08-18
 
 Seven entries. Two are about a lender leaving a position early, and both correct
-the same kind of unfairness: charging someone for something they had already
-been given, or holding them to terms they never reviewed. A lender who sells out
-mid-loan is no longer billed for interest that was already paid to them, and a
-lender listing a position now states what they will accept rather than leaving it
-open.
+the same kind of unfairness: being charged for something you had already been
+given, or being paid whatever the arithmetic came to later rather than what you
+posted the listing under. A lender who sells out mid-loan is no longer billed for
+interest that was already paid to them, and a lender listing a position now
+records the bounds that listing was made under, so a fill that breaks them is
+refused. Holding a seller's *submitted listing* to the quote they reviewed is a
+second, narrower promise — the two can differ if the borrower repays in between —
+and it lands in the next day's notes, with the surface that shows the quote.
 
 The other five share a different theme — documents and records that claimed more
 than they knew. A machine-readable export named a currency it did not carry; a
