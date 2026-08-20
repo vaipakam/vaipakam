@@ -30,6 +30,25 @@ import { copy } from '../content/copy';
  *  different promises to the reader. Collapsing them would render
  *  "checking…" forever in the case where nothing is being checked. */
 export type InstantSellCandidates = 'checking' | 'some' | 'none' | 'unknown';
+/* `'unknown'` is what the page passes in BOTH modes today, and the
+ * reason differs by mode — which matters, because only one of the two
+ * is a deliberate trade.
+ *
+ * In Basic the candidate list is genuinely not fetched: it is a full
+ * active-offers page walk, and running it for every lender who merely
+ * opens a position is a poor trade for a row that has a tool behind it.
+ *
+ * In Advanced the list IS fetched — `EarlyExitFlow` mounts, walks the
+ * offers and derives the compatible set — and the chooser still says
+ * `'unknown'`, so with zero matches the row stays jumpable while the
+ * tool below already knows it is empty (Codex r12 P2). That is
+ * information discarded rather than not gathered. It costs a wasted
+ * scroll to a surface that explains itself, not a dead end — the
+ * anchor exists and says `earlyExit.none` — which is why it is tracked
+ * rather than patched: the honest fix shares the tool's derivation
+ * instead of copying it, and a second copy of the facet's admission
+ * rules is the exact defect class this card was built to remove.
+ * Tracked in #1849. */
 
 /** Whether this position already carries a live sale listing.
  *

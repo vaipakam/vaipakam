@@ -93,11 +93,14 @@ the loan is now resolved by repayment or the default process — no new sale can
 be started — so you are not sent looking for a narrower fix that could not help
 anyway.
 
-Two limits worth stating plainly. In the simple view the "sell now" row does not
-yet tell you whether a matching buyer exists right now; finding that out
-requires a sweep of every open offer, and doing it for every lender who merely
-opens a page would be a poor trade. Rather than guess, the row makes no claim
-and the tool it points to does the real check. Separately, two further reasons a
+Two limits worth stating plainly. The "sell now" row does not yet tell you
+whether a matching buyer exists right now; finding that out requires a sweep of
+every open offer, and doing it for every lender who merely opens a page would be
+a poor trade. Rather than guess, the row makes no claim and the tool it points
+to does the real check. In the advanced view that sweep has in fact already run
+— the sale tool does it — so there the row is holding back an answer that
+exists rather than one nobody has; reusing it is follow-up work, and the cost
+meanwhile is a scroll to a tool that immediately tells you the market is empty. Separately, two further reasons a
 listing can be refused — a position carrying an unresolved VPFI balance, and a
 borrower whose own offset exit is already pending — are **not** yet shown on the
 card: neither has a cheap client-side read today, so both still surface when you

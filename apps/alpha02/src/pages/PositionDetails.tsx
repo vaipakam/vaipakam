@@ -963,6 +963,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           : undefined
   ) as LoanStatus | undefined;
 
+  /** Whether the loan is open enough for a SALE to be attempted.
+   *
+   *  The indexed row and the live reads can disagree in both
+   *  directions, and this exists so the chooser's rows and the tools
+   *  those rows jump to never resolve that disagreement differently
+   *  (Codex r12 P2). They did: admitting `fallback_pending` to the
+   *  chooser while the tool block still demanded an indexed `active`
+   *  meant a cured-but-unindexed loan showed both sale rows as
+   *  available, offered the Basic-mode switch, and mounted no tools —
+   *  jump buttons scrolling to anchors that did not exist. A chooser
+   *  whose whole purpose is to stop dead ends had become one.
+   *
+   *  A live answer OUTRANKS the indexed row because it is the same
+   *  source the contracts will check at submit. The indexed row is
+   *  kept as the fallback for when no live read has answered, not as
+   *  a veto over one that has. */
+  const saleAttemptable =
+    resolvedLoanStatus !== undefined
+      ? resolvedLoanStatus === LoanStatus.Active
+      : row.status === 'active';
+
   const liveSaysFallbackPending =
     bannerTerms.data?.live.status === LoanStatus.FallbackPending;
   // Past-due is decided by CHAIN-anchored time against (preferably
@@ -3019,7 +3040,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           block). */}
       {isAdvanced &&
       role === 'lender' &&
-      row.status === 'active' &&
+      // NOT the raw indexed row — see `saleAttemptable`. The chooser's
+      // rows and this block must agree, or a row is offered with
+      // nothing behind it.
+      saleAttemptable &&
       !soldThisSession &&
       !isRental &&
       principal &&
