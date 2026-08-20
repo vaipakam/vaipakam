@@ -11,6 +11,7 @@ const o = copy.lenderExit.options;
 /** A position with nothing blocking either sale path. */
 const base: LenderExitInput = {
   periodicInterestCadence: 0,
+  cadenceReadFailed: false,
   maturity: 'current',
   listingSupportedOnChain: true,
   listingFlowDisabled: false,
@@ -39,6 +40,7 @@ describe('wait row — ordering and framing', () => {
   it('is never marked unavailable, on any input', () => {
     const hostile: LenderExitInput = {
       periodicInterestCadence: undefined,
+      cadenceReadFailed: true,
       maturity: 'past',
       listingSupportedOnChain: false,
       listingFlowDisabled: true,
@@ -543,5 +545,42 @@ describe('an unestablished due date is not a live one (Codex r6 P2)', () => {
     expect(hasJumpableRow(buildLenderExitRows({ ...base, maturity: 'unknown' }))).toBe(
       false,
     );
+  });
+});
+
+describe('a failed read is not a slow one (Codex r7 P2)', () => {
+  // Both arrive as an undefined cadence. Rendering the checking line
+  // for a persistent failure promises an answer that is not coming —
+  // the sale lock's fourth-state lesson, on the wait row.
+  it('says the schedule could not be read, rather than still reading it', () => {
+    const desc = rowFor(
+      { periodicInterestCadence: undefined, cadenceReadFailed: true },
+      'wait',
+    ).desc;
+    expect(desc).toBe(o.waitDescUnknown);
+    expect(desc).not.toBe(o.waitDescChecking);
+  });
+
+  it('still says checking while the read is merely in flight', () => {
+    expect(
+      rowFor({ periodicInterestCadence: undefined, cadenceReadFailed: false }, 'wait')
+        .desc,
+    ).toBe(o.waitDescChecking);
+  });
+
+  it('is ignored once the cadence actually resolved, either way', () => {
+    expect(
+      rowFor({ periodicInterestCadence: 2, cadenceReadFailed: true }, 'wait').desc,
+    ).toBe(o.waitDescPeriodic);
+    expect(
+      rowFor({ periodicInterestCadence: 0, cadenceReadFailed: true }, 'wait').desc,
+    ).toBe(o.waitDescAtClose);
+  });
+
+  it('never marks the wait row unavailable for it — waiting is still the honest default', () => {
+    expect(
+      rowFor({ periodicInterestCadence: undefined, cadenceReadFailed: true }, 'wait')
+        .unavailable,
+    ).toBeUndefined();
   });
 });

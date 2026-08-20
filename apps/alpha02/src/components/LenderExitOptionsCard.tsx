@@ -56,6 +56,9 @@ export function LenderExitOptionsCard({
    *  rather than asserting the at-close shape, which would misstate
    *  when a periodically-settling lender is paid. */
   periodicInterestCadence: number | undefined;
+  /** Whether that read FAILED rather than being in flight — see
+   *  `LenderExitInput.cadenceReadFailed`. */
+  cadenceReadFailed: boolean;
   /** Chain-anchored. Past maturity BOTH sale rows flip to the past-due
    *  line: a fully-elapsed term is refused at CREATION. Three-valued,
    *  not a boolean — see `MaturityState`. */

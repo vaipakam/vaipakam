@@ -1939,6 +1939,13 @@ const copySource = {
         'Nothing to do — interest is paid to you on this loan’s own schedule as the borrower settles it, and you claim the principal plus whatever interest is still outstanding at the end. If they don’t repay, the normal default process applies and recovery can be less.',
       waitDescChecking:
         'Nothing to do — we’re still reading this loan’s interest schedule, which decides whether you’re paid during the term or only at the end.',
+      // Codex r7 P2 — a FAILED cadence read arrives as the same
+      // `undefined` a loading one does, and showing the checking line
+      // for a persistent failure promises an answer that is not
+      // coming. Says what is and is not known, and points at the terms
+      // rather than guessing a shape.
+      waitDescUnknown:
+        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest. We couldn’t read this loan’s interest schedule, so we can’t say here whether you’re paid during the term or only at the end; the loan’s own terms above are the record. If they don’t repay, the normal default process applies and recovery can be less.',
       waitCost: 'Costs nothing — this is the default.',
 
       sellNow: 'Sell your position now',

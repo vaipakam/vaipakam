@@ -120,17 +120,31 @@ export interface LenderExitRow {
 }
 
 export interface LenderExitInput {
-  /** 0 = no periodic schedule; `undefined` = live read in flight. */
+  /** 0 = no periodic schedule; `undefined` = the read has not answered.
+   *  Pair with `cadenceReadFailed` to tell a failure from a wait. */
   periodicInterestCadence: number | undefined;
+  /** Whether the cadence read FAILED, as opposed to being in flight
+   *  (Codex r7 P2). Both arrive as `undefined` cadence, and rendering
+   *  the checking line for a persistent failure promises an answer
+   *  that is not coming — the same transient-dressing-a-dead-end shape
+   *  as the sale lock's fourth state, on the wait row instead. */
+  cadenceReadFailed: boolean;
   /** Whether the loan permits partial repayment. Affects the WAIT row's
    *  timing claim, not any sale row: `repayPartial` pays the lender
    *  that share of principal plus its accrued interest immediately,
    *  while the loan stays active — so "you claim at the end" is false
    *  for these loans even with no periodic schedule (Codex r4 P2). */
   allowsPartialRepay: boolean;
-  /** A live listing whose offer record this device cannot recover: the
-   *  pending card below then offers no cancel, so the row must not
-   *  promise one (Codex r5 P2). */
+  /** Whether the pending card below will actually render a cancel.
+   *
+   *  It gates on `state.offerId && state.isHolder` — TWO conditions,
+   *  and the holder half fails independently: the pending hook's
+   *  isolated `ownerOf` call returns `isHolder: false` on a read
+   *  failure by design, while a locally remembered offer id stays
+   *  verified and non-null. Keying the row on the offer id alone
+   *  therefore promised a cancel that a partial read failure had
+   *  already removed (Codex r5 P2 for the id, r7 P2 for the holder).
+   *  Mirror BOTH, or this drifts from the card again. */
   saleListingCancellable: boolean;
   /** Chain-anchored only — never a device clock. See `MaturityState`
    *  for why this is not a boolean. */
@@ -160,7 +174,9 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
   // nothing reaches the lender before maturity.
   const waitDesc =
     input.periodicInterestCadence === undefined
-      ? o.waitDescChecking
+      ? input.cadenceReadFailed
+        ? o.waitDescUnknown
+        : o.waitDescChecking
       : input.periodicInterestCadence !== 0
         ? o.waitDescPeriodic
         : input.allowsPartialRepay

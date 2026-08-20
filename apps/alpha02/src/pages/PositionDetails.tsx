@@ -2707,6 +2707,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             loanLive.data?.live.periodicInterestCadence ??
             liveStatus.data?.periodicInterestCadence
           }
+          // A FAILED read arrives as the same `undefined` a loading one
+          // does (Codex r7 P2), and the checking line then promises an
+          // answer that is not coming. `liveStatus` is the source that
+          // runs in BOTH modes, so its error is the one that decides:
+          // in Basic `loanLive` is disabled and never errors, so
+          // reading its flag there would keep this false forever.
+          cadenceReadFailed={
+            loanLive.data?.live.periodicInterestCadence === undefined &&
+            liveStatus.data?.periodicInterestCadence === undefined &&
+            (liveStatus.isError || (isAdvanced && loanLive.isError))
+          }
           // Chain-anchored only, same rule as the borrower chooser's
           // pastDueHint: a device clock or lagging indexer row must
           // never flip the sale rows to "past due" while the
@@ -2801,10 +2812,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // share plus its accrued interest DURING the term, so the
           // at-close wording is false for these loans (Codex r4 P2).
           allowsPartialRepay={row.allowsPartialRepay}
-          // The pending card offers no cancel when it cannot recover
-          // the listing's offer record, so the row must not promise one
-          // (Codex r5 P2). Mirrors that card's own `pendingNoId` gate.
-          saleListingCancellable={sale.state?.offerId != null}
+          // Mirrors the pending card's cancel gate — BOTH halves of it
+          // (`state.offerId && state.isHolder`). The holder half fails
+          // on its own: the hook's isolated `ownerOf` returns
+          // `isHolder: false` on a read failure while a locally
+          // remembered offer id stays verified, so keying on the id
+          // alone promised a cancel that failure had already removed
+          // (Codex r5 P2 for the id, r7 P2 for the holder).
+          saleListingCancellable={
+            sale.state?.offerId != null && sale.state.isHolder === true
+          }
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
           // if it errors. Collapsing that to `false` showed BOTH sale
