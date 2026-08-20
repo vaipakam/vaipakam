@@ -14,12 +14,15 @@ findable by its new holder, and a sale settled in the platform token now
 refreshes both parties' fee-tier clock instead of leaving one over-priced and
 the other under-priced until some unrelated movement corrected it.
 
-The remaining three are about honesty in what the system publishes: events can
-no longer be recorded without the loan or offer they name, automated readers are
-pointed at where current rates actually live rather than at documents that only
-looked current, and one live verification drive that could not run from the
-agent environment now can — with the real cause of the blockage written down
-rather than worked around.
+The remaining three are about honesty in what the system publishes. The first
+is the most easily overstated: an event that records no loan or offer reference
+is now a *tagged gap* rather than a silent one — which found sixty of them
+already in that state, left the tracking issue open for the backlog, and stops
+the list growing without anyone noticing. It is a guardrail, not a filing job
+completed. The other two: automated readers are pointed at where current rates
+actually live rather than at documents that only looked current, and one live
+verification drive that could not run from the agent environment now can — with
+the real cause of the blockage written down rather than worked around.
 
 ## Lender sale — the instant route now refuses a loan with a live offset (PR #1813)
 
