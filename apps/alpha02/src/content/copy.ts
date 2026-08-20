@@ -2005,6 +2005,20 @@ const copySource = {
       // sale paths, so an unanswered read must not read as "clear".
       saleLockChecking:
         'Checking whether this position is already listed…',
+      // Codex r3 P2 — both sale tools are held behind the
+      // fee-entitlement disclosure read, and their jump anchors go
+      // with them. A row left available then rendered a jump to an
+      // element that did not exist, and the click did nothing at all.
+      saleToolsChecking:
+        'Not available yet — we’re still reading the fee terms that have to be disclosed before a sale can be started.',
+      saleToolsFailed:
+        'Not available right now — the fee terms that have to be disclosed before a sale could not be read. Reload the page to try again.',
+      // Codex r3 P2 — the operator kill switch (`VITE_DISABLED_FLOWS`)
+      // disables the listing action and shows an incident banner
+      // inside the tool. Scoped to LISTING: the direct sale carries no
+      // kill switch, so gating it too would invent a blocker.
+      listUnavailableFlowDisabled:
+        'Not available right now — new listings are paused on this deployment while an issue is looked into. Your position is unaffected and the other options still apply.',
       listUnavailableNetwork:
         'Not available on this network yet — the listing tools aren’t published to this deployment.',
       listUnavailableNft:

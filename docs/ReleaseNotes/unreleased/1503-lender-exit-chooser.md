@@ -58,7 +58,12 @@ tools are not deployed on this network, the collateral is an NFT and listing
 currently supports ERC-20 collateral only, or the position is already listed
 (with a pointer to the card that can cancel it — and where this device cannot
 recover the listing's record, the row says the listing stands without promising
-a cancel it cannot deliver). Past the due date both sale rows say plainly that
+a cancel it cannot deliver). Two more reasons are operational rather than
+positional: while the fee terms that must be disclosed before any sale are
+still being read — or could not be read — both sale rows say so, because the
+tools themselves do not appear until that read lands; and if the operator has
+paused new listings on a deployment while looking into an issue, the listing
+row says that too, and says your position is unaffected. Past the due date both sale rows say plainly that
 the loan is now resolved by repayment or the default process — no new sale can
 be started — so you are not sent looking for a narrower fix that could not help
 anyway.

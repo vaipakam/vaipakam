@@ -59,6 +59,7 @@ import {
   fullTermInterest,
   shortAddress,
 } from '../lib/format';
+import { flowDisabled } from '../lib/killSwitch';
 import { loanStateView, loanStateLabel } from '../lib/loanState';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { type ReceiptData } from '../components/ReviewReceipt';
@@ -2730,12 +2731,33 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // resolves from bannerTerms' LIVE terms when present, which is
           // what the r2 fix widened the gate to guarantee for lenders;
           // `loanLive` is fresher but carries no local anchor.
+          //
+          // `>=`, not `>` (Codex r3 P2): the Advanced tool block gates
+          // on a STRICT `<`, so at exactly the maturity second the
+          // tools do not mount while a `>` here still reported the
+          // position as pre-maturity — the rows showed as available
+          // and their jumps had nothing to scroll to. Both contracts
+          // refuse a new exit at that boundary too, so the boundary
+          // second belongs on the past-due side.
           pastDue={
             bannerTerms.data
-              ? bannerNowSec > termsEndSec
+              ? bannerNowSec >= termsEndSec
               : loanLive.data
-                ? loanLive.data.chainNow > loanEndTimeOf(loanLive.data.live)
+                ? loanLive.data.chainNow >= loanEndTimeOf(loanLive.data.live)
                 : false
+          }
+          // Sync env read (`VITE_DISABLED_FLOWS`), no query behind it.
+          listingFlowDisabled={flowDisabled('post-offer')}
+          // Both sale tools — and both jump anchors — are held behind
+          // this read; see `SaleToolsState`. `feeEnt` is unconditional
+          // (loan id only), so it answers in Basic mode too and this
+          // cannot become a permanent unanswered state.
+          saleTools={
+            feeEnt.data !== undefined
+              ? 'ready'
+              : feeEnt.isError
+                ? 'failed'
+                : 'checking'
           }
           listingSupportedOnChain={loanSaleListingEnabled(readChain.chainId)}
           collateralIsNft={collateralIsNft}

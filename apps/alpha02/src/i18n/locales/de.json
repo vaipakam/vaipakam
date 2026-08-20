@@ -2234,7 +2234,10 @@
         "listUnavailableOffsetPending": "Nicht verfügbar, solange der Kreditnehmer einen verknüpften Ausstieg bei diesem Kredit offen hat – dieser muss zuerst abgeschlossen oder storniert werden.",
         "sellNowAlreadyListed": "Nicht verfügbar, solange diese Position zum Verkauf inseriert ist – stornieren Sie das Inserat zuerst über die Karte unten.",
         "sellNowAlreadyListedNoCancel": "Nicht verfügbar, solange diese Position zum Verkauf inseriert ist. Das Inserat wurde von einem anderen Gerät erstellt und kann hier nicht storniert werden – stornieren Sie es dort, wo es erstellt wurde.",
-        "saleLockChecking": "Wird geprüft, ob diese Position bereits inseriert ist…"
+        "saleLockChecking": "Wird geprüft, ob diese Position bereits inseriert ist…",
+        "saleToolsChecking": "Noch nicht verfügbar – wir lesen noch die Gebührenkonditionen, die vor dem Start eines Verkaufs offengelegt werden müssen.",
+        "saleToolsFailed": "Derzeit nicht verfügbar – die vor einem Verkauf offenzulegenden Gebührenkonditionen konnten nicht gelesen werden. Laden Sie die Seite neu, um es erneut zu versuchen.",
+        "listUnavailableFlowDisabled": "Derzeit nicht verfügbar – neue Inserate sind auf diesem Deployment pausiert, während ein Vorfall geprüft wird. Ihre Position ist davon nicht betroffen, die übrigen Optionen gelten weiterhin."
       },
       "pastDue": "Dieser Kredit ist überfällig – der Kreditnehmer zahlt ihn zurück oder das Ausfallverfahren löst ihn auf. Neue Verkäufe können jetzt nicht mehr gestartet werden.",
       "checking": "Prüfen, welche dieser Optionen für diese Position verfügbar sind…"

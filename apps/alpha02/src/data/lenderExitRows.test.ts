@@ -13,6 +13,8 @@ const base: LenderExitInput = {
   periodicInterestCadence: 0,
   pastDue: false,
   listingSupportedOnChain: true,
+  listingFlowDisabled: false,
+  saleTools: 'ready',
   collateralIsNft: false,
   allowsPartialRepay: false,
   saleListingCancellable: true,
@@ -39,6 +41,8 @@ describe('wait row — ordering and framing', () => {
       periodicInterestCadence: undefined,
       pastDue: true,
       listingSupportedOnChain: false,
+      listingFlowDisabled: true,
+      saleTools: 'failed',
       collateralIsNft: true,
       allowsPartialRepay: true,
       saleListingCancellable: false,
@@ -395,5 +399,96 @@ describe('cost survives a live listing (Codex r5 P1)', () => {
     const row = rowFor({ collateralIsNft: true }, 'list');
     expect(row.unavailable).toBe(o.listUnavailableNft);
     expect(row.costStillApplies).toBe(false);
+  });
+});
+
+describe('the tools behind the rows (Codex r3 P2)', () => {
+  // Both sale tools live behind the fee-entitlement disclosure read,
+  // and their jump ANCHORS go with them. A row left available then
+  // rendered a jump to an element that did not exist, and `jump()`
+  // optional-chains a missing target — so the click did nothing, with
+  // nothing said. Availability follows the tools.
+  it('holds BOTH sale rows while the disclosure read is in flight', () => {
+    for (const key of ['sell-now', 'list'] as const) {
+      expect(rowFor({ saleTools: 'checking' }, key).unavailable).toBe(
+        o.saleToolsChecking,
+      );
+    }
+  });
+
+  it('says so when that read failed, rather than showing a spinner', () => {
+    for (const key of ['sell-now', 'list'] as const) {
+      expect(rowFor({ saleTools: 'failed' }, key).unavailable).toBe(
+        o.saleToolsFailed,
+      );
+    }
+  });
+
+  it('offers no switch to Advanced when neither tool can render', () => {
+    expect(hasJumpableRow(buildLenderExitRows({ ...base, saleTools: 'checking' }))).toBe(
+      false,
+    );
+  });
+
+  // The kill switch is LISTING-scoped: `LoanSaleFlow` refuses on
+  // `post-offer`, the direct sale carries no kill switch at all, so
+  // gating both rows would invent a blocker on the instant exit.
+  it('marks the listing row unavailable under the operator kill switch', () => {
+    expect(rowFor({ listingFlowDisabled: true }, 'list').unavailable).toBe(
+      o.listUnavailableFlowDisabled,
+    );
+  });
+
+  it('leaves the direct sale alone under that same switch', () => {
+    expect(rowFor({ listingFlowDisabled: true }, 'sell-now').unavailable).toBeUndefined();
+  });
+
+  // Ordering, each asserted with every lower-precedence blocker also
+  // set, so precedence is pinned rather than incidentally passing.
+  it('ranks the listing lock above both operational blockers', () => {
+    expect(
+      rowFor(
+        { saleLock: 'listed', listingFlowDisabled: true, saleTools: 'checking' },
+        'list',
+      ).unavailable,
+    ).toBe(o.listAlreadyListed);
+  });
+
+  it('ranks past-due above everything', () => {
+    for (const key of ['sell-now', 'list'] as const) {
+      expect(
+        rowFor(
+          { pastDue: true, listingFlowDisabled: true, saleTools: 'failed' },
+          key,
+        ).unavailable,
+      ).toBe(copy.lenderExit.pastDue);
+    }
+  });
+
+  it('ranks the kill switch above the disclosure read, and both above position refusals', () => {
+    expect(
+      rowFor(
+        { listingFlowDisabled: true, saleTools: 'failed', heldVpfiUnresolved: true },
+        'list',
+      ).unavailable,
+    ).toBe(o.listUnavailableFlowDisabled);
+    expect(
+      rowFor({ saleTools: 'failed', heldVpfiUnresolved: true }, 'list').unavailable,
+    ).toBe(o.saleToolsFailed);
+  });
+
+  it('still ranks the network and collateral facts above both', () => {
+    expect(
+      rowFor(
+        { listingSupportedOnChain: false, listingFlowDisabled: true, saleTools: 'failed' },
+        'list',
+      ).unavailable,
+    ).toBe(o.listUnavailableNetwork);
+    expect(
+      rowFor(
+        { collateralIsNft: true, listingFlowDisabled: true, saleTools: 'failed' },
+        'list',
+      ).unavailable,
+    ).toBe(o.listUnavailableNft);
   });
 });

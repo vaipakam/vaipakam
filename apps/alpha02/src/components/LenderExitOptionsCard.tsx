@@ -38,6 +38,7 @@ import {
   type InstantSellCandidates,
   type LenderExitJumpTarget,
   type SaleLockState,
+  type SaleToolsState,
 } from '../data/lenderExitRows';
 
 export type { LenderExitJumpTarget };
@@ -59,6 +60,11 @@ export function LenderExitOptionsCard({
   pastDue: boolean;
   /** The listing surface is not published to every deployment. */
   listingSupportedOnChain: boolean;
+  /** Operator kill switch — LISTING row only. See the input's note. */
+  listingFlowDisabled: boolean;
+  /** Whether the sale tools (and their jump anchors) can render at
+   *  all — see `SaleToolsState`. */
+  saleTools: SaleToolsState;
   /** Phase 1 listing is ERC-20-collateral only. */
   collateralIsNft: boolean;
   /** Wait-row timing only — see `LenderExitInput.allowsPartialRepay`. */

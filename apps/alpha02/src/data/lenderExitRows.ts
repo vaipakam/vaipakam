@@ -57,6 +57,24 @@ export type InstantSellCandidates = 'checking' | 'some' | 'none' | 'unknown';
  *  reason. */
 export type SaleLockState = 'checking' | 'listed' | 'clear' | 'unknown';
 
+/** Whether the sale TOOLS themselves can render.
+ *
+ *  Both sale surfaces are held behind the fee-entitlement read: a
+ *  Full-stamped position carries its fee mode to the buyer, and that
+ *  disclosure is part of the sale set, so until the read settles the
+ *  page renders a stand-in card in place of BOTH tools and their jump
+ *  anchors go with it. A row that stayed available then rendered a
+ *  jump button whose target did not exist, and `jump()`
+ *  optional-chains a missing element — so the click did nothing, with
+ *  nothing said (Codex r3 P2).
+ *
+ *  Availability follows the tools rather than the anchors being
+ *  patched onto the stand-in card, because the honest statement is
+ *  about the OPTION, not the scroll: while the disclosure is unread
+ *  the sale cannot be started, and a lender is better told that than
+ *  scrolled to a card that says the same thing in smaller type. */
+export type SaleToolsState = 'ready' | 'checking' | 'failed';
+
 export type LenderExitJumpTarget = 'early-exit-card' | 'loan-sale-card';
 
 export interface LenderExitRow {
@@ -99,8 +117,16 @@ export interface LenderExitInput {
   /** Chain-anchored only — never a device clock. */
   pastDue: boolean;
   listingSupportedOnChain: boolean;
+  /** Operator kill switch (`VITE_DISABLED_FLOWS`). Scoped to the
+   *  LISTING row: `LoanSaleFlow` refuses and shows the incident
+   *  banner, while the direct sale carries no kill switch at all — so
+   *  gating both rows would invent a blocker on the instant exit
+   *  (Codex r3 P2). */
+  listingFlowDisabled: boolean;
   collateralIsNft: boolean;
   saleLock: SaleLockState;
+  /** See `SaleToolsState` — applies to BOTH sale rows. */
+  saleTools: SaleToolsState;
   heldVpfiUnresolved: boolean;
   borrowerOffsetPending: boolean;
   instantSellCandidates: InstantSellCandidates;
@@ -155,6 +181,13 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
               input.saleListingCancellable
               ? o.sellNowAlreadyListed
               : o.sellNowAlreadyListedNoCancel
+          : // Ranked BELOW the listing lock to match the page's own
+            // order: the stand-in card replaces the tools only on the
+            // branch a live listing has already taken over.
+            input.saleTools !== 'ready'
+            ? input.saleTools === 'failed'
+              ? o.saleToolsFailed
+              : o.saleToolsChecking
           : input.instantSellCandidates === 'checking'
           ? copy.lenderExit.checking
           : input.instantSellCandidates === 'none'
@@ -190,6 +223,16 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
             ? o.listUnavailableNetwork
             : input.collateralIsNft
               ? o.listUnavailableNft
+              : // Operator/protocol-level facts about whether the
+                // surface exists at all rank ABOVE position-specific
+                // refusals: "the tool is switched off" before "your
+                // position carries a balance to clear".
+                input.listingFlowDisabled
+              ? o.listUnavailableFlowDisabled
+              : input.saleTools !== 'ready'
+                ? input.saleTools === 'failed'
+                  ? o.saleToolsFailed
+                  : o.saleToolsChecking
               : input.heldVpfiUnresolved
                 ? o.listUnavailableHeldVpfi
                 : input.borrowerOffsetPending
