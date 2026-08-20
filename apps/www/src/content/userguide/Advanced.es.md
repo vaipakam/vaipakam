@@ -76,9 +76,14 @@ defecto de un solo verificador se rechaza en el gate de despliegue.
 
 ### Consentimiento de descuento en comisiones
 
-Una bandera de opt-in a nivel de billetera que permite al protocolo
-liquidar la porción descontada de una comisión en VPFI debitado de
-tu vault en eventos terminales. Por defecto: desactivado.
+Una bandera de opt-in a nivel de billetera que convierte tu VPFI en
+un descuento de comisiones. **Como prestatario**, el descuento es una
+reducción directa de la Loan Initiation Fee, cobrada en el activo
+prestado al aceptarse el préstamo; no se debita nada de tu vault por
+ello. **Como prestamista**, el descuento de rendimiento se aplica en
+la liquidación y, si hay una referencia de precio de VPFI configurada,
+puede liquidarse en VPFI desde tu vault, dejándote la comisión íntegra
+en el activo prestado. Por defecto: desactivado.
 Desactivado significa que pagas el 100% de cada comisión en el
 activo principal; activado significa que se aplica el descuento
 ponderado por tiempo.

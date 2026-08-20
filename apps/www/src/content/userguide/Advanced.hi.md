@@ -73,9 +73,13 @@ configuration deploy gate पर अस्वीकार कर दी जा�
 
 ### Fee-discount की सहमति
 
-Wallet-level opt-in flag, जिससे terminal events पर protocol
-fee के discounted हिस्से को आपके vault से debit किए गए VPFI
-में settle कर सकता है। Default: off. Off का मतलब है कि आप
+Wallet-level opt-in flag, जो आपके VPFI holding को fee discount में
+बदल देता है। **Borrower के रूप में** discount, Loan Initiation Fee में
+ही सीधी कटौती है जो loan accept होते समय lending asset में ली जाती है;
+इसके लिए आपके vault से कुछ नहीं काटा जाता। **Lender के रूप में** yield
+discount settlement पर लागू होता है, और यदि VPFI का price reference
+कॉन्फ़िगर हो तो उसे आपके vault से VPFI में चुकाया जा सकता है, जिससे पूरी
+fee lending asset में आपके पास रह जाती है। Default: off. Off का मतलब है कि आप
 हर fee का 100% principal asset में चुकाते हैं; on का मतलब है
 कि time-weighted discount लागू होगा।
 

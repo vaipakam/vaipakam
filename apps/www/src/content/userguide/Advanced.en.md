@@ -69,11 +69,18 @@ deploy gate.
 
 ### Fee-discount consent
 
-A wallet-level opt-in flag that lets the protocol settle the
-discounted portion of a fee in VPFI debited from your vault at
-terminal events. Default: off. Off means you pay 100% of every
-fee in the principal asset; on means the time-weighted discount
-applies.
+A wallet-level opt-in flag that turns your VPFI holding into a
+fee discount. Default: off — off means you pay 100% of every fee
+in the principal asset.
+
+The two legs work differently, and it is worth knowing which one
+you are reading about. **As a borrower**, the discount is a direct
+reduction of the Loan Initiation Fee, charged in the lending asset
+at acceptance; nothing is debited from your vault for it. **As a
+lender**, the yield-fee discount applies at settlement, and where
+the protocol has a VPFI price reference configured it can instead
+be settled in VPFI from your vault, leaving you the whole fee in
+the lending asset.
 
 Tier ladder:
 

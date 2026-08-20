@@ -72,9 +72,12 @@ policy は **3 required + 2 optional verifiers、threshold 1-of-2**
 
 ### 手数料割引の同意
 
-wallet-level の opt-in flag です。terminal events で、protocol が
-fee の discounted portion を vault から debit した VPFI で settle
-できるようにします。default: off。off は fee の 100% を principal
+wallet-level の opt-in flag で、保有する VPFI を手数料の割引に変えます。
+**借り手として**は、割引は Loan Initiation Fee そのものの直接的な減額で、
+loan の accept 時に lending asset で課されます。そのために vault から
+引き落とされるものはありません。**貸し手として**は、イールド割引は
+settlement 時に適用され、VPFI の価格参照が設定されていれば vault から
+VPFI で決済することもでき、その場合は貸出資産の手数料を全額保持できます。default: off。off は fee の 100% を principal
 asset で支払うという意味です。on の場合は time-weighted discount
 が適用されます。
 

@@ -74,9 +74,13 @@ gate-இல் நிராகரிக்கப்படும்.
 
 ### Fee-discount consent
 
-இது wallet-level opt-in flag. Terminal events-இல் fee-இன் discounted
-பகுதியை உங்கள் vault-இலிருந்து debit செய்யப்படும் VPFI மூலம் settle
-செய்ய protocol-ஐ அனுமதிக்கிறது. Default: off. Off என்றால் ஒவ்வொரு
+இது wallet-level opt-in flag; உங்கள் VPFI வைத்திருப்பை fee தள்ளுபடியாக
+மாற்றுகிறது. **Borrower-ஆக**, தள்ளுபடி என்பது Loan Initiation Fee-இலேயே
+நேரடியான குறைப்பு; loan accept ஆகும்போது lending asset-இல் வசூலிக்கப்படும்,
+அதற்காக உங்கள் vault-இலிருந்து எதுவும் கழிக்கப்படாது. **Lender-ஆக**, பலன்
+தள்ளுபடி settlement-இல் பொருந்தும்; VPFI விலை மேற்கோள் அமைக்கப்பட்டிருந்தால்
+உங்கள் vault-இலிருந்து VPFI-ஆகவும் தீர்க்கப்படலாம் — அப்போது lending
+asset-இல் கட்டணம் முழுவதும் உங்களிடமே இருக்கும். Default: off. Off என்றால் ஒவ்வொரு
 fee-இன் 100%-ஐயும் principal asset-இல் செலுத்துகிறீர்கள்; on என்றால்
 time-weighted discount பொருந்தும்.
 

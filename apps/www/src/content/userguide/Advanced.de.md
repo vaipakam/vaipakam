@@ -77,11 +77,17 @@ abgelehnt.
 
 ### Zustimmung zum Gebühren-Rabatt
 
-Ein Opt-in-Flag auf Wallet-Ebene, das dem Protokoll erlaubt, den
-rabattierten Anteil einer Gebühr in VPFI abzurechnen, das bei
-terminalen Ereignissen aus deinem Vault abgebucht wird. Standard:
-aus. Aus bedeutet, dass du 100% jeder Gebühr im Principal-Asset
-zahlst; an bedeutet, dass der zeitgewichtete Rabatt angewendet wird.
+Ein Opt-in-Flag auf Wallet-Ebene, das deinen VPFI-Bestand in einen
+Gebühren-Rabatt umsetzt. Standard: aus — aus bedeutet, dass du 100%
+jeder Gebühr im Principal-Asset zahlst.
+
+Die beiden Seiten funktionieren unterschiedlich. **Als Borrower**
+ist der Rabatt eine direkte Minderung der Loan Initiation Fee, die
+bei Annahme im Lending-Asset berechnet wird; dafür wird nichts aus
+deinem Vault abgebucht. **Als Lender** greift der Yield-Rabatt beim
+Settlement, und wenn eine VPFI-Preisreferenz konfiguriert ist, kann
+er stattdessen in VPFI aus deinem Vault beglichen werden, sodass dir
+die volle Gebühr im Lending-Asset verbleibt.
 
 Tier-Leiter:
 

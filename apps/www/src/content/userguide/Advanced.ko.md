@@ -66,8 +66,12 @@ April 2026 industry incident 이후 hardened된 cross-chain 메시지 검증
 
 ### Fee-discount 동의
 
-wallet-level opt-in flag입니다. terminal events에서 protocol이 fee의
-discounted portion을 vault에서 debit한 VPFI로 settle할 수 있게 합니다.
+wallet-level opt-in flag로, 보유한 VPFI를 수수료 할인으로 바꿔 줍니다.
+**차입자로서**는 할인이 Loan Initiation Fee 자체를 직접 깎아주는 방식이며
+loan이 accept될 때 lending asset으로 부과되고, 이를 위해 vault에서 차감되는
+것은 없습니다. **대여자로서**는 이자 수수료 할인이 settlement 시 적용되며,
+VPFI 가격 기준이 설정되어 있으면 vault에서 VPFI로 정산할 수도 있어 대출
+자산 수수료 전액을 그대로 가질 수 있습니다.
 기본값: off. off는 모든 fee의 100%를 principal asset으로 지불한다는
 뜻이고, on은 time-weighted discount가 적용된다는 뜻입니다.
 

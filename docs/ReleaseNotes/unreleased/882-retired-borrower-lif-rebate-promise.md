@@ -17,10 +17,11 @@ the old promise stood: the discount is a direct reduction, no VPFI leaves the
 vault to pay the fee, and there is nothing to claim afterwards.
 
 **The old mechanism is scoped, not deleted.** Loans opened while it was live
-still settle exactly that way, and their rebates remain claimable. The pages now
-mark those passages as describing those loans, so a reader can tell which
-paragraphs apply to them. Deleting the description outright would have stranded
-the people it still applies to.
+still settle exactly that way, and a rebate on one of them is claimable **when it
+closes properly** — repayment, early close, or refinance. If such a loan instead
+defaults or is liquidated, the held VPFI is forfeited and there is no rebate at
+all, which the pages now say wherever they describe those outcomes. Deleting the
+description outright would have stranded the people it still applies to.
 
 **One thing deliberately not over-corrected.** Where the optional per-party
 tariff is enabled, VPFI genuinely does leave the borrower's vault at origination.
@@ -58,11 +59,13 @@ directly at one of them via an anchor link may read it without that scope. They
 are not false (they describe what happens to a rebate that exists), but they are
 not self-contained, and closing that is follow-up work.
 
-**One surface is deliberately untouched and needs a decision.** The connected
-app's offer-creation screen still advertises the retired rebate to a borrower at
-the moment they are choosing terms. That is app copy rather than documentation,
-and it was outside this change's agreed scope, so it is recorded rather than
-edited here.
+**Two connected-app surfaces are deliberately untouched and need a decision.**
+The offer-creation screen still advertises the retired rebate to a borrower at the
+moment they are choosing terms; and the Dashboard's consent control still tells
+them, at the moment they enable the setting, that doing so may take VPFI from
+their vault to pay the initiation fee — which it no longer does. Both are app
+copy rather than documentation and sat outside this change's agreed scope, so
+they are recorded rather than edited here.
 
 The claim display itself needed no change: it reads each loan's actual held amount
 and shows a rebate only where one exists, which was already correct for both old

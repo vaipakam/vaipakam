@@ -76,9 +76,13 @@ déploiement.
 
 ### Consentement à la remise sur frais
 
-Un drapeau d'opt-in au niveau wallet qui permet au protocole de
-régler la portion remisée d'un frais en VPFI prélevés sur ton
-vault lors des événements terminaux. Par défaut : désactivé.
+Un drapeau d'opt-in au niveau wallet qui transforme tes VPFI en remise
+sur les frais. **En tant qu'emprunteur**, la remise est une réduction
+directe du Loan Initiation Fee, prélevé dans l'actif prêté à
+l'acceptation ; rien n'est débité de ton vault pour cela. **En tant que
+prêteur**, la remise de rendement s'applique au règlement et, si une
+référence de prix VPFI est configurée, elle peut être réglée en VPFI
+depuis ton vault, te laissant la totalité des frais dans l'actif prêté. Par défaut : désactivé.
 Désactivé signifie que tu paies 100% de chaque frais dans l'actif
 principal ; activé signifie que la remise pondérée dans le temps
 s'applique.

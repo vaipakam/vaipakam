@@ -65,8 +65,11 @@ gate 被拒绝。
 
 ### Fee-discount consent
 
-这是 wallet-level opt-in flag。它允许 protocol 在 terminal events
-时，用从您 vault debit 的 VPFI 来 settle fee 的 discounted 部分。
+这是 wallet-level opt-in flag，把您持有的 VPFI 转化为 fee 折扣。
+**作为 borrower**，折扣是对 Loan Initiation Fee 的直接减免，在 loan 被
+accept 时以 lending asset 计收，不会从您的 vault 中扣除任何东西。
+**作为 lender**，收益费折扣在 settlement 时适用；若已配置 VPFI 价格参考，
+也可改为从您的 vault 中以 VPFI 结算，使您保留 lending asset 中的全额费用。
 Default：off。off 表示每笔 fee 的 100% 都用 principal asset 支付；
 on 则会应用 time-weighted discount。
 
