@@ -917,6 +917,42 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // FallbackPending on-chain is still fully curable by repayment, so
   // neither the "repayment no longer accepted" copy nor the repay
   // suppression may fire for it — the cure banner takes over instead.
+  // ONE resolution of "what is this loan's status right now", shared by
+  // every gate that asks. Rounds 8, 9, 10 and 11 each found a different
+  // gate with its own ad-hoc precedence over these same three reads,
+  // written in a different order each time — `maturity` consulted
+  // `loanLive` while the terminal gate did not, `fallbackPending`
+  // consulted neither. Fixing them one at a time is what produced four
+  // rounds of the same finding, so the precedence lives here once and
+  // the gates read it.
+  //
+  // All three reads hit the same chain, so none is more AUTHORITATIVE
+  // than another — disagreement between them is staleness, not
+  // conflict. What ranks them is scope: `loanLive` is the richest and
+  // is refetched with the strategy surfaces, `liveStatus` is the
+  // always-on read built for exactly this question, and `bannerTerms`
+  // is the banner's own. `loanLive` is advanced-only, so in Basic mode
+  // the order simply starts at `liveStatus`.
+  //
+  // `isError` DISQUALIFIES a source rather than lowering its rank: a
+  // failed refetch leaves TanStack holding the previous result, and
+  // that cached answer is exactly the one that predates the change the
+  // gate needs to see. Ranking it below a healthy source would still
+  // let it win whenever the healthy sources are absent.
+  // All three arrive decoded off a contract read, so each is a plain
+  // number; `LoanStatus` is a numeric enum and every other comparison
+  // in this file already relies on that. Cast once here, at the single
+  // point the value is resolved, rather than at each reader.
+  const resolvedLoanStatus = (
+    loanLive.data && !loanLive.isError
+      ? loanLive.data.live.status
+      : liveStatus.data && !liveStatus.isError
+        ? liveStatus.data.status
+        : bannerTerms.data && !bannerTerms.isError
+          ? bannerTerms.data.live.status
+          : undefined
+  ) as LoanStatus | undefined;
+
   const liveSaysFallbackPending =
     bannerTerms.data?.live.status === LoanStatus.FallbackPending;
   // Past-due is decided by CHAIN-anchored time against (preferably
@@ -2692,9 +2728,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // mounted. Failing closed on an unanswered read is the
       // permanent-dead-end trap this card has already met twice.
       !(
-        bannerTerms.data !== undefined &&
-        bannerTerms.data.live.status !== LoanStatus.Active &&
-        bannerTerms.data.live.status !== LoanStatus.FallbackPending
+        resolvedLoanStatus !== undefined &&
+        resolvedLoanStatus !== LoanStatus.Active &&
+        resolvedLoanStatus !== LoanStatus.FallbackPending
       ) &&
       !soldThisSession &&
       !isRental &&
@@ -2877,11 +2913,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // read said Active. A stale blocker is as wrong as a stale
           // permission — it just fails in the safe-looking direction.
           fallbackPending={
-            liveStatus.data && !liveStatus.isError
-              ? liveStatus.data.status === LoanStatus.FallbackPending
-              : bannerTerms.data && !bannerTerms.isError
-                ? bannerTerms.data.live.status === LoanStatus.FallbackPending
-                : false
+            resolvedLoanStatus === LoanStatus.FallbackPending
           }
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so

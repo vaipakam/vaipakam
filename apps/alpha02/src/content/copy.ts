@@ -1942,10 +1942,19 @@ const copySource = {
       // Codex r7 P2 — a FAILED cadence read arrives as the same
       // `undefined` a loading one does, and showing the checking line
       // for a persistent failure promises an answer that is not
-      // coming. Says what is and is not known, and points at the terms
-      // rather than guessing a shape.
+      // coming. Says what is and is not known.
+      //
+      // Codex r11 P2 — it used to add "the loan's own terms above are
+      // the record", which was a FALSE POINTER: the terms row renders
+      // rate, duration and due date only, and has never carried the
+      // cadence. Sending a lender to a surface that cannot answer is
+      // worse than admitting the gap, because they spend the trip
+      // before finding out. Names a recovery that can actually work
+      // instead — the read is a live one, so retrying is the real fix
+      // — and says plainly that the amount owed is unaffected, since
+      // the open question is only WHEN it arrives.
       waitDescUnknown:
-        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest. We couldn’t read this loan’s interest schedule, so we can’t say here whether you’re paid during the term or only at the end; the loan’s own terms above are the record. If they don’t repay, the normal default process applies and recovery can be less.',
+        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest. We couldn’t read this loan’s interest schedule, so we can’t say here whether that reaches you during the term or only at the end. It doesn’t change what you’re owed. Reloading the page usually clears this. If they don’t repay, the normal default process applies and recovery can be less.',
       waitCost: 'Costs nothing — this is the default.',
 
       sellNow: 'Sell your position now',

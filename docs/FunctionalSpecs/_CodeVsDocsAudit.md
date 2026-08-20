@@ -610,13 +610,27 @@ a row that already reads as unavailable. That is a poorer explanation, not a
 value-losing one — unlike the original defect this rule was written to fix,
 which HID a cost that could still be incurred.
 
-Not fixable in place: the client state the card reads
-(`LoanSalePendingState`) carries the lock, the loan status, holder, offer id,
-sale rate, cooldown and funding legs — but **no listing expiry and no
-accepted-not-yet-completed flag**. Distinguishing fillable from merely locked
-needs the listing offer's own window, which is a new read. Tracked with the
-other authoritative pre-checks in #1841, and part of what the shared preview
-verdict in `docs/DesignsAndPlans/SaleExitPreviewVerdict.md` would answer.
+**Cheaper to fix than first recorded, for most positions.** This entry
+originally said the gap needed a new read. That is wrong for the ordinary case
+and the correction matters, because the deferral was justified on the cost:
+whenever the listing's offer id resolves — the same-device path — the hook
+already fetches that offer, and the response it decodes carries both
+`expiresAt` and `accepted`. It narrows the result to the two fields it wanted
+(the sale rate and creation time) and drops the rest. Classifying fillability
+for those positions is a matter of keeping fields already on the wire, not
+issuing another request.
+
+What genuinely remains is the **unrecovered-id** case: where the listing is
+known only by the position lock and no offer id could be resolved, there is
+nothing to widen, and answering needs either id recovery or an authoritative
+verdict from the protocol. That half belongs with the other pre-checks in
+#1841 and is part of what the shared preview verdict in
+`docs/DesignsAndPlans/SaleExitPreviewVerdict.md` would answer.
+
+Left deferred rather than fixed here on scope, not cost — the error
+over-warns in the safe direction, and widening a shared hook's decode plus its
+state type is a change to a surface several other cards read, which does not
+belong in a chooser PR.
 
 Recorded so a later reader finds a known, bounded, safe-direction gap rather
 than concluding the card's rule is simply the lock.
