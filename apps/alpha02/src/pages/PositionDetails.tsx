@@ -2816,9 +2816,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // checking line never resolved — Codex r1 P2. `loanLive`
           // stays as the preferred source when it IS loaded, since it
           // refreshes faster.
+          //
+          // `bannerTerms` is the THIRD source, and omitting it was the
+          // same defect one door along (Codex r17 P2): it is enabled
+          // independently of the other two, so when `liveStatus` fails
+          // without data this page can be holding a perfectly good
+          // cadence in a snapshot it simply was not consulting — and
+          // the row then said the schedule could not be read, about a
+          // schedule it had just read.
           periodicInterestCadence={
             loanLive.data?.live.periodicInterestCadence ??
-            liveStatus.data?.periodicInterestCadence
+            liveStatus.data?.periodicInterestCadence ??
+            (bannerTerms.isError
+              ? undefined
+              : bannerTerms.data?.live.periodicInterestCadence)
           }
           // A FAILED read arrives as the same `undefined` a loading one
           // does (Codex r7 P2), and the checking line then promises an
@@ -2826,9 +2837,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // runs in BOTH modes, so its error is the one that decides:
           // in Basic `loanLive` is disabled and never errors, so
           // reading its flag there would keep this false forever.
+          // A read that succeeded ANYWHERE outranks a failure
+          // elsewhere: the claim is about whether the schedule is
+          // known, not about which query answered.
           cadenceReadFailed={
             loanLive.data?.live.periodicInterestCadence === undefined &&
             liveStatus.data?.periodicInterestCadence === undefined &&
+            (bannerTerms.isError ||
+              bannerTerms.data?.live.periodicInterestCadence === undefined) &&
             (liveStatus.isError || (isAdvanced && loanLive.isError))
           }
           // Chain-anchored only, same rule as the borrower chooser's
