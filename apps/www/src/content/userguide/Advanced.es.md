@@ -457,10 +457,10 @@ timelock, y no pueden mover activos.
   slippage para repagar al prestamista. El swap es permissionless —cualquiera puede
   dispararlo en el instante en que tu HF cae por debajo de 1,0.
 - **Defaults con colateral ilíquido** — el default transfiere
-  todo tu colateral al prestamista. No hay reclamación residual;
-  sólo cualquier reembolso de VPFI Loan Initiation Fee no usado —
-  y sólo en un préstamo que siga en la vía de comisión VPFI
-  retirada — que cobras como prestatario al reclamar.
+  todo tu colateral al prestamista y no queda nada por reclamar:
+  en un préstamo que siga en la vía de comisión VPFI retirada, el
+  VPFI retenido contra la comisión de inicio se pierde en favor
+  del tesoro en lugar de devolverse.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -1017,8 +1017,9 @@ Una vez que HF cae por debajo de 1,0, cualquiera puede disparar
 una liquidación basada en HF; el swap vende tu colateral a
 precios mermados por slippage para repagar al prestamista. Sobre
 colateral ilíquido, el default transfiere todo tu colateral al
-prestamista —sólo queda por reclamar cualquier reembolso de VPFI
-Loan Initiation Fee no usado.
+prestamista y no queda nada por reclamar: en un préstamo que siga
+en la vía retirada, el VPFI retenido contra la comisión de inicio
+se pierde en favor del tesoro.
 
 <a id="loan-details.parties"></a>
 
@@ -1083,9 +1084,10 @@ del rol:
   refinance intercambia los préstamos atómicamente sin que el
   colateral salga de tu vault.
 - **Reclamar como prestatario** — sólo en estados terminales. Devuelve el
-  colateral en repago total, o el reembolso de VPFI Loan
-  Initiation Fee no usado en default / liquidación. Quema el NFT
-  de posición de prestatario.
+  colateral en repago total; en default / liquidación no hay nada
+  que devolver, ya que el VPFI retenido bajo la vía retirada se
+  pierde en favor del tesoro. Quema el NFT de posición de
+  prestatario.
 
 ---
 

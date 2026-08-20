@@ -428,10 +428,10 @@ timelock-gated हैं, और assets move नहीं कर सकते।
   permissionless है — आपका HF 1.0 से नीचे गिरते ही कोई भी उसे
   trigger कर सकता है।
 - **Illiquid-collateral defaults** — default आपका पूरा
-  collateral lender को transfer कर देता है। कोई residual claim
-  नहीं बचता; सिर्फ़ कोई unused VPFI Loan Initiation Fee rebate —
-  जो सिर्फ़ बंद किए गए VPFI fee रास्ते वाले loans पर होता है —
-  जिसे आप borrower के रूप में claim time पर लेते हैं।
+  collateral lender को transfer कर देता है और claim करने को कुछ
+  नहीं बचता: बंद किए गए VPFI fee रास्ते वाले loan में initiation
+  fee के बदले रखा गया VPFI treasury को ज़ब्त हो जाता है, लौटाया
+  नहीं जाता।
 
 <a id="create-offer.advanced-options"></a>
 
@@ -962,8 +962,9 @@ HF ऊपर लाने के levers:
 HF 1.0 से नीचे जाते ही कोई भी HF-based liquidation trigger कर
 सकता है; swap आपके collateral को slippage-hit prices पर बेचकर
 lender को चुकाता है। Illiquid collateral पर default आपका पूरा
-collateral lender को transfer कर देता है — claim करने के लिए
-सिर्फ़ कोई unused VPFI Loan Initiation Fee rebate बचता है।
+collateral lender को transfer कर देता है और claim करने के लिए कुछ
+नहीं बचता: बंद किए गए रास्ते में रखा VPFI treasury को ज़ब्त हो
+जाता है।
 
 <a id="loan-details.parties"></a>
 
@@ -1026,9 +1027,9 @@ actions:
   atomic रूप से swap कर देता है, आपका collateral आपके vault
   से कभी बाहर नहीं जाता।
 - **Claim as borrower** — सिर्फ़ terminal states में। पूरे repayment पर
-  collateral लौटाता है, या default / liquidation पर
-  unused VPFI Loan Initiation Fee rebate। Borrower
-  position NFT को burn करता है।
+  collateral लौटाता है; default / liquidation पर लौटाने को कुछ
+  नहीं होता, क्योंकि बंद किए गए रास्ते में रखा VPFI treasury को
+  ज़ब्त हो जाता है। Borrower position NFT को burn करता है।
 
 ---
 

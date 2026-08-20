@@ -422,10 +422,10 @@ admin key இல்லை. Pause levers cross-chain-facing contracts-களி�
   permissionless — உங்கள் HF 1.0-க்குக் கீழே drop ஆகும் கணத்தில் யாரும்
   trigger செய்யலாம்.
 - **Illiquid-collateral defaults** — Default உங்கள் முழு collateral-ஐ
-  lender-க்கு transfer செய்கிறது. Leftover claim இல்லை; எஞ்சியுள்ள
-  unused VPFI Loan Initiation Fee rebate மட்டும் claim time-இல்
-  borrower-ஆக சேகரிக்க முடியும் — அது நிறுத்தப்பட்ட VPFI கட்டண
-  வழியில் உள்ள loans-க்கு மட்டுமே.
+  lender-க்கு transfer செய்கிறது; claim செய்ய எதுவும் மீதியில்லை.
+  நிறுத்தப்பட்ட VPFI கட்டண வழியில் உள்ள loan-இல் தொடக்கக்
+  கட்டணத்திற்காக வைக்கப்பட்டிருந்த VPFI treasury-க்கு பறிமுதல்
+  ஆகும், திருப்பித் தரப்படாது.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -967,8 +967,9 @@ levers:
 HF 1.0-க்குக் கீழே சென்றவுடன், யாரும் HF-based liquidation-ஐ trigger
 செய்யலாம்; swap உங்கள் collateral-ஐ slippage-ஆல் பாதிக்கப்பட்ட விலையில்
 விற்று lender-க்கு திருப்பிச் செலுத்தும். Illiquid collateral-இல்,
-default உங்கள் முழு collateral-ஐ lender-க்கு transfer செய்கிறது — claim
-செய்ய உங்களுக்கு unused VPFI Loan Initiation Fee rebate மட்டுமே மீதியாகும்.
+default உங்கள் முழு collateral-ஐ lender-க்கு transfer செய்கிறது; claim
+செய்ய எதுவும் மீதியில்லை — நிறுத்தப்பட்ட வழியில் வைக்கப்பட்டிருந்த VPFI
+treasury-க்கு பறிமுதல் ஆகும்.
 
 <a id="loan-details.parties"></a>
 
@@ -1029,8 +1030,9 @@ Role-இப் பொருட்படுத்தாமல் யாரும�
   ஒரு lender accept செய்தவுடன், complete refinance, collateral உங்கள்
   vault-ஐ விட்டு வெளியேறாமல் loans-ஐ atomically swap செய்கிறது.
 - **Claim as borrower** — Terminal state-இல் மட்டும். Full repayment-இல் collateral-ஐ,
-  அல்லது default / liquidation-இல் unused VPFI Loan Initiation Fee
-  rebate-ஐ திருப்பித் தருகிறது. Borrower position NFT-ஐ burn செய்கிறது.
+  திருப்பித் தருகிறது; default / liquidation-இல் திருப்பித் தர எதுவும்
+  இல்லை, நிறுத்தப்பட்ட வழியில் வைக்கப்பட்டிருந்த VPFI treasury-க்கு
+  பறிமுதல் ஆகும். Borrower position NFT-ஐ burn செய்கிறது.
 
 ---
 

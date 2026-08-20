@@ -874,8 +874,9 @@ levers:
 
 HF가 1.0 아래로 떨어지면 누구든 HF-based liquidation을 trigger할 수 있고,
 swap은 slippage-hit price로 내 collateral을 팔아 lender에게 상환합니다.
-Illiquid collateral의 경우 default는 collateral 전체를 lender에게 transfer합니다
-— claim할 수 있는 것은 unused VPFI Loan Initiation Fee rebate뿐입니다.
+Illiquid collateral의 경우 default는 collateral 전체를 lender에게
+transfer하며, claim할 수 있는 것은 없습니다. 폐지된 수수료 경로의 loan이라면
+보관되던 VPFI는 treasury로 몰수됩니다.
 
 <a id="loan-details.parties"></a>
 
@@ -930,8 +931,9 @@ role과 관계없이 누구나 사용할 수 있는 permissionless actions:
   complete refinance가 collateral이 vault를 떠나지 않은 채 loans를
   atomically swap합니다.
 - **Borrower로 claim** — terminal state 전용. full repayment 시 collateral을
-  반환하거나, default / liquidation 시 unused VPFI Loan Initiation Fee
-  rebate를 반환합니다. Borrower position NFT를 burn합니다.
+  반환합니다. default / liquidation 시에는 반환할 것이 없으며, 폐지된
+  수수료 경로에서 보관되던 VPFI는 treasury로 몰수됩니다. Borrower position
+  NFT를 burn합니다.
 
 ---
 

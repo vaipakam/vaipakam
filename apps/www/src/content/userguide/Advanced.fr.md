@@ -457,10 +457,9 @@ déplacer d'actifs.
   sous 1,0.
 - **Défauts sur collatéral illiquide** — le défaut transfère ton
   collatéral intégral au prêteur. Aucune réclamation
-  résiduelle ; seulement le rabais VPFI Loan Initiation Fee
-  inutilisé — et uniquement sur un prêt encore soumis à la voie de
-  frais VPFI retirée — que tu encaisses en tant qu'emprunteur au
-  moment de la réclamation.
+  résiduelle. Sur un prêt encore soumis à la voie de frais VPFI
+  retirée, le VPFI retenu au titre des frais d'initiation est acquis
+  au trésor plutôt que restitué : il n'y a rien à encaisser.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -1019,8 +1018,10 @@ Une fois HF descendu sous 1,0, n'importe qui peut déclencher une
 liquidation basée sur HF ; le swap vend ton collatéral à des
 prix érodés par le slippage pour rembourser le prêteur. Sur
 collatéral illiquide, le défaut transfère ton collatéral
-intégral au prêteur — il ne reste à réclamer que le rabais VPFI
-Loan Initiation Fee inutilisé.
+intégral au prêteur, et il ne reste rien à réclamer : sur un prêt
+encore soumis à la voie de frais VPFI retirée, le VPFI retenu au
+titre des frais d'initiation est acquis au trésor plutôt que
+restitué.
 
 <a id="loan-details.parties"></a>
 
@@ -1084,9 +1085,10 @@ Actions permissionless disponibles à tous quel que soit le rôle :
   finaliser le refinancement échange les prêts atomiquement
   sans que le collatéral ne quitte ton vault.
 - **Réclamer en tant qu'emprunteur** — uniquement en état terminal. Rend
-  le collatéral en cas de remboursement total, ou le rabais
-  VPFI Loan Initiation Fee inutilisé en défaut / liquidation.
-  Brûle le NFT de position d'emprunteur.
+  le collatéral en cas de remboursement total ; en défaut /
+  liquidation il n'y a rien à rendre, le VPFI retenu sous la voie
+  retirée étant acquis au trésor. Brûle le NFT de position
+  d'emprunteur.
 
 ---
 

@@ -454,9 +454,9 @@ Timelock abgesichert und können keine Assets bewegen.
 - **Defaults bei illiquidem Collateral** — der Default überträgt
   dein gesamtes Collateral an den Lender. Es gibt keinen
   Restanspruch; nur ein eventuell ungenutzter VPFI-Loan-
-  Initiation-Fee-Rebate — und nur bei einem Loan, der noch auf dem
-  eingestellten VPFI-Gebührenweg läuft — den du als Borrower beim
-  Claim erhältst.
+  Initiation-Fee-Rebate. Bei einem Loan auf dem eingestellten
+  VPFI-Gebührenweg wird dieses VPFI an die Treasury verwirkt, nicht
+  an dich zurückgegeben.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -1019,8 +1019,10 @@ Sobald HF unter 1,0 fällt, kann jeder eine HF-basierte
 Liquidation auslösen; der Swap verkauft dein Collateral zu Preisen,
 die durch Slippage ausgehöhlt sind, um den Lender zurückzuzahlen.
 Bei illiquidem Collateral überträgt der Default dein gesamtes
-Collateral an den Lender — es bleibt nur ein eventuell
-ungenutzter VPFI-Loan-Initiation-Fee-Rebate zum Claimen.
+Collateral an den Lender, und es bleibt nichts zum Claimen: bei
+einem Loan auf dem eingestellten VPFI-Gebührenweg wird das gegen
+die Initiation-Fee verwahrte VPFI an die Treasury verwirkt statt
+zurückgegeben.
 
 <a id="loan-details.parties"></a>
 
@@ -1087,9 +1089,10 @@ verfügbar sind:
   Refinance-Abschluss die Loans atomar, ohne dass das
   Collateral deinen Vault verlässt.
 - **Als Borrower claimen** — nur in terminalen Zuständen. Gibt das
-  Collateral bei voller Rückzahlung zurück, oder den ungenutzten
-  VPFI-Loan-Initiation-Fee-Rebate bei Default / Liquidation.
-  Verbrennt den Borrower-Position-NFT.
+  Collateral bei voller Rückzahlung zurück; bei Default /
+  Liquidation gibt es nichts zurückzugeben, da VPFI, das unter dem
+  eingestellten Gebührenweg verwahrt war, an die Treasury verwirkt
+  wird. Verbrennt den Borrower-Position-NFT.
 
 ---
 

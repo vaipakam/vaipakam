@@ -351,9 +351,8 @@ cross-chain-facing contracts 中，受 timelock 控制，也不能移动 assets�
   slippage 影响的价格出售您的 collateral。swap 是 permissionless
   的 — 您的 HF 跌破 1.0 的瞬间，任何人都可以 trigger。
 - **Illiquid-collateral defaults** — Default 会把您的全部 collateral
-  转给 lender。没有 leftover claim；只有未使用的 VPFI Loan Initiation
-  Fee rebate 可以在 claim time 由 borrower 收取——而它只存在于仍在
-  已停用的 VPFI 费用路径上的 loan。
+  转给 lender，也没有任何 leftover claim：若该 loan 仍在已停用的 VPFI
+  费用路径上，为其发起费托管的 VPFI 会被没收转入 treasury，而不会退还。
 
 <a id="create-offer.advanced-options"></a>
 
@@ -794,8 +793,9 @@ route 成您的 principal asset。Recovery 是 slippage 之后的净额。
 
 一旦 HF 跌破 1.0，任何人都可以触发 HF-based liquidation；swap 会
 以受 slippage 影响的价格出售您的 collateral 来偿还 lender。在
-illiquid collateral 上，default 会把您的全部 collateral 转给 lender
-— 只有未使用的 VPFI Loan Initiation Fee rebate 还留给您 claim。
+illiquid collateral 上，default 会把您的全部 collateral 转给 lender，
+且没有任何东西留给您 claim：已停用费用路径下托管的 VPFI 会被没收转入
+treasury。
 
 <a id="loan-details.parties"></a>
 
@@ -851,8 +851,8 @@ locked" 等)。
   complete refinance 会 atomically swap loans，collateral 始终不离开
   您的 vault。
 - **Claim as borrower** — 仅在 terminal state 可用。full repayment 时返还
-  collateral；default / liquidation 时返还 unused VPFI Loan Initiation
-  Fee rebate。会 burn borrower position NFT。
+  collateral；default / liquidation 时没有可返还的东西，已停用费用路径下
+  托管的 VPFI 会被没收转入 treasury。会 burn borrower position NFT。
 
 ---
 

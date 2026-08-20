@@ -940,8 +940,9 @@ HF を引き上げる levers:
 HF が 1.0 を下回ると、誰でも HF-based liquidation を trigger でき
 ます。swap は lender へ返済するため、slippage-hit price であなたの
 collateral を売ります。Illiquid collateral では、default により
-collateral 全体が lender に transfer されます — claim できるのは
-unused VPFI Loan Initiation Fee rebate のみです。
+collateral 全体が lender に transfer され、claim できるものはありません。
+廃止された手数料経路のままの loan では、保管されていた VPFI は treasury に
+没収されます。
 
 <a id="loan-details.parties"></a>
 
@@ -1002,9 +1003,9 @@ role に関係なく誰でも利用できる permissionless actions:
   lender が accept したら、complete refinance により loans が
   atomically に swap されます。collateral は vault から出ません。
 - **Borrower として claim** — terminal state のみ。full repayment では
-  collateral を返し、default / liquidation では unused VPFI Loan
-  Initiation Fee rebate を返します。Borrower position NFT を burn
-  します。
+  collateral を返します。default / liquidation では返すものはなく、
+  廃止された手数料経路で保管されていた VPFI は treasury に没収されます。
+  Borrower position NFT を burn します。
 
 ---
 

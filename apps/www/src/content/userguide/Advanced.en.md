@@ -951,9 +951,10 @@ HF up:
 Once HF goes below 1.0, anyone can trigger an HF-based
 liquidation; the swap sells your collateral at slippage-eaten
 prices to repay the lender. On illiquid collateral, default
-transfers your full collateral to the lender — and on a loan
-still using the retired VPFI fee path, only any unused Loan
-Initiation Fee rebate is left for you to claim.
+transfers your full collateral to the lender, and nothing is
+left for you to claim: on a loan still using the retired VPFI
+fee path, the VPFI held against its initiation fee is forfeited
+to treasury rather than returned.
 
 <a id="loan-details.parties"></a>
 
@@ -1120,9 +1121,9 @@ Permissionless actions available to anyone regardless of role:
   on OpenSea's marketplace UI automatically; you don't sign
   anything off-chain.
 - **Claim as borrower** — terminal-only. Returns collateral on
-  full repayment, or the unused VPFI Loan Initiation Fee
-  rebate on default / liquidation. Burns the borrower position
-  NFT.
+  full repayment; on default / liquidation there is nothing to
+  return, since any VPFI held under the retired fee path is
+  forfeited to treasury. Burns the borrower position NFT.
 
 > **If your repay tx reverts while you have a live OpenSea
 > listing** — a buyer's `Seaport.fulfillOrder` may have landed
