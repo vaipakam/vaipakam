@@ -939,6 +939,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // that cached answer is exactly the one that predates the change the
   // gate needs to see. Ranking it below a healthy source would still
   // let it win whenever the healthy sources are absent.
+  //
+  // DO NOT harmonise `maturity` (below) onto this order. It reads the
+  // same two queries in the OPPOSITE sequence, deliberately, because it
+  // asks a different KIND of question: maturity is a comparison against
+  // a clock, and only `bannerTerms` carries an anchored one it can
+  // advance between polls (`chainNow + elapsed`) — `loanLive.chainNow`
+  // is frozen at fetch. Unifying the two orders would silently put a
+  // stopped clock in front of a running one, so the past-due boundary
+  // would stop arriving until something else refetched. Status has no
+  // clock in it, so freshness is the only axis and this order stands.
   // All three arrive decoded off a contract read, so each is a plain
   // number; `LoanStatus` is a numeric enum and every other comparison
   // in this file already relies on that. Cast once here, at the single
@@ -2818,6 +2828,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // outlive the live term. Falling through to `loanLive`, and
           // to `'unknown'` when it cannot answer either, fails closed
           // instead of trusting a snapshot the chain has moved past.
+          //
+          // The order here is the REVERSE of `resolvedLoanStatus`'s and
+          // that is intentional — see the note there. This branch needs
+          // an anchored clock, which only `bannerTerms` carries; the
+          // status resolution needs only a fresh enum. Same two
+          // queries, two different questions, two orders.
           maturity={
             bannerTerms.data && !bannerTerms.isError
               ? bannerNowSec >= termsEndSec
