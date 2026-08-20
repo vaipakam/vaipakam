@@ -203,8 +203,23 @@ export const wagmiConfig = createConfig({
     // browser (the deep-link path on mobile is the "All Wallets" →
     // MetaMask entry, which uses the WalletConnect connector below).
     injected({ target: "metaMask" }),
-    // Coinbase Wallet — stock SDK connector.
-    coinbaseWallet({ appName: APP_NAME, appLogoUrl: APP_ICON }),
+    // Coinbase Wallet — stock SDK connector, with the SDK's own
+    // analytics phone-home turned OFF (#1824, mirroring alpha02's
+    // UX-033). `preference.telemetry` gates the SDK's functional-metrics
+    // beacons; `options: 'all'` is the SDK's own default for wallet
+    // selection and is stated explicitly only because `preference` has
+    // to be supplied as a whole object — so this stays a telemetry-only
+    // change, not a smart-wallet-mode change.
+    //
+    // Not merely a modal-time concern: `reconnectOnMount` defaults true
+    // and wagmi's `reconnect` builds every configured connector's
+    // provider to look for a restorable session, so without this the
+    // beacons fire for every visitor on page load, wallet or no wallet.
+    coinbaseWallet({
+      appName: APP_NAME,
+      appLogoUrl: APP_ICON,
+      preference: { options: "all", telemetry: false },
+    }),
     // WalletConnect — only wired when a project id is configured.
     // `showQrModal: false` keeps ConnectKit rendering its own QR /
     // redirect UI. `metadata.redirect` carries ONLY `universal` (a web
@@ -216,6 +231,14 @@ export const wagmiConfig = createConfig({
           walletConnect({
             projectId: WC_PROJECT_ID,
             showQrModal: false,
+            // #1824 (mirroring alpha02's UX-033) — `telemetryEnabled`
+            // threads EthereumProvider → SignClient → Core, where it
+            // gates the `pulse.walletconnect.org` event beacons.
+            // Omitting it is NOT equivalent to false: Core's EventClient
+            // takes it as a DEFAULT PARAMETER (`i = !0`), which fires on
+            // exactly the `undefined` an absent option passes, so the
+            // option has to be present and false.
+            telemetryEnabled: false,
             metadata: {
               name: APP_NAME,
               description: APP_DESCRIPTION,
