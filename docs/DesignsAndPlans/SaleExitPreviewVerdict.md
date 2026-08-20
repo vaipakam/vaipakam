@@ -5,7 +5,7 @@ rounds on #1847 returned nine findings, two of which were plain factual errors
 in the first draft and one of which weakens the recommendation itself. §9
 lists what changed.
 
-**Status: proposal, not a decision.** It exists because #1841 has
+It exists because #1841 has
 accumulated **ten** deferred items that all wait on the same choice, and
 answering them one at a time has been demonstrably worse than answering
 them together. Nothing here is implemented. The recommendation is at the
@@ -14,7 +14,8 @@ dismissed.
 
 Related: #1841 (the ten items), #1839 (the chooser that surfaced them),
 #1503 (the lender early-withdrawal programme), #1835 (blocked separately
-on facet size, but affected by the sizing argument in §5).
+on facet size, but affected by the sizing argument in §5), #1849 (item 9's
+Advanced-mode half).
 
 ---
 
@@ -92,8 +93,8 @@ problem, for one of the same ten items.
 
 > **Revised after review (#1847, three rounds, nine findings).** The first
 > draft of this section contained a factual error about the pause rules and
-> under-specified most of the ABI. Both are corrected below, and §7's
-> recommendation is weakened as a result. The original is in this file's
+> under-specified most of the ABI. Both are corrected below, and the
+> recommendation in §8 is weakened as a result. The original is in this file's
 > history; it is not preserved inline, because a design doc that carries its
 > own retracted claims invites someone to read the wrong half.
 
