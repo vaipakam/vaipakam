@@ -3,11 +3,13 @@
 Seven entries. Most of the day went to a single question asked in two places:
 what has a party actually agreed to, and does the system hold itself to that?
 
-On the lending side, a lender leaving a position early was being charged for
-interest the borrower had already paid them, and had no way to say what price
-they would accept — so a listing could be filled on terms they never saw. Both
-are now bounded by what the seller agreed to rather than by what the arithmetic
-happened to produce.
+On the lending side, two distinct defects in a lender leaving a position early.
+One was arithmetic: the departing lender was charged for interest the borrower
+had already paid them, which a paid-through checkpoint now excludes — nothing to
+do with agreement, simply a figure that was wrong. The other was consent: a
+lender had no way to say what price they would accept, so a listing could be
+filled on terms they never saw, and a listing is now bounded by what the seller
+actually agreed to.
 
 The rest is the documentation and configuration surfaces making the same kind of
 correction: stating which network a figure came from, stating a loan's own fee

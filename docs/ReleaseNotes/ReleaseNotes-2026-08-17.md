@@ -1,6 +1,6 @@
 # Release Notes — 2026-08-17
 
-Three entries, and a theme runs through all of them: a check that cannot actually
+Five entries. A theme runs through most of them: a check that cannot actually
 establish what it claims is worse than no check, because it reports success.
 
 The first is about these notes. The tooling that assembles this file now verifies
@@ -29,6 +29,13 @@ announced nothing left the loan looking open forever. A change that emits nothin
 invisible to the automated coverage check too, which is the same failure the first
 entry is about, in a different subsystem. It is now impossible to construct a status
 change that nothing can see.
+
+Two further entries were folded in later, and both are that same theme once more,
+in the places work actually ships from. One gives the marketing site a committed
+post-deploy drive, and — where that drive cannot be run — records *why* rather
+than leaving a gap that reads as coverage. The other catches a component left out
+of the redeployment script before it ships, closing a gap where the script's own
+count check compared against itself and therefore agreed with any omission.
 
 ## Tooling — the release-note assembler files fragments by their own UTC day
 

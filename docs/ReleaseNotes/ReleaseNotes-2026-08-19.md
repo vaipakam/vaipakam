@@ -4,9 +4,11 @@ Seven entries, and the lender-exit work dominates. Four of them harden what
 happens when a lender leaves a position early — a flow that keeps proving to
 have more edges than it looks like it has.
 
-Two are about *not settling the same loan twice*: the instant sale route now
+One is about *not settling the same loan twice*: the instant sale route now
 refuses a loan that already has a close-out in flight, matching the listing
-route it had drifted from. Two are about *the position taking its history with
+route it had drifted from. One is about *the seller's own terms*: a listing can
+now be held to the quote its seller reviewed, so a fill cannot land on
+economics they never saw. Two are about *the position taking its history with
 it*: a sold or handed-over position now carries the bookkeeping that makes it
 findable by its new holder, and a sale settled in the platform token now
 refreshes both parties' fee-tier clock instead of leaving one over-priced and
