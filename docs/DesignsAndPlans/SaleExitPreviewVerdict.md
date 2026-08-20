@@ -178,6 +178,32 @@ about what it says — the shadow-copy failure this selector exists to end,
 reproduced inside the fix. Bits are append-only; a retired blocker leaves its
 bit permanently burned.
 
+**The positions, since "fixed as part of the ABI" is worthless without
+them.** The previous revision asserted the schema was pinned and then never
+assigned a single index — item labels like `8b` are not bit positions, so two
+implementations could follow this document faithfully and still disagree.
+Append-only; a retired blocker's bit is burned, never reused.
+
+| Bit | Blocker | `directBlockers` | `listBlockers` |
+| --- | --- | --- | --- |
+| 0 | Loan not Active (item 0) | ✅ | ✅ |
+| 1 | Sale admission refused (item 3) | ✅ | ✅ |
+| 2 | Borrower offset pending (item 4) | ✅ | ✅ |
+| 3 | Held VPFI unresolved (item 5) | ✅ | ✅ |
+| 4 | Principal asset paused (item 6) | ✅ | ✅ |
+| 5 | Collateral asset paused (item 7) | ✅ | ✅ |
+| 6 | Rental principal, non-ERC20 (item 8c) | ✅ | ✅ |
+| 7 | NFT collateral (item 8b) | — | ✅ |
+| 8 | Relist cooldown active (item 1) | — | ✅ |
+| 9 | Final-hour window (item 2) | — | ✅ |
+| 10 | Listing already present (item 8) | — | ✅ |
+
+The route masks are the columns: a bit marked `—` is never set in that map,
+and a caller must ignore it there rather than treating an unset bit as a
+verdict. Bits 0–6 are the both-routes set, which is also the visible record of
+§4.2's correction — the pause bits are in both maps, where the first draft had
+them in one.
+
 **`uint256`, not `uint16`.** The narrower type was a false economy: ABI
 encoding pads every one of these to a full 32-byte word regardless, so
 `uint16` bought no return-data bandwidth while capping the schema at sixteen
@@ -276,7 +302,7 @@ helps; cooldown is the longer bar of the two listing-only ones.
 | 1 | `Fillable` — stands, unexpired, bounds hold right now |
 | 2 | `EndedUnfilled` — stands but no buyer can complete |
 | 3 | `AcceptedPendingCompletion` — accepted, awaiting `completeLoanSale`, loan still Active |
-| 5 | `AcceptedButUncompletable` — accepted, loan TERMINAL (`Repaid`/`Settled`/`Defaulted`): stuck |
+| 5 | `AcceptedButUncompletable` — accepted, loan TERMINAL (`Repaid`/`Settled`/`Defaulted`/`InternalMatched`): stuck |
 | 6 | `AcceptedAwaitingCure` — accepted, loan `FallbackPending`: recoverable |
 | 4 | `BoundsViolated` — unexpired, but a fill would revert today |
 | 255 | `Indeterminate` |
@@ -293,8 +319,13 @@ that a dead end would tell a lender their sale is unrecoverable while the
 borrower is in the middle of recovering it. Value 5 is therefore restricted to
 the three genuinely terminal statuses.
 
+`InternalMatched` belongs in that terminal set too, and was missed:
+`RiskMatchLiquidationFacet.triggerInternalMatchLiquidation` can move an Active
+or `FallbackPending` loan there **without consulting its sale link**, which
+reaches the same stuck state by a fourth route.
+
 If a legacy accepted-but-uncompleted listing's loan reaches `Repaid`,
-`Settled` or `Defaulted`, `_completeLoanSaleImpl` rejects every non-Active loan **and**
+`Settled`, `Defaulted` or `InternalMatched`, `_completeLoanSaleImpl` rejects every non-Active loan **and**
 `teardownStaleSaleListing` deliberately skips accepted offers — so the link is
 stuck with no on-chain path out. Value 3 without the Active condition would
 have sent the lender to a completion that cannot succeed, repeatedly.
