@@ -8,7 +8,11 @@ the proposal undeployable as written.
 
 **§9 carries the running tally and is the only place that does.** Every
 duplicate of it in this file went stale within a round or two, which is a
-small instance of the problem the document is about.
+small instance of the problem the document is about. For the same reason §9
+refers to verdicts by **name** rather than by numeric value: it cited stale
+numbers for two of them after the enum split, and these codes are a
+client-facing ABI schema, so an implementer following the summary rather than
+§4.3.1 could have generated incompatible Solidity and TypeScript encodings.
 
 It exists because #1841 has
 accumulated **ten** deferred items that all wait on the same choice, and
@@ -272,17 +276,25 @@ helps; cooldown is the longer bar of the two listing-only ones.
 | 1 | `Fillable` — stands, unexpired, bounds hold right now |
 | 2 | `EndedUnfilled` — stands but no buyer can complete |
 | 3 | `AcceptedPendingCompletion` — accepted, awaiting `completeLoanSale`, loan still Active |
-| 5 | `AcceptedButUncompletable` — accepted, loan no longer Active: STUCK |
+| 5 | `AcceptedButUncompletable` — accepted, loan TERMINAL (`Repaid`/`Settled`/`Defaulted`): stuck |
+| 6 | `AcceptedAwaitingCure` — accepted, loan `FallbackPending`: recoverable |
 | 4 | `BoundsViolated` — unexpired, but a fill would revert today |
 | 255 | `Indeterminate` |
 
-Precedence 5 > 3 > 2 > 4 > 1 > 0, and **independent of `windowVerdict`** — a
+Precedence 5 > 6 > 3 > 2 > 4 > 1 > 0, and **independent of `windowVerdict`** — a
 lender past maturity with value 3 still sees "complete this sale", because
 that is what the protocol still permits.
 
-**Value 5 is a genuine protocol dead end, not a display state.** If a legacy
-accepted-but-uncompleted listing's loan reaches `Repaid`, `Settled` or
-`Defaulted`, `_completeLoanSaleImpl` rejects every non-Active loan **and**
+**Value 5 is a genuine protocol dead end; value 6 is emphatically not**, and
+collapsing them was a real error in the previous revision — every non-Active
+status mapped to "stuck", but `FallbackPending` has an explicit borrower cure
+back to `Active`, after which `completeLoanSale` proceeds normally. Labelling
+that a dead end would tell a lender their sale is unrecoverable while the
+borrower is in the middle of recovering it. Value 5 is therefore restricted to
+the three genuinely terminal statuses.
+
+If a legacy accepted-but-uncompleted listing's loan reaches `Repaid`,
+`Settled` or `Defaulted`, `_completeLoanSaleImpl` rejects every non-Active loan **and**
 `teardownStaleSaleListing` deliberately skips accepted offers — so the link is
 stuck with no on-chain path out. Value 3 without the Active condition would
 have sent the lender to a completion that cannot succeed, repeatedly.
@@ -649,10 +661,10 @@ classification was complete when it was not.**
   version of the table (now 8c). With `checkedMask` reporting those bits
   checked and clear, an omission like this is worse than an admitted gap.
 - An **accepted-but-uncompleted** listing is neither fillable nor ended
-  unfilled, and teardown is explicitly wrong for it (value 6).
+  unfilled, and teardown is explicitly wrong for it (`AcceptedPendingCompletion`).
 - An unexpired listing is **not necessarily fillable**: the seller floor and
   held ceiling stamped at listing can be violated by the time a buyer arrives,
-  so every acceptance reverts (value 7).
+  so every acceptance reverts (`BoundsViolated`).
 
 The third is the one to sit with. It attacks `ListingLive` — a value added by
 the *previous* round's fix — for exactly the flaw that round was fixing: a
