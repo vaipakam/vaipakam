@@ -1017,6 +1017,7 @@
         "sellNow": "Sell your position now",
         "sellNowDesc": "Sell this position straight into a standing lending offer that matches it. You’re paid immediately from funds already locked by that lender, and the borrower’s rate and due date don’t change.",
         "sellNowCost": "Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Open the tool for the actual figures.",
+        "costFullTariff": "This position is on the Full fee plan, which you paid for in VPFI when the loan opened. That plan travels with the position, so the part of it covering the rest of the term goes to the buyer and is not refunded.",
         "sellNowNoOffers": "No lending offer on the book matches this position right now — check back later, or list it below instead.",
         "list": "List your position for sale",
         "listDesc": "Publish this position at your asking rate and wait for a buyer. The sale settles only when someone accepts.",

@@ -153,6 +153,14 @@ export interface LenderExitRow {
   title: string;
   desc: string;
   cost?: string;
+  /** A SECOND cost line, shown on the same terms as `cost`.
+   *
+   *  Separate from `cost` because it applies only to SOME positions
+   *  (today: a Full-stamped fee entitlement) while the base cost
+   *  sentence is identical for every one. Folding it in would mean two
+   *  near-identical long strings per row in every locale, drifting
+   *  apart on the next edit to either. */
+  costExtra?: string;
   /** Structural facts true even when the row IS available. */
   note?: string;
   /** Keep `cost` visible even though `unavailable` is set.
@@ -188,6 +196,20 @@ export interface LenderExitInput {
    *  while the loan stays active — so "you claim at the end" is false
    *  for these loans even with no periodic schedule (Codex r4 P2). */
   allowsPartialRepay: boolean;
+  /** Whether the LENDER side of this loan's fee entitlement is stamped
+   *  Full.
+   *
+   *  `FeeEntitlement` is keyed by loanId, NOT by holder, and no sale
+   *  path clears it — `repriceFeeEntitlementOnExtension` is the only
+   *  writer and it fires on extension, not sale. So the stamp travels
+   *  with the position: the buyer inherits the yield-fee bump for the
+   *  remaining term without paying any `C*`, and the seller, who paid
+   *  it in VPFI at origination, keeps only the part already settled
+   *  (Codex r12 P2).
+   *
+   *  Free to know: the sale rows already wait on the fee-entitlement
+   *  read, so this adds no query. */
+  lenderFeeModeFull: boolean;
   /** Whether the pending card below will actually render a cancel.
    *
    *  It gates on `state.offerId && state.isHolder` — TWO conditions,
@@ -274,6 +296,7 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       title: o.sellNow,
       desc: o.sellNowDesc,
       cost: o.sellNowCost,
+      costExtra: input.lenderFeeModeFull ? o.costFullTariff : undefined,
       // Same reasoning as the listing row: while a listing stands, the
       // buyer completing it incurs these same losses, and this row's
       // cost line carries the identical disclosure.
@@ -317,6 +340,7 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       title: o.list,
       desc: o.listDesc,
       cost: o.listCost,
+      costExtra: input.lenderFeeModeFull ? o.costFullTariff : undefined,
       note: o.listStructural,
       // A live listing is a sale in flight, not a declined option.
       costStillApplies: input.saleLock === 'listed',

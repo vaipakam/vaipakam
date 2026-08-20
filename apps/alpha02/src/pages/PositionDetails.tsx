@@ -3002,6 +3002,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     ? 'checking'
                     : 'clear'
           }
+          // Free — the sale rows already wait on `feeEnt`, so reading
+          // the stamp here adds no query. Defaults to false while the
+          // read is absent, which is the safe direction for a COST
+          // line: naming a loss that does not apply would be worse
+          // than the row's existing silence, and the rows are held
+          // unavailable until this read lands anyway.
+          lenderFeeModeFull={feeEnt.data?.lenderMode === FEE_MODE_FULL}
           // See the prop's own note: no cheap client read exists for
           // the held-for-lender balance, so this stays false and the
           // refusal surfaces in the listing tool instead.

@@ -18,6 +18,7 @@ const base: LenderExitInput = {
   saleTools: 'ready',
   collateralIsNft: false,
   allowsPartialRepay: false,
+  lenderFeeModeFull: false,
   saleCancel: 'yes',
   fallbackPending: false,
   saleLock: 'clear',
@@ -48,6 +49,7 @@ describe('wait row — ordering and framing', () => {
       saleTools: 'failed',
       collateralIsNft: true,
       allowsPartialRepay: true,
+      lenderFeeModeFull: true,
       saleCancel: 'no-elsewhere',
       fallbackPending: true,
       saleLock: 'listed',
@@ -687,5 +689,48 @@ describe('a failed prerequisite names no read at all (Codex r10 P2)', () => {
       rowFor({ saleTools: 'failed', heldVpfiUnresolved: true }, 'list')
         .unavailable,
     ).not.toBe(o.listUnavailableHeldVpfi);
+  });
+});
+
+
+describe('Full-tariff entitlement — the fourth loss', () => {
+  it('is silent on a position that is not Full-stamped', () => {
+    for (const key of ['sell-now', 'list']) {
+      expect(rowFor({ lenderFeeModeFull: false }, key).costExtra).toBeUndefined();
+    }
+  });
+
+  it('names the forfeited plan on BOTH sale rows when the stamp is Full', () => {
+    for (const key of ['sell-now', 'list']) {
+      expect(rowFor({ lenderFeeModeFull: true }, key).costExtra).toBe(
+        o.costFullTariff,
+      );
+    }
+  });
+
+  it('never touches the wait row — keeping the position keeps the plan', () => {
+    expect(rowFor({ lenderFeeModeFull: true }, 'wait').costExtra).toBeUndefined();
+  });
+
+  it('survives alongside a live listing, exactly as the base cost does', () => {
+    // A listed position is a sale in flight, so its costs are pending
+    // consequences rather than declined prices — and the entitlement
+    // transfers on completion with everything else. If this ever
+    // diverged from `costStillApplies`, one cost line would vanish
+    // while its sibling stayed.
+    const row = rowFor({ lenderFeeModeFull: true, saleLock: 'listed' }, 'list');
+    expect(row.costStillApplies).toBe(true);
+    expect(row.costExtra).toBe(o.costFullTariff);
+    expect(row.cost).toBe(o.listCost);
+  });
+
+  it('is a SEPARATE line, never folded into the base sentence', () => {
+    // The base cost is identical for every position; only this line
+    // varies. Concatenating them would mean two near-identical long
+    // strings per row in nine locales.
+    const full = rowFor({ lenderFeeModeFull: true }, 'sell-now');
+    const plain = rowFor({ lenderFeeModeFull: false }, 'sell-now');
+    expect(full.cost).toBe(plain.cost);
+    expect(full.cost).not.toContain(o.costFullTariff);
   });
 });

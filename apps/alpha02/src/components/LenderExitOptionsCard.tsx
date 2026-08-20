@@ -75,6 +75,8 @@ export function LenderExitOptionsCard({
   collateralIsNft: boolean;
   /** Wait-row timing only — see `LenderExitInput.allowsPartialRepay`. */
   allowsPartialRepay: boolean;
+  /** See `LenderExitInput.lenderFeeModeFull`. */
+  lenderFeeModeFull: boolean;
   /** Whether the pending card below will offer a cancel, and if not,
    *  why — see `SaleCancelState`. */
   saleCancel: SaleCancelState;
@@ -145,6 +147,12 @@ export function LenderExitOptionsCard({
               <div className="row-sub">{row.desc}</div>
               {row.cost && (!row.unavailable || row.costStillApplies) ? (
                 <div className="row-sub muted">{row.cost}</div>
+              ) : null}
+              {/* Same gate as `cost` — it IS a cost line, just one that
+                  applies to a subset of positions. */}
+              {row.costExtra &&
+              (!row.unavailable || row.costStillApplies) ? (
+                <div className="row-sub muted">{row.costExtra}</div>
               ) : null}
               {/* Codex r2 P2 — the structural note renders INDEPENDENTLY
                   of availability, unlike `cost`. Gating it the same way

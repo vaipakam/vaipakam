@@ -40,6 +40,14 @@ points you at the tool that shows the figures. A cost line that mentioned only
 the interest would read as complete while omitting an amount that can be larger
 than it.
 
+One position type pays a fourth thing, and the card now says so. If your
+position is on the Full fee plan — the one you paid for in VPFI when the loan
+opened — that plan is recorded against the loan rather than against you, and
+nothing about a sale cancels it. So it goes to the buyer along with the
+position, and the part of it covering the rest of the term is value you paid
+for and do not get back. The card names it on both sale rows and, like the
+other two, does not attempt to price it.
+
 Those cost lines stay visible **while a listing of yours is standing**, even
 though the rows themselves then read as unavailable. A live listing is not an
 option you declined — it is a sale in flight that a buyer can complete at any

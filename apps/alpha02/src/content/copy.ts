@@ -1970,6 +1970,23 @@ const copySource = {
       // figures rather than implying they do not exist.
       sellNowCost:
         'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Open the tool for the actual figures.',
+      // FOURTH loss, and only on a Full-stamped position (Codex r12
+      // P2). `FeeEntitlement` is keyed by loanId, NOT by lender, and no
+      // sale path resets it — only `repriceFeeEntitlementOnExtension`
+      // touches the stamp. So the lender NFT carries `lenderMode ==
+      // Full` to the buyer, who inherits the yield-fee bump for the
+      // remaining term without paying any `C*` of their own. The seller
+      // paid that in VPFI up front and keeps only the part already
+      // settled.
+      //
+      // Named, NOT priced — the same treatment as the held balance and
+      // the reward entry, and for the same reason: the card cannot
+      // compute a remaining-term share and a number it guessed at would
+      // be worse than the sentence. A separate line rather than a
+      // longer one so the base cost sentence stays identical for every
+      // position and needs no second translation.
+      costFullTariff:
+        'This position is on the Full fee plan, which you paid for in VPFI when the loan opened. That plan travels with the position, so the part of it covering the rest of the term goes to the buyer and is not refunded.',
       sellNowNoOffers:
         'No lending offer on the book matches this position right now — check back later, or list it below instead.',
 
