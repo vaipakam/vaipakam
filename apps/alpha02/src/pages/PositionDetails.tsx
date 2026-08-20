@@ -975,14 +975,30 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  jump buttons scrolling to anchors that did not exist. A chooser
    *  whose whole purpose is to stop dead ends had become one.
    *
-   *  A live answer OUTRANKS the indexed row because it is the same
-   *  source the contracts will check at submit. The indexed row is
-   *  kept as the fallback for when no live read has answered, not as
-   *  a veto over one that has. */
-  const saleAttemptable =
-    resolvedLoanStatus !== undefined
-      ? resolvedLoanStatus === LoanStatus.Active
-      : row.status === 'active';
+   *  It is deliberately `effectivelyActive` ITSELF rather than a
+   *  richer reconciliation, and that is the second half of the same
+   *  lesson (Codex r14 P2). My first attempt resolved the status from
+   *  the widest set of live reads, which made the chooser MORE willing
+   *  than the tools: `loanLive` — the query the whole strategy block
+   *  waits on — is enabled from `effectivelyActive`, so a cure that
+   *  only `bannerTerms` had seen offered the Advanced switch and then
+   *  parked both rows on "checking" forever behind a query that could
+   *  never run. A different dead end reached by the opposite door.
+   *
+   *  The invariant is not "use the best available answer", it is
+   *  "rows and tools must answer the same question the same way". So
+   *  this shares the tools' own predicate by construction rather than
+   *  by agreement, and cannot drift from it. Where that predicate
+   *  cannot see a cure, the honest result is a row that says the sale
+   *  is unavailable — not one offered against a tool that cannot
+   *  load.
+   *
+   *  Widening it means widening `effectivelyActive`, which is the
+   *  right place: `bannerTerms` is declared AFTER `loanLive`, so
+   *  feeding it into that enablement is a hook-reorder on a page where
+   *  hook order has already caused a crash (#1521). Not worth it for a
+   *  case both other live reads failing already covers. */
+  const saleAttemptable = effectivelyActive;
 
   const liveSaysFallbackPending =
     bannerTerms.data?.live.status === LoanStatus.FallbackPending;
@@ -3008,7 +3024,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // line: naming a loss that does not apply would be worse
           // than the row's existing silence, and the rows are held
           // unavailable until this read lands anyway.
-          lenderFeeModeFull={feeEnt.data?.lenderMode === FEE_MODE_FULL}
+          // `!isError` as well as `.data` (Codex r14 P2). TanStack
+          // RETAINS the last success through a failed refetch, and
+          // `repriceFeeEntitlementOnExtension` DOWNGRADES a lender Full
+          // stamp to None when a keeper extends the loan in place — so
+          // a cached Full record can outlive the plan it describes, and
+          // the card would price a sunk original-term tariff as a cost
+          // of selling. Falling back to silence is right for a cost
+          // line: an unstated loss is a gap, a stated non-loss is a
+          // false comparison the lender may act on.
+          lenderFeeModeFull={
+            feeEnt.data !== undefined &&
+            !feeEnt.isError &&
+            feeEnt.data.lenderMode === FEE_MODE_FULL
+          }
           // See the prop's own note: no cheap client read exists for
           // the held-for-lender balance, so this stays false and the
           // refusal surfaces in the listing tool instead.
