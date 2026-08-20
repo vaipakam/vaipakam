@@ -2685,12 +2685,25 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // mode always took the `false` branch and a past-due lender
           // was told both sales were available (Codex r1 P2). This is
           // the identical fallback the borrower chooser already uses.
+          // Codex r3 P2 — ANCHORED chain time, not the raw poll snapshot.
+          // `chainNow` is captured per refetch, so on a polling-only
+          // deployment a lender sitting on the page across maturity kept
+          // seeing the sale rows until the next successful poll, while
+          // the contract had already begun refusing. `bannerNowSec`
+          // advances that anchor by the local tick between refetches —
+          // the device clock supplies only the DELTA, never the
+          // authority, which is the same rule the grace banner uses
+          // (Codex #1166 r2).
+          //
+          // `termsEndSec` is preferred over `loanLive` here because it
+          // resolves from bannerTerms' LIVE terms when present, which is
+          // what the r2 fix widened the gate to guarantee for lenders;
+          // `loanLive` is fresher but carries no local anchor.
           pastDue={
-            loanLive.data
-              ? loanLive.data.chainNow > loanEndTimeOf(loanLive.data.live)
-              : bannerTerms.data
-                ? BigInt(bannerTerms.data.chainNow) >
-                  loanEndTimeOf(bannerTerms.data.live)
+            bannerTerms.data
+              ? bannerNowSec > termsEndSec
+              : loanLive.data
+                ? loanLive.data.chainNow > loanEndTimeOf(loanLive.data.live)
                 : false
           }
           listingSupportedOnChain={loanSaleListingEnabled(readChain.chainId)}
