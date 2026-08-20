@@ -2763,12 +2763,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // case (`lenderNeedsLiveTerms`), so unknown clears on the
           // next refetch rather than persisting the way an un-runnable
           // query would.
+          //
+          // `!bannerTerms.isError` matters even though `.data` is set
+          // (Codex r8 P2): TanStack RETAINS the last success when a
+          // background refetch fails, and an obligation transfer
+          // re-stamps `startTime`/`durationDays` on the loan
+          // (`PrecloseFacet:1164`), so a cached LATER due date can
+          // outlive the live term. Falling through to `loanLive`, and
+          // to `'unknown'` when it cannot answer either, fails closed
+          // instead of trusting a snapshot the chain has moved past.
           maturity={
-            bannerTerms.data
+            bannerTerms.data && !bannerTerms.isError
               ? bannerNowSec >= termsEndSec
                 ? 'past'
                 : 'current'
-              : loanLive.data
+              : loanLive.data && !loanLive.isError
                 ? loanLive.data.chainNow >= loanEndTimeOf(loanLive.data.live)
                   ? 'past'
                   : 'current'
@@ -2798,8 +2807,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               ? feeEnt.isError
                 ? 'failed'
                 : 'checking'
-              : !sanctions.ready || !principal
-                ? 'checking'
+              : !principal
+                ? // Codex r8 P2 — `principalMeta` exhausting its retry
+                  // leaves `principal` undefined forever, and the
+                  // Advanced block is gated on it too, so neither
+                  // anchor ever mounts. Reporting that as "still
+                  // reading the fee terms" was wrong twice over: wrong
+                  // cause, and a wait that never ends.
+                  principalMeta.isError
+                  ? 'failed'
+                  : 'checking'
+                : !sanctions.ready
+                  ? 'checking'
                 : isAdvanced && !loanLive.data
                   ? loanLive.isError
                     ? 'failed'
@@ -2819,8 +2838,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // remembered offer id stays verified, so keying on the id
           // alone promised a cancel that failure had already removed
           // (Codex r5 P2 for the id, r7 P2 for the holder).
-          saleListingCancellable={
-            sale.state?.offerId != null && sale.state.isHolder === true
+          saleCancel={
+            sale.state?.offerId == null
+              ? 'no-elsewhere'
+              : sale.state.isHolder === true
+                ? 'yes'
+                : 'no-unverified'
+          }
+          // Affirmative FallbackPending only (Codex r8 P2). Both sale
+          // entry points require exactly Active, so the rows go — but
+          // the card STAYS, because the status is not terminal and the
+          // wait row is still the honest answer. An unread status is
+          // not a fallback-pending one, so this never guesses.
+          fallbackPending={
+            bannerTerms.data?.live.status === LoanStatus.FallbackPending ||
+            liveStatus.data?.status === LoanStatus.FallbackPending
           }
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so

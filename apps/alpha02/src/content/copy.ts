@@ -2016,6 +2016,22 @@ const copySource = {
       // fee-entitlement disclosure read, and their jump anchors go
       // with them. A row left available then rendered a jump to an
       // element that did not exist, and the click did nothing at all.
+      // Codex r8 P2 — the two ways a cancel can be absent want
+      // different sentences. A missing offer record really does mean
+      // "listed elsewhere"; a FAILED holder read says nothing about
+      // where it was listed and may clear on retry, so sending that
+      // lender to another device invents a cause. My own r7 fix
+      // created this by folding the second case into the first.
+      listAlreadyListedCancelUnverified:
+        'Already listed — this position is on sale now. We couldn’t confirm you still hold it from this device, so the cancel control isn’t available here at the moment; the card below shows what we can see, and reloading may restore it.',
+      sellNowAlreadyListedCancelUnverified:
+        'Not available while this position is listed for sale. We couldn’t confirm you still hold it from this device, so cancelling isn’t offered here at the moment — reloading may restore it.',
+      // Codex r8 P2 — both sale entry points require the loan to be
+      // exactly Active, and a fallback-pending loan is not. The card
+      // stays mounted (the status is not terminal and the wait row
+      // still applies) but neither sale can be started.
+      saleFallbackPending:
+        'Not available while this loan is settling through its fallback path — a sale can only be started on a loan that is running normally. Waiting still applies, and the loan’s own settlement continues.',
       // Codex r6 P2 — the due date is chain-anchored from whichever
       // live read answered; with neither answering there is no
       // authoritative source, and reporting "not past due" would be a

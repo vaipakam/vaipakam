@@ -38,6 +38,7 @@ import {
   type InstantSellCandidates,
   type LenderExitJumpTarget,
   type MaturityState,
+  type SaleCancelState,
   type SaleLockState,
   type SaleToolsState,
 } from '../data/lenderExitRows';
@@ -74,8 +75,12 @@ export function LenderExitOptionsCard({
   collateralIsNft: boolean;
   /** Wait-row timing only — see `LenderExitInput.allowsPartialRepay`. */
   allowsPartialRepay: boolean;
-  /** Whether the pending card below can actually offer a cancel. */
-  saleListingCancellable: boolean;
+  /** Whether the pending card below will offer a cancel, and if not,
+   *  why — see `SaleCancelState`. */
+  saleCancel: SaleCancelState;
+  /** Live status says FallbackPending: the card stays, both sales go.
+   *  See `LenderExitInput.fallbackPending`. */
+  fallbackPending: boolean;
   /** Whether this position already carries a live listing. A TRI-STATE
    *  (`SaleLockState`), not a boolean: the lock refuses BOTH sale paths
    *  (`SaleOfferAlreadyExists`, and the page unmounts the instant-exit

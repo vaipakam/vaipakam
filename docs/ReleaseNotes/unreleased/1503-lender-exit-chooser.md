@@ -61,7 +61,12 @@ tools are not deployed on this network, the collateral is an NFT and listing
 currently supports ERC-20 collateral only, or the position is already listed
 (with a pointer to the card that can cancel it — and where this device cannot
 recover the listing's record, the row says the listing stands without promising
-a cancel it cannot deliver). Two more reasons are operational rather than
+a cancel it cannot deliver — and where the reason is that we simply could not
+confirm you still hold the position, it says *that*, rather than telling you the
+listing was made somewhere it may well not have been). A loan settling through
+its fallback path also blocks both sales, since a sale can only start on a loan
+running normally; the card stays, because waiting still applies. Two more
+reasons are operational rather than
 positional: while the fee terms that must be disclosed before any sale are
 still being read — or could not be read — both sale rows say so, because the
 tools themselves do not appear until that read lands; and if the operator has

@@ -93,6 +93,19 @@ export type SaleToolsState = 'ready' | 'checking' | 'failed';
  *  this case has not answered yet, so it clears on the next refetch. */
 export type MaturityState = 'past' | 'current' | 'unknown';
 
+/** Whether the pending card below will offer a cancel, and if not, why.
+ *
+ *  Three-valued rather than a boolean (Codex r8 P2), because the two
+ *  ways it can be absent want different sentences. A missing offer
+ *  record means the listing was made elsewhere and this device cannot
+ *  act on it — "cancel it where you listed it" is the right advice. An
+ *  unverified holder means the card's isolated `ownerOf` read failed,
+ *  which says nothing about where the listing was made and may resolve
+ *  on the next attempt — telling that lender to go to another device
+ *  would be a fabricated cause, and my own r7 fix introduced exactly
+ *  that by folding the holder failure into the elsewhere wording. */
+export type SaleCancelState = 'yes' | 'no-elsewhere' | 'no-unverified';
+
 export type LenderExitJumpTarget = 'early-exit-card' | 'loan-sale-card';
 
 export interface LenderExitRow {
@@ -145,7 +158,16 @@ export interface LenderExitInput {
    *  therefore promised a cancel that a partial read failure had
    *  already removed (Codex r5 P2 for the id, r7 P2 for the holder).
    *  Mirror BOTH, or this drifts from the card again. */
-  saleListingCancellable: boolean;
+  saleCancel: SaleCancelState;
+  /** The live read says the loan is FallbackPending (Codex r8 P2).
+   *
+   *  The card stays mounted for this status — it is not terminal, and a
+   *  lender still has options worth reading — but both sale entry
+   *  points require exactly `Active`
+   *  (`EarlyWithdrawalDirectFacet:167`, `EarlyWithdrawalFacet:270`), so
+   *  the rows must not be offered. Affirmative only: an unread status
+   *  is not a fallback-pending one. */
+  fallbackPending: boolean;
   /** Chain-anchored only — never a device clock. See `MaturityState`
    *  for why this is not a boolean. */
   maturity: MaturityState;
@@ -188,12 +210,17 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
   // a live one, and both contracts refuse an exit past maturity, so
   // presenting the rows as takeable would be a claim made from a read
   // that did not answer.
+  // Ranked above the listing lock: a fallback-pending loan refuses both
+  // sales outright, so "cancel the listing first" would be advice that
+  // does not lead anywhere (Codex r8 P2).
   const pastDueOr = (reason: string | undefined) =>
     input.maturity === 'past'
       ? copy.lenderExit.pastDue
       : input.maturity === 'unknown'
         ? copy.lenderExit.options.maturityUnknown
-        : reason;
+        : input.fallbackPending
+          ? o.saleFallbackPending
+          : reason;
 
   return [
     {
@@ -221,9 +248,11 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
               // cancellable split is the same one the listing row
               // makes: this row NAMES the cancel as the fix, so it
               // must not name one this device cannot perform.
-              input.saleListingCancellable
+              input.saleCancel === 'yes'
               ? o.sellNowAlreadyListed
-              : o.sellNowAlreadyListedNoCancel
+              : input.saleCancel === 'no-elsewhere'
+                ? o.sellNowAlreadyListedNoCancel
+                : o.sellNowAlreadyListedCancelUnverified
           : // Ranked BELOW the listing lock to match the page's own
             // order: the stand-in card replaces the tools only on the
             // branch a live listing has already taken over.
@@ -259,9 +288,11 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
         input.saleLock === 'checking'
           ? o.saleLockChecking
           : input.saleLock === 'listed'
-            ? input.saleListingCancellable
+            ? input.saleCancel === 'yes'
               ? o.listAlreadyListed
-              : o.listAlreadyListedNoCancel
+              : input.saleCancel === 'no-elsewhere'
+                ? o.listAlreadyListedNoCancel
+                : o.listAlreadyListedCancelUnverified
           : !input.listingSupportedOnChain
             ? o.listUnavailableNetwork
             : input.collateralIsNft

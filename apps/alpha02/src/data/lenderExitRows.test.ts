@@ -18,7 +18,8 @@ const base: LenderExitInput = {
   saleTools: 'ready',
   collateralIsNft: false,
   allowsPartialRepay: false,
-  saleListingCancellable: true,
+  saleCancel: 'yes',
+  fallbackPending: false,
   saleLock: 'clear',
   heldVpfiUnresolved: false,
   borrowerOffsetPending: false,
@@ -47,7 +48,8 @@ describe('wait row — ordering and framing', () => {
       saleTools: 'failed',
       collateralIsNft: true,
       allowsPartialRepay: true,
-      saleListingCancellable: false,
+      saleCancel: 'no-elsewhere',
+      fallbackPending: true,
       saleLock: 'listed',
       heldVpfiUnresolved: true,
       borrowerOffsetPending: true,
@@ -345,13 +347,13 @@ describe('wait row — partial repay also pays during the term (Codex r4 P2)', (
 describe('listed row — do not promise a cancel the pending card withholds (Codex r5 P2)', () => {
   it('promises cancellation only when the listing record is recoverable', () => {
     expect(
-      rowFor({ saleLock: 'listed', saleListingCancellable: true }, 'list').unavailable,
+      rowFor({ saleLock: 'listed', saleCancel: 'yes' }, 'list').unavailable,
     ).toBe(o.listAlreadyListed);
   });
 
   it('points elsewhere when it is not — matching the pending card’s own refusal', () => {
     expect(
-      rowFor({ saleLock: 'listed', saleListingCancellable: false }, 'list').unavailable,
+      rowFor({ saleLock: 'listed', saleCancel: 'no-elsewhere' }, 'list').unavailable,
     ).toBe(o.listAlreadyListedNoCancel);
   });
 
@@ -361,21 +363,21 @@ describe('listed row — do not promise a cancel the pending card withholds (Cod
   // above the corrected one.
   it('applies the same split to the sell-now row, which names the cancel as the fix', () => {
     expect(
-      rowFor({ saleLock: 'listed', saleListingCancellable: true }, 'sell-now')
+      rowFor({ saleLock: 'listed', saleCancel: 'yes' }, 'sell-now')
         .unavailable,
     ).toBe(o.sellNowAlreadyListed);
     expect(
-      rowFor({ saleLock: 'listed', saleListingCancellable: false }, 'sell-now')
+      rowFor({ saleLock: 'listed', saleCancel: 'no-elsewhere' }, 'sell-now')
         .unavailable,
     ).toBe(o.sellNowAlreadyListedNoCancel);
   });
 
   it('lets past-due still outrank both listed variants on both rows', () => {
-    for (const cancellable of [true, false]) {
+    for (const cancellable of ['yes', 'no-elsewhere'] as const) {
       for (const key of ['sell-now', 'list'] as const) {
         expect(
           rowFor(
-            { saleLock: 'listed', saleListingCancellable: cancellable, maturity: 'past' },
+            { saleLock: 'listed', saleCancel: cancellable, maturity: 'past' },
             key,
           ).unavailable,
         ).toBe(copy.lenderExit.pastDue);
@@ -582,5 +584,63 @@ describe('a failed read is not a slow one (Codex r7 P2)', () => {
       rowFor({ periodicInterestCadence: undefined, cadenceReadFailed: true }, 'wait')
         .unavailable,
     ).toBeUndefined();
+  });
+});
+
+describe('two ways a cancel can be absent, two sentences (Codex r8 P2)', () => {
+  // My own r7 fix folded a FAILED holder read into the "listed from
+  // another device" wording, which fabricates a cause: the read says
+  // nothing about where the listing was made, and may clear on retry.
+  it('says elsewhere only when the offer record is genuinely missing', () => {
+    expect(rowFor({ saleLock: 'listed', saleCancel: 'no-elsewhere' }, 'list').unavailable)
+      .toBe(o.listAlreadyListedNoCancel);
+  });
+
+  it('stays cause-neutral when it is the holder read that failed', () => {
+    const line = rowFor(
+      { saleLock: 'listed', saleCancel: 'no-unverified' },
+      'list',
+    ).unavailable;
+    expect(line).toBe(o.listAlreadyListedCancelUnverified);
+    expect(line).not.toBe(o.listAlreadyListedNoCancel);
+  });
+
+  it('applies the same split on the sell-now row', () => {
+    expect(
+      rowFor({ saleLock: 'listed', saleCancel: 'no-unverified' }, 'sell-now').unavailable,
+    ).toBe(o.sellNowAlreadyListedCancelUnverified);
+  });
+});
+
+describe('a fallback-pending loan admits no sale (Codex r8 P2)', () => {
+  // Both entry points require exactly Active. The card stays mounted —
+  // the status is not terminal and waiting is still honest advice —
+  // but neither sale can be started.
+  it('blocks both sale rows', () => {
+    for (const key of ['sell-now', 'list'] as const) {
+      expect(rowFor({ fallbackPending: true }, key).unavailable).toBe(
+        o.saleFallbackPending,
+      );
+    }
+  });
+
+  it('outranks the listing lock, whose advice would lead nowhere', () => {
+    expect(
+      rowFor({ fallbackPending: true, saleLock: 'listed' }, 'list').unavailable,
+    ).toBe(o.saleFallbackPending);
+  });
+
+  it('still yields to past-due and to an unestablished due date', () => {
+    expect(
+      rowFor({ fallbackPending: true, maturity: 'past' }, 'list').unavailable,
+    ).toBe(copy.lenderExit.pastDue);
+    expect(
+      rowFor({ fallbackPending: true, maturity: 'unknown' }, 'list').unavailable,
+    ).toBe(o.maturityUnknown);
+  });
+
+  it('leaves the wait row untouched', () => {
+    const rows = buildLenderExitRows({ ...base, fallbackPending: true });
+    expect(rows.find((r) => r.key === 'wait')!.unavailable).toBeUndefined();
   });
 });
