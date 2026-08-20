@@ -690,6 +690,32 @@ contract DeployDiamond is Script {
         VaipakamNFTFacet(diamond).initializeNFT();
         console.log("NFT initialized.");
 
+        // 5d-bis. #1434 P1-b (Codex #1699 r21) — mark this FRESH deployment as
+        //     already seeded, with zero.
+        //
+        //     `seedArmedFreshPaid` exists for a chain that was upgraded INTO
+        //     P1-b and therefore carries armed-fresh payouts made before the
+        //     paid-side counter existed. A chain deployed fresh has no such
+        //     history by construction: the counter has tracked every payout
+        //     from block one, so its correct seed is exactly 0.
+        //
+        //     Recording that here is what makes the flag mean what the rest of
+        //     the system reads it to mean. `RefreshAllFacetsInPlace` and the
+        //     redeploy orchestrator both branch on `armedFreshPaidSeeded()`:
+        //     left false, a fresh Diamond is misclassified as UNMIGRATED on
+        //     its first full-facet refresh, which at best demands operator
+        //     inputs that do not apply and at worst invites an operator to
+        //     supply "the payout history" — double-counting payouts the live
+        //     counter already holds and pinning the delivered-fresh bound at
+        //     zero until duplicate funding arrives.
+        //
+        //     Before the unpause, deliberately: the one-shot flag and the
+        //     paused window are the same "armed, not merely present" rule the
+        //     migration itself follows, so no window exists in which the
+        //     Diamond is live with an unseeded marker.
+        RewardReporterFacet(diamond).seedArmedFreshPaid(0);
+        console.log("P1-b: fresh deployment marked seeded (0).");
+
         // 5e. Unpause the protocol. The Diamond is born paused (see
         //     `VaipakamDiamond.constructor` — `LibPausable.pause()` is
         //     the last constructor write) so the half-cut window
