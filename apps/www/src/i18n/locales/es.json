@@ -352,7 +352,7 @@
     "preconnect": {
       "whatTitle": "¿Qué es VPFI?",
       "discountTitle": "Descuento de comisiones por niveles",
-      "discountBody": "El VPFI que mantienes en tu vault de Vaipakam obtiene un descuento escalonado sobre las comisiones de protocolo. Requiere el consentimiento de descuento activado y, para el prestatario, un activo prestado líquido. Un depósito nuevo sólo cuenta tras un periodo mínimo de tenencia, y se aplica el nivel más bajo que mantuviste en la ventana reciente — recargar justo antes de un préstamo no lo sube:",
+      "discountBody": "El VPFI que mantienes en tu vault de Vaipakam obtiene un descuento escalonado sobre las comisiones de protocolo. Requiere el consentimiento de descuento activado y, para el prestatario, un activo prestado líquido. Un depósito nuevo sólo cuenta tras un periodo mínimo de tenencia, y se aplica el nivel más bajo que mantuviste en la ventana reciente — recargar justo antes de un préstamo no lo sube Tu nivel se calcula sobre el saldo del vault en la cadena canónica — un depósito que sólo está en una cadena espejo no lo sube:",
       "discountBullet1": "Prestamistas: un descuento sobre la parte de tesorería tomada del interés ganado. Cuanto más VPFI hayas mantenido durante la vida del préstamo, menor será la deducción.",
       "discountBullet2": "Prestatarios: un descuento sobre la comisión de inicio del préstamo — aplicado directamente a la comisión que pagas al aceptarse el préstamo, no devuelto después.",
       "howTitle": "Cómo funciona",

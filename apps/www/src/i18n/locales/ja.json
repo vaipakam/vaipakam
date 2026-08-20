@@ -352,7 +352,7 @@
     "preconnect": {
       "whatTitle": "VPFIとは？",
       "discountTitle": "階層型の手数料割引",
-      "discountBody": "Vaipakam Vault に保有する VPFI は、プロトコル手数料に対する段階的な割引を得ます。割引同意が有効であること、借り手の場合は lending asset が流動的であることが必要です。新しい入金は短い最低保有期間を過ぎて初めて算入され、適用されるのは直近ウィンドウで保有した最も低いティアです — loan の直前に積み増しても上がりません:",
+      "discountBody": "Vaipakam Vault に保有する VPFI は、プロトコル手数料に対する段階的な割引を得ます。割引同意が有効であること、借り手の場合は lending asset が流動的であることが必要です。新しい入金は短い最低保有期間を過ぎて初めて算入され、適用されるのは直近ウィンドウで保有した最も低いティアです — loan の直前に積み増しても上がりません ティアは canonical chain の Vault 残高から算出され、mirror chain にのみ置かれた入金では上がりません:",
       "discountBullet1": "貸し手: 獲得利息に対するTreasury取り分が割引されます。ローン期間中にVPFIを長く保有するほど控除が小さくなります。",
       "discountBullet2": "借り手: Loan Initiation Fee の割引 — loan の accept 時に支払う手数料そのものから直接差し引かれます。後から返金されるものではありません。",
       "howTitle": "仕組み",

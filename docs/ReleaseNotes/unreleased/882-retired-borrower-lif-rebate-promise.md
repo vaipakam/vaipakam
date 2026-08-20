@@ -63,12 +63,13 @@ not self-contained, and closing that is follow-up work.
 The offer-creation screen still advertises the retired rebate to a borrower at the
 moment they are choosing terms; the Dashboard's consent control still tells them,
 at the moment they enable the setting, that doing so may take VPFI from their
-vault to pay the initiation fee; and the Claim Center's own borrower help text
-still says that a default or liquidation leaves an unused rebate to collect. All
-are app copy rather than documentation and sat outside this change's agreed
-scope, so they are recorded rather than edited here — and the list is written as
-"several" rather than a count, because every attempt to enumerate these surfaces
-so far has found one more.
+vault to pay the initiation fee; the Claim Center's own borrower help text
+still says that a default or liquidation leaves an unused rebate to collect; and
+the signed-out vault page still pitches the retired lifetime-weighted rebate to
+anyone who visits it. All are app copy rather than documentation and sat outside
+this change's agreed scope, so they are recorded rather than edited here — and
+the list is written as "several" rather than a count, because every attempt to
+enumerate these surfaces has found one more. Four rounds, four additions.
 
 The claim display itself needed no change: it reads each loan's actual held amount
 and shows a rebate only where one exists, which was already correct for both old

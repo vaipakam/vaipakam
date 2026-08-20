@@ -352,7 +352,7 @@
     "preconnect": {
       "whatTitle": "VPFI क्या है?",
       "discountTitle": "Tiered fee discount",
-      "discountBody": "आपके Vaipakam Vault में रखा VPFI protocol fees पर tiered discount देता है। इसके लिए fee-discount सहमति चालू होनी चाहिए और borrower के लिए lending asset liquid होना चाहिए। नया deposit एक छोटी न्यूनतम holding अवधि के बाद ही गिना जाता है, और लागू होता है हाल की window में रखा सबसे नीचा tier — loan से ठीक पहले टॉप-अप करने से यह नहीं बढ़ता:",
+      "discountBody": "आपके Vaipakam Vault में रखा VPFI protocol fees पर tiered discount देता है। इसके लिए fee-discount सहमति चालू होनी चाहिए और borrower के लिए lending asset liquid होना चाहिए। नया deposit एक छोटी न्यूनतम holding अवधि के बाद ही गिना जाता है, और लागू होता है हाल की window में रखा सबसे नीचा tier — loan से ठीक पहले टॉप-अप करने से यह नहीं बढ़ता आपका tier canonical chain पर आपके vault balance से बनता है — सिर्फ़ mirror chain पर रखा deposit इसे नहीं बढ़ाता:",
       "discountBullet1": "Lenders: earned interest पर treasury share में discount। Loan अवधि में जितनी देर VPFI held रहा, treasury cut उतना कम होता है।",
       "discountBullet2": "Borrowers: Loan Initiation Fee पर discount — यह उसी fee में सीधे लागू होता है जो loan accept होते समय चुकाई जाती है, बाद में लौटाया नहीं जाता।",
       "howTitle": "यह कैसे काम करता है",
