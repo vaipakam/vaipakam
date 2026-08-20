@@ -352,7 +352,7 @@
     "preconnect": {
       "whatTitle": "VPFIとは？",
       "discountTitle": "階層型の手数料割引",
-      "discountBody": "Vaipakam Vault に保有する VPFI は、プロトコル手数料に対する段階的な割引を得ます。割引同意が有効であること、借り手の場合は lending asset が流動的であることが必要です。新しい入金は短い最低保有期間を過ぎて初めて算入され、適用されるのは直近ウィンドウで保有した最も低いティアです — loan の直前に積み増しても上がりません。ティアは canonical chain の Vault 残高から算出され、mirror chain にのみ置かれた入金では上がりません. mirror chain で借りる・貸す予定があるなら、保有期間が明けたらダッシュボードからティアを mirror に push してください — 待つだけではそちらで有効になりません。",
+      "discountBody": "Vaipakam Vault に保有する VPFI は、プロトコル手数料に対する段階的な割引を得ます。loan が決済されるチェーンで割引同意が有効であること（設定はチェーンごとで、グローバルではありません）、借り手の場合は lending asset が流動的であることが必要です。新しい入金は短い最低保有期間を過ぎて初めて算入され、適用されるのは直近ウィンドウで保有した最も低いティアです — loan の直前に積み増しても上がりません。ティアは canonical chain の Vault 残高から算出され、mirror chain にのみ置かれた入金では上がりません. mirror chain で借りる・貸す予定があるなら、保有期間が明けたらダッシュボードからティアを mirror に push してください — 待つだけではそちらで有効になりません。",
       "discountBullet1": "貸し手: 得た利息から差し引かれる treasury 分に対する割引。loan の期間を通じて VPFI を長く保有していたほど、その取り分は小さくなります。VPFI の価格参照が設定されている場合、その割引は loan が決済されるチェーン上の Vault から VPFI で決済されます — そのチェーンに十分な空き VPFI が必要で、足りなければ手数料は全額課されます。",
       "discountBullet2": "借り手: Loan Initiation Fee の割引 — loan の accept 時に支払う手数料そのものから直接差し引かれます。後から返金されるものではありません。",
       "howTitle": "仕組み",
