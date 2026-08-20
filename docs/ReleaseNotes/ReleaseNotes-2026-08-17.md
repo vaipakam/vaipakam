@@ -1,11 +1,14 @@
 # Release Notes — 2026-08-17
 
 Five entries. Three of them — the assembler below, the marketing-site drive, and
-the redeployment guardrail — share a theme: a check that cannot actually
-establish what it claims is worse than no check, because it reports success. The
-other two are structural: splitting a component that had run out of room so
-either half can be fixed again, and making every loan status change announce
-itself from the single place they all pass through.
+the redeployment guardrail — share a theme: a step that reports success without
+establishing what its success is taken to mean. One folded a day's notes without
+checking the entries belonged to that day, one passed before a merge on evidence
+that could not reach the live page, and one compared a count against itself. That
+is worse than having no such step, because a step is trusted. The other two are
+structural: splitting a component that had run out of room so either half can be
+fixed again, and making every loan status change announce itself from the single
+place they all pass through.
 
 The first is about these notes. The tooling that assembles this file now verifies
 that each fragment it folds in belongs to the date on the file — something it never

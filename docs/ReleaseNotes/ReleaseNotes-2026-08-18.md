@@ -11,9 +11,9 @@ The other five share a different theme — documents and records that claimed mo
 than they knew. A machine-readable export named a currency it did not carry; a
 published figure did not say which network's configuration produced it; copy
 about an existing loan showed today's fee rather than the rate that loan was
-actually created under; a failed configuration read could pin a whole session to
-its failure; and the record of what a deploy installs was missing thirteen
-components. In each case the fix is the same shape: say only what you can
+actually created under; a page went on calling a configuration snapshot current
+after it had aged past what that same page would accept; and the record of what a
+deploy installs was missing thirteen components. In each case the fix is the same shape: say only what you can
 establish, and say where it came from.
 
 ## Thread — a lender selling out is no longer billed for interest already paid to them (PR #1801)
