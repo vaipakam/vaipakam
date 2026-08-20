@@ -59,17 +59,29 @@ between that copy and the real rule.
 | 6 | Asset paused (principal) | `isAssetPaused(asset)` | a live read per leg |
 | 7 | Asset paused (collateral) | `isAssetPaused(asset)` | a live read per leg |
 | 8 | Listing fillability after expiry | the listing offer's `expiresAt` | `LoanSalePendingState` carries no expiry |
+| 8b | Listing refuses NFT collateral | `EarlyWithdrawalFacet:275-281` (`SaleOfferCollateralMustBeERC20`) | nothing — already client-answerable; listed because the BITMAP must carry it |
 | 9 | Instant-sell candidates | the open-offer book | a full page walk in Basic; in Advanced, already walked and discarded |
 | 10 | Maturity tick resolution | — | not a read at all; a shared-clock change |
 
-Nine of the ten are **reads of Diamond storage**. Item 10 is not — it is
-a client timer concern and does not belong in this design; it is called
-out here only so the count is honest. Item 9 is a book walk, which a
-per-loan view cannot answer either.
+Item 10 is not a read at all — a client timer concern, listed only so the
+count is honest. Item 9 is a book walk, which a per-loan view cannot answer in
+either mode.
 
-**So the tractable set is items 1–8: eight refusals, all answerable from
-Diamond-local storage in a single call.** That is the observation this
-proposal rests on.
+**8b is new in this revision and is a different kind of entry.** NFT
+collateral deterministically reverts the LISTING route
+(`SaleOfferCollateralMustBeERC20`) while the direct route may stay eligible,
+and the client can already answer it from loan data it holds — so it is not a
+missing *read*. It is here because `listBlockers` must still carry the bit:
+a bitmap that omits a live route-specific refusal reports `listBlockers`
+clear for a listing that cannot be created, and a caller cannot tell the
+difference between "not blocked" and "not represented". It also shows the
+route asymmetry is real rather than assumed, which §4.2 needed after the
+pause claim turned out to be wrong.
+
+**So the tractable set is items 1–8 plus 8b: nine refusals, answerable
+without consulting any third party.** That is the observation this proposal
+rests on — and note the criterion is *self-contained*, not *needs a new read*,
+since 8b needs none.
 
 ## 3. What already exists
 
@@ -110,7 +122,8 @@ saleExitPreview(uint256 loanId, address lender)
      uint256 admissionB,         //   carried through, not discarded
      uint64  cooldownUntil,      // 0 = none
      uint64  listingExpiresAt,   // 0 = no listing OR legacy GTC — see below
-     uint8   temporalVerdict)    // chain-evaluated; see "no device clocks"
+     uint256 linkedSaleOfferId,  // 0 = none; the view resolves it anyway
+     uint8   temporalVerdict)    // chain-evaluated enum, encoded in 4.3.1
 ```
 
 Wider than the first draft, and every added field answers a specific way the
@@ -159,6 +172,44 @@ while `OfferCancelFacet.teardownStaleSaleListing` (`:587-595`) admits that same
 sentinel to teardown **immediately**. A client choosing either reading is
 wrong half the time. `temporalVerdict` carries the classification the sale
 paths actually use, and the sentinel stays a display value.
+
+#### 4.3.1 `temporalVerdict` encoding — an ENUM, and precedence is fixed
+
+The first revision added this field and then left it undefined, which is
+§4.1's own finding one field over: two sides can implement incompatible
+readings of the same `uint8` and both decode cleanly. Pinning the bitmaps
+while leaving this open was not a smaller version of that mistake, it was the
+same one.
+
+An **enum, not a bitmap** — the conditions are mutually exclusive once
+precedence is applied, and a bitmap would invite callers to invent their own
+precedence:
+
+| Value | Meaning | Governs |
+| --- | --- | --- |
+| 0 | `Clear` — no temporal bar | both routes |
+| 1 | `PastMaturity` — term fully elapsed | both routes |
+| 2 | `RelistCooldown` — `cooldownUntil` not yet reached | listing only |
+| 3 | `FinalHourWindow` — remaining term < `MIN_SALE_LISTING_SECONDS` | listing only |
+| 4 | `ListingLive` — a listing stands and can still be filled | listing only |
+| 5 | `ListingEndedUnfilled` — stands but no buyer can complete | listing only |
+| 255 | `Indeterminate` — could not be evaluated | both, fail-closed |
+
+**Precedence, highest first: 1 > 2 > 3 > 5 > 4 > 0.** Maturity outranks
+everything because it closes both routes and no narrower reason can help.
+Cooldown outranks the window because it is the longer bar. `ListingEnded`
+outranks `ListingLive` so a caller never treats a dead listing as fillable.
+
+Callers get one value and no arithmetic. The direct route reads only 0, 1 and
+255; a listing-only value on the direct row is a contract bug, not a caller
+decision.
+
+**`linkedSaleOfferId` comes back too.** The view must resolve
+`loanToSaleOfferId[loanId]` to read the expiry at all, so discarding it is
+pure waste — and it is the id `useLoanSalePending` currently hunts for with a
+bounded indexer walk that can come up empty, which is exactly what leaves a
+lender with no cancel button (#1848). Returning what we already looked up
+turns a fallible recovery into a field.
 
 ### 4.4 An unmeasurable admission is a distinct answer
 
@@ -310,22 +361,49 @@ still does — but a loan-level verdict does not fully supply that prediction,
 so the preview narrows the map-only gap rather than closing it. I am not going
 to pretend otherwise to keep the recommendation tidy.
 
-**Why I still lean this way.** The eight loan-level blockers are the ones that
-are *permanent for the position* — paused asset, NFT collateral, cooldown,
-unconsolidatable held balance. A lender told "not right now, here is why" about
-those is being told something durable and true. Candidate matching is
-genuinely momentary and belongs with the tool that walks the book. Splitting on
-durability is defensible in a way that "the card knows everything" was not.
+**Why I still lean this way — on a different invariant than I first gave.**
+(Counting note: nine loan-level entries, items 1–8 plus 8b.)
+
+My first attempt justified the split on *durability*: loan-level blockers are
+permanent, candidate matching is momentary. That is **false**, and worth
+striking rather than softening. Governance unpauses assets. Cooldowns expire
+by construction. Oracle and liquidity conditions recover. A held-for-lender
+balance gets resolved. Most of the nine are as transient as the order book.
+
+The distinction that actually holds is **self-contained vs relational**. Every
+one of the nine is a property of *this loan and this holder* — answerable by
+reading the position and the protocol's own configuration, with no third party
+involved. Candidate matching is irreducibly relational: it asks what OTHER
+participants are currently offering, so it cannot be answered by a per-loan
+view at any price, and its answer is invalidated by strangers rather than by
+anything about this position.
+
+That is why one belongs in an aggregate per-loan read and the other belongs
+with the tool that walks the book — and unlike durability, it is a property of
+the *question*, not a guess about how long an answer stays true.
 
 **Adopting it means adopting §4.6.** Without extracting the shared classifiers
 the mutating guards consume, this is a second source of truth wearing the
 costume of a single one — and it would drift, exactly as the client did. That
 is now a precondition, not a refinement.
 
-**Given a yes:** land items 1, 2, 6, 7 first — pure storage reads with no new
-classification — behind `checkedMask`, with the per-chain gate from §7 in
-place. Items 4, 5 and 8 follow with the classifier extraction. Item 3 is
-already exposed.
+**Given a yes:** the first batch is **items 6, 7 and 8b** — the two per-asset
+pause legs, which really are bare `isAssetPaused` reads with no predicate
+behind them, plus the NFT-collateral bit, which needs no read at all — behind `checkedMask`, with the per-chain gate from §7 in place.
+
+Items 1 and 2 are **not** in it, correcting the previous revision. Calling
+them "pure storage reads" confused reading a value with classifying it: the
+cooldown needs the inline `block.timestamp` comparison and the final-hour
+window needs the `_boundListingExpiry` maturity predicate, so producing their
+`temporalVerdict` means reproducing exactly the logic §4.6 makes a
+precondition for adopting any of this. A first pass that shipped them would
+ship the duplicated predicates this design exists to eliminate — with the
+proposal's own adoption rule written three sections above it.
+
+So items 1, 2, 4, 5 and 8 all land **with** the classifier extraction, not
+before it. Item 3 is already exposed. That makes the first batch smaller and
+less useful than the version it replaces, which is the honest consequence of
+taking §4.6 seriously rather than a reason to relax it.
 
 **Given a no:** strip the card's availability claims to what it can answer from
 data the page already holds, and say in the copy that the tool performs the
@@ -351,3 +429,24 @@ Recorded because the corrections are more useful than the proposal:
 - The authority claim was too strong, which weakens §8's own argument.
 
 Seven of these would have survived into an implementation.
+
+**A fourth round found five more, on the revision itself:**
+
+- `temporalVerdict` was added with **no encoding** — §4.1's own finding, one
+  field over, in the same edit that fixed it. Now a pinned enum with stated
+  precedence (§4.3.1).
+- The durability premise behind §8's split was **false** — pauses lift,
+  cooldowns expire, oracles recover. Replaced with self-contained vs
+  relational, which is a property of the question rather than a guess about
+  its answer's lifetime.
+- The first rollout batch **contradicted §4.6**, shipping the duplicated
+  predicates the adoption precondition forbids. The batch is now smaller.
+- NFT collateral was counted in the recommendation but **absent from §2** and
+  from every batch (now 8b).
+- The view resolves the linked sale offer id and **discarded it**, leaving a
+  fallible recovery walk in place of a field.
+
+Two of those five were defects introduced BY the revision. That is the
+clearest evidence in this document for its own thesis: a corrected shadow copy
+is still a shadow copy, and the correction is where the next divergence
+enters.
