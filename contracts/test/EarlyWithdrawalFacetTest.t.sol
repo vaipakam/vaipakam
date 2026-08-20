@@ -2033,6 +2033,75 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
+    /// @dev #1503 item 23 (Codex round 2, P1) — mirroring the cadence onto the
+    ///      vehicle must not put the position through ORIGINATION admission.
+    ///
+    ///      The vehicle is built from the position's CURRENT state — its
+    ///      `durationDays` is the days remaining, its `amount` the principal
+    ///      after any partial repay — so `_validatePeriodicCadence` asks
+    ///      "could this be originated today?", which an ordinary running
+    ///      position routinely fails. Here the whole 30-day loan is shorter
+    ///      than a Quarterly interval, so Filter 1 (`interval >= duration`)
+    ///      rejects it; the same shape reaches a real lender as an Annual loan
+    ///      one day after origination, or a multi-year loan aged under 365 days.
+    ///
+    ///      NEGATIVE CONTROL: with the `saleVehicleCreate` exemption removed,
+    ///      the listing reverts and this fails at `createLoanSaleOffer` — i.e.
+    ///      the lender's exit is gone for a position that is running normally.
+    function test_item23_periodicPositionStaysListableAfterMirroring() public {
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Quarterly;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        uint256 saleOfferId = _listSaleOffer();
+
+        LibVaipakam.Offer memory vehicle =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        assertEq(
+            uint8(vehicle.periodicInterestCadence),
+            uint8(LibVaipakam.PeriodicInterestCadence.Quarterly),
+            "exempt from admission, but the cadence must still be STORED"
+        );
+    }
+
+    /// @dev #1503 item 23 (Codex round 2, P1) — the companion to the test above,
+    ///      and the reason it proves anything. A guard that refused EVERY sale
+    ///      would satisfy the stale case while breaking the product, so pin that
+    ///      an ordinary listing — one whose vehicle mirrors, which is every
+    ///      listing created since — passes the same invariant untouched.
+    ///
+    ///      `testSaleAcceptHonoursTrueBehaviouralTerms` above already drives a
+    ///      full accept through it; this states the invariant directly on all
+    ///      three fields at once, including the cadence, which no accept test
+    ///      exercises.
+    function test_item23_afreshListingSatisfiesTheMirrorInvariant() public {
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        ld.allowsPrepayListing = true;
+        ld.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Quarterly;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        uint256 saleOfferId = _listSaleOffer();
+
+        LibVaipakam.Offer memory vehicle =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        LibVaipakam.Loan memory live =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(
+            vehicle.allowsPartialRepay, live.allowsPartialRepay, "partial repay must mirror"
+        );
+        assertEq(
+            vehicle.allowsPrepayListing, live.allowsPrepayListing, "prepay listing must mirror"
+        );
+        assertEq(
+            uint8(vehicle.periodicInterestCadence),
+            uint8(live.periodicInterestCadence),
+            "cadence must mirror"
+        );
+    }
+
     /// @dev #951 (Codex #959 round-6, P1) — the linked loan's OWN borrower cannot
     ///      buy the lender position of their own debt (it would leave an Active
     ///      loan with lender == borrower). The generic self-trade check only

@@ -984,6 +984,47 @@ contract OfferCreateFacet is
         LibVaipakam.ProtocolConfig storage cfgT034 =
             LibVaipakam.storageSlot().protocolCfg;
 
+        // #1503 (design item 23) — a lender-sale VEHICLE stores the live
+        // position's cadence verbatim and skips every filter below.
+        //
+        // The filters are ADMISSION rules: they decide whether a cadence may be
+        // ORIGINATED on these terms. A sale originates nothing — it hands an
+        // existing position to a new lender, and that position's cadence was
+        // already admitted when the loan was taken. Re-asking the origination
+        // question at listing time asks whether the position could be created
+        // TODAY, which is a different question with a different answer, because
+        // the vehicle is built from the position's *current* state:
+        // `durationDays` is the days REMAINING (not the original term) and
+        // `amount` is the CURRENT principal (a partial repay shrinks it).
+        //
+        // So without this exemption, mirroring the cadence (in
+        // `EarlyWithdrawalFacet._buildSaleParams`) would silently make ordinary
+        // periodic positions unlistable:
+        //   - Filter 1 rejects `intervalDays(cadence) >= durationDays`, so an
+        //     Annual 366-day loan becomes unlistable one day after origination,
+        //     and a Quarterly loan for its whole last quarter.
+        //   - Filter 2 rejects a non-None cadence below the finer-cadence
+        //     principal threshold, so a partial repay that drops the principal
+        //     under it strands the lender; and it demands `Annual` on the
+        //     multi-year row, which a multi-year loan stops satisfying as soon
+        //     as its remaining term falls under 365 days.
+        //   - Filter 0 and the kill-switch would strand a live position whose
+        //     collateral was re-classified illiquid, or every periodic position
+        //     at once if governance ever turned the feature off.
+        // In each case the lender's exit disappears for a position that is
+        // running normally — a worse outcome than the stale-default bug the
+        // mirroring fixes.
+        //
+        // Storing the cadence is still REQUIRED (not merely allowed): the
+        // accept-time binding compares the buyer's signature against this
+        // stored value, so a vehicle that dropped it back to `None` would put
+        // the buyer's signed terms back out of step with the position they are
+        // buying. Exempt from admission, faithful in content.
+        if (LibVaipakam.storageSlot().saleVehicleCreate) {
+            offer.periodicInterestCadence = cadence;
+            return;
+        }
+
         // Master kill-switch: feature off → only None reachable. Reverts
         // before any other validation so the disabled state is the loudest
         // signal.
