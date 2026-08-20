@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -139,6 +140,11 @@ contract MetricsFacet {
         for (uint256 i = 1; i <= lEnd; i++) {
             LibVaipakam.Loan storage l = s.loans[i];
             if (l.id == 0) continue;
+            // #1503 item 26 — a sale vehicle mirrors the real loan's principal,
+            // so pricing it into lifetime volume double-counts the SAME money
+            // once per sale, and its rate would feed interest earned that
+            // nobody ever owed.
+            if (LibMetricsHooks.isInternalVehicle(s, i)) continue;
             if (l.assetType != LibVaipakam.AssetType.ERC20) continue;
             uint256 pNumeraire = _priceAmount(l.principalAsset, l.principal);
             totalVolumeLentNumeraire += pNumeraire;
@@ -149,6 +155,37 @@ contract MetricsFacet {
                 totalInterestEarnedNumeraire += (pNumeraire * l.interestRateBps) / LibVaipakam.BASIS_POINTS;
             }
         }
+    }
+
+    /// @notice Whether `loanId` is the lender-sale TRANSITIONAL RECORD rather
+    ///         than a position — the internal row a listed sale forges to carry
+    ///         the lender relationship from acceptance to settlement.
+    /// @dev    #1503 item 26 (Codex #1825 r3). Every enumerating view here
+    ///         excludes these records, but ids are sequential and the id
+    ///         high-water mark is public, so a caller can always DERIVE a
+    ///         vehicle's id from the gaps and read the retained row through
+    ///         `LoanFacet.getLoanDetails`.
+    ///
+    ///         The answer to that is to LABEL the record, not to hide it. A
+    ///         getter that reverted for these ids would conceal nothing —
+    ///         contract storage is readable directly, so anyone who wants the
+    ///         row can have it — while breaking legitimate reads (support,
+    ///         forensics, the completion flow's own fixtures) and leaving a
+    ///         caller who reached the row by accident no way to find out what
+    ///         it is. What made the record dangerous was being unlabelled,
+    ///         not being reachable.
+    ///
+    ///         So: enumeration excludes it, announcement never mentions it,
+    ///         and a point lookup that finds it anyway can ask this and be
+    ///         told. Consumers building a list should use the paginated views,
+    ///         which filter; consumers resolving a single id should ask here
+    ///         before treating the row as a position.
+    /// @return True when the record is a sale vehicle created under the
+    ///         item-26 regime. Vehicles created BEFORE it carry no mark and
+    ///         answer false — they were announced at creation, so consumers
+    ///         already hold them as ordinary rows.
+    function isSaleVehicleLoan(uint256 loanId) external view returns (bool) {
+        return LibMetricsHooks.isInternalVehicle(LibVaipakam.storageSlot(), loanId);
     }
 
     /// @notice Total count of unique wallets that have participated as lender,
@@ -183,6 +220,10 @@ contract MetricsFacet {
         for (uint256 i = 1; i <= end; i++) {
             LibVaipakam.Loan storage l = s.loans[i];
             if (l.id == 0) continue;
+            // #1503 item 26 — see the twin scan in `getProtocolStats`: a
+            // vehicle is terminal by the time it is scannable, so without this
+            // every completed sale would contribute phantom interest.
+            if (LibMetricsHooks.isInternalVehicle(s, i)) continue;
             if (l.assetType != LibVaipakam.AssetType.ERC20) continue;
             if (
                 l.status == LibVaipakam.LoanStatus.Active ||
@@ -949,6 +990,19 @@ contract MetricsFacet {
         returns (uint256 totalLoansCreated, uint256 totalOffersCreated)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #1503 item 26 (Codex #1825 r2) — this stays the ID HIGH-WATER MARK
+        // and deliberately still counts sale vehicles. An earlier cut of item
+        // 26 subtracted them, which broke the contract this function's own
+        // natspec states: ids are sequential, so consumers (including the
+        // `MetricsCountersParity` invariant) scan `[1..totalLoansCreated]`.
+        // Vehicles consume ids like anything else, so subtracting them lowers
+        // the bound below real loans that sit ABOVE a vehicle's id and those
+        // loans vanish from the scan.
+        //
+        // Excluding vehicles from a COUNT OF LOANS is a different question,
+        // answered where a count actually lives: `getProtocolStats`'s
+        // `totalLoansEverCreated` never counted them (the vehicle skips at
+        // creation), and every enumerating view below filters them out.
         totalLoansCreated = s.nextLoanId;
         totalOffersCreated = s.nextOfferId;
     }
@@ -1438,9 +1492,36 @@ contract MetricsFacet {
         total = s.nextLoanId; // highest valid id (1-indexed; sequence starts at 1)
         uint256[] memory buf = new uint256[](limit);
         uint256 filled;
-        uint256 start = offset + 1; // IDs start at 1
-        for (uint256 id = start; id <= total && filled < limit; id++) {
+        // #1503 item 26 — the reported total excludes sale vehicles, so the
+        // rows must too, or a page returns an id the caller cannot reconcile
+        // against `total` (and can resolve through `getLoanDetails` to a
+        // record the product says does not exist).
+        total -= s.internalVehicleLoanCount;
+        // `offset` counts VISIBLE records, not raw ids (Codex #1825 r2). Once
+        // a vehicle sits below the requested offset the two stop agreeing, and
+        // treating the offset as an id then re-serves rows already returned by
+        // the previous page and keeps serving them past the end — with visible
+        // ids 1 and 3 around a vehicle at 2, `(1,1)` and `(2,1)` both answered
+        // `[3]` even though `offset == total`. Skipping visible records is
+        // also what the by-status twin below already does.
+        //
+        // COST (Codex #1825 r3): skipping visible records means walking the
+        // prefix, so a deep page is O(offset) rather than O(limit) and a full
+        // enumeration is quadratic in the history. That only becomes true once
+        // a vehicle EXISTS to make ids sparse — with none, visible rank and id
+        // agree exactly and the original direct-seek is still correct, so a
+        // deployment that has never completed a listed sale keeps the old
+        // cost. Beyond that the id-range family (this view, the by-status
+        // twin, and the two lifetime scans) needs a rank or cursor index
+        // rather than a per-view patch; tracked in #1832. The O(results)
+        // reverse-index views remain the answer for deep enumeration.
+        uint256 skipped;
+        uint256 firstId = s.internalVehicleLoanCount == 0 ? offset + 1 : 1;
+        if (firstId != 1) skipped = offset; // dense: the seek already skipped them
+        for (uint256 id = firstId; id <= s.nextLoanId && filled < limit; id++) {
             if (s.loans[id].id == 0) continue;
+            if (LibMetricsHooks.isInternalVehicle(s, id)) continue;
+            if (skipped < offset) { skipped += 1; continue; }
             buf[filled] = id; filled += 1;
         }
         loanIds = new uint256[](filled);
@@ -1489,6 +1570,9 @@ contract MetricsFacet {
         uint256 filled;
         for (uint256 id = 1; id <= end; id++) {
             if (s.loans[id].status != status) continue;
+            // #1503 item 26 — a completed sale vehicle is a Repaid record; it
+            // must not appear in a status page any more than in the full list.
+            if (LibMetricsHooks.isInternalVehicle(s, id)) continue;
             matched += 1;
             if (skipped < offset) { skipped += 1; continue; }
             if (filled < limit) { buf[filled] = id; filled += 1; }

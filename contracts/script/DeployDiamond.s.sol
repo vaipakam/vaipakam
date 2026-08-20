@@ -2943,7 +2943,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](51);
+        s = new bytes4[](52);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -3041,6 +3041,7 @@ contract DeployDiamond is Script {
         // Scenario-A consumed-by-sale terminal is visible to integrators without
         // the `ownerOf`-liveness heuristic.
         s[50] = MetricsFacet.getOfferState.selector;
+        s[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

@@ -2344,6 +2344,17 @@ export async function processLoanLogs(
   // `is_sale_vehicle` flag and the loans row marked to match, covering all
   // three LoanInitiated insert paths (companion / read-back / stub) with one
   // idempotent correlated UPDATE.
+  //
+  // Since #1503 item 26 the sale vehicle emits no `LoanInitiated`, so no row
+  // is created for it and this correlation finds nothing to mark on new
+  // sales. It is retained for the rows created BEFORE that change, which
+  // still need the flag for the tape/candle exclusion.
+  //
+  // The vehicle's id is not published anywhere else either (Codex #1825 r1):
+  // `OfferAccepted` on a sale accept now carries the REAL loan id, so the
+  // activity reference this indexer stores from that event resolves to a loan
+  // row that exists. Before that it carried the vehicle's own id, which no
+  // `loans` row ever matched.
   const initiatedPairs: Array<{ loanId: number; offerId: number }> = [];
 
   // #1782 — safety-net status edges, DEFERRED to after the log loop.
@@ -3899,11 +3910,17 @@ export async function processLoanLogs(
     //  - LoanSaleCompleted (EarlyWithdrawal) — the *original* loan stays
     //    Active with a new lender (LoanSold has its own handler above;
     //    LoanSaleOfferLinked now marks the sale offer's is_sale_vehicle
-    //    flag for the Rate Desk tape/candle exclusion, #1129);
-    //    the internal "temp loan" the sale spins up transitions
-    //    Active→Repaid on-chain but does NOT currently emit a status
-    //    event, so the indexer can't mirror it — see the contract-side
-    //    payload-completeness follow-up.
+    //    flag for the Rate Desk tape/candle exclusion, #1129).
+    //    The internal "temp loan" the sale spins up needs no mirroring at
+    //    all since #1503 item 26: it emits neither `LoanInitiated` nor a
+    //    status edge, so no row is ever created for it and there is
+    //    nothing here to terminalize. That is the resolution of the
+    //    payload-completeness gap this note used to point at — the earlier
+    //    fix (#1782) gave the vehicle a terminal event, and item 26 then
+    //    removed its creation event instead, which is the stronger half:
+    //    a row that never exists cannot be stuck. Vehicles created BEFORE
+    //    item 26 do have rows, and they still terminalize through the
+    //    #1782 safety-net branch above, which is why that branch stays.
     //  - LoanKeeperEnabled / OfferKeeperEnabled / *Details companions —
     //    not modelled in the indexer schema. (OffsetOfferCreated IS
     //    handled above — it marks the offer row's is_offset_vehicle

@@ -982,9 +982,10 @@ contract EarlyWithdrawalFacet is
 
         // Old lender forfeits interaction rewards to treasury; new lender
         // gets a fresh entry covering the residual loan window. #1067 — routed
-        // best-effort through the `transferLenderRewardEntry` self-hook so the
-        // O(1) transfer body lives on InteractionRewardsFacet, off this tight
-        // facet (see the loan-keyed twin above for the subordinacy rationale).
+        // through the `transferLenderRewardEntry` self-hook so the O(1)
+        // transfer body lives on InteractionRewardsFacet, off this tight
+        // facet. ATOMIC with the settlement since #1503 item 12 — see
+        // `_rewardHook` for why a failure here must not settle silently.
         _rewardHook(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.transferLenderRewardEntry.selector,
@@ -1074,11 +1075,39 @@ contract EarlyWithdrawalFacet is
 
         // Mark temp loan as Repaid with zeroed-out claim records so
         // ClaimFacet's NothingToClaim check won't create a stuck artifact.
-        LibLifecycle.transition(
-            tempLoan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Repaid
-        );
+        // #1503 item 26 — the INTERNAL-VEHICLE transition: validated edge,
+        // no metrics hook, no LoanStatusChanged. The vehicle was never
+        // counted, indexed, or announced at initiation (the paired skips in
+        // LoanFacet), so the ordinary transition would decrement an active
+        // count it never incremented and hand indexers a status edge for a
+        // loan they were never told exists.
+        //
+        // Routed by REGIME, not by code version, and the regime is read from
+        // the vehicle's own durable mark. A vehicle accepted BEFORE item 26
+        // carries no mark: its creation was announced, so its terminal must be
+        // announced too or the row a consumer built from `LoanInitiated` sits
+        // Active forever.
+        //
+        // Whether it was COUNTED is a SEPARATE question (Codex #1825 r1) and
+        // must not be inferred from the same signal: a loan predating the
+        // counter layer or its backfill can be announced yet absent from the
+        // active set, and deciding both from active-list membership would
+        // close such a vehicle silently — reintroducing the exact #1782
+        // defect. So membership decides only the decrement.
+        if (LibMetricsHooks.isInternalVehicle(s, tempLoanId)) {
+            LibLifecycle.transitionInternalVehicle(
+                tempLoan,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Repaid
+            );
+        } else {
+            LibLifecycle.transitionLegacyVehicle(
+                tempLoan,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Repaid,
+                s.activeLoanIdsListPos[tempLoanId] != 0
+            );
+        }
         // Set claimed=true so neither party needs to (or can) claim.
         s.lenderClaims[tempLoanId] = LibVaipakam.ClaimInfo({
             asset: tempLoan.principalAsset,
@@ -1111,12 +1140,6 @@ contract EarlyWithdrawalFacet is
         emit LoanSaleCompleted(loanId, originalLender, newLender);
     }
 
-    /// @dev #1067 — best-effort reward transfer self-call. The O(1) transfer
-    ///      body lives on {InteractionRewardsFacet}; a failed low-level call is
-    ///      intentionally not bubbled (the sale settlement proceeds regardless —
-    ///      reward bookkeeping is subordinate). Production always cuts
-    ///      InteractionRewardsFacet; a focused test harness that omits it simply
-    ///      skips the reward transfer.
     /// @dev The `priorHeldSale > 0` migration leg of `_completeLoanSaleImpl`,
     ///      in its OWN frame: the host sits at the viaIR stack ceiling, and
     ///      the r6 mutation-site checkpoints tipped it over — this leg's
@@ -1198,9 +1221,26 @@ contract EarlyWithdrawalFacet is
     }
 
     function _rewardHook(bytes memory data) private {
-        (bool ok, ) = address(this).call(data);
+        // #1503 item 12 — ATOMIC with settlement, no longer best-effort. Every
+        // sale quote discloses the seller's reward forfeiture and the buyer's
+        // residual entry as a cost line, and a mandatory disclosure of a
+        // best-effort effect is a promise the protocol does not keep: a
+        // swallowed failure here settles the sale with the seller's entry
+        // un-forfeited and no residual for the buyer, in silence. The transfer
+        // body (`LibInteractionRewards.transferLenderEntry`) is pure O(1)
+        // storage bookkeeping with its own early-returns for "program not
+        // active" and "no entry" — on a properly-cut diamond it cannot revert,
+        // so the only failure this bubbles in practice is the deploy-drift
+        // case (InteractionRewardsFacet's selector unrouted), which is exactly
+        // the case that must not settle silently.
+        (bool ok, bytes memory ret) = address(this).call(data);
         if (!ok) {
-            // best-effort — the sale settlement proceeds regardless.
+            if (ret.length > 0) {
+                assembly {
+                    revert(add(32, ret), mload(ret))
+                }
+            }
+            revert RewardMigrationFailed();
         }
     }
 

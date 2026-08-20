@@ -1,0 +1,83 @@
+## A sold position now always carries its reward migration, and the sale's internal bookkeeping loan stops showing up in your history (PR #TBD)
+
+Two independent defects on the lender position-sale routes, both about a sale
+leaving traces it shouldn't — or failing to leave one it promised.
+
+### The reward migration is now part of the sale, not a side effect
+
+Every sale quote tells the seller, as a priced cost line, that they forfeit
+the platform-interaction rewards accrued on the position, and tells the buyer
+they receive a fresh entry covering the rest of the loan's window. Underneath,
+that migration was performed on a best-effort basis: if it failed, the sale
+settled anyway. The seller kept a reward entry on a position they no longer
+own, the buyer received none, and nobody was told — the transaction succeeded
+and reported nothing wrong.
+
+A disclosure the protocol does not keep is worse than one it never made, and
+this one is quoted at the moment of decision. Both sale routes — selling
+instantly into a standing bid, and the completion of a posted listing — now
+treat the reward migration as part of the settlement. If it cannot be
+performed, the whole sale is refused and the reason is reported, rather than
+settling on terms different from the ones quoted.
+
+In normal operation nothing changes: the migration is simple bookkeeping that
+cannot fail, and it does nothing at all before the rewards programme launches.
+The failure this makes visible is a misconfigured deployment where the reward
+component isn't reachable — precisely the case that must not be allowed to
+settle sales quietly on the wrong terms.
+
+### The sale's internal bookkeeping loan is no longer visible anywhere
+
+Completing a listed sale forges a short-lived internal loan record to carry the
+lender relationship from the moment a buyer accepts to the moment the sale
+settles — usually the same transaction. It is not a real position: no
+collateral, no borrower obligation, and it ends within the flow that created
+it. The product has always described it as invisible.
+
+It was not. That record was counted into the platform's active-loan and
+lifetime-loan statistics, added to the interest-rate averages, appended to both
+parties' permanent loan history, placed in the list keepers walk, and announced
+to interfaces as a newly created loan. Users saw a loan appear in their history
+that they never took out; the protocol's own totals counted positions that were
+never real, permanently.
+
+The internal record is now excluded at every one of those points, and — as the
+matching half — its close-out no longer removes what it never added, nor
+announces the end of something no interface was told about. Never counted,
+never uncounted: every entry balances exactly, so no total can drift in either
+direction.
+
+Exclusion had to reach further than the writes made when the record appears.
+The record itself stays in storage, and its identifier came from the same
+sequence real positions draw from — so anything that walks that sequence kept
+finding it: the count of loans ever created, the full loan list, the
+by-status pages, and the lifetime volume and interest totals, where a sale
+would have priced the very same money a second time and invented interest
+nobody ever owed. The record now carries a durable mark saying what it is, and
+those surfaces skip it. The mark records which real loan the sale was for, so
+the acceptance notification can name that loan instead of publishing an
+identifier no list will acknowledge.
+
+The same mark answers a question the first cut of this work got wrong. Whether
+a record was *announced* when it was created and whether it was *counted* are
+separate facts, and a record from before this change can be the first without
+being the second. Deciding both from the counters would have closed such a
+sale in silence — the exact stuck-forever symptom this work exists to remove,
+re-entered through the older records' door. Announcement is now decided by the
+mark and counting by the counters, independently.
+
+What the record is *not* excluded from is the bookkeeping that is about records
+and people rather than about positions. Someone buying their first position is
+still counted as a participant in the protocol's user total, and the listing's
+own position token still stops presenting as an open listing the moment it is
+consumed. Those were never part of what "invisible" meant, and separating them
+explicitly is what keeps a future addition to the position bookkeeping from
+silently going missing on this path.
+
+Records created before this change were announced, so their close-outs are
+still announced — and they still adjust whichever totals they had actually
+joined, which need not be all of them. The two regimes are distinguished
+automatically; no migration or operator action is needed, and the statistics
+self-heal as those older sales complete.
+
+Part of #1503 (items 12 and 26).

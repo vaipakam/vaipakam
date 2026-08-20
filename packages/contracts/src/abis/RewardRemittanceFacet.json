@@ -2691,6 +2691,11 @@
   },
   {
     "type": "error",
+    "name": "RewardMigrationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RewardPoolCapExceeded",
     "inputs": [
       {

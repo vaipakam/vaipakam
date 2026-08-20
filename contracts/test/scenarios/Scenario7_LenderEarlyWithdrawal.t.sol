@@ -29,6 +29,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
+import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
@@ -125,7 +126,12 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
+        // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
+        // settlement now, so `transferLenderRewardEntry` must resolve here;
+        // unrouted it would bubble as the deploy-drift failure and revert
+        // this scenario's sale paths. Unconfigured program → no-op early-return.
+        cuts[21] = IDiamondCut.FacetCut({facetAddress: address(new InteractionRewardsFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getInteractionRewardsFacetSelectors()});
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),

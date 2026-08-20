@@ -92,7 +92,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](192);
+        selectors = new bytes4[](198);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -240,6 +240,9 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setSaleProceedsEscrowRaw.selector;
         selectors[n++] = TestMutatorFacet.clearSaleListingBoundsRaw.selector;
         selectors[n++] = TestMutatorFacet.getSaleListingBoundsRaw.selector;
+        selectors[n++] = TestMutatorFacet.metricsCountLoanRaw.selector;
+        selectors[n++] = TestMutatorFacet.getActiveLoanListPosRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLifetimeLoanCountersRaw.selector;
         selectors[n++] = TestMutatorFacet.setLenderPaidThroughRaw.selector;
         // #1801 — the two DISQUALIFICATION seeds: a mark recorded against a
         // principal the loan no longer carries, and the sticky freeze void.
@@ -375,6 +378,9 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanId.selector;
         // #1503 item 25 — raw read of the position-token → loan reverse index.
         selectors[n++] = TestMutatorFacet.getLoanIdByPositionTokenIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.getOfferIdByPositionTokenIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.getInternalVehicleRealLoanIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.setInternalVehicleMarkRaw.selector;
         // #1503 item 25, Codex #1818 r3 P2 — grandfathered-index fabrication +
         // raw reads for the one-time scan-repair tests.
         selectors[n++] = TestMutatorFacet.clearLoanIndexRegimeRaw.selector;
@@ -1549,7 +1555,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](51);
+        selectors = new bytes4[](52);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1628,6 +1634,7 @@ contract HelperTest {
         // lagged, surfacing when the item-25 rekey test read the buyer's
         // position through it.
         selectors[50] = MetricsFacet.getUserPositionLoans.selector;
+        selectors[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
         return selectors;
     }
 

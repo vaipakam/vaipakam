@@ -2005,6 +2005,79 @@ This option allows Liam to recover principal early by selling his lender positio
   direct sale and not to the listed sale's completion would let the same position
   be sold on different economics depending on which door it left by.
 
+##### Reward Migration Is Part of the Sale
+
+- **A sale that cannot migrate the interaction-reward position must not
+  settle.** The quote a seller decides on names the reward forfeiture as a cost
+  line, and names the buyer's fresh entry over the remaining loan window as
+  something they receive. Both routes therefore treat that migration as part of
+  the settlement rather than as bookkeeping that follows it: if the migration
+  cannot be performed, the sale is refused outright and the reason is reported.
+  A sale that settled while quietly skipping it would leave the seller holding
+  a reward entry on a position they no longer own and the buyer holding none —
+  the two parties transacting on terms neither was shown, with nothing in the
+  outcome to reveal it. Where the rewards programme has not launched, or the
+  seller holds no entry, the migration legitimately does nothing; that is not a
+  failure and settles normally.
+
+##### The Sale's Internal Record Is Not a Loan
+
+- **The transitional record a sale creates is invisible to every consumer, and
+  invisible symmetrically.** Completing a listed sale needs somewhere to carry
+  the lender relationship between the buyer's acceptance and the settlement,
+  and the protocol forges an internal record for it. That record is not a
+  position: no collateral, no borrower obligation, and it ends inside the flow
+  that created it, typically the same transaction. It must therefore be absent
+  from every count, average, history and list a real position appears in — the
+  active and lifetime position totals, the interest-rate averages, either
+  party's permanent position history, and the working set keepers walk — and
+  its creation must not be announced to interfaces.
+- **Absence is a pairing, not a single rule.** Because the record is never
+  counted when it appears, its close-out must not remove a count it never
+  added, and because its creation is never announced, its ending must not be
+  announced either — an ending reported for something no interface was told
+  exists is a reference to an unknown position, which is the same confusion the
+  announcement rules exist to prevent. Every entry balances exactly, so neither
+  a leak upward nor a phantom decrement is expressible.
+- **What is absent is the POSITION, not the people or the tokens.** Two things
+  the transitional record participates in are about records and holders rather
+  than about positions, and both still apply: a buyer acquiring a position
+  counts once toward the protocol's unique-participant total the same way any
+  first-time party does, and the listing's own position token stops presenting
+  as an open listing at the moment it is consumed rather than only when it is
+  later destroyed. Stating this explicitly is the point — "the record is
+  invisible" is a claim about position accounting, and reading it as "the
+  record touches nothing" would silently drop a real participant from the user
+  count and leave a consumed listing on display.
+- **Absence must reach the record, not only the moment it is created.** The
+  record persists after the sale, and its identifier is drawn from the same
+  sequence real positions use, so any surface that enumerates by identifier
+  range would keep returning it — the count of positions ever created, the full
+  position list, the by-status pages, and the lifetime volume and interest
+  totals, where its mirrored principal would price the same money twice and its
+  mirrored rate would invent interest no borrower owed. The record therefore
+  carries a durable indication of what it is, and those surfaces exclude it on
+  that basis. Suppressing only the creation-time writes and notifications is
+  not sufficient and must not be mistaken for it.
+- **A reference published for the transitional record must name the real
+  position instead.** The acceptance of a listing is a genuine event and is
+  reported as one, but it must identify the position that changed hands, not
+  the transitional record — an identifier that resolves to something every
+  position list denies is worse than no identifier, because consumers store it
+  and follow it.
+- **Records created under the earlier behaviour keep it, and "announced" and
+  "counted" are separate facts about them.** A transitional record created
+  before this rule took effect was announced, so its close-out must still be
+  announced or the row a consumer built from that announcement is never
+  retired. Whether it was also counted is a different question — a record
+  predating the counter layer, or a backfill of it, can be announced while
+  absent from those totals — and only a record actually present in a total may
+  be removed from it. Deciding both from the counters would close an
+  announced-but-uncounted record in silence, which is the very defect this
+  rule exists to prevent. The protocol distinguishes all of this from the
+  record's own state rather than from operator input, so no migration is
+  required and the totals correct themselves as those older sales complete.
+
 ##### Principal Recovery
 
 - Noah pays the agreed amount, typically equal to the outstanding principal.

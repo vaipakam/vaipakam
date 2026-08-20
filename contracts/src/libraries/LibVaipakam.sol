@@ -6983,6 +6983,40 @@ library LibVaipakam {
         ///      them.
         mapping(uint256 => uint256) rewardEntryExpiredAccum;
         mapping(uint256 => uint256) rewardEntryExpiredRecycledAccum;
+        /// @notice #1503 item 26 (Codex #1825 r1) — the DURABLE mark that a
+        ///         loan record is the lender-sale transitional vehicle rather
+        ///         than a position: vehicle loan id → the REAL loan whose
+        ///         lender position it carried. Non-zero ⇔ vehicle.
+        ///
+        ///         Suppressing the vehicle's creation events and its counter
+        ///         writes is not sufficient on its own, because the record
+        ///         itself persists in `loans` and its id was drawn from
+        ///         `nextLoanId`. Anything that enumerates by id range —
+        ///         `getAllLoansPaginated`, `getLoansByStatusPaginated`, the
+        ///         `getProtocolStats` / `getTotalInterestEarnedNumeraire`
+        ///         lifetime scans, `getGlobalCounts` — would keep finding it
+        ///         and keep pricing its principal into lifetime volume. A
+        ///         durable mark is what lets those surfaces exclude it; a
+        ///         transient link cannot, since `saleOfferToLoanId` is
+        ///         deleted at completion.
+        ///
+        ///         It stores the REAL loan id rather than a bare flag so the
+        ///         acceptance event has something true to name: the vehicle's
+        ///         own id must not reach consumers (it resolves to a record
+        ///         no loan list contains), while the sale it stands for is a
+        ///         real position that consumers already track.
+        ///
+        ///         Written at creation and never cleared — its absence on a
+        ///         vehicle is exactly the legacy signal `completeLoanSale`
+        ///         needs: a vehicle created before this shipped WAS announced
+        ///         at creation, so its terminal must still be announced, and
+        ///         that is a separate question from whether it was counted
+        ///         (`activeLoanIdsListPos`, which a pre-backfill deployment
+        ///         can leave zero on an announced loan).
+        mapping(uint256 => uint256) internalVehicleRealLoanId;
+        /// @notice Count of records marked above, so `getGlobalCounts` can
+        ///         report ids-issued minus vehicles without a scan.
+        uint256 internalVehicleLoanCount;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

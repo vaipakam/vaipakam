@@ -310,20 +310,29 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             );
         }
 
-        emit LoanInitiated(
-            loanId,
-            offerId,
-            s.loans[loanId].lender,
-            s.loans[loanId].borrower,
-            s.loans[loanId].principal,
-            s.loans[loanId].collateralAmount
-        );
+        // #1503 item 26 — the lender-sale vehicle announces NOTHING here.
+        // `LoanInitiated`(+Details) is what indexers build `loans` rows from,
+        // and a row for the transitional vehicle is a phantom loan the UX
+        // says is never visible — marked repaid moments later with no story
+        // a consumer can use to discard it. The sale is fully narrated by
+        // the offer-side events plus `LoanSaleOfferLinked` (listing) and
+        // `LoanSaleCompleted` (settlement), which carry the REAL loan id.
+        if (!isLenderSaleVehicle) {
+            emit LoanInitiated(
+                loanId,
+                offerId,
+                s.loans[loanId].lender,
+                s.loans[loanId].borrower,
+                s.loans[loanId].principal,
+                s.loans[loanId].collateralAmount
+            );
 
-        // §3.6 — companion event with the full loan row. Best-effort HF
-        // computation via staticcall (mirrors AddCollateralFacet's
-        // pattern); reverts cleanly to 0 for illiquid loans without
-        // failing the init.
-        _emitLoanInitiatedDetails(loanId);
+            // §3.6 — companion event with the full loan row. Best-effort HF
+            // computation via staticcall (mirrors AddCollateralFacet's
+            // pattern); reverts cleanly to 0 for illiquid loans without
+            // failing the init.
+            _emitLoanInitiatedDetails(loanId);
+        }
 
         // #407 (2026-06-12) — Vault encumbrance sub-ledger. Create
         // the collateral lien now that `loan.collateralAsset` /
@@ -494,20 +503,32 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // frontends rely on these arrays to enumerate a user's loans
         // without scanning events (Alchemy free-tier caps scans at 10
         // blocks; reverse indexes remove any RPC-side dependency).
+        //
+        // #1503 item 26 — NOT for the lender-sale vehicle. The transitional
+        // loan exists only to carry the lender relationship between accept
+        // and completion inside one flow; appending it to either party's
+        // lifetime history parks a phantom, terminal-within-the-same-flow
+        // loan in append-only arrays that count and pagination views expose
+        // forever. Skipped as a pair with the terminal side: the vehicle's
+        // close-out in `completeLoanSale` uses the internal-vehicle
+        // transition, so nothing later relies on these entries existing.
         LibVaipakam.Loan storage loan = s.loans[ctx.loanId];
-        s.userLoanIds[loan.lender].push(ctx.loanId);
-        s.userLoanIds[loan.borrower].push(ctx.loanId);
-        // #1503 item 25 — mirror the pushes into the O(1) membership map so a
-        // later position migration can dedup its append without scanning the
-        // lifetime array.
-        s.userLoanIndexed[loan.lender][ctx.loanId] = true;
-        s.userLoanIndexed[loan.borrower][ctx.loanId] = true;
-        // ...and mark the loan as BORN in the exact-map regime (Codex #1818
-        // r3 P2): every party who ever touches it is stamped at touch, so
-        // migrations may trust the map. Loans created before the map shipped
-        // lack this flag forever; their migrations establish membership by a
-        // scan each user pays at most once.
-        s.loanHolderIndexExact[ctx.loanId] = true;
+        if (!ctx.isLenderSaleVehicle) {
+            s.userLoanIds[loan.lender].push(ctx.loanId);
+            s.userLoanIds[loan.borrower].push(ctx.loanId);
+            // #1503 item 25 — mirror the pushes into the O(1) membership map so a
+            // later position migration can dedup its append without scanning the
+            // lifetime array.
+            s.userLoanIndexed[loan.lender][ctx.loanId] = true;
+            s.userLoanIndexed[loan.borrower][ctx.loanId] = true;
+            // ...and mark the loan as BORN in the exact-map regime (Codex #1818
+            // r3 P2): every party who ever touches it is stamped at touch, so
+            // migrations may trust the map. Loans created before the map shipped
+            // lack this flag forever; their migrations establish membership by a
+            // scan each user pays at most once. The vehicle never migrates — it
+            // is burned by `completeLoanSale` in the flow that created it.
+            s.loanHolderIndexExact[ctx.loanId] = true;
+        }
 
         _applyRentalPrepayIfNft(ctx.loanId, ctx.offerId);
         _maybeRunInitialRiskGates(ctx);
@@ -519,7 +540,34 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // collection NFT-leg counts + position-NFT reverse mapping. Must
         // run after _mintCounterpartyPosition so both lender and
         // borrower position tokenIds are already stamped on the loan.
-        LibMetricsHooks.onLoanInitialized(loan);
+        //
+        // #1503 item 26 — the sale vehicle is NEVER counted: it is not a real
+        // borrower position (zero collateral, terminal within the same flow),
+        // so counting it inflates `totalLoansEverCreated` / rate sums forever
+        // and parks it in the keeper-walked active set mid-flight. Its
+        // terminal transition skips the decrement hook symmetrically — a
+        // paired lifecycle, never counted and never uncounted, exactly
+        // balancing every write.
+        //
+        // It takes the vehicle entry point rather than skipping the hook: the
+        // hook also does work that is about RECORDS and HOLDERS rather than
+        // about positions (unique-user marking, the position-token registry
+        // handover), which the vehicle still needs. The split lives in the
+        // library so the vehicle cannot silently lose whatever the hook grows
+        // next — see {LibMetricsHooks.onInternalVehicleInitialized}.
+        if (ctx.isLenderSaleVehicle) {
+            // The mark carries the REAL loan this vehicle stands for. Read
+            // from the live sale link, which is still present here — it is the
+            // same read `isLenderSaleVehicle` was derived from, and it is
+            // deleted later at completion, which is why the mark has to be
+            // taken now rather than reconstructed afterwards.
+            LibMetricsHooks.onInternalVehicleInitialized(
+                loan,
+                s.saleOfferToLoanId[ctx.offerId]
+            );
+        } else {
+            LibMetricsHooks.onLoanInitialized(loan);
+        }
     }
 
     /**

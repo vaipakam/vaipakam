@@ -1608,6 +1608,11 @@
   },
   {
     "type": "error",
+    "name": "InternalVehicleNeedsRealLoan",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -2422,6 +2427,11 @@
   {
     "type": "error",
     "name": "RewardMessengerNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardMigrationFailed",
     "inputs": []
   },
   {

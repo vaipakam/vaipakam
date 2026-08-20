@@ -22,6 +22,14 @@ interface IVaipakamErrors {
     // without usable revert data, so they identify "which kind of hop went
     // wrong" rather than duplicating the inner reason string.
     error NFTBurnFailed();
+    /// @notice #1503 item 12 — the sale-settlement reward migration self-call
+    ///         failed WITHOUT returndata (with returndata the inner revert is
+    ///         rethrown verbatim instead). Sale settlement is atomic with the
+    ///         reward migration because every quote discloses the seller's
+    ///         forfeiture and the buyer's residual entry; on a properly-cut
+    ///         diamond the transfer body cannot revert, so in practice this
+    ///         marks deploy drift (InteractionRewardsFacet unrouted).
+    error RewardMigrationFailed();
     error NFTMintFailed();
     error NFTStatusUpdateFailed();
     error NFTRenterUpdateFailed();
