@@ -257,3 +257,46 @@ describe('sale lock — an unanswered read is not "clear" (Codex r1 P2)', () => 
       .toBe(false);
   });
 });
+
+describe("sale lock 'unknown' — a read that cannot run is not a read in flight", () => {
+  // Self-caught while reviewing the r1 fix: the lock query is gated on
+  // a valid lender position token, so with none it never runs and its
+  // data is undefined PERMANENTLY. Folding that into 'checking' would
+  // have pinned both sale rows behind a spinner that never resolves —
+  // the same unknown-as-known defect the tri-state was added to fix,
+  // entering by the opposite door.
+  it('leaves both sale rows to their narrower predicates rather than blocking', () => {
+    const rows = buildLenderExitRows({ ...base, saleLock: 'unknown' });
+    expect(rows.find((r) => r.key === 'sell-now')!.unavailable).toBeUndefined();
+    expect(rows.find((r) => r.key === 'list')!.unavailable).toBeUndefined();
+  });
+
+  it('never renders the checking line — nothing is being checked', () => {
+    for (const key of ['sell-now', 'list']) {
+      expect(rowFor({ saleLock: 'unknown' }, key).unavailable).not.toBe(
+        o.saleLockChecking,
+      );
+    }
+  });
+
+  it('still yields to the narrower reasons that ARE known', () => {
+    expect(
+      rowFor({ saleLock: 'unknown', collateralIsNft: true }, 'list').unavailable,
+    ).toBe(o.listUnavailableNft);
+    expect(
+      rowFor({ saleLock: 'unknown', instantSellCandidates: 'none' }, 'sell-now')
+        .unavailable,
+    ).toBe(o.sellNowNoOffers);
+  });
+
+  it('still yields to past due', () => {
+    expect(rowFor({ saleLock: 'unknown', pastDue: true }, 'list').unavailable).toBe(
+      copy.lenderExit.pastDue,
+    );
+  });
+
+  it('does not withhold the Basic-mode switch — the tools are still reachable', () => {
+    expect(hasJumpableRow(buildLenderExitRows({ ...base, saleLock: 'unknown' })))
+      .toBe(true);
+  });
+});

@@ -677,9 +677,33 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       loan.data.assetType === AssetType.ERC20 &&
       loan.data.startTime + loan.data.durationDays * 86400 < nowSec + 3600,
   );
+  // #1503 PR-H (Codex r2 P2) — a LENDER viewing an active position needs
+  // the live terms whether or not the INDEXED row looks close to due,
+  // because that row can be wrong in the one direction that matters
+  // here. `PrecloseFacet.transferObligationViaOffer` permits a SHORTER
+  // replacement maturity and rewrites `durationDays`/`startTime`
+  // (PrecloseFacet.sol:753-755, 1164-1166); until the indexer catches
+  // up, `rowPastDueCandidate` is computed from the older, later term
+  // and stays false. The exit chooser would then read "not past due"
+  // from a read that never ran, and advertise two sales the contracts
+  // refuse on a position that has actually matured.
+  //
+  // Scoped to lender viewers of open ERC-20 positions rather than made
+  // unconditional: that is exactly the population the chooser serves,
+  // and it keeps the extra poll off every other viewer of every other
+  // position.
+  const lenderNeedsLiveTerms = Boolean(
+    loan.data &&
+      role === 'lender' &&
+      !loanIsRental &&
+      (loan.data.status === 'active' ||
+        loan.data.status === 'fallback_pending') &&
+      loan.data.assetType === AssetType.ERC20,
+  );
   const bannerTerms = useQuery({
     queryKey: ['graceBannerTerms', readChain.chainId, loan.data?.loanId],
-    enabled: Boolean(readClient) && rowPastDueCandidate,
+    enabled:
+      Boolean(readClient) && (rowPastDueCandidate || lenderNeedsLiveTerms),
     staleTime: 30_000,
     refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
     // chainNow rides along (Codex #1166 r2): the contracts gate on
@@ -2676,12 +2700,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // if it errors. Collapsing that to `false` showed BOTH sale
           // exits as available on a position whose lock had never been
           // checked — and the listing lock refuses both paths.
+          // FOUR states, not three — see `SaleLockState`. The lock query
+          // is gated on a valid lender position token, so with no such
+          // token it never runs and its data is undefined FOREVER.
+          // Folding that into 'checking' would pin both sale rows shut
+          // behind a permanent spinner, which is the same
+          // unknown-presented-as-known defect one door over. Distinguish
+          // "no read is possible" from "the read has not answered".
           saleLock={
-            sale.state === undefined
-              ? 'checking'
-              : sale.state.listed === true
-                ? 'listed'
-                : 'clear'
+            !loan.data?.lenderTokenId ||
+            !/^[1-9]\d*$/.test(String(loan.data.lenderTokenId))
+              ? 'unknown'
+              : sale.state === undefined
+                ? 'checking'
+                : sale.state.listed === true
+                  ? 'listed'
+                  : 'clear'
           }
           // See the prop's own note: no cheap client read exists for
           // the held-for-lender balance, so this stays false and the

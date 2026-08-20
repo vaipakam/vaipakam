@@ -39,8 +39,23 @@ export type InstantSellCandidates = 'checking' | 'some' | 'none' | 'unknown';
  *  so an unanswered read must not collapse to "clear". A boolean did
  *  exactly that while the read was loading or had errored, showing both
  *  exits as available on a position whose lock had never been checked
- *  (Codex r1 P2). */
-export type SaleLockState = 'checking' | 'listed' | 'clear';
+ *  (Codex r1 P2).
+ *
+ *  `'unknown'` is the fourth state and exists because the fix for that
+ *  finding nearly reintroduced it by the opposite door. The lock read
+ *  is gated on a valid lender position token; with no such token the
+ *  query NEVER runs, so its data stays undefined permanently. Mapping
+ *  that to `'checking'` would have pinned both sale rows shut forever
+ *  behind a spinner — a permanent dead end dressed as a transient one,
+ *  which is the exact failure the card exists to prevent.
+ *
+ *  So: `'checking'` means a read that CAN answer has not answered yet;
+ *  `'unknown'` means no read is possible at all. The latter makes no
+ *  claim and leaves the rows to the tools, which is also harmless here
+ *  — a position with no lender token cannot be listed or sold in the
+ *  first place, so the tool refuses for its own, better-stated
+ *  reason. */
+export type SaleLockState = 'checking' | 'listed' | 'clear' | 'unknown';
 
 export type LenderExitJumpTarget = 'early-exit-card' | 'loan-sale-card';
 

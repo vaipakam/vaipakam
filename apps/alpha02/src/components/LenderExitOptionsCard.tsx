@@ -118,7 +118,23 @@ export function LenderExitOptionsCard({
               {row.cost && !row.unavailable ? (
                 <div className="row-sub muted">{row.cost}</div>
               ) : null}
-              {row.note && !row.unavailable ? (
+              {/* Codex r2 P2 — the structural note renders INDEPENDENTLY
+                  of availability, unlike `cost`. Gating it the same way
+                  suppressed the cross-party disclosure precisely while
+                  a listing was actively holding the borrower's offset
+                  and collateral-withdrawal options — the moment it is
+                  most true and most worth saying. It matters for
+                  listings a lender did not make in this session: by a
+                  keeper, on another device, or before this card
+                  shipped. `LoanSalePendingCard` covers the seller's own
+                  lock and cancellation but never the borrower impact,
+                  so nothing else on the page says it.
+
+                  `cost` stays availability-gated on purpose: it
+                  describes what taking the option WOULD cost, which is
+                  noise on an option that cannot be taken. The note
+                  describes what is happening RIGHT NOW. */}
+              {row.note ? (
                 <div className="row-sub muted">{row.note}</div>
               ) : null}
               {row.unavailable ? (
