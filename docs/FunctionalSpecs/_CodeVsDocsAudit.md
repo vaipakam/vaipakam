@@ -590,3 +590,33 @@ refusal is also not merely a nicety that could be relocated somewhere roomier:
 it belongs at ACCEPT, because refusing at completion instead would strand a
 buyer whose funds are already committed on the legacy accepted-but-not-completed
 shape, which this document's own settlement rules forbid.
+
+## Sale-cost disclosure keys on the lock, where the spec keys on fillability
+
+The spec says an exit the lender has already committed to keeps its cost stated,
+because a sale in flight has pending consequences rather than hypothetical
+prices — and that the test is whether the sale can still **complete**.
+
+The lender exit chooser implements that test as "the position lock stands",
+which is a **proxy**, and the two come apart in one state. A listing that
+expired without selling keeps the lock until the lender cancels or someone runs
+the permissionless cleanup; through that window no buyer can complete the sale,
+but the card carries on naming the held-balance transfer and the reward
+forfeiture as pending losses.
+
+**Direction of the error matters here** and is why this is recorded rather than
+rushed. The card over-warns: it names a cost the lender can no longer incur, on
+a row that already reads as unavailable. That is a poorer explanation, not a
+value-losing one — unlike the original defect this rule was written to fix,
+which HID a cost that could still be incurred.
+
+Not fixable in place: the client state the card reads
+(`LoanSalePendingState`) carries the lock, the loan status, holder, offer id,
+sale rate, cooldown and funding legs — but **no listing expiry and no
+accepted-not-yet-completed flag**. Distinguishing fillable from merely locked
+needs the listing offer's own window, which is a new read. Tracked with the
+other authoritative pre-checks in #1841, and part of what the shared preview
+verdict in `docs/DesignsAndPlans/SaleExitPreviewVerdict.md` would answer.
+
+Recorded so a later reader finds a known, bounded, safe-direction gap rather
+than concluding the card's rule is simply the lock.

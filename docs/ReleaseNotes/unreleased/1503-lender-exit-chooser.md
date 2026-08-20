@@ -45,7 +45,15 @@ though the rows themselves then read as unavailable. A live listing is not an
 option you declined — it is a sale in flight that a buyer can complete at any
 moment, so the held balance transferring and the reward entry being given up are
 pending consequences rather than hypothetical prices. Nothing else on the page
-states them, so the card keeps saying them until the listing clears.
+states them, so the card keeps saying them while the listing stands.
+
+One limit on that, worth stating because it is the direction the card currently
+errs in: a listing that **expired without selling** still holds the position
+until you cancel it or someone runs the cleanup, and during that window no
+buyer can complete — so the losses are no longer pending, but the card carries
+on naming them. It is telling you about a cost you can no longer incur, on a
+row that already reads as unavailable. Saying too much rather than too little,
+and being fixed with the other listing-state work rather than guessed at here.
 
 The listing row goes further and says something sellers routinely do not expect:
 while your listing stands it also freezes two of the *borrower's* options on
@@ -67,9 +75,11 @@ listing was made somewhere it may well not have been). A loan settling through
 its fallback path also blocks both sales, since a sale can only start on a loan
 running normally; the card stays, because waiting still applies. Two more
 reasons are operational rather than
-positional: while the fee terms that must be disclosed before any sale are
-still being read — or could not be read — both sale rows say so, because the
-tools themselves do not appear until that read lands; and if the operator has
+positional: while the details a sale needs before it can start are still being
+read — the fee terms that must be disclosed, and the loan's token information —
+both sale rows say so, because the tools themselves do not appear until those
+land. If one of those reads *fails* rather than lagging, the row names **which**
+one, so it never blames a read that worked. And if the operator has
 paused new listings on a deployment while looking into an issue, the listing
 row says that too, and says your position is unaffected. And if the loan's due
 date cannot be confirmed at all, both rows say **that**, rather than quietly
