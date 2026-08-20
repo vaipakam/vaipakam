@@ -52,6 +52,25 @@ just described. The introductory
 walkthrough also stopped offering the retired "pay the fee in VPFI and receive the
 full amount" route as a live choice.
 
+**A second class of correction, found while making the first.** Removing the
+rebate promise meant reading every passage that describes how the discount is
+earned — and those passages were incomplete in a way that costs a reader money.
+The pages now state, wherever they set expectations, the five conditions that
+actually govern it: the VPFI must sit in the vault on the canonical chain; it
+must have been held for a minimum period before it counts, and a mid-loan
+withdrawal reprices the whole average down to the lowest balance held; a tier
+earned on the canonical chain does not appear on another chain until it is
+pushed there; the fee-discount consent must be enabled **on the chain the loan
+settles on** — it is a per-chain setting, not one global switch; and the lender
+leg needs free VPFI on that same chain when the discount is applied, or it is
+simply not delivered.
+
+Each of these was already true and already enforced. None of them was on the
+page. Together they describe a reader who does everything the site tells them to
+and is still charged full price, with nothing to indicate why — which is a worse
+failure than a stale promise, because a stale promise is at least visible once
+it fails to arrive.
+
 **Known limitation, stated rather than left to be discovered.** Settlement
 passages deeper in the guides — the refinance and preclose mechanics — are covered
 by their section's scope but remain individually unqualified. A reader arriving
