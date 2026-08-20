@@ -68,6 +68,7 @@ between that copy and the real rule.
 | 7 | Asset paused (collateral) | `isAssetPaused(asset)` | a live read per leg |
 | 8 | Listing fillability after expiry | the listing offer's `expiresAt` | `LoanSalePendingState` carries no expiry |
 | 8b | Listing refuses NFT collateral | `EarlyWithdrawalFacet:275-281` (`SaleOfferCollateralMustBeERC20`) | nothing — already client-answerable; listed because the BITMAP must carry it |
+| 8c | Both routes refuse a rental (non-ERC20 principal) | `EarlyWithdrawalDirectFacet:178-179`, `EarlyWithdrawalFacet:272-274` (`InvalidSaleOffer`) | nothing — client-answerable; missing from BOTH maps until review caught it |
 | 9 | Instant-sell candidates | the open-offer book | a full page walk in Basic; in Advanced, already walked and discarded |
 | 10 | Maturity tick resolution | — | not a read at all; a shared-clock change |
 
@@ -86,7 +87,14 @@ difference between "not blocked" and "not represented". It also shows the
 route asymmetry is real rather than assumed, which §4.2 needed after the
 pause claim turned out to be wrong.
 
-**So the tractable set is items 1–8 plus 8b: nine refusals, answerable
+**8c is the same class as 8b and a sharper warning.** An ERC-721/1155 *principal*
+(a rental loan) makes BOTH entry points revert `InvalidSaleOffer`, independently
+of 8b's collateral check — and it was absent from every version of this table
+until review found it. A preview claiming completeness while omitting a blocker
+that closes both routes is worse than one that admits a gap, because
+`checkedMask` would report those bits checked and clear.
+
+**So the tractable set is items 1–8 plus 8b and 8c: ten refusals, answerable
 without consulting any third party.** That is the observation this proposal
 rests on — and note the criterion is *self-contained*, not *needs a new read*,
 since 8b needs none.
@@ -218,18 +226,41 @@ precedence:
 | 1 | `PastMaturity` — term fully elapsed | both routes |
 | 2 | `RelistCooldown` — `cooldownUntil` not yet reached | listing only |
 | 3 | `FinalHourWindow` — remaining term < `MIN_SALE_LISTING_SECONDS` | listing only |
-| 4 | `ListingLive` — a listing stands and can still be filled | listing only |
+| 4 | `ListingFillable` — stands, unexpired, and bounds hold **right now** | listing only |
 | 5 | `ListingEndedUnfilled` — stands but no buyer can complete | listing only |
+| 6 | `ListingAcceptedPendingCompletion` — accepted, awaiting completion | listing only |
+| 7 | `ListingBoundsViolated` — unexpired, but a fill would revert today | listing only |
 | 255 | `Indeterminate` — could not be evaluated | both, fail-closed |
 
-**Precedence, highest first: 1 > 2 > 3 > 5 > 4 > 0.** Maturity outranks
-everything because it closes both routes and no narrower reason can help.
-Cooldown outranks the window because it is the longer bar. `ListingEnded`
-outranks `ListingLive` so a caller never treats a dead listing as fillable.
+**Precedence, highest first: 1 > 2 > 3 > 6 > 5 > 7 > 4 > 0.** Maturity
+outranks everything because it closes both routes and no narrower reason can
+help. Cooldown outranks the window because it is the longer bar. Accepted
+outranks both ended and violated: a sale in mid-completion is neither dead nor
+re-fillable, and the lender's next action is completion rather than teardown
+or a price change. Violated outranks fillable so a caller never advertises a
+fill that would revert.
 
 Callers get one value and no arithmetic. The direct route reads only 0, 1 and
 255; a listing-only value on the direct row is a contract bug, not a caller
 decision.
+
+**Values 6 and 7 exist because the first version of this table was wrong in
+the way this whole document warns about** — asserting a classification was
+complete when it was not:
+
+- **6** — a legacy or recovery-state sale can have `accepted == true` while
+  `loanToSaleOfferId` is still set. It cannot be filled again, yet it has not
+  ended unfilled either, because `completeLoanSale` can still recover it.
+  `OfferCancelFacet.teardownStaleSaleListing` explicitly excludes this
+  mid-completion state (`:567-570`), so folding it into 5 would also point the
+  lender at teardown — the one recovery that is wrong here.
+- **7** — expiry does not decide fillability. `_completeLoanSaleImpl` reverts
+  `SaleBelowSellerFloor` / `SaleAboveHeldCeiling` when the live seller net or
+  held balance has drifted outside the bounds stamped at listing
+  (`EarlyWithdrawalFacet:793-805`). So an unexpired listing can be one every
+  buyer's acceptance rolls back. Calling that `ListingLive` would have been
+  the same overclaim, one revision later: a verdict named for what was
+  recorded rather than for what would happen.
 
 **`linkedSaleOfferId` comes back too.** The view must resolve
 `loanToSaleOfferId[loanId]` to read the expiry at all, so discarding it is
@@ -430,16 +461,16 @@ so the preview narrows the map-only gap rather than closing it. I am not going
 to pretend otherwise to keep the recommendation tidy.
 
 **Why I still lean this way — on a different invariant than I first gave.**
-(Counting note: nine loan-level entries, items 1–8 plus 8b.)
+(Counting note: ten loan-level entries, items 1–8 plus 8b and 8c.)
 
 My first attempt justified the split on *durability*: loan-level blockers are
 permanent, candidate matching is momentary. That is **false**, and worth
 striking rather than softening. Governance unpauses assets. Cooldowns expire
 by construction. Oracle and liquidity conditions recover. A held-for-lender
-balance gets resolved. Most of the nine are as transient as the order book.
+balance gets resolved. Most of the ten are as transient as the order book.
 
 The distinction that actually holds is **self-contained vs relational**. Every
-one of the nine is a property of *this loan and this holder* — answerable by
+one of the ten is a property of *this loan and this holder* — answerable by
 reading the position and the protocol's own configuration, with no third party
 involved. Candidate matching is irreducibly relational: it asks what OTHER
 participants are currently offering, so it cannot be answered by a per-loan
@@ -455,7 +486,7 @@ the mutating guards consume, this is a second source of truth wearing the
 costume of a single one — and it would drift, exactly as the client did. That
 is now a precondition, not a refinement.
 
-**Given a yes:** the first batch is **items 6, 7 and 8b** — the two per-asset
+**Given a yes:** the first batch is **items 6, 7, 8b and 8c** — the two per-asset
 pause legs, which really are bare `isAssetPaused` reads with no predicate
 behind them, plus the NFT-collateral bit, which needs no read at all — behind `checkedMask`, with the per-chain gate from §7 in place.
 
@@ -539,3 +570,24 @@ Both were mine, and both were the *same mistake in different clothing*:
 naming a sharing mechanism without checking that it actually shares anything
 across the boundary it has to cross — Solidity-to-Solidity in one case,
 Solidity-to-TypeScript in the other.
+
+**A sixth round found three more, all one category: claiming a
+classification was complete when it was not.**
+
+- A **rental principal** (non-ERC20) makes both entry points revert, entirely
+  separately from the NFT-*collateral* check — and it was missing from every
+  version of the table (now 8c). With `checkedMask` reporting those bits
+  checked and clear, an omission like this is worse than an admitted gap.
+- An **accepted-but-uncompleted** listing is neither fillable nor ended
+  unfilled, and teardown is explicitly wrong for it (value 6).
+- An unexpired listing is **not necessarily fillable**: the seller floor and
+  held ceiling stamped at listing can be violated by the time a buyer arrives,
+  so every acceptance reverts (value 7).
+
+The third is the one to sit with. It attacks `ListingLive` — a value added by
+the *previous* round's fix — for exactly the flaw that round was fixing: a
+verdict named for what was recorded rather than for what would happen. Six
+rounds in, the document is still finding the same error in its own
+corrections, which is either the strongest possible support for §1's thesis or
+the clearest possible sign that this design should not be built. Both readings
+are available and §8 does not resolve them.
