@@ -1587,6 +1587,11 @@
   },
   {
     "type": "error",
+    "name": "InternalVehicleNeedsRealLoan",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
