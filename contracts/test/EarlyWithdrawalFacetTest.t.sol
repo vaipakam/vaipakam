@@ -2318,6 +2318,53 @@ contract EarlyWithdrawalFacetTest is Test {
         assertEq(pastEnd.length, 0, "a page past the end must be empty");
     }
 
+    /// @dev Codex #1825 r3 — ids are sequential and the high-water mark is
+    ///      public, so a caller can always DERIVE a vehicle's id from the gaps
+    ///      in an enumeration and read the retained row directly. Hiding it
+    ///      would be theatre (contract storage is readable regardless) and
+    ///      would break legitimate reads; what made the record dangerous was
+    ///      being UNLABELLED. So the row stays readable and can now be asked
+    ///      what it is.
+    function test_1503item26_aDerivedVehicleIdCanBeIdentified() public {
+        uint256 vehicleId = _runRealSaleToCompletion("identifyBuyer");
+
+        // The row is still readable — support and forensics need it, and the
+        // completion flow's own assertions read it.
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(vehicleId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the record stays readable by id"
+        );
+        // ...and a caller who reached it can find out what they are holding.
+        assertTrue(
+            MetricsFacet(address(diamond)).isSaleVehicleLoan(vehicleId),
+            "a derived vehicle id must identify itself as a vehicle"
+        );
+        assertFalse(
+            MetricsFacet(address(diamond)).isSaleVehicleLoan(activeLoanId),
+            "a real position must not be reported as a vehicle"
+        );
+    }
+
+    /// @dev Codex #1825 r3 — skipping visible records walks the prefix, which
+    ///      only becomes necessary once a vehicle makes the ids sparse. With
+    ///      none, visible rank and id agree exactly, so the original direct
+    ///      seek is still correct and a deployment that has never completed a
+    ///      listed sale keeps the cheaper path. Pinned because "still correct"
+    ///      is the part a fast path can quietly get wrong.
+    function test_1503item26_densePagingIsUnchangedWithoutVehicles() public {
+        uint256 second = _openAnotherLoan("denseBorrower");
+        (, uint256 total) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
+        assertEq(total, 2, "fixture: two visible loans, no vehicle");
+
+        (uint256[] memory p0, ) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
+        (uint256[] memory p1, ) = MetricsFacet(address(diamond)).getAllLoansPaginated(1, 1);
+        (uint256[] memory p2, ) = MetricsFacet(address(diamond)).getAllLoansPaginated(2, 1);
+        assertEq(p0[0], activeLoanId, "first page is the first loan");
+        assertEq(p1[0], second, "second page is the second loan");
+        assertEq(p2.length, 0, "a page past the end is empty");
+    }
+
     /// @dev A second real loan, so the visible id sequence continues ABOVE the
     ///      vehicle's id. Borrower-side of the setUp offer shape.
     function _openAnotherLoan(string memory label) internal returns (uint256 loanId) {

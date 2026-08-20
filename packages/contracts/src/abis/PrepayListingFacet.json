@@ -374,6 +374,11 @@
   },
   {
     "type": "error",
+    "name": "ArmedFreshPaidAlreadySeeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {
@@ -1049,6 +1054,22 @@
     "type": "error",
     "name": "DayNotReadyToFinalize",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DeliveredFreshShortfall",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

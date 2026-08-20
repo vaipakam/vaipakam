@@ -1072,13 +1072,43 @@ contract RewardReporterFacet is
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint32 old = s.baseChainId;
+        bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
         s.baseChainId = chainId;
+        // Pre-merge adversarial review (2026-08-17) P2 — mirror-ness has TWO
+        // inputs (`!isCanonicalRewardChain && baseChainId != 0`), and the r9
+        // residual retirement guarded only the canonical knob. Detaching a
+        // mirror the natural way — `setBaseChainId(0)` — flipped it into the
+        // unbounded "neither" state with the residual intact: armed pricing
+        // kept running off persisted stamps with no delivered bound and no
+        // paid-ledger writes, and re-attaching re-offered the same residual
+        // whose backing was already spent. One helper, called on the
+        // EFFECTIVE role predicate, so a third role input can never repeat
+        // this by construction.
+        _retireDeliveredResidualOnRoleChange(s, wasMirror);
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("baseChainId"),
             bytes32(uint256(old)),
             bytes32(uint256(chainId))
         );
+    }
+
+    /// @dev Retire the delivered-fresh residual (`received - paid`) whenever
+    ///      the EFFECTIVE mirror role — `LibVaipakam.isMirrorRewardChain`,
+    ///      not any single knob — changed across a config write. Levelling
+    ///      `paid` up to `received` errs safe: the chain resumes with no
+    ///      delivered headroom and earns it back from the next remittance.
+    ///      Shared by every setter that feeds the role predicate, so the
+    ///      check IS the operation and a new role input inherits it.
+    function _retireDeliveredResidualOnRoleChange(
+        LibVaipakam.Storage storage s,
+        bool wasMirror
+    ) private {
+        if (wasMirror == LibVaipakam.isMirrorRewardChain(s)) return;
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        if (s.rewardBudgetArmedFreshPaid < received) {
+            s.rewardBudgetArmedFreshPaid = received;
+        }
     }
 
     /// @notice Flip this Diamond's canonical-reward-chain flag.
@@ -1089,6 +1119,7 @@ contract RewardReporterFacet is
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bool old = s.isCanonicalRewardChain;
+        bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
         s.isCanonicalRewardChain = on;
         // #1662 r9 — a FRESH canonical deployment uses per-receipt
         // attribution from inception, so mark it armed at watermark ZERO
@@ -1103,12 +1134,96 @@ contract RewardReporterFacet is
         {
             s.recoveryAttributionArmed = true;
         }
+        // Codex #1699 r9 P1 — RETIRE the delivered residual at every role
+        // transition, in BOTH directions.
+        //
+        // This flag is mutable both ways, and the delivered-fresh bound is
+        // mirror-scoped: `received - paid`. Scoping only at PAYOUT time leaves
+        // the residual sitting in storage across a role change. A mirror with
+        // 10 delivered and 4 paid carries 6; promoted to canonical, armed
+        // claims ignore the bound AND deliberately skip the paid-ledger write,
+        // so they can consume the very tokens that 6 was backing. Demote
+        // again and the untouched counters offer the SAME 6 a second time —
+        // unrelated custody funding a duplicate spend.
+        //
+        // Retiring by levelling paid up to received makes the residual zero
+        // without falsifying either total's era meaning, and it is the safe
+        // direction: a chain resumes with NO delivered headroom and earns it
+        // back from the next remittance. Erring the other way would hand it
+        // free allowance.
+        //
+        // Pre-merge adversarial review (2026-08-17) P2 — the retirement now
+        // keys on the EFFECTIVE role predicate through the shared helper,
+        // because mirror-ness has two inputs and `setBaseChainId` mutates
+        // the other one. Guarding each knob's own delta re-created the
+        // one-fix-two-sites defect r2 already catalogued.
+        _retireDeliveredResidualOnRoleChange(s, wasMirror);
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("isCanonicalRewardChain"),
             bytes32(uint256(old ? 1 : 0)),
             bytes32(uint256(on ? 1 : 0))
         );
+    }
+
+    /// @notice #1434 P1-b (Codex #1699 r2) — the pre-P1-b paid-side history
+    ///         was seeded on this mirror, arming the delivered-fresh bound
+    ///         against funding that was already spent before the upgrade.
+    /// @custom:event-category state-change/reward-compensation
+    event ArmedFreshPaidSeeded(uint256 amount);
+
+    /// @notice #1699 r18 P2 — whether the one-shot paid-history seed has run.
+    ///         Exists so the maintained refresh can SKIP the migration block
+    ///         on an already-seeded Diamond instead of demanding obsolete
+    ///         migration inputs mid-refresh, paused. (The earlier position —
+    ///         "the one-shot revert IS the signal" — required reaching the
+    ///         seed call at all; the input-validation require sat in front of
+    ///         it and wedged every rerun.)
+    function armedFreshPaidSeeded() external view returns (bool) {
+        return LibVaipakam.storageSlot().armedFreshPaidSeeded;
+    }
+
+    /**
+     * @notice #1434 P1-b (Codex #1699 r2) — ONE-SHOT migration seed for the
+     *         delivered-fresh bound's PAID side on an in-place-upgraded
+     *         mirror.
+     * @dev    Why a seed and not a derivation. The bound is
+     *         `received - paid`. On upgrade the received counter already
+     *         holds deliveries for compensated and short-lapsed days — those
+     *         states deliberately BYPASSED the old blanket mirror halt and
+     *         were payable in the parent implementation — while the newly
+     *         appended paid counter starts at zero. Unseeded, that
+     *         already-spent funding reads as available and can be spent
+     *         again.
+     *
+     *         An exact ON-CHAIN derivation does not exist, which is the
+     *         deciding fact rather than a matter of taste.
+     *         `DayCompensation.armedFreshCounted` records what a day ADDED TO
+     *         THE RECEIVED side, not what was paid out of it; the paid figure
+     *         lives in `userSideDayPaidVpfi[user][side][day]`, which cannot be
+     *         summed on-chain over an unbounded user set. So the operator
+     *         computes it off-chain from the indexed payout events and seeds
+     *         it here, once.
+     *
+     *         Direction of error matters and is stated so an operator can
+     *         choose deliberately: seeding LOW re-opens the double-spend this
+     *         exists to close; seeding HIGH strands legitimate funding until
+     *         further deliveries arrive (recoverable, and the conservative
+     *         side). Prefer the high estimate when uncertain.
+     *
+     *         Fresh deploys need no seed — both counters start at zero — so
+     *         this is only for chains carrying pre-P1-b history.
+     * @param  amount Armed fresh already paid out before this upgrade.
+     */
+    function seedArmedFreshPaid(uint256 amount)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.armedFreshPaidSeeded) revert ArmedFreshPaidAlreadySeeded();
+        s.armedFreshPaidSeeded = true;
+        s.rewardBudgetArmedFreshPaid += amount;
+        emit ArmedFreshPaidSeeded(amount);
     }
 
     /// @notice Adjust the grace window after the first chain report for

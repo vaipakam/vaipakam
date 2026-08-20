@@ -71,6 +71,7 @@ import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulato
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -91,7 +92,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](192);
+        selectors = new bytes4[](198);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -457,6 +458,19 @@ contract HelperTest {
         // #1662 r9 - reproduce the legacy pre-attribution shape.
         selectors[n++] =
             TestMutatorFacet.setRecoveryAttributionRaw.selector;
+        // #1434 P1-b - stage / read back the mirror delivered-fresh ledger.
+        selectors[n++] = TestMutatorFacet.setArmedFreshLedgerRaw.selector;
+        selectors[n++] = TestMutatorFacet.getArmedFreshPaidRaw.selector;
+        // #1434 (Codex #1699 r7) — read back an entry's settlement cursor and
+        // processed flag, so a test can assert a SPANNING expiry stamps the
+        // cursor exactly as a claim would rather than merely not reverting.
+        selectors[n++] =
+            TestMutatorFacet.getRewardEntryClaimNextDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.getRewardEntryProcessedRaw.selector;
+        selectors[n++] =
+            TestMutatorFacet.getRewardEntryExpiryBegunRaw.selector;
+        selectors[n++] =
+            TestMutatorFacet.getUserClaimPendingUncappedRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -1541,7 +1555,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](51);
+        selectors = new bytes4[](52);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1620,6 +1634,7 @@ contract HelperTest {
         // lagged, surfacing when the item-25 rekey test read the buyer's
         // position through it.
         selectors[50] = MetricsFacet.getUserPositionLoans.selector;
+        selectors[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
         return selectors;
     }
 
@@ -1992,7 +2007,7 @@ contract HelperTest {
         // + the RL-3 (#1305) claim-horizon sweep.
         // #1351 slice 2c — the two CLAIM entry points moved to
         // {RewardClaimFacet} (EIP-170).
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](8);
         selectors[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
         selectors[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
@@ -2006,7 +2021,6 @@ contract HelperTest {
         selectors[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         // RL-3 (#1305) — the mutating claim-horizon sweep (its id-keyed read
         // views live on the lens facet).
-        selectors[8] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
         return selectors;
     }
 
@@ -2023,6 +2037,20 @@ contract HelperTest {
         return selectors;
     }
 
+    /// @dev #1434 — the claim-horizon sweep, on its own facet. Expiry settles
+    ///      through the ShareOfPool engine now, and neither InteractionRewards
+    ///      nor RewardClaim had the EIP-170 headroom to host it.
+    function getRewardHorizonSweepFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] =
+            RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
+        return selectors;
+    }
+
     /// @dev #1306 follow-up — the read-only view/getter selectors split off
     ///      {InteractionRewardsFacet} into {InteractionRewardsLensFacet}.
     ///      Count deliberately omitted; see the matching note in
@@ -2032,7 +2060,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](20);
+        selectors = new bytes4[](21);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2056,6 +2084,7 @@ contract HelperTest {
         selectors[17] = InteractionRewardsLensFacet.getRecycleDayMetrics.selector;
         selectors[18] = InteractionRewardsLensFacet.getRecycleBackingSnapshot.selector;
         selectors[19] = InteractionRewardsLensFacet.getRecycledCreditedPreLaunch.selector;
+        selectors[20] = InteractionRewardsLensFacet.getUserArmedFreshNeed.selector;
         return selectors;
     }
 
@@ -2064,7 +2093,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](19);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
@@ -2082,6 +2111,8 @@ contract HelperTest {
         // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
         selectors[3] = RewardReporterFacet.setBaseChainId.selector;
         selectors[4] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
+        selectors[17] = RewardReporterFacet.seedArmedFreshPaid.selector;
+        selectors[18] = RewardReporterFacet.armedFreshPaidSeeded.selector;
         selectors[5] = RewardReporterFacet.setRewardGraceSeconds.selector;
         selectors[6] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
         selectors[7] = RewardReporterFacet.getChainReportSentAt.selector;
@@ -2252,7 +2283,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](34);
+        selectors = new bytes4[](35);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2275,6 +2306,7 @@ contract HelperTest {
         selectors[19] = RewardRemittanceLensFacet.getRewardRemittanceReceiver.selector;
         selectors[20] = RewardRemittanceLensFacet.getRewardBudgetReceivedTotal.selector;
         selectors[21] = RewardRemittanceLensFacet.getDeliveredFreshPosition.selector;
+        selectors[34] = RewardRemittanceLensFacet.getDeliveredFreshBound.selector;
         // #1434 P2-w5 — the recovery-position reads.
         selectors[22] = RewardRemittanceLensFacet.getRecoveryPosition.selector;
         selectors[23] =

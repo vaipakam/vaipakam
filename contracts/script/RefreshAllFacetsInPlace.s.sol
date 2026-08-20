@@ -42,6 +42,7 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -103,6 +104,19 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 ///      same paused block that retires the unattributed selectors.
 ///      The companion `IRecycleComposition` canonical probe was removed in
 ///      r11 when arming became unconditional; nothing else read it.
+/// @dev #1434 P1-b — the paid-side migration seed, invoked INSIDE the paused
+///      block so no window exists where historical delivered funding is
+///      spendable again.
+interface IArmedFreshPaidSeed {
+    function seedArmedFreshPaid(uint256 amount) external;
+
+    function armedFreshPaidSeeded() external view returns (bool);
+}
+
+/// @dev #1434 P1-b — declared so the refresh can match THIS revert and only
+///      this one; every other failure must abort the migration while paused.
+error ArmedFreshPaidAlreadySeeded();
+
 interface IRecoveryAttribution {
     function armRecoveryAttribution() external;
 
@@ -191,7 +205,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     //
     // The parity test deliberately lives in `test/`, not here: a production
     // refresh script must not import test code to check itself.
-    uint256 public constant EXPECTED_FACETS = 73;
+    // 73 -> 74: EarlyWithdrawalDirectFacet (#1780) + RewardHorizonSweepFacet
+    // (#1434) landed on either side of one merge.
+    uint256 public constant EXPECTED_FACETS = 74;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -795,6 +811,93 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
         console.log("Verified: all selectors route to the fresh implementations.");
 
+        // ─── #1434 P1-b (Codex #1699 r3 P1) — SEED THE PAID SIDE WHILE PAUSED ──
+        //
+        // The delivered-fresh bound is `received - paid`, and the paid counter
+        // is newly appended, so it reads ZERO the instant these facets are
+        // cut. On a mirror carrying pre-P1-b history that is not merely
+        // incomplete, it is unsafe: compensated and short-lapsed days
+        // BYPASSED the old blanket halt and were genuinely payable, so their
+        // deliveries already sit in the received counter and would be
+        // spendable a second time.
+        //
+        // Seeding after the unpause — or in a later manual transaction —
+        // leaves exactly that window open on the live chain. This is the
+        // "armed, not merely present" rule the w1 ceremony and w6 attribution
+        // watermark both follow: a guard that exists but is never armed by
+        // the ceremony that reaches it is not a guard. Same paused block, same
+        // reason.
+        //
+        // Operator-supplied because no exact on-chain derivation exists
+        // (`armedFreshCounted` records the RECEIVED side; the paid figure
+        // lives in a per-user mapping that cannot be summed on-chain). Set
+        // `ARMED_FRESH_PAID_SEED` from the indexed payout history. Zero is the
+        // correct value for a FRESH deploy and for a chain with no pre-P1-b
+        // armed payouts, so an unset variable is not silently wrong — but it
+        // IS wrong for a mirror with history, which is why the log states
+        // which case was taken.
+        // Idempotent via the one-shot revert itself, deliberately: the seed
+        // already refuses a second call, so that refusal IS the "already
+        // migrated" signal. Reading a dedicated getter would add a selector,
+        // a wiring site and an ABI re-export to learn something the existing
+        // guard already tells us — and a rerun of this refresh (which happens)
+        // must not abort on a chain that is simply already seeded.
+        // Codex #1699 r18 P2 — an ALREADY-SEEDED Diamond skips the whole
+        // migration block, so a routine rerun needs no migration inputs at
+        // all. The input-validation require below used to sit in front of
+        // the seed call whose AlreadySeeded catch made reruns idempotent —
+        // wedging every rerun, paused, on a now-obsolete question. The
+        // on-chain flag is authoritative and the facet cut above has already
+        // routed its getter.
+        if (IArmedFreshPaidSeed(diamond).armedFreshPaidSeeded()) {
+            console.log(
+                "P1-b: armed-fresh paid history already seeded - skipped"
+            );
+        } else {
+            // Codex #1699 r4 P1 — the seed must be stated, never defaulted.
+            //
+            // This migration is IRREVERSIBLE: the seed adds to the paid
+            // counter and permanently sets the one-shot flag. Defaulting a
+            // missing env var to zero would therefore write a wrong figure,
+            // close the door behind it, and unpause — recreating precisely
+            // the double-spend the seed exists to prevent, with no way to
+            // repair it through this path. An operator who genuinely has no
+            // pre-P1-b payouts says so explicitly instead.
+            uint256 seed = vm.envOr("ARMED_FRESH_PAID_SEED", type(uint256).max);
+            bool ackNoHistory =
+                vm.envOr("ARMED_FRESH_PAID_NO_HISTORY", false);
+            require(
+                seed != type(uint256).max || ackNoHistory,
+                "P1-b: set ARMED_FRESH_PAID_SEED (armed fresh already paid "
+                "before this upgrade), or ARMED_FRESH_PAID_NO_HISTORY=true to "
+                "declare there is none. Refusing to default an irreversible "
+                "accounting migration to zero."
+            );
+            if (seed == type(uint256).max) seed = 0;
+
+            // Codex #1699 r4 P1 — swallow ONLY the replay, never every revert.
+            //
+            // The previous catch-all reported ANY failure as "already
+            // migrated" and then unpaused with an unseeded ledger — an
+            // ADMIN_ROLE loss or an overflow would have looked identical to a
+            // benign rerun. Reusing an existing failure signal is sound, but
+            // it has to discriminate WHICH failure; anything unexpected must
+            // abort while the Diamond is still PAUSED.
+            try IArmedFreshPaidSeed(diamond).seedArmedFreshPaid(seed) {
+                console.log("P1-b: seeded armed-fresh paid history:", seed);
+            } catch (bytes memory err) {
+                require(
+                    err.length >= 4
+                        && bytes4(err) == ArmedFreshPaidAlreadySeeded.selector,
+                    "P1-b: seed failed for a reason other than a replay - "
+                    "aborting while paused"
+                );
+                console.log(
+                    "P1-b: armed-fresh paid history already seeded - skipped"
+                );
+            }
+        }
+
         if (!wasPaused) AdminFacet(diamond).unpause();
 
         vm.stopBroadcast();
@@ -880,6 +983,21 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "rewardClaimFacet",
             address(new RewardClaimFacet()),
             _getRewardClaimFacetSelectors()
+        );
+        // #1434 — the claim-horizon sweep moved onto its OWN facet when expiry
+        // was unified onto the ShareOfPool engine. Listed here for exactly the
+        // reason the slice-2c note above records: this script only
+        // Replace/Adds the selectors it lists, so omitting the destination
+        // facet would leave `sweepExpiredInteractionRewards` routed at the old
+        // implementation — the pre-unification expiry, with its hand-derived
+        // D1 obligation — while every other reward facet moved forward.
+        // Slot 73: #1780's earlyWithdrawalDirectFacet took 72 on main and
+        // this facet landed on the same index on the branch; the merge keeps
+        // both, hole-free (the #1795 parity test asserts every slot).
+        items[73] = Item(
+            "rewardHorizonSweepFacet",
+            address(new RewardHorizonSweepFacet()),
+            _getRewardHorizonSweepSelectors()
         );
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

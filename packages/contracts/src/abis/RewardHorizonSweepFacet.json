@@ -1,465 +1,200 @@
 [
   {
     "type": "function",
-    "name": "calculateLTV",
+    "name": "sweepExpiredInteractionRewards",
     "inputs": [
       {
-        "name": "borrowedAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "borrowedAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAmount",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "entryIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "outputs": [
       {
-        "name": "ltv",
+        "name": "expiredTotal",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "captureDailyPriceSnapshot",
-    "inputs": [
-      {
-        "name": "assets",
-        "type": "address[]",
-        "internalType": "address[]"
-      }
-    ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "checkLiquidity",
+    "type": "event",
+    "name": "RewardCommitmentReleased",
     "inputs": [
       {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
+        "name": "source",
         "type": "uint8",
-        "internalType": "enum LibVaipakam.LiquidityStatus"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "checkLiquidityOnActiveNetwork",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LiquidityStatus"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "countLiveSecondaryOracleFeeds",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "live",
-        "type": "uint8",
+        "indexed": true,
         "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getAssetPrice",
-    "inputs": [
+      },
       {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "price",
+        "name": "refId",
         "type": "uint256",
+        "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "decimals",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getAssetRiskProfile",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "isSupported",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "status",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LiquidityStatus"
-      },
-      {
-        "name": "loanInitMaxLtvBps",
+        "name": "amount",
         "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqBonusBps",
-        "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "anonymous": false
   },
   {
-    "type": "function",
-    "name": "getEffectiveLiquidityTier",
+    "type": "event",
+    "name": "RewardEntryExpired",
     "inputs": [
       {
-        "name": "asset",
+        "name": "entryId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "user",
         "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "tier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getEffectiveTierMaxInitLtvBps",
-    "inputs": [
-      {
-        "name": "tier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getHistoricalAssetPrice",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
+        "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "dayIndex",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "snapshot",
-        "type": "tuple",
-        "internalType": "struct LibVaipakam.AssetPriceSnapshot",
-        "components": [
-          {
-            "name": "price",
-            "type": "int256",
-            "internalType": "int256"
-          },
-          {
-            "name": "feedDecimals",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "capturedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getIlliquidAssets",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address[]",
-        "internalType": "address[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getLiquidityTier",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "tier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getSequencerUptimeFeed",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTierLtvCacheEntry",
-    "inputs": [
-      {
-        "name": "tier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "ltvBps",
-        "type": "uint16",
-        "internalType": "uint16"
+        "name": "total",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       },
       {
-        "name": "lastRefreshedAt",
+        "name": "recycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardEntryExpiryArmed",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "finalNoticeFrom",
         "type": "uint64",
+        "indexed": false,
         "internalType": "uint64"
       }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isAssetSupported",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "refreshTierLtvCache",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "sequencerHealthy",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tryGetAssetPrice",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "ok",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "price",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "decimals",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
+    "anonymous": false
   },
   {
     "type": "event",
-    "name": "DailyAssetPriceCaptured",
+    "name": "RewardEntryExpiryBegun",
     "inputs": [
       {
-        "name": "asset",
+        "name": "entryId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "user",
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      },
-      {
-        "name": "dayIndex",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "price",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "feedDecimals",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "TierLtvCacheRefreshRejected",
+    "name": "RewardEntryHorizonStamped",
     "inputs": [
       {
-        "name": "tier",
-        "type": "uint8",
+        "name": "entryId",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "uint8"
+        "internalType": "uint256"
       },
       {
-        "name": "candidateLtvBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
-        "name": "reason",
-        "type": "string",
+        "name": "firstClaimableAt",
+        "type": "uint64",
         "indexed": false,
-        "internalType": "string"
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "TierLtvCacheUpdated",
+    "name": "VpfiRecycled",
     "inputs": [
       {
-        "name": "tier",
+        "name": "source",
         "type": "uint8",
         "indexed": true,
         "internalType": "uint8"
       },
       {
-        "name": "newLtvBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
+        "name": "refId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       },
       {
-        "name": "oldLtvBps",
-        "type": "uint16",
+        "name": "amount",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint16"
+        "internalType": "uint256"
       },
       {
-        "name": "assetsContributing",
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiRecycledPreLaunch",
+    "inputs": [
+      {
+        "name": "source",
         "type": "uint8",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint8"
+      },
+      {
+        "name": "refId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1203,17 +938,17 @@
   },
   {
     "type": "error",
+    "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FeeEntitlementChargeFailed",
     "inputs": []
   },
   {
     "type": "error",
     "name": "FeeEntitlementRequiresCanonicalVpfiChain",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FeeTooHigh",
     "inputs": []
   },
   {
@@ -1329,13 +1064,24 @@
   },
   {
     "type": "error",
-    "name": "InsufficientLiquidity",
+    "name": "InsufficientProceeds",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "InsufficientProceeds",
-    "inputs": []
+    "name": "InsufficientRecycleBacking",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1408,11 +1154,6 @@
   {
     "type": "error",
     "name": "InvalidLoanStatus",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidReserves",
     "inputs": []
   },
   {
@@ -1701,17 +1442,7 @@
   },
   {
     "type": "error",
-    "name": "NoDexPool",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NoInteractionRewardsToClaim",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoPriceFeed",
     "inputs": []
   },
   {
@@ -1787,37 +1518,6 @@
   },
   {
     "type": "error",
-    "name": "OracleCrossCheckDivergence",
-    "inputs": [
-      {
-        "name": "chainlinkPrice",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "pythPrice",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "deviationBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxDeviationBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OraclePriceDivergence",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "PadNumeraireRateFeedStale",
     "inputs": []
   },
@@ -1862,11 +1562,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "PeerLtvReadsPaused",
-    "inputs": []
   },
   {
     "type": "error",
@@ -2060,6 +1755,11 @@
   },
   {
     "type": "error",
+    "name": "RecycleBackingTokenUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RecycledShareExceedsDelivery",
     "inputs": [
       {
@@ -2073,6 +1773,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
   },
   {
     "type": "error",
@@ -2251,17 +1956,6 @@
   },
   {
     "type": "error",
-    "name": "SafeCastOverflowedUintToInt",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SaleAboveHeldCeiling",
     "inputs": [
       {
@@ -2305,16 +1999,6 @@
   {
     "type": "error",
     "name": "SelfCollateralizedOffer",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SequencerDown",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SequencerGracePeriod",
     "inputs": []
   },
   {
@@ -2380,11 +2064,6 @@
   {
     "type": "error",
     "name": "SourceChainIdNotExpected",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "StalePriceData",
     "inputs": []
   },
   {

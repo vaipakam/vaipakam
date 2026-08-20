@@ -2406,6 +2406,25 @@ library LibVaipakam {
         // to default could claim, then default, dodging the §4 forfeit).
         bool closed;
         uint256 perDayNumeraire18; // Numeraire18 interest-per-day snapshotted at register
+        /// @dev #1434 (Codex #1699 r8 P1) — APPENDED AT THE TAIL
+        ///      (struct-in-mapping tail widening is layout-safe).
+        ///
+        ///      The expiry sweep began MOVING this entry's value. Set on the
+        ///      FIRST crediting chunk, never unset.
+        ///
+        ///      Unifying expiry onto the day engine made a reap CHUNKED, and
+        ///      every credited chunk is IRREVERSIBLE — the value is already in
+        ///      the recycle bucket. Leaving the entry claimable between chunks
+        ///      meant an owner who claimed mid-sweep silently lost whatever had
+        ///      already been recycled, with no removal signal to explain it,
+        ///      contradicting the guarantee that a claim before removal wins.
+        ///
+        ///      So the first credited chunk IS the removal point: from that
+        ///      instant the claim paths skip the entry and a public signal
+        ///      marks it. "A claim before removal wins" stays true and becomes
+        ///      precisely observable — a deferral still credits nothing and
+        ///      leaves the entry fully claimable.
+        bool expiryBegun;
     }
 
     /**
@@ -6144,10 +6163,20 @@ library LibVaipakam {
         ///      loan-side-capped split keeps `armedFresh` whole for
         ///      commitment retirement while `total` sheds the capped-off
         ///      part, so no combination of the returned fields is the amount
-        ///      actually paid. That lands with P1-b, which consumes it, and
-        ///      which is itself blocked behind P2 lifting the mirror
-        ///      armed-day pricing halt (#1434 §2g): while that halt stands,
-        ///      armed mirror days never price and there is nothing to bound.
+        ///      actually paid.
+        ///
+        ///      #1434 P1-b LANDED that paid side as
+        ///      `rewardBudgetArmedFreshPaid` (see the tail of this struct)
+        ///      and lifted the mirror armed-day pricing halt this note was
+        ///      waiting on, so the bound is now live: read it through
+        ///      {LibInteractionRewards.deliveredFreshBound}, never by
+        ///      differencing these fields by hand — it must SATURATE,
+        ///      because the received side below carries an unwind and can
+        ///      legitimately fall below the paid side after a released or
+        ///      reclassified delivery. The paid side is written at the three
+        ///      sites that actually spend armed fresh (the claim walk, the
+        ///      expiry batch, the forfeit sweep) rather than derived from
+        ///      these splits, precisely because of the shape described above.
         uint256 rewardBudgetArmedFreshReceived;
         /// @dev The reconciliation counterpart: Σ of the fresh-looking
         ///      amount of every delivery this chain declined to count above.
@@ -6893,6 +6922,67 @@ library LibVaipakam {
         ///         holder's bit; `LibLoan._indexLoanForHolder` establishes
         ///         membership by a scan that each user pays at most once.
         mapping(uint256 => bool) loanHolderIndexExact;
+        /// @dev #1434 P1-b — APPENDED AT THE TAIL (same in-place-upgrade
+        ///      rule as every counter above). The PAID half of the
+        ///      delivered-fresh bound, and the counterpart of
+        ///      `rewardBudgetArmedFreshReceived`: Σ of ARMED fresh this
+        ///      chain has actually paid out, written at every armed-fresh
+        ///      payout site. P1-a shipped only the received half, which is
+        ///      why the halt could not lift on that slice alone.
+        ///
+        ///      `interactionPoolPaidOut` is deliberately NOT reused as a
+        ///      proxy (an earlier revision was withdrawn for exactly that,
+        ///      Codex #1556 r1): it counts LIFETIME payouts including
+        ///      ordinary-schedule days that no delivery ever funded, so
+        ///      charging them against delivered fresh would defer every
+        ///      later day on any chain with prior activity. Only
+        ///      armed-day fresh belongs here, because only armed-day fresh
+        ///      is what a remittance delivers.
+        ///
+        ///      The bound `received − paid` MUST be evaluated SATURATING
+        ///      in both terms. The received side is NOT monotone: it
+        ///      carries its own saturating unwind for a released or
+        ///      reclassified delivery, so a paid figure charged against a
+        ///      received figure that has since shrunk would otherwise
+        ///      underflow — and a reverting pricing path wedges the walk
+        ///      for every later day, which is the failure mode the
+        ///      withdrawn B2-d4 attempt was rejected for.
+        uint256 rewardBudgetArmedFreshPaid;
+        /// @dev #1434 P1-b (Codex #1699 r2) — the one-shot migration flag for
+        ///      the counter above. TRUE once an in-place-upgraded mirror has
+        ///      seeded its pre-P1-b paid history.
+        ///
+        ///      Needed because the bound goes live the moment this facet set
+        ///      is cut, while the paid counter starts at ZERO — yet
+        ///      `rewardBudgetArmedFreshReceived` already holds deliveries for
+        ///      compensated and short-lapsed days, which BYPASSED the old
+        ///      blanket mirror halt by design and were genuinely payable. Left
+        ///      unseeded, that already-spent funding reads as wholly available
+        ///      and can be spent a second time.
+        ///
+        ///      A fresh deploy needs no seed (both counters start at zero), so
+        ///      this is armed only where there is history to carry.
+        bool armedFreshPaidSeeded;
+        /// @dev #1434 (Codex #1699 r7 P2) — APPENDED AT THE TAIL (same
+        ///      in-place-upgrade rule as every counter above). Running totals
+        ///      of what an expiring reward entry has ALREADY had credited
+        ///      across its chunked settlement, so the terminal
+        ///      `RewardEntryExpired` can still report the WHOLE entry.
+        ///
+        ///      Unifying expiry onto the day engine made a reap CHUNKED: a
+        ///      long entry settles over several sweeps. Without these, the
+        ///      terminal event would carry only the FINAL chunk while its
+        ///      documented `total` / `recycled` decomposition still claims to
+        ///      describe the whole entry — every indexer and notification
+        ///      consumer reading that face value would under-report, silently.
+        ///      Accumulating preserves the event's meaning rather than
+        ///      redefining it under consumers that were never told.
+        ///
+        ///      Written only on the expiry path and read once at
+        ///      terminalization; an entry that never expires never touches
+        ///      them.
+        mapping(uint256 => uint256) rewardEntryExpiredAccum;
+        mapping(uint256 => uint256) rewardEntryExpiredRecycledAccum;
         /// @notice #1503 item 26 (Codex #1825 r1) — the DURABLE mark that a
         ///         loan record is the lender-sale transitional vehicle rather
         ///         than a position: vehicle loan id → the REAL loan whose

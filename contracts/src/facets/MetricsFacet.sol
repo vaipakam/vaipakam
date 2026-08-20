@@ -157,6 +157,37 @@ contract MetricsFacet {
         }
     }
 
+    /// @notice Whether `loanId` is the lender-sale TRANSITIONAL RECORD rather
+    ///         than a position — the internal row a listed sale forges to carry
+    ///         the lender relationship from acceptance to settlement.
+    /// @dev    #1503 item 26 (Codex #1825 r3). Every enumerating view here
+    ///         excludes these records, but ids are sequential and the id
+    ///         high-water mark is public, so a caller can always DERIVE a
+    ///         vehicle's id from the gaps and read the retained row through
+    ///         `LoanFacet.getLoanDetails`.
+    ///
+    ///         The answer to that is to LABEL the record, not to hide it. A
+    ///         getter that reverted for these ids would conceal nothing —
+    ///         contract storage is readable directly, so anyone who wants the
+    ///         row can have it — while breaking legitimate reads (support,
+    ///         forensics, the completion flow's own fixtures) and leaving a
+    ///         caller who reached the row by accident no way to find out what
+    ///         it is. What made the record dangerous was being unlabelled,
+    ///         not being reachable.
+    ///
+    ///         So: enumeration excludes it, announcement never mentions it,
+    ///         and a point lookup that finds it anyway can ask this and be
+    ///         told. Consumers building a list should use the paginated views,
+    ///         which filter; consumers resolving a single id should ask here
+    ///         before treating the row as a position.
+    /// @return True when the record is a sale vehicle created under the
+    ///         item-26 regime. Vehicles created BEFORE it carry no mark and
+    ///         answer false — they were announced at creation, so consumers
+    ///         already hold them as ordinary rows.
+    function isSaleVehicleLoan(uint256 loanId) external view returns (bool) {
+        return LibMetricsHooks.isInternalVehicle(LibVaipakam.storageSlot(), loanId);
+    }
+
     /// @notice Total count of unique wallets that have participated as lender,
     ///         borrower, or offer creator. Counter-backed — O(1).
     function getUserCount() external view returns (uint256) {
@@ -1473,8 +1504,21 @@ contract MetricsFacet {
         // ids 1 and 3 around a vehicle at 2, `(1,1)` and `(2,1)` both answered
         // `[3]` even though `offset == total`. Skipping visible records is
         // also what the by-status twin below already does.
+        //
+        // COST (Codex #1825 r3): skipping visible records means walking the
+        // prefix, so a deep page is O(offset) rather than O(limit) and a full
+        // enumeration is quadratic in the history. That only becomes true once
+        // a vehicle EXISTS to make ids sparse — with none, visible rank and id
+        // agree exactly and the original direct-seek is still correct, so a
+        // deployment that has never completed a listed sale keeps the old
+        // cost. Beyond that the id-range family (this view, the by-status
+        // twin, and the two lifetime scans) needs a rank or cursor index
+        // rather than a per-view patch; tracked in #1832. The O(results)
+        // reverse-index views remain the answer for deep enumeration.
         uint256 skipped;
-        for (uint256 id = 1; id <= s.nextLoanId && filled < limit; id++) {
+        uint256 firstId = s.internalVehicleLoanCount == 0 ? offset + 1 : 1;
+        if (firstId != 1) skipped = offset; // dense: the seek already skipped them
+        for (uint256 id = firstId; id <= s.nextLoanId && filled < limit; id++) {
             if (s.loans[id].id == 0) continue;
             if (LibMetricsHooks.isInternalVehicle(s, id)) continue;
             if (skipped < offset) { skipped += 1; continue; }

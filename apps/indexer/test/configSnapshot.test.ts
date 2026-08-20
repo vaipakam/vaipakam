@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { PublicClient } from 'viem';
 import {
+  handleConfigSnapshot,
   isConfigEventName,
   maybeRefreshProtocolConfig,
   serializeTuple,
@@ -360,5 +361,107 @@ describe('configSnapshot', () => {
       true,
       'addr',
     ]);
+  });
+
+  /**
+   * The labelled view (#1664 item 3). This endpoint is public and now
+   * advertised to automated consumers in `llms.txt`; an outside reader
+   * has no decoder, so the positional tuple alone told them nothing.
+   * The labels come from the compiled ABI, which is also what makes the
+   * mismatch case load-bearing: a wrong label on a real number is worse
+   * than no label, because nothing about it looks wrong.
+   */
+  describe('GET /config/:chainId labelled view', () => {
+    /** Store one row with a bundle of the ABI's own arity. */
+    async function seed(bundle: readonly unknown[]) {
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
+      db.prepare(
+        `INSERT INTO protocol_config
+           (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(84532, serializeTuple(bundle), JSON.stringify([true, true, false]), 1, 2);
+      return { env: { DB: d1 } as unknown as Env };
+    }
+
+    /** The real bundle arity, so the ABI names line up. */
+    const FULL_BUNDLE = [
+      '200',
+      '20',
+      '200',
+      '600',
+      '300',
+      '11000',
+      '500',
+      ['100', '200', '300', '400'],
+      ['1000', '1500', '2000', '2400'],
+      true,
+      true,
+      true,
+      '100',
+      '1800',
+      '365',
+    ];
+
+    it('labels every slot by its ABI name, alongside the raw tuple', async () => {
+      const { env } = await seed(FULL_BUNDLE);
+      const body = (await (await handleConfigSnapshot(84532, env)).json()) as {
+        bundle: unknown[];
+        values?: Record<string, unknown>;
+        flags?: Record<string, unknown>;
+      };
+      // The positional array stays — it is the apps' wire contract.
+      expect(body.bundle).toEqual(FULL_BUNDLE);
+      // ...and the same numbers arrive named.
+      expect(body.values?.treasuryFeeBps).toBe('200');
+      expect(body.values?.loanInitiationFeeBps).toBe('20');
+      expect(body.values?.maxOfferDurationDays).toBe('365');
+      expect(body.flags).toEqual({
+        rangeAmount: true,
+        rangeRate: true,
+        partialFill: false,
+      });
+    });
+
+    it('flags a stale-marked row so an outside consumer can skip it', async () => {
+      // markStaleBelow zeroes updated_at when a catch-up scan saw a
+      // governance event the row predates. The site rejects that via its
+      // own freshness window; an external reader following llms.txt had
+      // only a magic timestamp to infer it from (Codex #1821 r1 P2).
+      const { db, d1 } = createSqliteD1([MIGRATION_0035, MIGRATION_0039]);
+      db.prepare(
+        `INSERT INTO protocol_config
+           (chain_id, bundle_json, master_flags_json, source_block, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(84532, serializeTuple(FULL_BUNDLE), JSON.stringify([true, true, false]), 1, 0);
+      const body = (await (
+        await handleConfigSnapshot(84532, { DB: d1 } as unknown as Env)
+      ).json()) as { stale?: boolean; values?: Record<string, unknown> };
+      expect(body.stale).toBe(true);
+      // Still served — a consumer may want the last-known figures — but
+      // now it is told, rather than left to read a zero stamp.
+      expect(body.values?.treasuryFeeBps).toBe('200');
+    });
+
+    it('carries no stale flag on a normal row', async () => {
+      const { env } = await seed(FULL_BUNDLE);
+      const body = (await (await handleConfigSnapshot(84532, env)).json()) as Record<
+        string,
+        unknown
+      >;
+      expect(body).not.toHaveProperty('stale');
+    });
+
+    it('omits the labelled view rather than mislabelling a drifted row', async () => {
+      // A row stored before/after an ABI arity change. Zipping by
+      // position here would name a real number wrongly, and a consumer
+      // has no way to detect that; an absent key they can detect.
+      const { env } = await seed(FULL_BUNDLE.slice(0, 5));
+      const body = (await (await handleConfigSnapshot(84532, env)).json()) as {
+        bundle: unknown[];
+        values?: Record<string, unknown>;
+      };
+      expect(body.bundle).toHaveLength(5);
+      expect(body).not.toHaveProperty('values');
+    });
   });
 });

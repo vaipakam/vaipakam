@@ -52,8 +52,12 @@ abstract contract DiamondFacetNames {
     ///      72 → 73 in #1780 with `EarlyWithdrawalDirectFacet` (the direct
     ///      lender-exit route split off `EarlyWithdrawalFacet`, which had 30
     ///      bytes of EIP-170 headroom left — less than one cross-facet
-    ///      call).)
-    function cutFacetNames() internal pure returns (string[73] memory) {
+    ///      call);
+    ///      73 → 74 in #1434 with `RewardHorizonSweepFacet` (the
+    ///      permissionless claim-horizon sweep — expiry shares the
+    ///      ShareOfPool day engine, and neither reward facet had the
+    ///      EIP-170 headroom to carry the ~12.8 KB it costs).)
+    function cutFacetNames() internal pure returns (string[74] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -69,6 +73,7 @@ abstract contract DiamondFacetNames {
             "IntentConfigFacet",
             "InteractionRewardsFacet",
             "RewardClaimFacet",
+            "RewardHorizonSweepFacet",
             "InteractionRewardsLensFacet",
             "LegalFacet",
             "LoanFacet",

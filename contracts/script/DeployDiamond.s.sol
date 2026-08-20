@@ -71,6 +71,7 @@ import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol
 // T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -245,6 +246,8 @@ contract DeployDiamond is Script {
         // #1351 slice 2c — the CLAIM entry points live on their own facet so the
         // ShareOfPool day walk (~5.8 KB inlined) has EIP-170 room.
         RewardClaimFacet rewardClaimFacet = new RewardClaimFacet();
+        RewardHorizonSweepFacet rewardHorizonSweepFacet =
+            new RewardHorizonSweepFacet();
         // #1306 follow-up — read-only lens carved off InteractionRewardsFacet
         // for EIP-170 headroom (view/getter surface only, shared storage).
         InteractionRewardsLensFacet interactionRewardsLensFacet =
@@ -287,7 +290,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](73);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](74);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -329,6 +332,16 @@ contract DeployDiamond is Script {
         );
         cuts[25] = _buildCut(address(interactionRewardsFacet), _getInteractionRewardsSelectors());
         cuts[67] = _buildCut(address(rewardClaimFacet), _getRewardClaimFacetSelectors());
+        // #1434 — the claim-horizon sweep on its own facet: it settles through
+        // the ShareOfPool engine now, and neither existing host had room for
+        // it (see RewardHorizonSweepFacet's header for the measured sizes).
+        // (cuts[73]: #1780's EarlyWithdrawalDirectFacet took 72 on main and
+        // this facet landed on the same index on the branch — the merge keeps
+        // both, hole-free.)
+        cuts[73] = _buildCut(
+            address(rewardHorizonSweepFacet),
+            _getRewardHorizonSweepSelectors()
+        );
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -677,6 +690,32 @@ contract DeployDiamond is Script {
         VaipakamNFTFacet(diamond).initializeNFT();
         console.log("NFT initialized.");
 
+        // 5d-bis. #1434 P1-b (Codex #1699 r21) — mark this FRESH deployment as
+        //     already seeded, with zero.
+        //
+        //     `seedArmedFreshPaid` exists for a chain that was upgraded INTO
+        //     P1-b and therefore carries armed-fresh payouts made before the
+        //     paid-side counter existed. A chain deployed fresh has no such
+        //     history by construction: the counter has tracked every payout
+        //     from block one, so its correct seed is exactly 0.
+        //
+        //     Recording that here is what makes the flag mean what the rest of
+        //     the system reads it to mean. `RefreshAllFacetsInPlace` and the
+        //     redeploy orchestrator both branch on `armedFreshPaidSeeded()`:
+        //     left false, a fresh Diamond is misclassified as UNMIGRATED on
+        //     its first full-facet refresh, which at best demands operator
+        //     inputs that do not apply and at worst invites an operator to
+        //     supply "the payout history" — double-counting payouts the live
+        //     counter already holds and pinning the delivered-fresh bound at
+        //     zero until duplicate funding arrives.
+        //
+        //     Before the unpause, deliberately: the one-shot flag and the
+        //     paused window are the same "armed, not merely present" rule the
+        //     migration itself follows, so no window exists in which the
+        //     Diamond is live with an unseeded marker.
+        RewardReporterFacet(diamond).seedArmedFreshPaid(0);
+        console.log("P1-b: fresh deployment marked seeded (0).");
+
         // 5e. Unpause the protocol. The Diamond is born paused (see
         //     `VaipakamDiamond.constructor` — `LibPausable.pause()` is
         //     the last constructor write) so the half-cut window
@@ -883,6 +922,9 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("protocolBroadcastFacet", address(protocolBroadcastFacet));
         Deployments.writeFacet("interactionRewardsFacet", address(interactionRewardsFacet));
         Deployments.writeFacet("rewardClaimFacet", address(rewardClaimFacet));
+        Deployments.writeFacet(
+            "rewardHorizonSweepFacet", address(rewardHorizonSweepFacet)
+        );
         Deployments.writeFacet("interactionRewardsLensFacet", address(interactionRewardsLensFacet));
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
@@ -995,6 +1037,7 @@ contract DeployDiamond is Script {
         console.log("ProtocolBroadcastFacet:", address(protocolBroadcastFacet));
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
         console.log("RewardClaimFacet:", address(rewardClaimFacet));
+        console.log("RewardHorizonSweepFacet:", address(rewardHorizonSweepFacet));
         console.log("InteractionRewardsLensFacet:", address(interactionRewardsLensFacet));
         console.log("FeeEntitlementFacet: ", address(feeEntitlementFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
@@ -2194,7 +2237,7 @@ contract DeployDiamond is Script {
         // #1351 slice 2c — the two CLAIM entry points moved to
         // {RewardClaimFacet} (EIP-170: the ShareOfPool day walk inlines ~5.8 KB
         // and this facet had 481 B of headroom).
-        s = new bytes4[](9);
+        s = new bytes4[](8);
         s[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
         s[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
@@ -2206,9 +2249,6 @@ contract DeployDiamond is Script {
         s[5] = InteractionRewardsFacet.liquidationRewardClose.selector;
         s[6] = InteractionRewardsFacet.terminalRewardClose.selector;
         s[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
-        // RL-3 (#1305) — the mutating claim-horizon sweep (its id-keyed
-        // read views live on the lens facet).
-        s[8] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
     }
 
     /// @dev #1306 follow-up — read-only view/getter surface split off
@@ -2230,7 +2270,7 @@ contract DeployDiamond is Script {
     ///      the answer and it cannot go stale. If you find a count for this
     ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2254,6 +2294,7 @@ contract DeployDiamond is Script {
         s[17] = InteractionRewardsLensFacet.getRecycleDayMetrics.selector;
         s[18] = InteractionRewardsLensFacet.getRecycleBackingSnapshot.selector;
         s[19] = InteractionRewardsLensFacet.getRecycledCreditedPreLaunch.selector;
+        s[20] = InteractionRewardsLensFacet.getUserArmedFreshNeed.selector;
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for
@@ -2268,8 +2309,20 @@ contract DeployDiamond is Script {
         s[1] = RewardClaimFacet.claimInteractionRewardsTo.selector;
     }
 
+    /// @dev #1434 — the claim-horizon sweep. Its own facet because expiry now
+    ///      settles through the ShareOfPool engine and neither existing host
+    ///      had the headroom; the id-keyed read views stay on the lens facet.
+    function _getRewardHorizonSweepSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
+    }
+
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](19);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
@@ -2286,6 +2339,8 @@ contract DeployDiamond is Script {
         // `block.chainid`, no longer a settable endpoint id.
         s[3] = RewardReporterFacet.setBaseChainId.selector;
         s[4] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
+        s[17] = RewardReporterFacet.seedArmedFreshPaid.selector;
+        s[18] = RewardReporterFacet.armedFreshPaidSeeded.selector;
         s[5] = RewardReporterFacet.setRewardGraceSeconds.selector;
         s[6] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
         s[7] = RewardReporterFacet.getChainReportSentAt.selector;
@@ -2834,7 +2889,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](34);
+        s = new bytes4[](35);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2857,6 +2912,7 @@ contract DeployDiamond is Script {
         s[19] = RewardRemittanceLensFacet.getRewardRemittanceReceiver.selector;
         s[20] = RewardRemittanceLensFacet.getRewardBudgetReceivedTotal.selector;
         s[21] = RewardRemittanceLensFacet.getDeliveredFreshPosition.selector;
+        s[34] = RewardRemittanceLensFacet.getDeliveredFreshBound.selector;
         // #1434 P2-w5 — the recovery-position reads.
         s[22] = RewardRemittanceLensFacet.getRecoveryPosition.selector;
         s[23] =
@@ -2887,7 +2943,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](51);
+        s = new bytes4[](52);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -2985,6 +3041,7 @@ contract DeployDiamond is Script {
         // Scenario-A consumed-by-sale terminal is visible to integrators without
         // the `ownerOf`-liveness heuristic.
         s[50] = MetricsFacet.getOfferState.selector;
+        s[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One
