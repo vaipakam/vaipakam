@@ -1998,6 +1998,25 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "isSaleVehicleLoan",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "error",
     "name": "ERC721InvalidOwner",
     "inputs": [
