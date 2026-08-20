@@ -459,20 +459,34 @@ previous one and each was falsified within a round.
 
 The lesson is not that the sweeps were careless; it is that **this proposition
 cannot be held true by prose.** So it is now executable:
-**`contracts/script/check-commitment-formula.py`** scans every comment block in
-`contracts/src` and `contracts/test`, joins multi-line comment runs (a formula
-split across two lines is one statement, and that is how the addition form
-survived a sweep), and fails on any retired shape. A block may name a retired
-form deliberately — to reject it, or to describe a past revision — by carrying
-`formula-check:allow <reason>`, with the reason on the marker's own line.
+**`contracts/script/check-commitment-formula.py`**, step **2c** of
+`predeploy-check.sh`. It extracts comment CONTENT from `contracts/src` and
+`contracts/test` — comment-only lines, trailing comments and `/* */` blocks
+alike — strips the delimiters, joins contiguous runs (a formula split across two
+lines is one statement, and that is how the addition form survived a sweep), and
+fails on any retired shape, including shapes written with production ledger
+names like `chainReportedRecycled[c]`. A block may name a retired form
+deliberately — to reject it, or to describe a past revision — by carrying
+`formula-check:allow <reason>`, reason on the marker's own line.
 
-It runs as step **2c** of `predeploy-check.sh`, and it was verified to fail on
-each of the three mutations it exists to catch: a reintroduced bare form, a
-reintroduced addition form, and an exemption marker with no reason. The third of
-those initially PASSED — the reason was being read from the joined block, so any
-marker followed by more comment text looked justified — which was found by
-mutating the guard rather than by reading it, and fixed. **No count and no
-completeness claim appears in this document, because the check is the claim.**
+**The guard was itself vacuous in four independent ways, and every one was found
+by attacking it rather than reading it.** Its scan roots were cwd-relative while
+`predeploy-check.sh` cds into `contracts/` first, so it walked nothing and
+printed OK. It joined comment lines without stripping `///`, so the multi-line
+case it existed for produced `reported + released − /// consumed` and matched
+nothing. It ignored trailing comments entirely. And an exemption marker with no
+reason passed, because the reason was read from the joined block rather than the
+marker's own line. Scanning zero files is now a hard failure, and the checker
+reports how much it examined so a silent no-op cannot look like a pass.
+
+`check-commitment-formula.selftest.sh` is that attack, committed: seven retired
+shapes it must reject, three correct shapes it must not, and a cwd-equivalence
+check. It is deliberately **not** wired into the deploy gate — it mutates a
+source file and restores it, which is not something a pre-deploy path should do
+— so it is run by hand when the guard changes.
+
+**No count and no completeness claim appears in this document, because the check
+is the claim** — and the check now states what it scanned.
 
 **The bare form `consumedCumulative ≤ reportedCumulative` is FALSE and must not
 appear as a current claim anywhere.** That is the one thing worth stating here,

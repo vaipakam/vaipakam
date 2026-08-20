@@ -333,9 +333,10 @@ contract GovernorDayPoolTest is SetupTest {
     }
 
     /// Armed day, two-pass funding with mirror LOCAL funding ON (B2-d3).
-    /// A mirror funds its target from its OWN reported availability, net of
-    /// what Base has already instructed it to spend and of any repatriation
-    /// draw, first; Base tops up only the shortfall from its
+    /// A mirror funds its target from its OWN reported availability first —
+    /// net of what Base has instructed it to spend LESS whatever it released
+    /// un-spent (a released commitment returns to availability), and net of
+    /// any repatriation draw; Base tops up only the shortfall from its
     /// remaining fundable. The locally-funded share books into the per-chain
     /// ledgers and rides the wire as `recycleConsume`; Base's top-up books
     /// into the GLOBAL reservation — never both (design record §2e.4).
