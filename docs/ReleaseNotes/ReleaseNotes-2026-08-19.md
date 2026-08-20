@@ -18,7 +18,7 @@ of documents pretending to carry them; and the marketing-site live drive now
 runs from the agent environment with its previous blocker's real cause recorded
 rather than worked around.
 
-## Lender sale — the instant route now refuses a loan with a live offset (PR #TBD)
+## Lender sale — the instant route now refuses a loan with a live offset (PR #1813)
 
 A borrower who has started a Preclose Option-3 offset has a close-out in
 flight that pays whoever holds the lender position when it completes. The
@@ -77,7 +77,7 @@ before it can be a guard, and is left as follow-up rather than half-built.
 
 Part of #1503 (item 21).
 
-## Selling or handing over a position now carries its bookkeeping with it (PR #TBD)
+## Selling or handing over a position now carries its bookkeeping with it (PR #1818)
 
 Two things that should have moved when a loan position changed owner did not.
 
@@ -270,7 +270,7 @@ those four says so in its own entry, so the reason travels with the gap. The
 tracking issue **#1794** stays open for the sixty mappings; this change is the
 guardrail that stops the list growing silently.
 
-## A seller's listing can now be held to the quote they reviewed (PR #TBD)
+## A seller's listing can now be held to the quote they reviewed (PR #1823)
 
 When a lender lists their position for sale, the platform records two figures
 that protect them for the life of the listing: the least they can receive if
@@ -296,7 +296,7 @@ deployed where the interface can reach it.
 
 Part of #1503 (item 4 follow-through); tracked as #1810.
 
-## Selling a VPFI-settled position now refreshes both parties' fee-tier clock (PR #TBD)
+## Selling a VPFI-settled position now refreshes both parties' fee-tier clock (PR #1819)
 
 The VPFI fee-discount tier is time-weighted: every time VPFI moves through a
 user's vault, the platform is supposed to re-record their balance at that

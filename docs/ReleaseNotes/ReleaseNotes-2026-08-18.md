@@ -234,7 +234,7 @@ makes what the seller is charged observable on that route too.
 
 Part of #1503 (item 28).
 
-## Thread — a lender listing their position now says what they will accept (PR TBD)
+## Thread — a lender listing their position now says what they will accept (PR #1812)
 
 Listing a lender position for sale recorded no economic bound of any kind. The
 seller reviewed a set of figures, posted the listing, and then the platform
