@@ -189,20 +189,36 @@ Append-only; a retired blocker's bit is burned, never reused.
 | 0 | Loan not Active (item 0) | ✅ | ✅ |
 | 1 | Sale admission refused (item 3) | ✅ | ✅ |
 | 2 | Borrower offset pending (item 4) | ✅ | ✅ |
-| 3 | Held VPFI unresolved (item 5) | ✅ | ✅ |
+| 3 | Held VPFI unresolved (item 5) | — | ✅ |
 | 4 | Principal asset paused (item 6) | ✅ | ✅ |
 | 5 | Collateral asset paused (item 7) | ✅ | ✅ |
 | 6 | Rental principal, non-ERC20 (item 8c) | ✅ | ✅ |
 | 7 | NFT collateral (item 8b) | — | ✅ |
 | 8 | Relist cooldown active (item 1) | — | ✅ |
 | 9 | Final-hour window (item 2) | — | ✅ |
-| 10 | Listing already present (item 8) | — | ✅ |
+| 10 | Listing already present (item 8) | ✅ | ✅ |
 
 The route masks are the columns: a bit marked `—` is never set in that map,
 and a caller must ignore it there rather than treating an unset bit as a
-verdict. Bits 0–6 are the both-routes set, which is also the visible record of
-§4.2's correction — the pause bits are in both maps, where the first draft had
-them in one.
+verdict.
+
+**Two of these columns were wrong on their first pass, in opposite
+directions**, which is why the masks are stated per-bit rather than described:
+
+- **Bit 10 belongs to BOTH routes.** `EarlyWithdrawalDirectFacet:175-176`
+  reverts `SaleOfferAlreadyExists` when `loanToSaleOfferId[loanId] != 0`, so a
+  live listing closes the direct sale too. Marking it listing-only would have
+  reported a known blocker as irrelevant — and #1839's chooser has blocked
+  *both* rows on a live listing since round 1, so the table contradicted
+  behaviour already shipped on the strength of the same contract.
+- **Bit 3 is listing-only.** The direct route does not refuse an unresolved
+  held balance; `EarlyWithdrawalDirectFacet:547` **migrates** the pre-existing
+  `heldForLender` to the buyer. Marking it both-routes would have made the
+  preview refuse an exit the contract supports — the costlier direction, since
+  a false blocker removes a lender's option silently.
+
+The pause bits sit in both maps, which is the visible record of §4.2's
+correction.
 
 **`uint256`, not `uint16`.** The narrower type was a false economy: ABI
 encoding pads every one of these to a full 32-byte word regardless, so
@@ -385,6 +401,15 @@ the defect the proposal exists to remove.
 `checkedMask` makes the distinction explicit. A caller may treat a route as
 available only when the relevant bits are both **checked** and **clear**;
 anything unchecked renders as unknown, not as permission.
+
+**`admissionCode` is a separate gate, not a bit.** §4.4 makes an unmeasurable
+admission return `type(uint8).max`, but the availability rule above speaks only
+of bits — so an implementation could legitimately mark bit 1 checked and clear
+while returning 255, and a conforming client would report both routes
+available during exactly the oracle failure the fail-closed code exists for.
+The rule is therefore: a route is available only when its relevant bits are
+checked and clear **and** `admissionCode == 0`. Any other admission value,
+including 255, blocks both routes.
 
 **The same rule binds the two enums, and `checkedMask` does not cover them.**
 It records bit coverage only — so an unimplemented `windowVerdict` or
