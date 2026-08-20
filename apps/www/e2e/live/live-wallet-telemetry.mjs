@@ -9,9 +9,12 @@
  * WHY THIS IS THE RIGHT MOMENT TO CHECK. The exposure is not gated on
  * opening the wallet dialog, which is how the spec originally described
  * it. `reconnectOnMount` defaults true, and `@wagmi/core`'s `reconnect`
- * loops over EVERY configured connector calling `getProvider()` BEFORE
- * it ever consults `isAuthorized()` — so each SDK is constructed, and
- * each SDK's telemetry starts, for every visitor. A check that first
+ * loops over configured connectors calling `getProvider()` BEFORE it
+ * ever consults `isAuthorized()`, so a connector's SDK is constructed —
+ * and its telemetry starts — for every visitor. Observed here for the
+ * COINBASE connector specifically: `cbwsdk.store` appears on load while
+ * no `wc@2:*` key does. Do not read this as "every SDK"; WalletConnect
+ * is not constructed at load on these apps (#1840). A check that first
  * clicked "connect" would be testing a later and narrower thing.
  *
  * WHY A PASS HERE MEANS SOMETHING. "No requests observed" is worthless
@@ -104,11 +107,21 @@ for (const url of targets) {
     }
   });
 
+  let readinessError = null;
   try {
     // `domcontentloaded`, not `networkidle`: the connected app holds
     // long-lived connections (RPC / websocket), so networkidle never
     // settles and the check would time out on a perfectly healthy app.
     const resp = await page.goto(url, { timeout: 45_000, waitUntil: 'domcontentloaded' });
+
+    // A cross-origin redirect means the witnesses below would pass on
+    // whatever app we LANDED on, not the one asked for — so a
+    // misconfigured origin redirecting to a sibling app would report
+    // clean while never being exercised (Codex #1838 r2 P2). Compare
+    // origins, not URLs: path and trailing slash are irrelevant here.
+    const landed = new URL(page.url()).origin;
+    const asked = new URL(url).origin;
+    if (landed !== asked) throw new Error(`redirected to ${landed}`);
 
     // FAIL CLOSED (Codex #1838 r1 P1). `page.goto` resolves happily on
     // an HTML 404/500, and a fixed delay proves nothing about whether
@@ -136,24 +149,37 @@ for (const url of targets) {
     // it were going to report, this is when.
     await page.waitForTimeout(SETTLE_MS);
   } catch (e) {
-    console.log(`FAIL  ${url} — not verifiably exercised: ${String(e).split('\n')[0]}`);
-    unverified++;
-    await ctx.close();
-    continue;
+    // Do NOT return here. Telemetry may already have been observed —
+    // an error page can still load vendor code, and an SDK can report
+    // and then fail to persist its witness. Reporting only "not
+    // verifiably exercised" in that case hides a real privacy
+    // regression behind a readiness failure (Codex #1838 r2 P2), so
+    // both facts are reported below.
+    readinessError = String(e).split('\n')[0];
   }
 
   // Report per host rather than as one combined line. WalletConnect's
   // provider is not constructed at load on these apps (no `wc@2:*`
   // storage appears), so folding it into a single "no requests to A /
   // B" claim would assert coverage this run does not have.
-  const wcExercised = await page.evaluate(() =>
-    Object.keys(localStorage).some((k) => k.startsWith('wc@2:')),
-  );
+  const wcExercised = await page
+    .evaluate(() => Object.keys(localStorage).some((k) => k.startsWith('wc@2:')))
+    .catch(() => false);
 
   if (hits.length > 0) {
     console.log(`FAIL  ${url} — ${hits.length} telemetry request(s) on load:`);
     for (const h of hits) console.log(`        ${h}`);
     emitted++;
+    // Both can be true at once, and the telemetry is the more serious
+    // of the two — report the readiness failure as well rather than
+    // letting either mask the other.
+    if (readinessError) {
+      console.log(`        (also not verifiably exercised: ${readinessError})`);
+      unverified++;
+    }
+  } else if (readinessError) {
+    console.log(`FAIL  ${url} — not verifiably exercised: ${readinessError}`);
+    unverified++;
   } else {
     console.log(`PASS  ${url} — Coinbase SDK constructed and silent (cbwsdk.store present)`);
     console.log(

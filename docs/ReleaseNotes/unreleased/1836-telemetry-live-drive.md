@@ -6,12 +6,13 @@ it says nothing about whether the reporting actually stopped. A committed check
 now answers the second question against the deployed sites.
 
 It loads each connected app with no wallet installed, never touches the connect
-dialog, and watches for any request to the two vendors' reporting addresses.
-That is the right moment to look: the reporting does not wait for someone to
-open the wallet dialog. The apps try to restore a previous wallet session as
-soon as they load, and doing so builds every configured connector before asking
-whether any of them has a session to restore — which is where each kit's
-reporting begins.
+dialog, and watches for any request to the vendors' reporting addresses. That is
+the right moment to look: the reporting does not wait for someone to open the
+wallet dialog. The apps try to restore a previous wallet session as soon as they
+load, and doing so builds a connector before asking whether it has a session to
+restore — which is where that kit's reporting begins. In practice one of the two
+kits is built this way and the other is not, which is why the check speaks about
+them separately rather than as a pair.
 
 All three connected apps come back silent.
 

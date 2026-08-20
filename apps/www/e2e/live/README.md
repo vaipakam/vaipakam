@@ -1,17 +1,35 @@
-# `apps/www` live post-deploy drives
+# Live post-deploy drives
 
-Committed drives that exercise the **deployed** marketing site. They run
-after a production deploy, per the live-review definition-of-done — not
-against a preview build, and not as part of CI.
+Committed drives that exercise **deployed** sites. They run after a
+production deploy, per the live-review definition-of-done — not against a
+preview build, and not as part of CI.
+
+They live under `apps/www` because that is where the browser tooling and the
+container setup below already are, but they are not all about the marketing
+site. Two kinds sit here:
+
+- **Marketing-site drives** — the rendered docs on `vaipakam.com`.
+- **Connected-app drives** — the wallet-connecting apps (`defi`, `alpha01`,
+  `alpha02`), which have no Playwright dependency of their own.
+
+The table further down says which is which, and how each takes its target.
 
 ## Why these are not CI specs
 
-Each one checks something that is only true once the deployed site has
-fetched the published protocol-config snapshot from the deployed
-indexer. A preview build, a prebuild guard, or an inspection of the
-shipped bundle can all pass while the rendered page shows something
-else. That gap is the reason the live review exists, so closing it
-requires a real browser pointed at the real origin.
+The reason differs by drive, and it is worth knowing which one applies before
+trusting a result.
+
+A marketing-site drive checks something only true once the deployed page has
+fetched the published protocol-config snapshot from the deployed indexer: a
+preview build, a prebuild guard, or an inspection of the shipped bundle can all
+pass while the rendered page shows something else.
+
+A connected-app drive checks behaviour of third-party SDKs as they actually run
+in a browser against the deployed bundle — whether a wallet kit phones home, for
+instance. A type-check proves an option was accepted, not that the traffic
+stopped.
+
+Both gaps close only with a real browser pointed at the real origin.
 
 The `apps/www` prebuild guards (`check:livevalue`, `check:knobs`, and
 the rest of `pnpm --filter @vaipakam/www typecheck`) cover the
