@@ -2,18 +2,16 @@
 #
 # check-commitment-formula.selftest.sh — prove the guard is not vacuous.
 #
-# A checker that reports success is worthless unless you know it CAN fail. The
-# first version of `check-commitment-formula.py` passed on three separate
-# mutations it was written to catch, and every one of those holes was found by
-# attacking it rather than by reading it:
+# A checker that reports success is worthless unless you know it CAN fail.
+# `check-commitment-formula.py` has now been found vacuous across two review
+# rounds, in NINE independent ways — cwd-relative roots that walked nothing,
+# unstripped `///` that broke the multi-line joining it existed for, invisible
+# trailing comments, bypassable ledger identifiers, an over-broad `net`
+# exemption, missed trailing block comments, a waived addition form, a missed
+# commuted bound, and block-scoped exemptions that licensed newly introduced
+# false statements. Not one was found by reading it.
 #
-#   * its scan roots were cwd-relative, and `predeploy-check.sh` cds into
-#     `contracts/` first — so it walked nothing and printed OK;
-#   * it joined comment lines without stripping `///`, so the multi-line case it
-#     existed for produced `reported + released - /// consumed` and matched
-#     nothing;
-#   * it only saw lines that BEGIN with a comment token, so trailing comments
-#     were invisible.
+# Every case below is one of those holes, kept as a regression.
 #
 # This script re-runs that attack. It injects each retired shape into a real
 # source file, asserts the guard FAILS, restores the file, and then asserts the
@@ -65,6 +63,15 @@ run_case "addition split across lines" '    /// @dev avail = reported + released
 run_case "trailing comment"          '    uint256 private constant _SELFTEST = 1; // reported + released - consumed' 1
 run_case "production ledger names"   '    /// @dev chainReportedRecycled[c] + chainReleasedRecycled[c] - chainConsumedRecycled[c]' 1
 run_case "block comment /* */"       '    /* avail = reported - consumed */' 1
+run_case "TRAILING block comment"    '    uint256 private constant _ST2 = 2; /* avail = reported - consumed */' 1
+run_case "commuted addition bound"   '    /// @dev consumed <= released + reported.' 1
+run_case "addition w/ net consumed"  '    /// @dev avail = reported + released - consumedMinusReleased.' 1
+run_case "gross name starting 'net'" '    /// @dev networkConsumedCumulative <= networkReportedCumulative.' 1
+run_case "marker too far from mention" '    /// formula-check:allow this reason is real but far away.
+    ///
+    ///
+    ///
+    /// @dev avail = reported - consumed.' 1
 
 echo "Correct shapes — the guard must NOT fire:"
 run_case "normalized net identifier" '    /// @dev consumedMinusReleased <= reported is the bound.' 0

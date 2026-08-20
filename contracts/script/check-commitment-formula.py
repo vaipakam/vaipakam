@@ -31,8 +31,10 @@ has to be checked instead of asserted.
 
 WHY THIS SCRIPT IS PARANOID ABOUT ITSELF
 ----------------------------------------
-The first version of this checker was itself vacuous in three independent ways,
-all found by attacking it rather than reading it:
+Every version of this checker so far has been vacuous in some way, and every one
+of those holes was found by ATTACKING it rather than reading it. That track
+record is the reason `check-commitment-formula.selftest.sh` exists and is the
+reason to run it after any change here:
 
   * Its scan roots were CWD-relative. `predeploy-check.sh` cds into `contracts/`
     before invoking it, so the roots resolved to `contracts/contracts/src`,
@@ -47,6 +49,23 @@ all found by attacking it rather than reading it:
   * It only considered lines that BEGIN with a comment token, so any retired
     formula in a trailing comment (`uint256 avail; // reported - consumed`) was
     invisible. Inline comment text is now extracted too.
+
+  * Its `net` exemption matched any identifier merely STARTING with `net`, so
+    `networkConsumedCumulative <= networkReportedCumulative` — a genuinely
+    retired bound — was waved through. A prefix is not a meaning.
+  * It only found block comments that OPEN a line, missing
+    `uint256 x; /* reported - consumed */`.
+  * It waived the ADDITION form when the consumed operand was already net, but
+    `reported + released - consumedMinusReleased` restores releases twice and is
+    worse, not better.
+  * It missed the commuted bound `consumed <= released + reported`, which
+    overflows exactly as the uncommuted one does.
+  * Its exemptions were BLOCK-scoped, so one marked historical mention licensed
+    every other occurrence in the same NatSpec block — including a newly
+    introduced false one. Exemptions are now scoped to the occurrence, within
+    a few lines of the marker.
+  * It validated only the AGGREGATE scan count, so one dead root was hidden by
+    the other's thousands of blocks. Every root must now yield something.
 
 Each of those made the checker report success while examining less than it
 claimed, which is the same defect class it exists to prevent.
@@ -95,56 +114,82 @@ RE_BARE_SUB = re.compile(
     re.I,
 )
 RE_BARE_CMP = re.compile(r"(%s)\s*(?:<=|≤)\s*(%s)" % (_CONSUMED, _REPORTED), re.I)
+# The same unsafe bound commutes: `consumed <= released + reported` overflows on
+# a hostile near-max report exactly as `reported + released` does.
+RE_ADD_CMP = re.compile(
+    r"(%s)\s*(?:<=|≤)\s*\(?\s*(?:%s\s*\+\s*%s|%s\s*\+\s*%s)"
+    % (_CONSUMED, _RELEASED, _REPORTED, _REPORTED, _RELEASED),
+    re.I,
+)
 RE_BARE_PROSE = re.compile(r"reported[- ]minus[- ]consumed", re.I)
 
 # Identifiers that ALREADY encode the release adjustment are correct, not
 # retired: `consumedMinusReleased <= reported` is the right bound written with a
 # normalized name. Flagging it would force a block-wide exemption and blind the
 # checker to a real defect elsewhere in that block.
-_ALREADY_NET = ("minusreleased", "lessreleased", "netofreleased", "claimnet", "netclaim")
+# EXPLICIT shapes only. An earlier version also exempted any identifier merely
+# STARTING with `net`, which waved through `networkConsumedCumulative <=
+# networkReportedCumulative` — a genuinely retired bound whose name says nothing
+# about releases. A prefix is not a meaning.
+_ALREADY_NET = (
+    "minusreleased",
+    "lessreleased",
+    "netofreleased",
+    "netofrelease",
+    "claimnet",
+    "netclaim",
+    "netconsumed",
+    "consumednet",
+)
 
 
 def _is_already_net(identifier):
+    """True only when the NAME itself encodes the release subtraction."""
     norm = identifier.lower().replace("_", "").replace(" ", "")
-    if any(h in norm for h in _ALREADY_NET):
-        return True
-    return norm.startswith("net")
+    return any(h in norm for h in _ALREADY_NET)
 
 
-def comment_text(path):
-    """Yield (start_line, joined_comment_text, marker_lines) per comment run.
+def comment_pieces(path):
+    """Yield (start_line, joined_text, offsets, markers) per contiguous run.
 
-    Extracts comment CONTENT — delimiters stripped — from both comment-only
-    lines and trailing comments, then joins contiguous runs. Joined because a
-    formula split across two lines is one statement; stripped because leaving
-    the `///` in place is what made the joining useless.
+    `offsets` maps each joined-text character offset back to its SOURCE LINE, so
+    a violation can be attributed to the line that wrote it. That attribution is
+    what makes an exemption occurrence-scoped instead of block-scoped: one marked
+    historical mention must not license a newly introduced false statement
+    fifteen lines later in the same NatSpec block.
+
+    Comment CONTENT is extracted — delimiters stripped — from comment-only lines,
+    trailing `//` comments, and block comments whether they open the line or
+    follow code. Leaving the `///` in place is what made an earlier version's
+    joining useless; only handling `/*` at line start is what made its
+    block-comment coverage a subset of the real shapes.
     """
     with open(path, encoding="utf-8", errors="replace") as fh:
         lines = fh.read().split("\n")
 
-    extracted = []  # (line_no, text) for every line carrying comment content
+    extracted = []  # (line_no, comment_body_or_None)
     in_block = False
     for n, raw in enumerate(lines, 1):
-        s = raw.strip()
+        s_ = raw.strip()
         if in_block:
-            body = s
+            body = s_
             if "*/" in body:
-                body = body.split("*/", 1)[0]
-                in_block = False
+                body, in_block = body.split("*/", 1)[0], False
             extracted.append((n, body.lstrip("*").strip()))
             continue
-        if s.startswith("/*"):
-            body = s[2:]
+        # A block comment may open anywhere on the line, not only at its start.
+        bi = s_.find("/*")
+        li = s_.find("//")
+        if bi != -1 and (li == -1 or bi < li):
+            body = s_[bi + 2:]
             if "*/" in body:
                 body = body.split("*/", 1)[0]
             else:
                 in_block = True
             extracted.append((n, body.lstrip("*").strip()))
             continue
-        if "//" in s:
-            # trailing OR whole-line; either way take what follows the slashes
-            body = s.split("//", 1)[1]
-            extracted.append((n, body.lstrip("/").strip()))
+        if li != -1:
+            extracted.append((n, s_[li:].lstrip("/").strip()))
             continue
         extracted.append((n, None))
 
@@ -153,41 +198,69 @@ def comment_text(path):
         if extracted[i][1] is None:
             i += 1
             continue
-        start = extracted[i][0]
-        buf, marks = [], []
+        start_line = extracted[i][0]
+        parts, offsets, markers = [], [], {}
+        pos = 0
         while i < len(extracted) and extracted[i][1] is not None:
-            body = extracted[i][1]
-            buf.append(body)
+            ln, body = extracted[i]
             if MARKER in body:
-                marks.append(body)
+                markers[ln] = body.split(MARKER, 1)[1].strip(" *-/")
+            parts.append(body)
+            offsets.append((pos, ln))
+            pos += len(body) + 1
             i += 1
-        yield start, " ".join(buf), marks
+        yield start_line, " ".join(parts), offsets, markers
 
 
-def _violations_in(text):
-    kinds = []
-    for m in RE_ADDITION.finditer(text):
-        if not _is_already_net(m.group(3)):
-            kinds.append("ADDITION")
+def _line_of(offsets, offset):
+    line = offsets[0][1]
+    for off, ln in offsets:
+        if off <= offset:
+            line = ln
+        else:
             break
+    return line
+
+
+# How far an exemption reaches from its marker. Deliberately tight: a marker is
+# an annotation on ONE mention, not a licence for the block it happens to sit in.
+_MARKER_WINDOW = 3
+
+
+def _find_violations(text, offsets, markers):
+    """Return [(kind, source_line, exempt_reason_or_None)] for every occurrence."""
+    found = []
+
+    def record(kind, offset):
+        ln = _line_of(offsets, offset)
+        for mline, reason in markers.items():
+            if abs(mline - ln) <= _MARKER_WINDOW:
+                found.append((kind, ln, reason))
+                return
+        found.append((kind, ln, None))
+
+    for m in RE_ADDITION.finditer(text):
+        # NOT exempted by an already-net consumed operand: `reported + released -
+        # consumedMinusReleased` restores releases TWICE and is worse, not better.
+        record("ADDITION", m.start())
+    for m in RE_ADD_CMP.finditer(text):
+        record("ADDITION", m.start())
     for m in RE_BARE_SUB.finditer(text):
         if not _is_already_net(m.group(2)):
-            kinds.append("BARE")
-            break
-    if "BARE" not in kinds:
-        for m in RE_BARE_CMP.finditer(text):
-            if not _is_already_net(m.group(1)):
-                kinds.append("BARE")
-                break
-    if "BARE" not in kinds and RE_BARE_PROSE.search(text):
-        kinds.append("BARE")
-    return kinds
+            record("BARE", m.start())
+    for m in RE_BARE_CMP.finditer(text):
+        if not _is_already_net(m.group(1)):
+            record("BARE", m.start())
+    for m in RE_BARE_PROSE.finditer(text):
+        record("BARE", m.start())
+    return found
 
 
 def scan():
     violations, allowed = [], []
-    files = blocks = 0
+    per_root = {}
     for root in ROOTS:
+        files = blocks = 0
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [
                 d for d in dirnames if d not in ("lib", "out", "cache", "node_modules")
@@ -196,41 +269,48 @@ def scan():
                 if not fn.endswith(".sol"):
                     continue
                 files += 1
-                path = os.path.relpath(os.path.join(dirpath, fn))
-                for line, text, marks in comment_text(os.path.join(dirpath, fn)):
+                full = os.path.join(dirpath, fn)
+                path = os.path.relpath(full)
+                for line, text, offsets, markers in comment_pieces(full):
                     blocks += 1
-                    kinds = _violations_in(text)
-                    if not kinds:
-                        continue
-                    if marks:
-                        reason = marks[0].split(MARKER, 1)[1].strip(" *-/")
-                        if len(reason) < 10:
+                    for kind, srcline, reason in _find_violations(text, offsets, markers):
+                        if reason is None:
+                            violations.append((path, srcline, kind, text[:150]))
+                        elif len(reason) < 10:
                             violations.append(
-                                (path, line, "EMPTY-MARKER",
+                                (path, srcline, "EMPTY-MARKER",
                                  "%s carries no reason on its own line (found %r)"
                                  % (MARKER, reason))
                             )
                         else:
-                            allowed.append((path, line, ",".join(kinds), reason[:90]))
-                        continue
-                    violations.append((path, line, ",".join(kinds), text[:150]))
-    return violations, allowed, files, blocks
+                            allowed.append((path, srcline, kind, reason[:90]))
+        per_root[root] = (files, blocks)
+    return violations, allowed, per_root
 
 
 def main():
-    violations, allowed, files, blocks = scan()
+    violations, allowed, per_root = scan()
 
-    # A check that finds nothing must prove it looked. The first version of this
-    # script reported OK from a wrong cwd having walked zero directories.
-    if files == 0 or blocks == 0:
+    # EVERY root must have been walked. An aggregate count hides the case where
+    # one root is missing, mistyped or unreadable while the other still returns
+    # thousands of blocks — which reinstates the zero-directory failure for half
+    # the promised scope.
+    dead = [r for r, (f, b) in per_root.items() if f == 0 or b == 0]
+    if dead:
         print(
-            "check-commitment-formula: FAILED — scanned %d file(s) and %d comment "
-            "block(s). Expected thousands. The roots are %r; if those do not exist, "
-            "this script has been moved and its root resolution needs updating."
-            % (files, blocks, ROOTS),
+            "check-commitment-formula: FAILED — these scan roots yielded nothing:\n"
+            + "\n".join(
+                "  %s  (%d file(s), %d comment block(s))" % (r, per_root[r][0], per_root[r][1])
+                for r in dead
+            )
+            + "\nA check that finds nothing must prove it looked. If this script "
+            "moved, fix its root resolution.",
             file=sys.stderr,
         )
         return 1
+
+    files = sum(f for f, _ in per_root.values())
+    blocks = sum(b for _, b in per_root.values())
 
     if "--list" in sys.argv:
         print("Deliberate mentions (%d):" % len(allowed))
@@ -240,14 +320,14 @@ def main():
 
     if not violations:
         print(
-            "check-commitment-formula: OK — %d file(s), %d comment block(s) scanned; "
-            "no retired availability form stated (%d deliberate mention(s) marked)."
-            % (files, blocks, len(allowed))
+            "check-commitment-formula: OK — %d file(s), %d comment block(s) scanned "
+            "across %d root(s); no retired availability form stated (%d deliberate "
+            "mention(s) marked)." % (files, blocks, len(per_root), len(allowed))
         )
         return 0
 
-    print("check-commitment-formula: %d comment block(s) state a RETIRED "
-          "availability form (of %d scanned in %d file(s)):\n"
+    print("check-commitment-formula: %d occurrence(s) of a RETIRED availability "
+          "form (of %d comment block(s) in %d file(s)):\n"
           % (len(violations), blocks, files), file=sys.stderr)
     for path, line, kind, text in violations:
         print("  %s:%d  [%s]" % (path, line, kind), file=sys.stderr)
@@ -256,7 +336,8 @@ def main():
         "\nThe correct shapes are `sat(consumed - released) <= reported` and\n"
         "`reported - sat(consumed - released) - netRepatriationDraw`, both\n"
         "subtraction-first. If a mention is deliberate — rejecting the form, or\n"
-        "describing a past revision — add `%s <reason>` on one line." % MARKER,
+        "describing a past revision — add `%s <reason>` on one line, WITHIN %d\n"
+        "lines of the mention it explains." % (MARKER, _MARKER_WINDOW),
         file=sys.stderr,
     )
     return 1

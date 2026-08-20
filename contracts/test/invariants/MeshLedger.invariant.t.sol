@@ -65,16 +65,16 @@ import {HelperTest} from "../HelperTest.sol";
  *
  *           1. §7 #6 — `sat(consumed − released) ≤ reported` per chain,
  *              SUBTRACTION-first. B3's form of the original
+ *              formula-check:allow the superseded bare form is named here.
  *              `consumed ≤ reported`: a commitment the chain released
  *              un-spent is legitimately re-offerable, so the bound nets the
  *              release off rather than being weakened. Never stated as the
+ *              formula-check:allow the addition form is named here to forbid it.
  *              algebraically equal `consumed ≤ reported + released` (#1577)
  *              — a reported cumulative is unbounded, so that addition
  *              overflows on a hostile report and reverts instead of
  *              comparing. The two forms are equal over the reals and
  *              different over `uint256`, and only `uint256` runs.
- *              formula-check:allow names both retired forms to distinguish
- *              them from the bound this suite actually asserts.
  *           2. B3 identity — `outstanding == instructed − retired` per chain,
  *              exact at every instant including with broadcasts in flight.
  *           3. Ceiling — `availRecycled ≤ reported` per chain. The property
@@ -303,6 +303,7 @@ contract MeshLedgerInvariant is Test {
     // ─── Invariants ──────────────────────────────────────────────────────
 
     /// §7 #6, in B3's form: `sat(consumed − released) ≤ reported`. The
+    /// formula-check:allow the superseded bare form is quoted just below.
     /// original `consumed ≤ reported` gained the release term because a
     /// commitment released un-spent leaves its tokens in the chain's bucket
     /// and is legitimately committable again — the bound is widened by

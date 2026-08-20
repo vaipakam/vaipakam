@@ -176,7 +176,12 @@ if command -v python3 >/dev/null 2>&1; then
     FAIL=1
   fi
 else
-  echo "  · python3 not installed — skipping"
+  # FAIL CLOSED. A deploy gate that silently drops a check when an interpreter
+  # is missing is not a gate. CI having python3 does not cover local source
+  # drift after the checked commit, which is exactly when this runs.
+  echo "  ✗ python3 not installed — this guard is a REQUIRED predeploy" >&2
+  echo "    dependency and cannot be skipped. Install python3." >&2
+  FAIL=1
 fi
 
 # ── 3. Deploy shell-script lint ───────────────────────────────────────

@@ -297,10 +297,10 @@ contract MeshCommitRetirementTest is SetupTest {
         );
     }
 
-    /// formula-check:allow names the addition form to show why it is refused.
     /// Codex #1435 r1 P1 — the availability read must never REVERT, whatever
     /// a chain reports. `chainReportedRecycled[c]` is ratcheted to whatever
     /// cumulative a chain sends and is deliberately unbounded, so computing
+    /// formula-check:allow the addition form is named here to refuse it.
     /// `(reported + released) − consumed` would overflow on a near-max
     /// cumulative paired with any nonzero release. That is not contained:
     /// this read is on the `finalizeDay` path via the mesh funding pass, and
