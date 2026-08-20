@@ -62,6 +62,25 @@
 #   (the forge scripts read these via vm.envUint). Chain->RPC-var mapping mirrors
 #   Deployments.sol's envPrefix(): base-sepolia -> BASE_SEPOLIA_RPC_URL, etc.
 #
+#   P1-b SEED (#1434) — required ONCE per chain, and only on a chain that has
+#   not been seeded yet. RefreshAllFacetsInPlace performs a ONE-SHOT,
+#   IRREVERSIBLE accounting migration inside its paused block: it seeds how much
+#   ARMED fresh that chain had already paid out before P1-b. The correct value is
+#   per chain (a fresh post-P1-b deploy owes 0; a pre-P1-b mirror owes its real
+#   indexed payout history), so the variables are per chain too, following the
+#   same <PREFIX> convention as the RPC URLs:
+#
+#     ARMED_FRESH_PAID_SEED_<PREFIX>        e.g. ARMED_FRESH_PAID_SEED_ARB_SEPOLIA=1234...
+#     ARMED_FRESH_PAID_NO_HISTORY_<PREFIX>  e.g. ARMED_FRESH_PAID_NO_HISTORY_BASE_SEPOLIA=true
+#
+#   Exactly one of the two must be set for each UNSEEDED selected chain; the
+#   pre-flight refuses the run otherwise, BEFORE any broadcast. An already-seeded
+#   chain needs neither (the script skips the migration block by reading the
+#   on-chain `armedFreshPaidSeeded()` flag). The orchestrator exports the
+#   resolved pair as the process-global ARMED_FRESH_PAID_SEED /
+#   ARMED_FRESH_PAID_NO_HISTORY the forge script reads — per chain, inside the
+#   loop, so a multi-chain run can never apply one chain's answer to another.
+#
 # USAGE
 #   # gate only (safe default) — validate, print broadcast commands:
 #   bash script/redeploy-testnet-inplace.sh
@@ -153,6 +172,14 @@ rpc_var_for() {
   esac
 }
 
+# Map a chain slug -> its env-var PREFIX (the RPC var minus the _RPC_URL tail).
+# Used by the P1-b seed pre-flight so its variables follow the same convention.
+prefix_for() {
+  local v
+  v="$(rpc_var_for "$1")" || return 1
+  echo "${v%_RPC_URL}"
+}
+
 # Map a chain slug -> its expected EVM chain-id (mirrors Deployments.chainSlug()).
 chainid_for() {
   case "$1" in
@@ -209,6 +236,45 @@ for slug in $CHAINS; do
     [ "$has" = "true" ] \
       || fail "chain '$slug': admin $admin_addr lacks VAULT_ADMIN_ROLE on $diamond — the cuts would land but the vault step would revert (use --skip-vault or grant the role first)"
     info "$slug: admin holds VAULT_ADMIN_ROLE ✓"
+  fi
+
+  # P1-b seed pre-flight (#1434). RefreshAllFacetsInPlace runs a ONE-SHOT,
+  # IRREVERSIBLE accounting migration inside its paused block, and its inputs
+  # are per CHAIN — a fresh post-P1-b deploy owes 0, a pre-P1-b mirror owes its
+  # real payout history. A single process-global answer applied across the
+  # default two-chain loop is therefore wrong for at least one of them, with no
+  # repair path (`seedArmedFreshPaid` refuses a second call). Validate here, so
+  # a missing or ambiguous answer fails BEFORE any broadcast — the same reason
+  # the VAULT_ADMIN_ROLE check moved up front.
+  #
+  # An ALREADY-SEEDED chain needs no answer: the script reads the on-chain flag
+  # and skips the block entirely, so demanding an obsolete value would just
+  # re-create the wedge that gating fixed.
+  pfx="$(prefix_for "$slug")" || fail "chain '$slug': no env-prefix mapping"
+  seed_var="ARMED_FRESH_PAID_SEED_${pfx}"
+  nohist_var="ARMED_FRESH_PAID_NO_HISTORY_${pfx}"
+  seed_val="${!seed_var:-}"
+  nohist_val="${!nohist_var:-}"
+  already_seeded=""
+  if command -v cast >/dev/null 2>&1; then
+    dfile2="deployments/$slug/addresses.json"
+    diamond2="$(grep -oE '"diamond"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' "$dfile2" 2>/dev/null | grep -oE '0x[0-9a-fA-F]{40}')"
+    if [ -n "$diamond2" ]; then
+      # A pre-P1-b diamond does not route this selector yet; a revert here is
+      # simply "not seeded", never a failure.
+      already_seeded="$(cast call "$diamond2" 'armedFreshPaidSeeded()(bool)' --rpc-url "$val" 2>/dev/null || echo '')"
+    fi
+  fi
+  if [ "$already_seeded" = "true" ]; then
+    info "$slug: P1-b armed-fresh history already seeded ✓ (migration will be skipped)"
+  elif [ -n "$seed_val" ] && [ "$nohist_val" = "true" ]; then
+    fail "chain '$slug': both \$$seed_var and \$$nohist_var are set — they are mutually exclusive; state ONE answer for this chain"
+  elif [ -n "$seed_val" ]; then
+    info "$slug: P1-b seed = \$$seed_var ($seed_val)"
+  elif [ "$nohist_val" = "true" ]; then
+    info "$slug: P1-b seed = 0 (\$$nohist_var declares no pre-P1-b history)"
+  else
+    fail "chain '$slug': the P1-b armed-fresh migration is UNSEEDED and irreversible. Set \$$seed_var to the armed fresh already paid out on this chain before the P1-b upgrade (from the indexed payout history), or \$$nohist_var=true to declare there is none. Refusing to broadcast an accounting migration this run cannot state an answer for."
   fi
 done
 if [ "$BROADCAST" -eq 1 ]; then
@@ -324,6 +390,11 @@ EOF
   for slug in $CHAINS; do
     var="$(rpc_var_for "$slug")"
     echo "  # $slug"
+    pfx="$(prefix_for "$slug")"
+    # The P1-b seed is per chain and one-shot; a manual rerun must carry the
+    # SAME answer the orchestrator would have resolved, or it migrates blind.
+    echo "  #   (P1-b, only if this chain is not yet seeded: prefix the command with"
+    echo "  #    ARMED_FRESH_PAID_SEED=\$ARMED_FRESH_PAID_SEED_${pfx}  or  ARMED_FRESH_PAID_NO_HISTORY=true)"
     echo "  FOUNDRY_PROFILE=default forge script script/RefreshAllFacetsInPlace.s.sol --sig \"refresh()\" --rpc-url \$$var --broadcast --slow"
     [ "$SKIP_VAULT" -eq 0 ] && \
     echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
@@ -338,6 +409,16 @@ fi
 for slug in $CHAINS; do
   var="$(rpc_var_for "$slug")"
   rpc="${!var}"
+  # Resolve THIS chain's P1-b answer into the process-global names the forge
+  # script reads (validated in the pre-flight above). Scoped inside the loop so
+  # a multi-chain run can never apply one chain's answer to another — the whole
+  # reason these variables are per chain.
+  pfx="$(prefix_for "$slug")"
+  seed_var="ARMED_FRESH_PAID_SEED_${pfx}"
+  nohist_var="ARMED_FRESH_PAID_NO_HISTORY_${pfx}"
+  unset ARMED_FRESH_PAID_SEED ARMED_FRESH_PAID_NO_HISTORY
+  [ -n "${!seed_var:-}" ] && export ARMED_FRESH_PAID_SEED="${!seed_var}"
+  [ "${!nohist_var:-}" = "true" ] && export ARMED_FRESH_PAID_NO_HISTORY=true
   banner "[4] $slug — RefreshAllFacetsInPlace (diamond cuts)"
   "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
     --rpc-url "$rpc" --broadcast --slow \

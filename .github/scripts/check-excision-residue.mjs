@@ -544,6 +544,7 @@ const PINNED = new Map([
   ["packages/contracts/src/abis/RewardClaimFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
   ["packages/contracts/src/abis/RewardCommitmentFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
   ["packages/contracts/src/abis/RewardCompensationDispatchFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
+  ["packages/contracts/src/abis/RewardHorizonSweepFacet.json", [1, "SHARED-INTERFACE RESIDUE — the one mention is the `VPFIInvalidOriginChainId` error declaration that `IVaipakamErrors` (still carrying the retired error, see the sibling ABI pins on this same digest) lands in EVERY facet ABI; the facet is #1434's claim-horizon sweep and has no buy-surface behaviour. Retiring the dead declaration itself is the #1728-adjacent cause-fix.", "815e05cffa32"]],
   ["packages/contracts/src/abis/RewardRemittanceFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
   ["packages/contracts/src/abis/RewardReporterFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],
   ["packages/contracts/src/abis/RiskFacet.json", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "815e05cffa32"]],

@@ -50,7 +50,7 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
 
     /// @notice Every facet's runtime bytecode must be within EIP-170.
     function test_EveryFacetUnderEip170SizeLimit() public view {
-        string[73] memory facets = cutFacetNames();
+        string[74] memory facets = cutFacetNames();
         for (uint256 i; i < facets.length; ++i) {
             _assertUnderLimit(facets[i]);
         }
@@ -68,7 +68,7 @@ contract FacetSizeLimitTest is Test, DiamondFacetNames {
     ///         actually OVER the limit is failed by the test above, which is
     ///         where enforcement belongs.
     function test_ReportFacetsNearSizeLimit() public view {
-        string[73] memory facets = cutFacetNames();
+        string[74] memory facets = cutFacetNames();
         uint256 tight;
         for (uint256 i; i < facets.length; ++i) {
             if (_reportIfNearLimit(facets[i])) ++tight;

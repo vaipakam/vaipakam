@@ -586,16 +586,31 @@ contract RewardCompQuoteTest is SetupTest, IVaipakamErrors {
         assertEq(rpn2, 0.2e18, "day 2 adds zero (cumulative unchanged)");
     }
 
-    function test_ladder_unflaggedArmedMirrorDay_keepsBlanketHalt() public {
-        // The P1-b invariant: an armed mirror day WITHOUT the zeroed marker
-        // still halts the fold outright — the ladder must not widen it.
+    /// @dev #1434 P1-b — the fold CROSSES an ordinary armed mirror day now;
+    ///      what waits on delivered funding is PAYMENT, not pricing.
+    ///
+    ///      This replaces `test_ladder_unflaggedArmedMirrorDay_keepsBlanketHalt`,
+    ///      which asserted the cursor stays put. That assertion was true only
+    ///      as a SIDE-EFFECT of where the blanket halt happened to live
+    ///      (inside `_dayPoolHalves`, which the fold consults) — it was never
+    ///      the invariant. Baking it in again would forbid the correct design:
+    ///      the fold advances a counterfactual entitlement cursor, and a
+    ///      delivered-funding shortfall is a fact about PAYMENT.
+    ///
+    ///      An earlier P1-b revision did gate the fold, and this suite caught
+    ///      it — the gate compared delivered funding against the day's STAMPED
+    ///      POOL HALF, which is capacity rather than liability, so it halted
+    ///      days the chain could easily fund. The real invariant is asserted
+    ///      in `ShareOfPoolClaimWalkTest`: an unfunded armed mirror day PAYS
+    ///      nothing, by any route.
+    function test_ladder_unflaggedArmedMirrorDay_pricesButDoesNotPay() public {
         _configureMirror();
         _zeroedDayG0();
         _mut().setDayDeliberatelyZeroedRaw(DAY, false);
         assertEq(
             _mut().advanceCumThroughRaw(L, DAY),
-            0,
-            "ordinary armed mirror day stays halted until P1-b"
+            DAY,
+            "pricing crosses: the halt that stopped it is gone"
         );
     }
 

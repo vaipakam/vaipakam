@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {RewardClaimFacet} from "../../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../../src/facets/RewardHorizonSweepFacet.sol";
 import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -63,7 +64,7 @@ contract InteractionRewardsInvariant is Test {
         // exercising the claim path at all.
         RewardClaimFacet rewardClaim = new RewardClaimFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(ac),
             action: IDiamondCut.FacetCutAction.Add,
@@ -98,6 +99,11 @@ contract InteractionRewardsInvariant is Test {
             facetAddress: address(rewardClaim),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helper.getRewardClaimFacetSelectors()
+        });
+        cuts[7] = IDiamondCut.FacetCut({
+            facetAddress: address(new RewardHorizonSweepFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helper.getRewardHorizonSweepFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 

@@ -808,4 +808,31 @@ contract InteractionRewardsLensFacet {
             - s.rewardBudgetRedispatched
             + s.strandedReturnOverage;
     }
+    /**
+     * @notice #1434 P1-b (Codex #1699 r4) — the user's AGGREGATE capped
+     *         armed-fresh requirement, as the claim itself computes it.
+     * @dev    Hosted here because this facet already carries the dry-run
+     *         pricing engine for the preview, so exposing it costs no extra
+     *         bytecode — whereas calling the engine directly from the expiry
+     *         path inlined it into `InteractionRewardsFacet` and blew the
+     *         EIP-170 limit by 5,037 bytes.
+     *
+     *         Grouped and D1-capped, NOT a sum of per-entry prices: entries
+     *         sharing a `(user, side, day)` ceiling would otherwise overstate
+     *         the need and pause the expiry clock on funding nobody owes.
+     *
+     *         Measured with the delivered allowance SLACK. This is what the
+     *         group needs; clamping it by the allowance it is then compared
+     *         against would be circular and report every user as exactly
+     *         affordable.
+     * @param  user The claimant.
+     * @return armed Capped armed fresh the user's open claim would consume.
+     */
+    function getUserArmedFreshNeed(address user)
+        external
+        view
+        returns (uint256 armed)
+    {
+        return LibInteractionRewards.userArmedFreshNeedView(user);
+    }
 }
