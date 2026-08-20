@@ -1,9 +1,11 @@
 # One verdict for "can this lender exit, and if not, why"
 
-**Status: proposal, not a decision — REVISED TWICE after review.** Four Codex
-rounds on #1847 have returned fourteen findings: two were plain factual errors
-in the first draft, one weakens the recommendation itself, and **two were
-defects the first revision introduced**. §9 lists what changed and when.
+**Status: proposal, not a decision — REVISED THREE TIMES after review.** Five
+Codex rounds on #1847 have returned sixteen findings. Two were plain factual
+errors in the first draft, one weakens the recommendation itself, and **four
+were defects introduced by the revisions that fixed the earlier ones** —
+including two that made the proposal undeployable as written. §9 lists what
+changed and when.
 
 It exists because #1841 has
 accumulated **ten** deferred items that all wait on the same choice, and
@@ -136,12 +138,29 @@ narrow version would have failed.
 
 ### 4.1 Bit assignments are part of the ABI
 
-Every bit position and meaning is fixed here and in one shared Solidity
-constant, not chosen independently by the contract and the client. Two sides
-picking their own assignments compile and decode the same `uint16` perfectly
-while disagreeing about what it says — the shadow-copy failure this selector
-exists to end, reproduced inside the fix. Bits are append-only; a retired
-blocker leaves its bit permanently burned.
+Every bit position and meaning is fixed as part of the ABI, not chosen
+independently by the contract and the client. Two sides picking their own
+assignments compile and decode the same `uint16` perfectly while disagreeing
+about what it says — the shadow-copy failure this selector exists to end,
+reproduced inside the fix. Bits are append-only; a retired blocker leaves its
+bit permanently burned.
+
+**A Solidity constant does not achieve this, and saying so was the error.**
+The generated ABI describes the `uint16` return types and carries **no
+constant values**, so a client reading the ABI learns nothing about bit
+meanings and would hand-transcribe them — which is the drift, restored, in the
+section claiming to prevent it. Making the constant `public` only adds a
+getter, i.e. another call to learn something static.
+
+The schema must therefore reach TypeScript as a **generated artifact**: the
+bit assignments emitted from the Solidity source into
+`packages/contracts/src/`, alongside the existing per-facet ABI export, so the
+compiler stays the single source of truth exactly as it already is for event
+and function shapes. A hand-maintained TS mirror is not an acceptable
+substitute here for the same reason the Worker ABIs are generated rather than
+typed by hand: the failure is silent and positional.
+
+This applies to `temporalVerdict`'s enum (§4.3.1) as well as the two bitmaps.
 
 ### 4.2 Both routes pause — the earlier claim was wrong
 
@@ -255,10 +274,43 @@ classifications live in inline or private guard logic today —
 is inline — so `saleExitPreview` would have to reproduce those predicates and
 could drift from them exactly as the client did.
 
-The design is therefore only sound if it also **extracts those predicates into
-shared internal classifiers that the mutating guards themselves consume**. If
-that extraction is out of scope, so is this proposal: without it we would be
-building a second source of truth and calling it a single one.
+The design is therefore only sound if the mutating guards **consume the same
+classifier the preview does**. If that is out of scope, so is this proposal:
+without it we would be building a second source of truth and calling it a
+single one.
+
+**And the mechanism matters more than the intent.** The previous revision said
+"shared **internal** classifiers", which is wrong in a way that would have
+shown up only at deploy: an `internal` library function is compiled **into
+every consuming facet**. Since `EarlyWithdrawalFacet` and `OfferAcceptFacet`
+are the consumers and both sit at or near the EIP-170 ceiling (#1842 —
+`OfferAcceptFacet` has **164 bytes**), inlining a classifier into them is not
+a size risk, it is a straightforward overflow. §5's headroom figure for
+`RiskPreviewFacet` says nothing about that, so as written the document never
+established the complete proposal was deployable at all.
+
+**The precedent already solves this, and it is not inlining.**
+`LibSaleSolvency` reaches the admission classifier by a **cross-facet call** —
+`RiskPreviewFacet(address(this)).saleAdmission(loanId)` at `:129` — so the
+logic exists once, on the facet with room for it, and each consumer pays only
+for the call plus its own error mapping. That is the hosting model this
+proposal must adopt, stated explicitly rather than left to the reader:
+
+- Classifier bodies live on `RiskPreviewFacet`.
+- Guards call them through the Diamond and map codes to their own errors,
+  exactly as `LibSaleSolvency` does today.
+- Only the thin call-and-map is `internal`.
+
+**Cost, since this is not free.** Every guarded write pays an extra
+delegatecall. That is already true of the admission check on the sale paths,
+so it is a known and accepted shape rather than a new one — but it must be
+budgeted per consuming facet, not assumed.
+
+**Required before adoption:** a measured size delta for **every** consuming
+facet, not just the host, run through the existing `FacetSizeLimitTest`. With
+`OfferAcceptFacet` at 164 bytes and `RewardAggregatorFacet` at 32, "it fits on
+the host" is not evidence of anything. #1842's ranked headroom report exists
+precisely so this is checkable rather than argued.
 
 **Deliberately NOT in scope:**
 
@@ -277,11 +329,19 @@ fund-moving path changed to improve a read-only one.
 
 ## 5. Costs, stated honestly
 
-**Facet size.** `RiskPreviewFacet` has **7,643 bytes** of EIP-170
-headroom at `0501225c9`, the most of any facet in the sale family. This
-is the one place the addition comfortably fits — and it matters that
-`OfferAcceptFacet` has 164 bytes and `RewardAggregatorFacet` 32 (see
-#1842), so "put it where it is used" is not available.
+**Facet size — the host is the easy half.** `RiskPreviewFacet` has **7,643
+bytes** of EIP-170 headroom at `0501225c9`, the most of any facet in the sale
+family, and the view itself fits there comfortably. `OfferAcceptFacet` has 164
+bytes and `RewardAggregatorFacet` 32 (see #1842), so "put it where it is used"
+was never available.
+
+**That figure does not establish the proposal is deployable**, and the earlier
+revision treated it as though it did. §4.6 makes the guards consume the same
+classifier, so the binding constraint is the size delta on **every consuming
+facet** — and those are the facets with no room. It is only affordable because
+the hosting model is a cross-facet call rather than an inlined `internal`
+library (§4.6): consumers pay for a call and an error map, not for the logic.
+Even so, that delta is measured before adoption, not assumed.
 
 **One extra read per position page.** Against the read-diet this is the
 real cost. It is one call that replaces **eight** that would otherwise
@@ -455,3 +515,24 @@ Two of those five were defects introduced BY the revision. That is the
 clearest evidence in this document for its own thesis: a corrected shadow copy
 is still a shadow copy, and the correction is where the next divergence
 enters.
+
+**A fifth round found two more, and both attack deployability rather than
+detail:**
+
+- §4.6 said "shared **internal** classifiers". An `internal` library function
+  compiles into every consuming facet, and the consumers here are the facets
+  with 164 and 32 bytes left — so the design as written was not deployable,
+  and §5's host-headroom figure was answering the wrong question. Corrected to
+  the cross-facet hosting the admission classifier already uses
+  (`LibSaleSolvency:129`), with a per-consumer size budget required before
+  adoption.
+- §4.1 pinned the bit schema "in one shared Solidity constant". The generated
+  ABI carries types, **not constant values**, so the client would have
+  hand-transcribed the assignments — the drift that section exists to prevent,
+  reintroduced by the mechanism chosen to prevent it. Now a generated TS
+  artifact, alongside the existing ABI export.
+
+Both were mine, and both were the *same mistake in different clothing*:
+naming a sharing mechanism without checking that it actually shares anything
+across the boundary it has to cross — Solidity-to-Solidity in one case,
+Solidity-to-TypeScript in the other.
