@@ -2922,7 +2922,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // rest becomes knowable on the switch, where the tool block
           // states them itself.
           saleTools={
-            feeEnt.data === undefined
+            // `isError` FIRST, before the `data === undefined` test
+            // (Codex r16 P2). TanStack keeps the last success through a
+            // failed refetch, so an errored-but-cached entitlement has
+            // `data` defined — and round 14 made `lenderFeeModeFull`
+            // reject exactly that record. Leaving this gate trusting it
+            // meant one consumer distrusting the cache while its
+            // sibling accepted it, on the same query: the rows opened
+            // WITHOUT the Full-plan disclosure, which is the thing this
+            // prerequisite exists to wait for. My own r14 fix created
+            // that asymmetry by fixing one side of it.
+            feeEnt.isError || feeEnt.data === undefined
               ? feeEnt.isError
                 ? 'failed'
                 : 'checking'
