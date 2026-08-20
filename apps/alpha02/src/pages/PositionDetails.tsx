@@ -243,6 +243,34 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // fallback (full repay is permissionless — a stale "borrower" could
   // spend real tokens closing a position that now belongs to someone
   // else), so a failed read stays non-actionable instead.
+  /** Whether this wallet currently holds the LENDER position NFT.
+   *
+   *  NOT `role === 'lender'` (Codex r13 P2). The resolver below tests
+   *  the borrower side first and returns immediately, so a wallet
+   *  holding BOTH NFTs — which this file explicitly recognises as
+   *  possible — is `borrower` and never reaches the lender branch.
+   *  Every lender sale surface was gated on that value, so the whole
+   *  feature was invisible to a valid current lender.
+   *
+   *  Declared BEFORE the queries rather than beside the render gates
+   *  (Codex r18 P2). My first fix mounted the chooser and tools from
+   *  this predicate while `bannerTerms` and `useLoanSalePending` still
+   *  keyed on `role` — so for a dual holder those reads never ran, the
+   *  maturity stayed unknown, the sale lock stayed checking, and both
+   *  rows sat permanently unavailable with no Advanced switch offered.
+   *  A card that renders and can never answer is worse than one that
+   *  does not render: the first fix turned an invisible feature into a
+   *  visibly broken one.
+   *
+   *  Still scoped to the LENDER SALE path — `role` also drives claims,
+   *  NFT links and a dozen copy branches whose dual-holder behaviour is
+   *  pre-existing and belongs to its own change. */
+  const isLenderHolder =
+    nftOwners.data?.lenderOwner !== undefined &&
+    nftOwners.data.lenderOwner !== 'burned' &&
+    address !== undefined &&
+    nftOwners.data.lenderOwner.toLowerCase() === address.toLowerCase();
+
   const role: 'lender' | 'borrower' | 'viewer' | 'checking' | 'unverified' =
     useMemo(() => {
       const row = loan.data;
@@ -371,7 +399,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // Lender-side viewers only (the hook also self-enables on a
     // device marker) — borrowers/spectators must not pay the polling
     // cost for a watch their wallet can't answer.
-    !loanIsRental && Boolean(loan.data) && role === 'lender',
+    // `isLenderHolder`, not `role` — a dual-position holder must get
+    // this read or the sale-lock verdict never resolves (Codex r18 P2).
+    !loanIsRental && Boolean(loan.data) && isLenderHolder,
   );
   /** A listing that SUPPRESSES another surface must be verified.
    *
@@ -728,7 +758,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // otherwise touch.
   const lenderNeedsLiveTerms = Boolean(
     loan.data &&
-      role === 'lender' &&
+      // Same reason as the sale-lock read above (Codex r18 P2).
+      isLenderHolder &&
       !loanIsRental &&
       (loan.data.status === 'active' ||
         loan.data.status === 'fallback_pending') &&
@@ -1070,28 +1101,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       resolvedLoanStatus !== undefined &&
       resolvedLoanStatus !== LoanStatus.Active
     );
-
-  /** Whether this wallet currently holds the LENDER position NFT.
-   *
-   *  NOT `role === 'lender'` (Codex r13 P2). The role resolver checks
-   *  the borrower side first and returns immediately, so a wallet
-   *  holding BOTH NFTs — which this file explicitly recognises as
-   *  possible — resolves to `borrower` and never reaches the lender
-   *  branch. Every lender-side sale surface was gated on that value,
-   *  so the entire feature was invisible to a valid current lender:
-   *  not the chooser, not the tools it points at, in either mode.
-   *
-   *  Deliberately scoped to the SALE surfaces rather than fixing the
-   *  resolver. `role` drives claims, NFT links and a dozen copy
-   *  branches whose dual-holder behaviour is pre-existing and outside
-   *  this PR; widening it there is a separate change with its own
-   *  review. What must not happen is the card and its tools
-   *  disagreeing — so both read this, and neither reads `role`. */
-  const isLenderHolder =
-    nftOwners.data?.lenderOwner !== undefined &&
-    nftOwners.data.lenderOwner !== 'burned' &&
-    address !== undefined &&
-    nftOwners.data.lenderOwner.toLowerCase() === address.toLowerCase();
 
   const liveSaysFallbackPending =
     bannerTerms.data?.live.status === LoanStatus.FallbackPending;
