@@ -1,9 +1,10 @@
 # Release Notes — 2026-08-17
 
-Five entries. A theme runs through the first three: a check that cannot actually
+Five entries. Three of them — the assembler below, the marketing-site drive, and
+the redeployment guardrail — share a theme: a check that cannot actually
 establish what it claims is worse than no check, because it reports success. The
-last two are about keeping a growing system honest with itself — splitting a
-component that had run out of room, and making every loan status change announce
+other two are structural: splitting a component that had run out of room so
+either half can be fixed again, and making every loan status change announce
 itself from the single place they all pass through.
 
 The first is about these notes. The tooling that assembles this file now verifies

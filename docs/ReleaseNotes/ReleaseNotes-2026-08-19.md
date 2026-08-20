@@ -5,16 +5,18 @@ has to travel with them. Selling or handing over a position now carries its
 records along instead of leaving them with the previous holder; the instant sale
 route refuses a loan that has a live offset rather than settling into an
 inconsistent state; a seller's listing can be held to the quote they actually
-reviewed; and selling a VPFI-settled position refreshes the fee-tier clock for
-both parties rather than only one.
+reviewed; and selling a VPFI-settled position now refreshes the fee-tier clock
+for both parties, where previously neither of them was touched.
 
 The rest continue a thread that has run through this week: making automated
-consumers and live drives tell the truth about their own state. Events can no
-longer be filed against a loan or offer that does not exist, automated readers
-are pointed at where the current rates genuinely live instead of documents
-pretending to carry them, and the marketing-site live drive now runs from the
-agent environment with its previous blocker's real cause recorded rather than
-worked around.
+consumers and live drives tell the truth about their own state. A check now
+catches an event that names a loan or offer but files that reference blank,
+unless the omission is recorded as deliberate — sixty such gaps already existed
+and stay open on their own tracking issue rather than being waved through;
+automated readers are pointed at where the current rates genuinely live instead
+of documents pretending to carry them; and the marketing-site live drive now
+runs from the agent environment with its previous blocker's real cause recorded
+rather than worked around.
 
 ## Lender sale — the instant route now refuses a loan with a live offset (PR #TBD)
 
