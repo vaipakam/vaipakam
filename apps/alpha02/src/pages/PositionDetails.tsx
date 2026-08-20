@@ -3103,7 +3103,30 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   ? loanLive.isError
                     ? 'failed'
                     : 'checking'
-                  : 'ready'
+                  : // A FOURTH prerequisite, and the only one that is
+                    // not a query state (Codex r19 P2). `readLoanLive`
+                    // deliberately returns data with
+                    // `live.lenderForfeitFrom === undefined` when the
+                    // optional seller-window call fails, so `loanLive`
+                    // looks healthy while neither tool can price a
+                    // sale: `EarlyExitFlow` resolves its candidates to
+                    // unavailable and `LoanSaleFlow` disables both
+                    // actions. Without this the chooser advertised two
+                    // exits that cannot be started, and its jumps
+                    // landed on cards offering nothing.
+                    //
+                    // `failed`, not `checking`: the window call has
+                    // already failed and nothing is retrying it, so a
+                    // waiting line would promise an answer that is not
+                    // coming — the trap this card met three times.
+                    //
+                    // Only asserted where the read exists. In Basic
+                    // `loanLive` is disabled, so its absence says
+                    // nothing about the quote.
+                    loanLive.data &&
+                      loanLive.data.live.lenderForfeitFrom === undefined
+                    ? 'failed'
+                    : 'ready'
           }
           listingSupportedOnChain={loanSaleListingEnabled(readChain.chainId)}
           collateralIsNft={collateralIsNft}
@@ -3298,7 +3321,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         ) : loanLive.data.chainNow <
           loanLive.data.live.startTime +
             loanLive.data.live.durationDays * 86_400n ? (
-          feeEnt.data === undefined ? (
+          // `isError` too, not just absence (Codex r19 P2). TanStack
+          // retains the last success through a failed refetch, so this
+          // branch let both FORMS mount on a cached entitlement the
+          // chooser above had already classified as failed — and the
+          // stale record can misdescribe a Full plan an in-place
+          // extension already removed. The chooser saying "cannot
+          // start" while its destinations stay actionable is the same
+          // rows-versus-tools split as r12 and r13, on a third
+          // prerequisite.
+          feeEnt.isError || feeEnt.data === undefined ? (
             // Codex #1412 r4 (P3) — the travels-with-the-NFT note is
             // part of the sale disclosure set for a Full-stamped
             // position, so the sale CTAs hold until the fee-
