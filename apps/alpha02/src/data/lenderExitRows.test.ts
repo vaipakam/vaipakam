@@ -14,7 +14,7 @@ const base: LenderExitInput = {
   pastDue: false,
   listingSupportedOnChain: true,
   collateralIsNft: false,
-  alreadyListed: false,
+  saleLock: 'clear',
   heldVpfiUnresolved: false,
   borrowerOffsetPending: false,
   instantSellCandidates: 'some',
@@ -38,7 +38,7 @@ describe('wait row — ordering and framing', () => {
       pastDue: true,
       listingSupportedOnChain: false,
       collateralIsNft: true,
-      alreadyListed: true,
+      saleLock: 'listed',
       heldVpfiUnresolved: true,
       borrowerOffsetPending: true,
       instantSellCandidates: 'none',
@@ -138,7 +138,7 @@ describe('list-row refusal precedence — most structural first', () => {
   it('already-listed leads, so a lender is not invited to do what they have done', () => {
     const row = rowFor(
       {
-        alreadyListed: true,
+        saleLock: 'listed',
         listingSupportedOnChain: false,
         collateralIsNft: true,
         heldVpfiUnresolved: true,
@@ -205,9 +205,55 @@ describe('Basic-mode switch action', () => {
     const rows = buildLenderExitRows({
       ...base,
       instantSellCandidates: 'none',
-      alreadyListed: true,
+      saleLock: 'listed',
     });
     expect(rows.find((r) => r.key === 'wait')!.unavailable).toBeUndefined();
     expect(hasJumpableRow(rows)).toBe(false);
+  });
+});
+
+describe('sale lock — an unanswered read is not "clear" (Codex r1 P2)', () => {
+  it('blocks BOTH sale rows while the listing read is in flight', () => {
+    const rows = buildLenderExitRows({ ...base, saleLock: 'checking' });
+    expect(rows.find((r) => r.key === 'sell-now')!.unavailable).toBe(
+      o.saleLockChecking,
+    );
+    expect(rows.find((r) => r.key === 'list')!.unavailable).toBe(
+      o.saleLockChecking,
+    );
+  });
+
+  it('blocks the DIRECT sale too when a listing stands — its tool is unmounted, so the jump would scroll to nothing', () => {
+    expect(rowFor({ saleLock: 'listed' }, 'sell-now').unavailable).toBe(
+      o.sellNowAlreadyListed,
+    );
+  });
+
+  it('does not let a matching candidate override an unchecked lock', () => {
+    // The regression: candidate availability is the NARROWER fact, so
+    // it must not decide a row whose authoritative lock is unknown.
+    const row = rowFor(
+      { saleLock: 'checking', instantSellCandidates: 'some' },
+      'sell-now',
+    );
+    expect(row.unavailable).toBe(o.saleLockChecking);
+  });
+
+  it('past due still outranks the lock state', () => {
+    const rows = buildLenderExitRows({
+      ...base,
+      saleLock: 'checking',
+      pastDue: true,
+    });
+    for (const key of ['sell-now', 'list']) {
+      expect(rows.find((r) => r.key === key)!.unavailable).toBe(
+        copy.lenderExit.pastDue,
+      );
+    }
+  });
+
+  it('withholds the Basic-mode switch while the lock is unknown', () => {
+    expect(hasJumpableRow(buildLenderExitRows({ ...base, saleLock: 'checking' })))
+      .toBe(false);
   });
 });

@@ -2219,17 +2219,19 @@
         "waitCost": "No cuesta nada: esta es la opción por defecto.",
         "sellNow": "Vender tu posición ahora",
         "sellNowDesc": "Vende esta posición directamente a una oferta de préstamo vigente que le encaje. Cobras de inmediato con fondos ya bloqueados por ese prestamista, y ni la tasa ni la fecha de vencimiento del prestatario cambian.",
-        "sellNowCost": "Cuesta el MAYOR de los dos: los intereses acumulados hasta ahora o el complemento de tasa del comprador; nunca ambos.",
+        "sellNowCost": "Cuesta el MAYOR de los dos: los intereses acumulados hasta ahora o el complemento de tasa del comprador; nunca ambos. Además, cualquier saldo que ya se te esté reteniendo en este préstamo pasa al comprador, y pierdes tu entrada de recompensa pendiente para esta posición. Abre la herramienta para ver las cifras reales.",
         "sellNowNoOffers": "Ahora mismo ninguna oferta de préstamo del libro encaja con esta posición: vuelve más tarde o publícala más abajo.",
         "list": "Publicar tu posición en venta",
         "listDesc": "Publica esta posición a la tasa que pidas y espera a un comprador. La venta solo se liquida cuando alguien la acepta.",
-        "listCost": "Cuesta el MAYOR de los dos: los intereses acumulados hasta ahora o el complemento de tasa del comprador; nunca ambos.",
-        "listStructural": "Mientras la publicación siga vigente, tu posición no se puede transferir, y además retiene las opciones del PRESTATARIO en este préstamo: la aplicación retiene su pago parcial y el protocolo rechaza la retirada de su garantía, ambas cosas para proteger los términos firmados por el comprador. Eso dura hasta que la publicación caduque, un comprador la complete o tú la canceles.",
+        "listCost": "Cuesta el MAYOR de los dos: los intereses acumulados hasta ahora o el complemento de tasa del comprador; nunca ambos. Además, cualquier saldo que ya se te esté reteniendo en este préstamo pasa al comprador, y pierdes tu entrada de recompensa pendiente para esta posición. Abre la herramienta para ver las cifras reales.",
+        "listStructural": "Mientras la publicación siga vigente, tu posición no se puede transferir, y además retiene dos de las opciones del PRESTATARIO en este préstamo: el protocolo rechaza la retirada de su garantía y su salida por compensación, ambas para proteger los términos firmados por el comprador. Sus pagos, totales o parciales, siguen abiertos. Las retenciones terminan cuando un comprador completa la operación o tú cancelas; si la publicación simplemente caduca, siguen vigentes hasta que alguien ejecute la limpieza que la elimina.",
         "listAlreadyListed": "Ya está publicada: esta posición está en venta ahora. La tarjeta de publicación de abajo muestra sus términos y te permite cancelarla.",
         "listUnavailableNetwork": "Todavía no disponible en esta red: las herramientas de publicación no están desplegadas aquí.",
         "listUnavailableNft": "No disponible para esta posición: por ahora la publicación solo admite préstamos respaldados por garantía ERC-20.",
         "listUnavailableHeldVpfi": "No disponible hasta que se liquide el saldo VPFI pendiente de esta posición: una publicación necesita una única identidad de liquidación. Mientras tanto, vender ahora o esperar a que el préstamo se cierre siguen disponibles.",
-        "listUnavailableOffsetPending": "No disponible mientras el prestatario tenga una salida vinculada pendiente en este préstamo: primero tiene que completarse o cancelarse."
+        "listUnavailableOffsetPending": "No disponible mientras el prestatario tenga una salida vinculada pendiente en este préstamo: primero tiene que completarse o cancelarse.",
+        "sellNowAlreadyListed": "No disponible mientras esta posición esté publicada en venta: cancela primero la publicación con la tarjeta de abajo.",
+        "saleLockChecking": "Comprobando si esta posición ya está publicada…"
       },
       "pastDue": "Este préstamo ha superado su fecha de vencimiento: el prestatario lo paga o lo resuelve el proceso de impago. Ya no se pueden iniciar ventas nuevas.",
       "checking": "Comprobando cuáles de estas opciones están disponibles en esta posición…"

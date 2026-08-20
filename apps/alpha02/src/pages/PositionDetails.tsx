@@ -297,6 +297,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       return {
         status: live.status,
         useFullTermInterest: live.useFullTermInterest,
+        // #1503 PR-H (Codex r1 P2) — the LENDER chooser needs the
+        // cadence in Basic mode for exactly the reason the line above
+        // needs the interest mode: `loanLive` is advanced-only, so
+        // sourcing from it left every Basic-mode lender permanently on
+        // "still reading this loan's interest schedule" and never told
+        // whether they are paid during the term or only at the end —
+        // the card's central disclosure, silently dead in the mode it
+        // was built to serve. Same call, same struct, no extra RPC.
+        periodicInterestCadence: live.periodicInterestCadence,
       };
     },
   });
@@ -2627,29 +2636,67 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         <LenderExitOptionsCard
           isAdvanced={isAdvanced}
           onSwitchToAdvanced={() => setMode('advanced')}
-          // Undefined while the live read is in flight — the card
-          // renders its neutral checking line rather than asserting
-          // the at-close shape, which would misstate WHEN a
+          // Undefined ONLY while a read is genuinely in flight — the
+          // card then renders its neutral checking line rather than
+          // asserting the at-close shape, which would misstate WHEN a
           // periodically-settling lender is paid.
+          //
+          // Sourced from `liveStatus` (BOTH modes) rather than
+          // `loanLive` (advanced-only). Reading it from the strategy
+          // query made "undefined" permanent in Basic mode, so the
+          // checking line never resolved — Codex r1 P2. `loanLive`
+          // stays as the preferred source when it IS loaded, since it
+          // refreshes faster.
           periodicInterestCadence={
-            loanLive.data?.live.periodicInterestCadence
+            loanLive.data?.live.periodicInterestCadence ??
+            liveStatus.data?.periodicInterestCadence
           }
           // Chain-anchored only, same rule as the borrower chooser's
           // pastDueHint: a device clock or lagging indexer row must
           // never flip the sale rows to "past due" while the
           // chain-authoritative cards below still permit a sale.
+          //
+          // Falls back to `bannerTerms` for the same reason as the
+          // cadence above — with only `loanLive` in the chain, Basic
+          // mode always took the `false` branch and a past-due lender
+          // was told both sales were available (Codex r1 P2). This is
+          // the identical fallback the borrower chooser already uses.
           pastDue={
             loanLive.data
               ? loanLive.data.chainNow > loanEndTimeOf(loanLive.data.live)
-              : false
+              : bannerTerms.data
+                ? BigInt(bannerTerms.data.chainNow) >
+                  loanEndTimeOf(bannerTerms.data.live)
+                : false
           }
           listingSupportedOnChain={loanSaleListingEnabled(readChain.chainId)}
           collateralIsNft={collateralIsNft}
-          alreadyListed={salePending}
+          // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
+          // undefined while the listing read is in flight and stays so
+          // if it errors. Collapsing that to `false` showed BOTH sale
+          // exits as available on a position whose lock had never been
+          // checked — and the listing lock refuses both paths.
+          saleLock={
+            sale.state === undefined
+              ? 'checking'
+              : sale.state.listed === true
+                ? 'listed'
+                : 'clear'
+          }
           // See the prop's own note: no cheap client read exists for
           // the held-for-lender balance, so this stays false and the
           // refusal surfaces in the listing tool instead.
           heldVpfiUnresolved={false}
+          // KNOWN GAP, deferred (Codex r1 P2). This is always false for
+          // a lender today, and NOT because the enabled flag is set to
+          // `role === 'borrower'` — `useOffsetPending` seeds from a
+          // browser-LOCAL marker written by the borrower's own session,
+          // so a lender's browser has nothing to read no matter how the
+          // flag is set. Surfacing it needs a chain read of the
+          // loan→offset-offer link, which is tracked with the other
+          // deferred pre-checks. Until then the listing tool still
+          // refuses `OffsetActiveOnLoan` correctly; the cost is a
+          // wasted click, not a wrong action.
           borrowerOffsetPending={offsetPend.pending}
           // 'unknown' on purpose — the candidate list comes from
           // `useActiveOffers`, a full page walk this page does not

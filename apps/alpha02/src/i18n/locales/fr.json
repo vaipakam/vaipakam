@@ -2219,17 +2219,19 @@
         "waitCost": "Ne coûte rien : c’est l’option par défaut.",
         "sellNow": "Vendre votre position maintenant",
         "sellNowDesc": "Vendez cette position directement à une offre de prêt en cours qui lui correspond. Vous êtes payé immédiatement sur des fonds déjà bloqués par ce prêteur, et ni le taux ni l’échéance de l’emprunteur ne changent.",
-        "sellNowCost": "Coûte le PLUS ÉLEVÉ des deux : les intérêts accumulés à ce jour ou le complément de taux de l’acheteur — jamais les deux.",
+        "sellNowCost": "Coûte le PLUS ÉLEVÉ des deux : les intérêts accumulés à ce jour ou le complément de taux de l’acheteur — jamais les deux. En plus de cela, tout solde déjà retenu pour vous sur ce prêt passe à l’acheteur, et votre entrée de récompense en attente pour cette position est perdue. Ouvrez l’outil pour les montants réels.",
         "sellNowNoOffers": "Aucune offre de prêt du carnet ne correspond à cette position pour l’instant — revenez plus tard, ou publiez-la ci-dessous.",
         "list": "Mettre votre position en vente",
         "listDesc": "Publiez cette position au taux que vous demandez et attendez un acheteur. La vente ne se règle que lorsque quelqu’un l’accepte.",
-        "listCost": "Coûte le PLUS ÉLEVÉ des deux : les intérêts accumulés à ce jour ou le complément de taux de l’acheteur — jamais les deux.",
-        "listStructural": "Tant que l’annonce est active, votre position ne peut pas être transférée, et elle bloque aussi les options de l’EMPRUNTEUR sur ce prêt : l’application retient son remboursement partiel et le protocole refuse le retrait de sa garantie, dans les deux cas pour protéger les termes signés par l’acheteur. Cela dure jusqu’à l’expiration de l’annonce, sa réalisation par un acheteur, ou son annulation par vous.",
+        "listCost": "Coûte le PLUS ÉLEVÉ des deux : les intérêts accumulés à ce jour ou le complément de taux de l’acheteur — jamais les deux. En plus de cela, tout solde déjà retenu pour vous sur ce prêt passe à l’acheteur, et votre entrée de récompense en attente pour cette position est perdue. Ouvrez l’outil pour les montants réels.",
+        "listStructural": "Tant que l’annonce est active, votre position ne peut pas être transférée, et elle bloque aussi deux des options de l’EMPRUNTEUR sur ce prêt : le protocole refuse le retrait de sa garantie et sa sortie par compensation, dans les deux cas pour protéger les termes signés par l’acheteur. Ses remboursements, totaux ou partiels, restent possibles. Les blocages prennent fin lorsqu’un acheteur conclut ou que vous annulez ; si l’annonce expire simplement, ils demeurent jusqu’à ce que quelqu’un lance le nettoyage qui la supprime.",
         "listAlreadyListed": "Déjà publiée : cette position est actuellement en vente. La carte d’annonce ci-dessous en montre les termes et permet de l’annuler.",
         "listUnavailableNetwork": "Pas encore disponible sur ce réseau : les outils de publication ne sont pas déployés ici.",
         "listUnavailableNft": "Indisponible pour cette position : la publication ne prend pour l’instant en charge que les prêts adossés à une garantie ERC-20.",
         "listUnavailableHeldVpfi": "Indisponible tant que le solde VPFI en attente de cette position n’est pas apuré : une annonce exige une identité de règlement unique. Entre-temps, vendre maintenant ou attendre la clôture du prêt restent possibles.",
-        "listUnavailableOffsetPending": "Indisponible tant que l’emprunteur a une sortie liée en attente sur ce prêt : elle doit d’abord aboutir ou être annulée."
+        "listUnavailableOffsetPending": "Indisponible tant que l’emprunteur a une sortie liée en attente sur ce prêt : elle doit d’abord aboutir ou être annulée.",
+        "sellNowAlreadyListed": "Indisponible tant que cette position est mise en vente — annulez d’abord l’annonce via la carte ci-dessous.",
+        "saleLockChecking": "Vérification : cette position est-elle déjà mise en vente…"
       },
       "pastDue": "Ce prêt a dépassé son échéance : l’emprunteur le rembourse ou la procédure de défaut le résout. Aucune nouvelle vente ne peut être lancée maintenant.",
       "checking": "Vérification des options disponibles sur cette position…"

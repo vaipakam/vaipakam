@@ -31,6 +31,17 @@ import { copy } from '../content/copy';
  *  "checking…" forever in the case where nothing is being checked. */
 export type InstantSellCandidates = 'checking' | 'some' | 'none' | 'unknown';
 
+/** Whether this position already carries a live sale listing.
+ *
+ *  A union for the same reason as `InstantSellCandidates`: the listing
+ *  lock is authoritative for BOTH sale paths — `_createLoanSaleOfferImpl`
+ *  refuses `SaleOfferAlreadyExists` and the direct sale is refused too —
+ *  so an unanswered read must not collapse to "clear". A boolean did
+ *  exactly that while the read was loading or had errored, showing both
+ *  exits as available on a position whose lock had never been checked
+ *  (Codex r1 P2). */
+export type SaleLockState = 'checking' | 'listed' | 'clear';
+
 export type LenderExitJumpTarget = 'early-exit-card' | 'loan-sale-card';
 
 export interface LenderExitRow {
@@ -53,7 +64,7 @@ export interface LenderExitInput {
   pastDue: boolean;
   listingSupportedOnChain: boolean;
   collateralIsNft: boolean;
-  alreadyListed: boolean;
+  saleLock: SaleLockState;
   heldVpfiUnresolved: boolean;
   borrowerOffsetPending: boolean;
   instantSellCandidates: InstantSellCandidates;
@@ -86,7 +97,14 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       desc: o.sellNowDesc,
       cost: o.sellNowCost,
       unavailable: pastDueOr(
-        input.instantSellCandidates === 'checking'
+        input.saleLock === 'checking'
+          ? o.saleLockChecking
+          : input.saleLock === 'listed'
+            ? // The direct sale is refused while a listing stands, and
+              // the page suppresses the instant-exit card entirely —
+              // so without this the jump scrolled to no element.
+              o.sellNowAlreadyListed
+          : input.instantSellCandidates === 'checking'
           ? copy.lenderExit.checking
           : input.instantSellCandidates === 'none'
             ? o.sellNowNoOffers
@@ -109,8 +127,10 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       // because it is the one state with nothing to fix and something
       // to look at instead.
       unavailable: pastDueOr(
-        input.alreadyListed
-          ? o.listAlreadyListed
+        input.saleLock === 'checking'
+          ? o.saleLockChecking
+          : input.saleLock === 'listed'
+            ? o.listAlreadyListed
           : !input.listingSupportedOnChain
             ? o.listUnavailableNetwork
             : input.collateralIsNft

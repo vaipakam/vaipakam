@@ -1936,8 +1936,16 @@ const copySource = {
       sellNow: 'Sell your position now',
       sellNowDesc:
         'Sell this position straight into a standing lending offer that matches it. You’re paid immediately from funds already locked by that lender, and the borrower’s rate and due date don’t change.',
+      // Codex r1 P1 — "the LARGER of X or Y, never both" reads as
+      // EXHAUSTIVE, and it is not: both sale paths also migrate any
+      // held-for-lender balance to the buyer and atomically forfeit the
+      // seller's pending interaction-reward entry. The held balance can
+      // dwarf the interest figure, so naming only the interest
+      // component can induce a value-losing decision. The card cannot
+      // price these, so it NAMES them and sends the reader to the
+      // figures rather than implying they do not exist.
       sellNowCost:
-        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both.',
+        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Open the tool for the actual figures.',
       sellNowNoOffers:
         'No lending offer on the book matches this position right now — check back later, or list it below instead.',
 
@@ -1945,12 +1953,34 @@ const copySource = {
       listDesc:
         'Publish this position at your asking rate and wait for a buyer. The sale settles only when someone accepts.',
       listCost:
-        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both.',
+        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Open the tool for the actual figures.',
       // Cross-party disclosure: listing does not only lock the seller.
+      // Codex r1 P2 ×2 — two corrections to what this used to claim.
+      // (a) Partial repayment is NOT held: the borrower surface
+      // deliberately leaves it open, because an acceptance binds the
+      // CURRENT principal and a paydown simply invalidates a pending
+      // buyer's signature. Saying otherwise overstated the burden on
+      // the counterparty. What IS held is collateral withdrawal (the
+      // on-chain guard) and the borrower's offset path.
+      // (b) Expiry does not clear the locks. It stops a buyer taking
+      // the listing, but the position lock and the borrower's held
+      // path persist until someone runs the permissionless teardown —
+      // so "until it expires" promised an automatic unwind that does
+      // not happen.
       listStructural:
-        'While the listing stands, your position can’t be transferred, and it also holds the BORROWER’s options on this loan — the app holds their partial repayment and the protocol refuses their collateral withdrawal, both to protect the buyer’s signed terms. That lasts until the listing expires, a buyer completes, or you cancel.',
+        'While the listing stands, your position can’t be transferred, and it also holds two of the BORROWER’s options on this loan — the protocol refuses their collateral withdrawal and their offset exit, both to protect the buyer’s signed terms. Their repayments, full or partial, stay open. The holds end when a buyer completes or you cancel; if the listing simply expires, they stay in place until someone runs the cleanup that clears it.',
       listAlreadyListed:
         'Already listed — this position is on sale now. The listing card below shows its terms and lets you cancel it.',
+      // Codex r1 P2 — the direct sale is refused too while a listing
+      // stands (`SaleOfferAlreadyExists`), AND the page suppresses the
+      // instant-exit card entirely, so this row's jump would have
+      // scrolled to nothing at all.
+      sellNowAlreadyListed:
+        'Not available while this position is listed for sale — cancel the listing first, using the card below.',
+      // Codex r1 P2 — the listing lock read is authoritative for BOTH
+      // sale paths, so an unanswered read must not read as "clear".
+      saleLockChecking:
+        'Checking whether this position is already listed…',
       listUnavailableNetwork:
         'Not available on this network yet — the listing tools aren’t published to this deployment.',
       listUnavailableNft:

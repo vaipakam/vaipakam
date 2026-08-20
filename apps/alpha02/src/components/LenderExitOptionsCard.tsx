@@ -37,6 +37,7 @@ import {
   hasJumpableRow,
   type InstantSellCandidates,
   type LenderExitJumpTarget,
+  type SaleLockState,
 } from '../data/lenderExitRows';
 
 export type { LenderExitJumpTarget };
@@ -60,11 +61,13 @@ export function LenderExitOptionsCard({
   listingSupportedOnChain: boolean;
   /** Phase 1 listing is ERC-20-collateral only. */
   collateralIsNft: boolean;
-  /** This position already carries a live listing
-   *  (`SaleOfferAlreadyExists`). The chooser renders above the pending-
-   *  listing card, so without this the list row would invite a lender
-   *  to do what they have already done. */
-  alreadyListed: boolean;
+  /** Whether this position already carries a live listing. A TRI-STATE
+   *  (`SaleLockState`), not a boolean: the lock refuses BOTH sale paths
+   *  (`SaleOfferAlreadyExists`, and the page unmounts the instant-exit
+   *  card entirely), so an unanswered read must not collapse to
+   *  "clear" — that showed both exits as available on a position whose
+   *  lock had never been checked (Codex r1 P2). */
+  saleLock: SaleLockState;
   /** A position with unresolved held VPFI cannot be unified to one
    *  settlement identity, so listing refuses it
    *  (`SalePositionNotConsolidatable`).

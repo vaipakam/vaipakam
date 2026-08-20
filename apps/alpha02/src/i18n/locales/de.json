@@ -2219,17 +2219,19 @@
         "waitCost": "Kostet nichts – das ist die Standardoption.",
         "sellNow": "Ihre Position jetzt verkaufen",
         "sellNowDesc": "Verkaufen Sie diese Position direkt an ein passendes, offenes Kreditangebot. Sie werden sofort aus bereits gesperrten Mitteln dieses Kreditgebers bezahlt, und Zinssatz und Fälligkeit des Kreditnehmers ändern sich nicht.",
-        "sellNowCost": "Kostet den GRÖSSEREN der beiden Beträge: die bisher aufgelaufenen Zinsen oder den Zinsaufschlag des Käufers – niemals beides.",
+        "sellNowCost": "Kostet den GRÖSSEREN der beiden Beträge: die bisher aufgelaufenen Zinsen oder den Zinsaufschlag des Käufers – niemals beides. Darüber hinaus geht jedes bereits für Sie zurückgehaltene Guthaben dieses Kredits an den Käufer über, und Ihr offener Belohnungseintrag für diese Position verfällt. Öffnen Sie das Werkzeug für die tatsächlichen Beträge.",
         "sellNowNoOffers": "Derzeit passt kein Kreditangebot im Buch zu dieser Position – schauen Sie später wieder vorbei oder inserieren Sie sie unten.",
         "list": "Ihre Position zum Verkauf inserieren",
         "listDesc": "Veröffentlichen Sie diese Position zu Ihrem Wunschzins und warten Sie auf einen Käufer. Der Verkauf wird erst abgewickelt, wenn jemand annimmt.",
-        "listCost": "Kostet den GRÖSSEREN der beiden Beträge: die bisher aufgelaufenen Zinsen oder den Zinsaufschlag des Käufers – niemals beides.",
-        "listStructural": "Solange das Inserat besteht, kann Ihre Position nicht übertragen werden, und es hält außerdem die Optionen des KREDITNEHMERS bei diesem Kredit zurück: Die App hält seine Teilrückzahlung zurück und das Protokoll verweigert die Entnahme seiner Sicherheit – beides, um die vom Käufer signierten Konditionen zu schützen. Das gilt, bis das Inserat abläuft, ein Käufer abschließt oder Sie es stornieren.",
+        "listCost": "Kostet den GRÖSSEREN der beiden Beträge: die bisher aufgelaufenen Zinsen oder den Zinsaufschlag des Käufers – niemals beides. Darüber hinaus geht jedes bereits für Sie zurückgehaltene Guthaben dieses Kredits an den Käufer über, und Ihr offener Belohnungseintrag für diese Position verfällt. Öffnen Sie das Werkzeug für die tatsächlichen Beträge.",
+        "listStructural": "Solange das Inserat besteht, kann Ihre Position nicht übertragen werden, und es hält außerdem zwei Optionen des KREDITNEHMERS bei diesem Kredit zurück: Das Protokoll verweigert die Entnahme seiner Sicherheit und seinen Ausstieg per Verrechnung – beides, um die vom Käufer signierten Konditionen zu schützen. Seine Rückzahlungen, ganz oder teilweise, bleiben möglich. Die Sperren enden, wenn ein Käufer abschließt oder Sie stornieren; läuft das Inserat einfach ab, bestehen sie fort, bis jemand die Bereinigung ausführt, die es entfernt.",
         "listAlreadyListed": "Bereits inseriert – diese Position steht derzeit zum Verkauf. Die Inseratskarte unten zeigt die Konditionen und erlaubt die Stornierung.",
         "listUnavailableNetwork": "In diesem Netzwerk noch nicht verfügbar – die Inseratswerkzeuge sind hier nicht ausgerollt.",
         "listUnavailableNft": "Für diese Position nicht verfügbar – das Inserieren unterstützt derzeit nur Kredite mit ERC-20-Sicherheiten.",
         "listUnavailableHeldVpfi": "Nicht verfügbar, solange der offene VPFI-Saldo dieser Position nicht ausgeglichen ist – ein Inserat braucht eine eindeutige Abwicklungsidentität. In der Zwischenzeit bleiben der sofortige Verkauf und das Abwarten bis zum Kreditende möglich.",
-        "listUnavailableOffsetPending": "Nicht verfügbar, solange der Kreditnehmer einen verknüpften Ausstieg bei diesem Kredit offen hat – dieser muss zuerst abgeschlossen oder storniert werden."
+        "listUnavailableOffsetPending": "Nicht verfügbar, solange der Kreditnehmer einen verknüpften Ausstieg bei diesem Kredit offen hat – dieser muss zuerst abgeschlossen oder storniert werden.",
+        "sellNowAlreadyListed": "Nicht verfügbar, solange diese Position zum Verkauf inseriert ist – stornieren Sie das Inserat zuerst über die Karte unten.",
+        "saleLockChecking": "Wird geprüft, ob diese Position bereits inseriert ist…"
       },
       "pastDue": "Dieser Kredit ist überfällig – der Kreditnehmer zahlt ihn zurück oder das Ausfallverfahren löst ihn auf. Neue Verkäufe können jetzt nicht mehr gestartet werden.",
       "checking": "Prüfen, welche dieser Optionen für diese Position verfügbar sind…"
