@@ -1082,25 +1082,30 @@ contract EarlyWithdrawalFacet is
         // count it never incremented and hand indexers a status edge for a
         // loan they were never told exists.
         //
-        // Routed by whether THIS vehicle was actually counted, not by code
-        // version: a vehicle accepted BEFORE this change went through the
-        // ordinary init and sits in the metrics active set — completing it
-        // with the internal transition would strand it there (count inflated,
-        // keeper walking a Repaid loan forever). `activeLoanIdsListPos` is the
-        // exact membership marker (1-based; 0 = never counted), so a legacy
-        // vehicle still gets the balancing decrement + status event while a
-        // new-regime vehicle stays invisible end to end.
-        if (s.activeLoanIdsListPos[tempLoanId] != 0) {
-            LibLifecycle.transition(
+        // Routed by REGIME, not by code version, and the regime is read from
+        // the vehicle's own durable mark. A vehicle accepted BEFORE item 26
+        // carries no mark: its creation was announced, so its terminal must be
+        // announced too or the row a consumer built from `LoanInitiated` sits
+        // Active forever.
+        //
+        // Whether it was COUNTED is a SEPARATE question (Codex #1825 r1) and
+        // must not be inferred from the same signal: a loan predating the
+        // counter layer or its backfill can be announced yet absent from the
+        // active set, and deciding both from active-list membership would
+        // close such a vehicle silently — reintroducing the exact #1782
+        // defect. So membership decides only the decrement.
+        if (LibMetricsHooks.isInternalVehicle(s, tempLoanId)) {
+            LibLifecycle.transitionInternalVehicle(
                 tempLoan,
                 LibVaipakam.LoanStatus.Active,
                 LibVaipakam.LoanStatus.Repaid
             );
         } else {
-            LibLifecycle.transitionInternalVehicle(
+            LibLifecycle.transitionLegacyVehicle(
                 tempLoan,
                 LibVaipakam.LoanStatus.Active,
-                LibVaipakam.LoanStatus.Repaid
+                LibVaipakam.LoanStatus.Repaid,
+                s.activeLoanIdsListPos[tempLoanId] != 0
             );
         }
         // Set claimed=true so neither party needs to (or can) claim.

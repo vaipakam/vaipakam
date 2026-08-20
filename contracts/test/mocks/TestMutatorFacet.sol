@@ -72,6 +72,27 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().offerIdByPositionTokenId[tokenId];
     }
 
+    /// @notice #1503 item 26 test-only (Codex #1825 r1) — read the durable
+    ///         sale-vehicle mark. Tests need it to tell the two legacy
+    ///         questions apart: an unmarked vehicle is pre-regime (its
+    ///         creation WAS announced), which is independent of whether it
+    ///         also sits in the metrics active set.
+    function getInternalVehicleRealLoanIdRaw(uint256 loanId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().internalVehicleRealLoanId[loanId];
+    }
+
+    /// @notice #1503 item 26 test-only (Codex #1825 r1) — stamp the durable
+    ///         sale-vehicle mark on a raw-written fixture loan, so a staged
+    ///         vehicle can stand in for a NEW-REGIME one. Without this a
+    ///         staged fixture is indistinguishable from a pre-upgrade record,
+    ///         and a test written on it would assert legacy behaviour while
+    ///         claiming to cover the new path.
+    function setInternalVehicleMarkRaw(uint256 loanId, uint256 realLoanId) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.internalVehicleRealLoanId[loanId] = realLoanId;
+        s.internalVehicleLoanCount += 1;
+    }
+
     /// @notice #1503 item 25 test-only (Codex #1818 r3 P2) — fabricate the
     ///         GRANDFATHERED index state a loan created before the membership
     ///         map shipped would have: no exact-regime flag, no map bits, and

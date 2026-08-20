@@ -523,9 +523,33 @@ property that survives is a PAIRING — announced at both ends or at neither —
 and a terminal event for a record no interface knows about is a reference to an
 unknown position, the same confusion #1782 set out to remove.
 
+A THIRD divergence sits underneath both, and it is the one that made the first
+fix incomplete (Codex #1825 r1). Suppressing the record's creation-time writes
+and notifications does not make it absent, because the record itself persists
+and its id came from the shared sequence: `getAllLoansPaginated`,
+`getLoansByStatusPaginated`, `getGlobalCounts` and the `getProtocolStats` /
+`getTotalInterestEarnedNumeraire` lifetime scans all enumerate by id range and
+kept returning it — pricing its mirrored principal into lifetime volume (the
+same money, once per sale) and its mirrored rate into interest earned. The
+`OfferAccepted` event likewise still published the record's own id, which the
+indexer stores as an activity row's `loan_id`. "Invisible" is a property of the
+record; a fix that only covers the writes made at one moment is an enumeration
+again.
+
 **RESOLVED** — the record is excluded at every listed point and its close-out
 is silent and count-neutral to match, so entries balance exactly in both
-directions. The exclusion is drawn around POSITION accounting specifically:
+directions. A DURABLE mark on the record — carrying the real loan it stands for
+— is what the range-enumerating surfaces filter on, and what gives the
+acceptance event a true id to name; a transient link could not serve either,
+since the sale link is deleted at completion. The same mark also separates two legacy facts that the first cut of the routing
+conflated: whether a record was ANNOUNCED at creation and whether it was
+COUNTED. `LibMetricsHooks` documents that a loan predating the counter layer or
+its backfill may be absent from those totals while its `LoanInitiated` still
+built a consumer row, so deciding both from active-list membership closed such
+a record silently — the #1782 stuck-active defect, re-entered through the
+legacy door. Announcement is now decided by the mark, counting by the counters.
+
+The exclusion is drawn around POSITION accounting specifically:
 the record still counts a first-time buyer toward the unique-participant
 total and still releases the consumed listing's open-offer entry, because
 neither is a claim about positions and dropping them would have replaced one

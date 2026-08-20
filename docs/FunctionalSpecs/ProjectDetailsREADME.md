@@ -2049,13 +2049,34 @@ This option allows Liam to recover principal early by selling his lender positio
   invisible" is a claim about position accounting, and reading it as "the
   record touches nothing" would silently drop a real participant from the user
   count and leave a consumed listing on display.
-- **Records created under the earlier behaviour keep it.** A transitional
-  record that WAS counted and announced — created before this rule took effect
-  and still open — must still decrement and still announce when it closes, or
-  the totals it entered would never be released. The protocol distinguishes the
-  two regimes from the record's own state rather than from operator input, so
-  no migration is required and the totals correct themselves as those older
-  sales complete.
+- **Absence must reach the record, not only the moment it is created.** The
+  record persists after the sale, and its identifier is drawn from the same
+  sequence real positions use, so any surface that enumerates by identifier
+  range would keep returning it — the count of positions ever created, the full
+  position list, the by-status pages, and the lifetime volume and interest
+  totals, where its mirrored principal would price the same money twice and its
+  mirrored rate would invent interest no borrower owed. The record therefore
+  carries a durable indication of what it is, and those surfaces exclude it on
+  that basis. Suppressing only the creation-time writes and notifications is
+  not sufficient and must not be mistaken for it.
+- **A reference published for the transitional record must name the real
+  position instead.** The acceptance of a listing is a genuine event and is
+  reported as one, but it must identify the position that changed hands, not
+  the transitional record — an identifier that resolves to something every
+  position list denies is worse than no identifier, because consumers store it
+  and follow it.
+- **Records created under the earlier behaviour keep it, and "announced" and
+  "counted" are separate facts about them.** A transitional record created
+  before this rule took effect was announced, so its close-out must still be
+  announced or the row a consumer built from that announcement is never
+  retired. Whether it was also counted is a different question — a record
+  predating the counter layer, or a backfill of it, can be announced while
+  absent from those totals — and only a record actually present in a total may
+  be removed from it. Deciding both from the counters would close an
+  announced-but-uncounted record in silence, which is the very defect this
+  rule exists to prevent. The protocol distinguishes all of this from the
+  record's own state rather than from operator input, so no migration is
+  required and the totals correct themselves as those older sales complete.
 
 ##### Principal Recovery
 

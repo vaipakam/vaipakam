@@ -47,17 +47,37 @@ announces the end of something no interface was told about. Never counted,
 never uncounted: every entry balances exactly, so no total can drift in either
 direction.
 
-What it is *not* excluded from is the bookkeeping that is about records and
-people rather than about positions. Someone buying their first position is
+Exclusion had to reach further than the writes made when the record appears.
+The record itself stays in storage, and its identifier came from the same
+sequence real positions draw from — so anything that walks that sequence kept
+finding it: the count of loans ever created, the full loan list, the
+by-status pages, and the lifetime volume and interest totals, where a sale
+would have priced the very same money a second time and invented interest
+nobody ever owed. The record now carries a durable mark saying what it is, and
+those surfaces skip it. The mark records which real loan the sale was for, so
+the acceptance notification can name that loan instead of publishing an
+identifier no list will acknowledge.
+
+The same mark answers a question the first cut of this work got wrong. Whether
+a record was *announced* when it was created and whether it was *counted* are
+separate facts, and a record from before this change can be the first without
+being the second. Deciding both from the counters would have closed such a
+sale in silence — the exact stuck-forever symptom this work exists to remove,
+re-entered through the older records' door. Announcement is now decided by the
+mark and counting by the counters, independently.
+
+What the record is *not* excluded from is the bookkeeping that is about records
+and people rather than about positions. Someone buying their first position is
 still counted as a participant in the protocol's user total, and the listing's
 own position token still stops presenting as an open listing the moment it is
 consumed. Those were never part of what "invisible" meant, and separating them
 explicitly is what keeps a future addition to the position bookkeeping from
 silently going missing on this path.
 
-Records created before this change were counted, so their close-outs still
-decrement and still announce, exactly as before. The two regimes are
-distinguished automatically; no migration or operator action is needed, and the
-statistics self-heal as those older sales complete.
+Records created before this change were announced, so their close-outs are
+still announced — and they still adjust whichever totals they had actually
+joined, which need not be all of them. The two regimes are distinguished
+automatically; no migration or operator action is needed, and the statistics
+self-heal as those older sales complete.
 
 Part of #1503 (items 12 and 26).

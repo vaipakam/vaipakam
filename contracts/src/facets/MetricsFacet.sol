@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
+import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -139,6 +140,11 @@ contract MetricsFacet {
         for (uint256 i = 1; i <= lEnd; i++) {
             LibVaipakam.Loan storage l = s.loans[i];
             if (l.id == 0) continue;
+            // #1503 item 26 — a sale vehicle mirrors the real loan's principal,
+            // so pricing it into lifetime volume double-counts the SAME money
+            // once per sale, and its rate would feed interest earned that
+            // nobody ever owed.
+            if (LibMetricsHooks.isInternalVehicle(s, i)) continue;
             if (l.assetType != LibVaipakam.AssetType.ERC20) continue;
             uint256 pNumeraire = _priceAmount(l.principalAsset, l.principal);
             totalVolumeLentNumeraire += pNumeraire;
@@ -183,6 +189,10 @@ contract MetricsFacet {
         for (uint256 i = 1; i <= end; i++) {
             LibVaipakam.Loan storage l = s.loans[i];
             if (l.id == 0) continue;
+            // #1503 item 26 — see the twin scan in `getProtocolStats`: a
+            // vehicle is terminal by the time it is scannable, so without this
+            // every completed sale would contribute phantom interest.
+            if (LibMetricsHooks.isInternalVehicle(s, i)) continue;
             if (l.assetType != LibVaipakam.AssetType.ERC20) continue;
             if (
                 l.status == LibVaipakam.LoanStatus.Active ||
@@ -949,7 +959,12 @@ contract MetricsFacet {
         returns (uint256 totalLoansCreated, uint256 totalOffersCreated)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        totalLoansCreated = s.nextLoanId;
+        // #1503 item 26 (Codex #1825 r1) — ids issued MINUS the lender-sale
+        // transitional vehicles. Each sale draws an id from the same sequence,
+        // so the raw high-water mark counts records that are not positions and
+        // that no loan list returns; a running vehicle count keeps this O(1)
+        // rather than forcing a scan to subtract them.
+        totalLoansCreated = s.nextLoanId - s.internalVehicleLoanCount;
         totalOffersCreated = s.nextOfferId;
     }
 
@@ -1439,8 +1454,14 @@ contract MetricsFacet {
         uint256[] memory buf = new uint256[](limit);
         uint256 filled;
         uint256 start = offset + 1; // IDs start at 1
-        for (uint256 id = start; id <= total && filled < limit; id++) {
+        // #1503 item 26 — the reported total excludes sale vehicles, so the
+        // rows must too, or a page returns an id the caller cannot reconcile
+        // against `total` (and can resolve through `getLoanDetails` to a
+        // record the product says does not exist).
+        total -= s.internalVehicleLoanCount;
+        for (uint256 id = start; id <= s.nextLoanId && filled < limit; id++) {
             if (s.loans[id].id == 0) continue;
+            if (LibMetricsHooks.isInternalVehicle(s, id)) continue;
             buf[filled] = id; filled += 1;
         }
         loanIds = new uint256[](filled);
@@ -1489,6 +1510,9 @@ contract MetricsFacet {
         uint256 filled;
         for (uint256 id = 1; id <= end; id++) {
             if (s.loans[id].status != status) continue;
+            // #1503 item 26 — a completed sale vehicle is a Repaid record; it
+            // must not appear in a status page any more than in the full list.
+            if (LibMetricsHooks.isInternalVehicle(s, id)) continue;
             matched += 1;
             if (skipped < offset) { skipped += 1; continue; }
             if (filled < limit) { buf[filled] = id; filled += 1; }

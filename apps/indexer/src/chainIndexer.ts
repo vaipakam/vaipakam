@@ -2349,6 +2349,12 @@ export async function processLoanLogs(
   // is created for it and this correlation finds nothing to mark on new
   // sales. It is retained for the rows created BEFORE that change, which
   // still need the flag for the tape/candle exclusion.
+  //
+  // The vehicle's id is not published anywhere else either (Codex #1825 r1):
+  // `OfferAccepted` on a sale accept now carries the REAL loan id, so the
+  // activity reference this indexer stores from that event resolves to a loan
+  // row that exists. Before that it carried the vehicle's own id, which no
+  // `loans` row ever matched.
   const initiatedPairs: Array<{ loanId: number; offerId: number }> = [];
 
   // #1782 — safety-net status edges, DEFERRED to after the log loop.

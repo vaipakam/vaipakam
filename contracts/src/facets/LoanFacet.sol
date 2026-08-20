@@ -556,7 +556,15 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // library so the vehicle cannot silently lose whatever the hook grows
         // next — see {LibMetricsHooks.onInternalVehicleInitialized}.
         if (ctx.isLenderSaleVehicle) {
-            LibMetricsHooks.onInternalVehicleInitialized(loan);
+            // The mark carries the REAL loan this vehicle stands for. Read
+            // from the live sale link, which is still present here — it is the
+            // same read `isLenderSaleVehicle` was derived from, and it is
+            // deleted later at completion, which is why the mark has to be
+            // taken now rather than reconstructed afterwards.
+            LibMetricsHooks.onInternalVehicleInitialized(
+                loan,
+                s.saleOfferToLoanId[ctx.offerId]
+            );
         } else {
             LibMetricsHooks.onLoanInitialized(loan);
         }

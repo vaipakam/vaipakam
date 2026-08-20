@@ -33,6 +33,12 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 ///      holds live loans/offers, the counters will reflect only NEW activity
 ///      until a one-time backfill runs. Pre-mainnet deployments are unaffected.
 library LibMetricsHooks {
+    /// @notice A sale vehicle was registered without the real loan it carries.
+    /// @dev    Guards the one input that makes the mark meaningful: the mark
+    ///         IS the real loan id, so zero would both fail to identify the
+    ///         vehicle and leave the acceptance event nothing true to name.
+    error InternalVehicleNeedsRealLoan();
+
     // ───────────────────────── Loan hooks ─────────────────────────
 
     /// @notice Registers a freshly-created loan in every analytics index.
@@ -121,11 +127,40 @@ library LibMetricsHooks {
     ///      offer's position NFT, so the offer-side reverse entry must be
     ///      released or the SELLER keeps showing a consumed listing as an open
     ///      offer position until the token is burned at completion).
-    function onInternalVehicleInitialized(LibVaipakam.Loan storage loan) internal {
+    ///      ALSO done here, and load-bearing beyond bookkeeping (Codex #1825
+    ///      r1): the DURABLE mark, `internalVehicleRealLoanId`. Suppressing
+    ///      writes and events is not enough on its own — the record persists
+    ///      in `loans` under an id drawn from `nextLoanId`, so every
+    ///      enumerate-by-id-range surface would keep finding it. The mark is
+    ///      what those surfaces filter on, and what tells a later completion
+    ///      whether this vehicle belongs to the silent regime at all.
+    /// @param realLoanId The loan whose lender position the vehicle carries.
+    ///        Must be non-zero — a zero mark is indistinguishable from an
+    ///        unmarked record, which would silently re-admit the vehicle to
+    ///        every surface this exists to exclude.
+    function onInternalVehicleInitialized(
+        LibVaipakam.Loan storage loan,
+        uint256 realLoanId
+    ) internal {
+        if (realLoanId == 0) revert InternalVehicleNeedsRealLoan();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.internalVehicleRealLoanId[loan.id] = realLoanId;
+        s.internalVehicleLoanCount += 1;
         _markUserSeen(s, loan.lender);
         _markUserSeen(s, loan.borrower);
         _registerPositionTokens(s, loan, loan.id);
+    }
+
+    /// @notice True when `loanId` is a lender-sale transitional vehicle
+    ///         created under the #1503 item 26 regime — i.e. a record that no
+    ///         loan-enumerating surface may return.
+    /// @dev    One reader for every filter site, so "what counts as a vehicle"
+    ///         is defined once rather than re-derived per view.
+    function isInternalVehicle(
+        LibVaipakam.Storage storage s,
+        uint256 loanId
+    ) internal view returns (bool) {
+        return s.internalVehicleRealLoanId[loanId] != 0;
     }
 
     /// @dev Position-NFT registry upkeep shared by the real-loan and
