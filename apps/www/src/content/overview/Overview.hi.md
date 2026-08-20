@@ -80,8 +80,9 @@ Accept होते ही:
 
 Loaned amount से एक छोटी **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)** ली जाती है और
 protocol treasury को भेजी जाती है। इसलिए borrower को 1,000 नहीं, `{liveValue:exampleBorrowerReceives}`
-USDC मिलते हैं। (आप fee को **VPFI** में pay कर सकते हैं; तब borrower
-को पूरे 1,000 मिलते हैं — VPFI के बारे में नीचे और है।)
+USDC मिलते हैं। (**VPFI** रखने पर यह fee कम हो जाती है, इसलिए borrower
+को 1,000 में से ज़्यादा मिलता है — discount fee में से ही कट जाता है,
+बाद में लौटाया नहीं जाता। VPFI के बारे में नीचे और है।)
 
 ### Step 3 — समय बीतता है; borrower repay करता है
 

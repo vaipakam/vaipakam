@@ -39,14 +39,28 @@ the promise as `ردّ VPFI`, `reembolso de VPFI` and `rabais VPFI`, and one of 
 also spells it a second way in the same file. An English-only search finds none of
 those.
 
-**Known limitation, stated rather than left to be discovered.** The correction is
-placed where each page introduces the fee discount, and the settlement passages
-deeper in the guides are marked as describing loans on the retired path. Those
-deeper passages remain individually unqualified, so a reader arriving directly at
-one of them — the guides use anchor links — may read it without the surrounding
-scope. They are not false (they describe what happens to a rebate that exists),
-but they are not self-contained either, and closing that gap is follow-up work.
+**The correction reaches the places a borrower actually looks.** Beyond the page
+that introduces the fee discount, three surfaces mattered more than the rest and
+each is now scoped: the **Claim Center** list a borrower reads to find out what a
+claim will pay them; the **illiquid-default** passage that tells them what is left
+after losing their collateral; and the **public marketing bullet** on the buy-VPFI
+page, which advertised the rebate as a reason to hold VPFI. The introductory
+walkthrough also stopped offering the retired "pay the fee in VPFI and receive the
+full amount" route as a live choice.
 
-The application itself needed no change: it reads each loan's actual held amount
+**Known limitation, stated rather than left to be discovered.** Settlement
+passages deeper in the guides — the refinance and preclose mechanics — are covered
+by their section's scope but remain individually unqualified. A reader arriving
+directly at one of them via an anchor link may read it without that scope. They
+are not false (they describe what happens to a rebate that exists), but they are
+not self-contained, and closing that is follow-up work.
+
+**One surface is deliberately untouched and needs a decision.** The connected
+app's offer-creation screen still advertises the retired rebate to a borrower at
+the moment they are choosing terms. That is app copy rather than documentation,
+and it was outside this change's agreed scope, so it is recorded rather than
+edited here.
+
+The claim display itself needed no change: it reads each loan's actual held amount
 and shows a rebate only where one exists, which was already correct for both old
-and new loans. The documentation was the only thing making a promise.
+and new loans. The wording around it was the only thing making a promise.

@@ -1120,9 +1120,11 @@ The canonical tier calculator adds further gates with governance-bounded paramet
 
 ### 12.5 Borrower Loan Initiation Fee and the VPFI discount
 
-The borrower's fee discount is delivered as a **direct reduction of the Loan Initiation Fee you pay in the lending asset**. Your tier is set by the VPFI you hold in your vault, time-weighted across the loan's life, and the discount is applied when the loan is accepted. **No VPFI is taken from your vault to pay the fee, and there is no rebate to claim later.**
+The borrower's fee discount is delivered as a **direct reduction of the Loan Initiation Fee you pay in the lending asset**. Your tier comes from the VPFI you have held in your vault, time-weighted over that holding history, and it is **pinned when the loan is accepted** — topping up afterwards cannot raise it. **No VPFI is taken from your vault to pay the fee, and there is no rebate to claim later.**
 
-That is the whole borrower path for a loan opened today. If you hold enough VPFI to qualify for a tier, you simply pay less fee, in the same asset you were going to pay it in.
+Two conditions narrow it, and a loan that misses either pays the full fee: you must have enabled the platform-level fee-discount consent, and the lending asset must be liquid under the active chain's oracle and risk checks. The discount also **cannot take the fee to zero** — it is clamped at 50%, so half the gross fee is the floor however much VPFI you hold and whichever tariff you opt into.
+
+Otherwise that is the whole borrower path for a loan opened today: if you qualify for a tier, you pay less fee, in the same asset you were going to pay it in.
 
 **The optional VPFI tariff (where enabled).** Separately from the discount above, the platform may offer a per-party opt-in in which you pay an *additional* fee — a **tariff**, denominated in VPFI, taken from your vault at origination — in exchange for a further discount on your own side of the fee. Three things about it are worth stating plainly, because it is the one path on which VPFI does leave your vault at origination:
 

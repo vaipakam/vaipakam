@@ -354,7 +354,7 @@
       "discountTitle": "Tiered fee discount",
       "discountBody": "உங்கள் தனிப்பட்ட vault-வில் வைத்திருக்கும் VPFI, Vaipakam protocol fees-இல் time-weighted discount தருகிறது — ஒவ்வொரு loan settle ஆகும் போது தானாகப் பயன்படுத்தப்படும்; தனியான claim step தேவையில்லை:",
       "discountBullet1": "Lenders: சம்பாதித்த வட்டியில் இருந்து treasury எடுக்கும் cut-க்கு discount. Loan lifetime முழுவதும் நீங்கள் வைத்திருந்த VPFI அதிகமாக இருந்தால், cut குறையும்.",
-      "discountBullet2": "Borrowers: loan-initiation fee-க்கு VPFI rebate; proper close (repay / preclose / refinance) நேரத்தில் திருப்பிக் கிடைக்கும். Default ஆனால் rebate இழக்கப்படும்.",
+      "discountBullet2": "Borrowers: loan-initiation fee-க்கு discount — loan accept ஆகும்போது நீங்கள் செலுத்தும் கட்டணத்திலேயே நேரடியாகக் குறைக்கப்படும்; பின்னர் திருப்பித் தரப்படுவதில்லை.",
       "howTitle": "இது எப்படி வேலை செய்கிறது",
       "analyticsHint": "Protocol-wide stats மற்றும் circulating supply வேண்டுமா? பார்க்கவும்",
       "analyticsLink": "Analytics page"

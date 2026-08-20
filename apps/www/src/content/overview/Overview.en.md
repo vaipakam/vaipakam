@@ -73,8 +73,9 @@ The instant they accept:
 
 A small **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)** is taken from the loaned
 amount and routed to the protocol treasury. So the borrower receives
-`{liveValue:exampleBorrowerReceives}` USDC, not 1,000. (You can pay the fee in **VPFI** instead and the
-borrower receives the full 1,000 — more on VPFI below.)
+`{liveValue:exampleBorrowerReceives}` USDC, not 1,000. (Holding **VPFI** reduces this fee, so the
+borrower keeps more of the 1,000 — the discount comes off the fee itself
+rather than being paid back later. More on VPFI below.)
 
 ### Step 3 — Time passes; the borrower repays
 

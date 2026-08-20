@@ -354,7 +354,7 @@
       "discountTitle": "단계별 수수료 할인",
       "discountBody": "개인 Vault에 보유한 VPFI는 Vaipakam 프로토콜 수수료에 시간 가중 할인을 제공합니다 — 각 loan settlement 때 별도 claim 단계 없이 자동 적용됩니다:",
       "discountBullet1": "Lender: earned interest에 대한 treasury share가 할인됩니다. Loan 기간 동안 VPFI를 오래 보유할수록 treasury cut이 줄어듭니다.",
-      "discountBullet2": "Borrower: Loan Initiation Fee에 대한 VPFI rebate가 정상 종료(repay / preclose / refinance) 시 지급됩니다. Default 시 이 rebate는 forfeited됩니다.",
+      "discountBullet2": "Borrower: Loan Initiation Fee 할인 — loan이 accept될 때 내는 수수료에서 직접 차감되며, 나중에 돌려주는 방식이 아닙니다.",
       "howTitle": "작동 방식",
       "analyticsHint": "프로토콜 전체 통계와 circulating supply를 찾고 있나요? ",
       "analyticsLink": "Analytics 페이지"

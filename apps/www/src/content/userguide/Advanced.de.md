@@ -758,8 +758,9 @@ wird in derselben Transaktion verbrannt.
 Der Borrower-Claim gibt je nach Settlement des Loans zurück:
 
 - **Volle Rückzahlung / Preclose / Refinance** — dein
-  Collateral-Korb zurück, plus den zeitgewichteten VPFI-Rebate
-  aus der Loan Initiation Fee.
+  Collateral-Korb zurück, plus — nur bei einem Loan auf dem
+  eingestellten VPFI-Gebührenweg — den zeitgewichteten
+  VPFI-Rebate aus der Loan Initiation Fee.
 - **HF-Liquidation oder Default** — nur den ungenutzten
   VPFI-Loan-Initiation-Fee-Rebate, der auf diesen terminalen
   Pfaden null ist, sofern nicht ausdrücklich erhalten.

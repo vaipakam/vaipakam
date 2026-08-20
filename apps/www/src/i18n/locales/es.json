@@ -354,7 +354,7 @@
       "discountTitle": "Descuento de comisiones por niveles",
       "discountBody": "El VPFI que mantienes en tu Vaipakam Vault personal te da un descuento ponderado por tiempo en las comisiones del protocolo Vaipakam — aplicado automáticamente cuando se liquida cada préstamo, sin paso de claim separado:",
       "discountBullet1": "Prestamistas: un descuento sobre la parte de tesorería tomada del interés ganado. Cuanto más VPFI hayas mantenido durante la vida del préstamo, menor será la deducción.",
-      "discountBullet2": "Prestatarios: un reembolso en VPFI sobre la comisión de inicio del préstamo, pagado al cierre correcto (repago / preclose / refinanciación). El default hace perder el reembolso.",
+      "discountBullet2": "Prestatarios: un descuento sobre la comisión de inicio del préstamo — aplicado directamente a la comisión que pagas al aceptarse el préstamo, no devuelto después.",
       "howTitle": "Cómo funciona",
       "analyticsHint": "¿Buscas estadísticas de todo el protocolo y suministro circulante? Consulta la",
       "analyticsLink": "página de Analíticas"

@@ -429,7 +429,8 @@ timelock-gated हैं, और assets move नहीं कर सकते।
   trigger कर सकता है।
 - **Illiquid-collateral defaults** — default आपका पूरा
   collateral lender को transfer कर देता है। कोई residual claim
-  नहीं बचता; सिर्फ़ कोई unused VPFI Loan Initiation Fee rebate,
+  नहीं बचता; सिर्फ़ कोई unused VPFI Loan Initiation Fee rebate —
+  जो सिर्फ़ बंद किए गए VPFI fee रास्ते वाले loans पर होता है —
   जिसे आप borrower के रूप में claim time पर लेते हैं।
 
 <a id="create-offer.advanced-options"></a>
@@ -715,10 +716,12 @@ Borrower claim इस आधार पर return करता है कि loan
 हुआ:
 
 - **पूरा repayment / preclose / refinance** — आपकी collateral
-  basket वापस, साथ में Loan Initiation Fee से time-weighted
-  VPFI rebate।
+  basket वापस; और अगर वह loan अब भी बंद किए गए VPFI fee रास्ते
+  पर है, तो साथ में Loan Initiation Fee से time-weighted VPFI
+  rebate भी।
 - **HF-liquidation या default** — सिर्फ़ unused VPFI Loan
-  Initiation Fee rebate, जो इन terminal paths पर शून्य होता
+  Initiation Fee rebate — जो सिर्फ़ बंद किए गए रास्ते वाले loans
+  पर होता है — और जो इन terminal paths पर शून्य होता
   है जब तक स्पष्ट रूप से preserve न किया गया हो। Collateral
   पहले ही lender के पास चला गया होता है।
 

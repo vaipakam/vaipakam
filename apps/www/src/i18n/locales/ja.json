@@ -354,7 +354,7 @@
       "discountTitle": "階層型の手数料割引",
       "discountBody": "個人Vaultに保有するVPFIは、Vaipakamのプロトコル手数料に時間加重の割引を付与します。各ローン決済時に自動適用され、別途claimする必要はありません:",
       "discountBullet1": "貸し手: 獲得利息に対するTreasury取り分が割引されます。ローン期間中にVPFIを長く保有するほど控除が小さくなります。",
-      "discountBullet2": "借り手: Loan Initiation Feeに対するVPFIリベートが、正常なクローズ (repay / preclose / refinance) 時に支払われます。Default時はこのリベートを失います。",
+      "discountBullet2": "借り手: Loan Initiation Fee の割引 — loan の accept 時に支払う手数料そのものから直接差し引かれます。後から返金されるものではありません。",
       "howTitle": "仕組み",
       "analyticsHint": "プロトコル全体の統計や流通供給量を確認したい場合は、",
       "analyticsLink": "Analyticsページ"

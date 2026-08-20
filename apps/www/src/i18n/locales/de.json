@@ -354,7 +354,7 @@
       "discountTitle": "Gestaffelter Gebührenrabatt",
       "discountBody": "VPFI in Ihrer Vaipakam Vault bringt Ihnen einen zeitgewichteten Rabatt auf Vaipakams Protokollgebühren — automatisch angewendet, wenn jeder Kredit abgewickelt wird, ohne separaten Claim-Schritt:",
       "discountBullet1": "Kreditgeber: Rabatt auf den Treasury-Abzug aus verdienten Zinsen. Je mehr VPFI Sie über die Laufzeit des Kredits gehalten haben, desto kleiner der Abzug.",
-      "discountBullet2": "Kreditnehmer: VPFI-Rückvergütung auf die Kreditinitiationsgebühr, ausgezahlt bei ordnungsgemäßem Abschluss (Rückzahlung / Preclose / Refinanzierung). Bei Default verfällt die Rückvergütung.",
+      "discountBullet2": "Kreditnehmer: ein Rabatt auf die Kreditinitiationsgebühr — direkt auf die bei Annahme des Kredits gezahlte Gebühr angewendet, nicht später zurückerstattet.",
       "howTitle": "So funktioniert es",
       "analyticsHint": "Suchen Sie protokollweite Statistiken und den umlaufenden Bestand? Siehe",
       "analyticsLink": "Analyse-Seite"

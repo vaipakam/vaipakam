@@ -354,7 +354,7 @@
       "discountTitle": "Remise de frais par niveaux",
       "discountBody": "Le VPFI détenu dans votre Vaipakam Vault personnel vous donne une remise pondérée dans le temps sur les frais du protocole Vaipakam — appliquée automatiquement lors du règlement de chaque prêt, sans étape de retrait séparée :",
       "discountBullet1": "Prêteurs : une remise sur la part de trésorerie prélevée sur les intérêts gagnés. Plus vous avez détenu de VPFI pendant la durée du prêt, plus le prélèvement diminue.",
-      "discountBullet2": "Emprunteurs : un remboursement en VPFI sur les frais d'initiation du prêt, versé lors d'une clôture régulière (remboursement / preclose / refinancement). Un défaut fait perdre ce remboursement.",
+      "discountBullet2": "Emprunteurs : une remise sur les frais d'initiation du prêt — appliquée directement aux frais payés à l'acceptation du prêt, et non remboursée ensuite.",
       "howTitle": "Comment ça marche",
       "analyticsHint": "Vous cherchez des statistiques globales du protocole et l'offre en circulation ? Consultez la",
       "analyticsLink": "page d'analyses"

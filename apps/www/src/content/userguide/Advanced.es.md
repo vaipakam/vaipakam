@@ -758,8 +758,9 @@ La reclamación del prestatario devuelve, dependiendo de cómo se
 liquidó el préstamo:
 
 - **Repago total / preclose / refinance** — tu canasta de
-  colateral de vuelta, más el reembolso de VPFI ponderado por
-  tiempo de la Loan Initiation Fee.
+  colateral de vuelta, más —sólo en un préstamo que siga en la
+  vía de comisión VPFI retirada— el reembolso de VPFI ponderado
+  por tiempo de la Loan Initiation Fee.
 - **Liquidación por HF o default** — sólo el reembolso de VPFI
   Loan Initiation Fee no usado, que en estos caminos terminales
   es cero a menos que se preserve explícitamente. El colateral

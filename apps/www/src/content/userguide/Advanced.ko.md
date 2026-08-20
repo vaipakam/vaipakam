@@ -391,7 +391,8 @@ assets를 move할 수 없습니다.
   입니다 — HF가 1.0 아래로 떨어지는 순간 누구든 trigger할 수 있습니다.
 - **Illiquid-collateral defaults** — default는 collateral 전체를 lender에게
   transfer합니다. residual claim은 없습니다. borrower로서 claim 시점에
-  받는 unused VPFI Loan Initiation Fee rebate만 남습니다.
+  받는 unused VPFI Loan Initiation Fee rebate만 남으며, 이는 폐지된
+  VPFI 수수료 경로에 남아 있는 loan에만 존재합니다.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -648,9 +649,10 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
 반환합니다:
 
 - **full repayment / preclose / refinance** — 내 collateral basket과
-  Loan Initiation Fee에서 나온 time-weighted VPFI rebate를 받습니다.
+  폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 Loan Initiation
+  Fee에서 나온 time-weighted VPFI rebate도 함께 받습니다.
 - **HF-liquidation 또는 default** — unused VPFI Loan Initiation Fee
-  rebate만 반환됩니다. 이 terminal paths에서는 명시적으로 preserve되지
+  rebate만 반환되며, 이는 폐지된 경로의 loan에만 존재합니다. 이 terminal paths에서는 명시적으로 preserve되지
   않는 한 0입니다. collateral은 이미 lender에게 갔습니다.
 
 Borrower position NFT는 같은 transaction에서 burn됩니다.

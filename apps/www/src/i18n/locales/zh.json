@@ -354,7 +354,7 @@
       "discountTitle": "分级费用折扣",
       "discountBody": "您在个人 Vault 中持有的 VPFI，会为 Vaipakam 协议费用提供按时间加权的折扣 — 每笔贷款结算时自动应用，无需额外领取步骤：",
       "discountBullet1": "出借方：降低从已赚利息中扣取的 treasury 分成。贷款存续期间持有 VPFI 越多、越久，扣取比例越低。",
-      "discountBullet2": "借款方：贷款发起费的 VPFI 返还，在正常关闭（还款 / preclose / refinance）时返还。违约会失去返还。",
+      "discountBullet2": "借款方：贷款发起费的折扣——在 loan 被接受时直接从你支付的费用中减免，而不是事后返还。",
       "howTitle": "如何运作",
       "analyticsHint": "想查看协议整体统计和流通供应量？请查看",
       "analyticsLink": "数据分析页面"

@@ -421,7 +421,8 @@ cross-chain-facing contracts にのみあり、timelock-gated で、assets
 - **Illiquid-collateral defaults** — default はあなたの collateral
   全体を lender に transfer します。residual claim はありません。
   残るのは、claim 時に borrower として受け取る unused VPFI Loan
-  Initiation Fee rebate だけです。
+  Initiation Fee rebate だけで、それも廃止された VPFI 手数料経路の
+  ままの loan に限られます。
 
 <a id="create-offer.advanced-options"></a>
 
@@ -700,9 +701,10 @@ Borrower claim は、loan がどう settle されたかによって次を返し
 ます:
 
 - **full repayment / preclose / refinance** — あなたの collateral
-  basket と、Loan Initiation Fee からの time-weighted VPFI rebate。
+  basket。廃止された VPFI 手数料経路のままの loan であれば、
+  Loan Initiation Fee からの time-weighted VPFI rebate も戻ります。
 - **HF-liquidation または default** — unused VPFI Loan Initiation
-  Fee rebate のみ。これらの terminal paths では、明示的に preserve
+  Fee rebate のみ（廃止された経路の loan にのみ存在します）。これらの terminal paths では、明示的に preserve
   されない限り 0 です。Collateral はすでに lender に渡っています。
 
 Borrower position NFT は同じ transaction で burn されます。

@@ -838,7 +838,7 @@
       "discountTitle": "Tiered fee discount",
       "discountBody": "VPFI you hold in your Vaipakam Vault earns you a time-weighted discount on Vaipakam's protocol fees — applied automatically when each loan settles, no separate claim step:",
       "discountBullet1": "Lenders: a discount on the treasury cut taken from interest earned. The more VPFI you've held across the loan's lifetime, the smaller the cut.",
-      "discountBullet2": "Borrowers: a VPFI rebate on the loan-initiation fee, paid back at proper close (repay / preclose / refinance). Default forfeits the rebate.",
+      "discountBullet2": "Borrowers: a discount on the loan-initiation fee — applied directly to the fee you pay when the loan is accepted, not paid back afterwards.",
       "howTitle": "How it works",
       "howBody": "Acquire VPFI on the open market or bridge it in, then deposit it into your vault to start earning the fee discount. Cross-chain routing is handled for you — VPFI lands on whichever chain you bridged to.",
       "analyticsHint": "Looking for protocol-wide stats and circulating supply? See the",

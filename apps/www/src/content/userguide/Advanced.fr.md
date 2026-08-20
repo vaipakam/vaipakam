@@ -757,8 +757,9 @@ La réclamation de l'emprunteur rend, selon la manière dont le
 prêt s'est réglé :
 
 - **Remboursement total / preclose / refinance** — ton panier de
-  collatéral, plus le rabais VPFI pondéré dans le temps issu de
-  la Loan Initiation Fee.
+  collatéral, plus — uniquement sur un prêt encore soumis à la
+  voie de frais VPFI retirée — le rabais VPFI pondéré dans le
+  temps issu de la Loan Initiation Fee.
 - **Liquidation HF ou défaut** — uniquement le rabais VPFI Loan
   Initiation Fee inutilisé, qui sur ces chemins terminaux est
   zéro à moins d'être explicitement préservé. Le collatéral est

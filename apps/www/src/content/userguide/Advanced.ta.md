@@ -424,7 +424,8 @@ admin key இல்லை. Pause levers cross-chain-facing contracts-களி�
 - **Illiquid-collateral defaults** — Default உங்கள் முழு collateral-ஐ
   lender-க்கு transfer செய்கிறது. Leftover claim இல்லை; எஞ்சியுள்ள
   unused VPFI Loan Initiation Fee rebate மட்டும் claim time-இல்
-  borrower-ஆக சேகரிக்க முடியும்.
+  borrower-ஆக சேகரிக்க முடியும் — அது நிறுத்தப்பட்ட VPFI கட்டண
+  வழியில் உள்ள loans-க்கு மட்டுமே.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -718,10 +719,11 @@ Loan எவ்வாறு settle ஆனது என்பதைப் பொ�
 தருவது:
 
 - **Full repayment / preclose / refinance** — உங்கள் collateral basket
-  திரும்ப, கூடவே Loan Initiation Fee-இலிருந்து time-weighted VPFI
-  rebate.
+  திரும்ப; அந்த loan இன்னும் நிறுத்தப்பட்ட VPFI கட்டண வழியில்
+  இருந்தால், Loan Initiation Fee-இலிருந்து time-weighted VPFI
+  rebate-உம் சேர்ந்து.
 - **HF-liquidation அல்லது default** — unused VPFI Loan Initiation Fee
-  rebate மட்டும்; இந்த terminal paths-களில் explicitly preserve
+  rebate மட்டும் (நிறுத்தப்பட்ட வழியில் உள்ள loans-க்கு மட்டுமே); இந்த terminal paths-களில் explicitly preserve
   செய்யப்படாவிட்டால் அது zero ஆகும். Collateral ஏற்கனவே lender-க்கு
   நகர்ந்திருக்கும்.
 
