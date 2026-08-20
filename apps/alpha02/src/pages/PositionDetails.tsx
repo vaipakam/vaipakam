@@ -3034,7 +3034,31 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : undefined;
             const live =
               loanLive.data && !loanLive.isError
-                ? loanLive.data.chainNow >= loanEndTimeOf(loanLive.data.live)
+                ? // ADVANCED by local elapsed, exactly as the banner
+                  // path does (Codex r20 P2). `chainNow` is frozen at
+                  // the poll that fetched it, so on a 60-second cycle a
+                  // snapshot taken shortly before maturity kept
+                  // reporting `current` for up to a minute after the
+                  // contracts had begun refusing — the fallback was
+                  // reading a stopped clock.
+                  //
+                  // `dataUpdatedAt` is TanStack's own fetch stamp, so
+                  // this needs no change to `readLoanLive`'s shape —
+                  // which twelve other consumers share and none of them
+                  // needed widening for a maturity question.
+                  //
+                  // Still chain-ANCHORED: the device supplies only the
+                  // elapsed delta, never the absolute time, so a wrong
+                  // device clock shifts the boundary by its drift
+                  // rather than by its absolute error.
+                  loanLive.data.chainNow +
+                    BigInt(
+                      Math.max(
+                        0,
+                        Math.floor(nowSec - loanLive.dataUpdatedAt / 1000),
+                      ),
+                    ) >=
+                  loanEndTimeOf(loanLive.data.live)
                   ? 'past'
                   : 'current'
                 : undefined;
