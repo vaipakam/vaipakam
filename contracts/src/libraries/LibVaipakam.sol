@@ -5786,7 +5786,8 @@ library LibVaipakam {
         // Why the subtraction is load-bearing (design record §2f.2/§2f.3):
         // the day-close reports `creditedCumulative`, `recordChainRecycled`
         // ratchets `chainReportedRecycled[c]` to it, and B2-d3's
-        // `_mirrorAvailable` = `reported − consumed` offers the difference to
+        // `_mirrorAvailable` = `reported` net of the claim and repatriation
+        // draws offers the remainder to
         // Base as that mirror's committable LOCAL funding. Counting relocated
         // custody there would re-offer Base's own already-spent top-up as
         // mirror-local availability, and would additionally widen the Ā

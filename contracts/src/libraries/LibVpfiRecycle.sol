@@ -609,7 +609,8 @@ library LibVpfiRecycle {
      *            advances `recycleCustodyRelocatedCumulative`, which
      *            {creditedCumulative} subtracts. That keeps the tokens out of
      *            the cumulative a mirror reports to Base, which after B2-d3
-     *            drives BOTH `_mirrorAvailable` (`reported − consumed`) and
+     *            drives BOTH `_mirrorAvailable` (`reported` net of the claim
+     *            and repatriation draws) and
      *            the `Ā` attribution headroom in {recordChainRecycled}.
      *
      *         It shares {credit}'s backing assertion: the tokens must

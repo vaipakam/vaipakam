@@ -382,6 +382,13 @@ contract GovernorDayPoolTest is SetupTest {
         // assumption that breaks the day a release reaches this scenario.
         (, uint256 releasedArb) =
             _agg().getChainRecycledCommitRetirement(CHAIN_ARB);
+        assertEq(
+            releasedArb,
+            0,
+            "LIVE: this fixture releases nothing, which is WHY the net form "
+            "and the bare form coincide here -- if this ever fails, the "
+            "assertion below stopped being the stronger of the two"
+        );
         assertLe(
             consumed > releasedArb ? consumed - releasedArb : 0,
             reported,
@@ -444,6 +451,12 @@ contract GovernorDayPoolTest is SetupTest {
             _agg().getChainRecycledLedger(CHAIN_ARB);
         (, uint256 releasedAcross) =
             _agg().getChainRecycledCommitRetirement(CHAIN_ARB);
+        assertEq(
+            releasedAcross,
+            0,
+            "LIVE: no release across these days either -- the premise that "
+            "makes the net and bare forms agree here is asserted, not assumed"
+        );
         assertLe(
             consumed > releasedAcross ? consumed - releasedAcross : 0,
             reported,

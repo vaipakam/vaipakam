@@ -423,14 +423,14 @@ top of `consumed`, omitting `released`, omitting the repatriation terms).
 
 **A count is itself a claim, and the r10 revision replaced "the sweep is
 complete" with "a sweep found seven" — which was stale within one round.** So
-no number is recorded here either. What is recorded is the rule above, the
-canonical locations, and the fact that the **code-side copies tracked in #1577
-are NOT done**. Anyone who finds another restatement has found a defect, not a
-counterexample to a claim — and should fix it here rather than adding to a
-tally.
+no number is recorded here either. What is recorded is the rule above and the
+canonical locations; the state of the code-side copies tracked in #1577 is
+recorded in the paragraph below. Anyone who finds another restatement has found
+a defect, not a counterexample to a claim — and should fix it here rather than
+adding to a tally.
 
-**The docs and the CODE are now both swept** — #1577, which closed the gap the
-paragraph below used to describe. What changed:
+**#1577 swept the code side.** What changed — recorded without a count and
+without a completeness claim, for the reason the paragraph above gives:
 
 - `contracts/test/invariants/MeshLedger.invariant.t.sol` stated the
   overflow-prone **addition** form in its docstrings and in its function name
@@ -440,19 +440,26 @@ paragraph below used to describe. What changed:
   not change.
 - `contracts/test/GovernorDayPoolTest.t.sol` **asserted** the bare form under an
   `"SS7 invariant"` label. Both assertions now net the release off before
-  comparing. They pass identically today — those fixtures never release — which
-  is precisely why the bare form survived: it was true by fixture, not by
+  comparing, and the fixture premise that makes the two forms coincide there
+  (`released == 0`) is asserted rather than left implicit. They pass
+  identically, which is the point: the bare form was true by fixture, not by
   invariant.
-- **Four** NatSpec/comment mentions in `contracts/src/`, not the three an
-  earlier revision of this list counted: `RewardAggregatorFacet` carried the
-  addition form in `getChainRecycledLedger`'s `@return availRecycled` doc as
-  well as in the duplicate-chain-id comment, and that first one is the site an
-  integrator reads. The others are `IVaipakamErrors.DuplicateExpectedChainId`
-  and `LibMeshFunding`'s availability cap.
+- NatSpec and comments in `contracts/src/`. The **addition** form appeared in
+  exactly one of them — `getChainRecycledLedger`'s `@return availRecycled` doc,
+  which is the site an integrator reads. The rest carried the **bare** form:
+  the duplicate-chain-id comments in `RewardAggregatorFacet` and
+  `IVaipakamErrors`, `LibMeshFunding`'s availability cap, and every surviving
+  description of `_mirrorAvailable` as `reported − consumed` — a formula that
+  predates B3's release term and has been wrong since, in
+  `RewardAggregatorFacet`, `LibVpfiRecycle` and `LibVaipakam`.
 
-A count in a scope statement is a claim like any other; this one was wrong in
-the direction that stops the next person looking, which is the same failure the
-paragraph above was written to prevent.
+**The rule above earned itself again inside this very change.** A first pass
+corrected four `contracts/src/` restatements and stated that the code side was
+swept; an adversarial review then found four more — all of them describing
+`_mirrorAvailable` by its pre-B3 formula, and one of them in the same comment
+block a fix had already edited. That is the r10 failure repeating with different
+numbers, five lines below the paragraph warning about it, which is why neither a
+count nor a completeness claim is stated here.
 
 **The bare form `consumedCumulative ≤ reportedCumulative` is FALSE and must not
 appear as a current claim anywhere.** That is the one thing worth stating here,

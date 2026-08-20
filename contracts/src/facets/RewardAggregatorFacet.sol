@@ -739,8 +739,11 @@ contract RewardAggregatorFacet is
     /// @return availRecycled        What mesh funding/netting may draw
     ///                              against: `reported`, less the net claim
     ///                              draw `sat(consumed − released)`, less the
-    ///                              net repatriation draw — each netted by
-    ///                              SATURATING subtraction. Never computed as
+    ///                              MAINTAINED net repatriation slot — that
+    ///                              one is decremented by a cancellation ACK,
+    ///                              never derived from two gross cumulatives
+    ///                              (§7 #6's operand note). Every subtraction
+    ///                              SATURATES. Never computed as
     ///                              `reported + released − consumed` (#1577):
     ///                              a reported cumulative is unbounded, so
     ///                              that addition overflows on a hostile
@@ -1340,7 +1343,8 @@ contract RewardAggregatorFacet is
      *         actually REPORTS to Base with that netted out.
      * @dev    Operator/observability read for the invariant that matters:
      *         `reportedCumulative` must never include relocated custody, or
-     *         Base's `_mirrorAvailable` (`reported − consumed`) would re-offer
+     *         Base's `_mirrorAvailable` (`reported` net of the claim and
+     *         repatriation draws) would re-offer
      *         its own already-spent top-up as this mirror's local funding and
      *         the Ā attribution headroom would widen (design record §2f.2).
      *         On Base itself `custodyRelocated` stays 0 — nothing remits to
@@ -2045,7 +2049,7 @@ contract RewardAggregatorFacet is
         for (uint256 i; i < chainIds.length; ) {
             // #1222 M3 B2-d3 (Codex #1430 r1) — reject DUPLICATES. The
             // per-chain funding resolution reads each entry's demand
-            // numerators and its `reported − consumed` availability
+            // numerators and its `reported`-net-of-draws availability
             // independently, so a repeated id would double-count that
             // chain's target, self-fund its availability twice (booking
             // `2 × commitLocal` into the per-chain ledgers and breaking

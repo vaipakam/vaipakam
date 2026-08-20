@@ -12,11 +12,14 @@ The consequence the old wording concealed is the one an operator most needs to
 know: the platform can report ample remaining headroom while holding nothing to
 pay it with. Headroom is permission to spend, not evidence of funds.
 
-Every current statement of it now says so — including the one inside a **ratified
-principle**, whose substance is unchanged and whose reword is recorded in place
-alongside it. Two of the corrected statements are in the machine-readable
-documentation that integrators inherit, so a downstream reader no longer picks up
-the wrong model of where reward value comes from.
+The statements found saying otherwise now say so — including the one inside a
+**ratified principle**, whose substance is unchanged and whose reword is recorded
+in place alongside it. Several of the corrected statements are in the
+machine-readable documentation that integrators inherit, so a downstream reader
+no longer picks up the wrong model of where reward value comes from. No claim is
+made that none remain: a wording sweep can only reach the phrasings someone
+thought to look for, and the correction below is what happens when that limit
+bites.
 
 Wording that uses "pre-funded" in its ordinary and correct sense — a loan's
 prepaid buffer, a test account funded in advance, surplus already delivered to a
@@ -49,10 +52,14 @@ arithmetic that actually runs, where the rejected one can overflow on a hostile
 report. The name now matches the body — a name is read far more often than the
 comment correcting it.
 
-Four descriptions in the contracts were corrected rather than the three that had
-been recorded as outstanding. The missing one was the description attached to the
-public availability reading itself, which is the copy an integrator is most
-likely to read.
+The descriptions in the contracts were corrected too, and there were more of them
+than the record of outstanding work listed. That record is now kept without a
+count, because this change demonstrated the reason for the rule: a first pass
+corrected four of them and said so, and a review then found four more — all
+describing the availability calculation by a formula that predates the release
+term, one of them inside a comment block the first pass had already edited. A
+count in a status note is a claim like any other, and it goes stale in the
+direction that stops the next person looking.
 
 ## The treasury recycling rule is no longer filed inside one of its own footnotes (#1570)
 
@@ -64,10 +71,11 @@ dormancy and the keeper budget therefore appeared, to any reader and to the tabl
 of contents, to be part of a subsection titled "per-chain recycled-surplus flag
 (operator signal only)".
 
-The rule now comes first and its two refinements follow it. One cross-reference
-inside the subsection pointed to "the rule below" when that rule was in fact
-above it, and it has been corrected. A note deferring the disposal of a flagged
-surplus to a section "tracked separately" now points at the section that
+The rule now comes first and its two refinements follow it. Moving it turned one
+cross-reference inside the subsection — which said "the rule below", and was
+correct while the rule was below — into a statement pointing the wrong way, so it
+was corrected as part of the same move. A note deferring the disposal of a
+flagged surplus to a section "tracked separately" now points at the section that
 specifies it, which has since been written.
 
 No statement of intended behaviour changed in any of this — the section says what

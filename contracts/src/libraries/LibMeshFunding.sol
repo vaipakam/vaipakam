@@ -191,7 +191,8 @@ library LibMeshFunding {
             // d2's delivered-backing ledger make it safe). A mirror's
             // availability is Base's model of its committable bucket:
             // `reported` less the net claim draw `sat(consumed −
-            // released)`, the HARD backstop the B1 ledger
+            // released)` and less the net repatriation draw, the HARD
+            // backstop the B1 ledger
             // defines — reported only ever advances on the chain's own
             // authenticated day-close report, and consumed is the cumulative
             // Base has INSTRUCTED it to fund locally. Netting by the
