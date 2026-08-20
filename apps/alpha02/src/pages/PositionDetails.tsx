@@ -3099,12 +3099,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // remembered offer id stays verified, so keying on the id
           // alone promised a cancel that failure had already removed
           // (Codex r5 P2 for the id, r7 P2 for the holder).
+          // A null `offerId` means two different things and only one
+          // of them is "made elsewhere" (Codex r18 P2). When the link
+          // read FAILED we could not tell, so telling the lender their
+          // listing was created on another device is a fabricated
+          // cause — and the same failure would otherwise have wiped the
+          // local marker, taking the cancel path with it. Verification
+          // failure maps to the unverified line, which says we cannot
+          // confirm rather than naming a place.
           saleCancel={
-            sale.state?.offerId == null
-              ? 'no-elsewhere'
-              : sale.state.isHolder === true
-                ? 'yes'
-                : 'no-unverified'
+            sale.state?.offerIdVerifyFailed === true
+              ? 'no-unverified'
+              : sale.state?.offerId == null
+                ? 'no-elsewhere'
+                : sale.state.isHolder === true
+                  ? 'yes'
+                  : 'no-unverified'
           }
           // Affirmative FallbackPending only (Codex r8 P2). Both sale
           // entry points require exactly Active, so the rows go — but
