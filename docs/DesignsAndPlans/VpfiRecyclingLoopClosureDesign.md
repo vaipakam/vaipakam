@@ -47,7 +47,7 @@ reopens a ratified decision.
 VPFI the protocol absorbs (tariffs, notification fees, forfeited rewards,
 future slashes — the governor §4 classes) credits a protocol-owned
 **recycle bucket**. At day finalization the governor sizes the reward budget
-as the decaying pre-funded floor **plus** `(1−m)` of trailing-7-day
+as the decaying schedule floor **plus** `(1−m)` of trailing-7-day
 absorption (`m` = 5% retained platform margin). Users earn from that budget
 only through their **own completed lending activity**, per-user- and
 per-loan-capped: rewards on a loan are bounded by a **fee-linked ceiling**
@@ -57,7 +57,7 @@ absorbed), so reward extraction is capped by the scale of fees genuinely
 paid on that loan (the dYdX-style fee-linked cap), never by pool size. Nothing is burned: the 230M hard
 cap already provides permanent scarcity (owner decision 2026-07-13), and
 every recycled token extends the reward program's life instead —
-after the 69M pre-fund exhausts, the program continues indefinitely at
+once the 69M drawdown allowance is exhausted, the program continues indefinitely at
 `(1−m)×Ā`.
 
 ## 3. External benchmark — where the Vaipakam stack sits

@@ -973,7 +973,8 @@ interface IVaipakamErrors {
     ///         same chain id twice. The per-chain funding resolution treats
     ///         each entry independently, so a duplicate would double-count
     ///         that chain's demand target, self-fund its availability twice
-    ///         (breaking `consumed ≤ reported`), and clobber the shared
+    ///         (breaking SS7 #6's `sat(consumed − released) ≤ reported`),
+    ///         and clobber the shared
     ///         per-(day, chain) funding stamp.
     error DuplicateExpectedChainId(uint32 chainId);
 

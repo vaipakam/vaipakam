@@ -184,6 +184,8 @@ contract MeshCommitRetirementTest is SetupTest {
     /// A commitment the mirror forfeits/expires un-spent leaves its tokens
     /// in that chain's bucket, so the availability Base models must come
     /// back. Against B2-d3's `reported - consumed` this reads 0 forever.
+    /// formula-check:allow cites the superseded B2-d3 form as the historical
+    /// contrast this test exists to demonstrate.
     function test_B3_ReleasedCommitmentsRestoreAvailability() public {
         _armAndInstruct40();
 
@@ -298,6 +300,7 @@ contract MeshCommitRetirementTest is SetupTest {
     /// Codex #1435 r1 P1 — the availability read must never REVERT, whatever
     /// a chain reports. `chainReportedRecycled[c]` is ratcheted to whatever
     /// cumulative a chain sends and is deliberately unbounded, so computing
+    /// formula-check:allow the addition form is named here to refuse it.
     /// `(reported + released) − consumed` would overflow on a near-max
     /// cumulative paired with any nonzero release. That is not contained:
     /// this read is on the `finalizeDay` path via the mesh funding pass, and

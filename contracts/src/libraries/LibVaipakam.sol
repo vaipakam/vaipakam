@@ -5599,15 +5599,22 @@ library LibVaipakam {
         //   the highest cumulative ever accepted from chain `c` (Base's own
         //   under its chain id). Monotonic-guarded on write; a stale or
         //   reordered report can never walk it backwards.
-        //   `availRecycled[c] = chainReportedRecycled[c] −
-        //   chainConsumedRecycled[c]` is what B2/B3 funding and netting draw
+        //   Availability is `chainReportedRecycled[c]` less the NET claim
+        //   draw `sat(consumed − released)` and less the net repatriation
+        //   draw — see {LibVpfiRecycle.mirrorAvailRecycled}, which owns the
+        //   operand order. That is what B2/B3 funding and netting draw
         //   against — the HARD backstop bounding every day-credit clamp.
         mapping(uint32 => uint256) chainReportedRecycled;
         // `chainConsumedRecycled` — BASE-ONLY: cumulative recycled Base has
         //   INSTRUCTED chain `c` to consume (B2 `recycleConsume` +
         //   `keeperAllocate`, B3 netting). Declared with the ledger so the
-        //   block reads as one unit; written from B2 on. Always
-        //   `≤ chainReportedRecycled[c]`. **C2 repatriation does NOT write
+        //   block reads as one unit; written from B2 on. It is NOT bounded by
+        //   `chainReportedRecycled[c]`: a commitment released un-spent is
+        //   legitimately re-committable, so this cumulative can legally
+        //   exceed the reported one (report 100 → consume 100 → release 100 →
+        //   consume again is healthy at consumed 200 / reported 100). What is
+        //   bounded is the NET — `sat(consumed − released) ≤ reported`.
+        //   **C2 repatriation does NOT write
         //   this counter** (an earlier revision of this comment listed it as
         //   a future writer — wrong: this counter is one half of the
         //   `outstanding + retired == consumed` identity, and a repatriation
@@ -5786,7 +5793,8 @@ library LibVaipakam {
         // Why the subtraction is load-bearing (design record §2f.2/§2f.3):
         // the day-close reports `creditedCumulative`, `recordChainRecycled`
         // ratchets `chainReportedRecycled[c]` to it, and B2-d3's
-        // `_mirrorAvailable` = `reported − consumed` offers the difference to
+        // `_mirrorAvailable` = `reported` net of the claim and repatriation
+        // draws offers the remainder to
         // Base as that mirror's committable LOCAL funding. Counting relocated
         // custody there would re-offer Base's own already-spent top-up as
         // mirror-local availability, and would additionally widen the Ā
@@ -5842,7 +5850,11 @@ library LibVaipakam {
         // `chainReleasedRecycledCommit` — BASE-ONLY per-chain ratchet of the
         //   reported RELEASE cumulative; clamped to the ratcheted retired
         //   figure and to `chainConsumedRecycled[c]`. It re-credits
-        //   availability: `avail_c = reported_c + released_c − consumed_c`.
+        //   availability by reducing the NET claim draw that is subtracted
+        //   from `reported_c` — see {LibVpfiRecycle.mirrorAvailRecycled} for
+        //   the operand order; it is subtraction-first and is not restated
+        //   as a sum here, because the sum form overflows on a hostile
+        //   report.
         //   The clamp is the load-bearing safety bound — `released_c ≤
         //   consumed_c` forces `avail_c ≤ chainReportedRecycled[c]`, so the
         //   self-heal can never re-offer the Base-funded custody d5

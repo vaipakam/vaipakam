@@ -35,8 +35,9 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *         lane-sized chunks under the VPFI CCIP rate limits, and a failed
  *         batch is safe to retry (already-sent (chain,day) pairs are skipped).
  *
- * @dev    Base-only (`onlyCanonical`): the 69M interaction pool lives on the
- *         canonical chain, so only Base holds the VPFI to remit. Authorized to
+ * @dev    Base-only (`onlyCanonical`): the 69M interaction-reward allowance is
+ *         accounted on the canonical chain and the balance it draws against is
+ *         funded there, so only Base holds the VPFI to remit. Authorized to
  *         the ADMIN role, or an optional `rewardRemittanceKeeper` EOA for the
  *         apps/keeper automation loop.
  *

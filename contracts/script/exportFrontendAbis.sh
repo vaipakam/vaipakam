@@ -4,15 +4,24 @@
 #
 # Runs `forge inspect <Facet> abi --json` for every facet the
 # frontend imports, and writes the resulting JSON files into
-# `frontend/src/contracts/abis/`. Keeps the frontend's hand-imported
-# ABIs in lockstep with the contract source so the
+# `packages/contracts/src/abis/` — the shared @vaipakam/contracts
+# bundle every app reads. (This header used to name
+# `frontend/src/contracts/abis/`, a path removed with the frontend
+# tree; the script has written to the package bundle since Stage 1b.)
+# Keeps those ABIs in lockstep with the contract source so the
 # stale-ABI-vs-deployed-contract drift that bit us once (Phase 6
 # removed `keeperAccessEnabled` from `CreateOfferParams` but the
 # frontend kept sending it, causing Base RPCs to wrap the revert as
 # "exceeds max transaction gas limit") doesn't recur.
 #
 # Usage:
-#   bash contracts/script/exportFrontendAbis.sh
+#   bash contracts/script/exportFrontendAbis.sh      # from the REPO ROOT
+#   bash /abs/path/to/contracts/script/exportFrontendAbis.sh   # from anywhere
+#       # The script resolves its own location, so it runs correctly from
+#       # any working directory — but a REPO-ROOT-RELATIVE path cannot be
+#       # FOUND from contracts/, which fails as
+#       # "No such file or directory" while the surrounding shell still
+#       # reports success. Prefer the absolute form in scripted use.
 #       # defaults to CONTRACTS_PKG_DIR=../packages/contracts (this
 #       # monorepo's @vaipakam/contracts package).
 #

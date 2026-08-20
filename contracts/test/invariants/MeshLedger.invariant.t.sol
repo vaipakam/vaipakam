@@ -63,10 +63,18 @@ import {HelperTest} from "../HelperTest.sol";
  *
  *         Invariants asserted (governor design §7 + the B3 design record §4):
  *
- *           1. §7 #6 — `consumed ≤ reported + released` per chain. B3's form
- *              of the original `consumed ≤ reported`: a commitment the chain
- *              released un-spent is legitimately re-offerable, so the bound
- *              gains the release term rather than being weakened.
+ *           1. §7 #6 — `sat(consumed − released) ≤ reported` per chain,
+ *              SUBTRACTION-first. B3's form of the original
+ *              formula-check:allow the superseded bare form is named here.
+ *              `consumed ≤ reported`: a commitment the chain released
+ *              un-spent is legitimately re-offerable, so the bound nets the
+ *              release off rather than being weakened. Never stated as the
+ *              formula-check:allow the addition form is named here to forbid it.
+ *              algebraically equal `consumed ≤ reported + released` (#1577)
+ *              — a reported cumulative is unbounded, so that addition
+ *              overflows on a hostile report and reverts instead of
+ *              comparing. The two forms are equal over the reals and
+ *              different over `uint256`, and only `uint256` runs.
  *           2. B3 identity — `outstanding == instructed − retired` per chain,
  *              exact at every instant including with broadcasts in flight.
  *           3. Ceiling — `availRecycled ≤ reported` per chain. The property
@@ -95,12 +103,12 @@ import {HelperTest} from "../HelperTest.sol";
  *             true of the arithmetic itself, not derived from the clamps.
  *             The mutation is the evidence for that claim.
  *           * **Invariant 1 is the weakest of the set.** With the clamps
- *             gone a hostile `released` inflates the right-hand side, so
- *             `consumed ≤ reported + released` passes trivially. It is
- *             retained because it is the governor §7 #6 wording in B3's
- *             form and it does bind while the clamps hold — but invariant 4
- *             is what actually defends the bound, and a future change that
- *             weakens the clamps would be caught by 4, not by 1.
+ *             gone a hostile `released` drives `sat(consumed − released)`
+ *             to zero, so the bound passes trivially. It is retained
+ *             because it is the governor §7 #6 wording in B3's form and it
+ *             does bind while the clamps hold — but invariant 4 is what
+ *             actually defends the bound, and a future change that weakens
+ *             the clamps would be caught by 4, not by 1.
  */
 contract MeshLedgerInvariant is Test {
     VaipakamDiamond public diamond;
@@ -294,11 +302,21 @@ contract MeshLedgerInvariant is Test {
 
     // ─── Invariants ──────────────────────────────────────────────────────
 
-    /// §7 #6, in B3's form. The original `consumed <= reported` gained the
-    /// release term because a commitment released un-spent leaves its tokens
-    /// in the chain's bucket and is legitimately committable again — the
-    /// bound is widened by something real, not weakened.
-    function invariant_ConsumedWithinReportedPlusReleased() public view {
+    /// §7 #6, in B3's form: `sat(consumed − released) ≤ reported`. The
+    /// formula-check:allow the superseded bare form is quoted just below.
+    /// original `consumed ≤ reported` gained the release term because a
+    /// commitment released un-spent leaves its tokens in the chain's bucket
+    /// and is legitimately committable again — the bound is widened by
+    /// something real, not weakened.
+    ///
+    /// The name says `ClaimNetWithinReported` rather than the former
+    /// `ConsumedWithinReportedPlusReleased` (#1577): the addition form the
+    /// old name stated is the one the body below deliberately does NOT use,
+    /// because it overflows on a near-max report. A name that states the
+    /// wrong form is read far more often than the comment correcting it.
+    /// formula-check:allow quotes the superseded bare form to explain what
+    /// the release term replaced.
+    function invariant_ClaimNetWithinReported() public view {
         uint32[3] memory cs = _chains();
         for (uint256 i; i < cs.length; ++i) {
             (uint256 reported, uint256 consumed, , ) =

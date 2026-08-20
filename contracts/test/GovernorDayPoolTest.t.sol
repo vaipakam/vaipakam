@@ -333,8 +333,10 @@ contract GovernorDayPoolTest is SetupTest {
     }
 
     /// Armed day, two-pass funding with mirror LOCAL funding ON (B2-d3).
-    /// A mirror funds its target from its OWN reported-minus-consumed
-    /// availability first; Base tops up only the shortfall from its
+    /// A mirror funds its target from its OWN reported availability first —
+    /// net of what Base has instructed it to spend LESS whatever it released
+    /// un-spent (a released commitment returns to availability), and net of
+    /// any repatriation draw; Base tops up only the shortfall from its
     /// remaining fundable. The locally-funded share books into the per-chain
     /// ledgers and rides the wire as `recycleConsume`; Base's top-up books
     /// into the GLOBAL reservation — never both (design record §2e.4).
@@ -373,7 +375,29 @@ contract GovernorDayPoolTest is SetupTest {
             _agg().getChainRecycledLedger(CHAIN_ARB);
         assertEq(reported, 40 ether, "reported cumulative");
         assertApproxEqAbs(consumed, 40 ether, 1e15, "instruction booked");
-        assertLe(consumed, reported, "SS7 invariant: consumed <= reported");
+        // formula-check:allow quotes the bare form to contrast it with the
+        // real bound.
+        // SS7 #6 is the SUBTRACTION form `sat(consumed - released) <=
+        // reported`, not the bare `consumed <= reported` (#1577): a
+        // commitment released un-spent is legitimately re-committable, so
+        // `consumed` alone is deliberately unbounded by `reported`. This
+        // fixture never releases, so the two coincide here -- asserting the
+        // real bound is what keeps that an observation rather than a silent
+        // assumption that breaks the day a release reaches this scenario.
+        (, uint256 releasedArb) =
+            _agg().getChainRecycledCommitRetirement(CHAIN_ARB);
+        assertEq(
+            releasedArb,
+            0,
+            "LIVE: this fixture releases nothing, which is WHY the net form "
+            "and the bare form coincide here -- if this ever fails, the "
+            "assertion below stopped being the stronger of the two"
+        );
+        assertLe(
+            consumed > releasedArb ? consumed - releasedArb : 0,
+            reported,
+            "SS7 #6: sat(consumed - released) <= reported"
+        );
         assertApproxEqAbs(avail, 0, 1e15, "availability now exhausted");
         assertEq(
             _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
@@ -395,8 +419,9 @@ contract GovernorDayPoolTest is SetupTest {
         );
     }
 
-    /// The pass-1 availability cap is where the SS7 `consumed <= reported`
-    /// invariant is enforced: once a mirror's reported availability is fully
+    /// The pass-1 availability cap is where SS7 #6's bound
+    /// `sat(consumed - released) <= reported` is enforced: once a mirror's
+    /// reported availability is fully
     /// instructed, a later armed day funds it entirely from Base.
     function testMirrorAvailabilityIsExhaustedByPriorInstructions() public {
         _mut().setRecycleBucketRaw(1_000_000 ether);
@@ -428,13 +453,26 @@ contract GovernorDayPoolTest is SetupTest {
         );
         (uint256 reported, uint256 consumed, , ) =
             _agg().getChainRecycledLedger(CHAIN_ARB);
-        assertLe(consumed, reported, "invariant holds across days");
+        (, uint256 releasedAcross) =
+            _agg().getChainRecycledCommitRetirement(CHAIN_ARB);
+        assertEq(
+            releasedAcross,
+            0,
+            "LIVE: no release across these days either -- the premise that "
+            "makes the net and bare forms agree here is asserted, not assumed"
+        );
+        assertLe(
+            consumed > releasedAcross ? consumed - releasedAcross : 0,
+            reported,
+            "SS7 #6: sat(consumed - released) <= reported, across days"
+        );
     }
 
     /// Codex #1430 r1 — duplicate chain ids are rejected at the only
     /// writer: the resolution reads each entry's demand + availability
     /// independently, so a repeat would double-count the target, self-fund
-    /// the same availability twice (breaking consumed <= reported), and
+    /// the same availability twice (breaking SS7 #6's
+    /// `sat(consumed - released) <= reported`), and
     /// clobber the shared per-(day, chain) stamp.
     function testExpectedSourceChainIdsRejectsDuplicates() public {
         uint32[] memory dup = new uint32[](3);

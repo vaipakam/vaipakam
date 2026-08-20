@@ -190,14 +190,17 @@ library LibMeshFunding {
             // re-slice deferred it to here, where d1's commitment report +
             // d2's delivered-backing ledger make it safe). A mirror's
             // availability is Base's model of its committable bucket:
-            // `reported − consumed`, the HARD backstop the B1 ledger
+            // `reported` less the net claim draw `sat(consumed −
+            // released)` and less the net repatriation draw, the HARD
+            // backstop the B1 ledger
             // defines — reported only ever advances on the chain's own
             // authenticated day-close report, and consumed is the cumulative
             // Base has INSTRUCTED it to fund locally. Netting by the
             // instruction is what keeps a chain from being committed twice
             // for the same tokens across days, and makes the §7 invariant
-            // `consumed ≤ reported` bind (this cap is its only enforcement
-            // point). Base itself keeps its commitment- and keeper-netted
+            // `sat(consumed − released) ≤ reported` bind (this cap is its
+            // only enforcement point). Base itself keeps its commitment- and
+            // keeper-netted
             // `fundable`.
             c.avail = c.chainId == baseId
                 ? availBase

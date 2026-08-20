@@ -736,8 +736,20 @@ contract RewardAggregatorFacet is
     ///                              chain (availability, monotonic).
     /// @return consumedCumulative   Cumulative Base has instructed the chain
     ///                              to consume (written from B2 on).
-    /// @return availRecycled        `reported + released − consumed` — what
-    ///                              mesh funding/netting may draw against.
+    /// @return availRecycled        What mesh funding/netting may draw
+    ///                              against: `reported`, less the net claim
+    ///                              draw `sat(consumed − released)`, less the
+    ///                              MAINTAINED net repatriation slot — that
+    ///                              one is decremented by a cancellation ACK,
+    ///                              never derived from two gross cumulatives
+    ///                              (§7 #6's operand note). Every subtraction
+    ///                              SATURATES.
+    /// formula-check:allow the addition form is named here only to forbid it.
+    ///                              Never computed as
+    ///                              `reported + released − consumed` (#1577):
+    ///                              a reported cumulative is unbounded, so
+    ///                              that addition overflows on a hostile
+    ///                              report.
     ///                              #1222 M3 B3 added the release term (a
     ///                              commitment the chain forfeited/expired
     ///                              un-spent left its tokens in that chain's
@@ -1273,7 +1285,17 @@ contract RewardAggregatorFacet is
     ///         math source).
     /// @param  dayId Day to read.
     /// @return stamped        True once the day finalized (stamp exists).
-    /// @return scheduleFloor  Fresh (pre-fund) half of the day's pool.
+    /// @return scheduleFloor  Fresh half of the day's pool: the SCHEDULED
+    ///                          figure, itself capped by the remaining 69M
+    ///                          allowance (which is a spending ceiling, not a
+    ///                          balance created at deploy). This is not the
+    ///                          amount charged against that allowance — where
+    ///                          activity earns less than the schedule, the
+    ///                          charge is smaller, and may be zero. This
+    ///                          getter does NOT expose the charge: read it as
+    ///                          `freshDrawdown` from
+    ///                          {InteractionRewardsLensFacet.getRecycleDayMetrics},
+    ///                          or from the {GovernorDayPoolStamped} event.
     /// @return recycledBudget Absorption-coupled recycled half.
     /// @return aBar           Trailing absorption average at finalize.
     /// @return marginBps      Retained-margin bps stamped at finalize.
@@ -1331,7 +1353,8 @@ contract RewardAggregatorFacet is
      *         actually REPORTS to Base with that netted out.
      * @dev    Operator/observability read for the invariant that matters:
      *         `reportedCumulative` must never include relocated custody, or
-     *         Base's `_mirrorAvailable` (`reported − consumed`) would re-offer
+     *         Base's `_mirrorAvailable` (`reported` net of the claim and
+     *         repatriation draws) would re-offer
      *         its own already-spent top-up as this mirror's local funding and
      *         the Ā attribution headroom would widen (design record §2f.2).
      *         On Base itself `custodyRelocated` stays 0 — nothing remits to
@@ -2036,11 +2059,12 @@ contract RewardAggregatorFacet is
         for (uint256 i; i < chainIds.length; ) {
             // #1222 M3 B2-d3 (Codex #1430 r1) — reject DUPLICATES. The
             // per-chain funding resolution reads each entry's demand
-            // numerators and its `reported − consumed` availability
+            // numerators and its `reported`-net-of-draws availability
             // independently, so a repeated id would double-count that
             // chain's target, self-fund its availability twice (booking
             // `2 × commitLocal` into the per-chain ledgers and breaking
-            // `consumed ≤ reported`), and clobber the shared
+            // SS7 #6's `sat(consumed − released) ≤ reported`), and clobber
+            // the shared
             // `(day, chain)` funding stamp so the broadcast instructs only
             // one of the two reservations. There is no legitimate use for a
             // repeated source chain, so it is rejected at the only writer.

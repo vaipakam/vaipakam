@@ -27,8 +27,9 @@ wants:
    `contracts/src` is empty. The prior design, #1217, #1218 and #1222 are all
    unbuilt. We are free to build the *right* shape first time.
 2. **Interaction rewards are never minted per-claim.** They are paid by
-   `safeTransfer` out of a **pre-funded pool balance** on the Base Diamond,
-   bounded by a software counter
+   `safeTransfer` out of the Base Diamond's **existing VPFI balance** — which
+   an operator must fund; no step of deployment mints 69M into it — bounded by a
+   software counter
    (`interactionPoolPaidOut + rewardBudgetRemittedGlobal ≤
    VPFI_INTERACTION_POOL_CAP = 69M`,
    `InteractionRewardsFacet.claimInteractionRewards`). The daily budget is a
@@ -69,10 +70,16 @@ Required properties:
 - **(P3) Bootstrap continuity:** at launch absorption is near zero (most VPFI
   receipt classes are peg-gated dormant — §4), so distribution must degrade
   gracefully to today's schedule, not to zero. No cliff, no mode flag.
-- **(P4) Cap discipline:** drawdown of the *pre-funded* 69M pool ("fresh
-  drawdown") remains bounded by the existing schedule and the 69M counter;
-  recycled re-use extends the program without touching it. The token-enforced
-  230M global cap is unaffected either way.
+- **(P4) Cap discipline:** drawdown against the 69M interaction-reward
+  allocation ("fresh drawdown") remains bounded by the existing schedule and
+  the 69M counter; recycled re-use extends the program without touching it. The
+  token-enforced 230M global cap is unaffected either way.
+  <br>*Wording corrected under #1459 — substance unchanged.* This principle
+  originally called the 69M a *pre-funded* pool. It is an accounting ceiling on
+  drawdown: nothing mints or sets aside 69M at deploy, and funding the balance
+  the drawdown draws against is a separate operator prerequisite. A platform can
+  therefore report ample headroom while holding nothing to pay it with. The
+  bound P4 states — schedule and counter — is exactly as ratified.
 - **(P5) Governance shape:** the margin is a bounded ADMIN_ROLE knob behind
   the 48h timelock, later transferable to governance — the house
   `setInteractionCapVpfiPerEth` pattern (compile-time bounds, zero-sentinel
@@ -224,8 +231,12 @@ commitment-netted ones above; there is no separate "freshRemaining"):
 - `scheduleFloor[D]` is the existing emission schedule (`halfPoolForDay × 2`),
   re-labelled from "the pool" to "the floor": the guaranteed minimum that
   decays on the existing seven-tier curve, capped by `freshAvailable` (above).
-  Funded from the pre-funded pool and counted against the 69M counter, exactly
-  as today.
+  Paid from the Diamond's funded VPFI balance. It is the SCHEDULED figure,
+  capped by the remaining 69M allowance — **not** the amount charged against
+  it. `_stampGovernorDayPool` charges the computed `commitFresh`
+  (`freshDrawdown`), which on a day whose activity earns less than the schedule
+  is strictly smaller and may be zero; unused scheduled capacity consumes no
+  headroom. Reading the floor as the charge overstates cap consumption.
 - `recycledBudget[D]` is the absorption-coupled add-on, **not** counted
   against the 69M counter (P4). It is a **sizing reservation, not a
   finalize-time transfer**: the bucket is debited pro-rata **at claim /
@@ -254,8 +265,8 @@ note the raw schedule alone would NOT guarantee this, its 5% tail is
 unbounded; the `freshRemaining` cap is what closes it). The floor's built-in
 decay does the
 hand-over automatically: early life is schedule-dominated, mature life is
-absorption-dominated, and after the 69M pre-fund exhausts the program
-continues indefinitely at `(1 − m) × Ā` — **rewards stop hard-stopping**.
+absorption-dominated, and once the 69M drawdown allowance is exhausted the
+program continues indefinitely at `(1 − m) × Ā` — **rewards stop hard-stopping**.
 
 ### 3.2 The margin knob
 

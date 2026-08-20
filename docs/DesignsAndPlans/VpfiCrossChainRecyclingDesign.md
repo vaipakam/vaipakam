@@ -208,7 +208,8 @@ chain actually needs; recycling changes the *source*, never the amount).
 
 > **SUPERSEDED** by the balance governor
 > ([`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) §3):
-> rewards are drawn from a pre-funded pool, not minted per-day, so this
+> rewards are paid from the Diamond's existing balance against a fixed
+> drawdown allowance, not minted per-day, so this
 > offset formula has no mint to offset; and the schedule-blind pool size is
 > replaced by `dailyPool[D] = scheduleFloor[D] + (1 − marginBps) × Ā[D]`.
 > Retained below for the record.
@@ -422,29 +423,80 @@ top of `consumed`, omitting `released`, omitting the repatriation terms).
 
 **A count is itself a claim, and the r10 revision replaced "the sweep is
 complete" with "a sweep found seven" — which was stale within one round.** So
-no number is recorded here either. What is recorded is the rule above, the
-canonical locations, and the fact that the **code-side copies tracked in #1577
-are NOT done**. Anyone who finds another restatement has found a defect, not a
-counterexample to a claim — and should fix it here rather than adding to a
-tally.
+no number is recorded here either. What is recorded is the rule above and the
+canonical locations; the state of the code-side copies tracked in #1577 is
+recorded in the paragraph below. Anyone who finds another restatement has found
+a defect, not a counterexample to a claim — and should fix it here rather than
+adding to a tally.
 
-**The docs are swept; the CODE is NOT, and this is a scope statement rather
-than a claim of completeness** (Codex #1574 r9 P2 — an earlier revision listed
-"a test docstring" among the things that already point, which was false and is
-exactly the kind of overclaim that stops the next person looking). Still
-carrying stale forms, tracked in **#1577**:
+**#1577 swept the code side.** What changed — recorded without a count and
+without a completeness claim, for the reason the paragraph above gives:
 
-- `contracts/test/invariants/MeshLedger.invariant.t.sol` states the
+- `contracts/test/invariants/MeshLedger.invariant.t.sol` stated the
   overflow-prone **addition** form in its docstrings and in its function name
-  `invariant_ConsumedWithinReportedPlusReleased`, while its own code implements
-  the subtraction form and its inline comment explains why addition fails;
-- `contracts/test/GovernorDayPoolTest.t.sol` **asserts** the bare form under an
-  `"SS7 invariant"` label;
-- three NatSpec/comment mentions in `contracts/src/`.
+  while its own body implemented the subtraction form. The invariant is now
+  `invariant_ClaimNetWithinReported`, and the docstrings state
+  `sat(consumed − released) ≤ reported`. The body was already correct and did
+  not change.
+- `contracts/test/GovernorDayPoolTest.t.sol` **asserted** the bare form under an
+  `"SS7 invariant"` label. Both assertions now net the release off before
+  comparing, and the fixture premise that makes the two forms coincide there
+  (`released == 0`) is asserted rather than left implicit. They pass
+  identically, which is the point: the bare form was true by fixture, not by
+  invariant.
+- NatSpec and comments across `contracts/src/` **and `contracts/test/`**,
+  carrying both retired shapes: the bare `reported − consumed` and the
+  overflow-prone `reported + released − consumed`.
 
-Those are a contracts change, not a docs one. Until #1577 lands, a reader of
-those files will find the wrong invariant stated authoritatively next to code
-that does the right thing.
+**The rule above earned itself three times inside this one change, so the claim
+was replaced by a check.** A first pass corrected four `contracts/src/`
+restatements and stated the code side was swept. An adversarial review found
+four more, all describing `_mirrorAvailable` by its pre-B3 formula, one of them
+in a comment block a fix had already edited. Review then found four more still —
+two of them the addition form, and some in `contracts/test/`, which the
+verifying grep had never searched. Each pass wrote a narrower claim than the
+previous one and each was falsified within a round.
+
+The lesson is not that the sweeps were careless; it is that **this proposition
+cannot be held true by prose.** So it is now executable:
+**`contracts/script/check-commitment-formula.py`**, step **2c** of
+`predeploy-check.sh`. It extracts comment CONTENT from `contracts/src` and
+`contracts/test` — comment-only lines, trailing comments and `/* */` blocks
+alike — strips the delimiters, joins contiguous runs (a formula split across two
+lines is one statement, and that is how the addition form survived a sweep), and
+fails on any retired shape, including shapes written with production ledger
+names like `chainReportedRecycled[c]`. A block may name a retired form
+deliberately — to reject it, or to describe a past revision — by carrying
+`formula-check:allow <reason>`, reason on the marker's own line.
+
+**The guard was itself vacuous in four independent ways, and every one was found
+by attacking it rather than reading it.** Its scan roots were cwd-relative while
+`predeploy-check.sh` cds into `contracts/` first, so it walked nothing and
+printed OK. It joined comment lines without stripping `///`, so the multi-line
+case it existed for produced `reported + released − /// consumed` and matched
+nothing. It ignored trailing comments entirely. And an exemption marker with no
+reason passed, because the reason was read from the joined block rather than the
+marker's own line. Scanning zero files is now a hard failure, and the checker
+reports how much it examined so a silent no-op cannot look like a pass.
+
+`check-commitment-formula.selftest.sh` is that attack, committed: every hole
+ever found in the guard is kept there as a case, alongside correct shapes it
+must NOT fire on. **The count lives in the script, which prints it when run** —
+an earlier revision of this paragraph enumerated the cases here, and that
+enumeration was stale within one round, in a document whose own rule two
+sections above is that a count is a claim. Third instance of that pattern inside
+one change; the count is not coming back. It is deliberately **not** wired into
+the deploy gate — it mutates a source file and restores it, which is not
+something a pre-deploy path should do — so it is run by hand when the guard
+changes.
+
+**No count of REMAINING restatements, and no claim that the sweep is complete,
+appears in this document — the check is that claim**, and it states what it
+scanned when it runs. (Counts of what HAPPENED — how many rounds found what, and
+that this pattern has now recurred three times — are history, not a standing
+assertion about the tree, and do not go stale. An earlier revision of this
+sentence said no count appeared at all, which the paragraphs around it plainly
+falsified.)
 
 **The bare form `consumedCumulative ≤ reportedCumulative` is FALSE and must not
 appear as a current claim anywhere.** That is the one thing worth stating here,

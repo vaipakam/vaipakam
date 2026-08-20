@@ -609,7 +609,8 @@ library LibVpfiRecycle {
      *            advances `recycleCustodyRelocatedCumulative`, which
      *            {creditedCumulative} subtracts. That keeps the tokens out of
      *            the cumulative a mirror reports to Base, which after B2-d3
-     *            drives BOTH `_mirrorAvailable` (`reported − consumed`) and
+     *            drives BOTH `_mirrorAvailable` (`reported` net of the claim
+     *            and repatriation draws) and
      *            the `Ā` attribution headroom in {recordChainRecycled}.
      *
      *         It shares {credit}'s backing assertion: the tokens must
@@ -827,9 +828,10 @@ library LibVpfiRecycle {
         // #1222 M3 B3 — the actual decrement counts twice: into the shared
         // retirement cumulative AND into the release-only subset, because a
         // release leaves the tokens in the bucket. The release cumulative is
-        // what restores this chain's availability on Base (`avail_c =
-        // reported_c + released_c − consumed_c`); the `consume` half is
-        // genuinely spent and restores nothing.
+        // what restores this chain's availability on Base — see
+        // {mirrorAvailRecycled} for the operand order, which is
+        // subtraction-first and must not be restated as a sum here; the
+        // `consume` half is genuinely spent and restores nothing.
         uint256 retired = outstanding > amount ? amount : outstanding;
         s.outstandingCommitRecycled = outstanding - retired;
         s.recycleCommitRetiredCumulative += retired;
@@ -1129,9 +1131,12 @@ library LibVpfiRecycle {
 
     /**
      * @notice #1222 M3 B3 — Base's model of a MIRROR's committable recycle
-     *         bucket: everything the chain reported crediting, PLUS the
-     *         commitments it released un-spent, LESS everything Base has
-     *         instructed it to fund locally.
+     *         bucket: everything the chain reported crediting, LESS the NET
+     *         amount Base has instructed it to fund locally (instructed less
+     *         the commitments it released un-spent), LESS the net
+     *         repatriation draw. Stated subtraction-first because that is the
+     *         order the body evaluates — see the operand note below; the
+     *         algebraically equal sum form overflows.
      * @dev    The release term is B3's whole point. A mirror retires a
      *         reservation either by paying a claim (`consume` — the tokens
      *         leave) or by forfeiting/expiring it (`releaseCommitment` — the
@@ -1146,7 +1151,9 @@ library LibVpfiRecycle {
      *         `chainReportedRecycled[c]`.
      *
      *         ARRANGED AS `reported − (consumed − released)`, NOT
-     *         `(reported + released) − consumed` (Codex #1435 r1 P1). The two
+     *         `(reported + released) − consumed` (Codex #1435 r1 P1).
+     *         formula-check:allow states the addition form to forbid it; this
+     *         block is where that prohibition is defined. The two
      *         are mathematically identical under the clamp, but the addition
      *         form can OVERFLOW: `chainReportedRecycled[c]` is ratcheted to
      *         whatever cumulative a chain reports and is deliberately
