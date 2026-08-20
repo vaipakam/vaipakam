@@ -479,11 +479,16 @@ reason passed, because the reason was read from the joined block rather than the
 marker's own line. Scanning zero files is now a hard failure, and the checker
 reports how much it examined so a silent no-op cannot look like a pass.
 
-`check-commitment-formula.selftest.sh` is that attack, committed: seven retired
-shapes it must reject, three correct shapes it must not, and a cwd-equivalence
-check. It is deliberately **not** wired into the deploy gate — it mutates a
-source file and restores it, which is not something a pre-deploy path should do
-— so it is run by hand when the guard changes.
+`check-commitment-formula.selftest.sh` is that attack, committed: every hole
+ever found in the guard is kept there as a case, alongside correct shapes it
+must NOT fire on. **The count lives in the script, which prints it when run** —
+an earlier revision of this paragraph enumerated the cases here, and that
+enumeration was stale within one round, in a document whose own rule two
+sections above is that a count is a claim. Third instance of that pattern inside
+one change; the count is not coming back. It is deliberately **not** wired into
+the deploy gate — it mutates a source file and restores it, which is not
+something a pre-deploy path should do — so it is run by hand when the guard
+changes.
 
 **No count and no completeness claim appears in this document, because the check
 is the claim** — and the check now states what it scanned.

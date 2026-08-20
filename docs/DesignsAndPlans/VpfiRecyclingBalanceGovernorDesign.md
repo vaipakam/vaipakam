@@ -231,8 +231,12 @@ commitment-netted ones above; there is no separate "freshRemaining"):
 - `scheduleFloor[D]` is the existing emission schedule (`halfPoolForDay × 2`),
   re-labelled from "the pool" to "the floor": the guaranteed minimum that
   decays on the existing seven-tier curve, capped by `freshAvailable` (above).
-  Paid from the Diamond's funded VPFI balance and counted against the 69M
-  counter, exactly as today.
+  Paid from the Diamond's funded VPFI balance. It is the SCHEDULED figure,
+  capped by the remaining 69M allowance — **not** the amount charged against
+  it. `_stampGovernorDayPool` charges the computed `commitFresh`
+  (`freshDrawdown`), which on a day whose activity earns less than the schedule
+  is strictly smaller and may be zero; unused scheduled capacity consumes no
+  headroom. Reading the floor as the charge overstates cap consumption.
 - `recycledBudget[D]` is the absorption-coupled add-on, **not** counted
   against the 69M counter (P4). It is a **sizing reservation, not a
   finalize-time transfer**: the bucket is debited pro-rata **at claim /

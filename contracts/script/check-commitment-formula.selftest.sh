@@ -74,6 +74,7 @@ run_case "marker too far from mention" '    /// formula-check:allow this reason 
     /// @dev avail = reported - consumed.' 1
 run_case "parenthesized addition"    '    /// @dev avail = reported + (released - consumed).' 1
 run_case "reversed bare comparison"  '    /// @dev reported >= consumed always holds.' 1
+run_case "reversed addition bound"   '    /// @dev reported + released >= consumed always holds.' 1
 run_case "one marker cannot cover two mentions" '    /// formula-check:allow the historical form is quoted here on purpose.
     /// @dev the old B2-d3 shape was reported - consumed.
     /// @dev current availability is reported - consumed.' 1

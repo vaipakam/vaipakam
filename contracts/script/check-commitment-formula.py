@@ -122,6 +122,13 @@ RE_BARE_SUB = re.compile(
 RE_BARE_CMP = re.compile(r"(%s)\s*(?:<=|≤)\s*(%s)" % (_CONSUMED, _REPORTED), re.I)
 # The same false invariant reads naturally in the other direction.
 RE_BARE_CMP_REV = re.compile(r"(%s)\s*(?:>=|≥)\s*(%s)" % (_REPORTED, _CONSUMED), re.I)
+# ...and so does the addition-based bound: `reported + released >= consumed`
+# evaluates the same overflow-prone sum as `consumed <= reported + released`.
+RE_ADD_CMP_REV = re.compile(
+    r"\(?\s*(?:%s\s*\+\s*%s|%s\s*\+\s*%s)\s*\)?\s*(?:>=|≥)\s*(%s)"
+    % (_REPORTED, _RELEASED, _RELEASED, _REPORTED, _CONSUMED),
+    re.I,
+)
 # The same unsafe bound commutes: `consumed <= released + reported` overflows on
 # a hostile near-max report exactly as `reported + released` does.
 RE_ADD_CMP = re.compile(
@@ -255,6 +262,8 @@ def _find_violations(text, offsets, markers):
     for m in RE_ADDITION_PAREN.finditer(text):
         add("ADDITION", m.start())
     for m in RE_ADD_CMP.finditer(text):
+        add("ADDITION", m.start())
+    for m in RE_ADD_CMP_REV.finditer(text):
         add("ADDITION", m.start())
     for m in RE_BARE_SUB.finditer(text):
         if not _is_already_net(m.group(2)):
