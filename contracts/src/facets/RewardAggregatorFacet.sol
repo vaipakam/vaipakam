@@ -736,8 +736,15 @@ contract RewardAggregatorFacet is
     ///                              chain (availability, monotonic).
     /// @return consumedCumulative   Cumulative Base has instructed the chain
     ///                              to consume (written from B2 on).
-    /// @return availRecycled        `reported + released − consumed` — what
-    ///                              mesh funding/netting may draw against.
+    /// @return availRecycled        What mesh funding/netting may draw
+    ///                              against: `reported`, less the net claim
+    ///                              draw `sat(consumed − released)`, less the
+    ///                              net repatriation draw — each netted by
+    ///                              SATURATING subtraction. Never computed as
+    ///                              `reported + released − consumed` (#1577):
+    ///                              a reported cumulative is unbounded, so
+    ///                              that addition overflows on a hostile
+    ///                              report.
     ///                              #1222 M3 B3 added the release term (a
     ///                              commitment the chain forfeited/expired
     ///                              un-spent left its tokens in that chain's
@@ -1273,7 +1280,9 @@ contract RewardAggregatorFacet is
     ///         math source).
     /// @param  dayId Day to read.
     /// @return stamped        True once the day finalized (stamp exists).
-    /// @return scheduleFloor  Fresh (pre-fund) half of the day's pool.
+    /// @return scheduleFloor  Fresh half of the day's pool — drawn against the
+    ///                          69M allowance (a spending ceiling, not a
+    ///                          balance created at deploy).
     /// @return recycledBudget Absorption-coupled recycled half.
     /// @return aBar           Trailing absorption average at finalize.
     /// @return marginBps      Retained-margin bps stamped at finalize.
@@ -2040,7 +2049,8 @@ contract RewardAggregatorFacet is
             // independently, so a repeated id would double-count that
             // chain's target, self-fund its availability twice (booking
             // `2 × commitLocal` into the per-chain ledgers and breaking
-            // `consumed ≤ reported`), and clobber the shared
+            // SS7 #6's `sat(consumed − released) ≤ reported`), and clobber
+            // the shared
             // `(day, chain)` funding stamp so the broadcast instructs only
             // one of the two reservations. There is no legitimate use for a
             // repeated source chain, so it is rejected at the only writer.

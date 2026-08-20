@@ -208,7 +208,8 @@ chain actually needs; recycling changes the *source*, never the amount).
 
 > **SUPERSEDED** by the balance governor
 > ([`VpfiRecyclingBalanceGovernorDesign.md`](VpfiRecyclingBalanceGovernorDesign.md) §3):
-> rewards are drawn from a pre-funded pool, not minted per-day, so this
+> rewards are paid from the Diamond's existing balance against a fixed
+> drawdown allowance, not minted per-day, so this
 > offset formula has no mint to offset; and the schedule-blind pool size is
 > replaced by `dailyPool[D] = scheduleFloor[D] + (1 − marginBps) × Ā[D]`.
 > Retained below for the record.
@@ -428,23 +429,30 @@ are NOT done**. Anyone who finds another restatement has found a defect, not a
 counterexample to a claim — and should fix it here rather than adding to a
 tally.
 
-**The docs are swept; the CODE is NOT, and this is a scope statement rather
-than a claim of completeness** (Codex #1574 r9 P2 — an earlier revision listed
-"a test docstring" among the things that already point, which was false and is
-exactly the kind of overclaim that stops the next person looking). Still
-carrying stale forms, tracked in **#1577**:
+**The docs and the CODE are now both swept** — #1577, which closed the gap the
+paragraph below used to describe. What changed:
 
-- `contracts/test/invariants/MeshLedger.invariant.t.sol` states the
+- `contracts/test/invariants/MeshLedger.invariant.t.sol` stated the
   overflow-prone **addition** form in its docstrings and in its function name
-  `invariant_ConsumedWithinReportedPlusReleased`, while its own code implements
-  the subtraction form and its inline comment explains why addition fails;
-- `contracts/test/GovernorDayPoolTest.t.sol` **asserts** the bare form under an
-  `"SS7 invariant"` label;
-- three NatSpec/comment mentions in `contracts/src/`.
+  while its own body implemented the subtraction form. The invariant is now
+  `invariant_ClaimNetWithinReported`, and the docstrings state
+  `sat(consumed − released) ≤ reported`. The body was already correct and did
+  not change.
+- `contracts/test/GovernorDayPoolTest.t.sol` **asserted** the bare form under an
+  `"SS7 invariant"` label. Both assertions now net the release off before
+  comparing. They pass identically today — those fixtures never release — which
+  is precisely why the bare form survived: it was true by fixture, not by
+  invariant.
+- **Four** NatSpec/comment mentions in `contracts/src/`, not the three an
+  earlier revision of this list counted: `RewardAggregatorFacet` carried the
+  addition form in `getChainRecycledLedger`'s `@return availRecycled` doc as
+  well as in the duplicate-chain-id comment, and that first one is the site an
+  integrator reads. The others are `IVaipakamErrors.DuplicateExpectedChainId`
+  and `LibMeshFunding`'s availability cap.
 
-Those are a contracts change, not a docs one. Until #1577 lands, a reader of
-those files will find the wrong invariant stated authoritatively next to code
-that does the right thing.
+A count in a scope statement is a claim like any other; this one was wrong in
+the direction that stops the next person looking, which is the same failure the
+paragraph above was written to prevent.
 
 **The bare form `consumedCumulative ≤ reportedCumulative` is FALSE and must not
 appear as a current claim anywhere.** That is the one thing worth stating here,

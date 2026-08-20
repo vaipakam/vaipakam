@@ -386,7 +386,7 @@ Pull-query alternative:
 
 Reward pool funding on mirrors:
 
-- the interaction-reward VPFI pool (`69,000,000` cap) is held on `Base` (canonical mint chain)
+- the interaction-reward allocation (`69,000,000` drawdown cap) is accounted on `Base` (canonical mint chain); the cap is a ceiling on spending, and the balance it is spent from must be funded into the Base Diamond separately — see the cap's full treatment below
 - per-day per-chain VPFI payout budget is computed **per side**: `½ × dailyPool[D] × (dailyChainLenderInterest[D][chainId] / dailyGlobalLenderInterest[D]) + ½ × dailyPool[D] × (dailyChainBorrowerInterest[D][chainId] / dailyGlobalBorrowerInterest[D])` — each half of the day's pool is scaled by that side's own chain/global ratio; a side whose global denominator is zero (no interest on that side anywhere that day) contributes nothing to the budget
 - once a day is finalized, `Base` computes that per-chain budget and **remits it on-demand** to each mirror over the configured cross-chain token path (Chainlink CCIP) — a permissioned, batched, retriable send, **decoupled from finalization** rather than bundled into it, so a single stuck lane, native-fee shortfall, or per-day delivery failure never blocks finalization or the other chains' funding (#776). The remittance is bounded so what `Base` has remitted plus what it has itself paid out never exceeds the 69M pool.
 - **the two bullets above describe the pre-mesh funding shape.** An unarmed day is NOT fresh-only: it already carries a recycled portion **sized against** the canonical chain's own recycle bucket (Phase A′) — **sized only.** While unarmed the bucket is neither debited nor reserved against, and the day's remittance carries no recycled component at all: the stamp is a record. An earlier revision of this sentence said the portion was "remitted from there", which asserted a funding transfer that no unarmed-day path performs — verified across the day-finalize stamp, `_planDay`, the per-side split and both bucket-debiting call sites. **Read that at the BUDGET layer, which is the layer this bullet is about: the day's finalized record carries a recycled portion sized from the canonical bucket. It does NOT mean an unarmed day PAYS recycled value at claim time — while unarmed, the day's stamp is a record only and the claim math pays the scheduled portion, because reserving commitments with no consume side would collapse the fresh availability the cap depends on. Arming wires reservation and consumption together, which is when the recorded recycled portion becomes payable.** That two-layer split is easy to misread as a contradiction — it was filed as one and refuted (`D-#1457-01`). What ARMING changes about FUNDING: it **introduces recycled funding at all**, and simultaneously sets *who* provides it — per-chain self-funding with a canonical top-up. An earlier revision of this clause said arming changes only who funds, "not whether", which cannot stand beside the paragraph above (#1457 r17): if an unarmed day never debits, reserves or remits recycled value, then there is no unarmed recycled FUNDING to re-source — only a recorded figure. The *record* predates arming; the funding does not. With that said, a day's budget has **two portions with different funding rules**:
@@ -896,66 +896,6 @@ Frontend expectations:
 
 ## 9. Treasury Recycling Rule
 
-### 9a. Per-chain recycled-surplus flag (operator signal only)
-
-Recycled VPFI accumulates on whichever chain the fees landed on, and funds that
-chain's own reward claims. A chain with little activity can therefore hold more
-than it will use, while a busy chain runs lean. The platform surfaces that
-difference **per chain** rather than as one global figure, because a global
-total conceals exactly the asymmetry worth seeing.
-
-A **mirror** chain is flagged when the recycled VPFI available to it exceeds a
-configured multiple of its trailing-average daily recycled budget, averaged over
-the trailing thirty days. The same read also reports the availability, the
-trailing average, the threshold compared against, and the configured multiple,
-so an operator can see why a chain is or is not flagged.
-
-**The flag is a mirror concept and the canonical chain is refused, not
-answered.** Asking about the canonical chain fails rather than returning a
-figure — deliberately, for two reasons. The availability number computed that
-way would be the *lifetime* total rather than what is live, so it would keep
-the flag raised for funds already spent, with nothing able to clear it. And the
-flag exists to surface candidates for moving surplus back to the canonical
-chain, so the canonical chain is never a candidate: there is nowhere for it to
-move value to. The canonical chain's own recycled position is reported by the
-composition and backing reads, which compute it correctly. An operator scanning
-chains should scan the mirrors.
-
-Intended behaviour, in the terms that are observable:
-
-- **The flag moves no value.** It is a signal. Disposal of a flagged surplus is
-  a separate, deliberate action — consistent with the rule below that on retail,
-  disposing of a bucket surplus is a deliberate treasury action and never
-  automatic protocol behaviour.
-- **Only the canonical deployment answers the question at all.** The reading is
-  computed from ledgers only the canonical deployment maintains, so a mirror
-  asked the same question should refuse rather than answer from its own empty
-  copy. This is a separate requirement from refusing to report on the chain
-  being asked *about*: one concerns which deployment is answering, the other
-  which chain is the subject, and neither implies the other. A deployment that
-  cannot know should say so, because a well-formed zero is indistinguishable
-  from a genuine finding of no surplus and whatever reads it will act on the
-  answer either way. The general principle: where a reading is derived from
-  state that only one deployment holds, availability of that reading should be
-  scoped to that deployment rather than left to the caller to police.
-- **It is off until an administrator configures a multiple**, and while off
-  nothing is ever flagged. No threshold suits every deployment, and a warning
-  that fires before anyone has chosen its meaning is one people stop reading.
-  Clearing the multiple turns it off again.
-- **The comparison is against what a chain BUDGETED**, not what it spent from
-  its own balance. The two agree while a chain has ample availability and
-  diverge when it is short — and a spend-based measure would make the warning
-  harder to clear the worse a chain's position became.
-- **Days with no budget count as zero**, and the average always divides by the
-  full window. One busy day in an idle month reads as an idle month with one
-  busy day.
-- **A chain holding funds while budgeting nothing across the whole window is
-  flagged.** That is the clearest instance of what the flag exists to find, so
-  it is reported rather than treated as uncomputable.
-
-The broader Phase-C surplus-tooling section, covering disposition, is tracked
-separately (#1570).
-
 VPFI received as fees is recycled through a **governance-configurable** treasury-conversion path, not a hard-coded protocol split (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner). Governance sets an ordered list of conversion targets, each carrying a per-target allocation in basis points (`setTreasuryConvertTargets`), plus **global** conversion-eligibility thresholds — a minimum **numeraire** value and a maximum interval (`setTreasuryConvertThresholds`) — that gate when a conversion may run. (The threshold is denominated in the protocol's active numeraire, which is USD by default but governance-rotatable; it is not hard-wired to USD.) These thresholds are protocol-wide, not per-target and not per-asset: a single minimum-value gate and a single shared last-conversion timer are consulted for every input asset, so converting any one asset resets the interval gate for all of them. `convertTreasuryAsset` performs the conversions, but only when (a) targets are configured and (b) the Diamond itself is the treasury (Diamond-as-treasury mode); in external-treasury deployments (Treasury is a separate multisig/address) this path is unavailable and configuring targets does not enable it.
 
 The specific launch allocation is a governance choice made at deploy time, not a protocol constant. The **authoritative recommended target list lives in the treasury conversion design** ([`docs/DesignsAndPlans/TreasuryFunctionalSpec.md`](../DesignsAndPlans/TreasuryFunctionalSpec.md)); the historical `38 / 38 / 24` (ETH / wBTC / retained-VPFI) split is illustrative only. (The public whitepaper's v4.0 rewrite states the same illustrative-only framing, so the two documents agree; the remaining open item is only the deploy-time governance choice of the actual launch allocation from the design doc's recommended list.)
@@ -1201,6 +1141,66 @@ Founder and contributor compensation:
 - genesis founder, team, early-contributor, and ecosystem grants should use per-grantee vesting wallets with the approved cliff and linear-release terms
 - real genesis funding actions, including founder grants and salary-stream activation, should remain gated on legal sign-off before token generation
 
+
+### 9a. Per-chain recycled-surplus flag (operator signal only)
+
+Recycled VPFI accumulates on whichever chain the fees landed on, and funds that
+chain's own reward claims. A chain with little activity can therefore hold more
+than it will use, while a busy chain runs lean. The platform surfaces that
+difference **per chain** rather than as one global figure, because a global
+total conceals exactly the asymmetry worth seeing.
+
+A **mirror** chain is flagged when the recycled VPFI available to it exceeds a
+configured multiple of its trailing-average daily recycled budget, averaged over
+the trailing thirty days. The same read also reports the availability, the
+trailing average, the threshold compared against, and the configured multiple,
+so an operator can see why a chain is or is not flagged.
+
+**The flag is a mirror concept and the canonical chain is refused, not
+answered.** Asking about the canonical chain fails rather than returning a
+figure — deliberately, for two reasons. The availability number computed that
+way would be the *lifetime* total rather than what is live, so it would keep
+the flag raised for funds already spent, with nothing able to clear it. And the
+flag exists to surface candidates for moving surplus back to the canonical
+chain, so the canonical chain is never a candidate: there is nowhere for it to
+move value to. The canonical chain's own recycled position is reported by the
+composition and backing reads, which compute it correctly. An operator scanning
+chains should scan the mirrors.
+
+Intended behaviour, in the terms that are observable:
+
+- **The flag moves no value.** It is a signal. Disposal of a flagged surplus is
+  a separate, deliberate action — consistent with the rule stated at the head of
+  this section, that on retail disposing of a bucket surplus is a deliberate
+  treasury action and never automatic protocol behaviour.
+- **Only the canonical deployment answers the question at all.** The reading is
+  computed from ledgers only the canonical deployment maintains, so a mirror
+  asked the same question should refuse rather than answer from its own empty
+  copy. This is a separate requirement from refusing to report on the chain
+  being asked *about*: one concerns which deployment is answering, the other
+  which chain is the subject, and neither implies the other. A deployment that
+  cannot know should say so, because a well-formed zero is indistinguishable
+  from a genuine finding of no surplus and whatever reads it will act on the
+  answer either way. The general principle: where a reading is derived from
+  state that only one deployment holds, availability of that reading should be
+  scoped to that deployment rather than left to the caller to police.
+- **It is off until an administrator configures a multiple**, and while off
+  nothing is ever flagged. No threshold suits every deployment, and a warning
+  that fires before anyone has chosen its meaning is one people stop reading.
+  Clearing the multiple turns it off again.
+- **The comparison is against what a chain BUDGETED**, not what it spent from
+  its own balance. The two agree while a chain has ample availability and
+  diverge when it is short — and a spend-based measure would make the warning
+  harder to clear the worse a chain's position became.
+- **Days with no budget count as zero**, and the average always divides by the
+  full window. One busy day in an idle month reads as an idle month with one
+  busy day.
+- **A chain holding funds while budgeting nothing across the whole window is
+  flagged.** That is the clearest instance of what the flag exists to find, so
+  it is reported rather than treated as uncomputable.
+
+Disposition of a flagged surplus is specified in §9b below. This subsection
+is the signal only, and deliberately stops there.
 ### 9b. Planned-surplus repatriation (dark until transport is configured)
 
 The platform can deliberately move a mirror chain's surplus recycled value

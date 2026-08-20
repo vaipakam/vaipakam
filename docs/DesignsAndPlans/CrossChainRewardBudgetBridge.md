@@ -190,8 +190,8 @@ outbound reward/treasury flow even if the CCIP messenger itself is still
 unpaused. Authorization (ADMIN / keeper) is layered ON TOP of the pause
 gate, not instead of it.
 
-The canonical 69M pool is held on Base, so the VPFI to send comes from
-the Base Diamond's balance (locked into the CCT `LockReleaseTokenPool`
+The canonical 69M allowance is accounted on Base, so the VPFI to send comes
+from the Base Diamond's funded balance (locked into the CCT `LockReleaseTokenPool`
 on send; an equal amount of `VPFIMirrorToken` is minted on the
 destination — 1:1 CCT invariant preserved).
 
