@@ -62,6 +62,7 @@ between that copy and the real rule.
 
 | # | Refusal | Contract source | What the client lacks |
 | --- | --- | --- | --- |
+| 0 | **Loan not Active** (live) | both entrypoints require `status == Active` | a live status read the indexer can lag — the stale-row window |
 | 1 | Relist cooldown | `saleRelistCooldownUntil[loanId]`, `EarlyWithdrawalFacet:327` | the timestamp (the revert carries it; nothing reads it ahead of time) |
 | 2 | Final-hour window | `MIN_SALE_LISTING_SECONDS` vs remaining term | a governance-tunable constant the app does not read |
 | 3 | Sale admission | `LibSaleSolvency.assertSaleSolvent` | already exposed — see §3 |
@@ -97,8 +98,21 @@ until review found it. A preview claiming completeness while omitting a blocker
 that closes both routes is worse than one that admits a gap, because
 `checkedMask` would report those bits checked and clear.
 
-**So the tractable set is items 1–8 plus 8b and 8c: ten refusals, answerable
-without consulting any third party.** That is the observation this proposal
+**Item 0 was missing from every earlier version of this table, and it is the
+one that matters most.** Both entrypoints require `loan.status == Active`, yet
+the set had no status blocker and the temporal encoding carried only
+`PastMaturity`. So while the indexer still reported an active row after the
+chain moved the loan to `FallbackPending`, `Repaid`, `Settled` or `Defaulted`,
+the preview would have returned otherwise-clear verdicts for two routes that
+revert `LoanNotActive`.
+
+That is precisely the stale-state window #1839 spent rounds 12–14 closing on
+the client — and a preview built to be the authority would have reopened it at
+the source, with `checkedMask` reporting those bits checked and clear. A
+chain-side view has no excuse for it: the live status is right there.
+
+**So the tractable set is item 0, items 1–8, plus 8b and 8c: eleven refusals,
+answerable without consulting any third party.** That is the observation this proposal
 rests on — and note the criterion is *self-contained*, not *needs a new read*,
 since neither 8b nor 8c needs one.
 
@@ -144,7 +158,8 @@ saleExitPreview(uint256 loanId, address lender)
      uint64  cooldownUntil,      // 0 = none
      uint64  listingExpiresAt,   // 0 = no listing OR legacy GTC — see below
      uint256 linkedSaleOfferId,  // 0 = none; the view resolves it anyway
-     uint8   temporalVerdict)    // chain-evaluated enum, encoded in 4.3.1
+     uint8   windowVerdict,      // may a NEW sale start? — 4.3.1
+     uint8   listingVerdict)     // state of the EXISTING listing — 4.3.1
 ```
 
 Wider than the first draft, and every added field answers a specific way the
@@ -211,66 +226,69 @@ sentinel to teardown **immediately**. A client choosing either reading is
 wrong half the time. `temporalVerdict` carries the classification the sale
 paths actually use, and the sentinel stays a display value.
 
-#### 4.3.1 `temporalVerdict` encoding — an ENUM, and precedence is fixed
+#### 4.3.1 Two axes, not one — `windowVerdict` and `listingVerdict`
 
-The first revision added this field and then left it undefined, which is
-§4.1's own finding one field over: two sides can implement incompatible
-readings of the same `uint8` and both decode cleanly. Pinning the bitmaps
-while leaving this open was not a smaller version of that mistake, it was the
-same one.
+The previous revision put both in a single `temporalVerdict` with a
+precedence order, and that was a design error rather than an underspecified
+field: **they are orthogonal questions and a precedence between them destroys
+information.**
 
-An **enum, not a bitmap** — the conditions are mutually exclusive once
-precedence is applied, and a bitmap would invite callers to invent their own
-precedence:
+A listing that already exists naturally enters the final-hour window before
+its maturity-clamped expiry, and an accepted-but-uncompleted listing can cross
+maturity while `completeLoanSale` stays available for as long as the loan is
+Active. Ranking maturity and the window above the lifecycle values meant the
+card would report "past maturity" to a lender whose actual next action was
+*complete the sale that already sold* — discarding the recoverable state at
+exactly the moment it is the only thing worth showing.
+
+So: two enums, each answering one question.
+
+**`windowVerdict` — may a NEW sale be started?**
 
 | Value | Meaning | Governs |
 | --- | --- | --- |
-| 0 | `Clear` — no temporal bar | both routes |
+| 0 | `Open` | both routes |
 | 1 | `PastMaturity` — term fully elapsed | both routes |
-| 2 | `RelistCooldown` — `cooldownUntil` not yet reached | listing only |
+| 2 | `RelistCooldown` — `cooldownUntil` not reached | listing only |
 | 3 | `FinalHourWindow` — remaining term < `MIN_SALE_LISTING_SECONDS` | listing only |
-| 4 | `ListingFillable` — stands, unexpired, and bounds hold **right now** | listing only |
-| 5 | `ListingEndedUnfilled` — stands but no buyer can complete | listing only |
-| 6 | `ListingAcceptedPendingCompletion` — accepted, awaiting completion | listing only |
-| 7 | `ListingBoundsViolated` — unexpired, but a fill would revert today | listing only |
-| 255 | `Indeterminate` — could not be evaluated | both, fail-closed |
+| 255 | `Indeterminate` | both, fail-closed |
 
-**Precedence, highest first: 1 > 2 > 3 > 6 > 5 > 7 > 4 > 0.** Maturity
-outranks everything because it closes both routes and no narrower reason can
-help. Cooldown outranks the window because it is the longer bar. Accepted
-outranks both ended and violated: a sale in mid-completion is neither dead nor
-re-fillable, and the lender's next action is completion rather than teardown
-or a price change. Violated outranks fillable so a caller never advertises a
-fill that would revert.
+Precedence 1 > 2 > 3 > 0. Maturity closes both routes and no narrower reason
+helps; cooldown is the longer bar of the two listing-only ones.
 
-Callers get one value and no arithmetic. The direct route reads only 0, 1 and
-255; a listing-only value on the direct row is a contract bug, not a caller
-decision.
+**`listingVerdict` — what is the EXISTING listing's state?**
 
-**Values 6 and 7 exist because the first version of this table was wrong in
-the way this whole document warns about** — asserting a classification was
-complete when it was not:
+| Value | Meaning |
+| --- | --- |
+| 0 | `None` — no listing linked |
+| 1 | `Fillable` — stands, unexpired, bounds hold right now |
+| 2 | `EndedUnfilled` — stands but no buyer can complete |
+| 3 | `AcceptedPendingCompletion` — accepted, awaiting `completeLoanSale` |
+| 4 | `BoundsViolated` — unexpired, but a fill would revert today |
+| 255 | `Indeterminate` |
 
-- **6** — a legacy or recovery-state sale can have `accepted == true` while
-  `loanToSaleOfferId` is still set. It cannot be filled again, yet it has not
-  ended unfilled either, because `completeLoanSale` can still recover it.
-  `OfferCancelFacet.teardownStaleSaleListing` explicitly excludes this
-  mid-completion state (`:567-570`), so folding it into 5 would also point the
-  lender at teardown — the one recovery that is wrong here.
-- **7** — expiry does not decide fillability. `_completeLoanSaleImpl` reverts
-  `SaleBelowSellerFloor` / `SaleAboveHeldCeiling` when the live seller net or
-  held balance has drifted outside the bounds stamped at listing
-  (`EarlyWithdrawalFacet:793-805`). So an unexpired listing can be one every
-  buyer's acceptance rolls back. Calling that `ListingLive` would have been
-  the same overclaim, one revision later: a verdict named for what was
-  recorded rather than for what would happen.
+Precedence 3 > 2 > 4 > 1 > 0, and **independent of `windowVerdict`** — a
+lender past maturity with value 3 still sees "complete this sale", because
+that is what the protocol still permits.
 
-**`linkedSaleOfferId` comes back too.** The view must resolve
-`loanToSaleOfferId[loanId]` to read the expiry at all, so discarding it is
-pure waste — and it is the id `useLoanSalePending` currently hunts for with a
-bounded indexer walk that can come up empty, which is exactly what leaves a
-lender with no cancel button (#1848). Returning what we already looked up
-turns a fallible recovery into a field.
+Values 3 and 4 exist because the single-enum version was wrong twice over.
+**3**: a legacy or recovery-state sale can have `accepted == true` while
+`loanToSaleOfferId` is still set — not fillable, not ended, and
+`teardownStaleSaleListing` explicitly excludes that state (`:567-570`), so
+folding it into "ended" also points at the one wrong recovery. **4**: expiry
+does not decide fillability, since `_completeLoanSaleImpl` reverts
+`SaleBelowSellerFloor` / `SaleAboveHeldCeiling` when the live seller net or
+held balance has drifted outside the bounds stamped at listing
+(`EarlyWithdrawalFacet:793-805`).
+
+Both enums are chain-evaluated, so no caller compares a timestamp to a device
+clock. `cooldownUntil` and `listingExpiresAt` remain as display values only.
+
+**`linkedSaleOfferId` comes back too.** The view resolves
+`loanToSaleOfferId[loanId]` to answer `listingVerdict` at all, so discarding it
+is pure waste — and it is the id `useLoanSalePending` currently hunts for with
+a bounded indexer walk that can come up empty, which is what leaves a lender
+with no cancel button (#1848).
 
 ### 4.4 An unmeasurable admission is a distinct answer
 
@@ -464,16 +482,16 @@ so the preview narrows the map-only gap rather than closing it. I am not going
 to pretend otherwise to keep the recommendation tidy.
 
 **Why I still lean this way — on a different invariant than I first gave.**
-(Counting note: ten loan-level entries, items 1–8 plus 8b and 8c.)
+(Counting note: eleven loan-level entries — item 0, items 1–8, plus 8b and 8c.)
 
 My first attempt justified the split on *durability*: loan-level blockers are
 permanent, candidate matching is momentary. That is **false**, and worth
 striking rather than softening. Governance unpauses assets. Cooldowns expire
 by construction. Oracle and liquidity conditions recover. A held-for-lender
-balance gets resolved. Most of the ten are as transient as the order book.
+balance gets resolved. Most of the eleven are as transient as the order book.
 
 The distinction that actually holds is **self-contained vs relational**. Every
-one of the ten is a property of *this loan and this holder* — answerable by
+one of the eleven is a property of *this loan and this holder* — answerable by
 reading the position and the protocol's own configuration, with no third party
 involved. Candidate matching is irreducibly relational: it asks what OTHER
 participants are currently offering, so it cannot be answered by a per-loan
@@ -489,11 +507,20 @@ the mutating guards consume, this is a second source of truth wearing the
 costume of a single one — and it would drift, exactly as the client did. That
 is now a precondition, not a refinement.
 
-**Given a yes:** the first batch is **items 6, 7, 8b and 8c** — the two per-asset
+**Given a yes:** the first batch is **items 6 and 7 only** — the two per-asset
 pause legs, which really are bare `isAssetPaused` reads with no predicate
-behind them, plus the NFT-collateral bit, which needs no read at all — behind `checkedMask`, with the per-chain gate from §7 in place.
+behind them — behind `checkedMask`, with the per-chain gate from §7 in place.
 
-Items 1 and 2 are **not** in it, correcting the previous revision. Calling
+**8b and 8c are not in it either, correcting the revision that put them
+there.** They look like free wins — the client can already answer both — but
+the *contracts* enforce them inline (`loan.collateralAssetType != ERC20` and
+`loan.assetType != ERC20`) in the mutating facets, so classifying them in the
+preview first duplicates those guards and breaks §4.6 in exactly the way the
+cooldown/window batch did. I removed that violation and reintroduced it one
+revision later with different items, which says something about how easily
+this precondition is lost.
+
+Items 1 and 2 are **not** in it, correcting an earlier revision. Calling
 them "pure storage reads" confused reading a value with classifying it: the
 cooldown needs the inline `block.timestamp` comparison and the final-hour
 window needs the `_boundListingExpiry` maturity predicate, so producing their
@@ -594,3 +621,28 @@ rounds in, the document is still finding the same error in its own
 corrections, which is either the strongest possible support for §1's thesis or
 the clearest possible sign that this design should not be built. Both readings
 are available and §8 does not resolve them.
+
+**A seventh round found three more, and one of them is the most serious
+omission in the document:**
+
+- **No live loan-status blocker at all** (now item 0). Both entrypoints
+  require `status == Active`, and the set had none — so on a stale indexer row
+  the preview would report two routes clear that revert `LoanNotActive`. That
+  is the exact window #1839 spent three rounds closing on the client, which a
+  preview claiming to be the authority would have reopened at the source.
+- **The single `temporalVerdict` conflated two orthogonal axes.** A listing
+  past maturity or inside the final-hour window lost its fill/cancel/complete
+  state to precedence, exactly when that state is the only actionable thing
+  left. Split into `windowVerdict` (may a new sale start) and `listingVerdict`
+  (what is the existing listing doing), ranked independently.
+- **8b and 8c were put in the first batch** — and they are inline predicates
+  in the mutating facets too, so that batch broke §4.6 the same way the
+  cooldown/window batch did. I removed that violation one round earlier and
+  reintroduced it with different items.
+
+The last of those is worth stating plainly: **the same precondition has now
+been violated twice, by me, one round apart, in a document that states it as a
+condition of adoption three sections above.** If a rule is that easy to lose
+while actively holding it in mind, expecting it to survive an implementation
+under deadline is not a reasonable bet — and that is an argument about §8's
+recommendation, not a note about §8's rollout table.
