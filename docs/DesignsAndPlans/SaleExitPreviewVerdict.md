@@ -341,8 +341,20 @@ the defect the proposal exists to remove.
 
 `checkedMask` makes the distinction explicit. A caller may treat a route as
 available only when the relevant bits are both **checked** and **clear**;
-anything unchecked renders as unknown, not as permission. This also makes a
-partial first pass safe to ship, which the original plan quietly was not.
+anything unchecked renders as unknown, not as permission.
+
+**The same rule binds the two enums, and `checkedMask` does not cover them.**
+It records bit coverage only — so an unimplemented `windowVerdict` or
+`listingVerdict` would default to `Open` / `None`, which are *valid definitive
+answers*, not absences. A partial build would then erase a live cooldown or a
+recoverable listing state while the blocker bits beside them correctly
+rendered unknown: the false-green failure again, arriving through the field
+added to prevent it.
+
+So an unimplemented enum classifier MUST return `Indeterminate` (255), never
+its zero value. Stated as a hard rule because the zero value is the natural
+default of an unwritten function, which makes this the easiest of all these
+mistakes to make by simply not doing something.
 
 ### 4.6 Shared classifiers, or this is just a second copy
 
@@ -552,8 +564,13 @@ precondition for adopting any of this. A first pass that shipped them would
 ship the duplicated predicates this design exists to eliminate — with the
 proposal's own adoption rule written three sections above it.
 
-So items 1, 2, 4, 5 and 8 all land **with** the classifier extraction, not
-before it. Item 3 is already exposed. That makes the first batch smaller and
+So items 1, 2, 4, 5, 8, **8b and 8c** all land **with** the classifier
+extraction, not before it. Naming 8b and 8c explicitly matters: the previous
+revision removed them from the first batch and assigned them to nothing, which
+under the `checkedMask` rule means the listing route could never graduate from
+unknown for 8b and neither route for 8c. Removing a check from a batch is not
+the same as scheduling it, and the difference is invisible until a permanently
+unknown row shows up in production. Item 3 is already exposed. That makes the first batch smaller and
 less useful than the version it replaces, which is the honest consequence of
 taking §4.6 seriously rather than a reason to relax it.
 
