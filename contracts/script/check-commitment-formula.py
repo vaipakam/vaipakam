@@ -109,11 +109,19 @@ RE_ADDITION = re.compile(
     r"\(?\s*(%s)\s*\+\s*(%s)\s*\)?\s*%s\s*(%s)" % (_REPORTED, _RELEASED, _DASH, _CONSUMED),
     re.I,
 )
+# `reported + (released - consumed)` is the same unsafe statement regrouped, and
+# in Solidity the inner subtraction ALSO underflows when released < consumed.
+RE_ADDITION_PAREN = re.compile(
+    r"(%s)\s*\+\s*\(\s*(%s)\s*%s\s*(%s)\s*\)" % (_REPORTED, _RELEASED, _DASH, _CONSUMED),
+    re.I,
+)
 RE_BARE_SUB = re.compile(
     r"(%s)\s*%s\s*(%s)(?!\s*%s\s*%s)" % (_REPORTED, _DASH, _CONSUMED, _DASH, _RELEASED),
     re.I,
 )
 RE_BARE_CMP = re.compile(r"(%s)\s*(?:<=|≤)\s*(%s)" % (_CONSUMED, _REPORTED), re.I)
+# The same false invariant reads naturally in the other direction.
+RE_BARE_CMP_REV = re.compile(r"(%s)\s*(?:>=|≥)\s*(%s)" % (_REPORTED, _CONSUMED), re.I)
 # The same unsafe bound commutes: `consumed <= released + reported` overflows on
 # a hostile near-max report exactly as `reported + released` does.
 RE_ADD_CMP = re.compile(
@@ -228,32 +236,61 @@ _MARKER_WINDOW = 3
 
 
 def _find_violations(text, offsets, markers):
-    """Return [(kind, source_line, exempt_reason_or_None)] for every occurrence."""
-    found = []
+    """Return [(kind, source_line, exempt_reason_or_None)] for every occurrence.
 
-    def record(kind, offset):
-        ln = _line_of(offsets, offset)
-        for mline, reason in markers.items():
-            if abs(mline - ln) <= _MARKER_WINDOW:
-                found.append((kind, ln, reason))
-                return
-        found.append((kind, ln, None))
+    A marker is CONSUMED by exactly one source line — the nearest unclaimed
+    occurrence within the window. Without consumption a marked historical
+    mention exempted every match near it, so a new false statement one line
+    later rode the old marker's licence; that is the block-scoping hole again,
+    just smaller. Binding is per LINE rather than per match, because one
+    sentence can legitimately trip two patterns at once (a bare form and an
+    addition form named in the same breath) and should not need two markers.
+    """
+    matches = []
+    def add(kind, offset):
+        matches.append((offset, kind))
 
     for m in RE_ADDITION.finditer(text):
-        # NOT exempted by an already-net consumed operand: `reported + released -
-        # consumedMinusReleased` restores releases TWICE and is worse, not better.
-        record("ADDITION", m.start())
+        add("ADDITION", m.start())
+    for m in RE_ADDITION_PAREN.finditer(text):
+        add("ADDITION", m.start())
     for m in RE_ADD_CMP.finditer(text):
-        record("ADDITION", m.start())
+        add("ADDITION", m.start())
     for m in RE_BARE_SUB.finditer(text):
         if not _is_already_net(m.group(2)):
-            record("BARE", m.start())
+            add("BARE", m.start())
     for m in RE_BARE_CMP.finditer(text):
         if not _is_already_net(m.group(1)):
-            record("BARE", m.start())
+            add("BARE", m.start())
+    for m in RE_BARE_CMP_REV.finditer(text):
+        if not _is_already_net(m.group(2)):
+            add("BARE", m.start())
     for m in RE_BARE_PROSE.finditer(text):
-        record("BARE", m.start())
-    return found
+        add("BARE", m.start())
+
+    matches.sort()
+    claimed = {}      # source line -> reason, for lines an exemption covers
+    used = set()      # marker lines already spent
+    out = []
+    for offset, kind in matches:
+        ln = _line_of(offsets, offset)
+        if ln in claimed:
+            out.append((kind, ln, claimed[ln]))
+            continue
+        best, best_d = None, None
+        for mline in markers:
+            if mline in used:
+                continue
+            d = abs(mline - ln)
+            if d <= _MARKER_WINDOW and (best_d is None or d < best_d):
+                best, best_d = mline, d
+        if best is None:
+            out.append((kind, ln, None))
+        else:
+            used.add(best)
+            claimed[ln] = markers[best]
+            out.append((kind, ln, markers[best]))
+    return out
 
 
 def scan():

@@ -72,6 +72,11 @@ run_case "marker too far from mention" '    /// formula-check:allow this reason 
     ///
     ///
     /// @dev avail = reported - consumed.' 1
+run_case "parenthesized addition"    '    /// @dev avail = reported + (released - consumed).' 1
+run_case "reversed bare comparison"  '    /// @dev reported >= consumed always holds.' 1
+run_case "one marker cannot cover two mentions" '    /// formula-check:allow the historical form is quoted here on purpose.
+    /// @dev the old B2-d3 shape was reported - consumed.
+    /// @dev current availability is reported - consumed.' 1
 
 echo "Correct shapes — the guard must NOT fire:"
 run_case "normalized net identifier" '    /// @dev consumedMinusReleased <= reported is the bound.' 0

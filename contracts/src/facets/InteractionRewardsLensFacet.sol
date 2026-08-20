@@ -532,9 +532,14 @@ contract InteractionRewardsLensFacet {
      *         readable here. Read the sum as global only for a FINALIZED day;
      *         before that, read `absorbedLocal` as this chain's own figure and
      *         do not present the total as global.
-     * @return scheduleFloor  Fresh half of the day's pool — drawn against the
-     *                          69M allowance (a spending ceiling, not a
-     *                          balance created at deploy).
+     * @return scheduleFloor  Fresh half of the day's pool: the SCHEDULED
+     *                          figure, itself capped by the remaining 69M
+     *                          allowance (which is a spending ceiling, not a
+     *                          balance created at deploy). This is not the
+     *                          amount charged against that allowance — where
+     *                          activity earns less than the schedule, the
+     *                          charge is smaller. `freshDrawdown` below is
+     *                          the actual draw.
      * @return recycledBudget Absorption-coupled recycled half. With
      *         `scheduleFloor` this gives `dailyPool` and hence
      *         `selfFundingRatio[D]`.

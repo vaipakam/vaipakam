@@ -1285,9 +1285,14 @@ contract RewardAggregatorFacet is
     ///         math source).
     /// @param  dayId Day to read.
     /// @return stamped        True once the day finalized (stamp exists).
-    /// @return scheduleFloor  Fresh half of the day's pool — drawn against the
-    ///                          69M allowance (a spending ceiling, not a
-    ///                          balance created at deploy).
+    /// @return scheduleFloor  Fresh half of the day's pool: the SCHEDULED
+    ///                          figure, itself capped by the remaining 69M
+    ///                          allowance (which is a spending ceiling, not a
+    ///                          balance created at deploy). This is not the
+    ///                          amount charged against that allowance — where
+    ///                          activity earns less than the schedule, the
+    ///                          charge is smaller. `freshDrawdown` is the
+    ///                          actual draw.
     /// @return recycledBudget Absorption-coupled recycled half.
     /// @return aBar           Trailing absorption average at finalize.
     /// @return marginBps      Retained-margin bps stamped at finalize.
