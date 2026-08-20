@@ -149,9 +149,9 @@ A **sibling** view on `RiskPreviewFacet`:
 
 ```
 saleExitPreview(uint256 loanId, address lender)
-  → (uint16 directBlockers,      // bit meanings fixed below
-     uint16 listBlockers,
-     uint16 checkedMask,         // which bits this build actually classified
+  → (uint256 directBlockers,     // bit meanings fixed below
+     uint256 listBlockers,
+     uint256 checkedMask,        // which bits this build actually classified
      uint8  admissionCode,       // 0 = clear; type(uint8).max = unmeasurable
      uint256 admissionA,         // saleAdmission's diagnostic payload,
      uint256 admissionB,         //   carried through, not discarded
@@ -173,6 +173,14 @@ assignments compile and decode the same `uint16` perfectly while disagreeing
 about what it says — the shadow-copy failure this selector exists to end,
 reproduced inside the fix. Bits are append-only; a retired blocker leaves its
 bit permanently burned.
+
+**`uint256`, not `uint16`.** The narrower type was a false economy: ABI
+encoding pads every one of these to a full 32-byte word regardless, so
+`uint16` bought no return-data bandwidth while capping the schema at sixteen
+positions. Eleven are already spoken for, and review has added three of those
+eleven — so the remaining headroom would have been consumed by the same
+process that filled it, and exhaustion means either another field or a
+coordinated ABI migration. Append-only bits and a tight width are a poor pair.
 
 **A Solidity constant does not achieve this, and saying so was the error.**
 The generated ABI describes the `uint16` return types and carries **no
@@ -263,13 +271,28 @@ helps; cooldown is the longer bar of the two listing-only ones.
 | 0 | `None` — no listing linked |
 | 1 | `Fillable` — stands, unexpired, bounds hold right now |
 | 2 | `EndedUnfilled` — stands but no buyer can complete |
-| 3 | `AcceptedPendingCompletion` — accepted, awaiting `completeLoanSale` |
+| 3 | `AcceptedPendingCompletion` — accepted, awaiting `completeLoanSale`, loan still Active |
+| 5 | `AcceptedButUncompletable` — accepted, loan no longer Active: STUCK |
 | 4 | `BoundsViolated` — unexpired, but a fill would revert today |
 | 255 | `Indeterminate` |
 
-Precedence 3 > 2 > 4 > 1 > 0, and **independent of `windowVerdict`** — a
+Precedence 5 > 3 > 2 > 4 > 1 > 0, and **independent of `windowVerdict`** — a
 lender past maturity with value 3 still sees "complete this sale", because
 that is what the protocol still permits.
+
+**Value 5 is a genuine protocol dead end, not a display state.** If a legacy
+accepted-but-uncompleted listing's loan reaches `Repaid`, `Settled` or
+`Defaulted`, `_completeLoanSaleImpl` rejects every non-Active loan **and**
+`teardownStaleSaleListing` deliberately skips accepted offers — so the link is
+stuck with no on-chain path out. Value 3 without the Active condition would
+have sent the lender to a completion that cannot succeed, repeatedly.
+
+The preview cannot fix that; it can refuse to misdescribe it. Naming the state
+is the minimum, and whether the protocol should gain a recovery path for it is
+a separate question this document raises rather than answers — it is a
+contract gap that predates the proposal and would outlive a decision not to
+build it. Filed as **#1851**, explicitly unreproduced: it rests on reading two
+guards against each other, and the state may prove unreachable.
 
 Values 3 and 4 exist because the single-enum version was wrong twice over.
 **3**: a legacy or recovery-state sale can have `accepted == true` while
