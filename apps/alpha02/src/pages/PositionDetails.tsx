@@ -2980,17 +2980,43 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // an anchored clock, which only `bannerTerms` carries; the
           // status resolution needs only a fresh enum. Same two
           // queries, two different questions, two orders.
-          maturity={
-            bannerTerms.data && !bannerTerms.isError
-              ? bannerNowSec >= termsEndSec
-                ? 'past'
-                : 'current'
-              : loanLive.data && !loanLive.isError
+          // DISAGREEMENT between two healthy sources resolves to
+          // `'unknown'`, not to the higher-ranked one (Codex r13 P2).
+          //
+          // The terminal-status trick does not transfer here: maturity
+          // is not absorbing. An in-grace keeper extension re-stamps
+          // `startTime`/`durationDays` and moves the due date FORWARD,
+          // so a cached `past` can outlive the live term — and an
+          // obligation transfer re-stamps it too, so a cached date can
+          // equally be LATER than the truth. Neither direction is
+          // safe, and this page tracks no per-query timestamps to
+          // break the tie with.
+          //
+          // So when the two disagree we genuinely do not know which is
+          // current, and the card's own doctrine applies: say so
+          // rather than pick. `'unknown'` already blocks both rows
+          // with an honest line and clears on the next refetch, and
+          // the alternative — asserting `past` on a loan the contracts
+          // would happily sell — is a wrong answer about the one fact
+          // that closes both exits.
+          maturity={(() => {
+            const banner =
+              bannerTerms.data && !bannerTerms.isError
+                ? bannerNowSec >= termsEndSec
+                  ? 'past'
+                  : 'current'
+                : undefined;
+            const live =
+              loanLive.data && !loanLive.isError
                 ? loanLive.data.chainNow >= loanEndTimeOf(loanLive.data.live)
                   ? 'past'
                   : 'current'
-                : 'unknown'
-          }
+                : undefined;
+            if (banner !== undefined && live !== undefined) {
+              return banner === live ? banner : 'unknown';
+            }
+            return banner ?? live ?? 'unknown';
+          })()}
           // Sync env read (`VITE_DISABLED_FLOWS`), no query behind it.
           listingFlowDisabled={flowDisabled('post-offer')}
           // EVERY prerequisite the anchored tools are gated on, not
