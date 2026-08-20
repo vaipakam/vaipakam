@@ -1098,9 +1098,25 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // Affirmative only: an unread or errored status leaves this alone,
     // because failing closed on a missing answer is the permanent
     // dead end this card has met three times.
-    !(
-      resolvedLoanStatus !== undefined &&
-      resolvedLoanStatus !== LoanStatus.Active
+    // ANY healthy source that affirmatively reports a non-Active
+    // status blocks, not just the top-ranked one (Codex r20 P2).
+    //
+    // The terminal-precedence fix left FallbackPending resolved by
+    // rank alone, on the reasoning that it can cure back to Active so
+    // an older one must not override a newer Active. That is right
+    // about the RESOLVED STATUS and wrong about SALE AVAILABILITY:
+    // both entrypoints require exactly `Active`, so a fresher
+    // 30-second read seeing the transition is enough to know a
+    // submission would be refused right now, whatever the 60-second
+    // read still has cached.
+    //
+    // Fails CLOSED on purpose, and the asymmetry is the argument: a
+    // false block is a row that says unavailable and clears on the
+    // next poll, while a false offer is a form filled in for a
+    // transaction that reverts. Only affirmative answers count — an
+    // unread or errored source still says nothing.
+    !liveStatusCandidates.some(
+      (st) => st !== undefined && st !== LoanStatus.Active,
     );
 
   const liveSaysFallbackPending =
@@ -3436,7 +3452,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // Bound to the wallet the settlement pull binds to — a
       // non-holder on the listing device must not see funding
       // verdicts (or grant approvals) for someone else's sale.
-      (role === 'lender' || sale.state.isHolder) ? (
+      // `isLenderHolder` joins the test (Codex r20 P2). The chooser
+      // tells a lender their position is already listed and points at
+      // THIS card — so if it does not mount, the row names a control
+      // that is not there. For a dual-position holder `role` is
+      // `borrower`, and the hook's independent `ownerOf` can fail on
+      // its own, so both existing halves could be false while the
+      // page's own owner read had already confirmed lender ownership.
+      (isLenderHolder || role === 'lender' || sale.state.isHolder) ? (
         <LoanSalePendingCard
           loanId={row.loanId}
           lenderTokenId={row.lenderTokenId}
