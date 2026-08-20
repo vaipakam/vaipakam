@@ -1291,8 +1291,11 @@ contract RewardAggregatorFacet is
     ///                          balance created at deploy). This is not the
     ///                          amount charged against that allowance — where
     ///                          activity earns less than the schedule, the
-    ///                          charge is smaller. `freshDrawdown` is the
-    ///                          actual draw.
+    ///                          charge is smaller, and may be zero. This
+    ///                          getter does NOT expose the charge: read it as
+    ///                          `freshDrawdown` from
+    ///                          {InteractionRewardsLensFacet.getRecycleDayMetrics},
+    ///                          or from the {GovernorDayPoolStamped} event.
     /// @return recycledBudget Absorption-coupled recycled half.
     /// @return aBar           Trailing absorption average at finalize.
     /// @return marginBps      Retained-margin bps stamped at finalize.

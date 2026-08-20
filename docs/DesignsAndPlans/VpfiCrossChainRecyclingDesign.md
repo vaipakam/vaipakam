@@ -490,8 +490,13 @@ the deploy gate — it mutates a source file and restores it, which is not
 something a pre-deploy path should do — so it is run by hand when the guard
 changes.
 
-**No count and no completeness claim appears in this document, because the check
-is the claim** — and the check now states what it scanned.
+**No count of REMAINING restatements, and no claim that the sweep is complete,
+appears in this document — the check is that claim**, and it states what it
+scanned when it runs. (Counts of what HAPPENED — how many rounds found what, and
+that this pattern has now recurred three times — are history, not a standing
+assertion about the tree, and do not go stale. An earlier revision of this
+sentence said no count appeared at all, which the paragraphs around it plainly
+falsified.)
 
 **The bare form `consumedCumulative ≤ reportedCumulative` is FALSE and must not
 appear as a current claim anywhere.** That is the one thing worth stating here,

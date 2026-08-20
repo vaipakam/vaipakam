@@ -136,7 +136,18 @@ RE_ADD_CMP = re.compile(
     % (_CONSUMED, _RELEASED, _REPORTED, _REPORTED, _RELEASED),
     re.I,
 )
-RE_BARE_PROSE = re.compile(r"reported[- ]minus[- ]consumed", re.I)
+# Ordinary prose states these rules too, and word operators bypass every
+# symbolic matcher above.
+_W = r"\w*%s\w*"
+RE_BARE_PROSE = re.compile(
+    r"%s\s+(?:minus|less|net\s+of)\s+%s" % (_W % "reported", _W % "consumed"),
+    re.I,
+)
+RE_ADD_PROSE = re.compile(
+    r"%s\s+plus\s+%s\s+(?:minus|less)\s+%s"
+    % (_W % "reported", _W % "released", _W % "consumed"),
+    re.I,
+)
 
 # Identifiers that ALREADY encode the release adjustment are correct, not
 # retired: `consumedMinusReleased <= reported` is the right bound written with a
@@ -274,6 +285,8 @@ def _find_violations(text, offsets, markers):
     for m in RE_BARE_CMP_REV.finditer(text):
         if not _is_already_net(m.group(2)):
             add("BARE", m.start())
+    for m in RE_ADD_PROSE.finditer(text):
+        add("ADDITION", m.start())
     for m in RE_BARE_PROSE.finditer(text):
         add("BARE", m.start())
 
