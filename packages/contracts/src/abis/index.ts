@@ -60,6 +60,7 @@ import PartialWithdrawalFacetABI from './PartialWithdrawalFacet.json';
 import PrecloseFacetABI from './PrecloseFacet.json';
 import RefinanceFacetABI from './RefinanceFacet.json';
 import EarlyWithdrawalFacetABI from './EarlyWithdrawalFacet.json';
+import EarlyWithdrawalDirectFacetABI from './EarlyWithdrawalDirectFacet.json';
 import TreasuryFacetABI from './TreasuryFacet.json';
 import PayrollFacetABI from './PayrollFacet.json';
 import DiamondLoupeFacetABI from './DiamondLoupeFacet.json';
@@ -76,6 +77,7 @@ import ProtocolBroadcastFacetABI from './ProtocolBroadcastFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
 // #1351 slice 2c — CLAIM entry points split off for EIP-170 headroom.
 import RewardClaimFacetABI from './RewardClaimFacet.json';
+import RewardHorizonSweepFacetABI from './RewardHorizonSweepFacet.json';
 // #1306 follow-up — read-only lens split off InteractionRewardsFacet.
 import InteractionRewardsLensFacetABI from './InteractionRewardsLensFacet.json';
 // #687-A removed the cross-chain VPFI buy contracts (VpfiBuyAdapter /
@@ -163,6 +165,7 @@ export {
   PrecloseFacetABI,
   RefinanceFacetABI,
   EarlyWithdrawalFacetABI,
+  EarlyWithdrawalDirectFacetABI,
   TreasuryFacetABI,
   PayrollFacetABI,
   DiamondLoupeFacetABI,
@@ -175,6 +178,7 @@ export {
   ProtocolBroadcastFacetABI,
   InteractionRewardsFacetABI,
   RewardClaimFacetABI,
+  RewardHorizonSweepFacetABI,
   InteractionRewardsLensFacetABI,
   RewardReporterFacetABI,
   RewardAggregatorFacetABI,
@@ -255,6 +259,7 @@ export const DIAMOND_ABI = [
   ...PrecloseFacetABI,
   ...RefinanceFacetABI,
   ...EarlyWithdrawalFacetABI,
+  ...EarlyWithdrawalDirectFacetABI,
   ...TreasuryFacetABI,
   ...PayrollFacetABI,
   ...DiamondLoupeFacetABI,
@@ -268,6 +273,7 @@ export const DIAMOND_ABI = [
   ...InteractionRewardsFacetABI,
   // #1351 slice 2c — CLAIM entry points split off for EIP-170 headroom.
   ...RewardClaimFacetABI,
+  ...RewardHorizonSweepFacetABI,
   ...InteractionRewardsLensFacetABI,
   ...RewardReporterFacetABI,
   ...RewardAggregatorFacetABI,

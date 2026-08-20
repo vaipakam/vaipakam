@@ -6,10 +6,15 @@
 #
 # #1503 gave both lender-exit sale paths a cross-facet call to
 # `RiskPreviewFacet.saleAdmission`. The two CURATED partial-refresh scripts
-# each reinstall one of the facets that makes that call:
+# each reinstall facets that make that call:
 #
-#   RedeployFacets      -> EarlyWithdrawalFacet (direct sale + listing creation)
-#   ReplaceStaleFacets  -> OfferAcceptFacet     (the binding listing accept)
+#   RedeployFacets      -> EarlyWithdrawalFacet       (listing creation + completion)
+#                       -> EarlyWithdrawalDirectFacet (the direct sale)
+#   ReplaceStaleFacets  -> OfferAcceptFacet           (the binding listing accept)
+#
+# Three hosts, not two, since #1780 split the direct route into its own facet.
+# RedeployFacets reinstalls BOTH halves of that pair for the reason its own
+# header gives: refreshing one alone leaves the other running pre-split code.
 #
 # Run either against an existing Diamond that predates #1503 and, before the
 # fix, you got the worst outcome available: the new sale bytecode live, calling
@@ -84,6 +89,8 @@ RISK_PREVIEW_SELECTORS=(
   0x314efc12  # previewCreatorBlock
   0xa7aaae7f  # previewIntent
   0x2c87c1a3  # saleAdmission
+  0x03530269  # sellerForfeitureWindow  (#1503 item 28)
+  0xda39c1e5  # quoteSellerBounds       (#1503 item 4)
 )
 
 # KNOWN FAILURE — ReplaceStaleFacets still fails at step 6, and the failure is
@@ -124,11 +131,17 @@ step() { echo; echo "--- $*"; }
 # scenario that does not traverse the path a given script refreshes would stay
 # green with that script's guard broken or dropped:
 #
-#   RedeployFacets     -> EarlyWithdrawalFacet -> N25 (direct sellLoanViaBuyOffer)
-#   ReplaceStaleFacets -> OfferAcceptFacet     -> N26 (resting-listing accept)
+#   RedeployFacets     -> EarlyWithdrawalDirectFacet -> N25 (direct sellLoanViaBuyOffer)
+#   ReplaceStaleFacets -> OfferAcceptFacet           -> N26 (resting-listing accept)
 #
 # Rehearsing ReplaceStaleFacets against N25 was exactly that mistake: N25's only
 # acceptOffer call originates an ordinary loan and never reaches the sale branch.
+#
+# Since #1780 the direct sale N25 drives lives in `EarlyWithdrawalDirectFacet`,
+# not `EarlyWithdrawalFacet` — named precisely here because this mapping's whole
+# job is to say which scenario proves which script's guard, and looking for
+# `sellLoanViaBuyOffer` in the facet this line used to name would come back
+# empty. RedeployFacets reinstalls both halves, so the pairing still holds.
 export DEPLOYER_PRIVATE_KEY="$DEPLOYER_KEY"
 export ADMIN_PRIVATE_KEY="$ADMIN_KEY"
 export ADMIN_ADDRESS="$ADMIN_ADDR"

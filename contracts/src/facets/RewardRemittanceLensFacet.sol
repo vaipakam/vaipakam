@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IRewardMessenger} from "../interfaces/IRewardMessenger.sol";
 
 /**
@@ -287,6 +288,37 @@ contract RewardRemittanceLensFacet {
     }
 
     /**
+     * @notice #1434 P1-b (Codex #1699 r1) — the PAID side of the
+     *         delivered-fresh bound, and the allowance that remains.
+     * @dev    A NEW selector rather than a third return on
+     *         {getDeliveredFreshPosition}: widening an existing return keeps
+     *         the same selector while changing the decode, which is the
+     *         silent-drift failure mode an ABI-supplied client cannot see.
+     *
+     *         `remaining` is the SATURATING difference, and reading it here
+     *         rather than differencing the two figures by hand is the point:
+     *         the received side is not monotone (it carries an unwind for a
+     *         released or reclassified delivery), so `paid` can legitimately
+     *         exceed it and a hand-rolled subtraction would underflow.
+     *
+     *         Zero `remaining` means armed-day payouts WAIT on this chain —
+     *         a satisfiable wait that the next remittance clears, not an
+     *         exhausted cap. On the canonical chain the bound does not apply
+     *         and `remaining` reads `type(uint256).max`.
+     * @return paid      Armed fresh this chain has paid out.
+     * @return remaining Delivered-less-paid allowance still spendable.
+     */
+    function getDeliveredFreshBound()
+        external
+        view
+        returns (uint256 paid, uint256 remaining)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        paid = s.rewardBudgetArmedFreshPaid;
+        remaining = LibInteractionRewards.deliveredFreshBound(s);
+    }
+
+    /**
      * @notice #1434 P1-a — how much of the reward funding delivered to this
      *         chain counts as ARMED FRESH, and how much did not.
      * @dev    The two are returned together because either alone misleads.
@@ -298,10 +330,12 @@ contract RewardRemittanceLensFacet {
      *
      *         NEITHER is a spendable balance, and neither is a bound. This
      *         is a RECEIPT-side ledger: it says what arrived and how it was
-     *         attributed, not what remains. The bound it will feed — armed
-     *         fresh delivered LESS armed fresh paid — needs the paid side,
-     *         which lands with P1-b (see the storage docs for why the splits
-     *         cannot report it today). Do not subtract
+     *         attributed, not what remains. The bound it feeds — armed fresh
+     *         delivered LESS armed fresh paid — is live as of #1434 P1-b,
+     *         which added the paid side (`rewardBudgetArmedFreshPaid`); read
+     *         it via {LibInteractionRewards.deliveredFreshBound}, which
+     *         saturates because the received side is not monotone. Do not
+     *         subtract
      *         `interactionPoolPaidOut` from `counted` and read the result as
      *         headroom: that cumulative also counts legacy-schedule payouts
      *         this funding never owed, and an earlier revision of this slice

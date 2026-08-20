@@ -13,6 +13,7 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -143,7 +144,7 @@ contract PauseGatingTest is SetupTest {
 
     function test_pause_sellLoanViaBuyOffer() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(0, 0);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(0, 0);
     }
 
     function test_pause_createLoanSaleOffer() public {

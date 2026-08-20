@@ -1,6 +1,9 @@
 /**
  * Lender early exit — sell the lender position into an existing open
- * lending ("buy") offer via EarlyWithdrawalFacet.sellLoanViaBuyOffer.
+ * lending ("buy") offer via EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer
+ * (that route moved out of EarlyWithdrawalFacet in #1780; the call surface
+ * is unchanged — the app still targets the one Diamond address, and the
+ * merged DIAMOND_ABI_VIEM spans both facets).
  *
  * Economics (mirrors the facet): the buyer's already-vaulted
  * principal funds the payout; the seller receives
@@ -98,10 +101,34 @@ export function EarlyExitFlow({
 
   const fitDays = durationFitDays(live, chainNow);
 
+  // Every seller figure prices at the SNAPSHOT's block. Since #1801 r9 that is
+  // not something this component arranges — `sellerEconomics` reads
+  // `live.readAtTimestamp` itself and takes no clock argument, so a caller
+  // cannot pair the loan with a different one. `chainNow` remains the right
+  // clock for offer expiry, which is a wall-clock question rather than a
+  // pricing one.
+  // ...and when the window could not be read at all, there is no seller quote
+  // to show. `sellerEconomics` throws rather than substituting a number, so the
+  // surface has to say so instead of rendering a wrong one — an unavailable
+  // quote is recoverable, a silently understated one funds a sale the contract
+  // then rejects.
+  const quoteUnavailable = live.lenderForfeitFrom === undefined;
+
   // The facet's admission rules, applied client-side so a doomed
   // candidate never reaches a wallet prompt. Every excluded shape
   // reverts InvalidSaleOffer on-chain.
   const candidates = useMemo(() => {
+    // No window, no quote — every candidate below needs one, and a doomed
+    // list is worse than an empty one because it looks priced.
+    //
+    // `null`, NOT `[]` (Codex #1801 r11 P2). This component already renders
+    // three distinct states, and `[]` is "the market is empty" — so a transient
+    // failure to read the seller's window told the lender there are no
+    // compatible offers when there may be plenty. The unavailable branch
+    // (`candidates === null`) is the one that describes what actually happened,
+    // and it already exists for the offer read failing; a quote failure is the
+    // same class of answer.
+    if (live.lenderForfeitFrom === undefined) return null;
     if (!offers.data || !address) return offers.data === null ? null : [];
     const me = address.toLowerCase();
     return offers.data
@@ -130,7 +157,7 @@ export function EarlyExitFlow({
         // Buying out your own position is a no-op with fees.
         if (o.creator.toLowerCase() === me) return false;
         // RateShortfallTooHigh guard.
-        const econ = sellerEconomics(live, BigInt(o.interestRateBps), chainNow);
+        const econ = sellerEconomics(live, BigInt(o.interestRateBps));
         return econ.cost <= live.principal;
       })
       .sort(
@@ -143,9 +170,10 @@ export function EarlyExitFlow({
 
   const selected =
     candidates?.find((o) => o.offerId === selectedId) ?? null;
-  const selectedEcon = selected
-    ? sellerEconomics(live, BigInt(selected.interestRateBps), chainNow)
-    : null;
+  const selectedEcon =
+    selected && !quoteUnavailable
+      ? sellerEconomics(live, BigInt(selected.interestRateBps))
+      : null;
 
   const sym = principalMeta.symbol;
   const dec = principalMeta.decimals;
@@ -283,7 +311,7 @@ export function EarlyExitFlow({
       // live (the picker judged it against a ≤60s-old clock).
       if (
         BigInt(liveOffer.durationDays) >
-        durationFitDays(liveLoan, latestBlock.timestamp)
+        durationFitDays(liveLoan, liveLoan.readAtTimestamp)
       ) {
         throw new Error(copy.match.termsChanged);
       }
@@ -291,11 +319,10 @@ export function EarlyExitFlow({
       // reviewed "~" figure shrinks as time elapses — allow up to two
       // days of drift (same pad convention as the repay paths); more
       // means something material moved (partial repay, rate change).
-      const liveEcon = sellerEconomics(
-        liveLoan,
-        BigInt(liveOffer.interestRateBps),
-        latestBlock.timestamp,
-      );
+      // Priced at the SNAPSHOT's block (#1801 r8) — `liveLoan`'s own read time,
+      // not a separately fetched latest block, so the loan, the window and the
+      // clock all describe one state.
+      const liveEcon = sellerEconomics(liveLoan, BigInt(liveOffer.interestRateBps));
       if (liveEcon.cost > liveLoan.principal) {
         throw new Error(copy.match.termsChanged);
       }
@@ -356,11 +383,7 @@ export function EarlyExitFlow({
           </p>
           <div className="stack" style={{ gap: 8 }}>
             {shown.map((o) => {
-              const econ = sellerEconomics(
-                live,
-                BigInt(o.interestRateBps),
-                chainNow,
-              );
+              const econ = sellerEconomics(live, BigInt(o.interestRateBps));
               const isSelected = o.offerId === selectedId;
               return (
                 <button

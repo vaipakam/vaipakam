@@ -22,6 +22,14 @@ interface IVaipakamErrors {
     // without usable revert data, so they identify "which kind of hop went
     // wrong" rather than duplicating the inner reason string.
     error NFTBurnFailed();
+    /// @notice #1503 item 12 — the sale-settlement reward migration self-call
+    ///         failed WITHOUT returndata (with returndata the inner revert is
+    ///         rethrown verbatim instead). Sale settlement is atomic with the
+    ///         reward migration because every quote discloses the seller's
+    ///         forfeiture and the buyer's residual entry; on a properly-cut
+    ///         diamond the transfer body cannot revert, so in practice this
+    ///         marks deploy drift (InteractionRewardsFacet unrouted).
+    error RewardMigrationFailed();
     error NFTMintFailed();
     error NFTStatusUpdateFailed();
     error NFTRenterUpdateFailed();
@@ -195,6 +203,22 @@ interface IVaipakamErrors {
     error NoInteractionRewardsToClaim();
     /// @notice The 69M VPFI interaction rewards cap has been fully paid out.
     error InteractionPoolExhausted();
+
+    /// @notice #1434 P1-b — RETAINED DELIBERATELY though currently unreached.
+    ///         r18 moved the mirror's delivered-fresh refusal from a
+    ///         whole-sweep revert to a PER-DAY defer inside the settlement
+    ///         engine, so nothing raises this today. Kept rather than removed
+    ///         because removing it rewrites all 41 facet ABIs for zero runtime
+    ///         gain; retirement is tracked as a follow-up.
+    /// @param needed    Armed fresh the action would have spent.
+    /// @param available Remaining delivered-less-paid allowance.
+    error DeliveredFreshShortfall(uint256 needed, uint256 available);
+
+    /// @notice #1434 P1-b (Codex #1699 r2) — the one-shot pre-P1-b paid-side
+    ///         migration seed has already run on this chain.
+    /// @dev    One-shot on purpose: the seed ADDS to the paid counter, so a
+    ///         second call would double-charge the bound and strand funding.
+    error ArmedFreshPaidAlreadySeeded();
     /// @notice #1460 — the claim's FRESH component exceeds the un-earmarked
     ///         VPFI behind it (`balanceOf(diamond) - recycleBucket`), so
     ///         paying it would leave the recycle bucket claiming tokens that
@@ -964,4 +988,70 @@ interface IVaipakamErrors {
     ///         remit batch — a day funds at most once (a RELEASED
     ///         reservation re-opens its days).
     error RemitDayAlreadyClosed(uint256 dayId, uint32 chainId);
+
+    /// @notice #1780 — the lender-sale errors are shared by BOTH early-
+    ///         withdrawal routes. The direct route ({EarlyWithdrawalDirectFacet})
+    ///         and the listed route ({EarlyWithdrawalFacet}) were one facet
+    ///         until the EIP-170 split, and each of these three is raised on
+    ///         both sides; they live here so the split does not duplicate a
+    ///         declaration, which is exactly what this interface exists to
+    ///         prevent.
+    /// @notice The buy offer or sale offer cannot serve as a sale vehicle for
+    ///         this loan — wrong asset, wrong term, already spoken for, or not
+    ///         in a fillable state.
+    error InvalidSaleOffer();
+    /// @notice The rate difference between the live loan and the sale vehicle
+    ///         would cost the exiting lender more than the principal itself.
+    error RateShortfallTooHigh();
+    /// @notice #1503 item 4 — completing this sale would pay the exiting lender
+    ///         less than the floor they recorded when they listed.
+    /// @dev    Raised when the settlement cost has grown past what the seller
+    ///         authorised. Ordinary accrual across the listing window CANNOT
+    ///         trip this: the floor is derived at BOTH ends of the listing
+    ///         window — whichever is worse for the seller, plus truncation
+    ///         slack — so the whole window is inside it. What trips it is a step change
+    ///         the seller never reviewed — a principal movement, or interest
+    ///         parked rather than delivered, either of which disqualifies the
+    ///         paid-through mark and re-opens the forfeiture window earlier.
+    ///
+    ///         The remedy is to cancel and relist at the new economics, NOT to
+    ///         relax the bound: the larger cost is real, and the seller has
+    ///         simply not agreed to it.
+    /// @param minSellerNet The floor recorded on the listing.
+    /// @param actual       What completion would actually pay the seller.
+    error SaleBelowSellerFloor(uint256 minSellerNet, uint256 actual);
+    /// @notice #1503 item 4 — completing this sale would hand the buyer more
+    ///         held-for-lender balance than there was when the seller listed.
+    /// @dev    That balance is money already set aside for the lender which
+    ///         transfers with the position, so a park between listing and
+    ///         acceptance silently enlarges what the seller gives up. Unlike
+    ///         the forfeiture it does not grow with time, so the recorded value
+    ///         is simply the balance at listing.
+    /// @param maxHeld The ceiling recorded on the listing.
+    /// @param actual  The balance that would transfer now.
+    error SaleAboveHeldCeiling(uint256 maxHeld, uint256 actual);
+    /// @notice #1810 — the listing would record a seller floor BELOW the quote
+    ///         the seller reviewed, so state moved against them between quote
+    ///         and listing (a partial repayment is enough — it disqualifies
+    ///         the paid-through mark and widens the forfeiture).
+    /// @dev    Raised only by `createLoanSaleOfferBound`; the unbound entry
+    ///         records whatever the arithmetic comes to. Adverse drift only —
+    ///         a floor above the reviewed one passes.
+    /// @param recorded The floor the listing would record now.
+    /// @param reviewed The floor the seller was quoted.
+    error ListingFloorBelowReviewed(uint256 recorded, uint256 reviewed);
+    /// @notice #1810 — the listing would record a held-transfer ceiling ABOVE
+    ///         the quote the seller reviewed (interest parked into
+    ///         held-for-lender between quote and listing enlarges what
+    ///         transfers with the position).
+    /// @param recorded The ceiling the listing would record now.
+    /// @param reviewed The ceiling the seller was quoted.
+    error ListingHeldAboveReviewed(uint256 recorded, uint256 reviewed);
+    /// @notice #951 (Codex #959) — a loan already has a live sale listing. Only
+    ///         one listing per loan at a time: `loanToSaleOfferId` is cleared on
+    ///         cancel (OfferCancelFacet) and on completion, so a re-list after
+    ///         either is allowed; a second concurrent listing would overwrite the
+    ///         forward link and strand the reverse link, splitting accept/cancel
+    ///         authority across two offers.
+    error SaleOfferAlreadyExists();
 }

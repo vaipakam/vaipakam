@@ -5,6 +5,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibERC721} from "./LibERC721.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {LibEntitlement} from "./LibEntitlement.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 
 /**
@@ -33,6 +34,15 @@ import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
  *      the book). Idempotent and a cheap no-op when the loan carries no listing.
  */
 library LibSaleListing {
+    /// @notice #1503 item 4 — units of slack added to the projected seller cost
+    ///         to absorb integer truncation between the two endpoint
+    ///         evaluations. Derived in {projectSellerBounds}: the shortfall leg
+    ///         is a difference of separately truncated figures, so it can exceed
+    ///         its own endpoint values by at most two units at an interior
+    ///         second. Slack LOWERS the recorded floor, which is the direction
+    ///         that cannot refuse a legitimate fill.
+    uint256 internal constant TRUNCATION_SLACK = 2;
+
     /// @notice A live sale listing was torn down because its loan exited to a
     ///         terminal state before the sale completed. Indexers surface the
     ///         `saleOfferId` as cancelled off the back of this + `offerCancelled`.
@@ -134,7 +144,182 @@ library LibSaleListing {
 
         delete s.loanToSaleOfferId[loanId];
         delete s.saleOfferToLoanId[saleOfferId];
+        // #1503 item 4 — bounds die with the listing they describe.
+        clearSellerBounds(s, loanId);
 
         emit LoanSaleListingTornDown(loanId, saleOfferId);
+    }
+    /// @notice #1503 item 4 — record the seller's two economic bounds on a new
+    ///         sale listing, and the flag that says they exist.
+    ///
+    /// @dev    Kept in this library rather than inlined into
+    ///         {EarlyWithdrawalFacet} because the DIRECT route needs the same
+    ///         projection when item 6 lands, and that facet is separate since
+    ///         #1780 — inlining here would guarantee the two routes diverge on
+    ///         the arithmetic, which is the defect #1659 already had to repair
+    ///         once.
+    ///
+    ///         (Size is NOT the reason, though it was the first one that came
+    ///         to mind: the "thirty bytes of headroom" figure belongs to the
+    ///         facet BEFORE #1780 split it, and is what motivated the split.
+    ///         Measured after, it carries about 5.2 KB free, so this would fit.
+    ///         Stated because a wrong justification in a comment outlives the
+    ///         decision it justifies.)
+    ///
+    ///         The two bounds have deliberately different shapes, and the
+    ///         asymmetry is the design rather than an inconsistency:
+    ///
+    ///         The FLOOR is a worst case projected forward. Accrued interest
+    ///         grows across the listing window, so a floor at the figure the
+    ///         seller saw would make their own listing unfillable within
+    ///         minutes. It is the settlement evaluated at BOTH ENDS of the
+    ///         window, taking whichever is worse for the seller, plus slack for
+    ///         integer truncation — see {projectSellerBounds}, which derives
+    ///         both. Not the expiry alone: the two legs of the cost move in
+    ///         opposite directions, so an above-rate listing is costliest to
+    ///         fill IMMEDIATELY. Either way the whole window fits inside the
+    ///         bound — "fill any time before this expires and you receive at
+    ///         least X" — and that is only computable because the expiry is
+    ///         mandatory and finite.
+    ///
+    ///         The CEILING is a snapshot taken now. `heldForLender` does not
+    ///         grow with time; it grows only when a settlement parks more into
+    ///         it, which is exactly the drift being refused, so the value at
+    ///         listing IS the bound.
+    ///
+    ///         What each catches is not the same, and neither is redundant: a
+    ///         park trips both (it enlarges the held balance AND voids the
+    ///         paid-through mark), but a principal change voids the mark while
+    ///         parking nothing, so only the floor sees it.
+    /// @param s          The Diamond storage slot.
+    /// @param loanId     The loan being listed.
+    /// @param saleRateBps The listing's own rate — fixed now, so the shortfall
+    ///                    leg of the worst case is knowable at listing.
+    /// @param expiresAt  The listing's mandatory finite expiry.
+    function recordSellerBounds(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 saleRateBps,
+        uint256 expiresAt
+    ) internal {
+        (uint256 minSellerNet, uint256 maxHeld) =
+            projectSellerBounds(s, loanId, saleRateBps, expiresAt);
+        s.saleListingMinSellerNet[loanId] = minSellerNet;
+        s.saleListingMaxHeldTransfer[loanId] = maxHeld;
+        s.saleListingBoundsRecorded[loanId] = true;
+        s.saleListingBoundsExpiry[loanId] = expiresAt;
+    }
+
+    /// @notice #1503 item 4 — the two bounds a listing with these terms would
+    ///         record, without recording them.
+    /// @dev    Split out of {recordSellerBounds} so the quote a seller is shown
+    ///         and the bound they are held to are ONE computation rather than
+    ///         two that agree today. `RiskPreviewFacet.quoteSellerBounds` is the
+    ///         external read; every claim about the quote not drifting from the
+    ///         rule rests on this being the only place the arithmetic lives.
+    ///
+    ///         Nothing is written, so this is safe to call before a listing
+    ///         exists — which is the only moment the quote is useful, since the
+    ///         seller is still deciding.
+    /// @return minSellerNet The floor: the least the seller receives if the
+    ///                      listing fills at any point before `expiresAt`.
+    /// @return maxHeld      The ceiling: `heldForLender` as it stands now.
+    function projectSellerBounds(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 saleRateBps,
+        uint256 expiresAt
+    ) internal view returns (uint256 minSellerNet, uint256 maxHeld) {
+        uint256 principal = s.loans[loanId].principal;
+        // BOTH ends of the window, not just expiry (Codex #1812 P1). The cost is
+        // `max(forfeited accrual, rate shortfall)`, and those two move in
+        // OPPOSITE directions: accrual grows as the listing stands, while the
+        // shortfall shrinks because it is owed over the REMAINING term. So the
+        // maximum of the two is reached at an endpoint but not always the same
+        // one — a loan listed at a materially higher rate than its own is
+        // costliest to sell IMMEDIATELY, and evaluating only at expiry recorded
+        // a floor above the seller's own instant net. An early fill nothing had
+        // disturbed then reverted `SaleBelowSellerFloor`, refusing the sale the
+        // bound exists to protect.
+        //
+        // Two endpoint evaluations would be exactly tight over the REALS: for an
+        // increasing f and a decreasing g, `max(f, g)` peaks at
+        // `max(f(end), g(start))`. That was the original justification here and
+        // it is not sufficient in integer arithmetic (Codex #1812 round-3 P2).
+        //
+        // The shortfall leg is a difference of two SEPARATELY TRUNCATED interest
+        // figures, `trunc(A) - trunc(B)`. Each truncation loses up to one unit,
+        // so the integer difference is not monotonic even though `A - B` is: it
+        // can sit one unit above the continuous value at an interior second and
+        // one unit below it at the endpoint that bounds the window. Both
+        // endpoints can therefore read 1,440 while some second between them
+        // costs 1,441, and the recorded floor then refuses a fill that changed
+        // nothing.
+        //
+        // Bounding it: with `f(t) = trunc(A) - trunc(B)` and `g = A - B`
+        // decreasing, `f(t) <= g(t) + 1 <= g(start) + 1 <= f(start) + 2`. So two
+        // units of slack covers every interior second, and the direction of the
+        // slack is the safe one — it lowers the floor rather than raising it, so
+        // the bound can never reject a fill the seller's own projection allowed.
+        // The cost is at most two base units of the lending asset.
+        uint256 costAtExpiry = worstCaseSellerCost(s, loanId, saleRateBps, expiresAt);
+        uint256 costNow = worstCaseSellerCost(s, loanId, saleRateBps, block.timestamp);
+        uint256 cost =
+            (costAtExpiry > costNow ? costAtExpiry : costNow) + TRUNCATION_SLACK;
+        // The buyer's escrowed proceeds are bound to the live principal by the
+        // accept-time term bind, so the seller's net is principal minus cost.
+        // A cost at or above principal is refused at completion by the existing
+        // `RateShortfallTooHigh` guard; the floor simply records zero there
+        // rather than underflowing.
+        minSellerNet = principal > cost ? principal - cost : 0;
+        maxHeld = s.heldForLender[loanId];
+    }
+
+    /// @notice #1503 item 4 — what a sale would cost the exiting lender if it
+    ///         filled at `at`, using the settlement arithmetic both sale routes
+    ///         apply.
+    /// @dev    `max(forfeited accrual, rate shortfall)` — the same ordering the
+    ///         completion paths use, where the forfeiture is applied to the
+    ///         shortfall first and only the excess reaches treasury.
+    ///
+    ///         The forfeiture window's opening point is read through
+    ///         {LibEntitlement.forfeitureAccrualStart} rather than recomputed,
+    ///         so this projection cannot drift from what completion charges.
+    ///         Note it is read AT LISTING: if a later event disqualifies the
+    ///         mark the window opens earlier and the real cost steps past this
+    ///         projection, which is precisely the drift the floor then refuses.
+    function worstCaseSellerCost(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 saleRateBps,
+        uint256 at
+    ) internal view returns (uint256) {
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
+        uint256 elapsed = at > accrualStart ? at - accrualStart : 0;
+        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
+        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
+
+        uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
+        uint256 forfeitSecs = at > forfeitFrom ? at - forfeitFrom : 0;
+        uint256 denom = LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS;
+        uint256 accrued = (loan.principal * loan.interestRateBps * forfeitSecs) / denom;
+
+        uint256 originalRemaining =
+            (loan.principal * loan.interestRateBps * remainingSecs) / denom;
+        uint256 saleRemaining = (loan.principal * saleRateBps * remainingSecs) / denom;
+        uint256 shortfall =
+            saleRemaining > originalRemaining ? saleRemaining - originalRemaining : 0;
+        return accrued > shortfall ? accrued : shortfall;
+    }
+
+    /// @notice #1503 item 4 — clear the bounds with the listing they belong to.
+    /// @dev    Called wherever `loanToSaleOfferId` is cleared. Leaving them
+    ///         behind would apply one listing's bounds to the next.
+    function clearSellerBounds(LibVaipakam.Storage storage s, uint256 loanId) internal {
+        delete s.saleListingMinSellerNet[loanId];
+        delete s.saleListingMaxHeldTransfer[loanId];
+        delete s.saleListingBoundsRecorded[loanId];
+        delete s.saleListingBoundsExpiry[loanId];
     }
 }

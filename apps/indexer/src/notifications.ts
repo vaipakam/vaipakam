@@ -152,6 +152,18 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   LoanObligationTransferred: 'PR2 — obligation transfer → both sides',
   LoanExtended: 'PR2 — loan extended → both sides',
   PeriodicInterestAutoLiquidated: 'PR2 — periodic-interest auto-liquidation → borrower',
+  // ── General safety nets — the SPECIFIC event carries the notification ─
+  // #1782 — emitted by `LibLifecycle.transition` for EVERY status edge, so it
+  // fires alongside whichever specific terminal event applies. Mapping it would
+  // double-notify every close-out: a repay would produce both the `loan_repaid`
+  // row from `LoanRepaid` and a second row from this. Its job is the PROJECTION
+  // safety net (a loan must never sit `active` when the chain says otherwise),
+  // which is a correctness guarantee about the loans table, not a distinct thing
+  // to tell a user. Where a terminal edge currently has NO mapped notification,
+  // that gap is tracked on the specific event's own PR2 entry above — closing it
+  // there keeps one row per real-world event.
+  LoanStatusChanged:
+    'safety-net projection event — fires on every edge alongside the specific terminal event that carries the notification; mapping it would double-notify',
   // ── Companion detail events (their primary event IS mapped) ─────
   LoanInitiatedDetails: 'companion to LoanInitiated (mapped) — no separate row',
   // ── Internal / companion / transient — no user-facing notification ─

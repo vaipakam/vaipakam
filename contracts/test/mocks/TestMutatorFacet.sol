@@ -2,11 +2,13 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibEntitlement} from "../../src/libraries/LibEntitlement.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {LibEncumbrance} from "../../src/libraries/LibEncumbrance.sol";
 import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibVpfiRecycle} from "../../src/libraries/LibVpfiRecycle.sol";
+import {LibConsolidation} from "../../src/libraries/LibConsolidation.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
 import {LibCollateralSettlement} from "../../src/libraries/LibCollateralSettlement.sol";
 import {LibPrepayCleanup} from "../../src/libraries/LibPrepayCleanup.sol";
@@ -52,12 +54,110 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().offerIdToLoanId[offerId] = loanId;
     }
 
+    /// @notice #1503 item 25 test-only — read the position-token → loan reverse
+    ///         index directly. The migration tests mock `mintNFT`/`burnNFT`
+    ///         (their diamonds are built per test file), so the burned/minted
+    ///         tokens are not enumerable and the ERC721-walking Metrics views
+    ///         cannot observe the rekey; this raw read can.
+    function getLoanIdByPositionTokenIdRaw(uint256 tokenId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().loanIdByPositionTokenId[tokenId];
+    }
+
+    /// @notice #1503 item 26 test-only — the offer-side twin of the getter
+    ///         above. `MetricsFacet.getUserPositionOffers` reads this map but
+    ///         only for tokens the queried wallet still HOLDS, so it cannot
+    ///         distinguish "entry released" from "token burned"; the vehicle's
+    ///         registry handover has to be observed on the map itself.
+    function getOfferIdByPositionTokenIdRaw(uint256 tokenId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().offerIdByPositionTokenId[tokenId];
+    }
+
+    /// @notice #1503 item 26 test-only (Codex #1825 r1) — read the durable
+    ///         sale-vehicle mark. Tests need it to tell the two legacy
+    ///         questions apart: an unmarked vehicle is pre-regime (its
+    ///         creation WAS announced), which is independent of whether it
+    ///         also sits in the metrics active set.
+    function getInternalVehicleRealLoanIdRaw(uint256 loanId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().internalVehicleRealLoanId[loanId];
+    }
+
+    /// @notice #1503 item 26 test-only (Codex #1825 r1) — stamp the durable
+    ///         sale-vehicle mark on a raw-written fixture loan, so a staged
+    ///         vehicle can stand in for a NEW-REGIME one. Without this a
+    ///         staged fixture is indistinguishable from a pre-upgrade record,
+    ///         and a test written on it would assert legacy behaviour while
+    ///         claiming to cover the new path.
+    function setInternalVehicleMarkRaw(uint256 loanId, uint256 realLoanId) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.internalVehicleRealLoanId[loanId] = realLoanId;
+        s.internalVehicleLoanCount += 1;
+    }
+
+    /// @notice #1503 item 25 test-only (Codex #1818 r3 P2) — fabricate the
+    ///         GRANDFATHERED index state a loan created before the membership
+    ///         map shipped would have: no exact-regime flag, no map bits, and
+    ///         (for a pre-map acquirer) no lifetime-array entry. New loans set
+    ///         all of these at creation, so tests must be able to strip them
+    ///         to exercise the one-time scan repair.
+    function clearLoanIndexRegimeRaw(uint256 loanId, address[] calldata holders) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.loanHolderIndexExact[loanId] = false;
+        for (uint256 i; i < holders.length; ++i) {
+            s.userLoanIndexed[holders[i]][loanId] = false;
+        }
+    }
+
+    /// @notice Companion to {clearLoanIndexRegimeRaw}: remove `loanId` from
+    ///         `userLoanIds[user]` to model a pre-map acquirer, who was never
+    ///         appended at all (the item-25 bug this PR fixes). Swap-and-pop —
+    ///         order is not part of the array's contract.
+    function removeUserLoanIdRaw(address user, uint256 loanId) external {
+        uint256[] storage ids = LibVaipakam.storageSlot().userLoanIds[user];
+        for (uint256 i; i < ids.length; ++i) {
+            if (ids[i] == loanId) {
+                ids[i] = ids[ids.length - 1];
+                ids.pop();
+                return;
+            }
+        }
+    }
+
+    /// @notice Codex #1818 r4 test-only — bloat `userLoanIds[user]` with
+    ///         filler ids so the bounded legacy membership scan's cap can be
+    ///         exercised without scaffolding thousands of real loans.
+    function pushUserLoanIdsRaw(address user, uint256 count, uint256 fillerStart) external {
+        uint256[] storage ids = LibVaipakam.storageSlot().userLoanIds[user];
+        for (uint256 i; i < count; ++i) {
+            ids.push(fillerStart + i);
+        }
+    }
+
+    /// @notice Raw reads for the exact-regime flag and the membership map, so
+    ///         the grandfathered-migration tests can assert truthful stamping.
+    function getLoanHolderIndexExactRaw(uint256 loanId) external view returns (bool) {
+        return LibVaipakam.storageSlot().loanHolderIndexExact[loanId];
+    }
+
+    function getUserLoanIndexedRaw(address user, uint256 loanId) external view returns (bool) {
+        return LibVaipakam.storageSlot().userLoanIndexed[user][loanId];
+    }
+
     /// @notice RL-1 test-only — force the mandatory-vault-upgrade gate
     ///         without deploying a fresh implementation, so tests can put a
     ///         claimant's vault below `mandatoryVaultVersion` and assert the
     ///         vault-credit → wallet fallback.
     function setMandatoryVaultVersionRaw(uint256 version) external {
         LibVaipakam.storageSlot().mandatoryVaultVersion = version;
+    }
+
+    /// @notice #1817 test-only — run the REAL tier restamp for `user` at
+    ///         their current (tracked-clamped) vault VPFI balance, exactly as
+    ///         the production mutation sites do. Lets a test establish a
+    ///         genuine pre-existing staker lifecycle (non-zero
+    ///         `currentStakeStartSec`) before exercising a flow that must
+    ///         reset it.
+    function restampUserVpfiRaw(address user) external {
+        LibConsolidation.restampUserVpfi(user);
     }
 
     /// @notice RL-1 test-only — inspect the T-087 accumulator's lifecycle +
@@ -369,8 +469,143 @@ contract TestMutatorFacet {
     /// @notice Write `s.heldForLender[loanId] = amount` directly.
     ///         Used by tests that need to scaffold preclose-residual
     ///         state without running a full preclose flow.
+    /// @notice Run `LibMetricsHooks.onLoanInitialized` for an existing loan
+    ///         (#1503 item 26 tests). Stages the LEGACY sale-vehicle state: a
+    ///         vehicle accepted BEFORE the paired-skip lifecycle went through
+    ///         the ordinary init and sits counted in the metrics active set,
+    ///         which is what routes its completion through the ordinary
+    ///         (decrementing, event-emitting) transition.
+    function metricsCountLoanRaw(uint256 loanId) external {
+        LibMetricsHooks.onLoanInitialized(LibVaipakam.storageSlot().loans[loanId]);
+    }
+
+    /// @notice Read `s.activeLoanIdsListPos[loanId]` (#1503 item 26 tests) —
+    ///         the exact membership marker the vehicle terminal routes on
+    ///         (1-based position; 0 = never counted).
+    function getActiveLoanListPosRaw(uint256 loanId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().activeLoanIdsListPos[loanId];
+    }
+
+    /// @notice Read the lifetime metrics counters the sale vehicle must never
+    ///         touch (#1503 item 26 tests) — `getProtocolStats` bundles them
+    ///         into a wide tuple; the tests want the two raw slots.
+    function getLifetimeLoanCountersRaw()
+        external
+        view
+        returns (uint256 totalLoansEverCreated, uint256 interestRateBpsSum)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.totalLoansEverCreated, s.interestRateBpsSum);
+    }
+
     function setHeldForLenderRaw(uint256 loanId, uint256 amount) external {
         LibVaipakam.storageSlot().heldForLender[loanId] = amount;
+    }
+
+    /// @notice Clear a listing's #1503 item-4 seller bounds (#1503 item 4).
+    /// @dev    Stages the LEGACY case: a listing created before the bounds
+    ///         existed records none, and the recorded-flag is what tells that
+    ///         apart from a listing whose ceiling is legitimately zero.
+    function clearSaleListingBoundsRaw(uint256 loanId) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        delete s.saleListingMinSellerNet[loanId];
+        delete s.saleListingMaxHeldTransfer[loanId];
+        delete s.saleListingBoundsRecorded[loanId];
+        delete s.saleListingBoundsExpiry[loanId];
+    }
+
+    /// @notice Read a listing's #1503 item-4 seller bounds (#1810).
+    /// @dev    Lets the quote→listing binding tests assert the figures a bound
+    ///         creation recorded, instead of inferring them from behavior.
+    function getSaleListingBoundsRaw(uint256 loanId)
+        external
+        view
+        returns (uint256 minSellerNet, uint256 maxHeld, bool recorded, uint256 expiry)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.saleListingMinSellerNet[loanId],
+            s.saleListingMaxHeldTransfer[loanId],
+            s.saleListingBoundsRecorded[loanId],
+            s.saleListingBoundsExpiry[loanId]
+        );
+    }
+
+    /// @notice Write `s.saleProceedsEscrow[loanId] = amount` directly.
+    /// @dev #1503 item 28 — the listed sale route's net settlement only runs when
+    ///      the buyer's principal is escrowed, which happens on a real listing
+    ///      accept. Tests that scaffold a completion from `_setupTempLoan` never
+    ///      reach that, so the whole payout fan-out was unreachable and no test
+    ///      could observe what the seller is actually charged.
+    function setSaleProceedsEscrowRaw(uint256 loanId, uint256 amount) external {
+        LibVaipakam.storageSlot().saleProceedsEscrow[loanId] = amount;
+    }
+
+    /// @notice Write the #1503 item-28 lender paid-through mark directly.
+    /// @dev Reaching it for real needs a periodic servicing run whose shortfall
+    ///      auto-liquidates — and, for the frozen case, one against a
+    ///      registry-flagged lender, which the unit harness has no oracle for.
+    ///      Seeding the mark exercises exactly what the sale routes read: the
+    ///      forfeiture window opens at this mark once it is non-zero, and at the
+    ///      accrual origin only while it is zero.
+    ///      Frozen interest is represented by leaving the mark where it was (the
+    ///      freeze branch never advances it); a previous lender's tenure by
+    ///      setting the mark to when their tenure ended.
+    ///      Seeds through the SHARED writer (#1801), so the recorded principal
+    ///      lands with the mark exactly as a real delivery would leave it. A
+    ///      mark seeded without its principal would be disqualified on read and
+    ///      every test using this would silently exercise the fallback instead.
+    function setLenderPaidThroughRaw(uint256 loanId, uint256 paidThroughAt)
+        external
+    {
+        LibEntitlement.stampInterestDelivered(
+            LibVaipakam.storageSlot(), loanId, paidThroughAt
+        );
+    }
+
+    /// @notice Seed the mark WITHOUT its principal companion (#1801).
+    /// @dev For the disqualification case only: proves a mark whose recorded
+    ///      principal no longer matches the live one is discarded in favour of
+    ///      the full-accrual charge. Reaching it for real means a principal
+    ///      decrement after a delivery — one of eight sites across five facets —
+    ///      which the unit harness cannot stage without a servicing run.
+    function setLenderPaidThroughWithPrincipalRaw(
+        uint256 loanId,
+        uint256 paidThroughAt,
+        uint256 markPrincipal
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.lenderInterestDeliveredThroughAt[loanId] = paidThroughAt;
+        s.lenderMarkPrincipalAt[loanId] = markPrincipal;
+    }
+
+    /// @notice Set or clear the sticky freeze void on a loan's mark (#1801).
+    /// @dev The real setter is every Active-loan lender-share park; staging one
+    ///      needs a registry-flagged holder the unit harness has no oracle for.
+    function setLenderMarkVoidedRaw(uint256 loanId, bool voided)
+        external
+    {
+        LibVaipakam.storageSlot().lenderMarkVoided[loanId] = voided;
+    }
+
+    /// @notice Seed this lender's tenure floor directly (#1801 r13).
+    /// @dev    The real setters are loan origination and a completed position
+    ///         sale. Staging a real sale inside this suite's scaffolded
+    ///         completions is what the escrow setter exists for; seeding the
+    ///         floor alone isolates what the DISQUALIFIED path reads.
+    function setLenderTenureStartRaw(uint256 loanId, uint256 at) external {
+        LibVaipakam.storageSlot().lenderTenureStart[loanId] = at;
+    }
+
+    /// @notice Re-base a loan's interest-accrual clock directly (#1801 r12).
+    /// @dev    The real setter is `repayPartial` / swap-to-repay, which re-base
+    ///         the borrower's obligation while paying the lender nothing when
+    ///         their share is frozen. Staging the frozen half for real needs a
+    ///         registry-flagged holder the unit harness has no oracle for, so
+    ///         the two halves are seeded separately: this moves the clock, and
+    ///         {setLenderMarkVoidedRaw} records the freeze.
+    function setInterestAccrualStartRaw(uint256 loanId, uint64 at) external {
+        LibVaipakam.storageSlot().loans[loanId].interestAccrualStart = at;
     }
 
     /// #594 test — append a loanId to a user's loan index directly (to set up
@@ -501,6 +736,18 @@ contract TestMutatorFacet {
     ///         Used by OfferFacet auto-complete coverage tests.
     function setOffsetOfferToLoanIdRaw(uint256 offerId, uint256 loanId) external {
         LibVaipakam.storageSlot().offsetOfferToLoanId[offerId] = loanId;
+    }
+
+    /// @notice Write `s.loanToOffsetOfferId[loanId] = offsetOfferId` directly —
+    ///         the OTHER half of the bijective pair above, and the half the
+    ///         "is a close-out already running on this loan" guards read.
+    ///         Twin of `setLoanToSaleOfferIdRaw`, for the same reason: it lets a
+    ///         suite assert that a live offset freezes the sale routes without
+    ///         cutting `PrecloseFacet` into that suite's diamond.
+    ///         `PrecloseFacet.offsetWithNewOffer` writes exactly this mapping, so
+    ///         the scaffolded state matches what production produces.
+    function setLoanToOffsetOfferIdRaw(uint256 loanId, uint256 offsetOfferId) external {
+        LibVaipakam.storageSlot().loanToOffsetOfferId[loanId] = offsetOfferId;
     }
 
     /// @notice Write `s.vaultVersion[user] = version` directly.
@@ -688,7 +935,9 @@ contract TestMutatorFacet {
             processed: false,
             forfeited: false,
             closed: false, // #1002 (S4) — seeded open; tests close via closeLoan/mutator
-            perDayNumeraire18: perDayNumeraire18
+            perDayNumeraire18: perDayNumeraire18,
+            // #1434 r8 — seeded BEFORE the removal point, like a live entry.
+            expiryBegun: false
         });
         s.userRewardEntryIds[user].push(id);
         // #1067 — mirror production `_allocEntry`: maintain the O(1) membership
@@ -886,7 +1135,15 @@ contract TestMutatorFacet {
             entryIds,
             LibInteractionRewards.PoolBudget({
                 fresh: poolFresh,
-                recycled: poolRecycled
+                recycled: poolRecycled,
+                // #1434 P1-b - this direct primitive harness stages the pool
+                // itself, so the delivered bound is left SLACK: a test driving
+                // `processUserSideDay` here is exercising the cap/ceiling
+                // arithmetic, and a binding delivered term would silently turn
+                // those cases into defers. Delivered-bound behaviour is
+                // covered through the real walk instead, where the bound is
+                // read from storage.
+                deliveredFresh: type(uint256).max
             }),
             LibInteractionRewards._noDryRun()
         );
@@ -1570,17 +1827,23 @@ contract TestMutatorFacet {
     ///         pay-or-freeze bookkeeping can be asserted in isolation. Runs as a
     ///         facet (msg.sender == diamond), so the `onlyDiamondInternal` host
     ///         accepts the routed self-call.
+    /// @param deliveredThroughAt #1503 item 28 — the paid-through boundary the
+    ///        host records on the CLEAN branch. Exposed on the driver rather than
+    ///        pinned to zero so a test can assert the mark moves on a clean payout
+    ///        and does NOT move on a frozen one, which is the whole distinction.
     function callFreezeOrPayActiveLenderResident(
         uint256 loanId,
         address asset,
-        uint256 amount
+        uint256 amount,
+        uint256 deliveredThroughAt
     ) external {
         _selfCall(
             abi.encodeWithSelector(
                 EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
                 loanId,
                 asset,
-                amount
+                amount,
+                deliveredThroughAt
             )
         );
     }
@@ -1844,6 +2107,70 @@ contract TestMutatorFacet {
     ///         zero the moment it is made canonical with no receipts, so a
     ///         test cannot otherwise construct the in-place-upgrade state
     ///         the watermark exists for.
+    /// @notice #1434 P1-b test-only — set the mirror delivered-fresh ledger
+    ///         directly: `received` is what remittances credited, `paid` is
+    ///         what armed-day payouts have consumed. The bound the pricing
+    ///         path reads is `received - paid`, saturating.
+    /// @dev    One setter for BOTH halves on purpose. They are only ever
+    ///         meaningful relative to each other, and a test that could move
+    ///         one without the other would make it easy to stage a state the
+    ///         production writers cannot actually produce.
+    function setArmedFreshLedgerRaw(uint256 received, uint256 paid)
+        external
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardBudgetArmedFreshReceived = received;
+        s.rewardBudgetArmedFreshPaid = paid;
+    }
+
+    /// @notice #1434 P1-b test-only — read the paid half back, so a test can
+    ///         assert what a claim CHARGED rather than only what it paid.
+    function getArmedFreshPaidRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardBudgetArmedFreshPaid;
+    }
+
+    /// @notice #1434 test-only — the entry's settlement cursor, so a test can
+    ///         assert a spanning expiry stamped it exactly as a claim would.
+    function getRewardEntryClaimNextDayRaw(uint256 id)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().rewardEntryClaimNextDay[id];
+    }
+
+    /// @notice #1434 r8 test-only — whether the sweep has passed this entry's
+    ///         REMOVAL POINT (the first chunk that credited).
+    function getRewardEntryExpiryBegunRaw(uint256 id)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().rewardEntries[id].expiryBegun;
+    }
+
+    /// @notice Pre-merge review 2026-08-17 test-only — the aggregate uncapped
+    ///         pending the claim-executable gates measure, so a test can
+    ///         assert a REMOVED entry no longer inflates it.
+    function getUserClaimPendingUncappedRaw(address user)
+        external
+        view
+        returns (uint256)
+    {
+        return LibInteractionRewards.userClaimPendingUncapped(
+            LibVaipakam.storageSlot(), user
+        );
+    }
+
+    /// @notice #1434 test-only — whether the entry is terminalised.
+    function getRewardEntryProcessedRaw(uint256 id)
+        external
+        view
+        returns (bool)
+    {
+        return LibVaipakam.storageSlot().rewardEntries[id].processed;
+    }
+
     function setRecoveryAttributionRaw(bool armed, uint256 armedAt)
         external
     {

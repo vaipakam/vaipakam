@@ -96,6 +96,16 @@ Public-navigation requirements:
   chain read was "pending or unavailable" on pages where none was ever
   attempted, which told readers something was broken about a page
   working exactly as designed
+- a figure presented as coming from the published configuration must name
+  WHICH deployment's configuration, because every supported network runs
+  its own independently tunable copy of the protocol and the site
+  nominates one of them for its documented figures. An unqualified "the
+  published configuration" reads as universal, and becomes wrong for a
+  reader on any other network the moment two deployments are retuned
+  apart. The name must be derived from the same setting that selects the
+  deployment, never written beside it as a separate literal — two records
+  of one fact drift, and a provenance label that names the wrong network
+  is worse than none
 - a figure the documentation COMPUTES from one of those rates must be
   derived from the same configuration, not written into the page as a
   fixed number beside it. A worked example that states what each party
@@ -114,11 +124,53 @@ Public-navigation requirements:
   figure must not inherit a confidence none of its parts had, and the
   marker defers to the least certain input rather than the most
 - the machine-readable copies are the one surface with no runtime, so
-  they resolve every reference at build time and are current as of their
-  build. That is a property of the artefact, not a gap to close: a
-  static file cannot follow a retune, and pretending otherwise by
-  leaving the reference unresolved would serve a crawler a token instead
-  of a number
+  they resolve every reference when they are produced — a crawler must
+  receive a number, never the embedding syntax. What they resolve to
+  today is the value set shipped with the site, which is pinned to the
+  protocol's compiled starting rates: a governance retune moves the live
+  configuration, not those starting rates, so these artefacts do not
+  follow a retune even across rebuilds, while the rendered pages that
+  successfully accept the published snapshot do — a page whose own read
+  fails renders the same shipped values these artefacts carry.
+  "Current as of its build" is therefore NOT a property these artefacts
+  have, and nothing may claim it for them, and any surface describing
+  them must say what they carry rather than imply currency
+- the machine-readable copies must NOT be produced by reading the
+  published configuration at publication time. Doing so would not make
+  them current — it would move their staleness from release to
+  publication while making publication depend on a service that can be
+  unavailable, and making two publications of the same source produce
+  different artefacts. A consumer that needs current figures is instead
+  told where to read them: the crawler index must advertise the live
+  configuration endpoint alongside the documents, name the chain it
+  describes, and state plainly that the documents carry starting rates
+  while that endpoint carries current ones. Static documents plus a
+  named live endpoint is the same division the site already publishes
+  for offer and loan data, and it keeps the documentation surface free
+  of the protocol-data dependencies that belong to the read API
+- a failed or aged-out configuration read is retried when the reader
+  gives the page a natural opportunity — visiting another page, or
+  returning to a tab left in the background — rather than the session
+  being pinned forever to the outcome of its first attempt. A fresh,
+  accepted snapshot triggers no re-read: navigation must not turn into
+  request traffic. A snapshot that ages past the freshness window while
+  on display loses its published claim rather than keeping it
+  indefinitely — the same rule that gates acceptance applies for as long
+  as the figure is shown, and a stale hold that cannot be refreshed
+  reverts to the bundled value, honestly labelled. Revalidation must not
+  flicker: while a re-check is in flight the page keeps stating its
+  previous conclusion, because it still has one
+- copy that describes a charge applied to an ALREADY-CREATED position
+  must not present the current rate as that position's rate. The
+  protocol stamps its fee percentages on a loan at creation, so a later
+  retune never re-prices an open loan — and a passage explaining what a
+  reader's settling loan will pay must say the percentage was fixed at
+  the loan's creation, presenting the live figure only as what loans
+  created at the current rate carry. Forward-looking copy — what a
+  reader accepting an offer now will get — correctly uses the live
+  figure, because the loan created by that acceptance stamps it; the
+  distinction is whether the reader is being told about a position that
+  exists or one they are about to create
 - the exception is a page documenting a governance knob's DEFAULT, which
   states a plain number rather than a reference. The two look identical
   on the page and are different claims: "the fee is X%" describes what
@@ -232,6 +284,7 @@ Privacy and consent requirements:
 - `ads_data_redaction` should ensure ad-click identifiers are redacted on outbound requests whenever advertising consent is denied
 - `url_passthrough` should allow conversion attribution to flow through URL parameters instead of cookies where appropriate
 - no non-essential tracking category should load before the user grants the corresponding consent
+- this holds however the collector arrived. Analytics injected into responses by the hosting or CDN layer, rather than requested by the application, sits downstream of the consent pipeline and cannot be gated by it, so it must be switched off at the layer that injects it. The site's content policy should not name such a collector: refusing it is the correct behaviour, and adding it to silence the resulting console message would trade a visible symptom for an unconsented collector running on every page. Any analytics the product does want — the hosting provider's own included — should be loaded through the consent-aware pipeline like every other category
 - the connected app's wallet-connection SDKs (e.g. the WalletConnect and Coinbase Wallet connectors) must have their own third-party analytics / telemetry beacons disabled, so simply opening the connect modal does not phone home usage data the user never consented to — and locked-down networks are not spammed with failed analytics requests
 
 Legal and data-rights requirements:
@@ -666,7 +719,7 @@ Governance-configuration visibility:
 - raw wei-denominated config values such as VPFI tier thresholds should be converted through shared display helpers before reaching cards, tooltips, translated strings, or tier tables
 - long-form doc pages (overview, whitepaper, user guide, parameter reference) should be able to embed a governance-tunable value inline in their prose, so each figure is maintained in one place rather than retyped into every sentence and every translation that mentions it
 - an embedded value should always resolve to a number for the reader, so a page never displays its own placeholder syntax or an empty gap
-- on the public marketing surface the resolved number is the value bundled at build time: those pages intentionally do not read the chain, so a governance change does not reach them without a rebuild, and the figures should not be described to readers or operators as live
+- the public marketing surface stays wallet-free and carries no chain client, but its embedded values follow the protocol's published configuration snapshot: a governance change reaches the rendered pages on next load, without a redeploy. The value bundled at build time remains the fallback for every failure path — before the snapshot resolves, and whenever it cannot be accepted — so a page always renders a figure. (An earlier version of this requirement said these pages resolve only bundled values and must not be described as live; that predates the published-configuration read and is superseded by the provenance requirements above.)
 - where a surface does have a chain client, the same embedded value should prefer the live protocol read and fall back to the bundled value, and a reader should be able to tell which one they are looking at
 - a reader should be able to tell an embedded value from surrounding prose, and confirm on hover where the figure came from
 - an embedded value whose name is not recognised should render visibly as inline code rather than silently disappearing, so an authoring typo is obvious on the page instead of producing a confidently wrong number
@@ -675,7 +728,7 @@ Governance-configuration visibility:
 - pages that always present English content, whatever locale prefix the reader arrived through, should format their embedded values as English, so a figure never uses another language's conventions or digits inside an English sentence
 - a page that falls back to English because a translation is missing should likewise format its embedded values as English
 - the documentation search index should hold the same rendered figures the reader sees, formatted for the same document, so searching for a value visible on a page finds that page
-- the machine-readable copies of the docs that the site publishes for automated consumers should carry the same resolved values as the human-facing pages, formatted for the same language, and should never expose the embedding syntax
+- the machine-readable copies of the docs that the site publishes for automated consumers should carry resolved values formatted for the document's language and never expose the embedding syntax. They carry the value set shipped with the site rather than the live configuration the rendered pages follow, so they match the human-facing pages exactly while the published configuration equals the shipped values, and after a retune they lag the pages that successfully loaded the published configuration — a page whose own read fails renders the same shipped values, and the two surfaces coincide again. The divergence is specified and stated, not a defect: the copies resolve against the shipped value set by design, and a consumer needing the current figures is pointed to the live configuration endpoint named in the crawler index
 
 Foundational frontend migration requirements:
 

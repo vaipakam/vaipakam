@@ -220,6 +220,13 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
     ///         revert-on-underfunded behaviour the pre-PR-3a treasury
     ///         transfer provided, strictly stronger.
     function testUnderfundedDiamondRevertsInsteadOfUnbackedCredit() public {
+        // #1699 r18/r19 — the guarded invariant is unchanged (an under-backed
+        // Diamond must never produce an unbacked bucket credit), but its
+        // observable moved: the engine-chunked forfeit sweep now treats a
+        // backing shortfall as RECOVERABLE and DEFERS — zero progress, every
+        // ledger untouched, the entry intact — instead of reverting the
+        // whole frame. Same guarantee, plus partial progress survives on
+        // multi-leg entries.
         uint64 loanId = 78;
         (uint256 id, ) = _seedForfeited(alice, loanId);
         _mut().setLoanActiveLenderEntryId(loanId, id);
@@ -230,18 +237,18 @@ contract RecycleBucketTest is SetupTest, IVaipakamErrors {
         vpfi.transfer(address(this), bal);
 
         vm.prank(makeAddr("keeper"));
-        vm.expectRevert(); // InsufficientRecycleBacking(needed, 0)
-        _facet().sweepForfeitedInteractionRewards(loanId);
+        uint256 deferred = _facet().sweepForfeitedInteractionRewards(loanId);
+        assertEq(deferred, 0, "an unbacked sweep DEFERS - zero progress");
 
-        // Whole frame rolled back: nothing processed, nothing credited.
+        // Nothing moved: no credit, no pool spend, entry intact.
         assertEq(_cfg().getRecycleBucket(), 0, "no unbacked credit");
         assertEq(
             _lens().getInteractionPoolPaidOut(),
             0,
-            "pool accounting rolled back with the revert"
+            "and no pool spend was recorded"
         );
 
-        // Refund the Diamond → the same sweep now succeeds.
+        // Refund the Diamond -> the same sweep now succeeds.
         vpfi.transfer(address(diamond), bal);
         vm.prank(makeAddr("keeper"));
         uint256 swept = _facet().sweepForfeitedInteractionRewards(loanId);

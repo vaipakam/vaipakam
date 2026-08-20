@@ -1610,7 +1610,19 @@ contract OfferAcceptFacet is
             s.signedOfferAcceptor != address(0)
                 ? s.signedOfferAcceptor
                 : msg.sender,
-            loanId,
+            // #1503 item 26 (Codex #1825 r1) — on a lender-sale accept this
+            // names the REAL loan whose position changed hands, not the
+            // transitional vehicle the accept forged. The vehicle's id is
+            // deliberately absent from every loan list and status feed, so
+            // publishing it here would hand consumers a reference that
+            // resolves to a record they are told does not exist — and the
+            // indexer stores this field as an activity row's `loan_id`. The
+            // sale IS a real event on a real loan; that is what it reports.
+            // The vehicle id is still what the function RETURNS, since the
+            // completion hop needs it.
+            s.internalVehicleRealLoanId[loanId] != 0
+                ? s.internalVehicleRealLoanId[loanId]
+                : loanId,
             effectivePrincipal,
             effFilled,
             offer.accepted

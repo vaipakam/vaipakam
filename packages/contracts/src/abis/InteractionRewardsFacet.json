@@ -71,25 +71,6 @@
   },
   {
     "type": "function",
-    "name": "sweepExpiredInteractionRewards",
-    "inputs": [
-      {
-        "name": "entryIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "expiredTotal",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "sweepForfeitedInteractionRewards",
     "inputs": [
       {
@@ -196,87 +177,6 @@
   },
   {
     "type": "event",
-    "name": "RewardEntryExpired",
-    "inputs": [
-      {
-        "name": "entryId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "total",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "recycled",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RewardEntryExpiryArmed",
-    "inputs": [
-      {
-        "name": "entryId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "finalNoticeFrom",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RewardEntryHorizonStamped",
-    "inputs": [
-      {
-        "name": "entryId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "firstClaimableAt",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "VpfiRecycled",
     "inputs": [
       {
@@ -346,6 +246,11 @@
         "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ArmedFreshPaidAlreadySeeded",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1027,6 +932,22 @@
   },
   {
     "type": "error",
+    "name": "DeliveredFreshShortfall",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DestinationHasNoDayStanding",
     "inputs": [
       {
@@ -1285,6 +1206,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidSaleOffer",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "KYCRequired",
     "inputs": []
   },
@@ -1489,6 +1415,38 @@
     "type": "error",
     "name": "LiquidationFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ListingFloorBelowReviewed",
+    "inputs": [
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ListingHeldAboveReviewed",
+    "inputs": [
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1732,6 +1690,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RateShortfallTooHigh",
+    "inputs": []
   },
   {
     "type": "error",
@@ -2020,6 +1983,11 @@
   },
   {
     "type": "error",
+    "name": "RewardMigrationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
   },
@@ -2049,6 +2017,43 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SaleAboveHeldCeiling",
+    "inputs": [
+      {
+        "name": "maxHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleBelowSellerFloor",
+    "inputs": [
+      {
+        "name": "minSellerNet",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleOfferAlreadyExists",
+    "inputs": []
   },
   {
     "type": "error",

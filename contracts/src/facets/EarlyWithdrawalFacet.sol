@@ -11,6 +11,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
+import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
@@ -26,22 +27,28 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 
 /**
  * @title EarlyWithdrawalFacet
  * @author Vaipakam Developer Team
- * @notice Lender early-withdrawal by selling their loan position to a new
- *         lender (Options 1 & 2 per README §9).
+ * @notice Lender early-withdrawal by the LISTED route — offering the loan
+ *         position for sale and letting a new lender take it (Option 2 per
+ *         README §9).
  * @dev Part of the Diamond Standard (EIP-2535). Reentrancy-guarded, pausable.
  *      ERC-20 loans only (NFT rental lender-sale requires NFT custody
  *      transfer — not supported in Phase 1).
  *
- *      Option 1 — {sellLoanViaBuyOffer}: liam accepts an existing Lender
- *      Offer from Noah. Noah's principal goes to liam (minus any rate
- *      shortfall); liam forfeits accrued interest to treasury.
+ *      Option 1 — the DIRECT route, {EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer}
+ *      — moved to its own facet in #1780 for EIP-170 headroom. Both routes
+ *      still route through the same Diamond and read the same storage; only
+ *      the runtime bytecode is split. See that facet's header for why the
+ *      seam runs between the routes rather than through the listed route's
+ *      two halves.
  *
- *      Option 2 — two-step:
+ *      Option 2 — two-step, and the whole of this facet:
  *        a) {createLoanSaleOffer}: liam creates a borrower-style sale
  *           offer linked to the live loan via `saleOfferToLoanId`.
  *        b) A new lender accepts the sale offer (via {OfferFacet.acceptOffer},
@@ -58,35 +65,6 @@ contract EarlyWithdrawalFacet is
     IVaipakamErrors
 {
     using SafeERC20 for IERC20;
-
-    /// @notice Emitted when a loan is sold to a new lender.
-    /// @param loanId The ID of the sold loan.
-    /// @param originalLender The original lender's address.
-    /// @param newLender The new lender's address.
-    /// @param shortfallPaid Any shortfall amount paid by original lender.
-    /// @param newLenderTokenId Position-NFT id minted for the new lender.
-    /// @param newInterestRateBps Loan's interest rate AFTER the sale.
-    ///        Unchanged in the lender-side sale path (borrower-favourability
-    ///        rule per README §9 keeps the rate fixed); included for
-    ///        cache-row freshness so consumers can self-update without a
-    ///        follow-up read.
-    /// @param newDurationDays Loan's duration AFTER the sale (unchanged
-    ///        for the same reason).
-    /// @param newDueTimestamp Computed maturity timestamp
-    ///        (`startTime + durationDays * 1 days`) — also unchanged on
-    ///        a sale, but explicit for consumer convenience.
-    ///        EventSourcingAudit §3.15.
-    /// @custom:event-category state-change/loan-mutation
-    event LoanSold(
-        uint256 indexed loanId,
-        address indexed originalLender,
-        address indexed newLender,
-        uint256 shortfallPaid,
-        uint256 newLenderTokenId,
-        uint256 newInterestRateBps,
-        uint256 newDurationDays,
-        uint64 newDueTimestamp
-    );
 
     /// @notice Emitted when a loan sale offer is created and linked to a live loan (Option 2, step 1).
     /// @param loanId The live loan being sold.
@@ -106,20 +84,12 @@ contract EarlyWithdrawalFacet is
     );
 
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
-    error InvalidSaleOffer();
-    error RateShortfallTooHigh();
     error SaleNotLinked();
     error SaleOfferNotAccepted();
-    /// @notice #951 (Codex #959) — a loan already has a live sale listing. Only
-    ///         one listing per loan at a time: `loanToSaleOfferId` is cleared on
-    ///         cancel (OfferCancelFacet) and on completion, so a re-list after
-    ///         either is allowed; a second concurrent listing would overwrite the
-    ///         forward link and strand the reverse link, splitting accept/cancel
-    ///         authority across two offers.
-    error SaleOfferAlreadyExists();
     /// @notice #1001 (S3, Codex #1070) — the lender position can't be listed for
     ///         sale while a Preclose Option-3 offset offer is live on the loan;
-    ///         the offset must be cancelled or completed first.
+    ///         cancel the offset to reopen this route — completing it instead
+    ///         settles the loan, so there is no position left to list.
     error OffsetActiveOnLoan();
     /// @notice #951 (Codex #959 round-2) — Phase 1 lender-sale is limited to loans
     ///         with ERC-20 collateral. The sale vehicle escrows no fresh collateral
@@ -161,434 +131,6 @@ contract EarlyWithdrawalFacet is
     // live), and refusing there would strand a committed buyer on the
     // documented manual-recovery path.
 
-    /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
-    ///      for the direct Option-1 loan sale. Kept in its own frame so the
-    ///      PairId locals + classification chain do not add to the already-deep
-    ///      `sellLoanViaBuyOffer` stack (viaIR stack ceiling). Standing-consent
-    ///      semantics — the buy offer carries no #662 acknowledgement for this
-    ///      loan's assets. Behind the off-by-default master switch.
-    function _assertBuyerRiskAccess(
-        LibVaipakam.Storage storage s,
-        LibVaipakam.Loan storage loan,
-        address buyer
-    ) private view {
-        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return;
-        LibRiskAccess.assertActorMayTransact(
-            s,
-            buyer,
-            LibRiskAccess.PairId({
-                lendAsset: loan.principalAsset,
-                lendType: loan.assetType,
-                lendTokenId: loan.tokenId,
-                collAsset: loan.collateralAsset,
-                collType: loan.collateralAssetType,
-                collTokenId: loan.collateralTokenId,
-                prepayAsset: loan.prepayAsset
-            })
-        );
-    }
-
-    /**
-     * @notice Allows original lender to sell an active loan by accepting a new Lender Offer.
-     * @dev Option 1: liam accepts Noah's Lender Offer. Transfers principal, forfeits accrued to treasury,
-     *      calculates/pays shortfall if rates differ. Updates NFTs, loan lender.
-     *      Callable only by original lender. Emits LoanSold.
-     * @param loanId The active loan ID to sell.
-     * @param buyOfferId The new Lender Offer ID from Noah.
-     */
-    function sellLoanViaBuyOffer(
-        uint256 loanId,
-        uint256 buyOfferId
-    ) external nonReentrant whenNotPaused {
-        // Tier-1 sanctions gate — selling a loan routes funds back
-        // to msg.sender (the lender exiting early).
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Loan storage loan = s.loans[loanId];
-        // Strategic flow — authority binds to current lender-side NFT owner.
-        LibAuth.requireLenderNftOwner(loan);
-        if (loan.status != LibVaipakam.LoanStatus.Active)
-            revert LoanNotActive();
-        // #951 (Codex #959 round-4) — a live Option-2 sale listing has already
-        // native-locked the lender NFT and pinned an immutable buyer-facing
-        // offer. Letting Option-1 (direct swap-in) re-anchor `loan.lender` while
-        // that listing is open would double-sell the same position: the Option-2
-        // buyer could still accept the stale vehicle. Require the seller to cancel
-        // the listing first. See LenderSaleVehicleRedesign.md (D4).
-        if (s.loanToSaleOfferId[loanId] != 0)
-            revert SaleOfferAlreadyExists();
-        // NFT rental lender-sale requires NFT custody transfer — not supported in Phase 1
-        if (loan.assetType != LibVaipakam.AssetType.ERC20)
-            revert InvalidSaleOffer();
-
-        // #1503 PR-E (design item 11) — the incoming lender never
-        // underwrote this loan, so the sale is an ADMISSION and must
-        // clear the same solvency floor the loan's own admission did.
-        // Without it a lender watching collateral fall could hand an
-        // already-underwater (possibly same-block liquidatable) position
-        // to a buyer whose standing offer was authored for a FRESH,
-        // comfortably over-collateralized position — priced off principal
-        // and accrued interest, which say nothing about the shortfall.
-        // Checked before any compliance / vault work so a doomed sale
-        // reverts cheaply.
-        LibSaleSolvency.assertSaleSolvent(loanId);
-
-        // Per-asset pause: direct lender swap-in is a creation path (Noah
-        // steps into new exposure without going through acceptOffer). The
-        // exit path for the old lender is still covered via claim/repay.
-        LibFacet.requireAssetNotPaused(loan.principalAsset);
-        LibFacet.requireAssetNotPaused(loan.collateralAsset);
-
-        LibVaipakam.Offer storage buyOffer = s.offers[buyOfferId];
-        if (
-            buyOffer.offerType != LibVaipakam.OfferType.Lender ||
-            buyOffer.accepted
-        ) revert InvalidSaleOffer();
-        // #1503 (design item 8) — GTT expiry. This path checked the offer's
-        // TYPE and `accepted` flag but never its deadline, so a lender offer
-        // past `expiresAt` and not yet permissionlessly cancelled stayed
-        // consumable: the seller could withdraw the creator's still-vaulted
-        // principal and mark the offer accepted AFTER the window that creator
-        // consented to had closed. Every fill / match path enforces this
-        // lazily (the storage row outlives `expiresAt` — there is no keeper
-        // sweep), and this one was the gap.
-        //
-        // Placed before the offset-vehicle check and every lien release or
-        // vault movement below, so an expired offer costs the caller a cheap
-        // revert and moves nothing. Routes through `LibVaipakam.isOfferExpired`
-        // so the GTC sentinel (`expiresAt == 0`, never expires) keeps living in
-        // one place rather than being re-derived here.
-        if (LibVaipakam.isOfferExpired(buyOffer)) {
-            revert OfferExpired(buyOfferId, buyOffer.expiresAt);
-        }
-        // #1001 (S3, Codex #1070 r5 P2) — a linked Preclose Option-3 offset offer
-        // is a Lender offer, so it would otherwise pass the shape check above and
-        // be consumable here. Consuming it via the direct swap-in marks it
-        // accepted + burns its position NFT WITHOUT the `acceptOffer` auto-complete
-        // hook that fires `completeOffsetInternal` — stranding the offset link +
-        // the borrower NFT lock. An offset offer must settle only through the
-        // direct `acceptOffer` path; reject it as a sale vehicle here, same as the
-        // matcher rejects it (`OffsetVehicleNotMatchable`).
-        if (s.offsetOfferToLoanId[buyOfferId] != 0) revert InvalidSaleOffer();
-        // T-407-C (#566) Codex P2 — the loan sale consumes the buy offer
-        // in full, so it must be a clean SINGLE-VALUE, UNFILLED offer:
-        //   • Ranged (effective amountMax > amount): the offer pre-vaults
-        //     and liens the ceiling, but the refund below only returns
-        //     `amount - principal`, stranding `amountMax - amount` in the
-        //     seller's vault with no cancel path (the offer is marked
-        //     accepted here).
-        //   • Partially filled (amountFilled > 0): only the residual is
-        //     vaulted, so the full-amount principal + refund withdrawals
-        //     would revert, or over-consume the seller's unrelated free
-        //     balance.
-        // Both shapes stay usable for ordinary matching — just not as a
-        // loan-sale vehicle. With this guard the existing refund
-        // (`amount - principal`) is provably exact (vault holds exactly
-        // `amount`).
-        {
-            uint256 effMax = buyOffer.amountMax == 0
-                ? buyOffer.amount
-                : buyOffer.amountMax;
-            if (effMax != buyOffer.amount || buyOffer.amountFilled != 0) {
-                revert InvalidSaleOffer();
-            }
-        }
-        // Enforce same asset types as original loan (README General Rules: lending, collateral, prepay)
-        if (buyOffer.lendingAsset != loan.principalAsset)
-            revert InvalidSaleOffer();
-        if (buyOffer.collateralAsset != loan.collateralAsset)
-            revert InvalidSaleOffer();
-        if (buyOffer.collateralAssetType != loan.collateralAssetType)
-            revert InvalidSaleOffer();
-        if (buyOffer.prepayAsset != loan.prepayAsset) revert InvalidSaleOffer();
-
-        // Borrower-favorability: Noah's terms must not worsen alice's position (README Section 9)
-        {
-            uint256 elapsedSecs = block.timestamp - loan.startTime;
-            uint256 remainDays = loan.durationDays > (elapsedSecs / 1 days)
-                ? loan.durationDays - (elapsedSecs / 1 days)
-                : 0;
-            if (buyOffer.durationDays > remainDays) revert InvalidSaleOffer();
-            if (buyOffer.collateralAmount > loan.collateralAmount)
-                revert InvalidSaleOffer();
-        }
-
-        // ── Sanctions & KYC: new lender (Noah) must pass normal initiation checks ─
-        LibCompliance.enforceCountryAndKyc(
-            address(this),
-            buyOffer.creator,
-            loan.borrower,
-            loan.principalAsset,
-            loan.principal,
-            loan.collateralAsset,
-            loan.collateralAmount
-        );
-
-        // #671 phase 2 (Codex #729 r4) — re-gate the BUYER against the loan's
-        // asset pair. This direct Option-1 sale bypasses acceptOffer /
-        // initiateLoan, so the accept-time progressive-risk gate in LoanFacet
-        // never runs; without this re-check a buy offer authored before the gate
-        // was enabled (or whose creator has since down-tiered, revoked the pair
-        // consent, or gone stale after a terms bump) could still step into an
-        // illiquid- or mid-tier-backed live loan. Extracted to a helper so the
-        // PairId locals do not add to this function's (already deep) stack frame.
-        _assertBuyerRiskAccess(s, loan, buyOffer.creator);
-
-        // Snapshot pre-existing heldForLender before any new shortfall deposits.
-        uint256 priorHeld = s.heldForLender[loanId];
-
-        // ── Net settlement (README Section 9, Option 1) ────────────────────
-        // Noah's principal is the only inflow.  liam's share (principal minus
-        // his cost) is paid out net; treasury cut and Noah's shortfall deposit
-        // come from the same bucket — liam never needs to pre-approve tokens.
-        //   liamCost    = max(accrued, shortfall)
-        //   treasuryCut = max(accrued - shortfall, 0)   (unused forfeited accrued)
-        //   toNoahHeld  = shortfall                     (compensates Noah)
-        //   toLiam      = principal - liamCost
-        // Unified seconds-based precision: both accrued and remaining use
-        // SECONDS_PER_YEAR so any sub-day remainder is preserved and rounding
-        // is symmetric across the two sides of the net settlement.
-        // #641 — accrued/remaining split reads the interest clock (post-partial
-        // origin + remaining term), not the immutable term tuple.
-        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
-        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
-        uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
-
-        uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        uint256 originalRemainingInterest = (loan.principal *
-            loan.interestRateBps *
-            remainingSecs) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        uint256 newRemainingInterest = (loan.principal *
-            buyOffer.interestRateBps *
-            remainingSecs) /
-            (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-
-        uint256 shortfall = newRemainingInterest > originalRemainingInterest
-            ? newRemainingInterest - originalRemainingInterest
-            : 0;
-        uint256 liamCost = accrued > shortfall ? accrued : shortfall;
-        uint256 treasuryCut = accrued > shortfall ? accrued - shortfall : 0;
-
-        if (buyOffer.amount < loan.principal) revert InvalidSaleOffer();
-        // If liam's cost exceeds what Noah brings, net settlement cannot
-        // complete — liam would owe tokens we never collected from him.
-        if (liamCost > loan.principal) revert RateShortfallTooHigh();
-
-        // T-407-C (#566) Codex P1 — release the buy offer's offer-principal
-        // lock before consuming its principal. The Lender buy offer
-        // pre-vaulted its principal at create, encumbered in the same
-        // aggregate the #565 withdraw chokepoint reads. This sale
-        // terminally consumes the offer (accepted = true + position-NFT
-        // burn below), so release the lock in full BEFORE the principal +
-        // excess withdrawals — otherwise the chokepoint sees free balance
-        // = 0 and bricks the first withdraw. The NFT-burn at the end of
-        // this function is too late to unblock these withdraws.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
-                buyOfferId
-            ),
-            bytes4(0)
-        );
-
-        // #1123 (Codex #1126 r2 P2) — fail-closed movement gate BEFORE the buyer's
-        // vault operations. On the DIRECT sale path a flagged BUYER is BLOCKED (user
-        // decision 2026-07-09): acquiring a position is a value-receiving action, so
-        // BOTH parties are gated here — a clean `SanctionedAddress` revert ahead of
-        // the buyer's principal pull below (whose vault resolution would otherwise
-        // brick a flagged buyer with an opaque error). `from` is the LIVE seller.
-        // (The accepted-sale COMPLETION path uses the seller-block/buyer-register
-        // sale gate instead, matching its #831 frozen-buyer-completes semantics.)
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                ProfileFacet.enforcePositionMoveNotSanctioned.selector,
-                LibERC721.ownerOf(loan.lenderTokenId),
-                buyOffer.creator
-            ),
-            bytes4(0)
-        );
-
-        // Pull Noah's principal into the diamond in a single withdraw,
-        // then fan out to liam / treasury / Noah's heldForLender.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                buyOffer.creator, // Noah
-                loan.principalAsset,
-                address(this),
-                loan.principal
-            ),
-            VaultWithdrawFailed.selector
-        );
-
-        uint256 toLiam = loan.principal - liamCost;
-        if (toLiam > 0) {
-            IERC20(loan.principalAsset).safeTransfer(msg.sender, toLiam);
-        }
-        LibFacet.transferToTreasury(loan.principalAsset, treasuryCut);
-        LibFacet.depositForNewLender(
-            loan.principalAsset,
-            buyOffer.creator,
-            shortfall,
-            loanId
-        );
-
-        // Refund any excess Noah deposited beyond the required principal.
-        // Noah deposited buyOffer.amount when creating the Lender offer;
-        // only loan.principal was withdrawn above.  Since accepted offers
-        // cannot be cancelled, the excess would otherwise be stranded.
-        uint256 excess = buyOffer.amount - loan.principal;
-        if (excess > 0) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    buyOffer.creator,
-                    loan.principalAsset,
-                    buyOffer.creator, // Refund back to Noah
-                    excess
-                ),
-                VaultWithdrawFailed.selector
-            );
-        }
-
-        // #597 — release the old lender's held-for-lender VPFI reservation
-        // BEFORE the physical migration withdraws it from their vault below:
-        // the #565 withdraw chokepoint would otherwise see the held as
-        // encumbered and brick the withdraw. `loan.lender` is still the old
-        // lender here (migrated below). No-op for a non-VPFI / never-reserved
-        // loan. The full held is re-reserved on the new lender after the
-        // position migrates (see end of this block).
-        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
-        // #998 S10 Class B (Codex fresh-round P2) — migrate the dedicated
-        // active-held reservation off the OLD lender NOW, BEFORE the `priorHeld`
-        // withdrawal below: `vaultWithdrawERC20` subtracts `encumbered[oldLender]`,
-        // so a still-locked active-held reservation would revert a clean/de-listed
-        // holder's sale. Moves the aggregate old → buyer (reads the old lender from
-        // the live loan, still un-migrated here); covers every asset. No-op when
-        // nothing was parked.
-        LibEncumbrance.migrateActiveHeld(loanId, buyOffer.creator);
-
-        // Migrate only the pre-existing heldForLender from old lender's vault to new lender's.
-        // priorHeld was snapshotted before any shortfall deposits in this transaction.
-        if (priorHeld > 0) {
-            address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
-                ? loan.principalAsset
-                : loan.prepayAsset;
-            // #597 Codex #672 P1 — withdraw the held from the STORED `loan.lender`,
-            // NOT `msg.sender`. The held was deposited into `loan.lender`'s vault
-            // at accrual and the #597 reservation (released just above) is keyed
-            // there too. After a plain lender-NFT transfer (pre-consolidation),
-            // `msg.sender` (the current NFT owner accepted by
-            // `requireLenderNftOwner`) ≠ `loan.lender`; sourcing from `msg.sender`
-            // would migrate the caller's OWN VPFI and leave the stored lender's
-            // released-but-not-moved held unencumbered + drainable. In the common
-            // sell-your-own-loan case `msg.sender == loan.lender` so this is
-            // unchanged. (`completeLoanSale` already uses `originalLender`.)
-            //
-            // #597 Codex #672 P2 — the stored `loan.lender` may have been
-            // sanctions-flagged after a plain lender-NFT transfer; they are
-            // LOSING custody (their held VPFI is pushed OUT to the new lender),
-            // so the Tier-1 vault gate must not brick this Tier-2 sale for the
-            // unflagged seller. Open the address-scoped exemption around ONLY
-            // this from-side withdrawal (same primitive as the #594 consolidation
-            // move). The host is `nonReentrant`; cleared immediately after.
-            s.consolidationMoveFromUser = loan.lender;
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.lender, // stored (old) lender — where the held VPFI sits
-                    payAsset,
-                    address(this),
-                    priorHeld
-                ),
-                VaultWithdrawFailed.selector
-            );
-            s.consolidationMoveFromUser = address(0);
-            address newVault = LibFacet.getOrCreateVault(buyOffer.creator);
-            IERC20(payAsset).safeTransfer(newVault, priorHeld);
-            // T-051 — Diamond-side transfer to new lender's vault
-            // ticks the protocolTrackedVaultBalance counter.
-            LibVaipakam.recordVaultDeposit(buyOffer.creator, payAsset, priorHeld);
-        }
-
-        // #1123 — fail-closed position-movement gate BEFORE the burn/mint
-        // migration: a registered-flagged current lender holder (or buyer) can't
-        // move the position via this sale vehicle during an oracle outage. `from`
-        // is the LIVE lender-position holder, captured before `migrateLenderPosition`
-        // rewrites `loan.lender`/`loan.lenderTokenId`.
-        // #1123 — the movement gate for this direct sale ran BEFORE the buyer's
-        // vault operations above (block-both; see the comment at the principal
-        // pull). No second gate needed here.
-        // Migrate lender position: burn old NFT + mint new LoanInitiated NFT
-        // for Noah, update loan.lender and loan.lenderTokenId in one place.
-        // (#998 S10 Class B — `migrateLenderPosition` carries the dedicated
-        // active-held reservation to the buyer internally.)
-        LibLoan.migrateLenderPosition(loanId, buyOffer.creator);
-
-        // #597 — re-reserve the held-for-lender VPFI on the NEW lender, where it
-        // now physically lives (pre-existing `priorHeld` migrated above + this tx's
-        // `shortfall` deposit). `loan.lender` is now the new lender. Released to the
-        // new lender at claim. Gated on VPFI (held is in the principal asset;
-        // NFT-rental prepay can't be VPFI — D-2).
-        //
-        // #998 S10 Class B (Codex fresh-round P2) — re-reserve only the
-        // NON-active-held slice: the Class B active-held portion
-        // (`heldForLenderEncumbered`) was already migrated to the buyer in its
-        // dedicated ledger above, so re-reserving the FULL `heldForLender` here
-        // would DOUBLE-count that slice and understate the buyer's VPFI free
-        // balance until claim. The active portion is always a subset of the total
-        // held (each park ticks both), so the subtraction can't underflow.
-        if (loan.principalAsset == s.vpfiToken) {
-            uint256 nonActiveHeld = s.heldForLender[loanId] -
-                s.heldForLenderEncumbered[loanId];
-            LibEncumbrance.encumberLenderProceeds(
-                loanId, loan.lender, loan.principalAsset, nonActiveHeld
-            );
-        }
-
-        // Old lender forfeits interaction rewards to treasury; new lender
-        // gets a fresh entry covering the residual loan window. #1067 — routed
-        // through the `transferLenderRewardEntry` self-hook so the O(1) transfer
-        // body lives on InteractionRewardsFacet, off this EIP-170-tight facet.
-        // BEST-EFFORT (not bubbled): reward bookkeeping is strictly subordinate
-        // to the fund-critical sale settlement, matching every sibling reward
-        // hook (preclose / riskmatch / claim / prepay / periodic). Production
-        // always cuts InteractionRewardsFacet, so the forfeit is never dropped.
-        _rewardHook(
-            abi.encodeWithSelector(
-                InteractionRewardsFacet.transferLenderRewardEntry.selector,
-                loanId,
-                buyOffer.creator
-            )
-        );
-
-        // Mark buyOffer accepted
-        buyOffer.accepted = true;
-        LibMetricsHooks.onOfferAccepted(buyOffer.id);
-
-        // Burn the consumed offer's position NFT (stale "Offer Created" artifact)
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.burnNFT.selector,
-                buyOffer.positionTokenId
-            ),
-            NFTBurnFailed.selector
-        );
-
-        emit LoanSold(
-            loanId,
-            msg.sender,
-            buyOffer.creator,
-            shortfall,
-            loan.lenderTokenId,
-            loan.interestRateBps,
-            loan.durationDays,
-            uint64(loan.startTime + loan.durationDays * 1 days)
-        );
-    }
-
     /**
      * @notice Allows original lender to create a sale offer mimicking a Borrower Offer (Option 2).
      * @dev WARNING — front-ends MUST surface this to the caller before they
@@ -628,6 +170,77 @@ contract EarlyWithdrawalFacet is
         bool creatorRiskAndTermsConsent,
         uint64 listingSeconds
     ) external nonReentrant whenNotPaused {
+        _createLoanSaleOfferImpl(
+            loanId, interestRateBps, creatorRiskAndTermsConsent, listingSeconds
+        );
+    }
+
+    /**
+     * @notice #1810 — list the lender position for sale, BOUND to the quote
+     *         the seller reviewed. Identical to {createLoanSaleOffer} except
+     *         that after the listing records its seller bounds
+     *         (LibSaleListing.recordSellerBounds), the recorded figures are
+     *         checked against what the seller was shown by
+     *         `RiskPreviewFacet.quoteSellerBounds`, and the listing reverts on
+     *         ADVERSE drift only: a floor below the reviewed one, or a held
+     *         ceiling above it. Better-than-reviewed passes.
+     *
+     * @dev    Closes the quote→listing seam Codex raised as a P1 on #1812: the
+     *         unbound entry recomputes both bounds from live state at mining
+     *         time, so a borrower partial-repay (or parked interest) between
+     *         the seller reading a quote and their transaction landing makes
+     *         the listing record a WORSE floor/ceiling than reviewed — and the
+     *         #1812 enforcement then faithfully protects the worse figure.
+     *         #1812 binds listing→fill; this binds quote→listing.
+     *
+     *         ADDITIVE on purpose: {createLoanSaleOffer} stays routed and
+     *         unchanged so the deployed frontend keeps working — changing its
+     *         signature would mean a new selector plus an explicit Remove leg
+     *         (the split-Diamond hazard CLAUDE.md documents) for no benefit.
+     *
+     *         The comparison runs AFTER the impl so it reads the very figures
+     *         `recordSellerBounds` persisted — one computation, not a mirror
+     *         of it (the #1801 lesson). A revert unwinds the whole listing
+     *         atomically, lock and link included.
+     *
+     * @param loanId The loan ID to sell.
+     * @param interestRateBps The sale interest rate (may differ from original).
+     * @param creatorRiskAndTermsConsent Consent for illiquid assets (if applicable).
+     * @param listingSeconds Seller-chosen listing window in seconds; bounded
+     *        and clamped exactly as {createLoanSaleOffer}.
+     * @param reviewedMinSellerNet The floor `quoteSellerBounds` showed the
+     *        seller; the recorded floor must be at least this.
+     * @param reviewedMaxHeld The held ceiling the seller reviewed; the
+     *        recorded ceiling must not exceed it.
+     */
+    function createLoanSaleOfferBound(
+        uint256 loanId,
+        uint256 interestRateBps,
+        bool creatorRiskAndTermsConsent,
+        uint64 listingSeconds,
+        uint256 reviewedMinSellerNet,
+        uint256 reviewedMaxHeld
+    ) external nonReentrant whenNotPaused {
+        _createLoanSaleOfferImpl(
+            loanId, interestRateBps, creatorRiskAndTermsConsent, listingSeconds
+        );
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 recordedFloor = s.saleListingMinSellerNet[loanId];
+        if (recordedFloor < reviewedMinSellerNet) {
+            revert ListingFloorBelowReviewed(recordedFloor, reviewedMinSellerNet);
+        }
+        uint256 recordedHeld = s.saleListingMaxHeldTransfer[loanId];
+        if (recordedHeld > reviewedMaxHeld) {
+            revert ListingHeldAboveReviewed(recordedHeld, reviewedMaxHeld);
+        }
+    }
+
+    function _createLoanSaleOfferImpl(
+        uint256 loanId,
+        uint256 interestRateBps,
+        bool creatorRiskAndTermsConsent,
+        uint64 listingSeconds
+    ) private {
         // Tier-1 sanctions gate — creating a sale offer is a state-
         // creating action by msg.sender; sanctioned wallet blocked.
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -675,10 +288,27 @@ contract EarlyWithdrawalFacet is
         // genuine re-list is still allowed.
         if (s.loanToSaleOfferId[loanId] != 0) revert SaleOfferAlreadyExists();
         // #1001 (S3, Codex #1070) — refuse to list the lender position for sale
-        // while a Preclose Option-3 offset offer is live on this loan. The offset
-        // pays the CURRENT lender at completion; letting the position change hands
-        // mid-offset entangles two concurrent close-outs of the same loan. The
-        // offset must be cancelled or completed first (it is short-lived).
+        // while a Preclose Option-3 offset offer is live on this loan. A sale is a
+        // second SETTLEMENT of a loan that already has one in flight, and the two
+        // would race. Either outcome clears the link, but only CANCELLING
+        // leaves something to sell: a completed offset terminalises the loan
+        // Active -> Repaid, and both sale routes require Active.
+        //
+        // NOT "short-lived" (#1503 item 21): `_buildOffsetParams` leaves an
+        // offset GTC on purpose (#1032 L-c), and `cancelOffer` lets a third
+        // party clean up only an EXPIRED offer — so a GTC link is
+        // creator-cancellable only, and an unaccepted offset can sit on the loan
+        // for its whole life. Brevity is the borrower's intent, not an enforced
+        // property, and the consequence — a borrower-side veto over both
+        // protocol-mediated lender exits — is tracked in #1814.
+        //
+        // Corrected wording (#1503 item 21): this comment used to say the conflict
+        // was the position "changing hands", which is not what makes it unsafe —
+        // the offset locks only the BORROWER NFT, and `_completeOffsetImpl`
+        // deliberately re-anchors to a lender NFT transferred while it was live.
+        // A bare transfer is supported; a second settlement is not. The old
+        // phrasing was copied verbatim into the direct route's new guard before
+        // review caught it, which is why it is fixed at the source too.
         if (s.loanToOffsetOfferId[loanId] != 0) revert OffsetActiveOnLoan();
         // #1503 PR-E (design item 11) — fail fast rather than publish a
         // listing that could not lawfully be filled. The BINDING check is
@@ -763,6 +393,14 @@ contract EarlyWithdrawalFacet is
         s.saleVehicleCreate = false;
         s.loanToSaleOfferId[loanId] = saleOfferId;
         s.saleOfferToLoanId[saleOfferId] = loanId;
+        // #1503 item 4 — record what the seller is agreeing to, so completion
+        // is bound by it rather than by whatever the arithmetic comes to at the
+        // acceptance block. Hosted in LibSaleListing so the direct route can
+        // share the projection rather than re-deriving it — the two routes
+        // duplicating settlement algebra is what #1659 had to repair.
+        LibSaleListing.recordSellerBounds(
+            s, loanId, interestRateBps, listingExpiresAt
+        );
         // #951 v2 (Codex #959 bind-to-live) — no collateral snapshot is stored:
         // the buyer's accept binds `collateralAmount` `>=`-style against the LIVE
         // loan in `OfferAcceptFacet._bindTermsToOffer`, so a later collateral
@@ -1024,23 +662,6 @@ contract EarlyWithdrawalFacet is
         // source is the correct fix.)
         address originalLender = loan.lender;
 
-        // #393 v1-b — the seller EXITS the loan here (receives sale proceeds and
-        // hands the position to the buyer), so release their standing-intent
-        // live-principal cap now rather than waiting for the buyer's eventual
-        // claim (the buyer might never claim, stranding the seller's cap). Keyed
-        // off the ORIGINATING intent so it frees the original owner's counter +
-        // deletes the marker. Gated on the cheap per-loan origin check so a
-        // non-intent loan skips the cross-facet hop entirely (no wasted gas, and
-        // no dependency on LenderIntentFacet being routed).
-        if (s.intentOrigin[loanId].owner != address(0)) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    LenderIntentFacet.releaseIntentExposure.selector, loanId
-                ),
-                bytes4(0)
-            );
-        }
-
         // ── Find the temporary loan via O(1) lookup ─────────────────────────
         uint256 tempLoanId = s.offerIdToLoanId[saleOfferId];
         if (tempLoanId == 0)
@@ -1049,6 +670,32 @@ contract EarlyWithdrawalFacet is
         address newLender = s.loans[tempLoanId].lender;
         if (newLender == address(0))
             revert LenderResolutionFailed();
+
+        // #393 v1-b — the seller EXITS the loan here (receives sale proceeds and
+        // hands the position to the buyer), so release their standing-intent
+        // live-principal cap now rather than waiting for the buyer's eventual
+        // claim (the buyer might never claim, stranding the seller's cap). Keyed
+        // off the ORIGINATING intent so it frees the original owner's counter +
+        // deletes the marker. Gated on the cheap per-loan origin check so a
+        // non-intent loan skips the cross-facet hop entirely (no wasted gas, and
+        // no dependency on LenderIntentFacet being routed).
+        // ...unless the buyer IS the origin owner (Codex #1818 r1 P1, applied
+        // to both routes): a self-purchase leaves the origin owner holding a
+        // live intent loan, and releasing would free its principal from their
+        // exposure cap while the exposure is still real. Marker and counter
+        // are retained in that case — see the direct route's twin for the
+        // full reasoning.
+        if (
+            s.intentOrigin[loanId].owner != address(0) &&
+            s.intentOrigin[loanId].owner != newLender
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    LenderIntentFacet.releaseIntentExposure.selector, loanId
+                ),
+                bytes4(0)
+            );
+        }
 
         // Snapshot pre-existing heldForLender before any new shortfall deposits
         uint256 priorHeldSale = s.heldForLender[loanId];
@@ -1059,10 +706,25 @@ contract EarlyWithdrawalFacet is
         // routed to treasury or Noah.
         // #641 — accrued/remaining split reads the interest clock (post-partial
         // origin + remaining term), not the immutable term tuple.
-        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 accrualStart = LibVaipakam.interestAccrualStartOf(loan);
+        uint256 elapsed = block.timestamp - accrualStart;
         uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
-        uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
+        // #1503 item 28 — the FORFEITURE clock is not the accrual clock. The
+        // seller forfeits accrued interest because the borrower has not paid it;
+        // on a periodic loan the borrower has paid part of it, since periodic
+        // auto-liquidation forwards interest to the lender WITHOUT moving the
+        // accrual clock. Charging from the accrual origin bills the seller for
+        // interest already in their hands.
+        //
+        // Narrowing the WINDOW rather than subtracting an amount — see
+        // {LibEntitlement.forfeitureAccrualStart}. `elapsed` above is unchanged
+        // and still measures the loan's own progress, which is what
+        // `remainingSecs` needs; only the forfeiture figure uses the later start.
+        uint256 forfeitFrom = LibEntitlement.forfeitureAccrualStart(loanId, accrualStart);
+        uint256 forfeitSecs =
+            block.timestamp > forfeitFrom ? block.timestamp - forfeitFrom : 0;
+        uint256 accrued = (loan.principal * loan.interestRateBps * forfeitSecs) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
         uint256 originalRemainingInterest = (loan.principal *
             loan.interestRateBps *
@@ -1106,6 +768,43 @@ contract EarlyWithdrawalFacet is
             uint256 liamCost = accrued > saleShortfall
                 ? accrued
                 : saleShortfall;
+            // #1503 item 4 — the seller's FLOOR. Ordinary accrual across the
+            // listing window cannot trip this: the floor was derived at the
+            // listing's BOTH endpoints (plus truncation slack — see
+            // LibSaleListing.projectSellerBounds), so the whole window sits
+            // inside it. What
+            // trips it is a step the seller never reviewed — a principal
+            // movement or a park disqualifying the paid-through mark, which
+            // re-opens the forfeiture window earlier than the projection
+            // assumed. Refusing is the point; the remedy is to relist.
+            // ...but only while the seller's projection still DESCRIBES the
+            // fill. The floor is derived from the window's own endpoints, so it
+            // bounds every fill inside the window and says nothing about one
+            // after it.
+            // `completeLoanSale` is lender-side-gated and deliberately remains
+            // callable past the window — the seller invoking it themselves is
+            // fresh authorisation, not a race — and enforcing a stale
+            // projection there would refuse the seller's own deliberate act.
+            //
+            // Caught by an EXISTING #1801 test rather than by a new one: the
+            // targeted run of the four new cases was green, and only the full
+            // suite showed `forfeitsOnlyTheUnpaidStretch` completing past the
+            // window and tripping a bound that was never meant to reach it.
+            if (
+                s.saleListingBoundsRecorded[loanId] &&
+                block.timestamp <= s.saleListingBoundsExpiry[loanId]
+            ) {
+                uint256 sellerNet = proceeds > liamCost ? proceeds - liamCost : 0;
+                uint256 floorNet = s.saleListingMinSellerNet[loanId];
+                if (sellerNet < floorNet) {
+                    revert SaleBelowSellerFloor(floorNet, sellerNet);
+                }
+                uint256 heldNow = s.heldForLender[loanId];
+                uint256 heldCeiling = s.saleListingMaxHeldTransfer[loanId];
+                if (heldNow > heldCeiling) {
+                    revert SaleAboveHeldCeiling(heldCeiling, heldNow);
+                }
+            }
             uint256 treasuryCut = accrued > saleShortfall
                 ? accrued - saleShortfall
                 : 0;
@@ -1139,6 +838,14 @@ contract EarlyWithdrawalFacet is
                 LibSanctionedLock.end(
                     s, newLender, loanId, loan.principalAsset, saleShortfall
                 );
+                // #1817 (Codex #1819 r6 P2) — the buyer's checkpoint at THIS
+                // credit's own site; a completion that credits nothing stays
+                // broadcast-free. Local when the held migration will stamp
+                // the buyer again below (r7 P2 — the later stamp is the
+                // final one and carries the broadcast).
+                if (loan.principalAsset == s.vpfiToken) {
+                    _restampVpfiParty(newLender, priorHeldSale > 0);
+                }
             }
         } else if (saleRemainingInterest > originalRemainingInterest) {
             uint256 shortfall = saleRemainingInterest -
@@ -1165,6 +872,11 @@ contract EarlyWithdrawalFacet is
                 LibSanctionedLock.end(
                     s, newLender, loanId, loan.principalAsset, shortfall
                 );
+                // r6 P2 — buyer checkpoint at this credit site (local when
+                // the held migration stamps the buyer again below, r7 P2).
+                if (loan.principalAsset == s.vpfiToken) {
+                    _restampVpfiParty(newLender, priorHeldSale > 0);
+                }
             } else {
                 uint256 remainingShortfall = shortfall - accrued;
                 uint256 totalFromLiam = accrued + remainingShortfall;
@@ -1180,6 +892,11 @@ contract EarlyWithdrawalFacet is
                 LibSanctionedLock.end(
                     s, newLender, loanId, loan.principalAsset, totalFromLiam
                 );
+                // r6 P2 — buyer checkpoint at this credit site (local when
+                // the held migration stamps the buyer again below, r7 P2).
+                if (loan.principalAsset == s.vpfiToken) {
+                    _restampVpfiParty(newLender, priorHeldSale > 0);
+                }
             }
         } else {
             LibFacet.transferFromPayerToTreasury(
@@ -1211,34 +928,8 @@ contract EarlyWithdrawalFacet is
         // Migrate only pre-existing heldForLender from old lender's vault to new lender's
         {
             if (priorHeldSale > 0) {
-                address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
-                    ? loan.principalAsset
-                    : loan.prepayAsset;
-                // #597 Codex #672 P2 — same sanctions exemption as
-                // `sellLoanViaBuyOffer`: the departed `originalLender` is losing
-                // custody of their held VPFI, so the Tier-1 vault gate must not
-                // brick the sale for the unflagged seller. Address-scoped; the
-                // host is `nonReentrant`; cleared immediately after.
-                s.consolidationMoveFromUser = originalLender;
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        originalLender,
-                        payAsset,
-                        address(this),
-                        priorHeldSale
-                    ),
-                    VaultWithdrawFailed.selector
-                );
-                s.consolidationMoveFromUser = address(0);
-                // #831 — vault-lock the held migration into the buyer's
-                // (newLender) vault: a buyer flagged after committing must not
-                // brick the completion. `depositLocked` resolves the buyer vault
-                // under the receive-side exemption, pushes the held from Diamond
-                // custody, and emits `SanctionedProceedsLocked` when flagged
-                // (T-051 — the Diamond-side transfer ticks the tracked counter).
-                LibSanctionedLock.depositLocked(
-                    s, newLender, loanId, payAsset, priorHeldSale
+                _migrateHeldOnCompletion(
+                    s, loan, loanId, originalLender, newLender, priorHeldSale
                 );
             }
         }
@@ -1296,13 +987,34 @@ contract EarlyWithdrawalFacet is
             LibEncumbrance.encumberLenderProceeds(
                 loanId, loan.lender, loan.principalAsset, nonActiveHeld
             );
+            // #1503 item 27 (#1817) — mirror of the direct route: the sale
+            // moved VPFI through both parties' vaults (held migration off
+            // the seller, held credit + settlement movements on the buyer),
+            // so run the post-balance discount / staking checkpoint for
+            // each. Cross-facet entry keeps the rollup body off this
+            // EIP-170-tight facet. `originalLender` is the seller captured
+            // before the migration; `newLender` is the buyer. The seller is
+            // stamped only when their vault actually moved (Codex #1819 r3
+            // P2) — the held migration is their sale-side vault movement, so
+            // with none held their stamp would be an unrelated broadcast-
+            // budget spend. (No buyer debit trough exists on THIS route: the
+            // buyer's principal was escrowed in Diamond custody at accept,
+            // so completion only credits their vault.)
+            // No party stamps remain here (r6): the DEPARTED lender is
+            // stamped at the held-withdrawal site, and the buyer at each
+            // credit site — the rate-shortfall deposit and the held
+            // migration. With neither movement (the legacy/manual-recovery
+            // completion), nobody's vault moved and nothing may broadcast:
+            // an exhausted push budget must not be able to revert the only
+            // recovery hook (r6 P2).
         }
 
         // Old lender forfeits interaction rewards to treasury; new lender
         // gets a fresh entry covering the residual loan window. #1067 — routed
-        // best-effort through the `transferLenderRewardEntry` self-hook so the
-        // O(1) transfer body lives on InteractionRewardsFacet, off this tight
-        // facet (see the loan-keyed twin above for the subordinacy rationale).
+        // through the `transferLenderRewardEntry` self-hook so the O(1)
+        // transfer body lives on InteractionRewardsFacet, off this tight
+        // facet. ATOMIC with the settlement since #1503 item 12 — see
+        // `_rewardHook` for why a failure here must not settle silently.
         _rewardHook(
             abi.encodeWithSelector(
                 InteractionRewardsFacet.transferLenderRewardEntry.selector,
@@ -1392,11 +1104,39 @@ contract EarlyWithdrawalFacet is
 
         // Mark temp loan as Repaid with zeroed-out claim records so
         // ClaimFacet's NothingToClaim check won't create a stuck artifact.
-        LibLifecycle.transition(
-            tempLoan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Repaid
-        );
+        // #1503 item 26 — the INTERNAL-VEHICLE transition: validated edge,
+        // no metrics hook, no LoanStatusChanged. The vehicle was never
+        // counted, indexed, or announced at initiation (the paired skips in
+        // LoanFacet), so the ordinary transition would decrement an active
+        // count it never incremented and hand indexers a status edge for a
+        // loan they were never told exists.
+        //
+        // Routed by REGIME, not by code version, and the regime is read from
+        // the vehicle's own durable mark. A vehicle accepted BEFORE item 26
+        // carries no mark: its creation was announced, so its terminal must be
+        // announced too or the row a consumer built from `LoanInitiated` sits
+        // Active forever.
+        //
+        // Whether it was COUNTED is a SEPARATE question (Codex #1825 r1) and
+        // must not be inferred from the same signal: a loan predating the
+        // counter layer or its backfill can be announced yet absent from the
+        // active set, and deciding both from active-list membership would
+        // close such a vehicle silently — reintroducing the exact #1782
+        // defect. So membership decides only the decrement.
+        if (LibMetricsHooks.isInternalVehicle(s, tempLoanId)) {
+            LibLifecycle.transitionInternalVehicle(
+                tempLoan,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Repaid
+            );
+        } else {
+            LibLifecycle.transitionLegacyVehicle(
+                tempLoan,
+                LibVaipakam.LoanStatus.Active,
+                LibVaipakam.LoanStatus.Repaid,
+                s.activeLoanIdsListPos[tempLoanId] != 0
+            );
+        }
         // Set claimed=true so neither party needs to (or can) claim.
         s.lenderClaims[tempLoanId] = LibVaipakam.ClaimInfo({
             asset: tempLoan.principalAsset,
@@ -1422,20 +1162,114 @@ contract EarlyWithdrawalFacet is
         // one-listing-per-loan guard in createLoanSaleOffer would reject it).
         delete s.loanToSaleOfferId[loanId];
         delete s.saleOfferToLoanId[saleOfferId];
+        // #1503 item 4 — the bounds belong to THIS listing; leaving them would
+        // apply them to the next one.
+        LibSaleListing.clearSellerBounds(s, loanId);
 
         emit LoanSaleCompleted(loanId, originalLender, newLender);
     }
 
-    /// @dev #1067 — best-effort reward transfer self-call. The O(1) transfer
-    ///      body lives on {InteractionRewardsFacet}; a failed low-level call is
-    ///      intentionally not bubbled (the sale settlement proceeds regardless —
-    ///      reward bookkeeping is subordinate). Production always cuts
-    ///      InteractionRewardsFacet; a focused test harness that omits it simply
-    ///      skips the reward transfer.
+    /// @dev The `priorHeldSale > 0` migration leg of `_completeLoanSaleImpl`,
+    ///      in its OWN frame: the host sits at the viaIR stack ceiling, and
+    ///      the r6 mutation-site checkpoints tipped it over — this leg's
+    ///      temporaries (the pay-asset pick, the withdraw encode, the two
+    ///      stamps) now live here instead.
+    ///
+    ///      #597 Codex #672 P2 — the sanctions exemption around the from-side
+    ///      withdrawal: the departed `originalLender` is LOSING custody, so
+    ///      the Tier-1 vault gate must not brick the sale for the unflagged
+    ///      seller. Address-scoped; the host is `nonReentrant`.
+    ///
+    ///      #1817 (Codex #1819 r6 P1) — the DEPARTED lender is checkpointed
+    ///      at their post-withdraw balance, between the held debit and the
+    ///      buyer-side redeposit: in a self-purchase (originalLender ==
+    ///      newLender) the deposit returns the same vault to positive, and a
+    ///      stamp taken only afterwards would observe positive -> positive
+    ///      across a real zero. The BUYER is stamped after the credit (r6 P2
+    ///      — stamps live where the vault moves, so a completion that moves
+    ///      nothing stays broadcast-free).
+    ///
+    ///      #831 — `depositLocked` vault-locks the buyer-side receive so a
+    ///      buyer flagged after committing cannot brick the completion
+    ///      (T-051 — the Diamond-side transfer ticks the tracked counter).
+    function _migrateHeldOnCompletion(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        uint256 loanId,
+        address originalLender,
+        address newLender,
+        uint256 priorHeldSale
+    ) private {
+        address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
+            ? loan.principalAsset
+            : loan.prepayAsset;
+        s.consolidationMoveFromUser = originalLender;
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                originalLender,
+                payAsset,
+                address(this),
+                priorHeldSale
+            ),
+            VaultWithdrawFailed.selector
+        );
+        s.consolidationMoveFromUser = address(0);
+        // Self-purchase: this stamp is INTERMEDIATE for the shared user (the
+        // buyer stamp below follows), so it rolls up locally; a third-party
+        // seller's is their final movement and broadcasts (r7 P2).
+        if (loan.principalAsset == s.vpfiToken) {
+            _restampVpfiParty(originalLender, originalLender == newLender);
+        }
+        LibSanctionedLock.depositLocked(
+            s, newLender, loanId, payAsset, priorHeldSale
+        );
+        if (loan.principalAsset == s.vpfiToken) {
+            _restampVpfiParty(newLender, false);
+        }
+    }
+
+    /// @dev #1817 r6 — one-liner restamp emitter. completeLoanSale sits at
+    ///      the viaIR stack ceiling, and inlining the abi.encode temporaries
+    ///      for each checkpoint tipped it over; a private frame keeps them
+    ///      out of the big function entirely.
+    /// @param localOnly INTERMEDIATE checkpoints roll up locally (r7 P2 —
+    ///        one broadcast per party per completion; the party's FINAL
+    ///        stamp carries the push, and a per-checkpoint CCIP message
+    ///        could exhaust the shared budget mid-settlement).
+    function _restampVpfiParty(address who, bool localOnly) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                localOnly
+                    ? ConsolidationFacet.restampUserVpfiLocalInternal.selector
+                    : ConsolidationFacet.restampUserVpfiInternal.selector,
+                who
+            ),
+            bytes4(0)
+        );
+    }
+
     function _rewardHook(bytes memory data) private {
-        (bool ok, ) = address(this).call(data);
+        // #1503 item 12 — ATOMIC with settlement, no longer best-effort. Every
+        // sale quote discloses the seller's reward forfeiture and the buyer's
+        // residual entry as a cost line, and a mandatory disclosure of a
+        // best-effort effect is a promise the protocol does not keep: a
+        // swallowed failure here settles the sale with the seller's entry
+        // un-forfeited and no residual for the buyer, in silence. The transfer
+        // body (`LibInteractionRewards.transferLenderEntry`) is pure O(1)
+        // storage bookkeeping with its own early-returns for "program not
+        // active" and "no entry" — on a properly-cut diamond it cannot revert,
+        // so the only failure this bubbles in practice is the deploy-drift
+        // case (InteractionRewardsFacet's selector unrouted), which is exactly
+        // the case that must not settle silently.
+        (bool ok, bytes memory ret) = address(this).call(data);
         if (!ok) {
-            // best-effort — the sale settlement proceeds regardless.
+            if (ret.length > 0) {
+                assembly {
+                    revert(add(32, ret), mload(ret))
+                }
+            }
+            revert RewardMigrationFailed();
         }
     }
 

@@ -2406,6 +2406,25 @@ library LibVaipakam {
         // to default could claim, then default, dodging the §4 forfeit).
         bool closed;
         uint256 perDayNumeraire18; // Numeraire18 interest-per-day snapshotted at register
+        /// @dev #1434 (Codex #1699 r8 P1) — APPENDED AT THE TAIL
+        ///      (struct-in-mapping tail widening is layout-safe).
+        ///
+        ///      The expiry sweep began MOVING this entry's value. Set on the
+        ///      FIRST crediting chunk, never unset.
+        ///
+        ///      Unifying expiry onto the day engine made a reap CHUNKED, and
+        ///      every credited chunk is IRREVERSIBLE — the value is already in
+        ///      the recycle bucket. Leaving the entry claimable between chunks
+        ///      meant an owner who claimed mid-sweep silently lost whatever had
+        ///      already been recycled, with no removal signal to explain it,
+        ///      contradicting the guarantee that a claim before removal wins.
+        ///
+        ///      So the first credited chunk IS the removal point: from that
+        ///      instant the claim paths skip the entry and a public signal
+        ///      marks it. "A claim before removal wins" stays true and becomes
+        ///      precisely observable — a deferral still credits nothing and
+        ///      leaves the entry fully claimable.
+        bool expiryBegun;
     }
 
     /**
@@ -6144,10 +6163,20 @@ library LibVaipakam {
         ///      loan-side-capped split keeps `armedFresh` whole for
         ///      commitment retirement while `total` sheds the capped-off
         ///      part, so no combination of the returned fields is the amount
-        ///      actually paid. That lands with P1-b, which consumes it, and
-        ///      which is itself blocked behind P2 lifting the mirror
-        ///      armed-day pricing halt (#1434 §2g): while that halt stands,
-        ///      armed mirror days never price and there is nothing to bound.
+        ///      actually paid.
+        ///
+        ///      #1434 P1-b LANDED that paid side as
+        ///      `rewardBudgetArmedFreshPaid` (see the tail of this struct)
+        ///      and lifted the mirror armed-day pricing halt this note was
+        ///      waiting on, so the bound is now live: read it through
+        ///      {LibInteractionRewards.deliveredFreshBound}, never by
+        ///      differencing these fields by hand — it must SATURATE,
+        ///      because the received side below carries an unwind and can
+        ///      legitimately fall below the paid side after a released or
+        ///      reclassified delivery. The paid side is written at the three
+        ///      sites that actually spend armed fresh (the claim walk, the
+        ///      expiry batch, the forfeit sweep) rather than derived from
+        ///      these splits, precisely because of the shape described above.
         uint256 rewardBudgetArmedFreshReceived;
         /// @dev The reconciliation counterpart: Σ of the fresh-looking
         ///      amount of every delivery this chain declined to count above.
@@ -6643,6 +6672,351 @@ library LibVaipakam {
         //   discarded portion would read as still-in-transit forever,
         //   restoring the exact phantom allowance this counter removes.
         uint256 recycleReleasedRemitResolvedCumulative;
+        /// @dev #1503 item 28 — the point in time through which the CURRENT
+        ///      lender-position holder has actually been PAID their interest.
+        ///
+        ///      APPENDED AT THE STRUCT TAIL — never insert mid-struct.
+        ///
+        ///      A lender-position sale forfeits the interest that accrued during
+        ///      the seller's tenure, because the borrower has not paid it yet. On
+        ///      a periodic loan the borrower HAS paid part of it: periodic
+        ///      auto-liquidation forwards interest to the lender without moving
+        ///      the accrual clock, so the raw clock still spans periods already
+        ///      settled and the seller is billed for interest they received.
+        ///
+        ///      This is stored as a TIMESTAMP, not an amount. An amount cannot be
+        ///      compared with the forfeiture figure at all: that figure is scoped
+        ///      to the current accrual SEGMENT, and `repayPartial` (among six
+        ///      other paths) restarts the segment, after which a lifetime amount
+        ///      is measuring a different window than the one it would be
+        ///      subtracted from — under-charging on one side of the reset and
+        ///      double-crediting on the other (Codex #1801 r3 P1). A timestamp
+        ///      composes with a clock reset by construction: the forfeiture
+        ///      window starts at whichever is LATER, the accrual origin or this
+        ///      mark, so a reset that moves past it simply wins the `max` and
+        ///      nothing historical carries over. There is likewise no "excess
+        ///      credit" case to refuse, because a clamped window cannot
+        ///      over-subtract.
+        ///
+        ///      It advances in exactly two places, and the difference between
+        ///      them is worth stating because it is not obvious.
+        ///
+        ///      One: a periodic payout that genuinely REACHES the lender — never
+        ///      the freeze branch, whose tokens are parked in `heldForLender` and
+        ///      migrate to the BUYER on a sale.
+        ///
+        ///      Two: a SALE. The forfeiture settles the outstanding accrual (to
+        ///      treasury, or into the buyer's rate shortfall), so the position
+        ///      the buyer receives is clean and their own window opens at the
+        ///      sale. Without this the same stretch would be forfeited again on
+        ///      every resale.
+        ///
+        ///      A plain position TRANSFER does NOT advance it, and must not.
+        ///      Nothing is settled by a transfer, so the outstanding forfeiture
+        ///      travels with the position — exactly as the unpaid interest it
+        ///      represents does. Stamping there instead would let any lender
+        ///      zero their own forfeiture by transferring the position to
+        ///      themselves and selling from the other side, which is a larger
+        ///      hole than the one this whole mechanism closes.
+        ///
+        ///      Zero for a loan predating this upgrade, which makes the `max`
+        ///      pick the accrual origin — precisely the behaviour those loans
+        ///      already had. Grandfathered loans keep it rather than acquiring a
+        ///      wrong new one, and no backfill of unreconstructable history is
+        ///      needed.
+        mapping(uint256 => uint256) lenderInterestDeliveredThroughAt;
+        /// @notice #1801 — the loan's `principal` at the moment the mark above
+        ///         was stamped. Written with the mark and never apart from it
+        ///         (both go through {LibEntitlement.stampInterestDelivered}).
+        ///
+        /// @dev    The mark names a WINDOW; a window is only meaningful at the
+        ///         principal it was priced against. Principal is decremented at
+        ///         eight sites across five facets — `RepayFacet`,
+        ///         `SwapToRepayFacet`, `RiskFacet` and `RiskMatchLiquidationFacet`
+        ///         (five) — and a design that asks each of them to keep the mark
+        ///         honest has eight places to miss, in facets edited for
+        ///         unrelated reasons.
+        ///
+        ///         So the mark is not maintained by them; it is INVALIDATED BY
+        ///         STATE. A read honours it only while this equals the live
+        ///         principal, which means any principal change anywhere — today's
+        ///         eight sites and any added later by someone who has never read
+        ///         this — voids the credit automatically and charges the seller
+        ///         the full accrual instead. Fail-safe by construction rather
+        ///         than by cooperation.
+        mapping(uint256 => uint256) lenderMarkPrincipalAt;
+        /// @notice #1801 — set once this position's delivery record has become
+        ///         DISCONTINUOUS, which permanently disqualifies the scalar mark
+        ///         for the rest of the lender's tenure. Two causes: a lender
+        ///         share frozen rather than delivered, and a stamp whose window
+        ///         would span a principal change that no settlement reconciled.
+        ///
+        /// @dev    Voiding the mark at the freeze is not enough on its own: a
+        ///         later clean delivery re-stamps it, and the window from the
+        ///         new mark back to the previous one then spans the frozen
+        ///         stretch, crediting the seller for interest that went to
+        ///         `heldForLender` and migrates to the buyer. That is exactly
+        ///         the "do not leap the mark over frozen periods" case — a
+        ///         single timestamp cannot say "paid for the second period, not
+        ///         the first", so once delivery has become non-contiguous no
+        ///         stamp on this loan is trustworthy again.
+        ///
+        ///         Cleared on a position SALE, through
+        ///         {LibEntitlement.stampInterestDeliveredForNewLender},
+        ///         because the incoming lender's window opens at the sale and
+        ///         carries none of the seller's history — frozen or otherwise.
+        mapping(uint256 => bool) lenderMarkVoided;
+
+        /// @notice #1503 item 28 — the `heldForLender` balance the mark was
+        ///         stamped at, so a park that happened since it is DETECTABLE.
+        ///
+        /// @dev    Codex #1801 r11 P1. Parked interest is interest the lender did
+        ///         not receive, so it disqualifies the mark for exactly the
+        ///         reason a freeze does — but the two are not the same event, and
+        ///         only the freeze path was setting {lenderMarkVoided}. The
+        ///         obligation-transfer route parks the lender's accrued share on
+        ///         a CONTINUING loan and never touched the flag, so a later clean
+        ///         settlement re-stamped the mark over the parked stretch and the
+        ///         sale excluded it from the seller's charge — money the seller
+        ///         never received and which migrates to the buyer.
+        ///
+        ///         Reading the balance rather than trusting the park sites is the
+        ///         same choice made for principal one field up, and for the same
+        ///         reason: there are SEVEN places that park to `heldForLender`
+        ///         across four facets, one of which remembered to void, and any
+        ///         future eighth would have to remember too. A rule read off
+        ///         state cannot be forgotten by code that has never seen it.
+        ///
+        ///         Safe as an equality test because `heldForLender[loanId]` only
+        ///         grows while a loan is live — it is consumed at terminal claim,
+        ///         never decremented during a lender's tenure — so a difference
+        ///         is proof of a park and nothing else.
+        mapping(uint256 => uint256) lenderMarkHeldAt;
+
+        /// @notice #1503 item 28 — the moment THIS lender's tenure began: loan
+        ///         origination, or the sale that handed them the position.
+        ///
+        /// @dev    Codex #1801 r13, two P1s that turned out to be one missing
+        ///         idea. A disqualified mark falls back to the earlier of the
+        ///         recorded delivery and the accrual clock, and neither of those
+        ///         is anchored to the party being charged:
+        ///
+        ///         - a loan whose FIRST lender payment is the one that freezes
+        ///           has no recorded delivery at all, so the fallback was the
+        ///           clock — which that same repayment had just re-based, giving
+        ///           a window of roughly zero over a genuinely unpaid stretch;
+        ///         - a BUYER disqualified after purchase fell back to the loan's
+        ///           original accrual clock, which predates them, charging them
+        ///           for the seller's whole pre-purchase tenure — a stretch the
+        ///           first sale already settled.
+        ///
+        ///         One bound fixes both, because both are the window escaping
+        ///         the tenure it belongs to. The window may open no earlier than
+        ///         here and, when nothing is disqualified, no earlier than the
+        ///         recorded delivery either.
+        ///
+        ///         Zero for loans that predate this change: nothing is known
+        ///         about when their lender's tenure started, so no clamp is
+        ///         applied and they keep the behaviour they already had.
+        mapping(uint256 => uint256) lenderTenureStart;
+
+        /// @notice #1503 item 4 — the seller's FLOOR on a sale listing: the
+        ///         least they will accept out of the buyer's escrowed proceeds,
+        ///         after the settlement forfeiture is deducted.
+        ///
+        /// @dev    The listing stored no economic bound of any kind, so
+        ///         completion recomputed the forfeiture at the acceptance block
+        ///         and the seller was bound by whatever it came to then.
+        ///
+        ///         The floor is NOT the figure the seller saw. Accrued interest
+        ///         grows across the listing window, so a floor at the displayed
+        ///         value would make the listing unfillable almost immediately.
+        ///         It is the worst case they accepted — the same settlement
+        ///         arithmetic evaluated at BOTH ends of the listing window,
+        ///         taking whichever is worse for them, plus slack for integer
+        ///         truncation. Not the expiry alone: the two legs of the cost
+        ///         move in opposite directions, so an above-rate listing is
+        ///         costliest to fill immediately. Computable only because the
+        ///         expiry is mandatory and finite. See
+        ///         `LibSaleListing.projectSellerBounds`.
+        ///
+        ///         Zero does NOT mean "no floor recorded". `projectSellerBounds`
+        ///         deliberately returns zero when the projected cost reaches the
+        ///         principal, and the listing is recorded all the same — so a
+        ///         current listing can legitimately carry a zero floor. The
+        ///         companion `saleListingBoundsRecorded` flag is the sentinel
+        ///         that separates a recorded listing from one made before this
+        ///         shipped, exactly as it is for a zero ceiling. Reading the
+        ///         numeric floor as the sentinel would misclassify a live
+        ///         listing as legacy and skip its bounds.
+        mapping(uint256 => uint256) saleListingMinSellerNet;
+
+        /// @notice #1503 item 4 — the seller's CEILING on the held balance a
+        ///         sale hands to the buyer: what was parked for them when they
+        ///         listed.
+        ///
+        /// @dev    The opposite shape to the floor, because this quantity does
+        ///         not grow with time. It grows only when a partial or internal
+        ///         settlement parks MORE into it between listing and
+        ///         acceptance — precisely the drift this bound exists to
+        ///         refuse — so the recorded value is the balance at listing and
+        ///         any later park fails the sale rather than silently enlarging
+        ///         what transfers.
+        ///
+        ///         Recorded even when zero, with a companion flag, because "no
+        ///         held balance at listing" is a real bound and not the absence
+        ///         of one: without the flag a listing made with nothing parked
+        ///         would be indistinguishable from a legacy listing and would
+        ///         accept an arbitrary later park.
+        mapping(uint256 => uint256) saleListingMaxHeldTransfer;
+
+        /// @notice #1503 item 4 — whether this loan's live listing carries the
+        ///         item-4 bounds at all.
+        /// @dev    Distinguishes a listing that recorded a zero ceiling from one
+        ///         made before the bounds existed. Cleared with the listing.
+        mapping(uint256 => bool) saleListingBoundsRecorded;
+
+        /// @notice #1503 item 4 — the expiry the FLOOR was projected to.
+        /// @dev    Stored with the bounds rather than read back off the sale
+        ///         offer, so the seller's authorisation is one self-contained
+        ///         record. The offer is a different lifecycle — cancel and
+        ///         teardown clear it — and a bound that depends on a record
+        ///         someone else may remove is a bound with a hole in it.
+        ///
+        ///         The floor bounds every fill INSIDE the window and says
+        ///         nothing about one after it: `completeLoanSale` stays callable
+        ///         past the window on purpose, and the seller invoking it
+        ///         themselves is fresh authorisation rather than a race, so
+        ///         enforcing a stale projection there would refuse their own
+        ///         deliberate act.
+        mapping(uint256 => uint256) saleListingBoundsExpiry;
+        /// @notice O(1) membership map over `userLoanIds` (#1503 item 25,
+        ///         Codex #1818 r1 P2): true when `loanId` is already present in
+        ///         `userLoanIds[user]`, so a position migration can append the
+        ///         acquired loan to the buyer's index WITHOUT the linear
+        ///         lifetime-array scan the consolidation path uses — item 25
+        ///         names that scan as the thing a high-volume buyer could turn
+        ///         into an out-of-gas seller-burning revert.
+        ///
+        ///         Populated at loan creation for both original parties going
+        ///         forward. Loans created BEFORE this field shipped have their
+        ///         parties in the array but not the map — and holders who
+        ///         acquired a position through a pre-map migration in NEITHER
+        ///         (that absence is the item-25 bug itself), so no O(1) fact
+        ///         separates "in the array, unstamped" from "absent". The
+        ///         migration writer resolves that per LOAN via
+        ///         `loanHolderIndexExact` below rather than by assuming
+        ///         anything about individual holders (Codex #1818 r3 P2).
+        mapping(address => mapping(uint256 => bool)) userLoanIndexed;
+        /// @notice Per-loan regime marker for `userLoanIndexed` (Codex #1818
+        ///         r3 P2): true when the loan was CREATED under map-aware
+        ///         code, i.e. every party who ever touches it is stamped at
+        ///         touch, so a false bit truly means "not in the array". Set
+        ///         at creation only and never afterwards — repairing a
+        ///         grandfathered loan cannot earn the flag, because its
+        ///         FORMER pre-map holders stay ambiguous (an original party
+        ///         is in the array unstamped; a pre-map acquirer is in
+        ///         neither), and promoting the loan would hand their
+        ///         reacquisition to the bare-push path. While false,
+        ///         migration writers must neither trust nor blindly set any
+        ///         holder's bit; `LibLoan._indexLoanForHolder` establishes
+        ///         membership by a scan that each user pays at most once.
+        mapping(uint256 => bool) loanHolderIndexExact;
+        /// @dev #1434 P1-b — APPENDED AT THE TAIL (same in-place-upgrade
+        ///      rule as every counter above). The PAID half of the
+        ///      delivered-fresh bound, and the counterpart of
+        ///      `rewardBudgetArmedFreshReceived`: Σ of ARMED fresh this
+        ///      chain has actually paid out, written at every armed-fresh
+        ///      payout site. P1-a shipped only the received half, which is
+        ///      why the halt could not lift on that slice alone.
+        ///
+        ///      `interactionPoolPaidOut` is deliberately NOT reused as a
+        ///      proxy (an earlier revision was withdrawn for exactly that,
+        ///      Codex #1556 r1): it counts LIFETIME payouts including
+        ///      ordinary-schedule days that no delivery ever funded, so
+        ///      charging them against delivered fresh would defer every
+        ///      later day on any chain with prior activity. Only
+        ///      armed-day fresh belongs here, because only armed-day fresh
+        ///      is what a remittance delivers.
+        ///
+        ///      The bound `received − paid` MUST be evaluated SATURATING
+        ///      in both terms. The received side is NOT monotone: it
+        ///      carries its own saturating unwind for a released or
+        ///      reclassified delivery, so a paid figure charged against a
+        ///      received figure that has since shrunk would otherwise
+        ///      underflow — and a reverting pricing path wedges the walk
+        ///      for every later day, which is the failure mode the
+        ///      withdrawn B2-d4 attempt was rejected for.
+        uint256 rewardBudgetArmedFreshPaid;
+        /// @dev #1434 P1-b (Codex #1699 r2) — the one-shot migration flag for
+        ///      the counter above. TRUE once an in-place-upgraded mirror has
+        ///      seeded its pre-P1-b paid history.
+        ///
+        ///      Needed because the bound goes live the moment this facet set
+        ///      is cut, while the paid counter starts at ZERO — yet
+        ///      `rewardBudgetArmedFreshReceived` already holds deliveries for
+        ///      compensated and short-lapsed days, which BYPASSED the old
+        ///      blanket mirror halt by design and were genuinely payable. Left
+        ///      unseeded, that already-spent funding reads as wholly available
+        ///      and can be spent a second time.
+        ///
+        ///      A fresh deploy needs no seed (both counters start at zero), so
+        ///      this is armed only where there is history to carry.
+        bool armedFreshPaidSeeded;
+        /// @dev #1434 (Codex #1699 r7 P2) — APPENDED AT THE TAIL (same
+        ///      in-place-upgrade rule as every counter above). Running totals
+        ///      of what an expiring reward entry has ALREADY had credited
+        ///      across its chunked settlement, so the terminal
+        ///      `RewardEntryExpired` can still report the WHOLE entry.
+        ///
+        ///      Unifying expiry onto the day engine made a reap CHUNKED: a
+        ///      long entry settles over several sweeps. Without these, the
+        ///      terminal event would carry only the FINAL chunk while its
+        ///      documented `total` / `recycled` decomposition still claims to
+        ///      describe the whole entry — every indexer and notification
+        ///      consumer reading that face value would under-report, silently.
+        ///      Accumulating preserves the event's meaning rather than
+        ///      redefining it under consumers that were never told.
+        ///
+        ///      Written only on the expiry path and read once at
+        ///      terminalization; an entry that never expires never touches
+        ///      them.
+        mapping(uint256 => uint256) rewardEntryExpiredAccum;
+        mapping(uint256 => uint256) rewardEntryExpiredRecycledAccum;
+        /// @notice #1503 item 26 (Codex #1825 r1) — the DURABLE mark that a
+        ///         loan record is the lender-sale transitional vehicle rather
+        ///         than a position: vehicle loan id → the REAL loan whose
+        ///         lender position it carried. Non-zero ⇔ vehicle.
+        ///
+        ///         Suppressing the vehicle's creation events and its counter
+        ///         writes is not sufficient on its own, because the record
+        ///         itself persists in `loans` and its id was drawn from
+        ///         `nextLoanId`. Anything that enumerates by id range —
+        ///         `getAllLoansPaginated`, `getLoansByStatusPaginated`, the
+        ///         `getProtocolStats` / `getTotalInterestEarnedNumeraire`
+        ///         lifetime scans, `getGlobalCounts` — would keep finding it
+        ///         and keep pricing its principal into lifetime volume. A
+        ///         durable mark is what lets those surfaces exclude it; a
+        ///         transient link cannot, since `saleOfferToLoanId` is
+        ///         deleted at completion.
+        ///
+        ///         It stores the REAL loan id rather than a bare flag so the
+        ///         acceptance event has something true to name: the vehicle's
+        ///         own id must not reach consumers (it resolves to a record
+        ///         no loan list contains), while the sale it stands for is a
+        ///         real position that consumers already track.
+        ///
+        ///         Written at creation and never cleared — its absence on a
+        ///         vehicle is exactly the legacy signal `completeLoanSale`
+        ///         needs: a vehicle created before this shipped WAS announced
+        ///         at creation, so its terminal must still be announced, and
+        ///         that is a separate question from whether it was counted
+        ///         (`activeLoanIdsListPos`, which a pre-backfill deployment
+        ///         can leave zero on an announced loan).
+        mapping(uint256 => uint256) internalVehicleRealLoanId;
+        /// @notice Count of records marked above, so `getGlobalCounts` can
+        ///         report ids-issued minus vehicles without a scan.
+        uint256 internalVehicleLoanCount;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

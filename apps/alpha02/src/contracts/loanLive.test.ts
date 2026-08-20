@@ -6,11 +6,14 @@
  * grace window and charge the same fee repay does.
  */
 import { describe, expect, it } from 'vitest';
+import { saleSettlementBound } from '../data/loanSalePending';
 import {
   lateFeeAt,
   loanEndTimeOf,
   refinanceApprovalOf,
   refinancePayoffOf,
+  SellerQuoteUnavailableError,
+  sellerEconomics,
   type LoanLive,
 } from './loanLive';
 
@@ -114,6 +117,194 @@ describe('refinanceApprovalOf', () => {
       refinanceApprovalOf(live, { expiresAt: 0n, graceSeconds }),
     ).toBe(
       live.principal + interestFor(33n) + (live.principal * 250n) / 10_000n,
+    );
+  });
+});
+
+/**
+ * #1503 item 28 — the seller's forfeiture measures the stretch the lender has
+ * NOT been paid for. These pin the mirror against
+ * `EarlyWithdrawalDirectFacet` / `EarlyWithdrawalFacet`, whose forfeiture runs
+ * from the paid-through mark, falling back to the interest-accrual origin only
+ * for a lender who has never been paid.
+ */
+describe('sellerEconomics — forfeiture window (#1503 item 28)', () => {
+  /** A 30-day 10% loan on 1,000e18, accrual clock starting at t=1000. */
+  const saleLive = {
+    principal: 1_000n * 10n ** 18n,
+    interestRateBps: 1_000n,
+    startTime: 1_000n,
+    durationDays: 30n,
+    interestAccrualStart: 1_000n,
+    interestRemainingDays: 30,
+    // The seller clock lives on the SNAPSHOT since #1801 r9 — callers cannot
+    // supply their own, so the fixture carries the block it was read at.
+    readAtTimestamp: 1_000n + 10n * DAY,
+  } as LoanLive;
+
+  const now = 1_000n + 10n * DAY; // ten days in
+  /** Interest over `secs` at the loan's own rate, seconds-precision. */
+  const accrue = (secs: bigint) =>
+    (saleLive.principal * saleLive.interestRateBps * secs) /
+    (365n * DAY * 10_000n);
+
+  it('REFUSES to quote when the window read is unavailable', () => {
+    // This asserted the opposite until #1801 r8, and the correction is the point.
+    // The old fallback quoted from the accrual origin on the reasoning that it is
+    // the conservative answer. It is not always: a valid mark can PRECEDE the
+    // origin (the preclose path re-origins the accrual clock without clearing an
+    // older mark), so the contract could charge from the earlier mark while this
+    // quoted only from the later clock — understating the seller's cost on a
+    // transient RPC failure. An unknown window has no safe substitute.
+    expect(() => sellerEconomics(saleLive, saleLive.interestRateBps)).toThrow(
+      SellerQuoteUnavailableError,
+    );
+  });
+
+  it('forfeits the whole elapsed stretch when the window IS the accrual origin', () => {
+    // The contract resolves "this lender has never been paid" to the accrual
+    // origin itself, so that arrives as a real value rather than as an absence.
+    const fresh = { ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart };
+    expect(sellerEconomics(fresh, fresh.interestRateBps).accrued).toBe(
+      accrue(10n * DAY),
+    );
+  });
+
+  it('forfeits only the unpaid stretch the contract resolved', () => {
+    const paid = { ...saleLive, lenderForfeitFrom: now - 6n * DAY };
+    expect(sellerEconomics(paid, paid.interestRateBps).accrued).toBe(
+      accrue(6n * DAY),
+    );
+  });
+
+  it('forfeits nothing when the lender is paid through now', () => {
+    const paid = { ...saleLive, lenderForfeitFrom: now };
+    const econ = sellerEconomics(paid, paid.interestRateBps);
+    expect(econ.accrued).toBe(0n);
+    // A window model cannot over-subtract, so this is a completable sale that
+    // returns the whole principal — not a blocked one.
+    expect(econ.toSeller).toBe(paid.principal);
+  });
+
+  it('keeps the window open across an accrual-clock reset that paid nobody', () => {
+    // What a FROZEN partial repayment leaves behind: the borrower's obligation
+    // clock restarts, but the lender's share was parked in `heldForLender`
+    // rather than delivered — and that balance migrates to the BUYER on a sale.
+    // An earlier revision took the later of the two marks, which let the reset
+    // act as the credit and closed the window over interest the seller never
+    // received. What this pins on the CLIENT is narrower and is the point of the
+    // #1801 rename: the client does not weigh the two clocks at all. It uses the
+    // window the contract resolved and ignores `interestAccrualStart`, so a
+    // change to the contract's rule cannot leave a stale copy here.
+    const reset = {
+      ...saleLive,
+      lenderForfeitFrom: now - 6n * DAY,
+      interestAccrualStart: now - 4n * DAY,
+    };
+    expect(sellerEconomics(reset, reset.interestRateBps).accrued).toBe(
+      accrue(6n * DAY),
+    );
+  });
+
+  it('honours a mark that predates the accrual origin', () => {
+    // Same property from the other side: a resolved window earlier than the
+    // obligation clock is used as given. The contract decides whether such a
+    // window is still honourable — since #1801 it refuses one whose principal
+    // has moved or whose delivery a freeze broke — and the client's job is only
+    // to not second-guess the answer.
+    const stale = { ...saleLive, lenderForfeitFrom: now - 20n * DAY };
+    expect(sellerEconomics(stale, stale.interestRateBps).accrued).toBe(
+      accrue(20n * DAY),
+    );
+  });
+
+  it('measures the loan term from the accrual clock, not the window', () => {
+    // The remaining-term half must NOT move with the mark — it measures the
+    // loan's own progress, which the mark says nothing about. A rate ABOVE the
+    // loan's makes the shortfall the binding cost, exposing that half.
+    const bare = sellerEconomics({ ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart }, 2_000n);
+    const paid = sellerEconomics({ ...saleLive, lenderForfeitFrom: now - 6n * DAY }, 2_000n);
+    expect(paid.shortfall).toBe(bare.shortfall);
+    expect(paid.shortfallBinding).toBe(true);
+  });
+});
+
+/**
+ * #1503 item 28 — the standing-approval bound. This is the number a seller
+ * actually approves, so an under-estimate is a listing whose buyer acceptance
+ * reverts; the tests exist because both of its branches have been wrong once.
+ *
+ * Deliberately here rather than beside the hook: the file is where the
+ * facet-exact money mirror is pinned, and the bound is that mirror plus a
+ * headroom policy.
+ */
+describe('saleSettlementBound — the seller allowance (#1503 item 28)', () => {
+  const PAD_DAYS = 30n;
+  const saleLive = {
+    principal: 1_000n * 10n ** 18n,
+    interestRateBps: 1_000n,
+    startTime: 1_000n,
+    durationDays: 30n,
+    interestAccrualStart: 1_000n,
+    interestRemainingDays: 30,
+    readAtTimestamp: 1_000n + 10n * DAY,
+  } as LoanLive;
+  const now = 1_000n + 10n * DAY;
+  const accrue = (secs: bigint) =>
+    (saleLive.principal * saleLive.interestRateBps * secs) / (365n * DAY * 10_000n);
+
+  it('covers the whole remaining interest window plus the re-accrual pad', () => {
+    const fresh = { ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart };
+    expect(saleSettlementBound(fresh, fresh.interestRateBps)).toBe(
+      accrue((30n + PAD_DAYS) * DAY),
+    );
+  });
+
+  it('never sits below what an acceptance would pull right now', () => {
+    // A mark far enough before the accrual origin that the accrued cost
+    // outruns remaining-term-plus-pad. Reachable because the preclose path
+    // re-origins the accrual clock without clearing an older mark, and the
+    // term-based figure is measured from the CLOCK while the cost is measured
+    // from the MARK. Round 9 of the review found the bound below the pull here.
+    const stale = {
+      ...saleLive,
+      lenderForfeitFrom: now - 400n * DAY,
+      interestRemainingDays: 1,
+    };
+    const nowCost = sellerEconomics(stale, stale.interestRateBps).cost;
+    expect(saleSettlementBound(stale, stale.interestRateBps)).toBeGreaterThan(nowCost);
+  });
+
+  it('carries the SAME growth headroom on that branch as on the term branch', () => {
+    // Round 11: the current-cost floor was taken bare, so in exactly the case
+    // that made it necessary the allowance was the pull at the instant of
+    // approval and nothing more — interest keeps accruing, and a buyer
+    // arriving later reverts. Both branches must fund the pad.
+    const stale = {
+      ...saleLive,
+      lenderForfeitFrom: now - 400n * DAY,
+      interestRemainingDays: 1,
+    };
+    const nowCost = sellerEconomics(stale, stale.interestRateBps).cost;
+    expect(saleSettlementBound(stale, stale.interestRateBps)).toBe(
+      nowCost + accrue(PAD_DAYS * DAY),
+    );
+  });
+
+  it('rises to the rate shortfall when that is the binding cost', () => {
+    // A buy-offer rate above the loan's own makes the shortfall dominate; the
+    // bound must cover it even though it is not accrual at all.
+    const fresh = { ...saleLive, lenderForfeitFrom: saleLive.interestAccrualStart };
+    const econ = sellerEconomics(fresh, 9_000n);
+    expect(econ.shortfallBinding).toBe(true);
+    expect(saleSettlementBound(fresh, 9_000n)).toBeGreaterThanOrEqual(econ.shortfall);
+  });
+
+  it('refuses to quote at all when the window is unavailable', () => {
+    // The bound is a money figure like any other — an unknown window has no
+    // safe substitute here either, and the callers gate on it.
+    expect(() => saleSettlementBound(saleLive, saleLive.interestRateBps)).toThrow(
+      SellerQuoteUnavailableError,
     );
   });
 });

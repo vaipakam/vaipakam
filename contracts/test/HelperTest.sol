@@ -15,6 +15,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
@@ -70,6 +71,7 @@ import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulato
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -90,7 +92,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](170);
+        selectors = new bytes4[](198);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -235,6 +237,21 @@ contract HelperTest {
         // tests to scaffold loan-sale state without slot math.
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
         selectors[n++] = TestMutatorFacet.setHeldForLenderRaw.selector;
+        selectors[n++] = TestMutatorFacet.setSaleProceedsEscrowRaw.selector;
+        selectors[n++] = TestMutatorFacet.clearSaleListingBoundsRaw.selector;
+        selectors[n++] = TestMutatorFacet.getSaleListingBoundsRaw.selector;
+        selectors[n++] = TestMutatorFacet.metricsCountLoanRaw.selector;
+        selectors[n++] = TestMutatorFacet.getActiveLoanListPosRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLifetimeLoanCountersRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLenderPaidThroughRaw.selector;
+        // #1801 — the two DISQUALIFICATION seeds: a mark recorded against a
+        // principal the loan no longer carries, and the sticky freeze void.
+        // Both are read off state by `forfeitureAccrualStart`, so the tests
+        // seed the state rather than driving the writers that cause it.
+        selectors[n++] = TestMutatorFacet.setLenderPaidThroughWithPrincipalRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLenderMarkVoidedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setInterestAccrualStartRaw.selector;
+        selectors[n++] = TestMutatorFacet.setLenderTenureStartRaw.selector;
         // Layout-resilient claim writers used by ClaimFacetTest to
         // exercise the NothingToClaim revert + held-only paths
         // without slot math.
@@ -340,6 +357,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.getForfeitedLenderEntryIds.selector;
         selectors[n++] = TestMutatorFacet.setOfferConsumedBySaleRaw.selector; // #955
         selectors[n++] = TestMutatorFacet.setLoanToSaleOfferIdRaw.selector; // #951 (Codex #959 r5)
+        selectors[n++] = TestMutatorFacet.setLoanToOffsetOfferIdRaw.selector; // #1503 item 21
         selectors[n++] = TestMutatorFacet.tierLiquidationLtvBpsFor.selector; // #999 (S1) tier-0 remap probe
         selectors[n++] = TestMutatorFacet.setRentalBufferBpsRaw.selector; // #1004 (S8) rental late-fee buffer cap
         selectors[n++] = TestMutatorFacet.setLoanInitMaxLtvBpsRaw.selector; // #900 (S15) per-asset init-LTV cap
@@ -358,6 +376,18 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.callMigrateActiveHeld.selector;
         // #1144 — offer→loan link pin for the syncPrepaySaleOffer Scenario-B test.
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanId.selector;
+        // #1503 item 25 — raw read of the position-token → loan reverse index.
+        selectors[n++] = TestMutatorFacet.getLoanIdByPositionTokenIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.getOfferIdByPositionTokenIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.getInternalVehicleRealLoanIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.setInternalVehicleMarkRaw.selector;
+        // #1503 item 25, Codex #1818 r3 P2 — grandfathered-index fabrication +
+        // raw reads for the one-time scan-repair tests.
+        selectors[n++] = TestMutatorFacet.clearLoanIndexRegimeRaw.selector;
+        selectors[n++] = TestMutatorFacet.removeUserLoanIdRaw.selector;
+        selectors[n++] = TestMutatorFacet.pushUserLoanIdsRaw.selector;
+        selectors[n++] = TestMutatorFacet.getLoanHolderIndexExactRaw.selector;
+        selectors[n++] = TestMutatorFacet.getUserLoanIndexedRaw.selector;
         // #1008 (S13) — entry-path per-day-cap test scaffolding.
         selectors[n++] = TestMutatorFacet.closeRewardEntryRaw.selector;
         selectors[n++] = TestMutatorFacet.setDayCapThreshold18.selector;
@@ -370,6 +400,9 @@ contract HelperTest {
         // RL-1 — claim-to-vault delivery test scaffolding.
         selectors[n++] = TestMutatorFacet.setMandatoryVaultVersionRaw.selector;
         selectors[n++] = TestMutatorFacet.getStakeRollupStateRaw.selector;
+        // #1817 — establish a genuine pre-existing staker lifecycle before a
+        // flow that must reset it at a mid-transaction zero balance.
+        selectors[n++] = TestMutatorFacet.restampUserVpfiRaw.selector;
         // Governor PR-3a — recycle-bucket forfeit-routing scaffolding.
         selectors[n++] = TestMutatorFacet.setRewardEntryForfeitedRaw.selector;
         // Governor PR-3b — day-pool stamp test scaffolding.
@@ -425,6 +458,19 @@ contract HelperTest {
         // #1662 r9 - reproduce the legacy pre-attribution shape.
         selectors[n++] =
             TestMutatorFacet.setRecoveryAttributionRaw.selector;
+        // #1434 P1-b - stage / read back the mirror delivered-fresh ledger.
+        selectors[n++] = TestMutatorFacet.setArmedFreshLedgerRaw.selector;
+        selectors[n++] = TestMutatorFacet.getArmedFreshPaidRaw.selector;
+        // #1434 (Codex #1699 r7) — read back an entry's settlement cursor and
+        // processed flag, so a test can assert a SPANNING expiry stamps the
+        // cursor exactly as a claim would rather than merely not reverting.
+        selectors[n++] =
+            TestMutatorFacet.getRewardEntryClaimNextDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.getRewardEntryProcessedRaw.selector;
+        selectors[n++] =
+            TestMutatorFacet.getRewardEntryExpiryBegunRaw.selector;
+        selectors[n++] =
+            TestMutatorFacet.getUserClaimPendingUncappedRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -1070,7 +1116,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](10);
         selectors[0] = RiskPreviewFacet.previewOfferAcceptBlock.selector;
         selectors[1] = RiskPreviewFacet.assertMatchAllowed.selector;
         selectors[2] = RiskPreviewFacet.previewMatchRiskBlock.selector;
@@ -1081,6 +1127,10 @@ contract HelperTest {
         // #1503 PR-E — sale admission classification (live health floor +
         // inherited-risk-terms compatibility), read by LibSaleSolvency.
         selectors[7] = RiskPreviewFacet.saleAdmission.selector;
+        // #1503 item 28 — seller forfeiture window (see DeployDiamond).
+        selectors[8] = RiskPreviewFacet.sellerForfeitureWindow.selector;
+        // #1503 item 4 — listing bounds quote (see DeployDiamond).
+        selectors[9] = RiskPreviewFacet.quoteSellerBounds.selector;
     }
 
     /// @dev #1212 (E-10 Claim-All) — the single generic batching entry point.
@@ -1177,7 +1227,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         selectors[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         selectors[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
@@ -1186,6 +1236,7 @@ contract HelperTest {
             .restampCollateralVpfiAfterWithdraw
             .selector;
         selectors[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
+        selectors[6] = ConsolidationFacet.restampUserVpfiLocalInternal.selector;
     }
 
     function getDefaultedFacetSelectors()
@@ -1416,11 +1467,23 @@ contract HelperTest {
         returns (bytes4[] memory selectors)
     {
         selectors = new bytes4[](4);
-        selectors[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
-        selectors[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
-        selectors[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
+        selectors[0] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
+        selectors[1] = EarlyWithdrawalFacet.completeLoanSale.selector;
         // #951 (Codex #959) — cross-facet completion entry.
-        selectors[3] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        selectors[2] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
+        // #1810 — quote-bound listing creation.
+        selectors[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
+        return selectors;
+    }
+
+    /// @dev #1780 — the direct lender-exit route's own facet surface.
+    function getEarlyWithdrawalDirectFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
         return selectors;
     }
 
@@ -1492,7 +1555,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](50);
+        selectors = new bytes4[](52);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1567,6 +1630,11 @@ contract HelperTest {
         selectors[47] = MetricsFacet.getUserPositionLoansPaginated.selector;
         selectors[48] = MetricsFacet.getUserPositionOffersPaginated.selector;
         selectors[49] = MetricsFacet.getOfferState.selector; // #955 (#921 item 4)
+        // #1503 item 25 — routed in DeployDiamond since #769; the test diamond
+        // lagged, surfacing when the item-25 rekey test read the buyer's
+        // position through it.
+        selectors[50] = MetricsFacet.getUserPositionLoans.selector;
+        selectors[51] = MetricsFacet.isSaleVehicleLoan.selector; // #1503 item 26
         return selectors;
     }
 
@@ -1939,7 +2007,7 @@ contract HelperTest {
         // + the RL-3 (#1305) claim-horizon sweep.
         // #1351 slice 2c — the two CLAIM entry points moved to
         // {RewardClaimFacet} (EIP-170).
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](8);
         selectors[0] = InteractionRewardsFacet.setInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsFacet.setInteractionCapVpfiPerEth.selector;
         selectors[2] = InteractionRewardsFacet.sweepForfeitedInteractionRewards.selector;
@@ -1953,7 +2021,6 @@ contract HelperTest {
         selectors[7] = InteractionRewardsFacet.transferLenderRewardEntry.selector;
         // RL-3 (#1305) — the mutating claim-horizon sweep (its id-keyed read
         // views live on the lens facet).
-        selectors[8] = InteractionRewardsFacet.sweepExpiredInteractionRewards.selector;
         return selectors;
     }
 
@@ -1970,6 +2037,20 @@ contract HelperTest {
         return selectors;
     }
 
+    /// @dev #1434 — the claim-horizon sweep, on its own facet. Expiry settles
+    ///      through the ShareOfPool engine now, and neither InteractionRewards
+    ///      nor RewardClaim had the EIP-170 headroom to host it.
+    function getRewardHorizonSweepFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] =
+            RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
+        return selectors;
+    }
+
     /// @dev #1306 follow-up — the read-only view/getter selectors split off
     ///      {InteractionRewardsFacet} into {InteractionRewardsLensFacet}.
     ///      Count deliberately omitted; see the matching note in
@@ -1979,7 +2060,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](20);
+        selectors = new bytes4[](21);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2003,6 +2084,7 @@ contract HelperTest {
         selectors[17] = InteractionRewardsLensFacet.getRecycleDayMetrics.selector;
         selectors[18] = InteractionRewardsLensFacet.getRecycleBackingSnapshot.selector;
         selectors[19] = InteractionRewardsLensFacet.getRecycledCreditedPreLaunch.selector;
+        selectors[20] = InteractionRewardsLensFacet.getUserArmedFreshNeed.selector;
         return selectors;
     }
 
@@ -2011,7 +2093,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](19);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
@@ -2029,6 +2111,8 @@ contract HelperTest {
         // T-068: `setLocalEid` removed — chain identity is `block.chainid`.
         selectors[3] = RewardReporterFacet.setBaseChainId.selector;
         selectors[4] = RewardReporterFacet.setIsCanonicalRewardChain.selector;
+        selectors[17] = RewardReporterFacet.seedArmedFreshPaid.selector;
+        selectors[18] = RewardReporterFacet.armedFreshPaidSeeded.selector;
         selectors[5] = RewardReporterFacet.setRewardGraceSeconds.selector;
         selectors[6] = RewardReporterFacet.getLocalChainInterestNumeraire18.selector;
         selectors[7] = RewardReporterFacet.getChainReportSentAt.selector;
@@ -2199,7 +2283,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](34);
+        selectors = new bytes4[](35);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2222,6 +2306,7 @@ contract HelperTest {
         selectors[19] = RewardRemittanceLensFacet.getRewardRemittanceReceiver.selector;
         selectors[20] = RewardRemittanceLensFacet.getRewardBudgetReceivedTotal.selector;
         selectors[21] = RewardRemittanceLensFacet.getDeliveredFreshPosition.selector;
+        selectors[34] = RewardRemittanceLensFacet.getDeliveredFreshBound.selector;
         // #1434 P2-w5 — the recovery-position reads.
         selectors[22] = RewardRemittanceLensFacet.getRecoveryPosition.selector;
         selectors[23] =

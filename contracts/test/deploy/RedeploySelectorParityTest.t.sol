@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {FacetSelectors} from "../../script/lib/FacetSelectors.sol";
+import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 
 /**
  * @title  RedeploySelectorParityTest
@@ -38,9 +39,10 @@ contract RedeploySelectorParityTest is Test {
     }
 
     /// @dev #1649 — the curated scripts cut this facet not for its own sake but
-    ///      because the sale hosts they refresh (`EarlyWithdrawalFacet` in
-    ///      `RedeployFacets`, `OfferAcceptFacet` in `ReplaceStaleFacets`)
-    ///      cross-call `saleAdmission`. Pin the list so a preview selector added
+    ///      because the sale hosts they refresh cross-call `saleAdmission`:
+    ///      `EarlyWithdrawalFacet` and `EarlyWithdrawalDirectFacet` in
+    ///      `RedeployFacets` (two hosts since the #1780 split), `OfferAcceptFacet`
+    ///      in `ReplaceStaleFacets`. Pin the list so a preview selector added
     ///      to the facet cannot be silently left out of the curated refresh: the
     ///      omission would not fail a compile, it would fail a live sale.
     function test_RiskPreviewSelectors_MatchCompiledAbi() public view {
@@ -68,6 +70,40 @@ contract RedeploySelectorParityTest is Test {
     function test_VaipakamNFTSelectors_MatchRoutedSurface() public view {
         bytes4 loupeOwned = bytes4(keccak256("supportsInterface(bytes4)"));
         _assertParityExcept("VaipakamNFTFacet", FacetSelectors.vaipakamNFT(), loupeOwned);
+    }
+
+    /// @dev #1503 item 28 — the two facets that WRITE the seller's paid-through
+    ///      mark. They joined {FacetSelectors} because a curated refresh that
+    ///      installs the reading sale routes without them leaves the mark
+    ///      unwritten, silently reintroducing the double-charge item 28 fixes.
+    ///      Pin both surfaces so neither can drift out of the refresh.
+    function test_RepayPeriodicSelectors_MatchCompiledAbi() public view {
+        _assertParity("RepayPeriodicFacet", FacetSelectors.repayPeriodic());
+    }
+
+    function test_EncumbranceMutateSelectors_MatchCompiledAbi() public view {
+        _assertParity("EncumbranceMutateFacet", FacetSelectors.encumbranceMutate());
+    }
+
+    /// @dev #1503 item 28 — the RETIRED 3-argument resident-payout selector must
+    ///      be GONE from the facet's compiled surface, so the curated refresh's
+    ///      Remove leg targets a genuinely-retired entry point and no dual entry
+    ///      survives a fresh deploy. Same shape as the #1221 keeper-widen pin
+    ///      below, and for the same reason: a signature change is only complete
+    ///      when the old selector is unroutable.
+    function test_RetiredResidentPayoutSelector_IsGone() public view {
+        bytes4 retired = FacetSelectors.retiredResidentPayoutSelector();
+        bytes4[] memory live = FacetSelectors.encumbranceMutate();
+        for (uint256 i = 0; i < live.length; i++) {
+            assertTrue(
+                live[i] != retired,
+                "the 3-arg freezeOrPayActiveLenderResident must not be in the live surface"
+            );
+        }
+        assertTrue(
+            retired != EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+            "retired and current resident-payout selectors must differ"
+        );
     }
 
     /// @dev #1221 — the keeper action bitmask widened uint8→uint16, changing the

@@ -116,7 +116,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
 
         TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
-            LOAN_ID, mockERC20, AMOUNT
+            LOAN_ID, mockERC20, AMOUNT, block.timestamp
         );
 
         assertEq(ERC20Mock(mockERC20).balanceOf(holder), AMOUNT, "clean holder paid inline");
@@ -140,7 +140,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
 
         TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
-            LOAN_ID, mockERC20, AMOUNT
+            LOAN_ID, mockERC20, AMOUNT, block.timestamp
         );
 
         _assertParked();
@@ -155,7 +155,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
 
         TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
-            LOAN_ID, mockERC20, AMOUNT
+            LOAN_ID, mockERC20, AMOUNT, block.timestamp
         );
 
         _assertParked(); // registry keeps it fail-CLOSED through the outage
@@ -232,7 +232,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
 
         TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
-            LOAN_ID, mockERC20, AMOUNT
+            LOAN_ID, mockERC20, AMOUNT, block.timestamp
         );
 
         assertEq(
@@ -258,7 +258,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
 
         // Class B park reserves the PAYMENT asset via the dedicated ledger.
         TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
-            LOAN_ID, mockERC20, AMOUNT
+            LOAN_ID, mockERC20, AMOUNT, block.timestamp
         );
 
         // A later in-kind default reserves the COLLATERAL asset through the
@@ -302,7 +302,7 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
         m.setFlagged(holder, true);
         ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
         TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
-            LOAN_ID, mockERC20, AMOUNT
+            LOAN_ID, mockERC20, AMOUNT, block.timestamp
         );
         assertEq(
             TestMutatorFacet(address(diamond)).getEncumberedRaw(storedLender, mockERC20, 0),

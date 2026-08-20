@@ -491,6 +491,15 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   The key should drop out only when the intent is inactive and has zero reserved
   capital. Borrowers have no equivalent intent list because borrower demand is
   expressed through offers.
+- **Exiting an intent-funded loan releases its exposure at the exit.** A loan
+  originated from a standing intent counts against that intent's live-principal
+  cap for as long as the lender holds it. When the lender exits by selling the
+  position, that exposure is released at the moment of sale — not deferred until
+  the buyer claims, which would leave the seller's capacity hostage to an action
+  the buyer may never take. This holds for **every** route by which a lender
+  exits: selling through a listing and selling directly into a standing offer
+  release the exposure alike. A lender who has sold a position must never still
+  see it counted against what they may lend.
 - **Filling an intent.** A solver fills a lender's standing intent against an
   existing on-chain borrower offer: the protocol builds a one-time lender offer
   from the intent — the lender's rate floor, the borrower offer's term (which
@@ -1230,6 +1239,44 @@ The preview should preserve the resolved economic terms even when acceptance is 
 
 ## 6. Loan Closure & Repayment
 
+### Every status change must be observable, and observability belongs to the transition
+
+A loan's status is intended to change in exactly one way: through the single
+permitted-transition check, which rejects any move not on the allow-list. Two
+consequences are intended to follow from that, and both are requirements rather
+than implementation detail.
+
+- **Every status change is announced, and the announcement is the transition's
+  own responsibility — never the surrounding operation's.** A reader outside the
+  platform must be able to learn that a loan moved between states without
+  knowing which operation moved it. Leaving the announcement to each operation
+  makes correctness a per-operation obligation that can be forgotten silently:
+  an operation that announces nothing, or that announces a different loan than
+  the one whose status moved, produces no error anywhere while leaving external
+  readers permanently wrong about that loan. Announcing from the transition
+  itself makes an unobservable status change impossible to construct, which is
+  a stronger guarantee than any process that checks whether each operation
+  remembered.
+- **The announcement identifies the loan whose status actually moved.** Where an
+  operation touches more than one loan — a settlement that ends a temporary
+  holding record while completing a different, longer-lived one — each affected
+  loan's own change is announced under its own identity. An announcement naming
+  a related-but-different loan is worse than silence: it looks like coverage.
+
+A companion rule follows for the tooling: an automated check that verifies
+announcements are handled must take its input from the transitions that exist,
+not only from the announcements that exist. A check built the second way is
+blind to precisely the failure it exists to prevent, because a state change that
+announces nothing does not appear in a list of announcements. Satisfying the
+first requirement above satisfies this one as a side effect — if every
+transition announces, the two lists are the same list.
+
+Non-terminal edges are still announced, but reading them is optional: an
+external projection is not required to mirror transient states, and must not
+treat a move back into an ongoing state as a reason to overwrite what it holds.
+The requirement is that no loan is left presented as ongoing once the platform
+considers it finished.
+
 ### Repayment Logic
 
 **ERC-20 Lending:**
@@ -1488,6 +1535,7 @@ Borrowers may close or transfer their obligations before the originally schedule
 - Only the current borrower of an active loan may initiate a borrower preclose flow.
 - The wallet that initiates a borrower preclose flow must also be the current `ownerOf` the borrower-side Vaipakam NFT for that loan. Strategic borrower-side actions must follow the borrower position NFT holder, not merely the original borrower wallet if the NFT has been transferred.
 - When a loan is closed out, any position effects tracked against a side of the loan — the collateral lien, the reward-accrual entry, and the VPFI fee/stake checkpoint — must follow the current position-NFT holder for that side, not the wallet that originally opened the position. The platform consolidates a transferred position to its current holder before the loan goes terminal, so a holder who acquired a position on the secondary market receives the correct reward, fee-tier, and lien accounting at close-out. This holds across the close-out family (repayment, the liquidation paths — HF-based and time-based, the split path, and the multi-loan internal match — direct preclose, and refinance). On a refinance the exiting lender's position effects always follow its current holder. The refinance borrower side depends on whether the collateral carries over: when it carries over into the new loan it is **not** consolidated (it is not closing out — the position simply continues); when it does **not** carry over (a transferred, untagged, or ranged offer), the old collateral is returned and the old loan closes for the borrower too, so the borrower side **is** consolidated to its current holder before the return. Where a close-out withdraws VPFI out of a vault — at the refinance return, or when either side later claims its VPFI payout (the borrower's collateral/surplus, or the lender's proceeds/held top-up) — the platform re-stamps that vault owner's VPFI fee-tier/stake so credit never lingers on VPFI that has left the vault. NFT-rental loans are outside the *consolidation* guarantee (their position effects are not moved/re-anchored), but their lender income must still follow the current lender-position holder: the permissionless daily rental fee is paid to the current `ownerOf(lenderTokenId)` resolved at payment time, and the full-repay / default rental proceeds plus the rented NFT itself reach the current holder through the `ownerOf`-gated claim — never the departed lender after a position transfer. The same current-holder rule applies when a transferred borrower position is LISTED for collateral sale: every listing-creation flow — fixed-price, Dutch-decay, atomic OpenSea-offer match, and the permissionless auto-list-at-floor post — consolidates the borrower side to the current holder before it binds the listing to a vault, so the order references the holder's vault and the position is not left locked out of consolidation once the listing is active. (Rotating an already-live listing needs no consolidation: a live listing locks the borrower position NFT, so it cannot have been transferred since the listing was created.) A holder that is sanctioned or otherwise ineligible must never block a counterparty's close-out: consolidation is skipped for that side, and funds still reach the current holder through the standard claim path, which is independently `ownerOf`- and sanctions-gated.
+- **A position is findable by the token that represents it, and only by that token.** The platform resolves a position NFT back to the loan behind it, so a holder can go from the token in their wallet to the position it stands for. That lookup follows the position: when a sale or an obligation transfer retires one position token and issues another, the new holder's token resolves to the loan from that moment, and the superseded token stops resolving to it. This applies to both sides — a lender position sold through either route, and a borrower obligation handed to a replacement borrower — because the lookup is keyed by position token rather than by side. A buyer must never be unable to find the position they just acquired, and a departed holder's retired token must never still answer for it.
 - **Sanctions-gate classification (two tiers).** Every external method that creates protocol state or moves value is one of two postures. A **value-creating / value-receiving entry point** — creating or staging an offer / vault / listing / intent, or paying value to the caller — screens the acting wallet up front and refuses a flagged one; this must cover *re-staging* actions a wallet reaches after its position already exists (e.g. opting an offer into treasury-backed backstop eligibility, listing a position's collateral for sale together with the sale's fee recipients, or discretionarily withdrawing excess collateral), because a wallet clean at creation may be flagged afterwards. A **close-out** (repaying, default resolution, liquidation, periodic servicing) must instead stay open regardless of either party's status so the honest counterparty is always made whole — a flagged party's *proceeds* are frozen at the destination (parked in a locked vault position) rather than the transaction being blocked; this includes any *surplus* returned to the closing party (for example the excess a swap-to-repay yields over the debt), which is frozen at source for a flagged holder rather than sent to their wallet, and which remains claimable by that holder once they are no longer flagged (a withhold, not a forfeiture) — and the freeze must never brick the close-out, even when the flagged holder is a freshly-transferred position owner who never opened a vault. This classification is not self-enforcing, so it is backed by a documented per-method coverage matrix and a regression guardrail that fails if a gated entry point loses its screen.
 - **Fail-closed position movement (confirmed-flagged registry).** Screening a wallet against the sanctions oracle is deliberately *fail-open* — an unreachable oracle lets ordinary activity through rather than bricking the whole platform on a vendor outage. For the narrow act of **moving a loan-position token** (a plain ERC-721 transfer, or moving a position through the sale / obligation-transfer vehicles), that fail-open posture is unsafe: a wallet confirmed sanctioned could shuffle its position through intermediaries during an oracle outage and launder a frozen position out through a clean wallet. The platform therefore maintains an on-chain registry of wallets **confirmed flagged while the oracle was reachable** and consults it **fail-closed** on every position-movement path: a registered wallet cannot move a position even while the oracle is unavailable. The registry is populated automatically wherever the protocol observes a flagged holder on a non-reverting path — the flagged HOLDER of a closing position (recorded at close-out by the frozen-claimant park hook, across the close-out family including fallback-pending, NFT-rental, and the obligation-transfer lender top-up — where the incoming borrower's payoff to the current lender-position holder now parks fail-closed into the stored lender's vault rather than bricking the transfer when that holder is flagged), a flagged wallet caught trying to buy a position (registered as the buyer), and a disowned vault's stuck-token recovery that reveals a flagged source — and via a permissionless refresh anyone may call to register a freshly-listed wallet or **clear** a wallet the oracle now reports clean. Every registry update comes only from an authoritative (reachable-oracle) read — an outage can never clear a still-flagged wallet, and an authoritative-clean move self-heals a stale entry; a de-listing lifts the restriction. When no oracle is configured the registry is ignored entirely, and a wallet never previously observed as flagged is not blocked during an outage (the residual: a wallet flagged *and* moved within one uninterrupted outage, never previously observed, is not caught — a strictly smaller window than fully fail-open). A flagged buyer is handled by *how* they acquire the position: on the **direct buy-offer sale** — a value-receiving acquisition — the acceptance reverts cleanly, blocking a flagged wallet from buying in; on the **accepted-sale completion** path, consistent with the frozen-not-seized rule above, the sale still **completes** with the flagged buyer's proceeds frozen (and the buyer registered). On both paths a flagged **seller** offloading a position is blocked. This registry is what lets the fail-closed release of frozen proceeds rely on a single recorded frozen claimant per loan side — with movement barred, no chain of distinct flagged holders can form.
 - **Fail-closed release of frozen proceeds.** The claim that later releases a frozen party's parked proceeds must behave differently from an ordinary claim. The ordinary sanctions screen is deliberately *fail-open* — if the sanctions oracle is unreachable it lets the caller through, so an infrastructure outage never bricks honest activity. That fail-open posture must not govern the release of proceeds that were *confirmed frozen* at close-out: otherwise a party proven sanctioned when the position closed could withdraw during an oracle outage. (A flagged holder cannot instead launder by transferring the frozen position to a fresh clean wallet and claiming from there — the fail-closed movement gate above bars that transfer during an outage — and even so the release keys on the *recorded* address, not the current holder.) So whenever a close-out freezes a side because the intended recipient (the position's current holder, resolved live) is affirmatively flagged, the protocol records that specific address as the frozen claimant for that loan side, and the release of a side that carries such a record must additionally pass a *fail-closed* screen on the **recorded** address — an unreachable or unset oracle blocks the release, and the recorded party must be proven de-listed before the funds move, regardless of who holds the position at claim time. A close-out that happens *during* an outage records no such marker (the flag could not be confirmed), so those proceeds stay fail-open — the protocol never freezes a party it never confirmed as sanctioned, and an oracle blip alone can never freeze an honest claimant. A clean release clears the record so a later re-lock stays possible. The de-listing of the recorded party (oracle healthy again, address cleared) releases the funds.
@@ -1716,7 +1764,17 @@ Alice may cancel her offsetting offer while it is still un-matched. Because post
 
 ##### Mutual exclusion while an offset is live
 
-While an offset offer is linked to a loan, three actions that would race the pending settlement are refused until the offset is completed or cancelled (it is short-lived): listing the lender position for sale, transferring the borrower obligation to a new borrower, and editing the linked offset offer's terms. The offset offer is immutable once linked — its terms are pinned to the loan it offsets.
+While an offset offer is linked to a loan, four specific routes are refused until the offset is completed or cancelled. **They are refused for two different reasons, and conflating them would be a mistake.**
+
+Three of them — putting the lender position up for sale, selling the lender position outright in a single step, and transferring the borrower obligation to a new borrower — would each start a **second settlement** of a loan that already has one in flight, and the two would race. The test for a new route is exactly that and nothing broader: does it start a competing protocol-mediated settlement? Moving value, or handing a side of the loan to someone else, is not the test — a bare position transfer does both and is supported.
+
+The fourth is different: **editing the linked offset offer's terms** is refused because the offer is a settlement vehicle bound to a specific loan, and changing its amount, collateral or maturity would leave the vehicle describing something other than the loan it is meant to settle. That is a desynchronisation rule, not a mutual-exclusion one, and it holds regardless of how many settlements are in flight — the offer is immutable once linked, its terms pinned to the loan it offsets. A future maintainer must not relax that immutability on the grounds that a mutation "is not a second settlement"; it never was.
+
+**This is a list of guarded routes, not a general mutual-exclusion guarantee, and callers must not read it as one.** Other paths can still make the loan terminal while an offset stays linked — a refinance does not consult the offset link at all, and ordinary repayment or default can close the loan out from under it. Those are handled downstream rather than by refusal at the entry point. A caller that needs "nothing else can settle this loan right now" does not get it from this rule.
+
+**A bare transfer of a position is a different thing and is deliberately still allowed on the lender side.** The offset locks the borrower's position NFT, not the lender's, and completion pays whoever holds the lender position at that moment — re-anchoring to the current holder before it settles. So a lender who simply hands their NFT to another wallet is safe: one settlement still happens, and it pays the right party. What is refused is a second *settlement*, which moves money on its own terms and would leave two close-outs of one loan racing each other.
+
+The distinction is worth stating explicitly because the instant lender-sale route went unguarded for some time, having been read as outside a requirement that named the listing route alone. The test for a new route is not whether it changes who holds a position, but whether it settles the loan.
 
 A loan may have at most **one live offsetting offer at a time**: a second offset attempt while an earlier one is still outstanding is rejected, so Liam can never be prepaid twice by stacking offers. The single live offer is cleared when it completes or is cancelled.
 
@@ -1763,6 +1821,34 @@ Lenders may exit or attempt to exit their positions before maturity. For Phase 1
 - The borrower’s payment obligations under the live loan must remain well defined after the lender exit.
 - NFT ownership and claim rights must move consistently with the economic position.
 
+The rules below hold for **every** lender exit route, and are stated here rather
+than under one option because the hazard they address does not belong to a
+particular route. Where a rule was first written for one route and applies to
+both, this is its home — a rule kept under a single option is a rule the other
+option's reader will not see, which is how a route acquires a protection its
+sibling already has.
+
+- **No exit fills against an offer past its deadline.** Wherever a lender exit
+  consumes or creates an offer, an offer whose deadline has passed is not
+  fillable, however fresh the other party's own commitment is. This binds at the
+  moment of the fill, not at the moment the offer was found.
+- **No party may end up owing itself.** An exit that would leave the lender side
+  and the borrower side of one live loan held by the same party is refused,
+  whichever route produced it. Party identity resolves to whoever currently holds
+  the relevant position NFT, never to a stored origination address that may have
+  gone stale on the secondary market.
+- **A buyer may not enter a position sale at or after the loan's due date**, on
+  any route: the remaining term is zero and the buyer would be purchasing
+  nothing. The refusal happens before the buyer commits funds. A purchase already
+  entered before that moment is the opposite case — its settlement must remain
+  completable and is never refused on maturity grounds. Timing gates protect the
+  moment of entry; they never strand a committed purchase.
+- **One live sale route per position.** A position already being sold through one
+  route cannot simultaneously be sold through another; the seller ends the first
+  before starting the second. This is symmetric — neither route is privileged
+  over the other — because the failure it prevents is the same in both
+  directions: one position handed to two buyers.
+
 ### Option 1: Sell the Loan to Another Lender
 
 The original lender may transfer the active lender position to a new lender.
@@ -1791,6 +1877,206 @@ This option allows Liam to recover principal early by selling his lender positio
 
 - Any interest accrued up to the time of sale is forfeited by Liam and routed to treasury, subject to the platform’s sale rules.
 - This avoids complex retroactive splitting of interest across multiple lenders.
+- **Only interest Liam has not already been paid is forfeitable.** On a loan with
+  periodic interest servicing, Alice pays interest to the lender during the term,
+  and those payments do not stop the accrual measure from advancing. What Liam
+  forfeits is therefore the interest accrued over the stretch he has **not** been
+  paid for — measured from the point he was last paid through — never the raw
+  accrual, which would bill him a second
+  time for interest already in his hands on a route where he is exiting rather
+  than being made whole.
+- **Being paid is what moves that point, not the loan's own interest clock.**
+  The loan's clock restarts whenever Alice's obligation is re-based, which is a
+  different event from Liam being paid. They come apart in a case that matters:
+  when a payment is due to a lender the sanctions registry has flagged, the money
+  is held rather than delivered while the obligation still re-bases. Reading the
+  obligation clock as evidence of payment would close Liam's forfeiture over money
+  that never reached him — and that held balance goes to Noah on the sale. Where a
+  lender has never been paid at all, the loan's clock is the starting point; after
+  that, only actual payment moves it. A payment the platform failed to account for
+  therefore over-charges Liam slightly rather than quietly paying him twice.
+- **A period counts as paid only when it is paid in FULL.** A partial settlement
+  leaves the remainder in Alice's obligation, so treating the period as settled
+  would let Liam collect that remainder through his sale price while Noah can
+  still collect it later when Alice repays — the same interest, paid twice, and
+  the effect is largest exactly where collateral is nearly exhausted and the
+  payment smallest.
+- **The measure is a period of time, not a running total.** The forfeiture belongs
+  to the loan's current accrual stretch, and ordinary events — a partial
+  repayment, a swap-to-repay — restart that stretch. A lifetime total of interest
+  paid would not be comparable with it: right after a restart the total describes
+  a period the forfeiture no longer covers, and once the same interest accrued
+  again it would be deducted twice. A fully paid-up lender simply forfeits
+  nothing and completes the sale, rather than being blocked by a leftover the
+  platform has nowhere to put.
+- **The paid-through point is only honoured while it still describes the
+  position.** A point in time carries no amount, so it can only stand in for
+  "interest already received" when nothing has happened since that would change
+  what that stretch is worth or break it into pieces. Two things do, and either
+  one discards the credit in favour of charging Liam the full accrual:
+  - **The principal has moved.** The unpaid stretch is priced at the principal it
+    accrued on. A partial repayment inside that stretch means part of it accrued
+    on a larger balance than the one now on the loan, so a single figure would
+    bill it at the wrong size.
+  - **A payment to Liam was held rather than delivered.** Once that happens his
+    delivery is no longer one continuous run — some earlier period is unpaid
+    while a later one is settled — and a single point in time cannot say which.
+    Reading it as "paid through the later one" would credit him for the held
+    period as well. This disqualification lasts for the rest of Liam's tenure,
+    because no later payment restores the missing one.
+
+    Sanctions are not the only reason interest gets held back, and the others
+    count identically. Handing the borrower's obligation to a replacement
+    borrower settles Liam's accrued share into the same holding account on a
+    loan that carries on running: Liam has not been paid it, and it goes to
+    whoever buys his position next. The platform therefore asks whether anything
+    is being held for Liam that was not being held when his mark was last
+    recorded — a question about the loan's own state, not a rule each holding
+    site has to remember.
+
+  Neither refusal lifts on its own. A later clean payment cannot repair a period
+  that is already broken, so once either has happened Liam is charged the full
+  accrual for the rest of his tenure. The sequence that makes this matter looks
+  entirely routine: a balance change followed by an ordinary successful payment
+  would otherwise make the record look sound again while excluding the stretch
+  charged at the larger balance.
+
+  For the same reason a loan needs a starting balance recorded when it opens, so
+  the first payment has something to compare against. A loan already running when
+  this takes effect has none, and no later event supplies one: the stretch
+  between the loan opening and the first payment is never reconciled, so a record
+  installed after it excludes whatever happened in there just as surely. Such a
+  position therefore earns no credit for the rest of Liam's tenure — it keeps the
+  charge it already had. Recording a starting balance at the first payment would
+  make the SECOND payment look trustworthy while its window still began inside
+  the unreconciled stretch.
+
+  Refusing the credit must not RESET the window, and that distinction is
+  load-bearing. Falling back to the loan's own interest clock reads as the
+  obvious answer and is wrong for the same reason the clock is not evidence of
+  payment: it moves. A partial repayment that holds Liam's interest back also
+  re-bases the clock to that moment, so a fallback to the clock would open his
+  window at the reset and skip precisely the held stretch. The recorded point is
+  therefore kept and the EARLIER of the two is used — neither Liam's last
+  recorded payment nor the borrower's obligation restart can be later than the
+  moment he was genuinely paid through.
+
+  Under all of it sits a floor: the moment Liam's own involvement began, which
+  is the loan opening if he lent originally, or the purchase if he bought the
+  position. It is what keeps the window inside the tenure it belongs to, in both
+  directions. If the very first payment due to Liam is the one held back there
+  is no earlier payment to fall back to, and only the floor keeps that unpaid
+  stretch in his charge. And if Liam BOUGHT the position and is later
+  disqualified, without the floor he would fall back to the loan's original
+  clock — charging him for the previous lender's entire stretch, which the sale
+  he bought through already settled. Positions that predate this change record
+  no such moment, so nothing is assumed about them.
+
+  A sale clears all three: Noah's period opens at the purchase, at the principal
+  on the loan then, and carries nothing from Liam's tenure. The conditions are read
+  from the loan's own recorded state rather than reported by whatever caused
+  them, so a path nobody thought to update cannot leave a stale credit standing.
+  Where the credit is refused, Liam is charged interest he may genuinely have
+  received — the platform errs toward over-charging the exiting lender and never
+  toward paying the same interest twice. Because a larger forfeiture is a larger
+  cost, and a sale that would leave the position below its solvency floor is
+  refused, this can also mean Liam is unable to sell at a moment when a credited
+  window would have let him. That is the platform declining to fund a credit it
+  cannot size correctly.
+- **Only interest Liam has actually RECEIVED counts as already paid.** Interest
+  the platform recorded as settled to the lender side is not always interest the
+  lender got: when a periodic payment is made to a lender whose wallet is
+  sanctions-flagged, the money is held rather than delivered, while the record
+  still shows it as settled — correctly, because the borrower paid it and their
+  obligation must reduce by it either way. But a sale hands that held balance to
+  the buyer, so it is money the seller never received and does not keep. It
+  therefore does not move the point Liam is paid through; crediting it as well
+  would pay him for it a second time, out of the platform's share.
+- **A completed sale moves the paid-through point forward; a plain transfer does
+  not.** A sale settles the outstanding forfeiture — to the platform, or into the
+  buyer's rate compensation — so the position the buyer receives is clean and
+  their own forfeiture period opens at the sale. Without that, the same stretch
+  would be forfeited again on every resale, at the seller's expense once per hop.
+  A transfer settles nothing, so the outstanding forfeiture travels with the
+  position exactly as the unpaid interest it represents does. Treating a transfer
+  like a sale would let Liam zero his own forfeiture by sending the position to a
+  second wallet — or to himself — and selling from there.
+- **These rules bind both sale routes identically.** A rule that applied to the
+  direct sale and not to the listed sale's completion would let the same position
+  be sold on different economics depending on which door it left by.
+
+##### Reward Migration Is Part of the Sale
+
+- **A sale that cannot migrate the interaction-reward position must not
+  settle.** The quote a seller decides on names the reward forfeiture as a cost
+  line, and names the buyer's fresh entry over the remaining loan window as
+  something they receive. Both routes therefore treat that migration as part of
+  the settlement rather than as bookkeeping that follows it: if the migration
+  cannot be performed, the sale is refused outright and the reason is reported.
+  A sale that settled while quietly skipping it would leave the seller holding
+  a reward entry on a position they no longer own and the buyer holding none —
+  the two parties transacting on terms neither was shown, with nothing in the
+  outcome to reveal it. Where the rewards programme has not launched, or the
+  seller holds no entry, the migration legitimately does nothing; that is not a
+  failure and settles normally.
+
+##### The Sale's Internal Record Is Not a Loan
+
+- **The transitional record a sale creates is invisible to every consumer, and
+  invisible symmetrically.** Completing a listed sale needs somewhere to carry
+  the lender relationship between the buyer's acceptance and the settlement,
+  and the protocol forges an internal record for it. That record is not a
+  position: no collateral, no borrower obligation, and it ends inside the flow
+  that created it, typically the same transaction. It must therefore be absent
+  from every count, average, history and list a real position appears in — the
+  active and lifetime position totals, the interest-rate averages, either
+  party's permanent position history, and the working set keepers walk — and
+  its creation must not be announced to interfaces.
+- **Absence is a pairing, not a single rule.** Because the record is never
+  counted when it appears, its close-out must not remove a count it never
+  added, and because its creation is never announced, its ending must not be
+  announced either — an ending reported for something no interface was told
+  exists is a reference to an unknown position, which is the same confusion the
+  announcement rules exist to prevent. Every entry balances exactly, so neither
+  a leak upward nor a phantom decrement is expressible.
+- **What is absent is the POSITION, not the people or the tokens.** Two things
+  the transitional record participates in are about records and holders rather
+  than about positions, and both still apply: a buyer acquiring a position
+  counts once toward the protocol's unique-participant total the same way any
+  first-time party does, and the listing's own position token stops presenting
+  as an open listing at the moment it is consumed rather than only when it is
+  later destroyed. Stating this explicitly is the point — "the record is
+  invisible" is a claim about position accounting, and reading it as "the
+  record touches nothing" would silently drop a real participant from the user
+  count and leave a consumed listing on display.
+- **Absence must reach the record, not only the moment it is created.** The
+  record persists after the sale, and its identifier is drawn from the same
+  sequence real positions use, so any surface that enumerates by identifier
+  range would keep returning it — the count of positions ever created, the full
+  position list, the by-status pages, and the lifetime volume and interest
+  totals, where its mirrored principal would price the same money twice and its
+  mirrored rate would invent interest no borrower owed. The record therefore
+  carries a durable indication of what it is, and those surfaces exclude it on
+  that basis. Suppressing only the creation-time writes and notifications is
+  not sufficient and must not be mistaken for it.
+- **A reference published for the transitional record must name the real
+  position instead.** The acceptance of a listing is a genuine event and is
+  reported as one, but it must identify the position that changed hands, not
+  the transitional record — an identifier that resolves to something every
+  position list denies is worse than no identifier, because consumers store it
+  and follow it.
+- **Records created under the earlier behaviour keep it, and "announced" and
+  "counted" are separate facts about them.** A transitional record created
+  before this rule took effect was announced, so its close-out must still be
+  announced or the row a consumer built from that announcement is never
+  retired. Whether it was also counted is a different question — a record
+  predating the counter layer, or a backfill of it, can be announced while
+  absent from those totals — and only a record actually present in a total may
+  be removed from it. Deciding both from the counters would close an
+  announced-but-uncounted record in silence, which is the very defect this
+  rule exists to prevent. The protocol distinguishes all of this from the
+  record's own state rather than from operator input, so no migration is
+  required and the totals correct themselves as those older sales complete.
 
 ##### Principal Recovery
 
@@ -1860,6 +2146,22 @@ The sale vehicle posts **no fresh collateral**: the exiting lender is transferri
 A sale listing is never open-ended: every listing carries a **seller-chosen finite window**, at least one hour and at most thirty days, and the listing expires on its own when that window ends. The window can never outlive the loan itself — if the seller's chosen window would reach past the loan's due date, the listing's life is cut to end exactly at that due date, and a listing that could not stand for even the minimum window before the due date is refused outright (a position that close to maturity is not meaningfully sellable; the seller waits for the normal claim instead). An expired listing can no longer be bought: a buyer's acceptance at or after the expiry moment is refused, no matter how fresh the buyer's own signature is. Independently of the listing's window, no buyer may enter a position sale at or past the underlying loan's due date — the refusal happens at the moment of purchase, before the buyer commits any funds, because at that point the position's remaining term is zero and the buyer would be purchasing nothing. This holds even for a listing that predates the finite-window rule and carries no expiry of its own. A sale the buyer already entered before the due date is the opposite case: the buyer's funds are committed, so its settlement must remain completable and is never refused on maturity grounds — timing gates protect the moment of entry, never strand a committed purchase. Listings from before the finite-window rule get no grandfathered immunity in the other direction either: such a listing is treated as already-ended — anyone may trigger the cleanup for it immediately, restoring the borrower's held options, and the seller may relist under the bounded rules after the quiet period.
 
 Once a listing has expired on a still-active loan, **anyone** — the seller, a keeper, the frontend, or an unrelated third party — may trigger a cleanup that unlocks the seller's lender position NFT, marks the stale sale offer cancelled so it drops out of the open book, and severs the link between the loan and the dead listing. This cleanup stays available **even while the protocol is paused**: it moves no value and creates no new position — it only releases a lock that no longer protects anything — so an operator pause (which exists to stop value movement during an incident) must not trap a seller's NFT behind a dead listing.
+
+A listing also records **what the seller is agreeing to**, and a sale that would breach it is refused rather than completed. Two bounds are stored when the listing is made, and their shapes differ because the two costs behave differently over time.
+
+The **floor** is the least the seller will receive out of the buyer's payment once the settlement forfeiture is deducted. It is not the figure shown on their screen at the instant they look: the forfeited interest grows for as long as the listing stands, so a floor set at the displayed value would make the seller's own listing unfillable within minutes. The enforceable floor is the worst case they are accepting across the whole window — which is a true statement to show them ("fill any time before this runs out and you receive at least this much") and a bound the platform can check. It is computable only because a listing must carry a finite expiry.
+
+"Across the whole window" is not the same as "at expiry", and the difference is observable. The settlement cost is the greater of two quantities that move in OPPOSITE directions: the interest the seller forfeits grows as the listing stands, while the compensation owed to the buyer for taking a rate above the loan's own is calculated over the REMAINING term and therefore shrinks. So the costliest moment to fill is one end of the window or the other, and which end depends on the terms — a listing priced well above the loan's rate is most expensive to exit immediately. The floor accounts for both ends. Evaluating only the expiry would record a floor above the seller's own instant net and reject an early fill that nothing had disturbed.
+
+What the floor binds is the stretch from listing to sale: the figures recorded when the listing was posted govern the fill. Binding the figures a seller *reviewed* to the listing they subsequently submit is a separate and narrower guarantee — those can differ if the loan changes in the moments between — and the platform provides it as a second, optional way to submit a listing: the submission carries the floor and the held ceiling the seller was shown, and is refused outright when the listing would record figures worse for the seller — a lower floor, or a higher held ceiling — with the refusal naming both the recorded and the reviewed figure so the interface can re-quote and explain what moved. Only adverse drift is refused; figures at or better than what was reviewed always pass, so ordinary favorable movement never blocks a listing. The original, unbound submission remains available and unchanged, and an interface that shows a seller a quote is expected to submit through the bound form, so the quote a seller sees is the quote they are held to.
+
+The **ceiling** is on money already set aside for the lender, which transfers to the buyer with the position. That quantity does not grow with time; it grows only when a settlement parks more into it between listing and sale, which is precisely the drift being refused. So the recorded value is the balance at listing, and a later park fails the sale rather than enlarging what the seller surrenders. "Nothing was set aside" is RECORDED rather than inferred, so a listing whose ceiling is legitimately zero is distinguishable from one made before these bounds existed.
+
+Neither bound is redundant, and the reason is worth stating because they look like two views of one quantity. A park trips both — it enlarges the transferring balance and it disqualifies the record of what the lender has been paid, which widens the forfeiture. But a repayment that reduces the loan's balance disqualifies that record while parking nothing, so the floor catches a case the ceiling cannot see.
+
+What breaches the floor is therefore never drift the seller accepted: ordinary growth across the whole window sits inside it by construction. It is a step they never reviewed, and the remedy is to cancel and relist at the new economics rather than to loosen the bound — the larger cost is real, and they have simply not agreed to it. Each refusal names both the recorded figure and the figure the sale would produce, so a client can say which bound moved and by how much. One consequence follows and is expected rather than a fault: a live listing can become unfillable through ordinary borrower activity, since a partial repayment is enough, and the seller's listing surface must say so.
+
+The bounds bind only while the seller's projection still describes the sale. Completing a listing after its window has run out stays possible, because that path is lender-gated — the seller doing it themselves is fresh authorisation rather than a race — and holding them to a projection made for a window that has since passed would refuse their own deliberate act. Listings made before these bounds existed carry none and complete exactly as they did.
 
 Ending a listing without a sale — whether it expired on its own or the seller cancelled it — starts a **one-day quiet period** before the same loan can be listed again. This is the borrower's action window: while a listing stands, the borrower's offset close-out (the Preclose Option-3 lender-offer path — its pinned offer cannot coexist with the listing) and collateral-withdrawal options are held (repayment is never held — full repayment, partial repayment, and the direct early close all stay available throughout a live listing; shrinking the principal simply forces a pending buyer to re-sign for the smaller position, as described above), so a seller must not be able to chain listings back-to-back and keep the borrower's held options frozen indefinitely. During the quiet period the borrower can freely exercise every held option; after it lapses the lender may list again.
 
@@ -2198,6 +2500,8 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Core Contracts (Examples):**
   - `VaipakamOfferManagement.sol`: Handles creation, cancellation, and matching of lender/borrower offers.
   - `OfferMatchFacet` or equivalent matching facet: Hosts bot-facing Range Orders preview / match entrypoints when needed to keep the offer-management facet under the EIP-170 runtime bytecode ceiling. Range Orders pushed ordinary offer management past the real-chain bytecode limit, so matching and ordinary create / accept / cancel logic should remain split where necessary for deployability.
+  - **Deployability splits, generally.** The bytecode ceiling is a real-chain constraint, not a design preference, so a facet that outgrows it is expected to be split rather than trimmed of behaviour. Two rules govern where the seam goes. First, the seam follows a boundary the product already has — a distinct user-facing route, a distinct actor, a distinct lifecycle stage — never an arbitrary bisection chosen to balance byte counts. Second, halves that are only correct when read together stay together: where two entry points share an invariant (a link one writes and the other clears, a one-at-a-time rule, a cooldown), splitting between them turns a locally-checkable rule into a cross-facet one and is the wrong seam even when it would free more space. A split changes deployment shape only — the routes it separates keep the same behaviour, the same shared state, and the same single address that callers use.
+  - `EarlyWithdrawalDirectFacet` or equivalent direct lender-exit facet: hosts the one-transaction lender exit (selling a position straight into a standing lender offer) when the listed-sale route's facet needs the room. The two lender-exit routes are separate user-facing choices that share no internals, whereas the listed route's own two stages — putting the position up for sale, and completing the sale once a buyer takes it — share the listing's binding and lifecycle rules and are expected to stay in one facet.
   - `VaipakamLoanManagement.sol`: Manages active loans, repayments, defaults, and liquidations.
   - `VaipakamVault.sol`: Holds collateral, ERC-721/1155 rental NFTs, and funds during various stages.
   - `VaipakamNFT.sol`: The ERC-721 contract responsible for minting and managing Vaipakam NFTs.
@@ -2625,7 +2929,6 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/invariants/InterestMonotonicity.invariant.t.sol](../../contracts/test/invariants/InterestMonotonicity.invariant.t.sol) — amount-due non-decreasing as time advances.
 - [contracts/test/invariants/PerAssetPause.invariant.t.sol](../../contracts/test/invariants/PerAssetPause.invariant.t.sol) — paused-asset blocks new create/accept across all flows.
 - [contracts/test/invariants/OfferLoanLinkage.invariant.t.sol](../../contracts/test/invariants/OfferLoanLinkage.invariant.t.sol) — every loan points to an accepted offer.
-- [contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol](../../contracts/test/invariants/StakingRewardMonotonicity.invariant.t.sol) — rewardPerTokenStored never decreases; per-user earned grows until claim.
 - [contracts/test/invariants/DefaultTiming.invariant.t.sol](../../contracts/test/invariants/DefaultTiming.invariant.t.sol) — defaults only trigger after grace-period window.
 - [contracts/test/invariants/FundsConservation.invariant.t.sol](../../contracts/test/invariants/FundsConservation.invariant.t.sol) / [VaultSolvency.invariant.t.sol](../../contracts/test/invariants/VaultSolvency.invariant.t.sol) — no phantom funds, vault balances conserved.
 - [contracts/test/invariants/LoanStatusMonotonicity.invariant.t.sol](../../contracts/test/invariants/LoanStatusMonotonicity.invariant.t.sol) — loan status only moves forward.
@@ -2633,7 +2936,6 @@ flow list in the Phase-1 gap audit (see CHANGELOG `[Unreleased]`).
 - [contracts/test/invariants/CollateralMonotonicity.invariant.t.sol](../../contracts/test/invariants/CollateralMonotonicity.invariant.t.sol) — collateral balance only grows during loan life (addCollateral-only).
 - [contracts/test/invariants/FallbackSettlement.invariant.t.sol](../../contracts/test/invariants/FallbackSettlement.invariant.t.sol) — fallback settlement consistent with HF/LTV collapse flags.
 - [contracts/test/invariants/InteractionRewards.invariant.t.sol](../../contracts/test/invariants/InteractionRewards.invariant.t.sol) — reward emission stays within schedule + per-user cap.
-- [contracts/test/invariants/StakingBalances.invariant.t.sol](../../contracts/test/invariants/StakingBalances.invariant.t.sol) — sum(userStaked) == totalStaked, pool-cap respected.
 - [contracts/test/invariants/VPFISupplyCap.invariant.t.sol](../../contracts/test/invariants/VPFISupplyCap.invariant.t.sol) — total VPFI supply never exceeds hard cap.
 - [contracts/test/invariants/MetricsCountersParity.invariant.t.sol](../../contracts/test/invariants/MetricsCountersParity.invariant.t.sol) — MetricsFacet counters match raw storage.
 - [contracts/test/invariants/NFTCountParity.invariant.t.sol](../../contracts/test/invariants/NFTCountParity.invariant.t.sol) / [NFTOwnerAuthority.invariant.t.sol](../../contracts/test/invariants/NFTOwnerAuthority.invariant.t.sol) — position-NFT count + authority correctness.

@@ -55,7 +55,7 @@
   },
   {
     "type": "function",
-    "name": "sellLoanViaBuyOffer",
+    "name": "createLoanSaleOfferBound",
     "inputs": [
       {
         "name": "loanId",
@@ -63,7 +63,27 @@
         "internalType": "uint256"
       },
       {
-        "name": "buyOfferId",
+        "name": "interestRateBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "creatorRiskAndTermsConsent",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "listingSeconds",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "reviewedMinSellerNet",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewedMaxHeld",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -160,7 +180,7 @@
   },
   {
     "type": "event",
-    "name": "LoanSold",
+    "name": "LoanStatusChanged",
     "inputs": [
       {
         "name": "loanId",
@@ -169,46 +189,16 @@
         "internalType": "uint256"
       },
       {
-        "name": "originalLender",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newLender",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "shortfallPaid",
-        "type": "uint256",
+        "name": "from",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "enum LibVaipakam.LoanStatus"
       },
       {
-        "name": "newLenderTokenId",
-        "type": "uint256",
+        "name": "to",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newInterestRateBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newDurationDays",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newDueTimestamp",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
+        "internalType": "enum LibVaipakam.LoanStatus"
       }
     ],
     "anonymous": false
@@ -243,6 +233,11 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "ArmedFreshPaidAlreadySeeded",
+    "inputs": []
   },
   {
     "type": "error",
@@ -924,6 +919,22 @@
   },
   {
     "type": "error",
+    "name": "DeliveredFreshShortfall",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DestinationHasNoDayStanding",
     "inputs": [
       {
@@ -1068,22 +1079,6 @@
     "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "IlliquidPairNotConsented",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pairKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1452,6 +1447,38 @@
   },
   {
     "type": "error",
+    "name": "ListingFloorBelowReviewed",
+    "inputs": [
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ListingHeldAboveReviewed",
+    "inputs": [
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "LoanInitiationFailed",
     "inputs": []
   },
@@ -1485,22 +1512,6 @@
     "type": "error",
     "name": "MessengerPredatesV3",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "MidTierPairNotAcknowledged",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "pairKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2033,29 +2044,13 @@
   },
   {
     "type": "error",
-    "name": "RiskAndTermsConsentRequired",
+    "name": "RewardMigrationFailed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "RiskTierTooLow",
-    "inputs": [
-      {
-        "name": "actor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "requiredTier",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "actorTier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
+    "name": "RiskAndTermsConsentRequired",
+    "inputs": []
   },
   {
     "type": "error",
@@ -2081,6 +2076,38 @@
         "name": "token",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleAboveHeldCeiling",
+    "inputs": [
+      {
+        "name": "maxHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleBelowSellerFloor",
+    "inputs": [
+      {
+        "name": "minSellerNet",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

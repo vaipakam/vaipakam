@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {EarlyWithdrawalFacet} from "../../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
@@ -28,6 +29,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
+import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
@@ -65,6 +67,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
     ClaimFacet claimFacet;
     AddCollateralFacet addCollateralFacet;
     EarlyWithdrawalFacet earlyFacet;
+    EarlyWithdrawalDirectFacet earlyFacetDirect;
     AccessControlFacet accessControlFacet;
     TestMutatorFacet testMutatorFacet;
     HelperTest helperTest;
@@ -118,11 +121,17 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         claimFacet = new ClaimFacet();
         addCollateralFacet = new AddCollateralFacet();
         earlyFacet = new EarlyWithdrawalFacet();
+        earlyFacetDirect = new EarlyWithdrawalDirectFacet();
         accessControlFacet = new AccessControlFacet();
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
+        // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
+        // settlement now, so `transferLenderRewardEntry` must resolve here;
+        // unrouted it would bubble as the deploy-drift failure and revert
+        // this scenario's sale paths. Unconfigured program → no-op early-return.
+        cuts[21] = IDiamondCut.FacetCut({facetAddress: address(new InteractionRewardsFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getInteractionRewardsFacetSelectors()});
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -141,6 +150,8 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         cuts[10] = IDiamondCut.FacetCut({facetAddress: address(claimFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getClaimFacetSelectors()});
         cuts[11] = IDiamondCut.FacetCut({facetAddress: address(addCollateralFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAddCollateralFacetSelectors()});
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(earlyFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()});
+        // #1780 — the direct lender-exit route lives in its own facet now.
+        cuts[20] = IDiamondCut.FacetCut({facetAddress: address(earlyFacetDirect), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalDirectFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
@@ -304,11 +315,11 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         // Expect LoanSold event
         vm.expectEmit(true, true, true, false);
         // Topic-only check (data=false in expectEmit above); zero placeholders.
-        emit EarlyWithdrawalFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);
+        emit EarlyWithdrawalDirectFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);
 
         // Original lender sells the loan
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
 
         // Verify: loan.lender is now newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);

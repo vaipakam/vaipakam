@@ -30,6 +30,45 @@ import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 library LibLifecycle {
     error InvalidTransition(LibVaipakam.LoanStatus from, LibVaipakam.LoanStatus to);
 
+    /// @notice Emitted on EVERY `loan.status` edge, from the one primitive all
+    ///         status writes are required to route through.
+    /// @dev #1782 — the off-chain half of the chokepoint this library already
+    ///      documents. `transition` / `transitionFromAny` have always fanned
+    ///      out to {LibMetricsHooks.onLoanStatusChanged}, so every edge already
+    ///      had exactly one observation point on-chain; an indexer had no
+    ///      equivalent and could only watch whatever event the CALLING facet
+    ///      chose to emit. Where a caller emitted nothing — or named a
+    ///      different loan than the one it transitioned, as the sale-vehicle
+    ///      temp loan does — the projection kept that loan `active` forever.
+    ///      That is the May-2026 symptom reached through the event-coverage
+    ///      guardrail's blind spot: a state change that emits nothing is not an
+    ///      untagged or unhandled event, so it never enters the checker's
+    ///      enumeration.
+    ///
+    ///      Emitting HERE rather than at each call site is what closes the
+    ///      class instead of the instance. Routing through this primitive is
+    ///      already mandatory and already enforced (an unlisted edge reverts),
+    ///      so a transition that is invisible off-chain is no longer
+    ///      constructible — there is no call site left that could forget. It
+    ///      also makes a write-side static check on call sites unnecessary.
+    ///      The id comes from `loan.id` rather than from a caller-supplied
+    ///      argument. That is sound because `loan.id` is written exactly once,
+    ///      at creation (`LoanFacet.sol:953` is its only writer anywhere in
+    ///      `src/`), so it cannot drift from the storage key the caller indexed
+    ///      by. It is also the safer of the two: a `loanId` parameter would let
+    ///      a call site pass one loan's id while transitioning another, which is
+    ///      the precise failure #1782 describes — an event naming a different
+    ///      loan than the one that moved.
+    /// @param loanId The loan whose status changed.
+    /// @param from Status before the edge.
+    /// @param to Status after the edge.
+    /// @custom:event-category state-change/loan-mutation
+    event LoanStatusChanged(
+        uint256 indexed loanId,
+        LibVaipakam.LoanStatus from,
+        LibVaipakam.LoanStatus to
+    );
+
     /// @notice Stamp a fresh loan as Active. The default enum value is
     ///         already `Active` (index 0), so this is semantically a
     ///         marker — callers document that a loan has entered the
@@ -46,11 +85,79 @@ library LibLifecycle {
         LibVaipakam.LoanStatus expectedFrom,
         LibVaipakam.LoanStatus to
     ) internal {
+        _transition(loan, expectedFrom, to, true, true);
+    }
+
+    /// @notice #1503 item 26 — terminal transition for an INTERNAL vehicle
+    ///         loan (the lender-sale transitional loan): validates the edge
+    ///         and flips the status, but runs NO metrics hook and emits NO
+    ///         `LoanStatusChanged`.
+    /// @dev    The pair of `LoanFacet._finalizeLoanCreation`'s vehicle skips:
+    ///         the vehicle was never counted into the metrics layer, never
+    ///         indexed per-user, and never announced by `LoanInitiated`, so
+    ///         the ordinary transition here would decrement an active count
+    ///         it never incremented (swap-popping an id that is not in the
+    ///         list) and hand indexers a status edge for a loan they were
+    ///         never told exists. Use ONLY for the sale vehicle — every real
+    ///         loan goes through {transition} / {transitionFromAny} so the
+    ///         #1792 safety-net event stays exhaustive for them.
+    function transitionInternalVehicle(
+        LibVaipakam.Loan storage loan,
+        LibVaipakam.LoanStatus expectedFrom,
+        LibVaipakam.LoanStatus to
+    ) internal {
+        _transition(loan, expectedFrom, to, false, false);
+    }
+
+    /// @notice #1503 item 26 (Codex #1825 r1) — terminal transition for a
+    ///         LEGACY sale vehicle: one created before the item-26 regime, so
+    ///         its creation WAS announced and consumers hold a row for it.
+    /// @dev    The two legacy questions are independent and must be answered
+    ///         separately, which is the finding this exists for:
+    ///
+    ///         • Was it ANNOUNCED? Every pre-regime vehicle was — it emitted
+    ///           `LoanInitiated` — so its terminal must emit too, or the row a
+    ///           consumer built sits Active forever (the #1782 defect).
+    ///         • Was it COUNTED? Usually yes, but not necessarily: this
+    ///           library's own migration note allows loans that predate the
+    ///           counter layer (or a backfill) to be absent from it. Only a
+    ///           counted vehicle may be decremented; decrementing an uncounted
+    ///           one corrupts a total that belongs to other loans.
+    ///
+    ///         Deciding both from active-list membership — as the first cut of
+    ///         this routing did — silently converts the second answer into the
+    ///         first, and an announced-but-uncounted vehicle then closes
+    ///         invisibly.
+    /// @param counted Whether this vehicle is actually in the metrics active
+    ///        set (`activeLoanIdsListPos != 0`). The caller owns that read.
+    function transitionLegacyVehicle(
+        LibVaipakam.Loan storage loan,
+        LibVaipakam.LoanStatus expectedFrom,
+        LibVaipakam.LoanStatus to,
+        bool counted
+    ) internal {
+        _transition(loan, expectedFrom, to, counted, true);
+    }
+
+    /// @dev The one status-write primitive. `countMetrics` and `announce` are
+    ///      separate because the sale vehicle needs all three combinations:
+    ///      both (a real loan, and a legacy vehicle that was counted),
+    ///      neither (an item-26 vehicle), and announce-without-counting (a
+    ///      legacy vehicle absent from the counter layer). The edge validation
+    ///      is unconditional in every case.
+    function _transition(
+        LibVaipakam.Loan storage loan,
+        LibVaipakam.LoanStatus expectedFrom,
+        LibVaipakam.LoanStatus to,
+        bool countMetrics,
+        bool announce
+    ) private {
         LibVaipakam.LoanStatus current = loan.status;
         if (current != expectedFrom) revert InvalidTransition(current, to);
         if (!_isValid(current, to)) revert InvalidTransition(current, to);
         loan.status = to;
-        LibMetricsHooks.onLoanStatusChanged(loan, current, to);
+        if (countMetrics) LibMetricsHooks.onLoanStatusChanged(loan, current, to);
+        if (announce) emit LoanStatusChanged(loan.id, current, to);
     }
 
     /// @notice Variant that accepts the current status implicitly — the
@@ -66,6 +173,7 @@ library LibLifecycle {
         if (!_isValid(current, to)) revert InvalidTransition(current, to);
         loan.status = to;
         LibMetricsHooks.onLoanStatusChanged(loan, current, to);
+        emit LoanStatusChanged(loan.id, current, to);
     }
 
     /// @dev Pure allow-list check. Keep this as an if-ladder — it compiles

@@ -704,7 +704,32 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                     EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
                     loanId,
                     loan.principalAsset,
-                    lenderProceeds
+                    lenderProceeds,
+                    // #1503 item 28 — the lender is paid through the boundary of
+                    // the period being settled here. Passed BEFORE
+                    // `advanceCheckpoint` below moves the checkpoint onto the
+                    // next period, so this is the boundary just satisfied and
+                    // not the one still owed.
+                    //
+                    // FULL COVERAGE ONLY (Codex #1801 r4 P1). An earlier revision
+                    // moved the mark in lockstep with the checkpoint, on the
+                    // reasoning that a lagging mark re-forfeits the whole period.
+                    // That was wrong in the direction that costs the protocol: the
+                    // checkpoint advances on ANY payout, so a single wei of
+                    // `lenderProceeds` would close the entire period's forfeiture
+                    // window — largest exactly when collateral is nearly exhausted
+                    // and the payout is smallest. The seller would collect the
+                    // unpaid remainder through their sale proceeds while the buyer
+                    // can still collect it later through repayment: the same
+                    // interest, paid twice, out of treasury's share.
+                    //
+                    // "Paid through this boundary" has to mean the boundary was
+                    // PAID. A partial payout leaves the difference in the
+                    // borrower's obligation (see the `interestSettled` credit
+                    // below, which deliberately credits only what arrived), so the
+                    // window stays open over it and the seller forfeits it — the
+                    // conservative direction, and the honest one.
+                    lenderProceeds >= shortfall ? boundary : 0
                 ),
                 bytes4(0)
             );

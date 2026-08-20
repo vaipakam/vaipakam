@@ -49,12 +49,19 @@ export interface DeploymentFacets {
   diamondCutFacet?: HexAddress;
   diamondLoupeFacet?: HexAddress;
   earlyWithdrawalFacet?: HexAddress;
+  /** #1780 — the direct lender-exit route, split off `earlyWithdrawalFacet`
+   *  for EIP-170. Optional like its sibling: a chain deployed before the
+   *  split has no such key. */
+  earlyWithdrawalDirectFacet?: HexAddress;
   vaultFactoryFacet?: HexAddress;
   interactionRewardsFacet?: HexAddress;
   interactionRewardsLensFacet?: HexAddress;
   /** #1351 slice 2c — the claim entry points split out of
    *  `interactionRewardsFacet` for EIP-170 headroom. */
   rewardClaimFacet?: HexAddress;
+  /** #1434 — the permissionless claim-horizon sweep on its own facet
+   *  (EIP-170: sharing the day engine costs ~12.8 KB wherever it lives). */
+  rewardHorizonSweepFacet?: HexAddress;
   feeEntitlementFacet?: HexAddress;
   legalFacet?: HexAddress;
   loanFacet?: HexAddress;

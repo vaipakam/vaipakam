@@ -35,7 +35,7 @@ import {
   readLoanLive,
   sellerEconomics,
   type LoanLive,
-} from '../contracts/loanLive';
+  SellerQuoteUnavailableError,} from '../contracts/loanLive';
 import { fetchOffersByCreator } from './indexer';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -58,24 +58,43 @@ const REACCRUAL_PAD_DAYS = 30n;
 export function saleSettlementBound(
   live: LoanLive,
   saleRateBps: bigint,
-  chainNow: bigint,
 ): bigint {
-  const econ = sellerEconomics(live, saleRateBps, chainNow);
+  const econ = sellerEconomics(live, saleRateBps);
   const denom = SECONDS_PER_YEAR * BASIS_POINTS;
   const paddedWindowSecs =
     (interestRemainingDaysOf(live) + REACCRUAL_PAD_DAYS) * 86_400n;
   const paddedAccrual =
     (live.principal * live.interestRateBps * paddedWindowSecs) / denom;
-  return paddedAccrual > econ.shortfall ? paddedAccrual : econ.shortfall;
+  // ...and never below what an acceptance would pull RIGHT NOW (Codex #1801 r9
+  // P2). The padded figure is built from the remaining TERM, but when the mark
+  // precedes the accrual origin — a supported state, since the preclose path
+  // re-origins the clock without clearing an older mark — the accrued cost can
+  // exceed it. Bounding only by `shortfall` then granted an allowance already
+  // below the contract's settlement pull, so the listing was created and the
+  // buyer's acceptance reverted. `econ.cost` is max(accrued, shortfall), so
+  // taking it here covers both.
+  const floor = paddedAccrual > econ.shortfall ? paddedAccrual : econ.shortfall;
+  // ...and when the current cost is what binds, it needs the SAME growth
+  // headroom the term-based figure already has (Codex #1801 r11 P2). Round 9
+  // added `econ.cost` as a floor and stopped there, so in exactly the case that
+  // made it necessary — a mark far enough before the accrual origin that the
+  // accrued cost outruns remaining-term-plus-pad — the allowance was the pull at
+  // the instant of approval and nothing more. Interest keeps accruing after the
+  // snapshot, so a buyer arriving later reverts unless the seller happens to
+  // notice the funding watch and restores. Adding the pad's worth of accrual is
+  // the same margin, applied to the branch that was missing it.
+  const padAccrual =
+    (live.principal * live.interestRateBps * REACCRUAL_PAD_DAYS * 86_400n) / denom;
+  const costWithHeadroom = econ.cost + padAccrual;
+  return floor > costWithHeadroom ? floor : costWithHeadroom;
 }
 
 /** What a buyer's acceptance would pull RIGHT NOW. */
 export function saleSettlementNow(
   live: LoanLive,
   saleRateBps: bigint,
-  chainNow: bigint,
 ): bigint {
-  return sellerEconomics(live, saleRateBps, chainNow).cost;
+  return sellerEconomics(live, saleRateBps).cost;
 }
 
 const marker = makePendingMarkerStore('alpha02.loanSaleOffer');
@@ -285,13 +304,28 @@ export function useLoanSalePending(
         }
       }
 
-      const fundingKnown = isHolder && listed && saleRateBps !== null;
-      const requiredNow = fundingKnown
-        ? saleSettlementNow(live, saleRateBps!, latestBlock.timestamp)
-        : 0n;
-      const requiredBound = fundingKnown
-        ? saleSettlementBound(live, saleRateBps!, latestBlock.timestamp)
-        : 0n;
+      // An unavailable QUOTE is not an unavailable LISTING (Codex #1801 r9 P2).
+      // `sellerEconomics` throws when the forfeiture window could not be read,
+      // and letting that escape this hook left the query with no state at all —
+      // so `PositionDetails` saw `salePending: false`, dropped the
+      // chain-authoritative pending card and its cancel affordance, and could
+      // offer the new-listing flow for a position that is demonstrably locked.
+      // The lock read succeeded; only the funding figure is unknown, which is
+      // exactly what `fundingKnown: false` already means.
+      let fundingKnown = isHolder && listed && saleRateBps !== null;
+      let requiredNow = 0n;
+      let requiredBound = 0n;
+      if (fundingKnown) {
+        try {
+          requiredNow = saleSettlementNow(live, saleRateBps!);
+          requiredBound = saleSettlementBound(live, saleRateBps!);
+        } catch (e) {
+          if (!(e instanceof SellerQuoteUnavailableError)) throw e;
+          fundingKnown = false;
+          requiredNow = 0n;
+          requiredBound = 0n;
+        }
+      }
       return {
         listed,
         loanActive: live.status === LOAN_STATUS_ACTIVE,

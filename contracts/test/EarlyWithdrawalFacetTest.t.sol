@@ -7,7 +7,9 @@ import {Vm} from "forge-std/Vm.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EarlyWithdrawalDirectFacet} from "../src/facets/EarlyWithdrawalDirectFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibLifecycle} from "../src/libraries/LibLifecycle.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -33,6 +35,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {LibSaleListing} from "../src/libraries/LibSaleListing.sol";
 import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -44,6 +47,9 @@ import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibERC721} from "../src/libraries/LibERC721.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
+import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
 /**
@@ -80,6 +86,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ClaimFacet claimFacet;
     AddCollateralFacet addCollateralFacet;
     EarlyWithdrawalFacet earlyFacet;
+    EarlyWithdrawalDirectFacet earlyFacetDirect;
     AccessControlFacet accessControlFacet;
     TestMutatorFacet testMutatorFacet;
     HelperTest helperTest;
@@ -155,6 +162,11 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      (lender, lenderTokenId=99, borrowerTokenId=100).
     function _setupTempLoan(uint256 loanId) internal {
         LibVaipakam.Loan memory l;
+        // #1782 — every production loan carries its own id
+        // (`LoanFacet.sol:953`, the single writer). The lifecycle emit reads
+        // `loan.id`, so a fixture that leaves it zero announces loan 0 and is
+        // not a faithful stand-in for a real loan.
+        l.id = loanId;
         l.lender = newLender;
         l.lenderTokenId = 99;
         l.borrowerTokenId = 100;
@@ -164,6 +176,11 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Build a fresh tempLoan with ERC20 collateral set.
     function _setupTempLoanWithCollateral(uint256 loanId, address collateralAsset, uint256 collateralAmount) internal {
         LibVaipakam.Loan memory l;
+        // #1782 — every production loan carries its own id
+        // (`LoanFacet.sol:953`, the single writer). The lifecycle emit reads
+        // `loan.id`, so a fixture that leaves it zero announces loan 0 and is
+        // not a faithful stand-in for a real loan.
+        l.id = loanId;
         l.lender = newLender;
         l.lenderTokenId = 99;
         l.borrowerTokenId = 100;
@@ -209,6 +226,7 @@ contract EarlyWithdrawalFacetTest is Test {
         claimFacet = new ClaimFacet();
         addCollateralFacet = new AddCollateralFacet();
         earlyFacet = new EarlyWithdrawalFacet();
+        earlyFacetDirect = new EarlyWithdrawalDirectFacet();
         accessControlFacet = new AccessControlFacet();
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
@@ -225,7 +243,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](26);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](30);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -270,6 +288,22 @@ contract EarlyWithdrawalFacetTest is Test {
         cuts[10] = IDiamondCut.FacetCut({facetAddress: address(claimFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getClaimFacetSelectors()});
         cuts[11] = IDiamondCut.FacetCut({facetAddress: address(addCollateralFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAddCollateralFacetSelectors()});
         cuts[12] = IDiamondCut.FacetCut({facetAddress: address(earlyFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalFacetSelectors()});
+        // #1780 — the direct lender-exit route lives in its own facet now.
+        cuts[26] = IDiamondCut.FacetCut({facetAddress: address(earlyFacetDirect), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEarlyWithdrawalDirectFacetSelectors()});
+        // #1817 (item 27) — the sale settlement now restamps both parties'
+        // VPFI discount/staking checkpoint through ConsolidationFacet's
+        // internal entry, and the observable stamp lives behind the T-087
+        // accumulator facet; cut both so the restamp is real here rather
+        // than the minimal-fixture silent no-op.
+        cuts[27] = IDiamondCut.FacetCut({facetAddress: address(new ConsolidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getConsolidationFacetSelectors()});
+        cuts[28] = IDiamondCut.FacetCut({facetAddress: address(new VPFIDiscountAccumulatorFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getVpfiDiscountAccumulatorFacetSelectors()});
+        // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
+        // settlement now, so `transferLenderRewardEntry` must be routed here:
+        // an unrouted selector is exactly the deploy-drift failure the hook
+        // bubbles, and it would fail every sale-success test in this file.
+        // With the interaction program unconfigured (no launch timestamp) the
+        // routed call is a no-op early-return, matching production-before-launch.
+        cuts[29] = IDiamondCut.FacetCut({facetAddress: address(new InteractionRewardsFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getInteractionRewardsFacetSelectors()});
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(accessControlFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getAccessControlFacetSelectors()});
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
@@ -411,7 +445,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Borrower is not the lender-side NFT owner.
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     function testSellLoanRevertsForNonExistentLoan() public {
@@ -422,7 +456,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.expectRevert(
             abi.encodeWithSignature("ERC721NonexistentToken(uint256)", 0)
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(999, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(999, buyOfferId);
     }
 
     function testSellLoanRevertsInvalidSaleOffer_AlreadyAccepted() public {
@@ -432,8 +466,8 @@ contract EarlyWithdrawalFacetTest is Test {
         // Actually easiest: use an offer id that maps to the accepted loan offer.
         // After setUp, offer 1 was accepted by borrower. Let's use offerId 1 (accepted).
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, 1); // offer 1 is accepted
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, 1); // offer 1 is accepted
     }
 
     function testSellLoanRevertsInvalidSaleOffer_RangedBuyOffer() public {
@@ -446,8 +480,8 @@ contract EarlyWithdrawalFacetTest is Test {
         o.amountMax = o.amount * 2;
         TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     function testSellLoanRevertsInvalidSaleOffer_PartiallyFilledBuyOffer() public {
@@ -459,8 +493,39 @@ contract EarlyWithdrawalFacetTest is Test {
         o.amountFilled = 1;
         TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev #1503 design item 21 — while a Preclose Option-3 offset is live on
+    ///      the loan, the DIRECT sale must refuse, exactly as the listing path
+    ///      has since #1001. A sale starts its OWN settlement of a loan that
+    ///      already has one in flight, and the two would race; the direct route
+    ///      does it inside a single transaction.
+    ///
+    ///      Not because the position changes hands — a bare lender-NFT transfer
+    ///      during a live offset is supported, since the offset locks only the
+    ///      borrower position and completion re-anchors to the current holder.
+    ///
+    ///      The live offset is scaffolded through the raw mutator rather than by
+    ///      driving `PrecloseFacet.offsetWithNewOffer`, because this suite's
+    ///      diamond does not cut `PrecloseFacet` (driving it reverts
+    ///      `FunctionDoesNotExist`). The scaffold is faithful: `offsetWithNewOffer`
+    ///      records the live offset by writing exactly this mapping, so the state
+    ///      under test is the state production reaches. Same reason
+    ///      `setLoanToSaleOfferIdRaw` exists for the listing-side twin.
+    ///
+    ///      The buy offer is the suite's ordinary valid `buyOfferId`, so the
+    ///      revert is reached through a sale that would otherwise SUCCEED — the
+    ///      guard, not an earlier shape check, is what refuses it.
+    function testSellLoanRejectedWhileOffsetLive() public {
+        TestMutatorFacet(address(diamond)).setLoanToOffsetOfferIdRaw(activeLoanId, 99);
+
+        vm.prank(lender);
+        vm.expectRevert(EarlyWithdrawalDirectFacet.OffsetActiveOnLoan.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, buyOfferId
+        );
     }
 
     /// @dev #1503 design item 8 — the direct sale checked the buy offer's TYPE
@@ -485,7 +550,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 o.expiresAt
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev Boundary: `isOfferExpired` treats `now >= expiresAt` as expired, so
@@ -507,7 +572,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 o.expiresAt
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The GTC sentinel (`expiresAt == 0`) means "never expires", NOT
@@ -524,8 +589,8 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.warp(block.timestamp + 365 days);
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     // ─── sellLoanViaBuyOffer success ──────────────────────────────────────────
@@ -538,13 +603,1104 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.expectEmit(true, true, true, false);
         // Topic-only check (data=false in expectEmit above); zero placeholders.
-        emit EarlyWithdrawalFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);
+        emit EarlyWithdrawalDirectFacet.LoanSold(activeLoanId, lender, newLender, 0, 0, 0, 0, 0);
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
 
         // Loan lender should now be newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
+    }
+
+    /// @dev #1503 item 25 — a lender migration must carry the position-token →
+    ///      loan reverse index with it. `loanIdByPositionTokenId` was written
+    ///      only at loan creation, so after a sale the buyer's fresh token
+    ///      resolved to nothing while the seller's superseded (burned) token
+    ///      still resolved to the live loan — the Metrics position views built
+    ///      on the index answered with the party who no longer held it.
+    ///      Raw-read probe on purpose: this file's diamond mocks mint/burn, so
+    ///      the tokens are not enumerable and the ERC721-walking views cannot
+    ///      see the rekey.
+    function testSellLoanRekeysPositionIndex() public {
+        uint256 oldTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(oldTokenId),
+            activeLoanId,
+            "precondition: creation indexed the seller's token"
+        );
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+
+        uint256 newTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
+        assertTrue(newTokenId != oldTokenId, "migration minted a fresh token id");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(newTokenId),
+            activeLoanId,
+            "buyer's token resolves to the loan"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(oldTokenId),
+            0,
+            "seller's superseded token no longer resolves"
+        );
+        // Item 25's list-view half (Codex #1818 r1 P2): the acquired REAL loan
+        // id lands in the buyer's `userLoanIds`, which is what the dashboard
+        // and history views walk.
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(newLender),
+            1,
+            "acquired loan appended to the buyer's user-loan index"
+        );
+    }
+
+    // ─── #1503 item 28: settled interest nets out of the forfeiture ──────────
+    //
+    // Periodic auto-liquidation forwards interest to the lender through
+    // `loan.interestSettled` WITHOUT resetting the accrual clock, so the raw
+    // accrual still spans periods the borrower has already paid for. Both sale
+    // routes used to charge the seller that raw figure — billing them for
+    // interest they had already received.
+    //
+    // The netting tests are DIFFERENTIAL on purpose: the same sale is run twice
+    // from one snapshot, once with a settled credit and once without, and only
+    // the difference is asserted. Recomputing the accrual formula in the test
+    // would just restate the implementation, and would pass even if both runs
+    // were wrong by the same amount.
+
+    /// @dev Seeds the cross-facet stubs the sale routes need. Re-applied after a
+    ///      state revert, since a snapshot restores EVM state and says nothing
+    ///      about cheatcode mocks.
+    function _mockSaleSideEffects() internal {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+    }
+
+    /// @dev Two things the DIRECT route checks before it ever reaches the
+    ///      netting, both of which a warp trips: the buy offer carries a finite
+    ///      expiry stamped at creation, and its term must not exceed the loan's
+    ///      REMAINING term. Neither is what these tests are about, so the offer
+    ///      is made GTC and its term trimmed to what is left.
+    function _relaxBuyOfferForWarp(uint16 remainingDays) internal {
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.expiresAt = 0;
+        o.durationDays = remainingDays;
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+    }
+
+    function _seedSettledInterest(uint256 loanId, uint256 amount) internal {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        l.interestSettled = uint128(amount);
+        TestMutatorFacet(address(diamond)).setLoan(loanId, l);
+    }
+
+    /// @dev DIRECT route. The buy offer carries the loan's own rate, so there is
+    ///      no shortfall and the seller's whole cost is the forfeited accrual —
+    ///      which makes the payout move one-for-one with the interest the
+    ///      forfeiture window no longer covers.
+    function test_sellLoanViaBuyOffer_forfeitsOnlyTheUnpaidStretch() public {
+        _relaxBuyOfferForWarp(20); // 30-day loan, 10 days in
+        vm.warp(block.timestamp + 10 days); // let interest accrue (~1.37e18)
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidForTenDays = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // Paid through four days ago: six of the ten elapsed days remain
+        // forfeitable, so the seller keeps four days' worth.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidForSixDays = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidForTenDays, 0, "control run must actually pay the seller");
+        // Four days of the ten-day forfeiture returned to the seller. Stated as a
+        // ratio of the CONTROL RUN'S FORFEITURE — which the payout reveals, since
+        // a same-rate buy offer leaves the forfeiture as the seller's only cost —
+        // rather than by restating the interest formula, which would check the
+        // implementation against itself.
+        uint256 forfeitedOverTenDays =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal
+                - paidForTenDays;
+        assertEq(
+            paidForSixDays - paidForTenDays,
+            (forfeitedOverTenDays * 4) / 10,
+            "seller keeps exactly the four days they were already paid for"
+        );
+    }
+
+    /// @dev #1801 — a mark stamped at a DIFFERENT principal is not honoured.
+    ///      The unpaid stretch is priced at the principal it accrued on, so a
+    ///      mark that predates a principal change describes a window whose worth
+    ///      the loan can no longer state. Rather than bill it at the wrong size
+    ///      the credit is discarded and the seller pays the full accrual — which
+    ///      is the CONTROL payout, i.e. exactly as if no mark existed.
+    ///
+    ///      Read off state, so the eight principal-decrement sites across five
+    ///      facets need not cooperate: this test seeds the mismatch directly
+    ///      rather than driving one of them, because what is being pinned is
+    ///      that the READ refuses, not that any particular writer remembered.
+    function test_sellLoanViaBuyOffer_markAtAStalePrincipalIsNotHonoured() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // Same six-days-ago mark as the credited case above — but recorded
+        // against a principal the loan no longer carries.
+        uint256 livePrincipal =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal;
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, block.timestamp - 6 days, livePrincipal + 1
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithStaleMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
+        assertEq(
+            paidWithStaleMark,
+            paidWithNoMark,
+            "a mark recorded at another principal must buy the seller nothing"
+        );
+    }
+
+    /// @dev #1801 r9, corrected r10 — a loan with NO baseline never earns a
+    ///      credit for the CURRENT lender, not merely on its first stamp. This
+    ///      is the GRANDFATHERED shape: a loan already open at upgrade, whose
+    ///      principal may have moved before it with nothing recorded to detect
+    ///      that.
+    ///
+    ///      r9 recorded a baseline on the first stamp and let the second be
+    ///      trusted, which does not hold: the second settlement matches the
+    ///      freshly recorded principal and installs a mark whose window begins
+    ///      AFTER the unreconciled interval, so the sale excludes history that
+    ///      was never settled. The safe boundary is unknowable, so the position
+    ///      is voided for the tenure. A sale clears it for the buyer.
+    ///
+    ///      TWO stamps here, deliberately — one would pass under the r9 rule too.
+    function test_sellLoanViaBuyOffer_baselinelessPositionStaysVoid() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // Wipe the init baseline to stage a pre-upgrade loan, then deliver.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, 0, 0
+        );
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 8 days
+        );
+        // ...and a SECOND clean settlement, which r9 would have honoured.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 4 days
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidAfterTwoStamps = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
+        assertEq(
+            paidAfterTwoStamps,
+            paidWithNoMark,
+            "a baseline-less position must not open a credit, first stamp or later"
+        );
+    }
+
+    /// @dev #1801 r8 — a later clean stamp does NOT repair a window that already
+    ///      spans a principal change. The sequence is the dangerous one because
+    ///      every step looks routine: principal drops (an Active internal match
+    ///      does this without resetting the interest window), then an ordinary
+    ///      periodic settlement stamps a later boundary. Before the fix that
+    ///      re-validated the mark and excluded the whole pre-boundary stretch —
+    ///      including the part that accrued on the LARGER principal and was
+    ///      never covered by the lower-principal settlement.
+    ///
+    ///      Staged through the raw seeds because reaching it for real needs a
+    ///      servicing run against a match-liquidated loan; what is pinned is the
+    ///      RULE — a stamp that would span a change voids instead of advancing.
+    function test_sellLoanViaBuyOffer_restampAfterPrincipalChangeStaysVoid() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // A mark recorded at a principal the loan no longer carries...
+        uint256 livePrincipal =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal;
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, block.timestamp - 8 days, livePrincipal + 1
+        );
+        // ...and then a clean settlement stamping a LATER boundary, through the
+        // shared writer exactly as a real delivery would.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 4 days
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidAfterRestamp = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
+        assertEq(
+            paidAfterRestamp,
+            paidWithNoMark,
+            "a stamp across a principal change must void, not re-validate"
+        );
+    }
+
+    /// @dev #1801 — a mark on a position that has FROZEN a lender share is not
+    ///      honoured, for the rest of that lender's tenure. Once a payment was
+    ///      held rather than delivered the lender's delivery is no longer one
+    ///      continuous run, and a single timestamp cannot say which period is
+    ///      which; reading it as "paid through the later one" would credit the
+    ///      held period too. Sticky, because no later payment restores the
+    ///      missing one — pinned here by stamping a FRESH mark after the void
+    ///      and showing it still buys nothing.
+    function test_sellLoanViaBuyOffer_markAfterAFrozenShareIsNotHonoured() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // A share was frozen at some earlier point...
+        TestMutatorFacet(address(diamond)).setLenderMarkVoidedRaw(activeLoanId, true);
+        // ...and a later period then settled cleanly, stamping a fresh mark
+        // through the shared writer exactly as a real delivery would.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidAfterFreeze = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
+        assertEq(
+            paidAfterFreeze,
+            paidWithNoMark,
+            "a clean period after a freeze must not re-open the credit"
+        );
+    }
+
+    /// @dev DIRECT route, a BUYER disqualified after purchase (Codex #1801 r13
+    ///      P1). A sale opens the incoming lender's window at the purchase, but
+    ///      the loan's accrual clock still predates them by the whole of the
+    ///      seller's tenure. Once the round-12 rule made a disqualified mark
+    ///      fall back to the EARLIER of mark and clock, that older clock became
+    ///      reachable for the buyer — charging them for a stretch the first sale
+    ///      had already settled, and which they never received.
+    ///
+    ///      Seeded as a buyer's position: the tenure floor at the purchase, the
+    ///      mark there too, then a freeze that voids it.
+    function test_sellLoanViaBuyOffer_buyerNotChargedForSellerTenure() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 purchase = block.timestamp - 3 days;
+        uint256 snap = vm.snapshotState();
+
+        // Control: the buyer's window opens at the purchase and is honoured.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, purchase);
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidHonoured = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // The same buyer, now disqualified by a freeze. Without a tenure floor
+        // the window would re-open at the loan's original accrual clock.
+        TestMutatorFacet(address(diamond)).setLenderTenureStartRaw(activeLoanId, purchase);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, purchase);
+        TestMutatorFacet(address(diamond)).setLenderMarkVoidedRaw(activeLoanId, true);
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidDisqualified = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidHonoured, 0, "control run must actually pay the seller");
+        assertEq(
+            paidDisqualified,
+            paidHonoured,
+            "a disqualified buyer must not be charged for the seller's pre-purchase tenure"
+        );
+    }
+
+    /// @dev DIRECT route, a void whose accrual clock ALSO moved (Codex #1801
+    ///      r12 P1). A partial repayment whose lender share is frozen does two
+    ///      things at once: it parks the share, disqualifying the mark, and it
+    ///      re-bases `interestAccrualStart` to now. Reading "disqualified" as
+    ///      "fall back to the clock" then opened the window at the reset and
+    ///      omitted the frozen stretch entirely — the leak the disqualification
+    ///      exists to prevent.
+    ///
+    ///      The control is the LOWER charge the broken rule produced, so this
+    ///      asserts the seller is now charged strictly more than that, and
+    ///      exactly as much as a window opening at the mark.
+    function test_sellLoanViaBuyOffer_voidedMarkStillFloorsTheWindow() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint64 movedClock = uint64(block.timestamp - 2 days);
+        uint256 mark = block.timestamp - 8 days;
+        uint256 snap = vm.snapshotState();
+
+        // Control: the clock moved and NOTHING is recorded — the window opens at
+        // the reset, which is what the seller used to be charged from.
+        TestMutatorFacet(address(diamond)).setInterestAccrualStartRaw(activeLoanId, movedClock);
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidFromResetOnly = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // The real sequence: a mark from the last clean delivery, then a freeze
+        // that voids it, and the same clock reset.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, mark);
+        TestMutatorFacet(address(diamond)).setLenderMarkVoidedRaw(activeLoanId, true);
+        TestMutatorFacet(address(diamond)).setInterestAccrualStartRaw(activeLoanId, movedClock);
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithVoidedMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidFromResetOnly, 0, "control run must actually pay the seller");
+        assertLt(
+            paidWithVoidedMark,
+            paidFromResetOnly,
+            "a voided mark must still floor the window at the older unpaid boundary"
+        );
+    }
+
+    /// @dev DIRECT route, a PARK on a continuing loan (Codex #1801 r11 P1).
+    ///      `transferObligationViaOffer` parks the lender's accrued share in
+    ///      `heldForLender` rather than delivering it, and — unlike the freeze
+    ///      path — never touched the void flag. A clean settlement afterwards
+    ///      would then stamp a mark straight over the parked stretch, and the
+    ///      sale would exclude it from the seller's charge although the seller
+    ///      never received it and the balance migrates to the buyer.
+    ///
+    ///      Both runs carry the SAME parked balance, so the only difference
+    ///      between them is whether the later stamp installed a mark.
+    function test_sellLoanViaBuyOffer_markAfterAParkIsNotHonoured() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 parked = 1e6;
+        uint256 snap = vm.snapshotState();
+
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, parked);
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoMark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // The obligation transfer parked the accrued share — no void flag set,
+        // exactly as that path leaves it...
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, parked);
+        // ...and a later period settled cleanly, stamping through the shared
+        // writer as a real delivery would.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidAfterPark = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoMark, 0, "control run must actually pay the seller");
+        assertEq(
+            paidAfterPark,
+            paidWithNoMark,
+            "a clean period after a park must not re-open the credit"
+        );
+    }
+
+    /// @dev DIRECT route, mark at or beyond now. A window model cannot
+    ///      over-subtract, so a lender paid through the present forfeits nothing
+    ///      and the sale COMPLETES. The amount-based predecessor had to refuse
+    ///      here, because subtracting a lifetime figure from a segment-scoped one
+    ///      could leave a residual with nowhere to go (Codex #1801 r3 P1); there
+    ///      is no residual to strand once the quantity is a clamped window.
+    function test_sellLoanViaBuyOffer_paidThroughNowForfeitsNothing() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        // Reference: a sale with the forfeiture window fully closed by the
+        // accrual clock itself, i.e. nothing accrued yet.
+        vm.revertToState(snap);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp
+        );
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWhenPaidThrough = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        // Full principal back: the buy offer carries the loan's own rate, so with
+        // no forfeiture there is no cost of any kind to net out.
+        assertEq(
+            paidWhenPaidThrough,
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal,
+            "a lender paid through now forfeits nothing and keeps the principal"
+        );
+    }
+
+    /// @dev An accrual-clock reset that PAID NOBODY must not close the window
+    ///      (Codex #1801 r3 P1, corrected by r4 P1).
+    ///
+    ///      Round 3 made the window `max(accrualStart, mark)`, reasoning that a
+    ///      clock reset should win because the paths that reset it also pay the
+    ///      lender. That holds only when the payment actually LANDS. A partial
+    ///      repayment whose lender share is frozen by the sanctions registry
+    ///      parks the interest in `heldForLender` — which migrates to the BUYER
+    ///      on a sale — while the caller still resets the clock. The max let
+    ///      that reset act as the credit and closed the seller's window over
+    ///      interest they never received.
+    ///
+    ///      So the mark is authoritative and the clock is only the seed. Here
+    ///      the mark is older than the reset clock, and the window still opens
+    ///      at the MARK.
+    function test_sellLoanViaBuyOffer_resetThatPaidNobodyLeavesTheWindowOpen()
+        public
+    {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        LibVaipakam.Loan memory l =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        l.interestAccrualStart = uint64(block.timestamp - 4 days);
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l);
+
+        (uint256 forfeitFrom, ) = RiskPreviewFacet(address(diamond))
+            .sellerForfeitureWindow(activeLoanId);
+        assertEq(
+            forfeitFrom,
+            block.timestamp - 6 days,
+            "the mark bounds the forfeiture, not the re-based obligation clock"
+        );
+
+        // And the sale still completes — nothing here is a refusal.
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev FROZEN interest is not the seller's to be credited for (Codex #1801
+    ///      r1 P1). `interestSettled` is credited whether the periodic payout
+    ///      reached the lender or was parked into `heldForLender` behind the
+    ///      sanctions freeze — and a sale migrates that parked balance to the
+    ///      BUYER. The freeze branch never advances the mark, so a wholly frozen
+    ///      payout must move the seller's proceeds by nothing at all.
+    function test_sellLoanViaBuyOffer_ignoresFrozenSettledInterest() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithNoCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // The borrower's accumulator says a full ether was settled, but the
+        // payout froze into `heldForLender` and the mark never moved.
+        _seedSettledInterest(activeLoanId, 1 ether);
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidWithFrozenCredit = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidWithNoCredit, 0, "control run must actually pay the seller");
+        assertEq(
+            paidWithFrozenCredit,
+            paidWithNoCredit,
+            "a wholly frozen payout must not move the seller's proceeds"
+        );
+    }
+
+    /// @dev The window does NOT ride on `interestSettled` (Codex #1801 r2 P1).
+    ///      That accumulator is a credit against the BORROWER's obligation:
+    ///      `repayPartial` consumes it, which is correct for the borrower and
+    ///      would silently corrupt any seller-side figure derived from it.
+    ///      Moving it alone must change nothing here.
+    function test_sellLoanViaBuyOffer_windowIsIndependentOfInterestSettled()
+        public
+    {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        uint256 mark = block.timestamp - 6 days;
+        uint256 snap = vm.snapshotState();
+
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, mark);
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidBefore = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        // Same mark; the borrower-side accumulator swung to zero, as a partial
+        // repayment would leave it.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, mark);
+        _seedSettledInterest(activeLoanId, 0);
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paidAfter = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertEq(paidAfter, paidBefore, "the forfeiture window does not track interestSettled");
+    }
+
+    /// @dev RESALE (Codex #1801 r2 P1). A sale re-stamps the mark to the moment
+    ///      the position changes hands, so the incoming lender inherits none of
+    ///      the seller's paid-through stretch. Without it, lender A's receipts
+    ///      would shorten B's forfeiture on every resale — B's payout up,
+    ///      treasury's share down, once per hop.
+    function test_sellLoanViaBuyOffer_restampsTheMarkForTheIncomingLender()
+        public
+    {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.clearMockedCalls();
+
+        (uint256 forfeitFrom, uint256 forfeitAccrued) = RiskPreviewFacet(
+            address(diamond)
+        ).sellerForfeitureWindow(activeLoanId);
+        assertEq(
+            forfeitFrom,
+            block.timestamp,
+            "the buyer's forfeiture window opens at the sale, not at the seller's mark"
+        );
+        assertEq(forfeitAccrued, 0, "and carries nothing from the seller's tenure");
+    }
+
+    /// @dev A plain position TRANSFER must NOT move the mark (Codex #1801 r3 P1,
+    ///      REFUTED in that direction). Nothing is settled by a transfer, so the
+    ///      outstanding forfeiture travels with the position exactly as the
+    ///      unpaid interest it represents does. Stamping at the transfer instead
+    ///      would let any lender zero their own forfeiture by sending the
+    ///      position to a second wallet — or to themselves — and selling from
+    ///      there, which is a larger hole than the one item 28 closes.
+    function test_directLenderNftTransfer_doesNotMoveThePaidThroughMark() public {
+        vm.warp(block.timestamp + 10 days);
+        uint256 mark = block.timestamp - 6 days;
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(activeLoanId, mark);
+
+        uint256 lenderTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
+        vm.prank(lender);
+        VaipakamNFTFacet(address(diamond)).transferFrom(lender, borrower, lenderTokenId);
+
+        (uint256 forfeitFrom, ) = RiskPreviewFacet(address(diamond))
+            .sellerForfeitureWindow(activeLoanId);
+        assertEq(
+            forfeitFrom,
+            mark,
+            "a transfer settles nothing, so the outstanding window is unchanged"
+        );
+    }
+
+    /// @dev The public view is what the client quote mirrors (Codex #1801 r3
+    ///      P2), so it must report the figure the sale actually charges — not an
+    ///      independently plausible one. Checked by differential: the view's
+    ///      accrual is exactly what the seller loses off the principal.
+    function test_sellerForfeitureWindow_matchesWhatTheSaleCharges() public {
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+
+        (uint256 forfeitFrom, uint256 forfeitAccrued) = RiskPreviewFacet(
+            address(diamond)
+        ).sellerForfeitureWindow(activeLoanId);
+        assertEq(forfeitFrom, block.timestamp - 6 days, "window opens at the mark");
+
+        uint256 principal =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal;
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        uint256 paid = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(forfeitAccrued, 0, "the seeded window must actually cost something");
+        assertEq(
+            principal - paid,
+            forfeitAccrued,
+            "the view reports exactly what the sale deducts"
+        );
+    }
+
+    /// @dev LISTED route. Same claim on the completion path, driven through the
+    ///      escrowed-proceeds fan-out — which needed a seeded escrow to reach at
+    ///      all, since the scaffolded completions here never run a real accept.
+    function test_completeLoanSale_forfeitsOnlyTheUnpaidStretch() public {
+        _stageAcceptedSaleListing();
+        vm.warp(block.timestamp + 10 days);
+        uint256 snap = vm.snapshotState();
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        uint256 paidForTenDays = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+
+        vm.revertToState(snap);
+
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp - 6 days
+        );
+        _mockSaleSideEffects();
+        openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        uint256 paidForSixDays = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertGt(paidForTenDays, 0, "control run must actually pay the seller");
+        uint256 forfeitedOverTenDays =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal
+                - paidForTenDays;
+        assertEq(
+            paidForSixDays - paidForTenDays,
+            (forfeitedOverTenDays * 4) / 10,
+            "the listed route prices the same window as the direct one"
+        );
+    }
+
+    /// @dev LISTED route, mark at now — completes rather than refusing, for the
+    ///      same reason the direct route does. The two exits cannot diverge.
+    function test_completeLoanSale_paidThroughNowForfeitsNothing() public {
+        _stageAcceptedSaleListing();
+        vm.warp(block.timestamp + 10 days);
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughRaw(
+            activeLoanId, block.timestamp
+        );
+
+        _mockSaleSideEffects();
+        uint256 openingBalance = ERC20(mockERC20).balanceOf(lender);
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        uint256 paid = ERC20(mockERC20).balanceOf(lender) - openingBalance;
+        vm.clearMockedCalls();
+
+        assertEq(
+            paid,
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal,
+            "a lender paid through now forfeits nothing on the listed route either"
+        );
+    }
+
+    /// @dev Post a listing, mark its vehicle offer accepted at the loan's own
+    ///      rate (no shortfall), and escrow the buyer's principal so the net
+    ///      settlement actually runs.
+    function _stageAcceptedSaleListing() internal {
+        // The loan's OWN rate, so the rate-shortfall leg is zero throughout.
+        _stageAcceptedSaleListingAtRate(500);
+    }
+
+    /// @dev A listing at `rateBps` rather than the loan's 500. Above it, the
+    ///      shortfall leg is non-zero and — unlike the forfeited accrual — it
+    ///      SHRINKS as the window elapses, which is what makes the two ends of
+    ///      the window disagree about which is worst.
+    function _stageAcceptedSaleListingAtRate(uint256 rateBps) internal {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, rateBps, true, 7 days);
+        vm.clearMockedCalls();
+
+        _setOfferAcceptedAndRate(50, rateBps);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
+        _setupTempLoan(2);
+        TestMutatorFacet(address(diamond)).setSaleProceedsEscrowRaw(activeLoanId, PRINCIPAL);
+    }
+
+    // ─── #1503 item 4: the seller's two economic bounds ──────────────────────
+
+    /// @dev Codex #1812 round 3/5 — the TRUNCATION SLACK, measured rather than
+    ///      argued. Evaluating both endpoints is exactly tight over the reals
+    ///      and not in integer arithmetic: the shortfall leg is a difference of
+    ///      two SEPARATELY TRUNCATED figures, so it can exceed both endpoint
+    ///      values at a second in between, and a floor recorded without slack
+    ///      then refuses a fill that changed nothing.
+    ///
+    ///      These parameters are not decorative — they are the smallest case I
+    ///      could construct that is REACHABLE here. The counterexample in the
+    ///      review used 7,203 seconds of remaining term, which this contract
+    ///      cannot express: `interestRemainingDaysOf` returns whole days, so
+    ///      the term is always a multiple of 86,400. Searching whole-day terms
+    ///      found this one:
+    ///
+    ///        principal 1e9, loan 2 bps, sale 3 bps, 13-day term, 280,800s
+    ///        window → cost 3,561 at listing, 2,671 at expiry, and 3,562 at
+    ///        t = 46s. Without slack the recorded floor sits ONE unit above the
+    ///        seller's own net at that second.
+    ///
+    ///      The probe is `quoteSellerBounds`, which returns the floor for a
+    ///      window. Quoting a window that begins and ends at the SAME second
+    ///      collapses both endpoint evaluations onto it, so that quote is that
+    ///      second's own cost. The slack is added back to recover the true net,
+    ///      which is why the constant appears in the assertion: the invariant
+    ///      is "the recorded floor never exceeds the seller's real net at any
+    ///      second inside the window", and the probe carries slack of its own.
+    function test_saleListing_floorCoversAnInteriorSecondDespiteTruncation() public {
+        uint256 truncLoanId = 4242;
+        LibVaipakam.Loan memory l;
+        l.id = truncLoanId;
+        l.lender = lender;
+        l.principal = 1_000_000_000;
+        l.interestRateBps = 2;
+        l.interestAccrualStart = uint64(block.timestamp);
+        l.interestRemainingDays = 13;
+        TestMutatorFacet(address(diamond)).setLoan(truncLoanId, l);
+
+        uint256 listedAt = block.timestamp;
+        (uint256 floorAtListing, ) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(truncLoanId, 3, listedAt + 280_800);
+
+        // The interior second whose truncated cost exceeds BOTH endpoints.
+        vm.warp(listedAt + 46);
+        (uint256 floorAtThatSecond, ) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(truncLoanId, 3, block.timestamp);
+        uint256 trueNetAtThatSecond =
+            floorAtThatSecond + LibSaleListing.TRUNCATION_SLACK;
+
+        assertLe(
+            floorAtListing,
+            trueNetAtThatSecond,
+            "the recorded floor must not exceed the seller's net at an interior second"
+        );
+    }
+
+    /// @dev The FLOOR is the worst case ACROSS THE WINDOW — both endpoints,
+    ///      whichever is worse for the seller, plus truncation slack (see
+    ///      `LibSaleListing.projectSellerBounds`). Ordinary accrual therefore
+    ///      sits inside it, which is the property that makes the bound usable
+    ///      at all: a floor at the figure the seller saw would make their own
+    ///      listing unfillable within minutes.
+    /// @dev Codex #1812 P1 — the worst moment to fill is not always the LAST
+    ///      moment, so the floor cannot be projected at the expiry alone.
+    ///
+    ///      The cost is `max(forfeited accrual, rate shortfall)` and the two
+    ///      legs move in opposite directions: accrual grows across the window,
+    ///      while the shortfall is owed over the REMAINING term and so shrinks.
+    ///      Listed well above the loan's own rate, the shortfall dominates and
+    ///      the sale is costliest to the seller IMMEDIATELY.
+    ///
+    ///      Projecting only at the expiry therefore recorded a floor ABOVE the
+    ///      seller's own instant net, and this fill — which disturbs nothing,
+    ///      warps nowhere, and is exactly what the seller asked for — reverted
+    ///      `SaleBelowSellerFloor`. The bound refusing the sale it exists to
+    ///      protect is the failure this pins.
+    ///
+    ///      Evaluating both ends is necessary and NOT sufficient (Codex #1812
+    ///      round 3): the shortfall leg is a difference of separately truncated
+    ///      figures, so it can peak between the endpoints, and the projection
+    ///      carries two units of slack for that. This case would still pass
+    ///      without the slack — its gap is far wider than two units — so the
+    ///      slack is covered by the derivation in `LibSaleListing`, not here.
+    function test_saleListing_immediateFillAtAHigherRateIsNotBelowTheFloor() public {
+        _stageAcceptedSaleListingAtRate(1500);
+        // No warp: the buyer fills at once, which is the costliest moment here.
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "an immediate fill on an above-rate listing is inside the seller's own floor"
+        );
+    }
+
+    function test_saleListing_ordinaryAccrualDoesNotTripTheFloor() public {
+        _stageAcceptedSaleListing();
+        // Most of the seller-chosen window elapses before the buyer fills.
+        vm.warp(block.timestamp + 6 days);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "the sale completed and the position stayed live for the buyer"
+        );
+    }
+
+    /// @dev A PRINCIPAL change is the case only the floor can see: it
+    ///      disqualifies the paid-through mark — re-opening the forfeiture
+    ///      window earlier than the projection assumed — while parking nothing,
+    ///      so the held ceiling is untouched.
+    ///
+    ///      ORDER MATTERS, and getting it wrong is what a first draft of this
+    ///      test did: the mark must exist BEFORE the listing, so the seller's
+    ///      projection is computed against a short window. Setting it
+    ///      afterwards and voiding it proves nothing — the projection already
+    ///      assumed the accrual origin, so the void returns the window to
+    ///      exactly where the floor expected it and nothing trips. That is the
+    ///      floor being correctly insensitive to a change that does not worsen
+    ///      the seller's position.
+    function test_saleListing_principalChangeTripsTheFloor() public {
+        // The loan must have RUN before the listing, or voiding the mark barely
+        // widens the window: with the accrual origin at listing time the two
+        // starting points nearly coincide and the projected cost is already the
+        // larger one. Thirty days of history is what makes the disqualification
+        // a step rather than a rounding difference.
+        // Ten days, not thirty: the listing window is clamped at the loan's own
+        // maturity, so too much history makes `createLoanSaleOffer` refuse the
+        // listing outright and the test would pass on the wrong revert. The
+        // trip needs only history + fill-delay to exceed the seven-day window.
+        _relaxBuyOfferForWarp(20);
+        vm.warp(block.timestamp + 10 days);
+        // A lender paid through NOW, so the listing's projected cost covers only
+        // the seven-day window and its floor is correspondingly high. The mark
+        // is stamped WITH the live principal, which is what a real settlement
+        // records and what the disqualifier below then contradicts.
+        uint256 principalAtMark =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).principal;
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, block.timestamp, principalAtMark
+        );
+        _stageAcceptedSaleListing();
+
+        // Then a partial repayment moves principal, disqualifying the mark. The
+        // forfeiture window re-opens at the accrual origin, far earlier than
+        // the projection assumed, and the seller's net drops below the floor
+        // they recorded.
+        //
+        // Staged as a genuine PRINCIPAL MISMATCH (Codex #1812 round-4 P2). This
+        // test previously called `setLenderMarkVoidedRaw`, which trips the
+        // independent freeze/park disqualifier — so despite its name and its
+        // comment it never exercised the principal-change predicate at all, and
+        // would have passed with that predicate deleted. Leaving the mark's
+        // recorded principal behind the loan's live one is what a partial
+        // repayment actually does.
+        TestMutatorFacet(address(diamond)).setLenderPaidThroughWithPrincipalRaw(
+            activeLoanId, block.timestamp, principalAtMark + 1
+        );
+        vm.warp(block.timestamp + 3 days);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        // The SELECTOR, not a bare expectRevert: an earlier draft of this test
+        // was tripping `InvalidSaleOffer` at listing time — too much warped
+        // history for the window — and a bare expectRevert passed on it,
+        // reporting a green test that never reached the bound at all.
+        vm.expectPartialRevert(IVaipakamErrors.SaleBelowSellerFloor.selector);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev A PARK between listing and acceptance enlarges what transfers to the
+    ///      buyer. Unlike the forfeiture it does not grow with time, so the
+    ///      ceiling is simply the balance at listing.
+    function test_saleListing_newParkTripsTheHeldCeiling() public {
+        _stageAcceptedSaleListing();
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.SaleAboveHeldCeiling.selector,
+                0,
+                1e6
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    // ─── #1810: bind the reviewed quote to the submitted listing ─────────────
+
+    /// @dev The happy path: quote and listing in the same block, so the
+    ///      recorded bounds equal the reviewed ones exactly — equality must
+    ///      PASS (only adverse drift is refused).
+    function test_1810_boundListingAcceptsTheReviewedQuote() public {
+        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
+            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld
+        );
+        vm.clearMockedCalls();
+        (uint256 recFloor, uint256 recHeld, bool recorded,) =
+            TestMutatorFacet(address(diamond)).getSaleListingBoundsRaw(activeLoanId);
+        assertTrue(recorded, "the bound listing recorded its bounds");
+        assertEq(recFloor, quotedFloor, "recorded floor equals the reviewed quote");
+        assertEq(recHeld, quotedHeld, "recorded ceiling equals the reviewed quote");
+    }
+
+    /// @dev Time passing between quote and mining is the mildest adverse
+    ///      drift: the forfeiture leg accrues, the projected cost rises, and
+    ///      the listing would record a floor BELOW the one the seller
+    ///      reviewed. The bound entry refuses it; the unbound entry would
+    ///      have silently recorded the worse figure — which is the seam this
+    ///      entry point closes.
+    function test_1810_boundListingRefusesAdverseFloorDrift() public {
+        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
+        vm.warp(block.timestamp + 1 days);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        // Partial revert: the recorded-floor argument depends on the exact
+        // warped second and pinning it would make the test brittle for no
+        // added proof — the SELECTOR is what shows the bound fired rather
+        // than some earlier listing guard.
+        vm.expectPartialRevert(IVaipakamErrors.ListingFloorBelowReviewed.selector);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
+            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Interest parked into held-for-lender between quote and mining
+    ///      enlarges what transfers with the position — the ceiling the
+    ///      listing would record exceeds the reviewed one, and the bound
+    ///      entry refuses with both figures named.
+    function test_1810_boundListingRefusesNewParkAboveReviewedCeiling() public {
+        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
+        assertEq(quotedHeld, 0, "fixture starts with nothing held");
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ListingHeldAboveReviewed.selector,
+                1e6,
+                0
+            )
+        );
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
+            activeLoanId, 500, true, 7 days, quotedFloor, quotedHeld
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev Better-than-reviewed passes: a seller who reviewed a LOWER floor
+    ///      and a HIGHER ceiling than the listing records is strictly better
+    ///      off, and refusing that would block ordinary favorable drift.
+    function test_1810_boundListingPassesOnFavorableDrift() public {
+        (uint256 quotedFloor, uint256 quotedHeld) = RiskPreviewFacet(address(diamond))
+            .quoteSellerBounds(activeLoanId, 500, block.timestamp + 7 days);
+        assertGt(quotedFloor, 0, "fixture floor is nonzero, so a weaker review exists");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOfferBound(
+            activeLoanId, 500, true, 7 days, quotedFloor - 1, quotedHeld + 1
+        );
+        vm.clearMockedCalls();
+        (,, bool recorded,) =
+            TestMutatorFacet(address(diamond)).getSaleListingBoundsRaw(activeLoanId);
+        assertTrue(recorded, "the listing landed despite the weaker review");
+    }
+
+    /// @dev A listing made before the bounds existed records none, and must keep
+    ///      completing exactly as it did. The recorded-flag is what makes this
+    ///      distinguishable from a listing whose ceiling is legitimately zero.
+    function test_saleListing_legacyListingWithoutBoundsStillCompletes() public {
+        _stageAcceptedSaleListing();
+        TestMutatorFacet(address(diamond)).clearSaleListingBoundsRaw(activeLoanId);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 1e6);
+        _mockSaleSideEffects();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "a pre-bounds listing is not retro-bound by a ceiling it never recorded"
+        );
     }
 
     // ─── createLoanSaleOffer reverts ─────────────────────────────────────────
@@ -657,7 +1813,7 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.SaleOfferAlreadyExists.selector);
+        vm.expectRevert(IVaipakamErrors.SaleOfferAlreadyExists.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
     }
 
@@ -964,8 +2120,8 @@ contract EarlyWithdrawalFacetTest is Test {
     function testDirectSaleBlockedWhileListed() public {
         _listSaleOffer();
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.SaleOfferAlreadyExists.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(
+        vm.expectRevert(IVaipakamErrors.SaleOfferAlreadyExists.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             activeLoanId, buyOfferId
         );
     }
@@ -994,6 +2150,596 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferAcceptFacet.AcceptPreview memory p =
             OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
         assertEq(p.lifEstimate, 0, "sale-vehicle accept quotes no LIF");
+    }
+
+    // ─── #1503 item 26: the sale vehicle never enters metrics / index / events ─
+    //
+    // The lender-sale temp loan is a transitional bookkeeping row, not real
+    // exposure: zero collateral, terminal within the same flow, and the UX says
+    // it is never visible. Item 26 makes that a PAIRED lifecycle — never
+    // counted at initiation (no metrics bump, no per-user index, no
+    // `LoanInitiated`) and never uncounted at terminal (the internal-vehicle
+    // transition runs no hook and emits no `LoanStatusChanged`) — so every
+    // write is exactly balanced and no consumer ever sees a phantom loan.
+
+    /// @dev A REAL sale accept (signed terms, funded buyer, auto-complete hop
+    ///      mocked) must leave every protocol-wide and per-user counter exactly
+    ///      where it was, keep the vehicle out of the keeper-walked active
+    ///      list, and announce no `LoanInitiated` — while the vehicle row
+    ///      itself exists and is Active for the completion hop to consume.
+    function test_1503item26_vehicleInvisibleAtInitiation() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("item26Buyer");
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer); ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+        vm.prank(buyer); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
+
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        // Mock the auto-complete hop: this test pins the ACCEPT half of the
+        // paired lifecycle in isolation (the completion half is pinned below).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(EarlyWithdrawalFacet.completeLoanSaleInternal.selector),
+            ""
+        );
+
+        uint256 activeBefore = MetricsFacet(address(diamond)).getActiveLoansCount();
+        (uint256 everBefore, uint256 rateSumBefore) =
+            TestMutatorFacet(address(diamond)).getLifetimeLoanCountersRaw();
+        uint256 lenderLoansBefore = MetricsFacet(address(diamond)).getUserLoanCount(lender);
+        uint256 buyerLoansBefore = MetricsFacet(address(diamond)).getUserLoanCount(buyer);
+        uint256 usersBefore = MetricsFacet(address(diamond)).getUserCount();
+        // The vehicle consumes the SELLER's sale-offer position NFT; the
+        // offer-side reverse entry must be released when it becomes a loan
+        // position, or the seller keeps showing a consumed listing as an open
+        // offer until the token is burned at completion.
+        uint256 vehicleOfferToken =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId).positionTokenId;
+        assertGt(vehicleOfferToken, 0, "fixture: the listing minted an offer position");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOfferIdByPositionTokenIdRaw(vehicleOfferToken),
+            saleOfferId,
+            "fixture: the offer-side reverse entry is live before the accept"
+        );
+
+        vm.recordLogs();
+        vm.prank(buyer);
+        uint256 tempLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.clearMockedCalls();
+
+        assertGt(tempLoanId, 0, "the accept forged a vehicle loan");
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(tempLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "the vehicle row exists and is Active for the completion hop"
+        );
+
+        assertEq(
+            MetricsFacet(address(diamond)).getActiveLoansCount(),
+            activeBefore,
+            "vehicle must not enter the active-loan count"
+        );
+        (uint256 everAfter, uint256 rateSumAfter) =
+            TestMutatorFacet(address(diamond)).getLifetimeLoanCountersRaw();
+        assertEq(everAfter, everBefore, "vehicle must not inflate totalLoansEverCreated");
+        assertEq(rateSumAfter, rateSumBefore, "vehicle must not skew the lifetime rate sum");
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(lender),
+            lenderLoansBefore,
+            "vehicle must not land in the exiting lender's loan history"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(buyer),
+            buyerLoansBefore,
+            "vehicle must not land in the buyer's loan history"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getActiveLoanListPosRaw(tempLoanId),
+            0,
+            "vehicle must never enter the keeper-walked active list"
+        );
+
+        // ── and the effects that are about RECORDS, not positions, are KEPT ──
+        // These are what a blanket "skip the metrics hook" would have dropped
+        // along with the counters. A buyer who acquires a position is a
+        // protocol participant even though the vehicle is not their loan...
+        assertEq(
+            MetricsFacet(address(diamond)).getUserCount(),
+            usersBefore + 1,
+            "the first-time buyer is still counted as a unique participant"
+        );
+        // ...and the consumed listing must stop presenting as an open offer
+        // position the moment its NFT becomes a loan position.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getOfferIdByPositionTokenIdRaw(vehicleOfferToken),
+            0,
+            "the consumed listing's offer-side reverse entry is released"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLoanIdByPositionTokenIdRaw(vehicleOfferToken),
+            tempLoanId,
+            "the position token now resolves to the record that holds it"
+        );
+
+        bytes32 initSig =
+            keccak256("LoanInitiated(uint256,uint256,address,address,uint256,uint256)");
+        for (uint256 i; i < logs.length; i++) {
+            assertTrue(
+                logs[i].topics[0] != initSig,
+                "no LoanInitiated may announce the vehicle"
+            );
+        }
+    }
+
+    /// @dev The completion half of the pair: closing a NEW-REGIME vehicle must
+    ///      not decrement counters it never incremented and must emit no
+    ///      `LoanStatusChanged` for a loan no indexer was ever told exists —
+    ///      while still terminalizing the vehicle row itself.
+    ///
+    ///      The fixture is MARKED explicitly (Codex #1825 r1 F3). A staged
+    ///      vehicle is written raw, so without the mark it is indistinguishable
+    ///      on-chain from a pre-upgrade record — and this assertion would then
+    ///      be claiming the new path while actually exercising the legacy one,
+    ///      whose correct behaviour is the OPPOSITE (see the legacy tests
+    ///      below). "Never counted" is not what selects silence; carrying the
+    ///      mark is.
+    function test_1503item26_completionSilentForNewRegimeVehicle() public {
+        _stageAcceptedSaleListing(); // vehicle is loan id 2, written raw — never counted
+        TestMutatorFacet(address(diamond)).setInternalVehicleMarkRaw(2, activeLoanId);
+        uint256 activeBefore = MetricsFacet(address(diamond)).getActiveLoansCount();
+
+        _mockSaleSideEffects();
+        vm.recordLogs();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.clearMockedCalls();
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(2).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the vehicle still terminalizes Active -> Repaid"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getActiveLoansCount(),
+            activeBefore,
+            "an uncounted vehicle must not decrement the active-loan count"
+        );
+
+        bytes32 statusSig = keccak256("LoanStatusChanged(uint256,uint8,uint8)");
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == statusSig) {
+                assertTrue(
+                    uint256(logs[i].topics[1]) != 2,
+                    "no LoanStatusChanged may name the uncounted vehicle"
+                );
+            }
+        }
+    }
+
+    /// @dev Codex #1825 r1 F2 — suppressing the vehicle's own writes is not
+    ///      enough: the record persists in storage under an id drawn from the
+    ///      shared sequence, so every ENUMERATE-BY-ID-RANGE surface kept
+    ///      finding it. A durable mark is what those surfaces filter on.
+    ///
+    ///      Asserted end to end on a real sale rather than per view, because
+    ///      the failure is one record leaking into several places at once.
+    function test_1503item26_vehicleAbsentFromEveryGlobalLoanSurface() public {
+        (, uint256 allBefore) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 50);
+        (, uint256 repaidBefore) = MetricsFacet(address(diamond))
+            .getLoansByStatusPaginated(LibVaipakam.LoanStatus.Repaid, 0, 50);
+        uint256 interestBefore =
+            MetricsFacet(address(diamond)).getTotalInterestEarnedNumeraire();
+
+        uint256 tempLoanId = _runRealSaleToCompletion("globalSurfaceBuyer");
+
+        // NOT asserted here: `getGlobalCounts`. It is the ID HIGH-WATER MARK by
+        // its own natspec, and consumers scan `[1..totalLoansCreated]`, so it
+        // must keep counting the ids vehicles consume (Codex #1825 r2). The
+        // count-of-loans claim belongs to `totalLoansEverCreated`, asserted in
+        // the initiation test above.
+        (uint256[] memory allIds, uint256 allAfter) =
+            MetricsFacet(address(diamond)).getAllLoansPaginated(0, 50);
+        assertEq(allAfter, allBefore, "the all-loans total must not count the vehicle");
+        for (uint256 i; i < allIds.length; i++) {
+            assertTrue(allIds[i] != tempLoanId, "vehicle listed in getAllLoansPaginated");
+        }
+
+        (uint256[] memory repaidIds, uint256 repaidAfter) = MetricsFacet(address(diamond))
+            .getLoansByStatusPaginated(LibVaipakam.LoanStatus.Repaid, 0, 50);
+        assertEq(
+            repaidAfter,
+            repaidBefore,
+            "the completed vehicle must not swell the Repaid page"
+        );
+        for (uint256 i; i < repaidIds.length; i++) {
+            assertTrue(repaidIds[i] != tempLoanId, "vehicle listed among Repaid loans");
+        }
+
+        // The vehicle mirrors the real loan's principal and rate, so a leak
+        // here double-counts the SAME money and invents interest nobody owed.
+        assertEq(
+            MetricsFacet(address(diamond)).getTotalInterestEarnedNumeraire(),
+            interestBefore,
+            "a completed vehicle must contribute no interest"
+        );
+    }
+
+    /// @dev Codex #1825 r2 — paging over a SPARSE visible sequence. Excluding
+    ///      vehicles from the rows and from `total` leaves `offset` counting
+    ///      visible records while the loop treated it as a raw id, and the two
+    ///      diverge the moment a vehicle sits below the offset: a page then
+    ///      re-serves rows the previous page already returned, and keeps
+    ///      serving them past the end.
+    ///
+    ///      Walked one row at a time on purpose — the defect only appears when
+    ///      the offset crosses the vehicle, which a single wide page hides.
+    function test_1503item26_paginationSkipsVisibleRecordsNotRawIds() public {
+        // A vehicle id lands BETWEEN visible loans: the setUp loan exists, the
+        // sale forges the vehicle, and a fresh loan is created after it.
+        uint256 vehicleId = _runRealSaleToCompletion("paginationBuyer");
+        uint256 laterLoanId = _openAnotherLoan("paginationBorrower");
+        assertGt(laterLoanId, vehicleId, "fixture: a visible loan sits above the vehicle");
+
+        (, uint256 total) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
+
+        uint256[] memory seen = new uint256[](total);
+        for (uint256 page; page < total; page++) {
+            (uint256[] memory ids, ) =
+                MetricsFacet(address(diamond)).getAllLoansPaginated(page, 1);
+            assertEq(ids.length, 1, "every page below the total must yield a row");
+            assertTrue(ids[0] != vehicleId, "a page must never serve the vehicle");
+            for (uint256 k; k < page; k++) {
+                assertTrue(seen[k] != ids[0], "pages must not repeat a row");
+            }
+            seen[page] = ids[0];
+        }
+        // The visible loan above the vehicle must be reachable by paging — the
+        // id-as-offset walk skipped straight past it.
+        bool sawLater;
+        for (uint256 k; k < total; k++) if (seen[k] == laterLoanId) sawLater = true;
+        assertTrue(sawLater, "a loan above the vehicle must be reachable by paging");
+
+        // ...and a page at `offset == total` is empty rather than re-serving.
+        (uint256[] memory pastEnd, ) =
+            MetricsFacet(address(diamond)).getAllLoansPaginated(total, 1);
+        assertEq(pastEnd.length, 0, "a page past the end must be empty");
+    }
+
+    /// @dev Codex #1825 r3 — ids are sequential and the high-water mark is
+    ///      public, so a caller can always DERIVE a vehicle's id from the gaps
+    ///      in an enumeration and read the retained row directly. Hiding it
+    ///      would be theatre (contract storage is readable regardless) and
+    ///      would break legitimate reads; what made the record dangerous was
+    ///      being UNLABELLED. So the row stays readable and can now be asked
+    ///      what it is.
+    function test_1503item26_aDerivedVehicleIdCanBeIdentified() public {
+        uint256 vehicleId = _runRealSaleToCompletion("identifyBuyer");
+
+        // The row is still readable — support and forensics need it, and the
+        // completion flow's own assertions read it.
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(vehicleId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the record stays readable by id"
+        );
+        // ...and a caller who reached it can find out what they are holding.
+        assertTrue(
+            MetricsFacet(address(diamond)).isSaleVehicleLoan(vehicleId),
+            "a derived vehicle id must identify itself as a vehicle"
+        );
+        assertFalse(
+            MetricsFacet(address(diamond)).isSaleVehicleLoan(activeLoanId),
+            "a real position must not be reported as a vehicle"
+        );
+    }
+
+    /// @dev Codex #1825 r3 — skipping visible records walks the prefix, which
+    ///      only becomes necessary once a vehicle makes the ids sparse. With
+    ///      none, visible rank and id agree exactly, so the original direct
+    ///      seek is still correct and a deployment that has never completed a
+    ///      listed sale keeps the cheaper path. Pinned because "still correct"
+    ///      is the part a fast path can quietly get wrong.
+    function test_1503item26_densePagingIsUnchangedWithoutVehicles() public {
+        uint256 second = _openAnotherLoan("denseBorrower");
+        (, uint256 total) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
+        assertEq(total, 2, "fixture: two visible loans, no vehicle");
+
+        (uint256[] memory p0, ) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
+        (uint256[] memory p1, ) = MetricsFacet(address(diamond)).getAllLoansPaginated(1, 1);
+        (uint256[] memory p2, ) = MetricsFacet(address(diamond)).getAllLoansPaginated(2, 1);
+        assertEq(p0[0], activeLoanId, "first page is the first loan");
+        assertEq(p1[0], second, "second page is the second loan");
+        assertEq(p2.length, 0, "a page past the end is empty");
+    }
+
+    /// @dev A second real loan, so the visible id sequence continues ABOVE the
+    ///      vehicle's id. Borrower-side of the setUp offer shape.
+    function _openAnotherLoan(string memory label) internal returns (uint256 loanId) {
+        (address borrower2, uint256 borrower2Pk) = makeAddrAndKey(label);
+        ERC20Mock(mockERC20).mint(borrower2, 100000 ether);
+        ERC20Mock(mockCollateralERC20).mint(borrower2, 100000 ether);
+        vm.prank(borrower2); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        vm.prank(borrower2); ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
+        address v = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower2);
+        vm.prank(borrower2); ERC20(mockERC20).approve(v, type(uint256).max);
+        vm.prank(borrower2); ERC20(mockCollateralERC20).approve(v, type(uint256).max);
+        vm.prank(borrower2); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(borrower2, LibVaipakam.KYCTier.Tier2);
+
+        vm.prank(lender);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower2, borrower2Pk, offerId
+        );
+    }
+
+    /// @dev Codex #1825 r1 F1 — the acceptance event is the one publication of
+    ///      the vehicle's id that suppressing `LoanInitiated` does not cover,
+    ///      and the indexer stores its `loanId` as an activity row's loan
+    ///      reference. It must name the REAL loan: the sale is a real event on
+    ///      a position consumers already track, while the vehicle id resolves
+    ///      to a record every loan list denies.
+    function test_1503item26_acceptEventNamesTheRealLoanNotTheVehicle() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = _fundedBuyer("acceptEventBuyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        vm.recordLogs();
+        vm.prank(buyer);
+        uint256 tempLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 sig_ = keccak256("OfferAccepted(uint256,address,uint256,uint256,uint256,bool)");
+        bool seen;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] != sig_) continue;
+            if (uint256(logs[i].topics[1]) != saleOfferId) continue;
+            (uint256 announcedLoanId, , , ) =
+                abi.decode(logs[i].data, (uint256, uint256, uint256, bool));
+            assertEq(
+                announcedLoanId,
+                activeLoanId,
+                "the accept must announce the real loan that changed hands"
+            );
+            assertTrue(announcedLoanId != tempLoanId, "the vehicle id must not be published");
+            seen = true;
+        }
+        assertTrue(seen, "fixture: the sale accept emitted no OfferAccepted");
+
+        // The RETURN value is unchanged — the completion hop needs the vehicle.
+        assertGt(tempLoanId, 0, "the accept still returns the vehicle id to its caller");
+    }
+
+    /// @dev Fund + provision a buyer able to take a sale listing.
+    function _fundedBuyer(string memory label)
+        internal
+        returns (address buyer, uint256 buyerPk)
+    {
+        (buyer, buyerPk) = makeAddrAndKey(label);
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer); ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+        vm.prank(buyer); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
+    }
+
+    /// @dev List, accept and settle a real sale in one flow (the accept
+    ///      auto-completes), returning the vehicle's loan id.
+    function _runRealSaleToCompletion(string memory label)
+        internal
+        returns (uint256 tempLoanId)
+    {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = _fundedBuyer(label);
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        vm.prank(buyer);
+        tempLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(tempLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "fixture: the sale did not settle inside the accept"
+        );
+    }
+
+    /// @dev LEGACY vehicles — accepted BEFORE this upgrade — were counted into
+    ///      the metrics layer at initiation, so their terminal must keep taking
+    ///      the ordinary decrementing transition (and keep emitting the #1792
+    ///      safety-net status event) or the active count leaks upward forever.
+    ///      Membership in `activeLoanIdsListPos` is the discriminator.
+    function test_1503item26_legacyCountedVehicleStillDecrements() public {
+        _stageAcceptedSaleListing();
+        // Replay the pre-upgrade world: the vehicle WAS registered in metrics.
+        TestMutatorFacet(address(diamond)).metricsCountLoanRaw(2);
+        assertGt(
+            TestMutatorFacet(address(diamond)).getActiveLoanListPosRaw(2),
+            0,
+            "fixture: the legacy vehicle sits in the active list"
+        );
+        uint256 activeBefore = MetricsFacet(address(diamond)).getActiveLoansCount();
+
+        _mockSaleSideEffects();
+        vm.recordLogs();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.clearMockedCalls();
+
+        assertEq(
+            MetricsFacet(address(diamond)).getActiveLoansCount(),
+            activeBefore - 1,
+            "a counted legacy vehicle must decrement on terminal"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getActiveLoanListPosRaw(2),
+            0,
+            "the legacy vehicle left the active list"
+        );
+        bytes32 statusSig = keccak256("LoanStatusChanged(uint256,uint8,uint8)");
+        bool announced;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == statusSig && uint256(logs[i].topics[1]) == 2) {
+                announced = true;
+            }
+        }
+        assertTrue(
+            announced,
+            "the ordinary transition still announces a counted legacy vehicle"
+        );
+    }
+
+    /// @dev Codex #1825 r1 F3 — the announced-but-UNCOUNTED legacy vehicle,
+    ///      which the first cut of this routing closed silently.
+    ///
+    ///      "Was it announced?" and "was it counted?" are independent
+    ///      questions, and `LibMetricsHooks` says so itself: a loan predating
+    ///      the counter layer or its backfill is absent from the active set
+    ///      while its `LoanInitiated` still built a row in every indexer. The
+    ///      first routing read active-list membership for BOTH, so this
+    ///      vehicle took the silent branch and its row stayed Active forever —
+    ///      the #1782 defect, reintroduced through the legacy door.
+    ///
+    ///      The staged fixture is exactly that shape: a vehicle written raw
+    ///      (never counted) and NOT carrying the item-26 mark (never created
+    ///      through the new path), which is what a pre-upgrade record looks
+    ///      like on-chain.
+    function test_1503item26_legacyUncountedVehicleStillAnnounces() public {
+        _stageAcceptedSaleListing();
+        assertEq(
+            TestMutatorFacet(address(diamond)).getActiveLoanListPosRaw(2),
+            0,
+            "fixture: this legacy vehicle was never counted"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getInternalVehicleRealLoanIdRaw(2),
+            0,
+            "fixture: and it carries no item-26 mark, so it is legacy"
+        );
+        uint256 activeBefore = MetricsFacet(address(diamond)).getActiveLoansCount();
+
+        _mockSaleSideEffects();
+        vm.recordLogs();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.clearMockedCalls();
+
+        bytes32 statusSig = keccak256("LoanStatusChanged(uint256,uint8,uint8)");
+        bool announced;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == statusSig && uint256(logs[i].topics[1]) == 2) {
+                announced = true;
+            }
+        }
+        assertTrue(
+            announced,
+            "a vehicle whose creation was announced must have its terminal announced"
+        );
+        // ...and the count it never joined is left alone.
+        assertEq(
+            MetricsFacet(address(diamond)).getActiveLoansCount(),
+            activeBefore,
+            "an uncounted vehicle must not decrement a total it never joined"
+        );
+    }
+
+    // ─── #1503 item 12: reward migration is ATOMIC with the settlement ───────
+    //
+    // Every sale quote discloses the seller's reward forfeiture and the
+    // buyer's residual entry as a cost line; a swallowed hook failure would
+    // settle the sale with neither delivered, in silence. The hook now
+    // bubbles: a revert WITH data is rethrown verbatim, an empty failure is
+    // named `RewardMigrationFailed`.
+
+    /// @dev LISTED route: a failing reward hook aborts `completeLoanSale`
+    ///      wholesale — no settlement without the disclosed reward migration.
+    function test_1503item12_completeLoanSaleBubblesRewardHookFailure() public {
+        _stageAcceptedSaleListing();
+        _mockSaleSideEffects();
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(InteractionRewardsFacet.transferLenderRewardEntry.selector),
+            "boom"
+        );
+        vm.prank(lender);
+        vm.expectRevert(bytes("boom"));
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev A DATALESS hook failure (the unrouted-selector deploy-drift shape)
+    ///      must surface as the named `RewardMigrationFailed`, not as an
+    ///      undiagnosable empty revert.
+    function test_1503item12_emptyRewardHookFailureIsNamed() public {
+        _stageAcceptedSaleListing();
+        _mockSaleSideEffects();
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(InteractionRewardsFacet.transferLenderRewardEntry.selector),
+            ""
+        );
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.RewardMigrationFailed.selector);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+    }
+
+    /// @dev DIRECT route: `sellLoanViaBuyOffer` carries the same promise and
+    ///      bubbles the same way.
+    function test_1503item12_directSaleBubblesRewardHookFailure() public {
+        _mockSaleSideEffects();
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(InteractionRewardsFacet.transferLenderRewardEntry.selector),
+            "boom"
+        );
+        vm.prank(lender);
+        vm.expectRevert(bytes("boom"));
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.clearMockedCalls();
     }
 
     // ─── _getTreasury coverage via accrued interest ───────────────────────────
@@ -1044,7 +2790,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer);
 
         // Loan lender should now be newLender
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
@@ -1059,7 +2805,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev Covers LoanNotActive in createLoanSaleOffer
@@ -1116,7 +2862,7 @@ contract EarlyWithdrawalFacetTest is Test {
         ERC20Mock(mockERC20).mint(lender, 100 ether);
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateBuyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateBuyOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -1166,7 +2912,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, slightlyHigherOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, slightlyHigherOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -1215,7 +2961,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sameRateOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, sameRateOffer);
 
         LibVaipakam.Loan memory loan2 = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan2.lender, newLender);
@@ -1278,7 +3024,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("withdraw failed"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
         vm.clearMockedCalls();
     }
 
@@ -1321,7 +3067,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("burn fail"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
         vm.clearMockedCalls();
     }
 
@@ -1365,7 +3111,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("mint fail"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
         vm.clearMockedCalls();
     }
 
@@ -1415,8 +3161,8 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongOffer);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongOffer);
     }
 
     /// @dev Covers InvalidSaleOffer when buyOffer.amount < loan.principal
@@ -1457,8 +3203,8 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowOffer);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowOffer);
         vm.clearMockedCalls();
     }
 
@@ -1500,8 +3246,8 @@ contract EarlyWithdrawalFacetTest is Test {
         );
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, longOffer);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, longOffer);
     }
 
     /// @dev Covers InvalidSaleOffer when buyOffer.collateralAmount > loan.collateralAmount
@@ -1539,8 +3285,8 @@ contract EarlyWithdrawalFacetTest is Test {
         );
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highCollOffer);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highCollOffer);
     }
 
     // ─── completeLoanSale keeper access ────────────────────────────────────
@@ -1604,7 +3350,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.warp(block.timestamp + 31 days);
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
     }
 
@@ -1648,7 +3394,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowRateOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowRateOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -1695,7 +3441,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("burn fail"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, localBuyOffer);
         vm.clearMockedCalls();
     }
 
@@ -1707,8 +3453,8 @@ contract EarlyWithdrawalFacetTest is Test {
         _setLoanAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev Covers InvalidSaleOffer for prepayAsset mismatch
@@ -1755,8 +3501,8 @@ contract EarlyWithdrawalFacetTest is Test {
         );
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongPrepay);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongPrepay);
     }
 
     /// @dev Covers InvalidSaleOffer for collateral asset mismatch
@@ -1803,8 +3549,8 @@ contract EarlyWithdrawalFacetTest is Test {
         );
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongColl);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongColl);
     }
 
     /// @dev Covers excess refund path (buyOffer.amount > loan.principal) and excess > 0 branch
@@ -1847,7 +3593,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -1907,7 +3653,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("refund fail"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
         vm.clearMockedCalls();
     }
 
@@ -1917,7 +3663,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setLoanAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
 
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
     }
 
@@ -1968,6 +3714,97 @@ contract EarlyWithdrawalFacetTest is Test {
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
         vm.clearMockedCalls();
+    }
+
+    /// @dev #1782 / #971, SUPERSEDED IN FORM BY #1503 item 26 — read the two
+    ///      together, because this test used to assert the exact opposite of
+    ///      what it now asserts, and the reversal is deliberate.
+    ///
+    ///      #1782's property is that no loan an indexer knows about can go
+    ///      dark. The sale vehicle was its motivating instance: an indexer
+    ///      recorded the vehicle's creation from `LoanInitiated`, and the
+    ///      terminal produced only `LoanSaleCompleted` — which names the
+    ///      ORIGINAL loan, never `tempLoanId` — so the projection showed the
+    ///      vehicle active forever. #1782 closed that by emitting from
+    ///      `LibLifecycle.transition`, giving the vehicle a terminal event.
+    ///
+    ///      Item 26 removes the PRECONDITION instead: the vehicle no longer
+    ///      announces its creation at all, so no indexer can hold a row for it
+    ///      and there is nothing to leave stuck. The property survives as a
+    ///      PAIRING — announced at both ends or at neither — and the vehicle
+    ///      now takes the "neither" branch. A terminal event for a loan no
+    ///      consumer was told exists is not the safety net; it is a status
+    ///      edge naming an unknown id, which is the same class of confusion
+    ///      #1782 set out to remove.
+    ///
+    ///      What this test therefore pins is the pairing across ONE REAL
+    ///      flow — accept and completion in a single transaction, no
+    ///      completion mock — since a fixture that stages the two halves
+    ///      separately could satisfy each in isolation while the live flow
+    ///      still announced one of them.
+    ///
+    ///      #1782's live half is unchanged and covered by
+    ///      `test_1503item26_legacyCountedVehicleStillDecrements`: a vehicle
+    ///      that WAS counted and announced (accepted before this upgrade)
+    ///      still takes the ordinary transition and still emits its edge.
+    function test_1782_saleVehicleAnnouncesNeitherEndOfItsLife() public {
+        uint256 saleOfferId = _listSaleOffer();
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("pairingBuyer");
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer); ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+        vm.prank(buyer); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(buyer, LibVaipakam.KYCTier.Tier2);
+
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+
+        vm.recordLogs();
+        vm.prank(buyer);
+        uint256 tempLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        // The flow ran to completion inside the accept: the position changed
+        // hands and the vehicle is terminal. Without this the silence below
+        // would be trivially satisfied by a flow that never happened.
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            buyer,
+            "the sale actually settled inside the accept"
+        );
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(tempLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the vehicle actually terminalised"
+        );
+
+        bytes32 initSig =
+            keccak256("LoanInitiated(uint256,uint256,address,address,uint256,uint256)");
+        bytes32 statusSig = keccak256("LoanStatusChanged(uint256,uint8,uint8)");
+        bool sawSaleCompleted;
+        bytes32 completedSig = keccak256("LoanSaleCompleted(uint256,address,address)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length == 0) continue;
+            if (logs[i].topics[0] == initSig) {
+                assertTrue(
+                    uint256(logs[i].topics[1]) != tempLoanId,
+                    "the vehicle announced its creation"
+                );
+            }
+            if (logs[i].topics[0] == statusSig && logs[i].topics.length > 1) {
+                assertTrue(
+                    uint256(logs[i].topics[1]) != tempLoanId,
+                    "the vehicle announced its terminal"
+                );
+            }
+            if (logs[i].topics[0] == completedSig) sawSaleCompleted = true;
+        }
+        // The sale IS narrated — on the REAL loan id, which is the row every
+        // consumer actually holds.
+        assertTrue(sawSaleCompleted, "the settlement is announced on the real loan");
     }
 
     /// @dev #831 — a BUYER (`newLender`) flagged AFTER committing the sale must
@@ -2140,7 +3977,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         vm.clearMockedCalls();
     }
 
@@ -2154,7 +3991,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
 
         vm.prank(owner);
         ProfileFacet(address(diamond)).updateKYCTier(newLender, LibVaipakam.KYCTier.Tier2);
@@ -2216,8 +4053,8 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // buyOfferId has collateralAssetType=ERC20 but loan now has ERC721 → mismatch
         vm.prank(lender);
-        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev Covers completeLoanSale where the live loan burn NFT succeeds but mint NFT succeeds,
@@ -2282,7 +4119,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         vm.clearMockedCalls();
     }
 
@@ -2299,7 +4136,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(bytes("fail"));
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         vm.clearMockedCalls();
     }
 
@@ -2542,7 +4379,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.prank(lender);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
 
         // Restore KYC
         vm.prank(owner);
@@ -2702,7 +4539,7 @@ contract EarlyWithdrawalFacetTest is Test {
         deal(mockERC20, address(diamond), PRINCIPAL + 100 ether);
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -2753,7 +4590,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateOffer);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, highRateOffer);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.lender, newLender);
@@ -2957,7 +4794,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
         // Sell the loan to the new lender.
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
 
         // Reservation re-keyed old → new, where the held VPFI now physically lives.
         assertEq(
@@ -2969,6 +4806,410 @@ contract EarlyWithdrawalFacetTest is Test {
             TestMutatorFacet(address(diamond)).getEncumberedRaw(newLender, mockERC20, 0),
             held,
             "held-for-lender reservation re-keyed to the new lender"
+        );
+    }
+
+    /// @notice #1817 (#1503 item 27) — a VPFI-principal DIRECT sale moves VPFI
+    ///         through both parties' vaults (buyer's principal debit + held
+    ///         credit, seller's held debit + proceeds credit) and must run the
+    ///         post-balance discount/staking checkpoint for each, per the
+    ///         rollup-at-the-mutation-site rule every other VPFI vault movement
+    ///         follows. Observable through the T-087 staker lifecycle: a 0→
+    ///         positive rollup stamps `currentStakeStartSec`, so both parties
+    ///         flip from "never stamped" to "active staker" at the sale.
+    function test_1817_directSaleRestampsBothPartiesVpfiCheckpoint() public {
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+
+        // Same held-for-lender scaffold as the #597 re-key test above, so the
+        // sale's VPFI block (`loan.principalAsset == s.vpfiToken`) fires. The
+        // seller also keeps an UNRELATED VPFI stake in their vault: the held
+        // slice migrates to the buyer at sale, and the checkpoint stamps the
+        // post-sale balance — a seller left at zero records no stake start
+        // (correctly), so the observable needs a remainder to stamp.
+        uint256 held = 500 ether;
+        uint256 sellerStake = 50 ether;
+        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(oldVault, held + sellerStake);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held + sellerStake);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
+
+        // Neither party has ever been stamped: vpfiToken was unset during
+        // setUp, so every earlier rollup call site was a no-op.
+        (uint40 sellerStart0, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        (uint40 buyerStart0, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertEq(sellerStart0, 0, "fixture: seller unstamped before the sale");
+        assertEq(buyerStart0, 0, "fixture: buyer unstamped before the sale");
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+
+        (uint40 sellerStart1, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        (uint40 buyerStart1, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertTrue(
+            sellerStart1 != 0,
+            "seller's VPFI checkpoint restamped at sale settlement"
+        );
+        assertTrue(
+            buyerStart1 != 0,
+            "buyer's VPFI checkpoint restamped at sale settlement"
+        );
+    }
+
+    /// @notice #1817, Codex #1819 r1 P1 — the DIRECT route must restamp the
+    ///         STORED lender (whose vault the held VPFI actually left), not
+    ///         `msg.sender`. After a plain lender-NFT transfer without
+    ///         consolidation, the caller is the current NFT holder while the
+    ///         held withdrawal still sources from `loan.lender` (the #672 P1
+    ///         rule) — restamping the caller would refresh a vault this sale
+    ///         never touched and leave the stored lender's accumulator at its
+    ///         pre-sale balance indefinitely.
+    function test_1817_directSaleRestampsStoredLenderNotNftHolder() public {
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+
+        uint256 held = 500 ether;
+        uint256 sellerStake = 50 ether;
+        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(oldVault, held + sellerStake);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held + sellerStake);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
+
+        // Hand the lender NFT to a third party WITHOUT consolidation, so the
+        // caller (NFT holder) and the stored `loan.lender` diverge.
+        address nftHolder = makeAddr("gap1817NftHolder");
+        vm.prank(nftHolder);
+        ProfileFacet(address(diamond)).setUserCountry("US");
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).updateKYCTier(nftHolder, LibVaipakam.KYCTier.Tier2);
+        uint256 lenderTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lenderTokenId;
+        TestMutatorFacet(address(diamond)).burnNFTRaw(lenderTokenId);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(nftHolder, lenderTokenId);
+
+        vm.prank(nftHolder);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+
+        (uint40 storedLenderStart, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        (uint40 holderStart, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(nftHolder);
+        assertTrue(
+            storedLenderStart != 0,
+            "the STORED lender - whose vault lost the held VPFI - is restamped"
+        );
+        assertEq(
+            holderStart,
+            0,
+            "the NFT holder's untouched vault records no stake start"
+        );
+    }
+
+    /// @notice #1817, Codex #1819 r3 P1 — the DIRECT route must checkpoint the
+    ///         buyer at the DEBIT trough, not only after the re-credits. The
+    ///         principal pull can take the buyer's vaulted VPFI to zero
+    ///         mid-transaction; a single post-credit stamp would observe
+    ///         positive→positive, so the staker lifecycle would never reset
+    ///         and the re-credited held VPFI would inherit the buyer's
+    ///         pre-sale tier tenure. The trough stamp makes the zero
+    ///         observable: the lifecycle clears at the debit and restarts at
+    ///         the credit, so the pre-sale stake tenure does not survive.
+    ///         (The ring's dayMin deliberately does NOT retain the
+    ///         mid-transaction zero: a same-day stamp whose previous close
+    ///         was zero routes to the fresh-write branch — the Sub 1.B
+    ///         round-2 P2 rule — so the assertion here is the stake start,
+    ///         which is the durable effect.)
+    function test_1817_directSaleBuyerDebitTroughResetsStakeStart() public {
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+
+        // Held scaffold so the buyer is re-credited after the debit (the
+        // trough is only a trough if the balance comes back up).
+        uint256 held = 500 ether;
+        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(oldVault, held);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
+
+        // The buy offer's creation escrow (== the full principal) is the
+        // buyer's ENTIRE vaulted VPFI, so the sale's principal pull troughs
+        // at exactly zero. Stamp the buyer NOW so they carry a live staker
+        // lifecycle (non-zero start) into the sale.
+        TestMutatorFacet(address(diamond)).restampUserVpfiRaw(newLender);
+        (uint40 buyerStart0, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertTrue(buyerStart0 != 0, "fixture: buyer is an active staker pre-sale");
+
+        // Shrink the buy offer's residual term below the loan's remaining
+        // days so the borrower-favorability duration check still passes
+        // after the warp (the warp exists so the pre-sale stake start and
+        // the sale timestamp are distinguishable).
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.durationDays = 7;
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+
+        (uint40 buyerStart1, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertEq(
+            buyerStart1,
+            uint40(block.timestamp),
+            "buyer's stake start RESET at the sale - the debit trough was observed"
+        );
+        assertTrue(
+            buyerStart1 != buyerStart0,
+            "pre-sale tenure does not survive the mid-sale zero balance"
+        );
+    }
+
+    /// @notice #1817, Codex #1819 r4 P1 — with an OVERSIZED buy offer the
+    ///         buyer's last vault debit is the EXCESS REFUND, not the
+    ///         principal pull: the principal-pull stamp records the
+    ///         still-positive excess, and only after the refund does the
+    ///         balance reach its true minimum (zero here — no rate
+    ///         shortfall). The refund leg must re-stamp, or the pre-sale
+    ///         stake tenure survives an actual zero.
+    function test_1817_directSaleOversizedOfferTroughAtExcessRefund() public {
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+
+        uint256 held = 500 ether;
+        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(oldVault, held);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
+
+        // Grow the buy offer past the principal and fund the difference in
+        // the buyer's vault, as the larger creation escrow would have. The
+        // principal pull now leaves `extra` behind, so the buyer's zero
+        // only appears after the refund withdraws it.
+        uint256 extra = 100 ether;
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.amount = o.amount + extra;
+        o.amountMax = o.amount;
+        o.durationDays = 7;
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+        address buyerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
+        ERC20Mock(mockERC20).mint(buyerVault, extra);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            newLender, mockERC20, ERC20Mock(mockERC20).balanceOf(buyerVault)
+        );
+
+        TestMutatorFacet(address(diamond)).restampUserVpfiRaw(newLender);
+        (uint40 buyerStart0, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertTrue(buyerStart0 != 0, "fixture: buyer is an active staker pre-sale");
+
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+
+        (uint40 buyerStart1, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertEq(
+            buyerStart1,
+            uint40(block.timestamp),
+            "buyer's stake start RESET - the post-refund zero was observed"
+        );
+        assertTrue(
+            buyerStart1 != buyerStart0,
+            "pre-sale tenure does not survive the post-refund zero"
+        );
+    }
+
+    /// @notice #1817, Codex #1819 r6 P1 — a SELF-SALE (the stored lender
+    ///         selling into their own standing buy offer) withdraws the held
+    ///         VPFI from the seller's vault and redeposits it into the SAME
+    ///         vault. The departed-lender checkpoint must therefore run at
+    ///         the held-withdrawal site, between debit and redeposit — a
+    ///         stamp taken only after the migration observes positive →
+    ///         positive across a real zero and the stake tenure survives.
+    function test_1817_directSelfSaleHeldMigrationResetsStakeStart() public {
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+
+        // The lender's vault holds ONLY the held VPFI, so the held
+        // withdrawal troughs at exactly zero before the self-redeposit.
+        uint256 held = 500 ether;
+        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(oldVault, held);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
+
+        // The lender creates their OWN buy offer as the sale vehicle.
+        ERC20Mock(mockERC20).mint(lender, PRINCIPAL);
+        vm.prank(lender);
+        ERC20Mock(mockERC20).approve(address(diamond), PRINCIPAL);
+        vm.prank(lender);
+        uint256 selfOfferId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 7,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        // Pre-stamp: the lender is an active staker (their vault holds the
+        // held VPFI plus the offer's escrow).
+        TestMutatorFacet(address(diamond)).restampUserVpfiRaw(lender);
+        (uint40 start0, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        assertTrue(start0 != 0, "fixture: lender is an active staker pre-sale");
+
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, selfOfferId);
+
+        (uint40 start1, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        assertEq(
+            start1,
+            uint40(block.timestamp),
+            "self-sale stake start RESET - the held-withdrawal zero was observed"
+        );
+        assertTrue(
+            start1 != start0,
+            "pre-sale tenure does not survive the held-migration zero"
+        );
+    }
+
+    /// @notice #1817, Codex #1819 r6 P2 — a completion that moves NOTHING of
+    ///         the buyer's (legacy/no-escrow path, equal rates, no held
+    ///         VPFI) must not restamp the buyer at all: a broadcasting
+    ///         checkpoint with an exhausted push budget could revert the
+    ///         only recovery hook for an accepted sale.
+    function test_1817_listedRecoveryCompletionSkipsBuyerRestamp() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        vm.clearMockedCalls();
+
+        // Equal rate (500 == the loan's), no escrow recorded, no held VPFI:
+        // the buyer's vault does not move during this completion.
+        _setOfferAcceptedAndRate(50, 500);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
+        _setupTempLoan(2);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(newLender, mockERC20, 100 ether);
+
+        // Fund the seller's accrued-interest pull (legacy path pays accrued
+        // to treasury from the seller's wallet).
+        ERC20Mock(mockERC20).mint(lender, 1_000 ether);
+        vm.prank(lender);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+
+        (uint40 buyerStart, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertEq(
+            buyerStart,
+            0,
+            "no buyer restamp - this completion moved nothing of theirs"
+        );
+    }
+
+    /// @notice #1817 (#1503 item 27) — LISTED-route mirror of the direct-sale
+    ///         restamp test: `completeLoanSale`'s VPFI settlement block must
+    ///         checkpoint the seller (captured pre-migration) and the buyer.
+    function test_1817_listedSaleCompletionRestampsBothParties() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true, 7 days);
+        vm.clearMockedCalls();
+
+        _setOfferAcceptedAndRate(50, 1000);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
+        _setupTempLoan(2);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+
+        // Flip the principal asset into VPFI territory only for the
+        // completion step, and give both parties a positive tracked VPFI
+        // balance so the restamp's 0→positive lifecycle flip is observable.
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, 100 ether);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(newLender, mockERC20, 100 ether);
+
+        // Give the loan a held-for-lender balance: the seller's restamp is
+        // (correctly) gated on their vault actually moving, and on this
+        // route the sale price goes to the seller's WALLET — only the held
+        // migration touches their vault. The withdraw leg is mocked above,
+        // so fund the Diamond directly for the buyer-side deposit leg.
+        uint256 heldSale = 500 ether;
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, heldSale);
+        ERC20Mock(mockERC20).mint(address(diamond), heldSale);
+
+        (uint40 sellerStart0, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        (uint40 buyerStart0, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertEq(sellerStart0, 0, "fixture: seller unstamped before completion");
+        assertEq(buyerStart0, 0, "fixture: buyer unstamped before completion");
+
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+        vm.clearMockedCalls();
+
+        (uint40 sellerStart1, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(lender);
+        (uint40 buyerStart1, , , ) =
+            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
+        assertTrue(
+            sellerStart1 != 0,
+            "seller's VPFI checkpoint restamped at listed-sale completion"
+        );
+        assertTrue(
+            buyerStart1 != 0,
+            "buyer's VPFI checkpoint restamped at listed-sale completion"
         );
     }
 
@@ -3029,7 +5270,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
             activeLoanId, buyOfferId
         );
     }
@@ -3613,6 +5854,7 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+
     /// @dev Codex #1505 r2 P2 — the teardown must emit the CANONICAL
     ///      `OfferCanceled` (same topic0 as cancelOffer's) alongside the
     ///      sale-specific event, attributed to the seller: the indexer's
@@ -3689,7 +5931,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 floor
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     function test_createLoanSaleOffer_revertsBelowSolvencyFloor() public {
@@ -3809,7 +6051,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
             newLender,
@@ -3898,7 +6140,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The principal leg is judged too, and names itself — `which == 1`.
@@ -3918,7 +6160,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The staleness half of #1655, in the direction that used to let a
@@ -3954,7 +6196,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The mirror direction, and the reason the snapshot is still read.
@@ -3983,7 +6225,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev Codex #1635 r8 — the refusal must NOT depend on the
@@ -4069,7 +6311,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 tightened
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The gate is one-directional: a loan STRICTER than today's terms is
@@ -4084,7 +6326,7 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
         vm.prank(lender);
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
             newLender,
@@ -4147,7 +6389,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 cap
             )
         );
-        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
     /// @dev The preview must agree with the accept. A preview that checked only

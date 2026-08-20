@@ -291,14 +291,20 @@ contract EncumbranceMutateFacet {
     ///         registry-aware `mustFreezeParty` + park machinery is heavy. Runs in
     ///         the diamond's storage context, so it reads the live loan and the
     ///         diamond-held proceeds exactly as an inline call would.
+    /// @param deliveredThroughAt #1503 item 28 — the period boundary this payout
+    ///        settles. Recorded as the lender's paid-through mark on the CLEAN
+    ///        branch only, so a later position sale does not forfeit a stretch
+    ///        the borrower has already paid for. Pass `0` from any caller whose
+    ///        payout does not correspond to a settled interest period.
     function freezeOrPayActiveLenderResident(
         uint256 loanId,
         address asset,
-        uint256 amount
+        uint256 amount,
+        uint256 deliveredThroughAt
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibCloseoutFreeze.freezeOrPayActiveLenderResident(
-            s, loanId, s.loans[loanId], asset, amount
+            s, loanId, s.loans[loanId], asset, amount, deliveredThroughAt
         );
     }
 

@@ -135,6 +135,36 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "LoanStatusChanged",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "from",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "ArmedFreshPaidAlreadySeeded",
+    "inputs": []
+  },
+  {
     "type": "error",
     "name": "AssetPaused",
     "inputs": [
@@ -814,6 +844,22 @@
   },
   {
     "type": "error",
+    "name": "DeliveredFreshShortfall",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DestinationHasNoDayStanding",
     "inputs": [
       {
@@ -1087,6 +1133,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidSaleOffer",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidTransition",
     "inputs": [
       {
@@ -1307,6 +1358,38 @@
     "type": "error",
     "name": "LiquidationFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ListingFloorBelowReviewed",
+    "inputs": [
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ListingHeldAboveReviewed",
+    "inputs": [
+      {
+        "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1550,6 +1633,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RateShortfallTooHigh",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1828,6 +1916,11 @@
   },
   {
     "type": "error",
+    "name": "RewardMigrationFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
   },
@@ -1841,6 +1934,43 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SaleAboveHeldCeiling",
+    "inputs": [
+      {
+        "name": "maxHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleBelowSellerFloor",
+    "inputs": [
+      {
+        "name": "minSellerNet",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "actual",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleOfferAlreadyExists",
+    "inputs": []
   },
   {
     "type": "error",

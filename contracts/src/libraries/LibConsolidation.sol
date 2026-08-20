@@ -256,6 +256,11 @@ library LibConsolidation {
         address user,
         uint256 loanId
     ) private {
+        // #1503 item 25 (Codex #1818 r2 P2) — keep the O(1) membership map in
+        // step with the array on BOTH outcomes, or a holder this scan indexed
+        // (map unset) who later departs and reacquires through a sale gets
+        // double-appended by the migration writer, whose dedup reads the map.
+        s.userLoanIndexed[user][loanId] = true;
         uint256[] storage ids = s.userLoanIds[user];
         uint256 n = ids.length;
         for (uint256 i; i < n; ) {
@@ -444,5 +449,25 @@ library LibConsolidation {
         if (vpfi == address(0)) return;
         uint256 bal = s.protocolTrackedVaultBalance[user][vpfi];
         LibVPFIDiscount.rollupUserDiscount(user, bal);
+    }
+
+    /// @notice Broadcast-FREE twin of {restampUserVpfi} (#1817, Codex #1819
+    ///         r7). An INTERMEDIATE checkpoint inside a multi-movement
+    ///         settlement (a sale's debit trough, a self-sale's
+    ///         held-withdrawal dip) exists to make a transient balance
+    ///         observable to the accumulator — no observer can use the
+    ///         intermediate tier tuple, so pushing it cross-chain would
+    ///         charge the shared CCIP budget once per checkpoint and could
+    ///         revert the whole settlement when the budget covers the first
+    ///         message but not the second. The FINAL stamp of the affected
+    ///         party carries the broadcast; the next broadcasting mutation
+    ///         picks up anything a local-only sequence left unpushed — the
+    ///         same contract `vaultCreditFromDiamondERC20` documents.
+    function restampUserVpfiLocal(address user) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vpfi = s.vpfiToken;
+        if (vpfi == address(0)) return;
+        uint256 bal = s.protocolTrackedVaultBalance[user][vpfi];
+        LibVPFIDiscount.rollupUserDiscountLocal(user, bal);
     }
 }

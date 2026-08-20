@@ -76,169 +76,79 @@ contract InteractionRewardsFacet is
         if (s.interactionLaunchTimestamp == 0) {
             revert InteractionEmissionsNotStarted();
         }
-        address vpfi = s.vpfiToken;
-        if (vpfi == address(0)) revert VPFITokenNotSet();
+        if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
 
-        LibInteractionRewards.EntrySplit memory sweepSplit =
-            LibInteractionRewards.sweepForfeitedByLoanId(loanId);
-        uint256 treasuryDelta = sweepSplit.total;
-        if (treasuryDelta == 0) return 0;
-
+        // #1699 r18 — the forfeit armed leg settles through the day engine
+        // (see {LibInteractionRewards.sweepForfeitedByLoanId}). This facet
+        // now only assembles the engine's budgets — identically to the
+        // expiry facet, one bound per source — and books what the engine
+        // reports back. The hand-rolled gate, pro-rata attribution and
+        // aggregate pool clamp are gone: the engine caps, splits and bounds
+        // PER DAY, defers what is recoverable (delivered, backing) and
+        // truncates only against the monotone 69M cap.
         uint256 paidOut = s.interactionPoolPaidOut;
-        // #776 — reserve remitted-to-mirror VPFI (see {claimInteractionRewards}).
-        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
-        uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
-            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
-            : 0;
-
-        // PR-3c — the 69M cap + truncation govern the FRESH share only;
-        // the recycled share is bucket-backed. Exhaustion blocks the sweep
-        // ONLY when there is nothing recycled to release (Codex #1315 P2:
-        // a post-arming forfeit with a recycled component must still be
-        // sweepable at fresh exhaustion, or its commitment stays stuck).
-        uint256 freshSwept = sweepSplit.total - sweepSplit.recycled;
-        if (remaining == 0 && sweepSplit.recycled == 0) {
-            revert InteractionPoolExhausted();
+        uint256 headroom;
+        bool freshRecoverable;
+        {
+            uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
+            headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+                ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
+                : 0;
+            (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
+            freshRecoverable = backingRoom < headroom;
+            if (backingRoom < headroom) headroom = backingRoom;
         }
-        if (freshSwept > remaining) freshSwept = remaining;
-        swept = freshSwept + sweepSplit.recycled;
-        s.interactionPoolPaidOut = paidOut + freshSwept;
+        uint256 allowance = LibVaipakam.isMirrorRewardChain(s)
+            ? LibInteractionRewards.deliveredFreshBound(s)
+            : type(uint256).max;
 
-        // PR-3c consume-at-sweep: retire the FULL armed-fresh commitment —
-        // the entries are processed either way (see the claim path note).
-        LibInteractionRewards.consumeArmedFresh(sweepSplit.armedFresh);
+        (
+            uint256 freshCredited,
+            uint256 recycledReleased,
+            uint256 armedOwed,
+            uint256 armedDelivered
+        ) = LibInteractionRewards.sweepForfeitedByLoanId(
+            loanId, headroom, allowance, freshRecoverable
+        );
+        // r18 P2 — NO unconditional exhaustion revert: a zero-liability
+        // forfeit (dust cap, zero-flooring days) must still retire at pool
+        // exhaustion, and a deferred day is a retryable wait, not an error.
+        // "Nothing happened" is a zero return, exactly like the expiry batch.
+        swept = freshCredited + recycledReleased;
+        if (swept == 0 && armedOwed == 0) return 0;
+
+        s.interactionPoolPaidOut = paidOut + freshCredited;
+        // The commitment retires by what each chunk OWED (cappedOff
+        // included) — never merely what moved (the r10 rule).
+        if (armedOwed != 0) {
+            LibInteractionRewards.consumeArmedFresh(armedOwed);
+        }
+        // #1434 P1-b — charge the mirror's delivered bound with the armed
+        // fresh that actually moved, which the engine attributed per day.
+        if (armedDelivered != 0 && LibVaipakam.isMirrorRewardChain(s)) {
+            s.rewardBudgetArmedFreshPaid += armedDelivered;
+        }
 
         // Governor PR-3a/PR-3c (#1217 §4) — forfeit source split: the
         // FRESH share stays in Diamond custody and credits the recycle
         // bucket (genuine absorption); the RECYCLED share never left the
         // bucket, so its commitment releases with ZERO new credit.
-        // refId = the swept loan for per-loan observability.
-        if (freshSwept > 0) {
+        if (freshCredited > 0) {
             LibVpfiRecycle.credit(
                 LibVpfiRecycle.RecycleSource.ForfeitedReward,
                 loanId,
-                freshSwept
+                freshCredited
             );
         }
-        if (sweepSplit.recycled > 0) {
+        if (recycledReleased > 0) {
             LibVpfiRecycle.releaseCommitment(
                 LibVpfiRecycle.RecycleSource.ForfeitedReward,
                 loanId,
-                sweepSplit.recycled
+                recycledReleased
             );
         }
     }
 
-    /**
-     * @notice RL-3 (#1305, ratified §10.2; Codex #1317 r7) — permissionless
-     *         claim-horizon sweep. For each entry it advances an
-     *         EXECUTABLE-ELAPSED accumulator: it starts on the first touch
-     *         that finds the entry claim-executable, and only intervals
-     *         during which the entry stayed claimable (with no observation
-     *         gap over `REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS`) are credited.
-     *         Once an entry has accrued a full `H + notice` of genuinely-
-     *         claimable time it is EXPIRED into the recycle bucket. Keepers
-     *         drive this on a heartbeat cadence; missed intervals only slow
-     *         accrual (safe), and no unobserved outage can reap an entry the
-     *         claimant could not actually claim.
-     *
-     *         Source-split per the ratified split-signals rule: the
-     *         fresh-funded share genuinely leaves the fresh budget into
-     *         protocol custody — it consumes the 69M pool and credits the
-     *         bucket as `ExpiredReward` absorption (feeds `credited[D]`/Ā);
-     *         the recycled-funded share never left the bucket, so it is a
-     *         pure commitment RELEASE with zero new credit.
-     *
-     *         Forfeited entries are out of scope (the forfeit sweep owns
-     *         them); a claim landing before expiry always wins (an expired
-     *         entry is simply `processed`, identical to a claimed one).
-     * @param  entryIds Entries to advance/expire (keeper batches).
-     * @return expiredTotal VPFI wei expired into the bucket by this call.
-     */
-    function sweepExpiredInteractionRewards(uint256[] calldata entryIds)
-        external
-        nonReentrant
-        whenNotPaused
-        returns (uint256 expiredTotal)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.interactionLaunchTimestamp == 0) {
-            revert InteractionEmissionsNotStarted();
-        }
-        if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
-
-        // Fresh headroom is tracked PER ENTRY across the batch (Codex
-        // #1317 r4): each processed entry's creditable fresh share is
-        // capped inside {sweepExpiredEntry} against what the batch has
-        // left, so several fresh entries can never all go terminal
-        // against one remaining-capacity sliver — at most one bounded
-        // boundary entry is partially credited, then the rest defer.
-        uint256 paidOut = s.interactionPoolPaidOut;
-        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
-        uint256 headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
-            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
-            : 0;
-        // The fresh credit also grows the recycle bucket, so it must stay
-        // within the bucket's BACKING headroom — {LibVpfiRecycle.credit}
-        // reverts unless `balance >= recycleBucket + freshTotal`, and a
-        // reverting credit would poison the whole permissionless batch
-        // (Codex #1317 r9). Cap fresh to the smaller of the pool cap and
-        // the backing room; both shrink by the same credited amount, so a
-        // single running minimum tracks them.
-        //
-        // #1498 — the un-earmarked figure comes from
-        // {LibVpfiRecycle.backingPosition}, the ONE definition the bucket's
-        // owning library exports, rather than being recomputed here. BOTH
-        // enforcement sites — this sweep cap and the claim-time reject —
-        // inlined `balanceOf − recycleBucket` instead of calling the
-        // definition, and the comments stating its limits then drifted
-        // apart. Duplicated arithmetic is the drift class. The zero-token
-        // case cannot reach the helper's own revert — this function's
-        // {VPFITokenNotSet} guard has already rejected it.
-        (, , uint256 backingRoom) = LibVpfiRecycle.backingPosition(s);
-        if (backingRoom < headroom) headroom = backingRoom;
-        uint256 freshTotal;
-        uint256 recycledTotal;
-        uint256 armedFreshTotal;
-        for (uint256 i = 0; i < entryIds.length; ) {
-            (
-                LibInteractionRewards.EntrySplit memory ex,
-                uint256 freshCredited
-            ) = LibInteractionRewards.sweepExpiredEntry(entryIds[i], headroom);
-            headroom -= freshCredited;
-            freshTotal += freshCredited;
-            recycledTotal += ex.recycled;
-            armedFreshTotal += ex.armedFresh;
-            unchecked { ++i; }
-        }
-        if (freshTotal + recycledTotal == 0) return 0;
-
-        // Fresh share: consumes the 69M pool (tokens leave the fresh
-        // budget) exactly like a forfeit — already per-entry capped above.
-        s.interactionPoolPaidOut = paidOut + freshTotal;
-        // Every swept entry is terminally `processed`, so its ENTIRE armed
-        // fresh commitment retires here even when the pool cap truncated the
-        // creditable fresh — otherwise the truncated remainder would sit
-        // in the outstanding-commitment sum forever (same rule as the claim
-        // and forfeit paths).
-        LibInteractionRewards.consumeArmedFresh(armedFreshTotal);
-
-        if (freshTotal > 0) {
-            LibVpfiRecycle.credit(
-                LibVpfiRecycle.RecycleSource.ExpiredReward,
-                0,
-                freshTotal
-            );
-        }
-        if (recycledTotal > 0) {
-            LibVpfiRecycle.releaseCommitment(
-                LibVpfiRecycle.RecycleSource.ExpiredReward,
-                0,
-                recycledTotal
-            );
-        }
-        expiredTotal = freshTotal + recycledTotal;
-    }
 
     // ─── Admin ───────────────────────────────────────────────────────────────
 
