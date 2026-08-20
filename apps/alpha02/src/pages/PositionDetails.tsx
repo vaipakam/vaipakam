@@ -46,6 +46,7 @@ import {
   loanEndTimeOf,
   readLoanLive,
   readRepaymentDueLive,
+  MIN_SALE_LISTING_SECONDS,
 } from '../contracts/loanLive';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
@@ -3025,6 +3026,24 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               return banner === live ? banner : 'unknown';
             }
             return banner ?? live ?? 'unknown';
+          })()}
+          // Chain-anchored, and only asserted when a live term is
+          // actually known — an unread term must not claim the window
+          // is too short (Codex r18 P2). Shares the tool's own
+          // constant rather than mirroring it.
+          listingWindowTooShort={(() => {
+            if (bannerTerms.data && !bannerTerms.isError) {
+              return (
+                termsEndSec > bannerNowSec &&
+                BigInt(termsEndSec - bannerNowSec) < MIN_SALE_LISTING_SECONDS
+              );
+            }
+            if (loanLive.data && !loanLive.isError) {
+              const end = loanEndTimeOf(loanLive.data.live);
+              const now = loanLive.data.chainNow;
+              return end > now && BigInt(end - now) < MIN_SALE_LISTING_SECONDS;
+            }
+            return false;
           })()}
           // Sync env read (`VITE_DISABLED_FLOWS`), no query behind it.
           listingFlowDisabled={flowDisabled('post-offer')}

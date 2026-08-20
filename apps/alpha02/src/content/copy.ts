@@ -2084,6 +2084,12 @@ const copySource = {
       // kill switch, so gating it too would invent a blocker.
       listUnavailableFlowDisabled:
         'Not available right now — new listings are paused on this deployment while an issue is looked into. Your position is unaffected and the other options still apply.',
+      // The listing window is clamped at maturity, and the contract
+      // refuses a window shorter than MIN_SALE_LISTING_SECONDS — so in
+      // the last hour of a term no listing can be created, while the
+      // instant sale stays available (Codex r18 P2).
+      listUnavailableTooClose:
+        'Too close to the due date to list — a listing needs at least an hour before the loan matures. Selling into a standing offer still works.',
       listUnavailableNetwork:
         'Not available on this network yet — the listing tools aren’t published to this deployment.',
       listUnavailableNft:

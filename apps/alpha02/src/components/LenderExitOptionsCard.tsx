@@ -64,6 +64,8 @@ export function LenderExitOptionsCard({
    *  line: a fully-elapsed term is refused at CREATION. Three-valued,
    *  not a boolean — see `MaturityState`. */
   maturity: MaturityState;
+  /** See `LenderExitInput.listingWindowTooShort`. */
+  listingWindowTooShort: boolean;
   /** The listing surface is not published to every deployment. */
   listingSupportedOnChain: boolean;
   /** Operator kill switch — LISTING row only. See the input's note. */

@@ -233,6 +233,19 @@ export interface LenderExitInput {
   /** Chain-anchored only — never a device clock. See `MaturityState`
    *  for why this is not a boolean. */
   maturity: MaturityState;
+  /** Less than `MIN_SALE_LISTING_SECONDS` remains before maturity.
+   *
+   *  LISTING-ONLY, and that asymmetry is the point: `_boundListingExpiry`
+   *  clamps the window at maturity and then refuses anything shorter
+   *  than the minimum, so in the final hour no listing can be created —
+   *  while the instant sale has no window at all and stays available.
+   *  `LoanSaleFlow` only reports this at submit time, after the lender
+   *  has switched modes and filled the form (Codex r18 P2).
+   *
+   *  Costs no read: the app already exports the same
+   *  `MIN_SALE_LISTING_SECONDS` the tool uses, so this SHARES the
+   *  constant rather than copying it. */
+  listingWindowTooShort: boolean;
   listingSupportedOnChain: boolean;
   /** Operator kill switch (`VITE_DISABLED_FLOWS`). Scoped to the
    *  LISTING row: `LoanSaleFlow` refuses and shows the incident
@@ -372,11 +385,17 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
               : input.saleCancel === 'no-elsewhere'
                 ? o.listAlreadyListedNoCancel
                 : o.listAlreadyListedCancelUnverified
-          : !input.listingSupportedOnChain
-            ? o.listUnavailableNetwork
-            : input.collateralIsNft
-              ? o.listUnavailableNft
-              : // Operator/protocol-level facts about whether the
+          : // Ranked ABOVE the network and collateral reasons: this one
+            // is about THIS loan right now, and a lender who is told
+            // "not on this network" would go looking for another
+            // network when the real answer is "not in the last hour".
+            input.listingWindowTooShort
+            ? o.listUnavailableTooClose
+            : !input.listingSupportedOnChain
+              ? o.listUnavailableNetwork
+              : input.collateralIsNft
+                ? o.listUnavailableNft
+                : // Operator/protocol-level facts about whether the
                 // surface exists at all rank ABOVE position-specific
                 // refusals: "the tool is switched off" before "your
                 // position carries a balance to clear".

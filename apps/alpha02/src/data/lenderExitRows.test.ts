@@ -13,6 +13,7 @@ const base: LenderExitInput = {
   periodicInterestCadence: 0,
   cadenceReadFailed: false,
   maturity: 'current',
+  listingWindowTooShort: false,
   listingSupportedOnChain: true,
   listingFlowDisabled: false,
   saleTools: 'ready',
@@ -44,6 +45,7 @@ describe('wait row — ordering and framing', () => {
       periodicInterestCadence: undefined,
       cadenceReadFailed: true,
       maturity: 'past',
+      listingWindowTooShort: true,
       listingSupportedOnChain: false,
       listingFlowDisabled: true,
       saleTools: 'failed',
@@ -757,5 +759,36 @@ describe('borrower offset — refuses BOTH routes, not just listing', () => {
         rowFor({ borrowerOffsetPending: true, maturity: 'past' }, key).unavailable,
       ).toBe(copy.lenderExit.pastDue);
     }
+  });
+});
+
+
+describe('final-hour listing cutoff', () => {
+  it('blocks ONLY the listing row — the instant sale has no window', () => {
+    expect(rowFor({ listingWindowTooShort: true }, 'list').unavailable).toBe(
+      o.listUnavailableTooClose,
+    );
+    expect(
+      rowFor({ listingWindowTooShort: true }, 'sell-now').unavailable,
+    ).toBeUndefined();
+  });
+
+  it('is outranked by past maturity — the wider refusal wins', () => {
+    expect(
+      rowFor({ listingWindowTooShort: true, maturity: 'past' }, 'list')
+        .unavailable,
+    ).toBe(copy.lenderExit.pastDue);
+  });
+
+  it('outranks the narrower network and collateral reasons', () => {
+    const row = rowFor(
+      {
+        listingWindowTooShort: true,
+        listingSupportedOnChain: false,
+        collateralIsNft: true,
+      },
+      'list',
+    );
+    expect(row.unavailable).toBe(o.listUnavailableTooClose);
   });
 });
