@@ -959,12 +959,20 @@ contract MetricsFacet {
         returns (uint256 totalLoansCreated, uint256 totalOffersCreated)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // #1503 item 26 (Codex #1825 r1) — ids issued MINUS the lender-sale
-        // transitional vehicles. Each sale draws an id from the same sequence,
-        // so the raw high-water mark counts records that are not positions and
-        // that no loan list returns; a running vehicle count keeps this O(1)
-        // rather than forcing a scan to subtract them.
-        totalLoansCreated = s.nextLoanId - s.internalVehicleLoanCount;
+        // #1503 item 26 (Codex #1825 r2) — this stays the ID HIGH-WATER MARK
+        // and deliberately still counts sale vehicles. An earlier cut of item
+        // 26 subtracted them, which broke the contract this function's own
+        // natspec states: ids are sequential, so consumers (including the
+        // `MetricsCountersParity` invariant) scan `[1..totalLoansCreated]`.
+        // Vehicles consume ids like anything else, so subtracting them lowers
+        // the bound below real loans that sit ABOVE a vehicle's id and those
+        // loans vanish from the scan.
+        //
+        // Excluding vehicles from a COUNT OF LOANS is a different question,
+        // answered where a count actually lives: `getProtocolStats`'s
+        // `totalLoansEverCreated` never counted them (the vehicle skips at
+        // creation), and every enumerating view below filters them out.
+        totalLoansCreated = s.nextLoanId;
         totalOffersCreated = s.nextOfferId;
     }
 
@@ -1453,15 +1461,23 @@ contract MetricsFacet {
         total = s.nextLoanId; // highest valid id (1-indexed; sequence starts at 1)
         uint256[] memory buf = new uint256[](limit);
         uint256 filled;
-        uint256 start = offset + 1; // IDs start at 1
         // #1503 item 26 — the reported total excludes sale vehicles, so the
         // rows must too, or a page returns an id the caller cannot reconcile
         // against `total` (and can resolve through `getLoanDetails` to a
         // record the product says does not exist).
         total -= s.internalVehicleLoanCount;
-        for (uint256 id = start; id <= s.nextLoanId && filled < limit; id++) {
+        // `offset` counts VISIBLE records, not raw ids (Codex #1825 r2). Once
+        // a vehicle sits below the requested offset the two stop agreeing, and
+        // treating the offset as an id then re-serves rows already returned by
+        // the previous page and keeps serving them past the end — with visible
+        // ids 1 and 3 around a vehicle at 2, `(1,1)` and `(2,1)` both answered
+        // `[3]` even though `offset == total`. Skipping visible records is
+        // also what the by-status twin below already does.
+        uint256 skipped;
+        for (uint256 id = 1; id <= s.nextLoanId && filled < limit; id++) {
             if (s.loans[id].id == 0) continue;
             if (LibMetricsHooks.isInternalVehicle(s, id)) continue;
+            if (skipped < offset) { skipped += 1; continue; }
             buf[filled] = id; filled += 1;
         }
         loanIds = new uint256[](filled);

@@ -2237,7 +2237,6 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      Asserted end to end on a real sale rather than per view, because
     ///      the failure is one record leaking into several places at once.
     function test_1503item26_vehicleAbsentFromEveryGlobalLoanSurface() public {
-        (uint256 createdBefore, ) = MetricsFacet(address(diamond)).getGlobalCounts();
         (, uint256 allBefore) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 50);
         (, uint256 repaidBefore) = MetricsFacet(address(diamond))
             .getLoansByStatusPaginated(LibVaipakam.LoanStatus.Repaid, 0, 50);
@@ -2246,13 +2245,11 @@ contract EarlyWithdrawalFacetTest is Test {
 
         uint256 tempLoanId = _runRealSaleToCompletion("globalSurfaceBuyer");
 
-        (uint256 createdAfter, ) = MetricsFacet(address(diamond)).getGlobalCounts();
-        assertEq(
-            createdAfter,
-            createdBefore,
-            "a sale must not raise the count of loans ever created"
-        );
-
+        // NOT asserted here: `getGlobalCounts`. It is the ID HIGH-WATER MARK by
+        // its own natspec, and consumers scan `[1..totalLoansCreated]`, so it
+        // must keep counting the ids vehicles consume (Codex #1825 r2). The
+        // count-of-loans claim belongs to `totalLoansEverCreated`, asserted in
+        // the initiation test above.
         (uint256[] memory allIds, uint256 allAfter) =
             MetricsFacet(address(diamond)).getAllLoansPaginated(0, 50);
         assertEq(allAfter, allBefore, "the all-loans total must not count the vehicle");
@@ -2277,6 +2274,97 @@ contract EarlyWithdrawalFacetTest is Test {
             MetricsFacet(address(diamond)).getTotalInterestEarnedNumeraire(),
             interestBefore,
             "a completed vehicle must contribute no interest"
+        );
+    }
+
+    /// @dev Codex #1825 r2 — paging over a SPARSE visible sequence. Excluding
+    ///      vehicles from the rows and from `total` leaves `offset` counting
+    ///      visible records while the loop treated it as a raw id, and the two
+    ///      diverge the moment a vehicle sits below the offset: a page then
+    ///      re-serves rows the previous page already returned, and keeps
+    ///      serving them past the end.
+    ///
+    ///      Walked one row at a time on purpose — the defect only appears when
+    ///      the offset crosses the vehicle, which a single wide page hides.
+    function test_1503item26_paginationSkipsVisibleRecordsNotRawIds() public {
+        // A vehicle id lands BETWEEN visible loans: the setUp loan exists, the
+        // sale forges the vehicle, and a fresh loan is created after it.
+        uint256 vehicleId = _runRealSaleToCompletion("paginationBuyer");
+        uint256 laterLoanId = _openAnotherLoan("paginationBorrower");
+        assertGt(laterLoanId, vehicleId, "fixture: a visible loan sits above the vehicle");
+
+        (, uint256 total) = MetricsFacet(address(diamond)).getAllLoansPaginated(0, 1);
+
+        uint256[] memory seen = new uint256[](total);
+        for (uint256 page; page < total; page++) {
+            (uint256[] memory ids, ) =
+                MetricsFacet(address(diamond)).getAllLoansPaginated(page, 1);
+            assertEq(ids.length, 1, "every page below the total must yield a row");
+            assertTrue(ids[0] != vehicleId, "a page must never serve the vehicle");
+            for (uint256 k; k < page; k++) {
+                assertTrue(seen[k] != ids[0], "pages must not repeat a row");
+            }
+            seen[page] = ids[0];
+        }
+        // The visible loan above the vehicle must be reachable by paging — the
+        // id-as-offset walk skipped straight past it.
+        bool sawLater;
+        for (uint256 k; k < total; k++) if (seen[k] == laterLoanId) sawLater = true;
+        assertTrue(sawLater, "a loan above the vehicle must be reachable by paging");
+
+        // ...and a page at `offset == total` is empty rather than re-serving.
+        (uint256[] memory pastEnd, ) =
+            MetricsFacet(address(diamond)).getAllLoansPaginated(total, 1);
+        assertEq(pastEnd.length, 0, "a page past the end must be empty");
+    }
+
+    /// @dev A second real loan, so the visible id sequence continues ABOVE the
+    ///      vehicle's id. Borrower-side of the setUp offer shape.
+    function _openAnotherLoan(string memory label) internal returns (uint256 loanId) {
+        (address borrower2, uint256 borrower2Pk) = makeAddrAndKey(label);
+        ERC20Mock(mockERC20).mint(borrower2, 100000 ether);
+        ERC20Mock(mockCollateralERC20).mint(borrower2, 100000 ether);
+        vm.prank(borrower2); ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        vm.prank(borrower2); ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
+        address v = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower2);
+        vm.prank(borrower2); ERC20(mockERC20).approve(v, type(uint256).max);
+        vm.prank(borrower2); ERC20(mockCollateralERC20).approve(v, type(uint256).max);
+        vm.prank(borrower2); ProfileFacet(address(diamond)).setUserCountry("US");
+        ProfileFacet(address(diamond)).updateKYCTier(borrower2, LibVaipakam.KYCTier.Tier2);
+
+        vm.prank(lender);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower2, borrower2Pk, offerId
         );
     }
 
