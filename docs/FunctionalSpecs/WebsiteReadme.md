@@ -284,6 +284,7 @@ Privacy and consent requirements:
 - `ads_data_redaction` should ensure ad-click identifiers are redacted on outbound requests whenever advertising consent is denied
 - `url_passthrough` should allow conversion attribution to flow through URL parameters instead of cookies where appropriate
 - no non-essential tracking category should load before the user grants the corresponding consent
+- this holds however the collector arrived. Analytics injected into responses by the hosting or CDN layer, rather than requested by the application, sits downstream of the consent pipeline and cannot be gated by it, so it must be switched off at the layer that injects it. The site's content policy should not name such a collector: refusing it is the correct behaviour, and adding it to silence the resulting console message would trade a visible symptom for an unconsented collector running on every page. Any analytics the product does want — the hosting provider's own included — should be loaded through the consent-aware pipeline like every other category
 - the connected app's wallet-connection SDKs (e.g. the WalletConnect and Coinbase Wallet connectors) must have their own third-party analytics / telemetry beacons disabled, so simply opening the connect modal does not phone home usage data the user never consented to — and locked-down networks are not spammed with failed analytics requests
 
 Legal and data-rights requirements:
