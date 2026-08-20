@@ -106,6 +106,13 @@ surface and must not be taught to accept an unverified one.
 | File | Covers | Introduced by |
 | --- | --- | --- |
 | `live-worked-example.mjs` | The Overview's worked-example figures render as derived live values with the contract's integer arithmetic and honest provenance; the help search finds a page by a figure printed on it | #1751 (#1664 items 1 + 2) |
+| `live-wallet-telemetry.mjs` | Loading a connected-app origin sends nothing to the wallet SDKs' telemetry hosts — takes origins as arguments, so it covers `defi`, `alpha01` and `alpha02` | #1836 (#1824) |
+
+The second one lives here rather than under the app it checks because it
+targets three origins and belongs to none of them, and because this is where
+the browser tooling and the container setup above already are. `apps/defi` and
+`apps/alpha01` carry no Playwright dependency; adding one to each so a
+cross-app check could sit in both would be the worse trade.
 
 ## Adding one
 
