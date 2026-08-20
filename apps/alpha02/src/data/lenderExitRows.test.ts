@@ -734,3 +734,28 @@ describe('Full-tariff entitlement — the fourth loss', () => {
     expect(full.cost).not.toContain(o.costFullTariff);
   });
 });
+
+describe('borrower offset — refuses BOTH routes, not just listing', () => {
+  it('blocks the instant-sale row, which jumps straight to a wallet prompt', () => {
+    // EarlyWithdrawalDirectFacet:253 reverts OffsetActiveOnLoan just as
+    // the listing facet does. Consulting it on one row only left the
+    // more dangerous row available (Codex r15 P2).
+    expect(rowFor({ borrowerOffsetPending: true }, 'sell-now').unavailable).toBe(
+      o.listUnavailableOffsetPending,
+    );
+  });
+
+  it('still blocks the listing row', () => {
+    expect(rowFor({ borrowerOffsetPending: true }, 'list').unavailable).toBe(
+      o.listUnavailableOffsetPending,
+    );
+  });
+
+  it('past due still outranks it on both rows', () => {
+    for (const key of ['sell-now', 'list']) {
+      expect(
+        rowFor({ borrowerOffsetPending: true, maturity: 'past' }, key).unavailable,
+      ).toBe(copy.lenderExit.pastDue);
+    }
+  });
+});

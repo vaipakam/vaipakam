@@ -245,6 +245,19 @@ export interface LenderExitInput {
   /** See `SaleToolsState` — applies to BOTH sale rows. */
   saleTools: SaleToolsState;
   heldVpfiUnresolved: boolean;
+  /** The borrower has a linked exit (preclose offset) pending.
+   *
+   *  Refuses BOTH sale routes, not just the listing (Codex r15 P2):
+   *  `EarlyWithdrawalDirectFacet:253` rejects `OffsetActiveOnLoan` on
+   *  the direct sale exactly as `EarlyWithdrawalFacet` does for a
+   *  listing. Consulting it on one row only was a shadow copy that had
+   *  missed one of the two entry points — and the row it left
+   *  available is the one that jumps straight to a wallet prompt.
+   *
+   *  Still always `false` from the page (see the call site): the live
+   *  link needs a chain read, tracked with #1841. Wiring it correctly
+   *  now means the read lands as a one-line change on both rows rather
+   *  than as a rediscovery of this asymmetry. */
   borrowerOffsetPending: boolean;
   instantSellCandidates: InstantSellCandidates;
 }
@@ -323,6 +336,8 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
             ? input.saleTools === 'failed'
                 ? o.saleToolsFailed
                 : o.saleToolsChecking
+          : input.borrowerOffsetPending
+            ? o.listUnavailableOffsetPending
           : input.instantSellCandidates === 'checking'
           ? copy.lenderExit.checking
           : input.instantSellCandidates === 'none'

@@ -373,7 +373,27 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // cost for a watch their wallet can't answer.
     !loanIsRental && Boolean(loan.data) && role === 'lender',
   );
-  const salePending = sale.state?.listed === true;
+  /** A listing that SUPPRESSES another surface must be verified.
+   *
+   *  One principle, because the three consumers of `listed` differ in
+   *  which direction an error hurts (Codex r15 P2):
+   *
+   *    - This one HIDES the instant-exit tool. A retained `listed:
+   *      true` from a failed refetch therefore removes a working exit
+   *      from a lender whose position another device already unlocked,
+   *      so it must be health-checked — and is, here.
+   *    - The chooser's rows are blocked the same way, and already
+   *      fall back to `'checking'`.
+   *    - The pending card BELOW only ever adds a surface, and the
+   *      surface it adds is the cancel button. Hiding it on a failed
+   *      poll would strip the lender's only way to unwind a listing
+   *      that may well still be live — and the borrower stays frozen
+   *      meanwhile. It stays mounted deliberately.
+   *
+   *  So: a stale listing may still SHOW something, never SUPPRESS
+   *  something. Deriving all three from one boolean would have to pick
+   *  one of those, and either choice is wrong for the other case. */
+  const salePending = sale.state?.listed === true && !sale.isError;
 
   // Borrower-side view of the SAME lender-sale listing (#1503 PR-A
   // follow-up): the teardown probe classifies whether a listing holds
