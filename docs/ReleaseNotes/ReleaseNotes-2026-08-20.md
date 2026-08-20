@@ -1,4 +1,23 @@
-### Reward expiry now settles the same way a claim does (#1434)
+# Release Notes — 2026-08-20
+
+Two entries, and they are two halves of one piece of work: the completion of the
+VPFI recycling programme's settlement layer.
+
+Rewards can end three different ways — a holder claims them, an unclaimed one
+reaches the end of its claim horizon and is recycled, or a defaulted position
+forfeits them. Each of those three used to work out on its own what the reward
+was worth, applying the same limits in slightly different ways. That is the kind
+of duplication that does not announce itself: every copy looks correct in
+isolation, and the disagreements only surface at the edges — a reward that could
+never be finalized, an estimate that contradicted what a claim would actually
+pay, a limit applied twice or not at all. All three now ask the same settlement
+engine for the answer.
+
+The second entry is what that unification was for: a receiving chain can now pay
+out its own coordinated-mode days, bounded by what it has actually been funded,
+instead of being held back entirely.
+
+## Reward expiry now settles the same way a claim does (#1434)
 
 When a reward entry reaches the end of its claim horizon without being
 claimed, the protocol reaps it and returns its value to the recycling
@@ -168,3 +187,61 @@ shares the settlement engine, and no existing component had room for it
 within the per-component size limit that the platform's upgrade mechanism
 imposes. Nothing changes for anyone calling it: the address and the call
 itself are unchanged.
+
+## Receiving chains can now pay out their own coordinated-mode days (#1434 P1-b)
+
+Until now, a receiving chain never priced the days that run under the
+platform's coordinated reward mode. Those days were stopped outright — not
+because anything was wrong with them, but because the platform had no way to
+tell how much funding a receiving chain had actually been sent, and paying
+without that knowledge could have drawn on tokens held for other obligations.
+The stop was a placeholder for the missing measurement.
+
+That measurement now exists, so the stop is gone. A receiving chain prices its
+coordinated-mode days exactly as the coordinating chain does, and what keeps it
+honest is a simple rule: **it may pay out no more of that funding than it has
+actually been sent.**
+
+**A shortfall makes a day wait; it never shrinks it.** This is the part that
+matters most for anyone whose rewards are affected. Two different limits can
+hold a payout back, and they settle in opposite ways:
+
+- The platform's lifetime emission ceiling only ever shrinks. What it cannot
+  cover can never be covered later, so a day held back by that ceiling is paid
+  down to what fits and then closed for good.
+- Delivered funding is the opposite — it grows with every delivery. A day short
+  of it is simply not funded *yet*, so it waits, and the next delivery pays it
+  in full.
+
+Trimming a day for the second reason would permanently underpay someone whose
+funding was merely still in transit. The two limits are therefore tracked
+separately, so the platform can always say which one actually applied. Where
+both apply equally the day closes, because no future delivery could complete it
+and waiting would mean waiting for something that cannot arrive.
+
+**The wait can always end.** A day that is waiting on funding is not stuck: it
+becomes payable the moment that funding lands. The rule is keyed on the amount
+present rather than on the arrival of any particular message — which matters,
+because some days are deliberately never funded from the coordinating chain
+(the receiving chain covers them locally, or the amount rounds to nothing). A
+rule keyed on messages would leave those days waiting forever and block every
+later day behind them.
+
+**What is unchanged.** The coordinating chain is unaffected — it funds its own
+days directly and receives no deliveries, so the new limit does not apply to
+it. Rewards earned before coordinated mode was switched on are also unaffected:
+no delivery ever funded them, so they are not measured against delivered
+funding and continue to pay as they always have.
+
+**What you will see.** A reward estimate on a receiving chain no longer quotes
+an amount that a claim will decline to pay **for want of delivered funding**.
+Previously an estimate could promise a full day's reward while the claim paid
+nothing at all, because the estimate did not know what had been delivered.
+
+One limit used to sit outside that guarantee: near the platform's lifetime
+emission ceiling an estimate could read higher than the claim would pay, because
+estimates did not model that ceiling. The other entry in these notes closes that
+gap — the pending preview and the readiness check now apply the schedule's
+remaining headroom exactly as a claim spends it — so the two figures agree at
+that boundary as well. The agreement described here is the separate one about
+delivered funding, where the gap was never a bound but a wrong answer.
