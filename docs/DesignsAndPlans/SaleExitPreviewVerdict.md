@@ -1,11 +1,14 @@
 # One verdict for "can this lender exit, and if not, why"
 
-**Status: proposal, not a decision — REVISED THREE TIMES after review.** Five
-Codex rounds on #1847 have returned sixteen findings. Two were plain factual
-errors in the first draft, one weakens the recommendation itself, and **four
-were defects introduced by the revisions that fixed the earlier ones** —
-including two that made the proposal undeployable as written. §9 lists what
-changed and when.
+**Status: proposal, not a decision — REVISED REPEATEDLY under review.** It has
+been rewritten several times: two plain factual errors in the first draft, one
+finding that weakens the recommendation itself, and several defects introduced
+by the very revisions that fixed the earlier ones — including two that made
+the proposal undeployable as written.
+
+**§9 carries the running tally and is the only place that does.** Every
+duplicate of it in this file went stale within a round or two, which is a
+small instance of the problem the document is about.
 
 It exists because #1841 has
 accumulated **ten** deferred items that all wait on the same choice, and
@@ -55,7 +58,7 @@ page happened to already be reading. A shadow copy drifts. Every one of
 the ten deferrals, and several of the twenty-odd findings, is a drift
 between that copy and the real rule.
 
-## 2. The ten (plus one the review added), and what each actually needs
+## 2. The ten (plus two the review added), and what each actually needs
 
 | # | Refusal | Contract source | What the client lacks |
 | --- | --- | --- | --- |
@@ -97,7 +100,7 @@ that closes both routes is worse than one that admits a gap, because
 **So the tractable set is items 1–8 plus 8b and 8c: ten refusals, answerable
 without consulting any third party.** That is the observation this proposal
 rests on — and note the criterion is *self-contained*, not *needs a new read*,
-since 8b needs none.
+since neither 8b nor 8c needs one.
 
 ## 3. What already exists
 
