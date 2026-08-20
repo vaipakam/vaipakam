@@ -353,7 +353,7 @@
       "whatTitle": "VPFI란?",
       "discountTitle": "단계별 수수료 할인",
       "discountBody": "Vaipakam Vault에 보유한 VPFI는 프로토콜 수수료에 대한 등급별 할인을 받습니다. 할인 동의가 켜져 있어야 하고, 차입자라면 lending asset이 유동적이어야 합니다. 새 예치금은 짧은 최소 보유 기간이 지나야 인정되며, 적용되는 등급은 최근 구간에서 보유한 가장 낮은 등급입니다 — loan 직전에 채워도 올라가지 않습니다 등급은 canonical chain의 Vault 잔액으로 산정되며, mirror chain에만 있는 예치금은 등급을 올리지 않습니다:",
-      "discountBullet1": "Lender: earned interest에 대한 treasury share가 할인됩니다. Loan 기간 동안 VPFI를 오래 보유할수록 treasury cut이 줄어듭니다.",
+      "discountBullet1": "대여자: 얻은 이자에서 떼는 treasury 몫에 대한 할인. loan 기간 동안 VPFI를 오래 보유할수록 그 몫이 작아집니다. VPFI 가격 기준이 설정되어 있으면 이 할인은 loan이 정산되는 체인의 Vault에서 VPFI로 정산됩니다 — 그 체인에 충분한 여유 VPFI가 있어야 하며, 없으면 수수료 전액이 부과됩니다.",
       "discountBullet2": "Borrower: Loan Initiation Fee 할인 — loan이 accept될 때 내는 수수료에서 직접 차감되며, 나중에 돌려주는 방식이 아닙니다.",
       "howTitle": "작동 방식",
       "analyticsHint": "프로토콜 전체 통계와 circulating supply를 찾고 있나요? ",
@@ -986,7 +986,7 @@
       },
       "vpfi-discount": {
         "q": "VPFI 할인은 어떻게 동작하나요?",
-        "a1": "canonical chain의 Vaipakam Vault에 보유한 VPFI는 할인 등급을 얻습니다 — mirror chain에만 있는 예치금은 등급을 올리지 못합니다. 등급은 canonical vault에서 읽어 바깥으로 미러링되기 때문입니다. 한 번의 플랫폼 수준 동의로 차입자 측(개시)과 대여자 측(이자)이 모두 적용됩니다. 등급은 즉시 적용되지 않습니다. 새 예치금은 최소 기간(기본 3일) 보유해야 인정되고, 적용되는 등급은 최근 history window에서 보유한 가장 낮은 등급입니다 — loan 직전에 채워 넣어도 올라가지 않습니다. 차입자의 경우 할인은 개시 수수료를 직접 깎아주는 방식이며 accept 시 lending asset으로 부과되고, 이를 위해 VPFI가 차감되거나 나중에 돌려주는 일은 없습니다. 또한 동의(또는 동의에 해당하는 tariff opt-in)와 유동적인 lending asset이 필요하며, 둘 중 하나라도 없으면 전액이 부과됩니다. 대여자의 이자 할인도 기본적으로 같은 방식입니다. VPFI 가격 기준이 설정되어 있으면 대여자의 Vault에서 VPFI로 정산되며 — 잔액이 부족하면 직접 감액으로 돌아가지 않고 이자 수수료 전액을 냅니다.",
+        "a1": "canonical chain의 Vaipakam Vault에 보유한 VPFI는 할인 등급을 얻습니다 — mirror chain에만 있는 예치금은 등급을 올리지 못합니다. 등급은 canonical vault에서 읽어 바깥으로 미러링되기 때문입니다. 한 번의 플랫폼 수준 동의로 차입자 측(개시)과 대여자 측(이자)이 모두 적용됩니다. 등급은 즉시 적용되지 않습니다. 새 예치금은 최소 기간(기본 3일) 보유해야 인정되고, 적용되는 등급은 최근 history window에서 보유한 가장 낮은 등급입니다 — loan 직전에 채워 넣어도 올라가지 않습니다. 차입자의 경우 할인은 개시 수수료를 직접 깎아주는 방식이며 accept 시 lending asset으로 부과되고, 이를 위해 VPFI가 차감되거나 나중에 돌려주는 일은 없습니다. 또한 동의(또는 동의에 해당하는 tariff opt-in)와 유동적인 lending asset이 필요하며, 둘 중 하나라도 없으면 전액이 부과됩니다. 대여자의 이자 할인도 기본적으로 같은 방식입니다. VPFI 가격 기준이 설정되어 있으면 대여자의 Vault에서 VPFI로 정산되며 — 잔액이 부족하면 직접 감액으로 돌아가지 않고 이자 수수료 전액을 냅니다. mirror chain에서 빌리거나 빌려준다면 한 단계가 더 있습니다: 첫 예치는 보유 기간이 진행 중이라 등급 0을 브로드캐스트하고, 시간이 지나는 것만으로는 새 메시지가 전송되지 않습니다 — 기간이 끝나면 대시보드에서 등급을 mirror로 push하거나(또는 canonical chain에서 아무 Vault 거래나 수행) 해야 그곳에 적용됩니다.",
         "tableTier": "등급",
         "tableVault": "Vault 내 VPFI",
         "tableDiscount": "할인",

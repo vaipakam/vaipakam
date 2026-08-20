@@ -353,7 +353,7 @@
       "whatTitle": "什么是 VPFI？",
       "discountTitle": "分级费用折扣",
       "discountBody": "存放在您 Vaipakam Vault 中的 VPFI 可获得协议费用的分级折扣。需要已开启折扣同意；对借款方还需所借 asset 为流动资产。新存入的 VPFI 需经过一段较短的最低持有期才计入，且适用的是您在近期窗口内持有过的最低等级——在 loan 前临时充值并不会提升它 您的等级由 canonical chain 上的 vault 余额决定——仅存放在 mirror chain 上的 deposit 不会提升它：",
-      "discountBullet1": "出借方：降低从已赚利息中扣取的 treasury 分成。贷款存续期间持有 VPFI 越多、越久，扣取比例越低。",
+      "discountBullet1": "出借方：对从所得利息中抽取的 treasury 份额的折扣。您在 loan 存续期内持有的 VPFI 越多，该份额越小。若已配置 VPFI 价格参考，该折扣将从 loan 结算所在链上的您的 Vault 中以 VPFI 结算——因此该链上需有足够的可用 VPFI，否则将按全额收费。",
       "discountBullet2": "借款方：贷款发起费的折扣——在 loan 被接受时直接从你支付的费用中减免，而不是事后返还。",
       "howTitle": "如何运作",
       "analyticsHint": "想查看协议整体统计和流通供应量？请查看",
@@ -986,7 +986,7 @@
       },
       "vpfi-discount": {
         "q": "VPFI 折扣如何运作？",
-        "a1": "存放在 canonical chain 上您 Vaipakam Vault 中的 VPFI 可获得折扣等级——仅存放在 mirror chain 上的 deposit 不会提升它，因为等级是从 canonical vault 读取后向外镜像的。一次平台级同意即可覆盖借款方（发起费）与出借方（收益费）。等级并非即时生效：新存入的 VPFI 需先持有一段最短期限（默认三天）才计入，且实际适用的是您在近期历史窗口内持有过的**最低**等级——因此在 loan 前临时充值并不会提升它。对借款方而言，折扣是对发起费的直接减免，在 accept 时以 lending asset 计收；不会扣除 VPFI，之后也不返还。它还需要已开启同意（或选择加入 tariff，视同同意）且所借 asset 为流动资产；两者缺一即按全额收费。出借方的收益费折扣默认同样如此。若已配置 VPFI 价格参考，则改为从出借方 Vault 中以 VPFI 结算——若余额不足，出借方将支付全额收益费，而不会退回直接减免。",
+        "a1": "存放在 canonical chain 上您 Vaipakam Vault 中的 VPFI 可获得折扣等级——仅存放在 mirror chain 上的 deposit 不会提升它，因为等级是从 canonical vault 读取后向外镜像的。一次平台级同意即可覆盖借款方（发起费）与出借方（收益费）。等级并非即时生效：新存入的 VPFI 需先持有一段最短期限（默认三天）才计入，且实际适用的是您在近期历史窗口内持有过的**最低**等级——因此在 loan 前临时充值并不会提升它。对借款方而言，折扣是对发起费的直接减免，在 accept 时以 lending asset 计收；不会扣除 VPFI，之后也不返还。它还需要已开启同意（或选择加入 tariff，视同同意）且所借 asset 为流动资产；两者缺一即按全额收费。出借方的收益费折扣默认同样如此。若已配置 VPFI 价格参考，则改为从出借方 Vault 中以 VPFI 结算——若余额不足，出借方将支付全额收益费，而不会退回直接减免。 若您在 mirror chain 上借入或借出，还有一步：首次 deposit 会在持有期内广播等级 0，而时间流逝本身不会发送新消息——因此期满后需在 dashboard 中将等级 push 到 mirror（或在 canonical chain 上做任意 vault 交易），它才会在那里生效。",
         "tableTier": "等级",
         "tableVault": "保管中的 VPFI",
         "tableDiscount": "折扣",
