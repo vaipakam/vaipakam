@@ -24,7 +24,21 @@ what those structurally cannot see.
 pnpm --filter @vaipakam/www exec node e2e/live/live-worked-example.mjs
 ```
 
-Override the target with `WWW_ORIGIN` (defaults to
+Not every drive takes its target the same way, so check the table below
+before substituting a filename into that command. Single-origin drives use
+`WWW_ORIGIN`; `live-wallet-telemetry.mjs` takes one or more origins as
+positional arguments instead, because it checks several apps in one run and
+a single environment variable cannot express that:
+
+```bash
+node apps/www/e2e/live/live-wallet-telemetry.mjs \
+  https://defi.vaipakam.com/ https://alpha01.vaipakam.com/ https://alpha02.vaipakam.com/
+```
+
+It exits with a usage message if given no origins, rather than silently
+checking a default.
+
+Override a single-origin drive's target with `WWW_ORIGIN` (defaults to
 `https://vaipakam.com`):
 
 ```bash
@@ -106,7 +120,7 @@ surface and must not be taught to accept an unverified one.
 | File | Covers | Introduced by |
 | --- | --- | --- |
 | `live-worked-example.mjs` | The Overview's worked-example figures render as derived live values with the contract's integer arithmetic and honest provenance; the help search finds a page by a figure printed on it | #1751 (#1664 items 1 + 2) |
-| `live-wallet-telemetry.mjs` | Loading a connected-app origin sends nothing to the wallet SDKs' telemetry hosts — takes origins as arguments, so it covers `defi`, `alpha01` and `alpha02` | #1836 (#1824) |
+| `live-wallet-telemetry.mjs` | A connected-app origin constructs the Coinbase SDK and sends nothing to its telemetry host on load. Takes origins as POSITIONAL arguments (covers `defi`, `alpha01`, `alpha02`). Fails closed unless the SDK is witnessed as constructed; the WalletConnect branch is **not** exercised (#1840) | #1836 (#1824) |
 
 The second one lives here rather than under the app it checks because it
 targets three origins and belongs to none of them, and because this is where
@@ -117,7 +131,8 @@ cross-app check could sit in both would be the worse trade.
 ## Adding one
 
 Keep them dependency-free beyond `playwright`, parameterised by
-`WWW_ORIGIN`, and self-describing on stdout — someone reading the
+`WWW_ORIGIN` (or by positional origins where a drive spans several
+apps — say which in the table), and self-describing on stdout — someone reading the
 output during a release should be able to tell what was checked without
 opening the file. Query with what the page actually rendered rather
 than a hardcoded expectation wherever the invariant is "these two

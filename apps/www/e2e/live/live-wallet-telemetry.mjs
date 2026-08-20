@@ -28,12 +28,27 @@
  * tries to phone home and is blocked by the network still tried, and
  * on a locked-down network that attempt is itself the reported symptom.
  *
- * WalletConnect note: on a first visit it legitimately sends nothing
- * even when enabled — its EventClient submits only events a previous
- * session persisted, and `Core.initialize()` never calls the `init()`
- * that would emit a fresh one. So a pass here is strong evidence for
- * Coinbase and weak evidence for WalletConnect; the WalletConnect
- * setting is verified by reading the resolved config, not by this.
+ * WHAT A PASS DOES NOT COVER. On these apps only the Coinbase SDK is
+ * constructed at load — no `wc@2:*` storage appears — so the
+ * WalletConnect path is NOT EXERCISED by this check at all, and the
+ * output says so per host rather than printing one combined line that
+ * would imply otherwise. Two independent reasons it would stay silent
+ * anyway on a first visit: its provider is not built here, and its
+ * EventClient submits only events a previous session persisted
+ * (`Core.initialize()` never calls the `init()` that would emit a
+ * fresh one). Exercising it needs prepared returning-visitor state —
+ * tracked in #1840, deliberately not faked here, because seeding a
+ * vendor's internal storage shape would couple this drive to an
+ * undocumented format that has already changed between adjacent patch
+ * releases.
+ *
+ * FAILING CLOSED. Silence only means something if the code path ran,
+ * so a run must prove it did: the response must be a success, the app
+ * must have rendered, and `cbwsdk.store` must exist — that key is
+ * written by the Coinbase SDK, so it witnesses construction rather
+ * than inferring it from a timer. An HTML 404, a broken bundle, or
+ * initialization slower than the window all now FAIL instead of
+ * reporting a quiet pass (Codex #1838 r1 P1).
  *
  * Usage (operator machine):
  *   node apps/www/e2e/live/live-wallet-telemetry.mjs \
@@ -69,7 +84,8 @@ const browser = await chromium.launch({
     : {}),
 });
 
-let failures = 0;
+let emitted = 0;
+let unverified = 0;
 for (const url of targets) {
   // A FRESH context per origin: telemetry state can be influenced by
   // stored data, and reusing one would let an earlier origin's storage
@@ -92,29 +108,72 @@ for (const url of targets) {
     // `domcontentloaded`, not `networkidle`: the connected app holds
     // long-lived connections (RPC / websocket), so networkidle never
     // settles and the check would time out on a perfectly healthy app.
-    await page.goto(url, { timeout: 45_000, waitUntil: 'domcontentloaded' });
+    const resp = await page.goto(url, { timeout: 45_000, waitUntil: 'domcontentloaded' });
+
+    // FAIL CLOSED (Codex #1838 r1 P1). `page.goto` resolves happily on
+    // an HTML 404/500, and a fixed delay proves nothing about whether
+    // the app hydrated or the SDK was ever constructed. Without these
+    // gates an error shell or a broken bundle produces a silent PASS —
+    // which is this drive's own stated failure mode, aimed at itself.
+    const status = resp?.status() ?? 0;
+    if (!resp?.ok()) throw new Error(`HTTP ${status}`);
+
+    // Witness 1 — the app rendered something, so this is not a shell.
+    await page.waitForFunction(() => (document.getElementById('root')?.children.length ?? 0) > 0, {
+      timeout: 30_000,
+    });
+
+    // Witness 2, the load-bearing one — `cbwsdk.store` is written by
+    // the Coinbase Wallet SDK itself, so its presence proves the SDK
+    // was CONSTRUCTED: the exact code path whose telemetry this drive
+    // is checking actually ran. Silence without this witness would mean
+    // nothing at all.
+    await page.waitForFunction(() => localStorage.getItem('cbwsdk.store') !== null, {
+      timeout: 30_000,
+    });
+
+    // Only now is the settle window meaningful: the SDK exists, so if
+    // it were going to report, this is when.
     await page.waitForTimeout(SETTLE_MS);
   } catch (e) {
-    console.log(`FAIL  ${url} — navigation: ${String(e).split('\n')[0]}`);
-    failures++;
+    console.log(`FAIL  ${url} — not verifiably exercised: ${String(e).split('\n')[0]}`);
+    unverified++;
     await ctx.close();
     continue;
   }
 
+  // Report per host rather than as one combined line. WalletConnect's
+  // provider is not constructed at load on these apps (no `wc@2:*`
+  // storage appears), so folding it into a single "no requests to A /
+  // B" claim would assert coverage this run does not have.
+  const wcExercised = await page.evaluate(() =>
+    Object.keys(localStorage).some((k) => k.startsWith('wc@2:')),
+  );
+
   if (hits.length > 0) {
     console.log(`FAIL  ${url} — ${hits.length} telemetry request(s) on load:`);
     for (const h of hits) console.log(`        ${h}`);
-    failures++;
+    emitted++;
   } else {
-    console.log(`PASS  ${url} — no requests to ${TELEMETRY_HOSTS.join(' / ')} on load`);
+    console.log(`PASS  ${url} — Coinbase SDK constructed and silent (cbwsdk.store present)`);
+    console.log(
+      wcExercised
+        ? '        WalletConnect: provider constructed, also silent'
+        : '        WalletConnect: NOT EXERCISED on a first visit — see header (#1840)',
+    );
   }
   await ctx.close();
 }
 
 await browser.close();
+// Report the two failure kinds SEPARATELY. Collapsing them once made
+// this drive announce "1 of 1 origin(s) emitted telemetry" for a page
+// that emitted nothing and had simply failed the readiness gate —
+// a false accusation in the same breath as a check about honest
+// reporting.
+const clean = targets.length - emitted - unverified;
 console.log(
-  failures === 0
-    ? `\n${targets.length} origin(s) clean.`
-    : `\n${failures} of ${targets.length} origin(s) emitted telemetry.`,
+  `\n${clean} clean, ${emitted} emitting telemetry, ${unverified} not verifiably exercised ` +
+    `(of ${targets.length}).`,
 );
-process.exit(failures === 0 ? 0 : 1);
+process.exit(emitted + unverified === 0 ? 0 : 1);

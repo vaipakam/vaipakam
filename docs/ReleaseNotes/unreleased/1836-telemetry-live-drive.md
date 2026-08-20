@@ -33,15 +33,35 @@ It also confirmed, rather than assumed, the claim that prompted the change: the
 reporting really did cover every visitor, not only those who reached for a
 wallet.
 
+### It refuses to report a pass it cannot justify
+
+Review pointed out that the check could still have passed without testing
+anything: asking a browser to open a page succeeds even when the server returns
+an error page, and waiting a fixed time proves nothing about whether the app
+ever started. A broken deployment would have looked identical to a clean one.
+
+It now requires evidence that the thing under test actually ran before it will
+report anything: the page must load successfully, the app must have rendered,
+and the wallet kit must have left its own fingerprint in browser storage —
+which only happens if the kit was constructed, which is the moment the
+reporting would begin. Anything less is reported as "not verifiably exercised"
+rather than as a pass. Confirmed by pointing it at a page with no wallet
+support, which it correctly refuses to bless.
+
+That refusal is also counted separately from a real failure. An earlier version
+lumped the two together and announced that a page had sent tracking data when it
+had done nothing of the sort — a false accusation inside a check about honest
+reporting.
+
 ### One thing it deliberately does not claim
 
-For one of the two kits, a first-time visitor sends nothing even when the
-reporting is switched on — it forwards only what an earlier session left stored.
-So a clean result is strong evidence for one kit and weak evidence for the
-other, and the check says so rather than implying it covers both equally. The
-second kit's setting is confirmed by reading the configuration that actually
-resolves, which is a different kind of evidence and is described where it
-belongs.
+The second kit is not tested at all. It turns out not even to be started when
+the page loads, and it would stay quiet on a first visit in any case, since it
+only forwards activity an earlier session left behind. So the check now reports
+each kit separately and says plainly that this one was not exercised, instead of
+printing one line that would let a reader assume both were covered. Closing that
+gap properly needs a real returning-visitor session, and is recorded as its own
+piece of work rather than approximated with invented data.
 
 Still outstanding, and not claimed anywhere: nobody has yet completed a real
 wallet connection on these apps since the change. The settings could be correct
