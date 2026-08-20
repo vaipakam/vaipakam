@@ -59,12 +59,33 @@ export const wagmiConfig = createConfig({
   ...defaultConnectKitConfig,
   connectors: [
     injected({ target: 'metaMask' }),
-    coinbaseWallet({ appName: APP_NAME, appLogoUrl: APP_ICON }),
+    // Both connectors below have their SDK's own analytics phone-home
+    // turned OFF (#1824, mirroring alpha02's UX-033). This is not a
+    // connect-modal concern: `reconnectOnMount` defaults true and
+    // wagmi's `reconnect` builds every configured connector's provider
+    // looking for a restorable session, so the beacons otherwise fire
+    // for every visitor on page load, wallet or no wallet.
+    //
+    // `preference.telemetry` gates the Coinbase SDK's functional-metrics
+    // beacons; `options: 'all'` is its own default for wallet selection,
+    // stated explicitly only because `preference` must be supplied whole
+    // — so this stays a telemetry-only change.
+    coinbaseWallet({
+      appName: APP_NAME,
+      appLogoUrl: APP_ICON,
+      preference: { options: 'all', telemetry: false },
+    }),
     ...(WC_PROJECT_ID
       ? [
           walletConnect({
             projectId: WC_PROJECT_ID,
             showQrModal: false,
+            // `telemetryEnabled` threads EthereumProvider → SignClient →
+            // Core, gating the `pulse.walletconnect.org` beacons.
+            // Omitting it is NOT equivalent to false: Core's EventClient
+            // takes it as a DEFAULT PARAMETER (`i = !0`), which fires on
+            // exactly the `undefined` an absent option passes.
+            telemetryEnabled: false,
             metadata: {
               name: APP_NAME,
               description: 'Borrow, lend, and rent on Vaipakam.',
