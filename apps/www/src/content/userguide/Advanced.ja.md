@@ -97,8 +97,19 @@ top up して full-tier discount を取り、数秒後に withdraw する
 exploit pattern を防ぎます。
 
 discount は settlement 時の lender yield fee と borrower の
-Loan Initiation Fee に適用されます (borrower が claim するときに
-VPFI rebate として支払われます)。
+Loan Initiation Fee に適用されます。後者では、**lending asset で
+支払う手数料そのものの直接的な減額**として、loan の accept 時に
+適用されます。その手数料の支払いのために vault から VPFI が
+引き落とされることはなく、後から claim できる rebate もありません。
+
+> **Loan Initiation Fee の rebate を待っている場合は、ここを
+> 読んでください。** 以前のモデルでは、全額を VPFI で前払いし、
+> loan の存続期間中それを保管し、claim 時に一部を返していました。
+> **この経路は廃止されています。** 廃止前に開かれた loan は今も
+> その方式で決済され、以下の rebate に関する記述はそれらの loan
+> を指します。今日開かれた loan には initiation fee に対して保管
+> された VPFI はなく、未受取の rebate もありません。待っても、
+> 届きようのないお金を待つことになります。
 
 > **Network gas は別物です。** 上記の discount は Vaipakam の
 > **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、

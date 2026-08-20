@@ -87,7 +87,9 @@ window。这会关闭一种 exploit pattern：在 loan 即将结束时临时 top
 VPFI 以拿到 full-tier discount，然后几秒钟后 withdraw。
 
 discount 在 settlement 时适用于 lender yield fee，也适用于 borrower
-Loan Initiation Fee (borrower claim 时以 VPFI rebate 形式支付)。
+Loan Initiation Fee——在后者上它是**对你以 lending asset 支付的费用的直接减免**，在 loan 被 accept 时生效。不会从你的 vault 中扣除 VPFI 来支付该费用，之后也没有任何 rebate 可以 claim。
+
+> **如果你在等待 Loan Initiation Fee 的 rebate，请读这一段。** 早期模型会预先以 VPFI 收取全额费用，在 loan 存续期间托管，并在你 claim 时退回其中一部分。**该路径已停用。** 在其生效期间开立的 loan 仍按那种方式结算，下文关于 rebate 的段落描述的正是这些 loan。今天开立的 loan 没有为其 initiation fee 托管任何 VPFI，也没有待领的 rebate——等待它等于等待一笔不可能到账的钱。
 
 > **Network gas 与协议费用是分开的。** 上面的 discount 适用于 Vaipakam 的 **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）。每次 on-chain action 都需要的 **blockchain 网络 gas 费**（在 Base / Sepolia / Arbitrum 等链上 create offer / accept / repay / claim / withdraw 等操作时支付给 validators）不是协议费用。Vaipakam 从不收取，由网络收取。它无法按 tier 处理或 rebate，并且取决于 submission 时该链的拥堵情况，与 loan 大小或您的 VPFI tier 无关。
 

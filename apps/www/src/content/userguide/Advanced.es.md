@@ -103,8 +103,21 @@ antes del cierre de un préstamo, capturar el descuento del nivel
 completo y retirar segundos después.
 
 El descuento se aplica a la comisión por rendimiento del prestamista
-en la liquidación, y a la Loan Initiation Fee del prestatario
-(entregada como un reembolso de VPFI cuando el prestatario reclama).
+en la liquidación, y a la Loan Initiation Fee del prestatario, donde
+es una **reducción directa de la comisión que pagas en el activo
+prestado**, aplicada al aceptarse el préstamo. No se retira VPFI de
+tu vault para pagar esa comisión, y no hay ningún reembolso que
+reclamar después.
+
+> **Si esperas un reembolso de la Loan Initiation Fee, lee esto.**
+> Un modelo anterior cobraba la comisión completa en VPFI por
+> adelantado, la mantenía en custodia durante toda la vida del
+> préstamo y devolvía una parte al reclamar. **Esa vía está
+> retirada.** Los préstamos abiertos mientras estuvo vigente siguen
+> liquidándose así, y los pasajes sobre reembolsos más abajo
+> describen esos préstamos. Un préstamo abierto hoy no tiene VPFI
+> retenido contra su comisión de inicio ni reembolso pendiente:
+> esperarlo sería esperar un dinero que no puede llegar.
 
 > **El gas de red es independiente.** El descuento anterior se
 > aplica a las **comisiones del protocolo** de Vaipakam (Comisión
@@ -445,8 +458,9 @@ timelock, y no pueden mover activos.
   dispararlo en el instante en que tu HF cae por debajo de 1,0.
 - **Defaults con colateral ilíquido** — el default transfiere
   todo tu colateral al prestamista. No hay reclamación residual;
-  sólo cualquier reembolso de VPFI Loan Initiation Fee no usado,
-  que cobras como prestatario al reclamar.
+  sólo cualquier reembolso de VPFI Loan Initiation Fee no usado —
+  y sólo en un préstamo que siga en la vía de comisión VPFI
+  retirada — que cobras como prestatario al reclamar.
 
 <a id="create-offer.advanced-options"></a>
 

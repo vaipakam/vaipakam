@@ -103,8 +103,22 @@ avant la fin d'un prêt, capturer la remise du tier complet, et
 retirer quelques secondes plus tard.
 
 La remise s'applique au yield-fee du prêteur au moment du
-règlement et au Loan Initiation Fee de l'emprunteur (versé comme
-rabais VPFI lorsque l'emprunteur réclame).
+règlement et au Loan Initiation Fee de l'emprunteur, où elle est
+une **réduction directe des frais que tu paies dans l'actif
+prêté**, appliquée à l'acceptation du prêt. Aucun VPFI n'est
+prélevé de ton vault pour payer ces frais, et il n'y a aucun
+rabais à réclamer ensuite.
+
+> **Si tu attends un rabais sur le Loan Initiation Fee, lis
+> ceci.** Un modèle antérieur prélevait la totalité des frais en
+> VPFI d'avance, les conservait pendant toute la durée du prêt et
+> en restituait une partie lors de la réclamation. **Cette voie
+> est retirée.** Les prêts ouverts pendant qu'elle était active se
+> règlent toujours ainsi, et les passages sur le rabais plus bas
+> décrivent ces prêts. Un prêt ouvert aujourd'hui n'a aucun VPFI
+> retenu contre ses frais d'initiation ni rabais en attente —
+> l'attendre reviendrait à attendre un argent qui ne peut pas
+> arriver.
 
 > **Le gas du réseau est séparé.** La remise ci-dessus s'applique
 > aux **frais de protocole** de Vaipakam (yield-fee
@@ -444,8 +458,9 @@ déplacer d'actifs.
 - **Défauts sur collatéral illiquide** — le défaut transfère ton
   collatéral intégral au prêteur. Aucune réclamation
   résiduelle ; seulement le rabais VPFI Loan Initiation Fee
-  inutilisé, que tu encaisses en tant qu'emprunteur au moment de
-  la réclamation.
+  inutilisé — et uniquement sur un prêt encore soumis à la voie de
+  frais VPFI retirée — que tu encaisses en tant qu'emprunteur au
+  moment de la réclamation.
 
 <a id="create-offer.advanced-options"></a>
 

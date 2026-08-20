@@ -98,8 +98,21 @@ user loan खत्म होने से ठीक पहले VPFI top up �
 discount ले और कुछ seconds बाद withdraw कर ले।
 
 discount lender के yield fee पर settlement के समय और borrower
-की Loan Initiation Fee पर लागू होता है (जो VPFI rebate के
-रूप में borrower के claim करते समय अदा होती है)।
+की Loan Initiation Fee पर लागू होता है — वहाँ यह **उस fee में
+सीधी कटौती** है जो आप lending asset में चुकाते हैं, और यह loan
+accept होते समय लागू होती है। वह fee चुकाने के लिए आपके vault से
+कोई VPFI नहीं लिया जाता, और बाद में claim करने के लिए कोई rebate
+नहीं होता।
+
+> **अगर आप Loan Initiation Fee के rebate का इंतज़ार कर रहे हैं,
+> तो यह पढ़ें।** पुराने model में पूरी fee पहले VPFI में ली जाती
+> थी, loan की पूरी अवधि तक custody में रखी जाती थी, और claim के
+> समय उसका एक हिस्सा लौटाया जाता था। **वह रास्ता बंद कर दिया गया
+> है।** जो loan उस समय खुले थे वे आज भी उसी तरह settle होते हैं,
+> और नीचे rebate वाले हिस्से उन्हीं loans का वर्णन करते हैं। आज
+> खोले गए loan की initiation fee के बदले कोई VPFI custody में
+> नहीं है और कोई rebate बकाया नहीं है — उसका इंतज़ार करना ऐसे पैसे
+> का इंतज़ार करना होगा जो आ ही नहीं सकता।
 
 > **Network gas अलग है।** ऊपर बताया गया discount Vaipakam की
 > **protocol fees** (yield fee `{liveValue:treasuryFeeBps}`%,

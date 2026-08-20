@@ -387,8 +387,9 @@ transaction உறுதியாகிவிட்டவுடன், loan-இ�
 நீங்கள் loan-ஐ முழுமையாக repay செய்திருந்தால், உங்கள் borrower
 claim ஆரம்பத்தில் lock செய்த collateral-ஐ திருப்பித் தரும்.
 default அல்லது liquidation நடந்தால், Loan Initiation Fee-இல்
-பயன்படுத்தப்படாத VPFI rebate மட்டும் திரும்ப வரும் — collateral
-ஏற்கனவே lender-க்குச் சென்றிருக்கும். claim உங்கள் borrower
+பயன்படுத்தப்படாத VPFI rebate மட்டும் திரும்ப வரும்; அதுவும்
+நிறுத்தப்பட்ட VPFI கட்டண வழியில் இன்னும் உள்ள loan-க்கு மட்டுமே —
+collateral ஏற்கனவே lender-க்குச் சென்றிருக்கும். claim உங்கள் borrower
 position NFT-ஐ atomic-ஆக consume செய்கிறது.
 
 ---
@@ -602,7 +603,8 @@ default உங்கள் முழு collateral-ஐ lender-க்கு trans
   வெளியேறாது.
 - **Claim** — loan settle ஆனவுடன், முழு repayment-இல் உங்கள்
   collateral-ஐ திருப்பித் தருகிறது, அல்லது default-இல் loan-
-  initiation fee-இலிருந்து மீதமுள்ள VPFI rebate.
+  initiation fee-இலிருந்து மீதமுள்ள VPFI rebate — இது
+  நிறுத்தப்பட்ட VPFI கட்டண வழியில் உள்ள loans-க்கு மட்டுமே.
 
 ---
 

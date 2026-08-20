@@ -94,8 +94,19 @@ just before a loan ends, capture the full-tier discount, and
 withdraw seconds later.
 
 The discount applies to the lender yield fee at settlement, and
-to the borrower Loan Initiation Fee (paid out as a VPFI rebate
-when the borrower claims).
+to the borrower Loan Initiation Fee — where it is a **direct
+reduction of the fee you pay in the lending asset**, applied when
+the loan is accepted. No VPFI is taken from your vault to pay
+that fee, and there is no rebate to claim afterwards.
+
+> **If you are looking for a Loan Initiation Fee rebate, read
+> this.** An earlier model took the full fee in VPFI up front,
+> held it for the life of the loan, and returned part of it when
+> you claimed. **That path is retired.** Loans opened while it was
+> live still settle that way, and the rebate passages further down
+> describe those loans. A loan opened today has no VPFI held
+> against its initiation fee and no rebate pending — waiting for
+> one would mean waiting for money that cannot arrive.
 
 > **Network gas is separate.** The discount above is on Vaipakam's
 > **protocol fees** (yield fee `{liveValue:treasuryFeeBps}`%, Loan
@@ -935,8 +946,9 @@ HF up:
 Once HF goes below 1.0, anyone can trigger an HF-based
 liquidation; the swap sells your collateral at slippage-eaten
 prices to repay the lender. On illiquid collateral, default
-transfers your full collateral to the lender — only any unused
-VPFI Loan Initiation Fee rebate is left for you to claim.
+transfers your full collateral to the lender — and on a loan
+still using the retired VPFI fee path, only any unused Loan
+Initiation Fee rebate is left for you to claim.
 
 <a id="loan-details.parties"></a>
 

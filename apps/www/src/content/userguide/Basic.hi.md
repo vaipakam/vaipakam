@@ -364,8 +364,9 @@ loan के बनते समय तय हो जाता है — बा�
 यदि आपने loan पूरी तरह चुका दिया है, तो आपका borrower claim
 वह collateral लौटा देता है जो आपने शुरुआत में लॉक किया था।
 default या liquidation पर, सिर्फ़ Loan Initiation Fee से बचा
-हुआ कोई VPFI rebate लौट सकता है — collateral पहले ही lender के
-पास जा चुका होता है। claim आपके borrower position NFT को
+हुआ कोई VPFI rebate लौट सकता है, और वह भी सिर्फ़ उस loan पर जो
+अब भी बंद किए गए VPFI fee रास्ते पर है — collateral पहले ही
+lender के पास जा चुका होता है। claim आपके borrower position NFT को
 atomically consume करता है।
 
 ---
@@ -567,7 +568,8 @@ available नहीं हैं वे greyed out रहेंगे, और to
   को चुका देता है। collateral कभी vault से बाहर नहीं जाता।
 - **Claim** — loan settle होने के बाद full repayment पर आपका
   collateral लौटाता है, या default में loan-initiation fee से बचा
-  हुआ कोई VPFI rebate।
+  हुआ कोई VPFI rebate — जो सिर्फ़ बंद किए गए VPFI fee रास्ते वाले
+  loans पर होता है।
 
 ---
 

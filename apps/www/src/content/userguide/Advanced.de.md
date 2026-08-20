@@ -103,8 +103,22 @@ VPFI aufladen, den vollen Tier-Rabatt mitnehmen und Sekunden später
 wieder abheben könnte.
 
 Der Rabatt gilt für die Lender-Yield-Fee beim Settlement und für
-die Borrower-Loan-Initiation-Fee (ausgezahlt als VPFI-Rebate, wenn
-der Borrower claimt).
+die Borrower-Loan-Initiation-Fee — dort als **direkte Minderung
+der Gebühr, die du im Lending-Asset zahlst**, angewendet bei
+Annahme des Loans. Es wird kein VPFI aus deinem Vault entnommen,
+um diese Gebühr zu bezahlen, und es gibt danach keinen Rebate zu
+claimen.
+
+> **Falls du auf einen Loan-Initiation-Fee-Rebate wartest, lies
+> das hier.** Ein früheres Modell zog die volle Gebühr vorab in
+> VPFI ein, hielt sie über die gesamte Laufzeit des Loans in
+> Verwahrung und gab beim Claim einen Teil zurück. **Dieser Weg
+> ist eingestellt.** Loans, die noch unter dem alten Modell
+> eröffnet wurden, werden weiterhin so abgerechnet, und die
+> Rebate-Abschnitte weiter unten beschreiben genau diese Loans.
+> Ein heute eröffneter Loan hat kein VPFI gegen seine
+> Initiation-Fee verwahrt und keinen ausstehenden Rebate — darauf
+> zu warten hieße, auf Geld zu warten, das nicht kommen kann.
 
 > **Netzwerk-Gas ist separat.** Der obige Rabatt gilt für die
 > **Protokollgebühren** von Vaipakam (Yield-Fee
@@ -440,7 +454,9 @@ Timelock abgesichert und können keine Assets bewegen.
 - **Defaults bei illiquidem Collateral** — der Default überträgt
   dein gesamtes Collateral an den Lender. Es gibt keinen
   Restanspruch; nur ein eventuell ungenutzter VPFI-Loan-
-  Initiation-Fee-Rebate, den du als Borrower beim Claim erhältst.
+  Initiation-Fee-Rebate — und nur bei einem Loan, der noch auf dem
+  eingestellten VPFI-Gebührenweg läuft — den du als Borrower beim
+  Claim erhältst.
 
 <a id="create-offer.advanced-options"></a>
 

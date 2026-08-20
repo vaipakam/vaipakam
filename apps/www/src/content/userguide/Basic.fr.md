@@ -373,8 +373,9 @@ exécutée, ce côté du prêt est entièrement clos.
 Si tu as remboursé le prêt en totalité, ta réclamation d'emprunteur
 te rend le collatéral que tu as verrouillé au début. En cas de
 défaut ou de liquidation, seul le rabais VPFI inutilisé de la Loan
-Initiation Fee est rendu — le collatéral lui-même est déjà parti
-chez le prêteur. La réclamation consomme ton NFT de position
+Initiation Fee est rendu, et uniquement sur un prêt encore soumis à
+la voie de frais VPFI retirée — le collatéral lui-même est déjà
+parti chez le prêteur. La réclamation consomme ton NFT de position
 d'emprunteur de manière atomique.
 
 ---
@@ -586,8 +587,9 @@ info-bulle expliquant pourquoi.
   principal en une seule transaction. Le collatéral ne quitte
   jamais l'vault.
 - **Réclamer** — une fois le prêt réglé, rend ton collatéral en
-  cas de remboursement total, ou tout rabais VPFI inutilisé issu
-  des frais d'initiation du prêt en cas de défaut.
+  cas de remboursement total. En cas de défaut, il rend tout rabais
+  VPFI inutilisé issu des frais d'initiation du prêt, qui n'existe
+  que sur les prêts encore soumis à la voie retirée.
 
 ---
 

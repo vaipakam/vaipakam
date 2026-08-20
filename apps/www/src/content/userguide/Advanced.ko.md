@@ -89,7 +89,19 @@ VPFI를 top up해 full-tier discount를 받고 몇 초 뒤 withdraw하는 exploi
 pattern을 막습니다.
 
 discount는 settlement 시 lender yield fee와 borrower의 Loan Initiation
-Fee에 적용됩니다(이는 borrower가 claim할 때 VPFI rebate로 지급됩니다).
+Fee에 적용됩니다. 후자에서는 **당신이 lending asset으로 내는 수수료
+자체를 직접 깎아주는 방식**이며, loan이 accept될 때 적용됩니다. 그
+수수료를 내기 위해 vault에서 VPFI가 빠져나가지 않으며, 이후에 claim할
+rebate도 없습니다.
+
+> **Loan Initiation Fee rebate를 기다리고 있다면 이 부분을 읽어
+> 주세요.** 이전 모델은 수수료 전액을 VPFI로 선취해 loan 존속 기간
+> 동안 보관했다가 claim할 때 일부를 돌려주었습니다. **이 경로는
+> 폐지되었습니다.** 폐지 전에 개설된 loan은 여전히 그 방식으로
+> 정산되며, 아래의 rebate 관련 설명은 바로 그런 loan을 가리킵니다.
+> 오늘 개설된 loan에는 initiation fee에 대해 보관된 VPFI도, 받을
+> rebate도 없습니다 — 기다린다면 결코 도착할 수 없는 돈을 기다리는
+> 것입니다.
 
 > **Network gas는 별개입니다.** 위의 discount는 Vaipakam의
 > **protocol fees**(yield fee `{liveValue:treasuryFeeBps}`%,

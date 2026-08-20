@@ -1058,7 +1058,9 @@ contract upgrade to change.
 
 Zero rejected at the setter level. The
 treasury is the destination for all yield-fee and loan-initiation-fee
-flows that don't go to the matcher kickback or VPFI tier rebates.
+flows that don't go to the matcher kickback or the VPFI tier discount
+(a direct reduction of the fee charged, not a rebate — see the
+Loan Initiation Fee section above).
 Misconfig surfaces as fees disappearing into the wrong wallet —
 no on-chain bound stops this beyond the "non-zero" check. Operators
 must sanity-check the address against the published treasury

@@ -348,7 +348,8 @@ out.
 If you repaid the loan in full, your borrower claim returns the
 collateral you locked at the start. On default or liquidation,
 only any unused VPFI rebate from the Loan Initiation Fee is
-returned — the collateral itself has already gone to the lender.
+returned, and only on a loan still using the retired VPFI fee
+path — the collateral itself has already gone to the lender.
 The claim consumes your borrower position NFT atomically.
 
 ---
@@ -544,8 +545,9 @@ will be greyed out, with a small tooltip explaining why.
   protocol pays off the old loan from the new principal in one
   transaction. Collateral never leaves vault.
 - **Claim** — once the loan settles, returns your collateral on
-  full repayment, or any leftover VPFI rebate from the loan-
-  initiation fee on default.
+  full repayment. On default it returns any leftover VPFI rebate
+  from the loan-initiation fee, which exists only on loans still
+  using the retired VPFI fee path.
 
 ---
 

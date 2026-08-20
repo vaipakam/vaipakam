@@ -99,8 +99,20 @@ VPFI-ஐ top up செய்து full-tier discount-ஐப் பெற்ற�
 withdraw செய்யும் exploit pattern-ஐ இது தடுக்கிறது.
 
 Discount settlement-இல் lender yield fee-க்கு பொருந்தும்; borrower-க்கு
-Loan Initiation Fee-ல் பொருந்தும் (borrower claim செய்யும்போது VPFI
-rebate ஆக வழங்கப்படும்).
+Loan Initiation Fee-ல் பொருந்தும் — அங்கே அது நீங்கள் lending asset-இல்
+செலுத்தும் **கட்டணத்திலேயே நேரடியான குறைப்பு**, loan accept ஆகும்போது
+பொருந்துகிறது. அந்தக் கட்டணத்தைச் செலுத்த உங்கள் vault-இலிருந்து VPFI
+எடுக்கப்படுவதில்லை; பின்னர் claim செய்ய rebate எதுவும் இல்லை.
+
+> **Loan Initiation Fee rebate-க்காகக் காத்திருந்தால், இதைப் படியுங்கள்.**
+> முந்தைய model முழுக் கட்டணத்தையும் VPFI-ஆக முன்கூட்டியே எடுத்து, loan
+> முழு காலத்திற்கும் custody-இல் வைத்து, claim செய்யும்போது ஒரு பகுதியைத்
+> திருப்பித் தந்தது. **அந்த வழி நிறுத்தப்பட்டுவிட்டது.** அது இயங்கிய
+> காலத்தில் திறக்கப்பட்ட loans இன்னும் அப்படியே settle ஆகின்றன; கீழே
+> உள்ள rebate பகுதிகள் அந்த loans-ஐத்தான் விவரிக்கின்றன. இன்று திறக்கும்
+> loan-க்கு அதன் initiation fee-க்கு எதிராக VPFI எதுவும் custody-இல்
+> இல்லை, rebate எதுவும் நிலுவையில் இல்லை — அதற்குக் காத்திருப்பது வர
+> முடியாத பணத்திற்குக் காத்திருப்பதாகும்.
 
 > **Network gas தனியானது.** மேலே உள்ள discount Vaipakam-ன்
 > **protocol fees** (yield fee `{liveValue:treasuryFeeBps}`%,
