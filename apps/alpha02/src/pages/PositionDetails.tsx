@@ -692,6 +692,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // unconditional: that is exactly the population the chooser serves,
   // and it keeps the extra poll off every other viewer of every other
   // position.
+  //
+  // KNOWN SIDE EFFECT, stated rather than left to be discovered: every
+  // other consumer of `bannerTerms` now has data for these viewers
+  // where it previously had none, so for a LENDER (only — borrowers are
+  // excluded by the role clause) `termsStartSec` / `termsDurationDays`
+  // switch from the indexer row to LIVE terms, `bannerNowSec` switches
+  // from the raw device clock to the chain-anchored one, and
+  // `liveSaysFallbackPending` / `showGraceBanner` become computable
+  // instead of constant. Each of those moves in the same direction as
+  // this fix — chain truth over indexed truth — so the grace banner
+  // gets MORE accurate for lenders, not differently wrong. Flagged
+  // because it is a behaviour change on a surface this PR does not
+  // otherwise touch.
   const lenderNeedsLiveTerms = Boolean(
     loan.data &&
       role === 'lender' &&
