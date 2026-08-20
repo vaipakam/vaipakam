@@ -184,9 +184,11 @@ page in both modes, strictly informational:
   the seller's position is transfer-locked while listed, the sale
   settles only when a buyer accepts, and **while the listing stands
   it also holds the BORROWER's discretionary paths on the underlying
-  loan** (partial repayment is held by the app and collateral
-  withdrawal is refused by the protocol, both to protect the buyer's
-  signed terms). As the protocol stands a listing never expires and
+  loan** (collateral withdrawal and the offset exit are refused by the
+  protocol, both to protect the buyer's signed terms; their repayments,
+  full or partial, stay open — an acceptance binds the CURRENT
+  principal, so a paydown simply invalidates a pending buyer's
+  signature rather than needing to be prevented). As the protocol stands a listing never expires and
   only the seller cancels it, so the disclosure must say plainly that
   listing freezes those borrower affordances until the sale completes
   or the seller cancels — and this design REQUIRES that gap be closed

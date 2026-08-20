@@ -25,12 +25,22 @@ the term, not only at the end, so the card says that instead. While it is still
 reading the schedule it says so rather than guessing, because guessing would
 tell you something about your own money that is not yet known.
 
-**Each sale row states its cost before you open anything**: selling early costs
-the larger of the interest built up so far or the buyer's rate top-up — never
-both. The listing row goes further and says something sellers routinely do not
-expect: while your listing stands it also freezes the *borrower's* options on
-that loan — the app holds their partial repayment and the protocol refuses their
-collateral withdrawal, both to protect the terms the buyer signs.
+**Each sale row states its cost before you open anything**, and states all of
+it: selling early costs the larger of the interest built up so far or the
+buyer's rate top-up — never both — and on top of that, any balance already being
+held for you on the loan transfers to the buyer and your pending reward entry
+for the position is given up. The card cannot price those, so it names them and
+points you at the tool that shows the figures. A cost line that mentioned only
+the interest would read as complete while omitting an amount that can be larger
+than it.
+
+The listing row goes further and says something sellers routinely do not expect:
+while your listing stands it also freezes two of the *borrower's* options on
+that loan — the protocol refuses their collateral withdrawal and their offset
+exit, both to protect the terms the buyer signs. Their repayments stay open.
+And the freeze does not lift on its own when a listing expires: it lasts until a
+buyer completes, you cancel, or someone runs the cleanup that clears an expired
+listing.
 
 **Rows that are unavailable explain why, rather than disappearing.** A vanished
 row reads as "no such option". So the card names the reason instead: the listing
