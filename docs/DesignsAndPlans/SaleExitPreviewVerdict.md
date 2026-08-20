@@ -1,9 +1,9 @@
 # One verdict for "can this lender exit, and if not, why"
 
-**Status: proposal, not a decision — REVISED after review.** Three Codex
-rounds on #1847 returned nine findings, two of which were plain factual errors
-in the first draft and one of which weakens the recommendation itself. §9
-lists what changed.
+**Status: proposal, not a decision — REVISED TWICE after review.** Four Codex
+rounds on #1847 have returned fourteen findings: two were plain factual errors
+in the first draft, one weakens the recommendation itself, and **two were
+defects the first revision introduced**. §9 lists what changed and when.
 
 It exists because #1841 has
 accumulated **ten** deferred items that all wait on the same choice, and
@@ -26,10 +26,14 @@ what their options are and what each costs, and jumps to the tool that
 performs the action. It does not submit anything.
 
 To say "this option is not available, and here is why", it has to
-reproduce judgements the **contracts** own. Eight review rounds on
-#1839 found, one at a time, that it was reproducing them wrongly or not
-at all. Every fix was correct in isolation. The count did not come down:
-12 → 5 → 1 → 5 → 3 → 2 → 2 → 7.
+reproduce judgements the **contracts** own. **Fifteen** review rounds on
+#1839 have found, one at a time, that it was reproducing them wrongly or not
+at all. Every fix was correct in isolation. The count has never converged:
+12 → 5 → 1 → 5 → 3 → 2 → 2 → 7 → 3 → 4 → 3 → 3 → 2 → 2.
+
+Rounds 13 and 14 were caused by the fixes for rounds 12 and 13 — not by
+carelessness in them, but because each fix moved the boundary rather than
+removing it.
 
 The reason it did not come down is structural, not a matter of care.
 Each round made an unanswerable case *representable* — a new union, a
@@ -47,7 +51,7 @@ page happened to already be reading. A shadow copy drifts. Every one of
 the ten deferrals, and several of the twenty-odd findings, is a drift
 between that copy and the real rule.
 
-## 2. The ten, and what each actually needs
+## 2. The ten (plus one the review added), and what each actually needs
 
 | # | Refusal | Contract source | What the client lacks |
 | --- | --- | --- | --- |
@@ -103,12 +107,13 @@ problem, for one of the same ten items.
 
 ## 4. The proposal
 
-> **Revised after review (#1847, three rounds, nine findings).** The first
-> draft of this section contained a factual error about the pause rules and
-> under-specified most of the ABI. Both are corrected below, and the
-> recommendation in §8 is weakened as a result. The original is in this file's
-> history; it is not preserved inline, because a design doc that carries its
-> own retracted claims invites someone to read the wrong half.
+> **Revised twice after review (#1847, four rounds, fourteen findings).** The
+> first draft contained a factual error about the pause rules and
+> under-specified most of the ABI. The revision that fixed those introduced
+> two defects of its own, corrected in turn. The recommendation in §8 is
+> weakened as a result. Neither superseded version is preserved inline — a
+> design doc carrying its own retracted claims invites someone to read the
+> wrong half; both are in this file's history.
 
 A **sibling** view on `RiskPreviewFacet`:
 
