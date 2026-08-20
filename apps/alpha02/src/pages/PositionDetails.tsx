@@ -1018,7 +1018,50 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  feeding it into that enablement is a hook-reorder on a page where
    *  hook order has already caused a crash (#1521). Not worth it for a
    *  case both other live reads failing already covers. */
-  const saleAttemptable = effectivelyActive;
+  const saleAttemptable =
+    effectivelyActive &&
+    // ...but a live read that AFFIRMATIVELY says otherwise wins
+    // (Codex r13 P2). `effectivelyActive` starts from the indexed row
+    // and only ever WIDENS it — a `fallback_pending` row cured to
+    // Active. It never narrows, so when the row still says `active`
+    // and `loanLive` already reports Repaid, Defaulted or
+    // FallbackPending, it stayed true and this mounted both sale forms
+    // during the indexer's catch-up window.
+    //
+    // Round 14 made the rows and the tools agree; it did not make them
+    // right, and I reported that as closing the class. Agreement is
+    // necessary and not sufficient — two surfaces can agree on a stale
+    // answer.
+    //
+    // Affirmative only: an unread or errored status leaves this alone,
+    // because failing closed on a missing answer is the permanent
+    // dead end this card has met three times.
+    !(
+      resolvedLoanStatus !== undefined &&
+      resolvedLoanStatus !== LoanStatus.Active
+    );
+
+  /** Whether this wallet currently holds the LENDER position NFT.
+   *
+   *  NOT `role === 'lender'` (Codex r13 P2). The role resolver checks
+   *  the borrower side first and returns immediately, so a wallet
+   *  holding BOTH NFTs — which this file explicitly recognises as
+   *  possible — resolves to `borrower` and never reaches the lender
+   *  branch. Every lender-side sale surface was gated on that value,
+   *  so the entire feature was invisible to a valid current lender:
+   *  not the chooser, not the tools it points at, in either mode.
+   *
+   *  Deliberately scoped to the SALE surfaces rather than fixing the
+   *  resolver. `role` drives claims, NFT links and a dozen copy
+   *  branches whose dual-holder behaviour is pre-existing and outside
+   *  this PR; widening it there is a separate change with its own
+   *  review. What must not happen is the card and its tools
+   *  disagreeing — so both read this, and neither reads `role`. */
+  const isLenderHolder =
+    nftOwners.data?.lenderOwner !== undefined &&
+    nftOwners.data.lenderOwner !== 'burned' &&
+    address !== undefined &&
+    nftOwners.data.lenderOwner.toLowerCase() === address.toLowerCase();
 
   const liveSaysFallbackPending =
     bannerTerms.data?.live.status === LoanStatus.FallbackPending;
@@ -2769,7 +2812,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           Flagged wallets still see nothing (Tier-1), and a rental is
           excluded entirely — lender early withdrawal does not cover
           rentals in Phase 1. */}
-      {role === 'lender' &&
+      {isLenderHolder &&
       // Codex r10 P2 — `fallback_pending` belongs here, not only
       // `active`. r9 added copy telling a lender that a loan settling
       // through its fallback path blocks both sales and that waiting
@@ -3133,7 +3176,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           as soon as the ownership read refreshes, unmounting this
           block). */}
       {isAdvanced &&
-      role === 'lender' &&
+      // `isLenderHolder`, not `role` — same reason as the chooser
+      // above, and they MUST use the same test or a dual-position
+      // holder sees rows with no tools behind them.
+      isLenderHolder &&
       // NOT the raw indexed row — see `saleAttemptable`. The chooser's
       // rows and this block must agree, or a row is offered with
       // nothing behind it.
