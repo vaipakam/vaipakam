@@ -1,0 +1,44 @@
+name: Gemini On-Demand Code Reviewer
+
+on:
+  # 1. Triggers when a comment is left on a PR
+  issue_comment:
+    types: [created]
+    
+  # 2. Triggers ONLY when the main PR description is created or updated
+  pull_request:
+    types: [opened, edited]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    # CRITICAL: This conditional ensures the job runs ONLY if "@gemini" is explicitly mentioned
+    # It checks the PR description on open/edit OR the comment text inside a PR thread
+    if: >-
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.body, '@gemini')) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '@gemini'))
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          # Crucial for issue_comment events to fetch the actual PR branch, not the default branch
+          ref: refs/pull/${{ github.event.issue.number || github.event.pull_request.number }}/merge
+
+      - name: Gemini AI Code Review
+        uses: google-gemini/pr-reviewer@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          model: 'gemini-1.5-pro'
+          # If using issue_comment, explicitly pass the dynamic PR number
+          pull_request_number: ${{ github.event.issue.number || github.event.pull_request.number }}
+          system_message: |
+            You are an elite Staff Software Engineer. Review this pull request diff thoroughly.
+            Keep your feedback exceptionally concise, line-specific, and polite.
