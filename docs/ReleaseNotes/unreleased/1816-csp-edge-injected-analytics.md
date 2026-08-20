@@ -23,11 +23,13 @@ connectors are required to have their built-in telemetry switched off, so that
 merely opening the connect dialog does not report usage the visitor never
 agreed to. Checking that requirement while writing this turned up that neither
 of the two connectors it names actually switches its telemetry off, and that
-both therefore report to their vendors — not when someone opens the connect
-dialog, as first assumed, but as soon as the app loads at all, because the app
-restores any previous wallet session on start-up and building each connector to
-check is what starts its reporting. So the exposure covers every visitor to the
-connected app, not only those who reach for a wallet. Both are recorded
+the resulting exposure is not the one the rule describes. It is not gated on
+opening the connect dialog: the app restores any previous wallet session when
+it starts, and building each connector to check is what sets its reporting
+going. For one of the two that means every visitor to the connected app is
+reported on, whether or not they ever reach for a wallet. The other has its
+reporting switched on but sends nothing on a first visit — it only forwards
+activity that an earlier wallet session left stored. Both are recorded
 separately as their own gap.
 
 So the policy is unchanged, and it was doing its job — it caught a collector

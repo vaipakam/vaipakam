@@ -82,11 +82,13 @@
 
 # applies the same rule to the connected app's wallet SDKs' own
 
-# telemetry — a requirement, not a description: BOTH connectors leak
+# telemetry — a requirement, not a description: neither connector
 
-# today (#1824), and at app load rather than at connect, so do not read
+# switches it off (#1824) — Coinbase reports on every app load,
 
-# it here as a shipped precedent.
+# WalletConnect is enabled but only forwards events a prior session
+
+# stored — so do not read it here as a shipped precedent.
 
 # Any future analytics — Cloudflare's included — has to load
 
