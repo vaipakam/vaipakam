@@ -630,7 +630,9 @@ verdict from the protocol. That half belongs with the other pre-checks in
 Left deferred rather than fixed here on scope, not cost — the error
 over-warns in the safe direction, and widening a shared hook's decode plus its
 state type is a change to a surface several other cards read, which does not
-belong in a chooser PR.
+belong in a chooser PR. Tracked as **#1848**, filed separately from #1841
+precisely because it is the opposite shape: #1841 collects checks that need a
+NEW authoritative read, and this one needs none for the ordinary case.
 
 Recorded so a later reader finds a known, bounded, safe-direction gap rather
 than concluding the card's rule is simply the lock.
