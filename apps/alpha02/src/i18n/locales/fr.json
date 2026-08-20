@@ -2242,6 +2242,7 @@
         "maturityUnknown": "Indisponible pour l’instant : nous n’avons pas pu confirmer la date d’échéance de ce prêt, et une vente ne peut pas être lancée une fois celle-ci passée. Cela se résout généralement tout seul en un instant.",
         "saleToolsChecking": "Pas encore disponible : nous lisons encore les conditions de frais qui doivent être communiquées avant qu’une vente puisse être lancée.",
         "saleToolsFailed": "Indisponible pour l’instant : les conditions de frais à communiquer avant une vente n’ont pas pu être lues. Rechargez la page pour réessayer.",
+        "saleToolsFailedMeta": "Indisponible pour l’instant : nous n’avons pas pu charger les informations du jeton de ce prêt, dont une vente a besoin pour afficher les montants. Rechargez la page pour réessayer.",
         "listUnavailableFlowDisabled": "Indisponible pour l’instant : les nouvelles annonces sont suspendues sur ce déploiement le temps d’examiner un incident. Votre position n’est pas affectée et les autres options restent valables."
       },
       "pastDue": "Ce prêt a dépassé son échéance : l’emprunteur le rembourse ou la procédure de défaut le résout. Aucune nouvelle vente ne peut être lancée maintenant.",

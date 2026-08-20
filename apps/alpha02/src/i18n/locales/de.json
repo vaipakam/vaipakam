@@ -2242,6 +2242,7 @@
         "maturityUnknown": "Derzeit nicht verfügbar – das Fälligkeitsdatum dieses Kredits konnte nicht bestätigt werden, und nach dessen Ablauf kann kein Verkauf mehr gestartet werden. Das klärt sich in der Regel von selbst in einem Moment.",
         "saleToolsChecking": "Noch nicht verfügbar – wir lesen noch die Gebührenkonditionen, die vor dem Start eines Verkaufs offengelegt werden müssen.",
         "saleToolsFailed": "Derzeit nicht verfügbar – die vor einem Verkauf offenzulegenden Gebührenkonditionen konnten nicht gelesen werden. Laden Sie die Seite neu, um es erneut zu versuchen.",
+        "saleToolsFailedMeta": "Derzeit nicht verfügbar – die Token-Daten dieses Kredits konnten nicht geladen werden, die ein Verkauf braucht, um Ihnen Beträge anzuzeigen. Laden Sie die Seite neu, um es erneut zu versuchen.",
         "listUnavailableFlowDisabled": "Derzeit nicht verfügbar – neue Inserate sind auf diesem Deployment pausiert, während ein Vorfall geprüft wird. Ihre Position ist davon nicht betroffen, die übrigen Optionen gelten weiterhin."
       },
       "pastDue": "Dieser Kredit ist überfällig – der Kreditnehmer zahlt ihn zurück oder das Ausfallverfahren löst ihn auf. Neue Verkäufe können jetzt nicht mehr gestartet werden.",

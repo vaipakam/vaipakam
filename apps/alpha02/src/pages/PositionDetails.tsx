@@ -2805,7 +2805,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           saleTools={
             feeEnt.data === undefined
               ? feeEnt.isError
-                ? 'failed'
+                ? 'failed-terms'
                 : 'checking'
               : !principal
                 ? // Codex r8 P2 — `principalMeta` exhausting its retry
@@ -2814,14 +2814,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   // anchor ever mounts. Reporting that as "still
                   // reading the fee terms" was wrong twice over: wrong
                   // cause, and a wait that never ends.
+                  // r9 P2 fixed the half I left: the wait was gone,
+                  // the false cause was not — it still blamed a read
+                  // that had SUCCEEDED.
                   principalMeta.isError
-                  ? 'failed'
+                  ? 'failed-meta'
                   : 'checking'
                 : !sanctions.ready
                   ? 'checking'
                 : isAdvanced && !loanLive.data
                   ? loanLive.isError
-                    ? 'failed'
+                    ? 'failed-terms'
                     : 'checking'
                   : 'ready'
           }
@@ -2850,9 +2853,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // the card STAYS, because the status is not terminal and the
           // wait row is still the honest answer. An unread status is
           // not a fallback-pending one, so this never guesses.
+          //
+          // Health-checked on BOTH sources, and the healthy one wins
+          // (Codex r9 P2). I applied this rule to `maturity` in r8 and
+          // not here: a cached FallbackPending retained through a
+          // failed refetch kept blocking both rows after the borrower
+          // had cured the loan, even while the independent live-status
+          // read said Active. A stale blocker is as wrong as a stale
+          // permission — it just fails in the safe-looking direction.
           fallbackPending={
-            bannerTerms.data?.live.status === LoanStatus.FallbackPending ||
-            liveStatus.data?.status === LoanStatus.FallbackPending
+            liveStatus.data && !liveStatus.isError
+              ? liveStatus.data.status === LoanStatus.FallbackPending
+              : bannerTerms.data && !bannerTerms.isError
+                ? bannerTerms.data.live.status === LoanStatus.FallbackPending
+                : false
           }
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
@@ -2873,8 +2887,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               : sale.state === undefined
                 ? 'checking'
                 : sale.state.listed === true
-                  ? 'listed'
-                  : 'clear'
+                  ? // A cached LISTED stays authoritative: the lock
+                    // clears only by cancel or teardown, both actions
+                    // this device would see.
+                    'listed'
+                  : // A cached CLEAR does not (Codex r9 P2). Another
+                    // device can list inside a failed-poll window, and
+                    // offering both exits on a now-locked position
+                    // sends the lender to a preflight refusal. Back to
+                    // 'checking' — the read CAN answer, so it is a
+                    // wait, not a dead end.
+                    sale.isError
+                    ? 'checking'
+                    : 'clear'
           }
           // See the prop's own note: no cheap client read exists for
           // the held-for-lender balance, so this stays false and the

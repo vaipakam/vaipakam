@@ -1033,6 +1033,7 @@
         "maturityUnknown": "Not available right now — we couldn’t confirm this loan’s due date, and a sale can’t be started once it has passed. This usually clears on its own in a moment.",
         "saleToolsChecking": "Not available yet — we’re still reading the fee terms that have to be disclosed before a sale can be started.",
         "saleToolsFailed": "Not available right now — the fee terms that have to be disclosed before a sale could not be read. Reload the page to try again.",
+        "saleToolsFailedMeta": "Not available right now — we couldn’t load this loan’s token details, which a sale needs in order to show you amounts. Reload the page to try again.",
         "listUnavailableFlowDisabled": "Not available right now — new listings are paused on this deployment while an issue is looked into. Your position is unaffected and the other options still apply.",
         "listUnavailableNetwork": "Not available on this network yet — the listing tools aren’t published to this deployment.",
         "listUnavailableNft": "Not available for this position — listing currently supports loans backed by ERC-20 collateral only.",

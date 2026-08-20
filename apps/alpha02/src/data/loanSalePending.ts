@@ -394,6 +394,16 @@ export function useLoanSalePending(
 
   return {
     state: query.data,
+    /** Whether the LAST revalidation failed (Codex #1839 r9 P2).
+     *
+     *  TanStack retains the previous success through a failed refetch,
+     *  so `state` alone cannot distinguish "the chain says no listing"
+     *  from "the chain said no listing, and we have not been able to
+     *  ask since". Callers that gate an ACTION on `listed === false`
+     *  need the difference: another device can create a listing inside
+     *  that window, and a cached clear would keep offering both sale
+     *  paths on a position that is now locked. */
+    isError: query.isError,
     endedNotice,
     clearEndedNotice,
     remember,

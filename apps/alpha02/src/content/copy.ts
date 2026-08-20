@@ -2043,6 +2043,12 @@ const copySource = {
         'Not available yet — we’re still reading the fee terms that have to be disclosed before a sale can be started.',
       saleToolsFailed:
         'Not available right now — the fee terms that have to be disclosed before a sale could not be read. Reload the page to try again.',
+      // Codex r8/r9 P2 — my r8 fix routed a TOKEN-METADATA failure into
+      // the line above, whose only claim is about the fee read. That
+      // removed the permanent wait and kept a false cause: it blamed a
+      // read that had succeeded. Distinct state, distinct sentence.
+      saleToolsFailedMeta:
+        'Not available right now — we couldn’t load this loan’s token details, which a sale needs in order to show you amounts. Reload the page to try again.',
       // Codex r3 P2 — the operator kill switch (`VITE_DISABLED_FLOWS`)
       // disables the listing action and shows an incident banner
       // inside the tool. Scoped to LISTING: the direct sale carries no

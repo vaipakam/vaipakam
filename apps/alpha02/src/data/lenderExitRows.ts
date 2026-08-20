@@ -73,7 +73,11 @@ export type SaleLockState = 'checking' | 'listed' | 'clear' | 'unknown';
  *  about the OPTION, not the scroll: while the disclosure is unread
  *  the sale cannot be started, and a lender is better told that than
  *  scrolled to a card that says the same thing in smaller type. */
-export type SaleToolsState = 'ready' | 'checking' | 'failed';
+export type SaleToolsState =
+  | 'ready'
+  | 'checking'
+  | 'failed-terms'
+  | 'failed-meta';
 
 /** Whether the loan has passed its due date.
  *
@@ -257,9 +261,11 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
             // order: the stand-in card replaces the tools only on the
             // branch a live listing has already taken over.
             input.saleTools !== 'ready'
-            ? input.saleTools === 'failed'
+            ? input.saleTools === 'failed-terms'
               ? o.saleToolsFailed
-              : o.saleToolsChecking
+              : input.saleTools === 'failed-meta'
+                ? o.saleToolsFailedMeta
+                : o.saleToolsChecking
           : input.instantSellCandidates === 'checking'
           ? copy.lenderExit.checking
           : input.instantSellCandidates === 'none'
@@ -304,9 +310,11 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
                 input.listingFlowDisabled
               ? o.listUnavailableFlowDisabled
               : input.saleTools !== 'ready'
-                ? input.saleTools === 'failed'
+                ? input.saleTools === 'failed-terms'
                   ? o.saleToolsFailed
-                  : o.saleToolsChecking
+                  : input.saleTools === 'failed-meta'
+                    ? o.saleToolsFailedMeta
+                    : o.saleToolsChecking
               : input.heldVpfiUnresolved
                 ? o.listUnavailableHeldVpfi
                 : input.borrowerOffsetPending
