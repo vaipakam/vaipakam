@@ -31,6 +31,31 @@ only would have placed a confirmed privacy defect inside a green summary. Where
 the fix lives decides who does it, not whether a run that found the problem may
 call itself clean.
 
+### Watching for the refusal was not enough
+
+The first version noticed the problem by watching for the browser's complaint
+that it had refused the script. Review pointed out that this goes quiet in the
+one case that matters most: if the site's own security policy were ever
+missing, out of date, or widened to let this collector through, there would be
+no complaint to notice — and the collector would be running for real. The check
+would have turned green at the exact moment the problem got worse.
+
+It now watches for both, by two separate means: the browser's refusal, and a
+reply actually coming back from the collector. Either one fails the run, and
+they are reported differently, because the remedies differ — a refused script
+means one thing to switch off, while a collector that answered means the
+security policy is not doing what the project believes it is doing, and both
+need attention.
+
+Which signal to watch was measured rather than guessed, and the obvious choice
+was wrong. A refused script still counts as an attempt, so watching for
+attempts would have accused today's correctly-behaving deployment of running a
+collector it in fact blocked — a false report of the worse problem, inside the
+check whose whole purpose is to report this one honestly. Watching for the
+*reply* separates the two cleanly. Confirmed against the deployed site in both
+states: as it stands today, and again with the security policy deliberately
+disabled to produce the case under discussion.
+
 ### A detail worth keeping
 
 The problem is a property of the deployment rather than of any particular page

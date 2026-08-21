@@ -13,8 +13,9 @@
  *
  * What a PASS from this drive promises (#1626, owner decision
  * 2026-08-09; extended by #1826): the sweep stayed read-only, every
- * route it was asked to visit actually loaded, AND the zone was not
- * injecting the analytics beacon the site's CSP refuses. Console
+ * route it was asked to visit actually loaded, AND no injected
+ * analytics beacon was seen — neither refused by the CSP nor, worse,
+ * permitted through it. Console
  * errors, slow responses, heavy payloads and overflow probes otherwise
  * stay evidence and do not fail the run — they are judgements a
  * reviewer makes from the artifacts. The other two are not judgements.
@@ -322,6 +323,18 @@ async function devtoolsProbe(page) {
  *  clean page and invites the wrong conclusion that the zone setting is
  *  already off. Send a browser `User-Agent` if verifying by hand.
  *
+ *  This tag catches only the REFUSED state, and on its own that would
+ *  be a check that goes green as the problem gets worse: a CSP that is
+ *  missing, stale, or loosened to admit this host produces no console
+ *  error at all while the collector actually runs. The permitted state
+ *  is therefore caught separately, on the RESPONSE tap, and neither
+ *  signal is trusted to stand in for the other — see the two-state
+ *  block at the end of the file (#1859 r2). Measured, not assumed:
+ *  under the live CSP the beacon request event still fires and is then
+ *  failed with `errorText: 'csp'` with no response; with CSP bypassed
+ *  the same request answers 200. Watching requests would have accused
+ *  the correctly-refused deployment of running the collector.
+ *
  *  The beacon check extracts the first URL token from the message and
  *  compares its PARSED ORIGIN (never a substring/regex host match, so a
  *  lookalike domain can't self-tag — same shape as the #1145 CodeQL
@@ -441,6 +454,10 @@ const setupFailures = [];
 // so an unreachable target exited 1 and leaked that session's browser.
 let reachabilityProven = false;
 const backgroundNetworkBySession = {};
+/** Beacon requests that started while no route sink was active. Kept
+ *  run-level rather than per-route because they belong to no route, and
+ *  a permitted beacon is a finding wherever it fired (#1859 r2). */
+const backgroundBeacon = [];
 
 for (const session of activeSessions) {
   const routes = routesEnv
@@ -514,6 +531,7 @@ const sinkByRequest = new WeakMap();
 // #1154 r5 P2). Surfaced in the report as backgroundNetwork.
 const backgroundSink = {
   network: { responses: 0, bytes: 0, errors: [], failed: [], heavy: [] },
+  beacon: [],
 };
 page.on('request', (req) => {
   sinkByRequest.set(req, sink ?? backgroundSink);
@@ -540,6 +558,28 @@ page.on('response', async (res) => {
   const url = res.url();
   const status = res.status();
   s.network.responses += 1;
+  // The analytics beacon has TWO states and the console shows only one
+  // (Codex #1859 r2 P1). Refused: a CSP console error. PERMITTED: the
+  // script loads and reports, with NO console error at all — strictly
+  // worse, and invisible to a console-only scan, so a CSP that is
+  // missing, stale or loosened to admit this host would turn the sweep
+  // green at the moment the problem got worse.
+  //
+  // A RESPONSE is the discriminator, not a request. Measured against
+  // the deployed site: under the live CSP the request event still
+  // fires, then `requestfailed` reports `errorText: 'csp'` and no
+  // response arrives; with CSP bypassed the same request answers 200.
+  // Keying on the request event would therefore have accused today's
+  // correctly-refused deployment of running an ungated collector — a
+  // false report of the worse defect, inside the check that exists to
+  // report this one honestly.
+  try {
+    if (new URL(url).origin === BEACON_ORIGIN) {
+      s.beacon?.push(`${status} ${url.slice(0, 160)}`);
+    }
+  } catch {
+    /* not a parseable URL — cannot be the beacon origin */
+  }
   // The driver's undici route shim strips upstream content-length;
   // Playwright re-synthesizes it on fulfill, but don't depend on that:
   // prefer the CDP-measured body size (Codex #1154 P2).
@@ -609,6 +649,7 @@ for (const pass of session.passes) {
       console: [],
       pageErrors: [],
       network: { responses: 0, bytes: 0, errors: [], failed: [], heavy: [] },
+      beacon: [],
     };
     const started = Date.now();
     routesAttempted += 1;
@@ -733,6 +774,7 @@ for (const pass of session.passes) {
       console: sink.console,
       pageErrors: sink.pageErrors,
       network: sink.network,
+      beacon: sink.beacon,
     });
     if (navError !== null || httpError !== null || redirectedTo !== null) {
       allNavFailures.push({
@@ -778,6 +820,12 @@ allBlockedRequests.push(
   ...blockedRequests.map((b) => ({ ...b, session: session.key })),
 );
 backgroundNetworkBySession[session.key] = backgroundSink.network;
+// A beacon request that started between routes still proves the
+// injection is live and permitted, so it must not be dropped just
+// because no route sink owned it.
+if (backgroundSink.beacon.length > 0) {
+  backgroundBeacon.push(...backgroundSink.beacon.map((b) => `[${session.key}] ${b}`));
+}
 await page
   .evaluate(() => localStorage.setItem('alpha02.mode', 'basic'))
   .catch(() => {});
@@ -808,22 +856,60 @@ console.log(
 // the DEPLOYMENT, not of any one route visit — every route sees it, so
 // counting occurrences would say more about the route list than about
 // the defect.
-const beaconRoutes = new Set();
+// TWO states, detected by two independent signals, because each is
+// invisible to the other's (Codex #1859 r2 P1):
+//   REFUSED  — a CSP console error; the request is attempted and then
+//              failed with `errorText: 'csp'`, so no response arrives
+//              and nothing is sent. Today's state.
+//   PERMITTED — the script answers 200 and reports. NO console error at
+//              all, so the console scan calls it clean. Strictly worse:
+//              an ungated collector is actually running.
+// Detecting only the refusal would mean the sweep goes green at the
+// exact moment the problem gets worse — a CSP that is missing, stale,
+// or loosened to admit this host silences the very signal that was
+// standing in for it.
+//
+// `permittedRequests` is fed by RESPONSES, not requests: a refused
+// request still fires a request event, so keying on that would accuse a
+// correctly-refused deployment of running the collector.
+const beaconRefusedRoutes = new Set();
+const beaconPermitted = [...backgroundBeacon];
 for (const pass of report.passes) {
   for (const r of pass.routes ?? []) {
-    if ((r.console ?? []).some((c) => c.noise === 'csp-beacon')) beaconRoutes.add(r.route);
+    if ((r.console ?? []).some((c) => c.noise === 'csp-beacon')) beaconRefusedRoutes.add(r.route);
+    for (const b of r.beacon ?? []) beaconPermitted.push(`${r.route}: ${b}`);
   }
 }
-if (beaconRoutes.size > 0) {
+report.beacon = {
+  refusedRoutes: [...beaconRefusedRoutes],
+  permittedRequests: beaconPermitted,
+};
+// Reported as ONE line each, not per route: this is a property of the
+// DEPLOYMENT, so an occurrence count would say more about the length of
+// the route list than about the defect.
+if (beaconPermitted.length > 0) {
+  console.error(
+    `CONFIG DEFECT (worse form): the injected Cloudflare Web Analytics beacon was ` +
+      `NOT blocked — ${beaconPermitted.length} response(s) came back from ` +
+      `${BEACON_ORIGIN}, so an analytics collector is running on visitors who have ` +
+      `consented to none. TWO things are wrong, and both need fixing: the zone is ` +
+      `still injecting it (#1816), AND the served CSP is not refusing it — check ` +
+      `what the live response headers actually contain, since apps/alpha02/public/` +
+      `_headers is what we intend to serve, not proof of what is served. First ` +
+      `response: ${beaconPermitted[0]}`,
+  );
+}
+if (beaconRefusedRoutes.size > 0) {
   console.error(
     `CONFIG DEFECT: Cloudflare Web Analytics auto-injection is ON for this zone — ` +
       `its beacon is injected at the edge and refused by the site's CSP on ` +
-      `${beaconRoutes.size} route(s). The refusal is correct; the injection is not. ` +
-      `That collector sits downstream of the consent pipeline and cannot be gated ` +
-      `by it, so the fix is to turn the injection off at the zone, NOT to allow the ` +
-      `host in script-src (#1816). This FAILS the run: the remedy is an operator ` +
-      `action rather than a code change, which decides who fixes it, not whether ` +
-      `a sweep that found it may report success.`,
+      `${beaconRefusedRoutes.size} route(s). The refusal is correct; the injection ` +
+      `is not. That collector sits downstream of the consent pipeline and cannot be ` +
+      `gated by it, so the fix is to turn the injection off at the zone, NOT to allow ` +
+      `the host in script-src (#1816) — doing that converts this into the worse form ` +
+      `above. This FAILS the run: the remedy is an operator action rather than a code ` +
+      `change, which decides who fixes it, not whether a sweep that found it may ` +
+      `report success.`,
   );
 }
 for (const f of allNavFailures) {
@@ -861,7 +947,12 @@ if (allBlockedRequests.length > 0) {
 // verified nothing". A confirmed defect is the former whoever owns the
 // remedy, and exit 2 would actively misdescribe it as an unswept
 // surface.
-if (allBlockedRequests.length > 0 || allNavFailures.length > 0 || beaconRoutes.size > 0) {
+if (
+  allBlockedRequests.length > 0 ||
+  allNavFailures.length > 0 ||
+  beaconRefusedRoutes.size > 0 ||
+  beaconPermitted.length > 0
+) {
   if (allNavFailures.length > 0) {
     console.error(
       `NAVIGATION FAILURES: ${allNavFailures.length} of ${routesAttempted} route visit(s)` +
