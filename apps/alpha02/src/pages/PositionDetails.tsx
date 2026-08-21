@@ -1333,7 +1333,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // next poll, while a false offer is a form filled in for a
     // transaction that reverts. Only affirmative answers count — an
     // unread or errored source still says nothing.
-    !liveStatusCandidates.some(
+    //
+    // FRESH candidates (Codex #1858 r8). "Fails closed" is only sound
+    // over readings that can still change their mind: a pre-cure
+    // FallbackPending frozen by an Advanced → Basic → Advanced trip
+    // fails closed FOREVER, keeping both sale tools unmounted while
+    // the always-on reads report Active — and the chooser, now reading
+    // fresh candidates, publishes `ready`/`yes` with jumpable rows
+    // whose targets do not exist. That contradiction is worse than
+    // either half.
+    //
+    // A terminal reading still blocks correctly: terminal statuses are
+    // absorbing and every one of them is `!== Active`, so the fresh
+    // list carries them from whichever source can still speak.
+    !freshStatusCandidates.some(
       (st) => st !== undefined && st !== LoanStatus.Active,
     );
 
