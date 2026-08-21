@@ -4,9 +4,13 @@ A day about telling users the truth about their own money.
 
 The largest piece retires a promise the public pages had been making to
 borrowers — a VPFI rebate that, under the current fee model, cannot arrive. The
-correction runs through every public surface in all ten languages, and it scopes
-the retired mechanism rather than deleting it, because the loans opened while it
-was live still settle that way and their holders still have something to claim.
+correction runs through the documentation and site copy — whitepaper, overview,
+both user guides, the FAQ and the localized interface strings — in all ten
+languages, and it scopes the retired mechanism rather than deleting it, because
+the loans opened while it was live still settle that way and their holders still
+have something to claim. Several surfaces inside the connected app are
+deliberately not part of it and are listed further down, so this is not yet a
+complete sweep of everything a user can read.
 
 Along the way the same review surfaced a second, sharper class of problem: pages
 a reader could follow to the letter and still be charged the full fee, and pages
