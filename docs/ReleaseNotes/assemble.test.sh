@@ -71,6 +71,12 @@ pending() {  # pending <dir> -> count of pending fragments
 sections() {  # sections <file> -> count of `## ` headings, 0 if absent
   if [ -f "$1" ]; then grep -c '^## ' "$1" || true; else echo 0; fi
 }
+count_in() {  # count_in <ere> <file> -> number of matching lines, 0 if absent
+  # `grep -c` prints 0 AND exits 1 when nothing matches, so the obvious
+  # `grep -c … || echo 0` emits "0\n0" and every comparison against it fails.
+  if [ -f "$2" ]; then grep -cE "$1" "$2" || true; else echo 0; fi
+}
+
 fixture_hash() {  # fixture_hash <file> -> sha256 of its bytes
   # The same portable selection assemble.sh makes, for the same reason: stock
   # macOS ships `shasum`, not `sha256sum`. Hashed from STDIN so the filename
@@ -857,7 +863,7 @@ check "the run fails"              "$?"                          "1"
 check "the fragment is NOT deleted" "$(pending "$W")"            "2"
 check "it reports the command failure" "$(says "$msg" 'checksum command failed')" "1"
 check "no empty-hash marker was written" \
-  "$(grep -c 'sha256= -->' "$out/ReleaseNotes-2026-08-16.md" 2>/dev/null || echo 0)" "0"
+  "$(count_in 'sha256= -->' "$out/ReleaseNotes-2026-08-16.md")" "0"
 
 # The variant that produces the EXACT failure described: a checksum tool that
 # SUCCEEDS while printing something that is not a hash. `set -e` cannot see
@@ -876,7 +882,7 @@ check "a zero-exit bad hash also fails" "$?"                              "1"
 check "the fragment is NOT deleted"     "$(pending "$W")"                 "2"
 check "it reports the bad value"        "$(says "$msg" 'not-a-hash')"     "1"
 check "no malformed marker was written" \
-  "$(grep -c 'sha256=not-a-hash' "$out/ReleaseNotes-2026-08-16.md" 2>/dev/null || echo 0)" "0"
+  "$(count_in 'sha256=not-a-hash' "$out/ReleaseNotes-2026-08-16.md")" "0"
 
 # The third shape: a tool that prints something that LOOKS like a valid hash
 # and exits NON-ZERO. Validating the output alone accepts it, so the run
@@ -896,7 +902,33 @@ check "a plausible-but-failed hash is refused" "$?"                       "1"
 check "the fragment is NOT deleted"            "$(pending "$W")"          "2"
 check "it reports the command failure"  "$(says "$msg" 'checksum command failed')" "1"
 check "no false marker was written" \
-  "$(grep -c 'sha256=0000' "$out/ReleaseNotes-2026-08-16.md" 2>/dev/null || echo 0)" "0"
+  "$(count_in 'sha256=0000' "$out/ReleaseNotes-2026-08-16.md")" "0"
+
+echo "T31: a failing tail aborts rather than corrupting the marker"
+W="$ROOT/t31"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The separator between a fragment and its marker is decided by `tail -c1`. If
+# that fails, the substitution is empty, the -z test passes, no newline is
+# written, and the marker is glued onto the fragment's last line — unreadable,
+# so recovery cannot see it and appends the fragment again (Codex #1863 r8).
+#
+# The fragment must end WITHOUT a newline — that is the only case where the
+# separator matters. A fragment that ends with one terminates its own line, so
+# the marker lands correctly whatever `tail` did, and a test using such a
+# fragment would assert nothing about the glue.
+printf '## no trailing newline' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+git -C "$W" add -A
+GIT_AUTHOR_DATE='2026-08-16T23:00:00Z' GIT_COMMITTER_DATE='2026-08-16T23:00:00Z' \
+  git -C "$W" commit -q -m nonewline
+mkdir -p "$W/fakebin"
+printf '#!/bin/sh\nexit 4\n' > "$W/fakebin/tail"
+chmod +x "$W/fakebin/tail"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the run fails"               "$?"                                    "1"
+check "the fragment is NOT deleted" "$(pending "$W")"                       "2"
+check "it says what it could not read" "$(says "$msg" 'last byte')"         "1"
+check "no glued marker was written" \
+  "$(count_in '.+<!-- assembled-fragment: ' "$out/ReleaseNotes-2026-08-16.md")" "0"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

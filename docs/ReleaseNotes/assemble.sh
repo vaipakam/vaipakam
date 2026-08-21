@@ -944,7 +944,27 @@ for f in "${frags[@]}"; do
     s|\]\(\./|](\.\./|g
   ' "$f" >> "$WORK"
   # Ensure a trailing newline between fragments.
-  [ -z "$(tail -c1 "$f")" ] || printf '\n' >> "$WORK"
+  #
+  # `tail`'s status is captured, not discarded (Codex #1863 r8). On
+  # failure the substitution is empty, `-z` is TRUE, and the separating
+  # newline is skipped — so the provenance marker is concatenated onto
+  # the fragment's last line and becomes unparseable. Recovery then does
+  # not recognise that fragment, appends it a second time, and deletes
+  # the source. The line predates this change; what the marker did was
+  # turn "two fragments run together" into "the recovery record for this
+  # fragment is silently destroyed".
+  _tail_rc=0
+  _last_byte="$(tail -c1 "$f")" || _tail_rc=$?
+  if (( _tail_rc != 0 )); then
+    echo "Error: could not read the last byte of $(basename "$f") (exit $_tail_rc)." >&2
+    echo "Refusing to assemble: without it the marker below could be joined" >&2
+    echo "onto the fragment's final line and stop being readable, which" >&2
+    echo "silently costs the recovery this whole mechanism exists for." >&2
+    exit 1
+  fi
+  # Command substitution strips trailing newlines, so a file that ends in
+  # one yields the empty string here and needs no separator added.
+  [ -z "$_last_byte" ] || printf '\n' >> "$WORK"
   # Provenance marker — an HTML comment, so it is invisible in every
   # rendered view and visible to the next run of this script. See the
   # "Crash safety" note at the top: this is what makes a re-run after an
