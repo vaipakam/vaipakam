@@ -1650,9 +1650,27 @@ async function lenderAdvancedOf(page) {
     }
     return { advancedOffered: true, ...(await anchorAudit(page, card)) };
   } catch (e) {
-    // A click or evaluate that failed is "could not look", not a
-    // product defect — reported so it is visible, never as a FAIL.
-    return { advancedOffered: true, advancedJumps: null, advancedWhy: String(e).slice(0, 120) };
+    // "Could not look" is exit 2, NOT a clean observation (Codex #1853
+    // r6). Reporting it and returning was half right: it is correctly
+    // not a product FAIL — a switch that is disabled or covered, or an
+    // evaluate that throws, says nothing about the app — but the
+    // reporter only rejects `advancedAnchorsOk === false`, so the route
+    // stayed `ok` and the run could exit 0 with the Advanced assertion
+    // never completed.
+    //
+    // That is the SAME defect round 5 fixed for the offered-switch arm,
+    // in the other arm of the same function, twelve lines away. I fixed
+    // the branch the finding named and did not look at its sibling —
+    // for the sixth time on this PR, and this is the closest sibling
+    // yet.
+    //
+    // `advancedBlocked` is what the reporter turns into exit 2.
+    return {
+      advancedOffered: true,
+      advancedJumps: null,
+      advancedBlocked: true,
+      advancedWhy: String(e).slice(0, 120),
+    };
   }
 }
 
@@ -1966,6 +1984,21 @@ if (pageChainWrong.length) {
   process.exit(2);
 }
 if (failures) process.exit(1);
+// The Advanced probe could not be run to completion on some page: the
+// switch was there but unclickable, or the page evaluate threw. Not a
+// product FAIL — nothing was learned about the app either way — but not
+// a clean run either, because the assertion this drive advertises did
+// not execute (Codex #1853 r6). Ranked AFTER `failures` so a real
+// regression is still reported as one.
+const advBlocked = visited.filter((v) => v.advancedBlocked);
+if (advBlocked.length) {
+  console.log(
+    `\nBLOCKED: the Advanced probe could not complete on ${advBlocked.length}` +
+      ` page(s) — the jump-anchor assertion did not run.`,
+  );
+  advBlocked.forEach((v) => console.log(`  ${v.path}: ${v.advancedWhy}`));
+  process.exit(2);
+}
 if (allowlistTooNarrow.length || httpGaps.length) process.exit(2);
 // Every candidate moved out from under us: the list route alone proves
 // nothing about the chooser, so this run verified nothing.
