@@ -438,9 +438,11 @@ discount arrives as a **VPFI rebate paid when they claim** — that the full fee
 taken in VPFI up front, held for the life of the loan, and partly returned at
 settlement.
 
-That stopped being true when the fee model changed. A loan opened today has the
-discount applied **directly to the fee it pays in the lending asset**, at the
-moment the loan is accepted. No VPFI is taken to pay it, nothing is held, and
+That stopped being true when the fee model changed. A loan opened today, where
+the lending asset is one the protocol can price, has the discount applied
+**directly to the fee it pays in the lending asset**, at the moment the loan is
+accepted; where it cannot, the full fee is charged and there is no discount to
+apply. No VPFI is taken to pay it, nothing is held, and
 there is no rebate. A borrower reading the old pages would have been waiting for
 money that could never arrive — and would have had no way to discover that from
 the pages themselves.
@@ -655,7 +657,12 @@ So the guides no longer enumerate routes at all. They state the one thing the
 answer actually turns on: whether the collateral was SOLD or HANDED OVER. Sold
 returns the loan's own asset, handed over returns the collateral, and the ways
 of handing it over are named as open examples rather than as a closed list —
-with no count attached, since the count is the thing that kept going stale.
+with no count attached, since the count is the thing that kept going stale. One
+of those examples is not final: where a swap failed, a later retry at claim time
+can still sell the collateral and rewrite what waits into the loan's own asset,
+so a failed sale settles the question only if nobody retries it. That is the
+reason the guides tell a borrower to read the claim rather than infer it from
+how the loan closed.
 
 **And the position NFT is not proof that anything is waiting.** Where a
 liquidation left nothing over, the claim is either recorded as already settled
