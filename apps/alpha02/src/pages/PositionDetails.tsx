@@ -3139,7 +3139,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   // r8. That is what settled the question: the failure
                   // states collapsed rather than growing a third name
                   // to keep straight. See `SaleToolsState`.
-                  isAdvanced && !loanLive.data
+                  // `isError` disqualifies the cached snapshot, it does
+                  // not merely rank below it (Codex r20 P2). TanStack
+                  // retains `loanLive.data` through a failed refetch,
+                  // so this said "ready" on a snapshot that may predate
+                  // a partial repayment or an obligation transfer made
+                  // elsewhere — and `LoanSaleFlow` would then render and
+                  // confirm against obsolete principal and terms while
+                  // its submit path silently re-read the changed values.
+                  // A receipt the lender approved for different numbers
+                  // than the ones that execute.
+                  //
+                  // Same rule the fee-entitlement and sale-lock gates
+                  // already use; this was the third consumer of that
+                  // rule and the one I kept missing.
+                  isAdvanced && (!loanLive.data || loanLive.isError)
                   ? loanLive.isError
                     ? 'failed'
                     : 'checking'
@@ -3364,7 +3378,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !isRental &&
       principal &&
       !(sanctions.ready && sanctions.flagged) ? (
-        !loanLive.data || !sanctions.ready ? (
+        // Errored cached terms are NOT a basis for the full form —
+        // same rule as the readiness verdict above (Codex r20 P2).
+        !loanLive.data || loanLive.isError || !sanctions.ready ? (
           <section className="card">
             <h3>{copy.earlyExit.title}</h3>
             <p className="muted">
