@@ -839,6 +839,45 @@ check "the link is untouched" \
   "$([ -L "$out/ReleaseNotes-2026-08-17.md" ] && echo link || echo replaced)" "link"
 rm -f "$out/ReleaseNotes-2026-08-17.md"
 
+echo "T30: a failing hash aborts instead of writing an empty marker"
+W="$ROOT/t30"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Stage a checksum tool that fails. Inlined as $(frag_hash …) the failure is
+# swallowed by the command substitution — printf still succeeds, so the run
+# writes `sha256=` with nothing after it, replaces the output and deletes the
+# fragment. That marker can never be indexed, so the recovery it exists for is
+# gone (Codex #1863 r6).
+mkdir -p "$W/fakebin"
+for tool in sha256sum shasum; do
+  printf '#!/bin/sh\nexit 3\n' > "$W/fakebin/$tool"
+  chmod +x "$W/fakebin/$tool"
+done
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the run fails"              "$?"                          "1"
+check "the fragment is NOT deleted" "$(pending "$W")"            "2"
+check "it says it could not hash"  "$(says "$msg" 'could not hash')" "1"
+check "no empty-hash marker was written" \
+  "$(grep -c 'sha256= -->' "$out/ReleaseNotes-2026-08-16.md" 2>/dev/null || echo 0)" "0"
+
+# The variant that produces the EXACT failure described: a checksum tool that
+# SUCCEEDS while printing something that is not a hash. `set -e` cannot see
+# that one, so before the fix `printf` wrote `sha256=…` with junk in it,
+# replaced the output and deleted the fragment — a marker that can never be
+# indexed, so the recovery it exists for is silently gone.
+W="$ROOT/t30b"; build "$W"
+out="$W/docs/ReleaseNotes"
+mkdir -p "$W/fakebin"
+for tool in sha256sum shasum; do
+  printf '#!/bin/sh\necho "not-a-hash"\nexit 0\n' > "$W/fakebin/$tool"
+  chmod +x "$W/fakebin/$tool"
+done
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "a zero-exit bad hash also fails" "$?"                              "1"
+check "the fragment is NOT deleted"     "$(pending "$W")"                 "2"
+check "it reports the bad value"        "$(says "$msg" 'not-a-hash')"     "1"
+check "no malformed marker was written" \
+  "$(grep -c 'sha256=not-a-hash' "$out/ReleaseNotes-2026-08-16.md" 2>/dev/null || echo 0)" "0"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

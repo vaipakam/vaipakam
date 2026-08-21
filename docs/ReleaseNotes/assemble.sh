@@ -703,11 +703,37 @@ done
 # coincidental text), and a match in a different dated file (reuse, or a
 # crossed midnight). Each is reported with what it matched and where.
 # Stopping cannot duplicate and cannot delete; guessing can do both.
+# Hash every fragment ONCE, here, and validate each in the parent shell
+# (Codex #1863 r6). Two reasons it cannot be done at the call sites:
+#
+#   - a bare `h="$(frag_hash "$f")"` lets `set -e` abort on a failing
+#     checksum with the tool's own exit status and NO message, and does
+#     not notice a tool that exits 0 while printing something that is not
+#     a hash;
+#   - validating inside `frag_hash` cannot work either, because `exit`
+#     in a command substitution leaves only the SUBSHELL — the parent
+#     carries on with an empty hash, which is the failure being fixed.
+#
+# Computing them up front also stops the same file being hashed three or
+# four times per run.
+declare -A FRAG_HASH=()
+for f in "${frags[@]}"; do
+  _h="$(frag_hash "$f" || true)"
+  if [[ ! "$_h" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Error: could not hash $(basename "$f") (got '${_h}')." >&2
+    echo "Refusing to assemble: the marker written for a fragment is what" >&2
+    echo "lets a later run tell it has already been folded in, so an" >&2
+    echo "unusable hash would silently cost the recovery this exists for." >&2
+    exit 1
+  fi
+  FRAG_HASH["$f"]="$_h"
+done
+
 already=()
 pending=()
 ambiguous=()
 for f in "${frags[@]}"; do
-  h="$(frag_hash "$f")"
+  h="${FRAG_HASH[$f]}"
   if [ -n "${marker_seen[$h|$(basename "$f")|$OUT]+set}" ]; then
     already+=("$f")
   elif [ -n "${marker_where[$h]+set}" ]; then
@@ -726,7 +752,7 @@ if (( ${#ambiguous[@]} > 0 )) && (( FORCE_APPEND == 0 )); then
   echo "Nothing here can tell which:" >&2
   echo "" >&2
   for f in "${ambiguous[@]}"; do
-    h="$(frag_hash "$f")"
+    h="${FRAG_HASH[$f]}"
     # Every place this content already appears, not just one — with two
     # identically-worded notes in play, naming a single site would point
     # the operator at an arbitrary one of them.
@@ -907,7 +933,17 @@ for f in "${frags[@]}"; do
   # "Crash safety" note at the top: this is what makes a re-run after an
   # interruption skip a fragment already folded in, instead of appending
   # it a second time.
-  printf '%s%s sha256=%s -->\n' "$MARKER_PREFIX" "$(basename "$f")" "$(frag_hash "$f")" >> "$WORK"
+  #
+  # The hash comes from FRAG_HASH, validated up front (Codex #1863 r6).
+  # Inlined as `$(frag_hash "$f")` a checksum failure is swallowed by the
+  # command substitution: `printf` still succeeds, so the run writes a
+  # marker with an EMPTY hash, replaces the output, deletes the fragment
+  # and reports success. That marker can never be indexed, so if the run
+  # is then interrupted the recovery it exists for is gone and the
+  # section is appended twice. The one write the whole recovery rests on
+  # must not be able to fail quietly.
+  printf '%s%s sha256=%s -->\n' \
+    "$MARKER_PREFIX" "$(basename "$f")" "${FRAG_HASH[$f]}" >> "$WORK"
 done
 
 # The atomic step. Until this line $OUT is untouched, so an interruption
