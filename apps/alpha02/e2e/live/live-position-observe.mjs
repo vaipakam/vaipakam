@@ -1689,8 +1689,15 @@ async function jumpabilityMoved(loan) {
     // Both sale entry points require exactly Active — FallbackPending is
     // enough to close them while the card stays mounted.
     if (Number(live.status) !== STATUS_ACTIVE) return 'loan left Active during the probe';
-    if (now > live.startTime + live.durationDays * 86_400n) {
-      return 'loan crossed maturity during the probe';
+    // `>=`, matching the page and the contracts (Codex #1853 r10). The
+    // card classifies maturity inclusively and the Advanced tool block
+    // gates on a strict `<`, so AT the boundary second both jumps are
+    // correctly gone — and a `>` here returned "nothing moved", turning
+    // the healthy zero-jump result into a product FAIL. This is the
+    // identical off-by-one #1839 fixed in its own round 18, reproduced
+    // in the drive built to review it.
+    if (now >= live.startTime + live.durationDays * 86_400n) {
+      return 'loan reached maturity during the probe';
     }
     if (lock !== 0) return 'position became locked during the probe';
     return null;
@@ -1727,12 +1734,22 @@ async function positionLockOf(tokenId) {
  */
 async function waitForSaleRows(card, jumpsOf, page) {
   const CHECKING = /still reading the details a sale needs/i;
+  // The card's OTHER prerequisite outcome, and a settled one (Codex
+  // #1853 r10). `saleToolsFailed` is an answered failure — a reverted
+  // read, say — not a transport outage, so no route or RPC verdict fires
+  // and the drive sees a card that has stopped checking with no jumps.
+  // Treated as "settled" that reads as `no jumpable row` on one path and
+  // a product FAIL on the other; it is neither. The anchor audit simply
+  // could not run.
+  const FAILED = /one of the details a sale needs couldn.t be loaded/i;
   const deadline = Date.now() + 45_000;
   for (;;) {
     const jumps = await jumpsOf().count();
-    const stillChecking = CHECKING.test(await card.innerText().catch(() => ''));
-    if (jumps > 0 || !stillChecking || Date.now() > deadline) {
-      return { jumps, stillChecking };
+    const text = await card.innerText().catch(() => '');
+    const stillChecking = CHECKING.test(text);
+    const toolsFailed = FAILED.test(text);
+    if (jumps > 0 || toolsFailed || !stillChecking || Date.now() > deadline) {
+      return { jumps, stillChecking, toolsFailed };
     }
     await page.waitForTimeout(1_000);
   }
@@ -1770,6 +1787,14 @@ async function lenderAdvancedOf(page, loan) {
       // without ever auditing a row that became jumpable a second later.
       const settled = await waitForSaleRows(card, jumpsOf, page);
       if (settled.jumps === 0) {
+        if (settled.toolsFailed) {
+          return {
+            advancedOffered: false,
+            advancedJumps: null,
+            advancedBlocked: true,
+            advancedWhy: 'a prerequisite read failed — sale tools unavailable',
+          };
+        }
         if (settled.stillChecking) {
           return {
             advancedOffered: false,
@@ -1778,9 +1803,24 @@ async function lenderAdvancedOf(page, loan) {
             advancedWhy: 'sale tools still checking at first render — never settled',
           };
         }
-        return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
+        // RE-CHECK THE SWITCH (Codex #1853 r10). On a Basic page still
+        // loading at first render there is no switch AND no jumps, so we
+        // land here — but once `saleTools` becomes ready the switch
+        // APPEARS, while Basic mode still has zero jump buttons by
+        // design. Returning `no jumpable row` on the first look meant a
+        // healthy, genuinely jumpable page exited 0 without ever
+        // switching modes or auditing an anchor.
+        //
+        // The absence of a switch is only meaningful once the reads it
+        // depends on have settled, which is exactly what we just waited
+        // for.
+        if ((await sw.count()) === 0) {
+          return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
+        }
+        // It appeared: fall through to the click path below.
+      } else {
+        return { advancedOffered: false, advancedWhy: 'already in Advanced', ...(await anchorAudit(page, card)) };
       }
-      return { advancedOffered: false, advancedWhy: 'already in Advanced', ...(await anchorAudit(page, card)) };
     }
     await sw.first().click({ timeout: 10_000 });
     // WAIT FOR READINESS, not a fixed sleep (Codex #1853 r7). Switching
@@ -1794,8 +1834,19 @@ async function lenderAdvancedOf(page, loan) {
     //
     // Poll for a settled state instead: either a jump exists, or the
     // sale rows have stopped saying "still reading".
-    const { jumps, stillChecking } = await waitForSaleRows(card, jumpsOf, page);
+    const { jumps, stillChecking, toolsFailed } = await waitForSaleRows(card, jumpsOf, page);
     if (jumps === 0) {
+      if (toolsFailed) {
+        // Answered failure, not a no-op switch: the card is correctly
+        // reporting that a prerequisite could not be loaded, so the
+        // anchor audit could not run and nothing was learned.
+        return {
+          advancedOffered: true,
+          advancedJumps: null,
+          advancedBlocked: true,
+          advancedWhy: 'a prerequisite read failed after the switch — sale tools unavailable',
+        };
+      }
       if (stillChecking) {
         // Never settled inside the deadline. Nothing was learned about
         // the app — the read that decides is still outstanding — so this
@@ -1948,7 +1999,19 @@ for (const v of visited) {
   // AND both newly-exposed paths. Printing handover/offset without
   // failing on them let the drive pass while missing one of the two
   // #1505 surfaces it claims to validate (#1529 review).
-  if (detail && !v.nav) {
+  // A page whose chain revalidation ESTABLISHED that the loan moved is a
+  // state race, and its card-shape assertions are meaningless (Codex
+  // #1853 r10): the same transition that removed the jumps unmounts the
+  // card, so `chooser=false` and every row check fails — and `if
+  // (failures) process.exit(1)` runs BEFORE the advancedBlocked branch,
+  // so the race I had just correctly detected was still reported as a
+  // product regression.
+  //
+  // Note this is EVIDENCE-GATED, not a blanket suppression: it applies
+  // only where `jumpabilityMoved` read the chain and found a specific
+  // change. A page that merely looks odd still fails.
+  const racedMidProbe = v.advancedBlocked && /chain state moved/.test(v.advancedWhy ?? '');
+  if (detail && !v.nav && !racedMidProbe) {
     if (!v.chooser) problems.push(`${ROLE} chooser MISSING on an eligible loan`);
     else if (ROLE === 'lender') {
       // The card is an AWARENESS surface, so what makes it correct is
