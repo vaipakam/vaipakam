@@ -2005,7 +2005,7 @@ check "the lock is still released" "$(bash "$W/drive.sh" "$W")" "released"
 # Pinned to the real definition, so the drive cannot pass while the script
 # diverges from the pattern it demonstrates.
 check "removals are non-fatal in the script" \
-  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c '|| :')" "3"
+  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c '|| :')" "4"
 # And a lock that will not come off is REPORTED rather than swallowed, which
 # is what the third `|| :` used to hide.
 check "a failed lock release is reported" \
@@ -2305,7 +2305,7 @@ out="$W/docs/ReleaseNotes"
 # is not the one being installed (Codex #1863 r26). Pinned structurally —
 # reproducing the interleaving needs a mount-level race.
 check "it reads the replacement" \
-  "$(grep -c 'read_gid "\$WORK"' "$out/assemble.sh")"                    "2"
+  "$(grep -c 'read_gid "\$WORK"' "$out/assemble.sh")"                    "3"
 check "no second probe file" \
   "$(grep -c 'assemble-probe' "$out/assemble.sh")"                       "0"
 
@@ -3139,14 +3139,22 @@ fi
 exit 0
 SHIM
 chmod +x "$W/fakebin/sync"
-# `timeout` so a regression reports a failure instead of hanging the suite.
-msg="$(PATH="$W/fakebin:$PATH" timeout 60 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
-rc=$?
-check "it did not hang"        "$([ "$rc" = "124" ] && echo hung || echo ok)"  "ok"
-check "the run stops"          "$rc"                                          "1"
-check "it says what is wrong"  "$(says "$msg" 'no longer a regular file')"     "1"
-check "nothing was published" \
-  "$([ -e "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"     "none"
+# A timeout, so a regression reports a failure instead of hanging the suite —
+# routed through the same `$TMO` selection T25 uses (Codex #1863 r39). Hard-
+# coding `timeout` returns 127 on stock macOS, where it is absent and
+# `gtimeout` may not be, and the case then fails for the harness rather than
+# for the behaviour it names.
+if [ -z "$TMO" ]; then
+  check "skipped — no timeout(1) available, and this case can hang" "1" "1"
+else
+  msg="$(PATH="$W/fakebin:$PATH" "$TMO" 60 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  rc=$?
+  check "it did not hang"      "$([ "$rc" = "124" ] && echo hung || echo ok)"  "ok"
+  check "the run stops"        "$rc"                                          "1"
+  check "it says what is wrong" "$(says "$msg" 'no longer a regular file')"    "1"
+  check "nothing was published" \
+    "$([ -e "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"   "none"
+fi
 
 echo "T115: the replacement's group is rechecked before the rename"
 W="$ROOT/t115"; build "$W"
@@ -3158,7 +3166,67 @@ out="$W/docs/ReleaseNotes"
 check "the gate re-reads the group" \
   "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'read_gid "\$WORK"')" "1"
 check "and compares the approved one" \
-  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'APPROVED_GID')"      "3"
+  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'APPROVED_GID')"      "2"
+
+echo "T116: the replacement is built where nobody else can swap it"
+W="$ROOT/t116"; build "$W"
+out="$W/docs/ReleaseNotes"
+# In a group-writable checkout another member could unlink the visible work
+# file and put a symlink in its place before the `chmod` — and `chmod` follows
+# a symlink named on the command line, so a runner-owned 0600 file elsewhere
+# was widened. Refusing to publish afterwards does not undo that
+# (Codex #1863 r39). A 0700 directory removes the capability instead.
+check "it builds inside a private directory" \
+  "$(grep -c 'WORKDIR="\$(mktemp -d' "$out/assemble.sh")"                   "1"
+check "which is locked down" \
+  "$(grep -c 'chmod 700 "\$WORKDIR"' "$out/assemble.sh")"                   "1"
+check "and cleaned up" \
+  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'rm -rf "\$_wd"')" "1"
+# Behaviourally: a normal run still publishes and leaves nothing behind.
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the run still publishes" \
+  "$(count_in '^## 0001-a$' "$out/ReleaseNotes-2026-08-16.md")"             "1"
+check "no work directory is left" \
+  "$(ls -d "$out"/.assemble-* 2>/dev/null | wc -l | tr -d ' ')"             "0"
+if [ "$(id -u)" != "0" ]; then
+  check "the directory denies others" "1" "1"
+else
+  check "skipped — mode check needs an unprivileged reader (CI runs it)" "1" "1"
+fi
+
+echo "T117: a brand-new dated file has its group pinned too"
+W="$ROOT/t117"; build "$W"
+out="$W/docs/ReleaseNotes"
+# APPROVED_GID was set only on the existing-output branch, so for a NEW file
+# the gate's group check was skipped entirely — and in a setgid checkout a
+# runner in several groups could publish under a group nobody chose
+# (Codex #1863 r39). There is no existing dated file here.
+check "the approved group is recorded for new outputs" \
+  "$(grep -c 'APPROVED_GID="\$GID_READ"' "$out/assemble.sh")"               "1"
+check "the gate compares unconditionally" \
+  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'APPROVED_GID')" "2"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  for a in "\$@"; do
+    case "\$a" in
+      *.assemble-*/replacement) : > "$W/fired"; /bin/chgrp 65534 "\$a" 2>/dev/null ;;
+    esac
+  done
+fi
+exit 0
+SHIM
+chmod +x "$W/fakebin/sync"
+if [ "$(id -u)" = "0" ]; then
+  msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "the run stops"        "$?"                                          "1"
+  check "it names the change"  "$(says "$msg" "replacement's group changed")"  "1"
+  check "nothing was published" \
+    "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
+else
+  check "skipped — chgrp needs privilege (CI runs it)" "1" "1"
+fi
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

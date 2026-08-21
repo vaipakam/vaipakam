@@ -519,6 +519,7 @@ LOCK="$UNREL/.assemble.lock"
 # this process created.
 LOCK_HELD=0
 WORK=""
+WORKDIR=""
 SNAP=""
 PROBE=""
 # ONE cleanup for every exit path. Separate traps drifted apart once
@@ -537,8 +538,8 @@ PROBE=""
 # Each resource is cleared BEFORE it is released, not after: a failure
 # midway must not leave the flag saying there is still something to free.
 _cleanup() {
-  local _w="$WORK" _s="$SNAP" _p="$PROBE"
-  WORK=""; SNAP=""; PROBE=""
+  local _w="$WORK" _wd="$WORKDIR" _s="$SNAP" _p="$PROBE"
+  WORK=""; WORKDIR=""; SNAP=""; PROBE=""
   if [ -n "$_p" ]; then rm -f "$_p" 2>/dev/null || :; fi
   # Every removal is NON-FATAL, and the lock release is unconditional
   # (Codex #1863 r23). `set -e` exits on the last command of an `&&`
@@ -551,6 +552,7 @@ _cleanup() {
   # Cleanup is the one place that must finish whatever it finds broken:
   # it runs while something has already gone wrong.
   if [ -n "$_w" ]; then rm -f "$_w" || :; fi
+  if [ -n "$_wd" ]; then rm -rf "$_wd" || :; fi
   if [ -n "$_s" ]; then rm -rf "$_s" || :; fi
   if (( LOCK_HELD )); then
     LOCK_HELD=0
@@ -2027,7 +2029,22 @@ fi
 # `mktemp` in $DIR rather than /tmp so the rename is within a single
 # filesystem — across a mount boundary `mv` degrades to copy-then-unlink
 # and stops being atomic, which is the whole point of doing it this way.
-WORK="$(mktemp "$DIR/.assemble-$DATE.XXXXXX")"
+# Built inside a PRIVATE directory, not directly in $DIR (Codex #1863
+# r39). In a group-writable checkout another member could unlink the
+# visible work file and put a symlink in its place before the `chmod`
+# below — and `chmod` follows a symlink given on the command line, so a
+# runner-owned 0600 file elsewhere was widened to 0644. The type check
+# added last round refuses to PUBLISH that, but the widening has already
+# happened; refusing afterwards does not undo it.
+#
+# A 0700 directory removes the capability instead of narrowing the
+# window: nobody else can create or unlink entries inside it. Still under
+# $DIR, so the rename stays within one filesystem, which is what makes it
+# atomic.
+WORKDIR="$(mktemp -d "$DIR/.assemble-$DATE.XXXXXX")"
+chmod 700 "$WORKDIR"
+WORK="$WORKDIR/replacement"
+: > "$WORK"
 # `mktemp` creates 0600, and `mv` carries that mode onto $OUT — so every
 # successful assembly would quietly turn a world-readable release-notes
 # file into an owner-only one, or create the new one that way (Codex
@@ -2159,6 +2176,20 @@ if [ -f "$OUT" ]; then
   FINAL_MODE="$OUT_MODE"
 else
   FINAL_MODE="$(printf '%o' "$(( 0666 & ~0$(umask) ))")"
+  # A NEW dated file still has a group worth pinning (Codex #1863 r39).
+  # APPROVED_GID was set only on the existing-output branch, so for a new
+  # file the gate's group check was skipped entirely — and in a setgid
+  # checkout a runner in several groups could publish it under a group
+  # nobody chose. The replacement's own initial group is the approved
+  # one here: it is what a new file in this directory is supposed to get.
+  if read_gid "$WORK"; then
+    APPROVED_GID="$GID_READ"
+  else
+    echo "Error: could not read the group of the replacement." >&2
+    echo "Refusing to assemble: the published file's group has to be known" >&2
+    echo "before it is installed." >&2
+    exit 1
+  fi
 fi
 
 # Everything below builds on this COPY of $OUT, and the rename installs
@@ -2405,18 +2436,16 @@ _final_gate() {
   # without touching its bytes or its mode, and the existing checks —
   # content, mode, owner — all still passed while the rename installed a
   # different group on the published file (Codex #1863 r38).
-  if [ -n "${APPROVED_GID:-}" ]; then
-    if ! read_gid "$WORK"; then
-      echo "Error: could not re-read the group of the replacement." >&2
-      _refuse_reporting_consumed
-    fi
-    if [ "$GID_READ" != "$APPROVED_GID" ]; then
-      echo "Error: the replacement's group changed while this run was" >&2
-      echo "preparing it ($APPROVED_GID -> $GID_READ)." >&2
-      echo "Publishing it would hand the file to a group this run did not" >&2
-      echo "approve." >&2
-      _refuse_reporting_consumed
-    fi
+  if ! read_gid "$WORK"; then
+    echo "Error: could not re-read the group of the replacement." >&2
+    _refuse_reporting_consumed
+  fi
+  if [ "$GID_READ" != "$APPROVED_GID" ]; then
+    echo "Error: the replacement's group changed while this run was" >&2
+    echo "preparing it ($APPROVED_GID -> $GID_READ)." >&2
+    echo "Publishing it would hand the file to a group this run did not" >&2
+    echo "approve." >&2
+    _refuse_reporting_consumed
   fi
   # The SOURCE directory as well (Codex #1863 r36). A rename removes the
   # source entry, so `mv` needs write permission on BOTH directories —
@@ -2551,6 +2580,7 @@ _persist "$DIR"
 # rest of the transaction, and `_cleanup` reads this to decide whether
 # there is still a temp file to remove.
 WORK=""
+# The private directory is now empty; the trap removes it.
 
 # Only now are the fragments consumed. An interruption between the rename
 # and these deletes leaves fragments pending whose content IS already in
