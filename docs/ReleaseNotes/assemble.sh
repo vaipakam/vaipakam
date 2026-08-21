@@ -215,6 +215,11 @@ read_gid() {  # read_gid <path>; sets GID_READ
 # Deleting the machinery fixed three of that round's findings outright.
 QDIR="$UNREL/.assembled"
 
+# Whether the pool restricts unlinking to owners. Resolved once, used per
+# fragment in the final gate.
+STICKY_POOL=0
+if [ -k "$UNREL" ]; then STICKY_POOL=1; fi
+
 # Created and checked BEFORE anything is published (Codex #1863 r26).
 # Introduced as a step inside the clearing loop, its first failure — a
 # stale file or a dangling symlink sitting at that path — happened only
@@ -1908,7 +1913,13 @@ if [ -f "$OUT" ]; then
     # then looks for text the file does not contain, misses the duplicate
     # it exists to catch, and the section is appended a second time. Both
     # halves stay as bytes on disk: extract, then match with `-f`.
-    _head_file="$(mktemp)"
+    # Inside the run's PRIVATE directory, not the shared temp area
+    # (Codex #1863 r37). `mktemp` reserves its own name, but the derived
+    # `$_head_file.n` used below reserves nothing — on a multi-user host
+    # another user can pre-create that predictable path as a symlink, and
+    # the redirection then truncates whatever it points at. $SNAP is
+    # created by this run and is not shared.
+    _head_file="$(mktemp "$SNAP/head.XXXXXX")"
     _hrc=0
     # The SNAPSHOT, like validation, hashing and assembly (Codex #1863
     # r20). Reading the live fragment here made this the one check that
@@ -2328,6 +2339,23 @@ _final_gate() {
       echo "It changed type while this run was working." >&2
       _refuse_reporting_consumed
     fi
+    # A STICKY pool restricts unlinking to the file's owner or the
+    # directory's (Codex #1863 r37). A world-writable, sticky
+    # `unreleased/` holding a fragment owned by somebody else lets the
+    # write probe pass — the probe's own entry belongs to the runner —
+    # while the set-aside `mv` cannot remove that foreign entry, and it
+    # fails after publication. Per fragment, since the restriction is
+    # per file.
+    if (( STICKY_POOL )) && [ ! -O "$_f" ] && [ ! -O "$UNREL" ]; then
+      echo "Error: ${FRAG_NAME[$_f]} is owned by someone else, and" >&2
+      echo "$UNREL is sticky." >&2
+      echo "" >&2
+      echo "Refusing to assemble: setting a fragment aside has to remove its" >&2
+      echo "entry from that directory, which only its owner or the" >&2
+      echo "directory's owner may do there — so this would fail after the" >&2
+      echo "dated file was written. Ask its owner to run the assembly." >&2
+      _refuse_reporting_consumed
+    fi
     _dest="$QDIR/${FRAG_NAME[$_f]}"
     if [ -e "$_dest" ] || [ -L "$_dest" ]; then
       echo "Error: a set-aside file already occupies $_dest." >&2
@@ -2341,6 +2369,21 @@ _final_gate() {
       exit 1
     fi
   done
+  # The REPLACEMENT's own mode, re-read after the flush (Codex #1863
+  # r37). Everything else in this gate looks at the output and the
+  # sources; nothing looked at $WORK, and the post-rename readback
+  # compares content only — so a mode change during `_persist` published
+  # a widened file and consumed the fragments.
+  if ! read_mode "$WORK"; then
+    echo "Error: could not re-read the mode of the replacement." >&2
+    _refuse_reporting_consumed
+  fi
+  if [ "$MODE_READ" != "$FINAL_MODE" ]; then
+    echo "Error: the replacement's mode changed while this run was" >&2
+    echo "preparing it ($FINAL_MODE -> $MODE_READ)." >&2
+    echo "Publishing it would install permissions this run did not choose." >&2
+    _refuse_reporting_consumed
+  fi
   # The SOURCE directory as well (Codex #1863 r36). A rename removes the
   # source entry, so `mv` needs write permission on BOTH directories —
   # $UNREL turning read-only during `_persist` leaves the destination

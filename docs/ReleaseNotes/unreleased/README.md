@@ -157,7 +157,10 @@ file, then delete it or move it back up a level to assemble it.
 **The other case is a stale lock.** Assembly holds a lock
 (`unreleased/.assemble.lock`) so two runs cannot overlap, and it is
 released when the script exits — including on Ctrl-C. A *hard* kill
-(`SIGKILL`, or the machine dying) leaves it behind, and every later run
+(`SIGKILL`, or the machine dying) leaves it behind, and so does anything
+that stops the release from working — the directory turning read-only
+mid-run, say. The run that could not release it warns and prints the
+command; after a hard kill nothing is printed at all, and every later run
 then stops with "another assembly appears to be running" until it is
 cleared. That is deliberate: the lock guards a step that deletes files,
 so a stale one is reported rather than broken automatically on a

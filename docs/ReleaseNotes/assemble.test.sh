@@ -3055,6 +3055,63 @@ else
 fi
 chmod 0755 "$W/docs/ReleaseNotes/unreleased" 2>/dev/null || true
 
+echo "T111: the replacement's own mode is rechecked after the flush"
+W="$ROOT/t111"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Everything in the gate looked at the output and the sources; nothing looked
+# at $WORK, and the post-rename readback compares content only — so a mode
+# change during `_persist` published a widened file and consumed the fragments
+# (Codex #1863 r37).
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  for a in "\$@"; do
+    case "\$a" in
+      *.assemble-*) : > "$W/fired"; /bin/chmod 0666 "\$a" 2>/dev/null ;;
+    esac
+  done
+fi
+exit 0
+SHIM
+chmod +x "$W/fakebin/sync"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                        "1"
+check "no fragment consumed"   "$(pending "$W")"                           "2"
+check "it names the change"    "$(says "$msg" "replacement's mode changed")" "1"
+check "nothing was published" \
+  "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
+
+echo "T112: the normalised heading is built inside the run's private directory"
+W="$ROOT/t112"; build "$W"
+out="$W/docs/ReleaseNotes"
+# `mktemp` reserves its own name, but the derived `.n` path reserves nothing —
+# on a multi-user host another user can pre-create it as a symlink and the
+# redirection truncates whatever it points at (Codex #1863 r37). Pinned
+# structurally: reproducing it needs a second user racing the run.
+check "it is created under SNAP" \
+  "$(grep -c '_head_file="\$(mktemp "\$SNAP/head' "$out/assemble.sh")"       "1"
+check "no bare mktemp for it" \
+  "$(grep -c '_head_file="\$(mktemp)"' "$out/assemble.sh")"                  "0"
+
+echo "T113: a sticky pool with a foreign-owned fragment is refused"
+W="$ROOT/t113"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A sticky directory restricts unlinking to the file's owner or the
+# directory's, so the set-aside `mv` cannot remove a foreign entry — and that
+# failed only after publication (Codex #1863 r37).
+#
+# Pinned STRUCTURALLY. Staging it needs a third user who owns neither the
+# fragment nor the pool, and dropping privileges into a chowned tree here does
+# not reach the check — the run fails earlier on something unrelated, so a
+# behavioural assertion would report a pass it had not earned. Said plainly
+# rather than left looking verified.
+check "the check exists"      "$(grep -c 'STICKY_POOL )) && \[ ! -O' "$out/assemble.sh")" "1"
+check "it is in the final gate" \
+  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'STICKY_POOL')"     "1"
+check "the flag is resolved once" \
+  "$(grep -c 'if \[ -k "\$UNREL" \]; then STICKY_POOL=1; fi' "$out/assemble.sh")"       "1"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

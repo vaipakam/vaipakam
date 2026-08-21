@@ -36,9 +36,11 @@ original path may by then hold something newly saved, and restoring the older
 copy over it would destroy the very text this mechanism protects.
 
 The second is a **stale lock**. Assembly holds one so two runs cannot overlap,
-released whenever the script exits, including on Ctrl-C. Only a hard kill — or
-the machine dying — leaves it behind, and later runs then stop until it is
-cleared. That is deliberate too: the lock guards a step that deletes files, so a
+released whenever the script exits, including on Ctrl-C. A hard kill leaves it
+behind because no handler runs at all — and so does anything that stops the
+release itself from working, such as the directory turning read-only mid-run.
+Either way later runs stop until it is cleared, and the run that could not
+release it says so with the command to remove it. That is deliberate too: the lock guards a step that deletes files, so a
 stale one is reported with the exact command to remove it rather than broken
 automatically on a guess about whether the other run is still alive.
 
