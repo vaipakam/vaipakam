@@ -1948,7 +1948,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
     // with nothing rendered is the contradiction. With controls
     // present the same reading is agreement. Same fact, opposite
     // meaning, decided by what else is on the page.)
-    const agrees = lastVerdict === 'fail' || lastVerdict === 'unknown';
+    const agrees = readinessAgreesWithControls(lastVerdict);
     if ((jumps > 0 || switchThere) && agrees) {
       return { jumps, switchThere, toolsFailed: false, timedOut: false };
     }
@@ -1956,9 +1956,24 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
     // stable disagreement — both bracket reads said no row is jumpable
     // while a jump control was on screen — and gets its own reason
     // rather than borrowing one that would misdescribe it.
-    if (jumps > 0 || switchThere) {
+    // SETTLED disagreements only (Codex #1853 r35). Round 34's version
+    // returned on `blocked-pending` here too, so a card mid-refetch
+    // still showing its controls exited on the first poll and the
+    // caller announced a deadline that was never reached. That is
+    // round 30's defect verbatim, reintroduced through the branch
+    // added to fix a different one — pending is not a disagreement,
+    // it is the card not having answered yet.
+    if ((jumps > 0 || switchThere) && lastVerdict !== 'blocked-pending') {
       return {
-        jumps: 0, switchThere: false, toolsFailed: false, timedOut: false,
+        jumps: 0,
+        // KEPT, not zeroed. The r35 P3 was about `advancedOffered`
+        // being hardcoded on the post-click path; the same information
+        // is discarded here if this reports no switch when one was on
+        // screen. Applying the finding to its sibling rather than
+        // waiting to be told about it.
+        switchThere,
+        toolsFailed: false,
+        timedOut: false,
         settled: lastVerdict === 'absent' ? 'blocked-contradiction' : lastVerdict,
       };
     }
@@ -2367,7 +2382,22 @@ async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
  * on "no row is jumpable", which is the honest absence and not a
  * block.
  */
-function readinessBlock(settled) {
+function readinessAgreesWithControls(verdict) {
+  // The allowlist, in ONE place (Codex #1853 r35). Round 34 wrote it
+  // inside the poll and left the pre-switch branch on its own
+  // `blocked-pending`-only test, so a card offering a switch beside a
+  // stable `ready`/`no`, a failed read or an unreadable contract was
+  // still clicked. Same rule, two sites, one updated — the defect this
+  // PR is about, on the fix for that defect.
+  //
+  // `fail` is `ready`/`yes`: the card saying a row IS jumpable, which
+  // agrees with controls being on screen. `unknown` is a legacy bundle
+  // publishing nothing, where the controls are the only evidence there
+  // is. Nothing else licenses acting on a rendered control.
+  return verdict === 'fail' || verdict === 'unknown';
+}
+
+function readinessBlock(settled, offered = false) {
   const why = {
     'blocked-pending':
       'the lender card had not settled its jumpability question by the ' +
@@ -2390,7 +2420,11 @@ function readinessBlock(settled) {
   }[settled];
   if (!why) return null;
   return {
-    advancedOffered: false,
+    // Carried by the caller (Codex #1853 r35). The post-click path
+    // reaches here only after the switch was offered AND clicked, so
+    // hardcoding `false` filed those failures under the missing-switch
+    // route and hid which branch actually failed.
+    advancedOffered: offered,
     advancedJumps: null,
     advancedBlocked: true,
     advancedWhy: why,
@@ -2570,7 +2604,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
     // the switch is still there afterwards, the code below falls
     // through to the click exactly as before.
     const preSwitchVerdict = missingSwitchVerdict(await chooserSelfVerdict(page));
-    if ((await sw.count()) === 0 || preSwitchVerdict === 'blocked-pending') {
+    if ((await sw.count()) === 0 || !readinessAgreesWithControls(preSwitchVerdict)) {
       // NO SWITCH means one of two different things, and the first
       // version of this probe reported them identically. The card
       // renders the switch only when it is in Basic mode AND some row
@@ -2809,7 +2843,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
           // #1853 r29). `settled.settled` is absent only when the wait
           // ended for another reason, and `missingSwitchVerdict`
           // answers `unknown` for that, which is the pre-#1855 path.
-          const blocked = readinessBlock(settled.settled);
+          const blocked = readinessBlock(settled.settled, settled.switchThere === true);
           if (blocked) return blocked;
           return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
         }
@@ -2879,7 +2913,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
       // product FAIL here whenever the chain snapshots still looked
       // jumpable — the verdict was computed, carried back, and thrown
       // away at the one site that most needed it.
-      const blockedPost = readinessBlock(post.settled);
+      const blockedPost = readinessBlock(post.settled, true);
       if (blockedPost) return blockedPost;
       if (post.toolsFailed) {
         // A definite non-ready answer, not a no-op switch: the card is
