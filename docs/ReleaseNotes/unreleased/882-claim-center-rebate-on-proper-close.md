@@ -51,7 +51,8 @@ ended. A borrower who believed it would simply never look.
 is told one thing in their language and another in English. The sentence now
 says plainly that whether the rebate comes back depends on how the loan ended,
 and names which endings settle it — while saying that what is settled can itself
-be nothing, because the amount is sized by the discount the borrower averaged.
+be nothing, because the amount is sized by the discount the borrower holds at
+the moment it settles.
 
 **How it was missed.** An earlier pass in the same effort corrected this exact
 claim in the guides' action summaries and did not carry it into the Claim Center
