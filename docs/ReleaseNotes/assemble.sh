@@ -158,6 +158,22 @@ read_mode() {  # read_mode <path>
   return 0
 }
 
+# ── Length and truncation in BYTES ───────────────────────────────────────────
+# `${#var}` counts CHARACTERS in the current locale, and filesystem
+# limits are in BYTES (Codex #1863 r22). Under a UTF-8 locale a name of
+# 81 three-byte characters plus `.md` measures 84 while occupying 246
+# bytes, so a character-based bound waves it through and the prefixed
+# destination lands over NAME_MAX — failing AFTER the dated file is
+# published, which is the worst place in this script to fail.
+#
+# `local LC_ALL=C` is what makes both byte-wise: bash re-reads the locale
+# when the variable is assigned, and restores it when the function
+# returns. Truncation can split a multibyte character; the result is
+# still a legal filename, and this name is only ever a set-aside label
+# that the operator sees in full on screen.
+byte_len() { local LC_ALL=C; printf '%s' "${#1}"; }
+byte_head() { local LC_ALL=C; printf '%s' "${1:0:$2}"; }
+
 # ── The one invariant this script keeps ──────────────────────────────────────
 # Three rounds of review in a row (r17, r18, r19) found the same abstract
 # fault in three different places: evidence read at one moment
@@ -370,10 +386,26 @@ SNAP=""
 # already: the EXIT trap was later replaced with one that also removed
 # the temp file, which left the signal traps still cleaning only the
 # lock. A single function cannot fall out of step with itself.
+# IDEMPOTENT, because it runs TWICE on a signal (Codex #1863 r22). The
+# INT/TERM traps call it and then `exit`, which fires the EXIT trap,
+# which calls it again. Leaving LOCK_HELD set through the first call
+# meant the second `rmdir` ran too — and if another assembly had
+# acquired the lock in between, that second call removed SOMEBODY ELSE'S
+# lock, letting a third run overlap them. The lock exists to stop two
+# runs drawing from the same pool, so releasing one you no longer hold
+# reintroduces exactly what it prevents.
+#
+# Each resource is cleared BEFORE it is released, not after: a failure
+# midway must not leave the flag saying there is still something to free.
 _cleanup() {
-  [ -n "$WORK" ] && rm -f "$WORK"
-  [ -n "$SNAP" ] && rm -rf "$SNAP"
-  (( LOCK_HELD )) && rmdir "$LOCK" 2>/dev/null
+  local _w="$WORK" _s="$SNAP"
+  WORK=""; SNAP=""
+  [ -n "$_w" ] && rm -f "$_w"
+  [ -n "$_s" ] && rm -rf "$_s"
+  if (( LOCK_HELD )); then
+    LOCK_HELD=0
+    rmdir "$LOCK" 2>/dev/null
+  fi
   return 0
 }
 trap '_cleanup' EXIT
@@ -1939,8 +1971,8 @@ for f in "${frags[@]}"; do
   # ordinary pool. The full name is printed, so nothing is lost to the
   # operator; only the on-disk name is shortened.
   _q_name=".assembled.${FRAG_NAME[$f]}"
-  if (( ${#_q_name} > 200 )); then
-    _q_name=".assembled.${FRAG_NAME[$f]:0:160}.${FRAG_HASH[$f]:0:16}"
+  if (( $(byte_len "$_q_name") > 200 )); then
+    _q_name=".assembled.$(byte_head "${FRAG_NAME[$f]}" 160).${FRAG_HASH[$f]:0:16}"
   fi
   _q="$UNREL/$_q_name"
   if [ -e "$_q" ]; then

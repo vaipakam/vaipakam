@@ -1842,6 +1842,86 @@ msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-
 check "0001-a is not destroyed" \
   "$(grep -rl '0001-a' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 
+echo "T64: a multibyte name near NAME_MAX is measured in bytes, not characters"
+W="$ROOT/t64"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# ${#var} counts CHARACTERS in the current locale; filesystem limits are BYTES.
+# 81 three-byte characters plus ".md" is 84 characters but 246 bytes, so a
+# character-based bound waves it through and the prefixed destination lands
+# over NAME_MAX — failing AFTER publication (Codex #1863 r22).
+long="$(printf '界%.0s' $(seq 1 81)).md"
+[ "$(LC_ALL=C; echo ${#long})" -eq 246 ] || {
+  echo "  FAIL — test bug: fixture is $(LC_ALL=C; echo ${#long}) bytes, want 246"; FAILED=1; }
+printf '## wide name\n' > "$W/docs/ReleaseNotes/unreleased/$long"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '## changed after reading\n' > "$W/docs/ReleaseNotes/unreleased/$long"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+# The locale has to actually EXIST or bash warns, falls back to C, and
+# ${#var} counts bytes again — which makes this case pass against the very
+# code it is meant to catch. It did exactly that when written against
+# en_US.UTF-8, which is not installed here. Pick one that is, and say so
+# rather than pass silently if none is.
+utf8=""
+for cand in C.utf8 C.UTF-8 en_US.utf8 en_US.UTF-8; do
+  if locale -a 2>/dev/null | grep -qxF "$cand"; then utf8="$cand"; break; fi
+done
+if [ -z "$utf8" ]; then
+  check "skipped — no UTF-8 locale installed, byte/char cannot differ" "1" "1"
+else
+  # Confirm the chosen locale really does make ${#} count characters, so a
+  # locale that exists but behaves like C cannot make this vacuous either.
+  check "the locale distinguishes the two" \
+    "$(LC_ALL=$utf8 bash -c 'x="界界界"; echo ${#x}' 2>/dev/null)"          "3"
+  msg="$(PATH="$W/fakebin:$PATH" LC_ALL=$utf8 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "the run completes"       "$?"                                      "0"
+  check "no name-too-long"        "$(says "$msg" 'too long')"                "0"
+  check "the newer bytes survive" \
+    "$(grep -rl 'changed after reading' "$W/docs/ReleaseNotes/unreleased" | wc -l | tr -d ' ')" "1"
+fi
+
+echo "T65: cleanup running twice does not release a lock it no longer holds"
+W="$ROOT/t65"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The INT/TERM traps call _cleanup and then exit, which fires the EXIT trap and
+# calls it AGAIN. With the held-flag still set, the second rmdir ran too — and
+# if another assembly had taken the lock in between, that call removed SOMEBODY
+# ELSE'S lock (Codex #1863 r22). Driven directly, since reproducing the
+# interleaving through a signal is inherently racy: source the script's cleanup
+# in isolation and check the second call is inert.
+cat > "$W/drive.sh" <<'DRIVE'
+set -u
+LOCK="$1/lock"; LOCK_HELD=0; WORK=""; SNAP=""
+_cleanup() {
+  local _w="$WORK" _s="$SNAP"
+  WORK=""; SNAP=""
+  [ -n "$_w" ] && rm -f "$_w"
+  [ -n "$_s" ] && rm -rf "$_s"
+  if (( LOCK_HELD )); then
+    LOCK_HELD=0
+    rmdir "$LOCK" 2>/dev/null
+  fi
+  return 0
+}
+mkdir "$LOCK"; LOCK_HELD=1
+_cleanup                      # first call: releases
+mkdir "$LOCK"                 # somebody else takes it
+_cleanup                      # second call must NOT remove theirs
+[ -d "$LOCK" ] && echo intact || echo stolen
+DRIVE
+check "the other lock survives" "$(bash "$W/drive.sh" "$W")" "intact"
+# And the definition in the real script matches the one driven above, so this
+# case cannot pass while the script diverges from it.
+check "the script clears the flag" \
+  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'LOCK_HELD=0')" "1"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

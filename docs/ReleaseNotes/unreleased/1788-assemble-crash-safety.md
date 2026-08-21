@@ -333,6 +333,33 @@ only for the moment of the reading, and gone before the check, left the
 fingerprint matching and the index holding evidence that had never persisted.
 Dated files are now copied first and read from the copy, exactly as notes are.
 
+### Two smaller ones, and a test that proved nothing
+
+Tidying up after all of the above found two more, both narrow.
+
+The set-aside name introduced above was measured in *characters* while the
+limit it was checked against is in *bytes*. A name of eighty-one three-byte
+characters measures eighty-four and occupies two hundred and forty-six, so it
+passed a bound it plainly exceeded, and the rename failed after publication
+again — the fix for that fault reintroducing it by another route. Measured and
+trimmed in bytes now.
+
+And the cleanup that releases the lock runs **twice** when the run is
+interrupted: once from the interrupt handler, once from the exit handler it
+triggers. It did not record that it had already let go, so the second pass
+released the lock again — and if another assembly had taken it in between, the
+second pass released *theirs*, letting a third run overlap. Releasing a lock
+you no longer hold reintroduces precisely what the lock prevents. Cleanup now
+lets go once.
+
+The test written for the first of those **passed against the broken code**, and
+the reason is worth recording. It selected a locale that is not installed here;
+the shell warned, fell back, and went back to counting bytes — so the two
+things being distinguished became the same thing and the case could not fail.
+It now picks a locale that exists, *verifies that this locale really does count
+characters*, and says plainly that it skipped if none is available. A test whose
+premise silently evaporates is worse than no test, because it reports a pass.
+
 ### Verified against the fault, not just the fix
 
 Every test covering a **behaviour that changed** was run against the older
