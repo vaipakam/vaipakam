@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  excursionExplains,
   jumpabilityMoved,
   snapshotCardEligible,
   snapshotJumpable,
@@ -245,5 +246,53 @@ describe('snapshotCardEligible — the LOOSEST of the three questions', () => {
     // The caller tests `=== false` before suppressing card assertions;
     // a failed chain read must not silently discard real findings.
     expect(snapshotCardEligible(null, ME)).toBeNull();
+  });
+});
+
+describe('excursionExplains — which results a mid-probe race accounts for', () => {
+  const MOVED = 'status left Active';
+
+  it('explains the no-op-switch FAIL', () => {
+    // `advancedJumps: 0` — the switch was clicked and revealed nothing.
+    // An excursion turns that from a product FAIL into an ambiguity.
+    expect(excursionExplains({ advancedJumps: 0 }, MOVED)).toBe(true);
+  });
+
+  it('explains a route that never reached a jump count at all', () => {
+    // The finding that prompted the extraction (Codex #1853 r27): the
+    // switch never appeared, the wait hit its deadline, and this route
+    // returned `no jumpable row` — `advancedJumps: null`, unblocked —
+    // without ever consulting the excursion it had already recorded.
+    expect(excursionExplains({ advancedJumps: null }, MOVED)).toBe(true);
+    expect(excursionExplains({}, MOVED)).toBe(true);
+  });
+
+  it('leaves a SUCCESSFUL audit alone', () => {
+    // Positive jumps are a positive observation. Whatever moved
+    // mid-probe demonstrably did not stop the audit, so calling it
+    // ambiguous would discard a good result.
+    expect(excursionExplains({ advancedJumps: 2 }, MOVED)).toBe(false);
+  });
+
+  it('does not overwrite an already-blocked reason', () => {
+    // Precedence, and it is the same rule the stale-owner verdict
+    // beside it uses: a blocked result already carries a more specific
+    // finding, and replacing it with this one loses the better answer.
+    expect(
+      excursionExplains({ advancedBlocked: true, advancedJumps: null }, MOVED),
+    ).toBe(false);
+  });
+
+  it('is false when nothing moved', () => {
+    expect(excursionExplains({ advancedJumps: 0 }, null)).toBe(false);
+    expect(excursionExplains({ advancedJumps: 0 }, undefined)).toBe(false);
+    expect(excursionExplains({ advancedJumps: 0 }, '')).toBe(false);
+  });
+
+  it('survives a missing result rather than throwing', () => {
+    // The wrapper runs this on whatever the probe returned; a driver
+    // that crashes here reports nothing at all about the page.
+    expect(excursionExplains(undefined, MOVED)).toBe(true);
+    expect(excursionExplains(null, null)).toBe(false);
   });
 });

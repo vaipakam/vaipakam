@@ -167,3 +167,36 @@ export function snapshotCardEligible(s, observed) {
   if (!heldByObserver(s, observed)) return false;
   return Boolean(s.active || s.fallbackPending);
 }
+
+/**
+ * Does a sampled mid-probe excursion explain this Advanced result?
+ *
+ * The RULE behind the wrapper's excursion arm, extracted so it can be
+ * exercised (Codex #1853 r27). Round 24 introduced the rule at the two
+ * returns where the race had surfaced, and the route that ends "no
+ * jumpable row" — the switch never appeared, the deadline passed —
+ * walked past it, exiting clean on a run that had RECORDED the exact
+ * race the watcher exists to catch. Same shape as r13's finding about
+ * `jumpabilityMoved`: a rule applied where a finding pointed rather
+ * than everywhere it governs, and unexercised besides.
+ *
+ * Two conditions, and both are load-bearing:
+ *
+ *  - Nothing already BLOCKED. Those results carry a more specific
+ *    reason, and overwriting it with this one loses the better finding
+ *    — the same precedence the stale-owner verdict beside it uses.
+ *  - A falsy `advancedJumps`. `null` on every blocked route and `0` on
+ *    the honest no-op-switch FAIL, which are exactly the two outcomes
+ *    an excursion can explain. A successful audit — positive jumps —
+ *    is a positive observation that the excursion did not prevent, so
+ *    it is left alone.
+ *
+ * @param {{advancedBlocked?: boolean, advancedJumps?: number|null}} result
+ * @param {string|null} excursion what moved, or null if nothing did
+ * @returns {boolean}
+ */
+export function excursionExplains(result, excursion) {
+  if (!excursion) return false;
+  if (result?.advancedBlocked) return false;
+  return !result?.advancedJumps;
+}

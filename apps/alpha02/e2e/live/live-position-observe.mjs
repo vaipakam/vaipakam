@@ -89,6 +89,7 @@ import {
   numberToHex,
 } from 'viem';
 import {
+  excursionExplains,
   jumpabilityMoved,
   snapshotCardEligible,
   snapshotJumpable,
@@ -1989,6 +1990,61 @@ function lateScrapeRecorder(page, cardAbsentAtScrape) {
 }
 
 /**
+ * Watches for a REVERSIBLE status transition inside the probe window.
+ *
+ * The third axis on which a round trip hides (Codex #1853 r24).
+ * Ownership round trips are caught by the DOM — the card unmounts.
+ * A FallbackPending excursion is not: the card deliberately stays up
+ * to explain it, while `buildLenderExitRows` removes both jumps. So
+ * before and after agree, the card never disappears, and the honest
+ * behaviour reads as a no-op-switch FAIL.
+ *
+ * SPARSE ON PURPOSE, and the limit is stated rather than hidden: one
+ * chain read every `EVERY` poll ticks, so a transition that opens
+ * and closes between two samples is still invisible. That is a real
+ * gap and it is smaller than the one it replaces; #1855's readiness
+ * attribute removes the guess rather than narrowing it.
+ *
+ * Cheap by construction — a no-op when there is no loan to read, and
+ * it stops sampling once it has seen something, since one
+ * observation is all the verdict needs.
+ *
+ * HOISTED TO THE WRAPPER (Codex #1853 r27), for the same reason
+ * `before` was in r21: the excursion explains a zero-jump outcome on
+ * EVERY route, and while it lived inside the probe only the two
+ * returns that remembered to ask were covered.
+ */
+function statusWatcher(loan, before) {
+  const EVERY = 8;
+  let tick = 0;
+  let seen = null;
+  return {
+    async sample() {
+      if (!loan || seen) return;
+      // A TRANSITION, not a state (Codex #1853 r25). Without the
+      // baseline test the first sample of an ALREADY-unjumpable
+      // position records an "excursion" that never happened — and
+      // because the verdict consults this before its
+      // already-unjumpable arm, the run would report the wrong one
+      // of the two, which is the confidently-wrong diagnosis round
+      // 22 was about, reintroduced by round 24's fix.
+      if (snapshotJumpable(before, observed) !== true) return;
+      if (tick++ % EVERY !== 0) return;
+      const mid = await jumpabilitySnapshot(loan);
+      if (mid && snapshotJumpable(mid, observed) === false) {
+        // `jumpabilityMoved` is the authority on WHAT moved; the
+        // fallback only covers an input it does not model, and is
+        // reachable only because the baseline above was jumpable.
+        seen = jumpabilityMoved(before, mid) ?? 'the position stopped being sellable mid-probe';
+      }
+    },
+    get excursion() {
+      return seen;
+    },
+  };
+}
+
+/**
  * The single merge point for the Advanced probe.
  *
  * The probe's own verdict wins on every key it sets; the late rescrape
@@ -2002,7 +2058,10 @@ async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
   // unchanged and in fact strengthened: it still predates the first
   // observation of the switch, which is what r13 required.
   const before = loan ? await jumpabilitySnapshot(loan) : null;
-  const result = await lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before);
+  // ONE watcher across the whole probe, so an excursion seen before the
+  // click still explains a zero-jump result after it.
+  const watch = statusWatcher(loan, before);
+  const result = await lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before, watch);
   // Last chance, for a card that mounted after the probe's own capture.
   await late.capture();
   // A SUCCESSFUL AUDIT OF SOMEBODY ELSE'S CARD IS STILL NOT A PASS
@@ -2053,10 +2112,37 @@ async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
       advancedWhy: `the card was audited on a state it should not have rendered for: ${why}`,
     };
   }
+  // A SAMPLED EXCURSION EXPLAINS EVERY ZERO-JUMP EXIT (Codex #1853
+  // r27), and applying it here is what makes that true. Round 24 put
+  // the check on the two returns where the race had been seen, and the
+  // route that ends "no jumpable row" — the switch never appeared, the
+  // deadline passed — walked straight past it: the page can keep its
+  // cached unavailable rows after the loan has already cured, so both
+  // end-samples read Active, the card is still mounted, and the run
+  // exits clean having RECORDED the exact race the watcher exists to
+  // catch.
+  //
+  // BLOCKED, not FAIL. A transition inside the window means the
+  // observation is ambiguous rather than wrong, which is the same
+  // verdict the other excursion routes reach.
+  //
+  // The precedence and the which-results-qualify test live in
+  // `excursionExplains` so they are exercised rather than asserted —
+  // this driver's own r13 lesson, on a rule with the same history.
+  if (excursionExplains(result, watch.excursion)) {
+    return {
+      ...late.value,
+      ...result,
+      advancedJumps: null,
+      advancedBlocked: true,
+      advancedRaced: true,
+      advancedWhy: `the position was briefly unsellable during the probe: ${watch.excursion}`,
+    };
+  }
   return { ...late.value, ...result };
 }
 
-async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before) {
+async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before, watch) {
   const SWITCH = /Show these tools \(switches to Advanced view\)/i;
   // SCOPED TO THE LENDER CARD (Codex #1853 r5). The borrower chooser
   // uses the IDENTICAL labels — `copy.earlyRepay.switchToAdvanced` and
@@ -2081,61 +2167,8 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before)
   // and passed in (Codex #1853 r21), so the stale-owner verdict can be
   // applied to every exit rather than to the routes that surfaced it.
 
-  /**
-   * Watches for a REVERSIBLE status transition inside the probe window.
-   *
-   * The third axis on which a round trip hides (Codex #1853 r24).
-   * Ownership round trips are caught by the DOM — the card unmounts.
-   * A FallbackPending excursion is not: the card deliberately stays up
-   * to explain it, while `buildLenderExitRows` removes both jumps. So
-   * before and after agree, the card never disappears, and the honest
-   * behaviour reads as a no-op-switch FAIL.
-   *
-   * SPARSE ON PURPOSE, and the limit is stated rather than hidden: one
-   * chain read every `EVERY` poll ticks, so a transition that opens
-   * and closes between two samples is still invisible. That is a real
-   * gap and it is smaller than the one it replaces; #1855's readiness
-   * attribute removes the guess rather than narrowing it.
-   *
-   * Cheap by construction — a no-op when there is no loan to read, and
-   * it stops sampling once it has seen something, since one
-   * observation is all the verdict needs.
-   */
-  const statusWatcher = () => {
-    const EVERY = 8;
-    let tick = 0;
-    let seen = null;
-    return {
-      async sample() {
-        if (!loan || seen) return;
-        // A TRANSITION, not a state (Codex #1853 r25). Without the
-        // baseline test the first sample of an ALREADY-unjumpable
-        // position records an "excursion" that never happened — and
-        // because the verdict consults this before its
-        // already-unjumpable arm, the run would report the wrong one
-        // of the two, which is the confidently-wrong diagnosis round
-        // 22 was about, reintroduced by round 24's fix.
-        if (snapshotJumpable(before, observed) !== true) return;
-        if (tick++ % EVERY !== 0) return;
-        const mid = await jumpabilitySnapshot(loan);
-        if (mid && snapshotJumpable(mid, observed) === false) {
-          // `jumpabilityMoved` is the authority on WHAT moved; the
-          // fallback only covers an input it does not model, and is
-          // reachable only because the baseline above was jumpable.
-          seen = jumpabilityMoved(before, mid) ?? 'the position stopped being sellable mid-probe';
-        }
-      },
-      get excursion() {
-        return seen;
-      },
-    };
-  };
-
   const jumpsOf = () => card.getByRole('button', { name: /Go to this option/i });
   const cardPresent = async () => (await card.count()) > 0;
-  // ONE watcher across the whole probe, so an excursion seen before the
-  // click still explains a zero-jump result after it.
-  const watch = statusWatcher();
   // EAGER, and before any branch decides anything (Codex #1853 r18).
   // Taken here rather than per-return so no route can be the one that
   // forgets: if the card is already on the page, its shape is banked now
@@ -2241,17 +2274,9 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before)
     // the first is the more decisive (Codex #1853 r20).
     const stale = await vanishedCardVerdict(offered);
     if (stale) return stale;
-    // An excursion observed DURING the probe explains the zero jumps
-    // even though both end-samples agree (Codex #1853 r24).
-    if (watch.excursion) {
-      return {
-        advancedOffered: offered,
-        advancedJumps: null,
-        advancedBlocked: true,
-        advancedRaced: true,
-        advancedWhy: `the position was briefly unsellable during the probe: ${watch.excursion}`,
-      };
-    }
+    // The excursion arm that used to sit here has moved to the
+    // wrapper's single exit (Codex #1853 r27) — it applies to every
+    // return, including the ones that never reach this verdict.
     if (snapshotJumpable(before, observed) === false) {
       return {
         advancedOffered: offered,
@@ -2502,6 +2527,13 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before)
         advancedOffered: true,
         advancedJumps: jumpsBeforeSwitch,
         advancedAnchorsOk: false,
+        // SAYS IT IS A FAILURE rather than hoping the reporter infers
+        // one (Codex #1853 r27). This record has a positive
+        // `advancedJumps` and no `advancedAnchors`, which matches
+        // neither of the reporter's two failure shapes — so round 25's
+        // guard detected the leak and then exited 0. See
+        // `advancedFailed` at the reporter for why this is a flag.
+        advancedFailed: true,
         advancedWhy:
           `the Basic-mode switch was offered alongside ${jumpsBeforeSwitch} jump ` +
           'button(s) that should only exist in Advanced — the mode transition ' +
@@ -2863,6 +2895,21 @@ for (const v of visited) {
       // The two verdicts are independent and both are emitted: the dead
       // anchor is a FAIL on evidence we have, the unmapped rows still
       // block below on evidence we could not get.
+      // A PRODUCER THAT SAW A DEFECT SAYS SO (Codex #1853 r27). Every
+      // arm below infers failure from a PATTERN of fields — a dead
+      // entry in `advancedAnchors`, or `advancedJumps === 0` — which
+      // works only for the outcomes those patterns were written
+      // against. Round 25's Basic-mode-leak guard produced a record
+      // matching neither (positive jumps, no anchors) and the reporter
+      // let the run exit clean on a directly observed product defect.
+      //
+      // A FLAG, for the same reason `advancedRaced` is one: a rule the
+      // next return has to remember to match is a rule that keeps being
+      // forgotten. Anything that observes a defect sets this, and the
+      // reporter honours it without needing to recognise the shape.
+      if (v.advancedFailed) {
+        problems.push(v.advancedWhy ?? 'the lender Advanced audit reported a failure');
+      }
       const deadAnchors = (v.advancedAnchors ?? []).filter(
         (a) => a.target && a.present === false,
       );
