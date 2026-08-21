@@ -38,8 +38,14 @@ can arrive before maturity rather than claiming you are paid only at the close.
 While it is still reading the schedule it says so rather than guessing, because
 guessing would tell you something about your own money that is not yet known.
 And if that read *fails* rather than merely being slow, it says so instead of
-leaving a "still checking" line up indefinitely, and points you at the loan's
-own terms — an answer that is not coming should not be dressed as one that is.
+leaving a "still checking" line up indefinitely — an answer that is not coming
+should not be dressed as one that is. It says plainly that the failure does not
+change what you are owed, only when it arrives, and it offers reloading, which
+is a recovery that can actually work because the read is a live one. An earlier
+version pointed at the loan's own terms instead; that was worse than saying
+nothing, because the terms shown on the page carry the rate, the duration and
+the due date and have never carried the interest schedule — so it sent the
+reader somewhere that could not answer, and they only found out after the trip.
 
 **Each sale row states its cost before you open anything**, and states all of
 it: selling early costs the larger of the interest built up so far or the
@@ -51,12 +57,19 @@ the interest would read as complete while omitting an amount that can be larger
 than it.
 
 One position type pays a fourth thing, and the card now says so. If your
-position is on the Full fee plan — the one you paid for in VPFI when the loan
-opened — that plan is recorded against the loan rather than against you, and
+position is on the Full fee plan — paid for in VPFI when the loan opened — that
+plan is recorded against the loan rather than against whoever holds it, and
 nothing about a sale cancels it. So it goes to the buyer along with the
-position, and the part of it covering the rest of the term is value you paid
-for and do not get back. The card names it on both sale rows and, like the
-other two, does not attempt to price it.
+position, and the part of it covering the rest of the term is value that is not
+refunded to the seller. The card names it on both sale rows and, like the other
+two, does not attempt to price it.
+
+Note the wording avoids saying **you** paid it, and that is deliberate rather
+than fussy. Because the plan is keyed to the loan and not to a holder, a lender
+who acquired this position by transfer or by buying it from an earlier lender
+inherits the plan without ever having paid its tariff. Telling every current
+holder they paid for it would hand exactly those lenders a false idea of what
+the position cost them, at the moment they are deciding whether to sell it on.
 
 Those cost lines stay visible **while a listing of yours is standing**, even
 though the rows themselves then read as unavailable. A live listing is not an

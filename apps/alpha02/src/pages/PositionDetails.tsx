@@ -1046,6 +1046,52 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       : undefined,
   ];
 
+  /** Whether the optional seller-window call inside `readLoanLive`
+   *  answered — `false` when a HEALTHY snapshot carries
+   *  `lenderForfeitFrom === undefined`, which is how that call fails
+   *  softly (an unrefreshed deployment, say). Neither sale tool can
+   *  quote a price without it.
+   *
+   *  **Derived from all three sources in ONE place, deliberately**
+   *  (Codex r25 P2). THREE queries call `readLoanLive` and every one of
+   *  them carries this verdict; the readiness chain consulted them one
+   *  at a time, and each round of review added the next. r19 wired
+   *  `loanLive`, which is advanced-only, so Basic mode never saw it.
+   *  r24 added `liveStatus`, which is always-on but disabled once the
+   *  loan leaves Active/FallbackPending. r25 found `bannerTerms`,
+   *  enabled independently of both, healthy, holding the same answer,
+   *  and ignored.
+   *
+   *  Three rounds, three clauses, one question — which is the shape
+   *  this whole card exists to prevent, occurring inside it. So this is
+   *  the structural form rather than a fourth clause: the question is
+   *  asked once, of every source, and a consumer reads the verdict
+   *  instead of re-deriving it. A fourth `readLoanLive` caller changes
+   *  this array and nothing else.
+   *
+   *  `isError` disqualifies each snapshot for the usual reason — a
+   *  cached `true` is not evidence the window read works now — and any
+   *  healthy source reporting the failure is enough, matching how
+   *  `saleAttemptable` treats a non-Active status. */
+  const sellerWindowReadable: boolean | undefined = (() => {
+    const answers = [
+      loanLive.data && !loanLive.isError
+        ? loanLive.data.live.lenderForfeitFrom !== undefined
+        : undefined,
+      liveStatus.data && !liveStatus.isError
+        ? liveStatus.data.sellerWindowReadable
+        : undefined,
+      bannerTerms.data && !bannerTerms.isError
+        ? bannerTerms.data.live.lenderForfeitFrom !== undefined
+        : undefined,
+    ].filter((a): a is boolean => a !== undefined);
+    if (answers.length === 0) return undefined;
+    // Fail closed on disagreement: one healthy source proving the
+    // window cannot be read is enough, because both tools need it and
+    // neither retries.
+    return answers.every(Boolean);
+  })();
+
   /** The live status, with TERMINAL answers outranking rank itself.
    *
    *  Rank alone was wrong (Codex r13 P2). These queries poll at
@@ -3219,23 +3265,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     // waiting line would promise an answer that is not
                     // coming — the trap this card met three times.
                     //
-                    // Asserted from EITHER read, so the verdict is
-                    // mode-independent (Codex r24 P2). `loanLive` is
-                    // advanced-only, but the always-on `liveStatus`
-                    // query calls the same `readLoanLive` and now keeps
-                    // the same verdict — so Basic mode reaches "failed"
-                    // without first sending the lender through the
-                    // Advanced switch to find out.
+                    // ONE hoisted verdict over all three `readLoanLive`
+                    // callers (Codex r25 P2) — see `sellerWindowReadable`
+                    // beside the status resolution. This site grew a
+                    // clause per review round, one source at a time,
+                    // which is the defect the card exists to prevent
+                    // happening inside the card.
                     //
-                    // `isError` disqualifies the `liveStatus` snapshot
-                    // for the same reason it disqualifies the others: a
-                    // stale cached `true` is not evidence the window
-                    // read works now.
-                    (loanLive.data &&
-                      loanLive.data.live.lenderForfeitFrom === undefined) ||
-                      (liveStatus.data &&
-                        !liveStatus.isError &&
-                        liveStatus.data.sellerWindowReadable === false)
+                    // `undefined` means no healthy source has answered
+                    // yet, which the earlier arms already cover, so only
+                    // an explicit `false` is a failure here.
+                    sellerWindowReadable === false
                     ? 'failed'
                     : 'ready'
           }
