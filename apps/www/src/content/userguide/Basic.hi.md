@@ -384,7 +384,7 @@ repayment, preclose या refinance पर Loan Initiation Fee के बदल
 रखे गए VPFI का time-weighted rebate settle होता है — जो शून्य भी
 हो सकता है, और तब पूरी राशि treasury को जाती है, यदि loan भर आपका
 discount औसतन शून्य रहा हो। पूरी ज़ब्ती केवल default या
-को ज़ब्त हो जाता है। claim आपके borrower position NFT को consume
+liquidation पर होती है, और तब पूरा VPFI treasury को चला जाता है। claim आपके borrower position NFT को consume
 करता है। उल्टा सच नहीं है: liquidation के बाद NFT का बचा रहना इस बात
 का सबूत नहीं कि कुछ आपका इंतज़ार कर रहा है। अगर कुछ बचा ही नहीं, तो
 लेने को कुछ नहीं होता, कोशिश अस्वीकार हो जाती है, और NFT फिर भी रह
