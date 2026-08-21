@@ -1739,23 +1739,40 @@ async function jumpabilitySnapshot(loan) {
   });
 }
 
-/** Raw lock reason on any position token; 0 = unlocked. */
+/**
+ * Raw lock reason on any position token; 0 = unlocked.
+ *
+ * A REVERT IS NOT A LOCK, and this read does not swallow one (Codex
+ * #1853 r18). The version this replaces returned a `-1` sentinel that
+ * `jumpabilitySnapshot` turned into `locked: true`, "the same direction
+ * `offsetLockedOn` takes" — and that reasoning was the bug, because the
+ * two calls are not the same kind of call.
+ *
+ *   `offsetLockedOn` is a candidate FILTER. Assuming a lock there drops
+ *   one loan from the pool; the cost is an observation not made, which
+ *   is loud and harmless.
+ *
+ *   This one is a VERDICT INPUT. Assuming a lock here makes
+ *   `snapshotJumpable` return false, which routes a genuine no-op switch
+ *   into the already-unjumpable BLOCKED arm and lets the drive exit 0
+ *   with the anchor audit never run. The cost is a suppressed finding,
+ *   which is silent.
+ *
+ * A revert proves only that the prerequisite could not be read — on a
+ * deployment missing the selector, every position reads as locked and
+ * the whole Advanced assertion quietly stops asserting. So it propagates
+ * to `discovery()` and reads BLOCKED, which is the honest verdict for
+ * "we could not look".
+ */
 async function positionLockOf(tokenId) {
-  try {
-    return Number(
-      await pub.readContract({
-        address: DIAMOND,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'positionLock',
-        args: [tokenId],
-      }),
-    );
-  } catch (err) {
-    if (!isRevert(err)) throw err;
-    // Reverted — treat as locked, the same direction `offsetLockedOn`
-    // takes: a skipped observation is cheaper than a false regression.
-    return -1;
-  }
+  return Number(
+    await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'positionLock',
+      args: [tokenId],
+    }),
+  );
 }
 
 /**
@@ -1815,7 +1832,85 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
     }
     await page.waitForTimeout(1_000);
   }
-}async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
+}
+
+/**
+ * The lender card, as ONE locator every consumer shares.
+ *
+ * Both the probe and the late rescrape need it, and a second copy of
+ * this filter is a second statement of "which card is the lender's" —
+ * the defect class this PR chain is about, in the file that keeps being
+ * reviewed for it.
+ */
+function lenderCardOf(page) {
+  return page.locator('section.card').filter({ hasText: CHOOSER.title }).first();
+}
+
+/**
+ * The scrape can be too EARLY as well as too late (Codex #1853 r17).
+ *
+ * If the ownership, status or sanctions reads outrun the initial card
+ * scrape, the visit records `chooser: false` and an empty row shape —
+ * and then this probe goes on to observe the card, click its switch and
+ * audit its anchors successfully. The reporter was still reading the
+ * earlier cached absence, so a healthy late-rendering page was filed as
+ * `lender chooser MISSING` along with every row, on the same visit that
+ * had just interacted with that card.
+ *
+ * Every previous fix here treated the scrape as authoritative and the
+ * probe as the thing needing qualification. This is the same fact from
+ * the other end: a later positive observation is BETTER evidence than an
+ * earlier absence, because the card cannot un-render into having been
+ * there.
+ *
+ * MEMOIZED, AND MERGED AT ONE EXIT (Codex #1853 r18). Round 17 spread
+ * the rescrape into the two returns that carry an anchor audit and left
+ * every other settled return without it — so a card that mounted late
+ * and legitimately had no jumpable row (a past-maturity position, which
+ * is most of the live chain) kept the scrape's `chooser: false` and was
+ * filed as `lender chooser MISSING` by the very probe that had just read
+ * its text. Two consumers of one question, a distinction drawn in one
+ * and not its siblings, for the seventh time on this PR.
+ *
+ * Sticky because it must not be re-derived at the exit: a card observed
+ * mid-probe and unmounted by the time the probe returns is still a card
+ * that was there, and re-reading at the end would throw that evidence
+ * away — reintroducing the same bug in a narrower window.
+ */
+function lateScrapeRecorder(page, cardAbsentAtScrape) {
+  let seen = null;
+  return {
+    /** Record the card if it is on the page right now. Idempotent. */
+    async capture() {
+      if (!cardAbsentAtScrape || seen) return;
+      const text = await lenderCardOf(page)
+        .innerText()
+        .catch(() => null);
+      if (text !== null) seen = { chooser: true, cardRescraped: true, ...lenderShapeOf(text) };
+    },
+    /** What was recorded, or nothing — never a fabricated absence. */
+    get value() {
+      return seen ?? {};
+    },
+  };
+}
+
+/**
+ * The single merge point for the Advanced probe.
+ *
+ * The probe's own verdict wins on every key it sets; the late rescrape
+ * only fills in the card-shape keys the initial scrape missed, and the
+ * two sets do not overlap.
+ */
+async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
+  const late = lateScrapeRecorder(page, cardAbsentAtScrape);
+  const result = await lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late);
+  // Last chance, for a card that mounted after the probe's own capture.
+  await late.capture();
+  return { ...late.value, ...result };
+}
+
+async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
   const SWITCH = /Show these tools \(switches to Advanced view\)/i;
   // SCOPED TO THE LENDER CARD (Codex #1853 r5). The borrower chooser
   // uses the IDENTICAL labels — `copy.earlyRepay.switchToAdvanced` and
@@ -1825,7 +1920,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
   // lender's. That is the exact population I argued to KEEP in the pool
   // one round earlier, so the probe would have mis-measured precisely
   // the case I defended.
-  const card = page.locator('section.card').filter({ hasText: CHOOSER.title }).first();
+  const card = lenderCardOf(page);
   const sw = card.getByRole('button', { name: SWITCH });
   // Snapshot BEFORE anything observes the switch (Codex #1853 r13).
   // Round 12 took it after `sw.count()` had already decided, so a loan
@@ -1840,30 +1935,11 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
   const before = loan ? await jumpabilitySnapshot(loan) : null;
   const jumpsOf = () => card.getByRole('button', { name: /Go to this option/i });
   const cardPresent = async () => (await card.count()) > 0;
-
-  /**
-   * The scrape can be too EARLY as well as too late (Codex #1853 r17).
-   *
-   * If the ownership, status or sanctions reads outrun the initial card
-   * scrape, the visit records `chooser: false` and an empty row shape —
-   * and then this probe goes on to observe the card, click its switch
-   * and audit its anchors successfully. The reporter was still reading
-   * the earlier cached absence, so a healthy late-rendering page was
-   * filed as `lender chooser MISSING` along with every row, on the same
-   * visit that had just interacted with that card.
-   *
-   * Every previous fix here treated the scrape as authoritative and the
-   * probe as the thing needing qualification. This is the same fact from
-   * the other end: a later positive observation is BETTER evidence than
-   * an earlier absence, because the card cannot un-render into having
-   * been there.
-   */
-  const rescrapeIfLate = async () => {
-    if (!cardAbsentAtScrape) return {};
-    const text = await card.innerText().catch(() => null);
-    if (text === null) return {};
-    return { chooser: true, cardRescraped: true, ...lenderShapeOf(text) };
-  };
+  // EAGER, and before any branch decides anything (Codex #1853 r18).
+  // Taken here rather than per-return so no route can be the one that
+  // forgets: if the card is already on the page, its shape is banked now
+  // and every exit carries it.
+  await late.capture();
 
   /**
    * The one verdict for "the card ended up with no jump button".
@@ -2109,12 +2185,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
       } else {
         const audit = await anchorAudit(page, card);
         if (audit.advancedJumps === 0) return await noJumpVerdict(false);
-        return {
-          advancedOffered: false,
-          advancedWhy: 'already in Advanced',
-          ...(await rescrapeIfLate()),
-          ...audit,
-        };
+        return { advancedOffered: false, advancedWhy: 'already in Advanced', ...audit };
       }
     }
     await sw.first().click({ timeout: 10_000 });
@@ -2153,7 +2224,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
     // Both entries into the audit route a zero through the same verdict.
     const audit = await anchorAudit(page, card);
     if (audit.advancedJumps === 0) return await noJumpVerdict();
-    return { advancedOffered: true, ...(await rescrapeIfLate()), ...audit };
+    return { advancedOffered: true, ...audit };
   } catch (e) {
     // "Could not look" is exit 2, NOT a clean observation (Codex #1853
     // r6). Reporting it and returning was half right: it is correctly
@@ -2356,17 +2427,34 @@ for (const v of visited) {
       // button.
       // An unmapped row is the harness's gap, so it must not be filed
       // as the app's defect — it takes the BLOCKED path instead.
-      if (v.advancedAnchorsOk === false && !(v.advancedUnmapped ?? []).length) {
-        // Two different failures reach `advancedAnchorsOk === false`, and
-        // the anchor sentence is only true of one of them. The no-op
-        // switch has NO jump button at all, so reporting "a jump button
-        // has no anchor to land on" sent a reader looking for a button
-        // that was never rendered. Each now states its own finding.
+      //
+      // PER CHECK, NOT PER RUN (Codex #1853 r18). Round 13 suppressed
+      // the whole anchor finding whenever ANY unmapped title existed,
+      // which is right about the unmapped row and wrong about its
+      // neighbours: one new or reworded jump row would hide a positively
+      // observed dead button sitting beside it, and the run would exit 2
+      // for the harness's mapping gap while a real product defect went
+      // unprinted. `anchorAudit` keeps each row's own mapping and
+      // presence verdict precisely so this does not have to be decided
+      // in aggregate.
+      //
+      // The two verdicts are independent and both are emitted: the dead
+      // anchor is a FAIL on evidence we have, the unmapped rows still
+      // block below on evidence we could not get.
+      const deadAnchors = (v.advancedAnchors ?? []).filter(
+        (a) => a.target && a.present === false,
+      );
+      if (deadAnchors.length) {
         problems.push(
-          v.advancedJumps === 0
-            ? (v.advancedWhy ?? 'the lender card offered the switch and rendered no jump')
-            : 'a lender jump button has no anchor to land on',
+          'a lender jump button has no anchor to land on: ' +
+            deadAnchors.map((a) => a.target).join(', '),
         );
+      } else if (v.advancedJumps === 0 && v.advancedAnchorsOk === false) {
+        // The no-op switch has NO jump button at all, so the anchor
+        // sentence above is not true of it — reporting it that way sent a
+        // reader looking for a button that was never rendered. It states
+        // its own finding instead (Codex #1853 r16).
+        problems.push(v.advancedWhy ?? 'the lender card offered the switch and rendered no jump');
       }
     } else {
       if (!v.handover) problems.push('handover path MISSING from the chooser');
@@ -2380,12 +2468,24 @@ for (const v of visited) {
   if (detail && !v.nav) {
     console.log(
       ROLE === 'lender'
-        ? `      card=${v.chooser} blurb=${v.lenderBlurb} wait=${v.waitRow}` +
+        ? // `(late)` marks a card the initial scrape missed and the probe
+          // then observed. Printed because the flag existed with nothing
+          // reading it, and a reader looking at `card=true` deserves to
+          // know which observation it came from — the whole point of the
+          // rescrape is that the two disagreed.
+          `      card=${v.chooser}${v.cardRescraped ? ' (late)' : ''} blurb=${v.lenderBlurb} wait=${v.waitRow}` +
           ` sellNow=${v.sellNowRow} list=${v.listRow} waitFirst=${v.waitFirst}` +
           `\n      advanced: offered=${v.advancedOffered} jumps=${v.advancedJumps}` +
           ` anchorsOk=${v.advancedAnchorsOk ?? '-'}` +
           (Array.isArray(v.advancedAnchors) && v.advancedAnchors.length
-            ? ` [${v.advancedAnchors.map((a) => `${a.target}=${a.present}`).join(', ')}]`
+            ? ` [${v.advancedAnchors
+                // An unmapped row printed as `null=null` told the reader
+                // nothing; its TITLE is the only useful fact about it,
+                // and on a run that exits 1 for a dead anchor beside it
+                // this line is where the mapping gap is still visible —
+                // the BLOCKED summary below is not reached.
+                .map((a) => (a.target ? `${a.target}=${a.present}` : `unmapped:"${a.title}"`))
+                .join(', ')}]`
             : '') +
           (v.advancedWhy ? ` (${v.advancedWhy})` : '') +
           (v.advancedJumps ? '' : `\n      sell-now row: ${v.sellNowText ?? '-'}\n      listing row: ${v.listText ?? '-'}`)
