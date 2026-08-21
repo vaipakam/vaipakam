@@ -444,7 +444,33 @@ const lenderStatusOk = (st) => st === STATUS_ACTIVE || st === STATUS_FALLBACK_PE
  * contract ANSWERS false for every address — an answer, not a failure —
  * and this costs one cheap read per candidate.
  */
+/** One verdict per authority for the whole discovery pass. */
+const sanctionsCache = new Map();
 async function sanctionedAuthority(addr) {
+  // Cached per normalised address (Codex #1853 r7). Without it, an
+  // authority holding several eligible positions was read once PER LOAN
+  // — so a later duplicate call failing transiently could block a run
+  // whose answer was already in hand, and a mid-sweep oracle change
+  // could classify two loans of one holder inconsistently. Safe to
+  // cache for the sweep because `stillEligible` re-reads it immediately
+  // before each visit, which is where freshness actually matters.
+  //
+  // A REJECTION IS EVICTED rather than cached. Storing the promise is
+  // what makes the dedup work, but it also means a first-call failure
+  // would be replayed to every later loan of that holder — turning one
+  // transient blip into a permanent verdict for the run, which is a
+  // worse version of the problem this cache exists to fix. On rejection
+  // the entry is dropped so a later loan re-attempts; the rejection
+  // still propagates to `discovery()` for the caller that hit it.
+  const key = addr.toLowerCase();
+  if (!sanctionsCache.has(key)) {
+    const inflight = sanctionedAuthorityUncached(addr);
+    inflight.catch(() => sanctionsCache.delete(key));
+    sanctionsCache.set(key, inflight);
+  }
+  return sanctionsCache.get(key);
+}
+async function sanctionedAuthorityUncached(addr) {
   return pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
@@ -1636,17 +1662,44 @@ async function lenderAdvancedOf(page) {
       return { advancedOffered: false, advancedWhy: 'already in Advanced', ...(await anchorAudit(page, card)) };
     }
     await sw.first().click({ timeout: 10_000 });
-    // The tools mount behind their own reads; give them the same settle
-    // the initial scrape gets.
-    await page.waitForTimeout(6_000);
-    if ((await jumpsOf().count()) === 0) {
-      // A FAILURE, not an observation (Codex #1853 r5). The card offered
-      // the switch, which it does only when some row is jumpable, so
-      // after switching a jump must exist. Recording this as `null` let
-      // a no-op `onSwitchToAdvanced` — or tools that never mount — exit
-      // 0 while the Advanced assertion this PR claims never ran at all.
+    // WAIT FOR READINESS, not a fixed sleep (Codex #1853 r7). Switching
+    // starts the Advanced-only `loanLive` read, and while it is in
+    // flight the card sets `saleTools` to CHECKING — which removes every
+    // jump button by design. So the six-second sleep the previous
+    // version used meant a healthy-but-slow RPC produced zero jumps and
+    // hit the FAIL branch round 5 had just introduced: my own fix
+    // created a path that reports a product regression for an RPC taking
+    // slightly longer than a hard-coded guess.
+    //
+    // Poll for a settled state instead: either a jump exists, or the
+    // sale rows have stopped saying "still reading".
+    const CHECKING = /still reading the details a sale needs/i;
+    const deadline = Date.now() + 45_000;
+    let jumps = 0;
+    let stillChecking = true;
+    for (;;) {
+      jumps = await jumpsOf().count();
+      stillChecking = CHECKING.test(await card.innerText().catch(() => ''));
+      if (jumps > 0 || !stillChecking || Date.now() > deadline) break;
+      await page.waitForTimeout(1_000);
+    }
+    if (jumps === 0) {
+      if (stillChecking) {
+        // Never settled inside the deadline. Nothing was learned about
+        // the app — the read that decides is still outstanding — so this
+        // is "could not look", the same verdict as a probe that threw.
+        return {
+          advancedOffered: true,
+          advancedJumps: null,
+          advancedBlocked: true,
+          advancedWhy: 'sale tools still checking after the switch — never settled',
+        };
+      }
+      // Settled, and still no jump. THAT is a failure: the card offers
+      // the switch only when some row is jumpable, so it has contradicted
+      // itself — a no-op `onSwitchToAdvanced`, or tools that never mount.
       return { advancedOffered: true, advancedJumps: 0, advancedAnchorsOk: false,
-               advancedWhy: 'switch offered but no jump rendered after it' };
+               advancedWhy: 'switch offered but no jump rendered after it settled' };
     }
     return { advancedOffered: true, ...(await anchorAudit(page, card)) };
   } catch (e) {
