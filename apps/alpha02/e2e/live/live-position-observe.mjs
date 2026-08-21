@@ -2660,6 +2660,20 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
             advancedWhy: 'a prerequisite read failed — sale tools unavailable',
           };
         }
+        // CONSUMED ON BOTH PATHS (Codex #1853 r36). This sat inside the
+        // `!settled.switchThere` branch, so preserving `switchThere` on
+        // the disagreement return — last round's fix, made so the
+        // report could say a switch had been offered — routed those
+        // results straight past their only consumer and into the click.
+        // The allowlist added in round 35 was bypassed by the change
+        // made in round 35.
+        //
+        // A verdict that blocks does so whether or not a switch is on
+        // screen; the switch is what the verdict is ABOUT. Gating the
+        // consumption on it was always backwards, and only became
+        // reachable once the observation stopped being discarded.
+        const blocked = readinessBlock(settled.settled, settled.switchThere === true);
+        if (blocked) return blocked;
         // STILL SAYING "READING" AT THE DEADLINE IS NOT AN ANSWER
         // (Codex #1853 r19). `timedOut` was computed and then inspected
         // by neither caller, so a page whose prerequisite query is
@@ -2843,8 +2857,6 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
           // #1853 r29). `settled.settled` is absent only when the wait
           // ended for another reason, and `missingSwitchVerdict`
           // answers `unknown` for that, which is the pre-#1855 path.
-          const blocked = readinessBlock(settled.settled, settled.switchThere === true);
-          if (blocked) return blocked;
           return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
         }
         // It appeared while we waited: fall through to the click path.
