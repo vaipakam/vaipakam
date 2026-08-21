@@ -7,20 +7,24 @@ borrowers — a VPFI rebate that, under the current fee model, cannot arrive. Th
 correction runs through the documentation and site copy — whitepaper, overview,
 both user guides, the FAQ and the localized interface strings — in all ten
 languages, and it scopes the retired mechanism rather than deleting it, because
-the loans opened while it was live still settle that way and are settled on that
-basis when they close — which may or may not leave the holder anything, since the
-amount is sized by the discount they averaged over the loan. Several surfaces inside the connected app are
-deliberately not part of it and are listed further down, so this is not yet a
-complete sweep of everything a user can read.
+the loans opened while it was live are still settled on that basis when they
+close. Several surfaces inside the connected app are deliberately not part of it
+and are listed below, so this is not yet a complete sweep of everything a user
+can read.
 
-Along the way the same review surfaced a second, sharper class of problem: pages
-a reader could follow to the letter and still be charged the full fee, and pages
-that told a borrower their collateral was gone when it was sitting claimable in
-their own vault. Those are corrected here too.
+Alongside it, the same review kept finding a second and sharper class of
+problem: pages a reader could follow to the letter and still be charged the full
+fee, and pages that told a borrower their collateral was gone when it was
+sitting claimable in their own vault. Correcting those turned out to be harder
+than removing the original promise, because the first few corrections were
+themselves wrong — each one enumerated the routes a loan can close through, and
+each was overtaken by a route it had not heard of. What finally worked was to
+stop enumerating and state what the answer turns on.
 
-The rest of the day is verification work — a lender-exit chooser that shows
-doing nothing as a real option, and three fixes that stop the wallet-analytics
-checks from passing without having looked at what actually shipped.
+The rest of the day is verification work on the lender's exit options: a card
+that shows what selling early would cost and treats waiting as a real choice,
+now able to say whether it has finished deciding, plus three fixes that stop the
+wallet-analytics checks from passing without having looked at what shipped.
 
 
 ## Lenders can now see what their options are — including doing nothing
@@ -33,9 +37,8 @@ Until now, a lender in the simple view saw **nothing at all** about this. The
 sale tools existed, but they lived behind the Advanced view, so unless you had
 already switched over you would not learn that selling your position early was
 possible, what it would cost, or that waiting is itself a choice. The card is
-informational only — it never submits anything, and each row that represents an
-action points at the tool that does the actual work. The row for waiting does
-not, because waiting needs no tool.
+informational only — it never submits anything, and each row points at the tool
+that does the actual work.
 
 **Waiting is listed first, on purpose.** For a borrower, the useful thing to
 surface is the ways out of a debt. For a lender the situation is reversed: the
@@ -374,6 +377,46 @@ connection since the settings changed. Configuration and quiet page loads are
 both consistent with a connect flow that is broken, and only a person with a
 wallet can rule that out.
 
+## The lender's options card now says whether it has finished deciding
+
+The card that lists a lender's ways out of a position has always had to answer a
+question before it can render: is any of these options actually available right
+now? While it is working that out, the shortcut into the detailed tools is not
+shown — and when the answer turns out to be no, it is not shown either.
+
+From inside the app those two situations are obviously different. From outside —
+to anything checking that the card behaves correctly on a real position — they
+look identical, because the only evidence either way was the absence of a
+control. That left post-deploy review with two bad options: wait a fixed length
+of time and then assume the answer had arrived, or treat every quiet card as a
+possible fault.
+
+The card now states its own answer: whether the decision has settled, and what
+it settled to. Nothing about the page looks different — no wording changes, no
+new controls, nothing moves. The card simply stops keeping to itself something
+it already knew.
+
+**A failed check is reported as its own answer, not as either of the others.**
+If one of the reads the sale options depend on fails outright, the card has
+finished deciding — a reader should not be left waiting — but "finished" is not
+the same as "the answer is no". A review that treated those alike would report a
+position as having no exits available when the truth is that we could not tell.
+
+Two things deliberately do not count towards the decision being settled. One is
+the loan's interest schedule: it changes how the waiting option is worded and
+nothing else, so waiting on it would hold up an answer it cannot affect — and on
+a position whose schedule never loads, the answer would never come at all. The
+other is a check that will never run: on a position where the app does not sweep
+the market for buyers, and on one where the listing record cannot be read at all,
+there is nothing to wait for. Treating a permanently-unanswerable check as
+"still coming" would leave the card looking undecided forever.
+
+The reason this was worth doing is that the alternative had already been tried.
+Reviewing this card against a live position currently costs forty-five seconds
+per page of waiting for an answer that may already have arrived, and three
+separate classes of mistake in that review have traced back to guessing at an
+absence rather than reading a fact.
+
 ## The public pages no longer promise borrowers a rebate that cannot arrive (#882)
 
 The whitepaper and the user guides told borrowers that their Loan Initiation Fee
@@ -388,16 +431,15 @@ there is no rebate. A borrower reading the old pages would have been waiting for
 money that could never arrive — and would have had no way to discover that from
 the pages themselves.
 
-The documentation and site copy now say what actually happens, and say it in the same place
+Every public page now says what actually happens, and says it in the same place
 the old promise stood: the discount is a direct reduction, no VPFI leaves the
 vault to pay the fee, and there is nothing to claim afterwards.
 
 **The old mechanism is scoped, not deleted.** Loans opened while it was live
-still settle exactly that way: **a proper close** — repayment, early close, or
-refinance — settles the time-weighted rebate on one of them, which can come to
-nothing if the borrower's discount averaged nothing. If such a loan instead
-defaults or is liquidated, the held VPFI is forfeited in full and there is no
-rebate at all, which the pages now say wherever they describe those outcomes. Deleting the
+still settle exactly that way, and a rebate on one of them is claimable **when it
+closes properly** — repayment, early close, or refinance. If such a loan instead
+defaults or is liquidated, the held VPFI is forfeited and there is no rebate at
+all, which the pages now say wherever they describe those outcomes. Deleting the
 description outright would have stranded the people it still applies to.
 
 **One thing deliberately not over-corrected.** Where the optional per-party
@@ -419,13 +461,13 @@ those.
 
 **The correction reaches the places a borrower actually looks.** Beyond the page
 that introduces the fee discount, four surfaces mattered more than the rest and
-each is now corrected. They are: the site's **public FAQ**, which answered "how
-does the VPFI discount work?" by describing the retired mechanism outright — on
-the homepage and in the structured data search engines read; the **Claim Center**
-list a borrower reads to find out what a claim will pay them; the
-**illiquid-default** passage that tells them what is left after losing their
-collateral; and the **public marketing bullet** on the buy-VPFI page, which
-advertised the rebate as a reason to hold VPFI. The introductory
+each is now corrected — including the site's **public FAQ**, which answered "how
+does the VPFI discount work?" by describing the retired mechanism outright, on
+the homepage and in the structured data search engines read: the **Claim Center** list a borrower reads to find out what a
+claim will pay them; the **illiquid-default** passage that tells them what is left
+after losing their collateral; and the **public marketing bullet** on the buy-VPFI
+page, which advertised the rebate as a reason to hold VPFI; and the FAQ answer
+just described. The introductory
 walkthrough also stopped offering the retired "pay the fee in VPFI and receive the
 full amount" route as a live choice.
 
@@ -544,8 +586,61 @@ a discount, rather than selling it, leaves the collateral itself waiting. So the
 correction pointed most borrowers at the wrong thing while sounding more precise
 than the sentence it replaced.
 
-Both guides now name all three routes and say which asset each returns, and
-still say to look at the claim rather than assume.
+It took several attempts, and each wrong one was wrong in a way the first had
+made likely: it enumerated ROUTES, so the route it had not heard of was simply
+absent. An ordinary liquidation does not always go to an exchange — where
+another position can absorb it, the protocol matches it internally and the
+borrower's residue is the collateral, not the loan's asset. Naming three routes
+left that one out. Naming four left out the failed swap, which also ends in the
+collateral being handed over. And a correction that removed the enumeration
+from one side of the sentence promptly grew a fresh one on the other.
+
+So the guides no longer enumerate routes at all. They state the one thing the
+answer actually turns on: whether the collateral was SOLD or HANDED OVER. Sold
+returns the loan's own asset, handed over returns the collateral, and the ways
+of handing it over are named as open examples rather than as a closed list —
+with no count attached, since the count is the thing that kept going stale.
+
+**And the position NFT is not proof that anything is waiting.** Where a
+liquidation left nothing over, the claim is recorded as already settled — and
+the NFT is not burned on that path, so it can sit there afterwards looking
+exactly like an unclaimed one. The pages had gone further than that and pointed
+at the surviving NFT as the reason to expect a surplus, which sends a borrower
+to sign a transaction that is refused. Both guides now say to read the claim
+and not the NFT.
+
+**A zero-surplus liquidation is not always recorded the same way.** The pages
+said the claim is filed as already settled. That is true of the ordinary and
+discounted routes and not of an exactly-matched internal one, which records no
+claim at all — so the refusal a borrower meets differs by route, while what
+they can do about it does not. The pages now say only what is true of all of
+them: there is nothing to collect, the attempt is refused, and the NFT can be
+sitting there regardless. Stating the mechanism bought nothing a reader could
+use and was another internal detail to keep in sync.
+
+**The renewal warning needed one exception.** After it was narrowed, the pages
+said a push is sent only when your tier changes. A push carries the tier's rate
+and the tier-table version too, and mirrors stop honouring a cached older
+version — so after a governance retune the button does work, and pressing it is
+the difference between your discount and no discount at all. The warning stays;
+the case where the button is worth pressing is now named — and named
+accurately, which took a second attempt. The first version said a mirror stops
+honouring the cached version after a retune and that you would otherwise be
+charged with no discount at all. It does not, and you would not: no
+cross-chain message carries the new version, so the mirror goes on applying
+the rate it already has until a per-user push arrives. This document says so
+itself, in a section 1,400 lines further down, which the correction
+contradicted. That second attempt was also wrong, in the
+opposite direction, and the third is the one to read. The version a mirror
+holds is mirror-WIDE, and its receiver raises it from ANY user's message — so
+the first push by anybody after a retune flips the version for everyone on
+that mirror, and every cache still carrying the old one reads as tier 0 from
+that moment until its own push arrives. The old-BPS grace is real, is
+per-mirror rather than per-user, and ends on a stranger's message. So the
+push is worth making promptly, whether or not the new rate suits you.
+
+The passage that misled me is in this same document, and it has been corrected
+too: it described the grace without saying what ends it.
 
 **And the renewal procedure has been withdrawn rather than qualified.** Two
 rounds ago these pages started describing how to refresh a lapsed mirror
@@ -564,16 +659,13 @@ corrected by someone reading what the mechanism does.
 
 **A separate correction, and the most consequential one here.** The Claim
 Center guidance told a borrower that an HF-liquidation or a default returns
-**nothing**. That is not something a page can promise either way: only enough
-collateral is taken to cover the liquidator, the lender and the treasury, and any
-remainder is recorded as the borrower's claim and stays in their vault until they
-withdraw it. Whether a remainder exists depends on what the collateral actually
-realised — the liquidator's incentive and the realised slippage come out first —
-so an overcollateralised position often leaves one and is not guaranteed to. A borrower who believed the page would simply never go
+**nothing**. That is false whenever the position was overcollateralised: only
+enough collateral is taken to cover the liquidator, the lender and the treasury,
+and the remainder is recorded as the borrower's claim and stays in their vault
+until they withdraw it. A borrower who believed the page would simply never go
 and collect it. The guidance now tells them to check, explains that an illiquid
-default usually does take the whole basket — an outcome, not a rule — and states
-what happens to the retired-path rebate: forfeited outright on a default or
-liquidation, and settled on a proper close.
+default usually does take the whole basket — an outcome, not a rule — and keeps
+the one thing that is always lost, which is the rebate.
 
 The same passage also said the borrower position NFT is burned when the loan
 resolves. It is burned when the borrower *claims*, which is exactly the

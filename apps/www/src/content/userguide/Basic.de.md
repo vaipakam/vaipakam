@@ -379,18 +379,30 @@ Borrower-Claim das Collateral zurück, das du am Anfang gesperrt
 hast. Bei Default oder Liquidation sieh trotzdem nach. Es wird nur so
 viel Wert genommen, wie die Schuld und die Kosten ihrer Auflösung
 erfordern; alles darüber wird als deines erfasst. Welche Form es
-hat, hängt davon ab, wie der Loan endete: nach einer gewöhnlichen
-Liquidation oder einem Default auf handelbares Collateral wird der
-Korb verkauft und der Rest erreicht dich im Asset des Loans. Nur
-wenn ein Liquidator das Collateral mit Abschlag direkt übernimmt,
-statt es zu verkaufen, wartet das Collateral selbst auf dich. Oft geht bei einem Default über Collateral, das wir
+hat, hängt davon ab, wie der Loan endete: wurde das Collateral
+über eine Börse verkauft, erreicht dich der Rest im Asset des
+Loans. Wurde es stattdessen übergeben, wartet das Collateral selbst
+auf dich. Mehrerlei übergibt es, egal wie der Loan endete: ein Liquidator, der es
+mit Abschlag direkt übernimmt, ein Close-out, der protokollintern gegen
+eine gegenläufige Position gematcht statt verkauft wird, oder ein Verkauf, der nicht zustande kam — dort bekommst du das Collateral, sofern der Lender beim Claim kein
+funktionierendes Quote mitbringt — dann wirst du im Asset des Loans
+ausgezahlt; die meisten bringen keins mit. Eine
+gewöhnliche Liquidation und ein Default suchen dieses interne
+Matching, bevor sie an eine Börse gehen, also endet keines von beiden
+immer gleich — lies den Claim, statt es aus der Endungsart zu erraten.
+Die Übernahme mit Abschlag ist die Ausnahme und andersherum
+berechenbar: sie verkauft nie, dir bleibt also immer das Collateral. Oft geht bei einem Default über Collateral, das wir
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
 das ist aber ein Ausgang, keine Regel. Nie zurück kommt der
 Gebühren-Rebate: bei einem Loan auf dem eingestellten
 VPFI-Gebührenweg wird das gegen die Loan Initiation Fee verwahrte
-VPFI an die Treasury verwirkt. Der Claim verbraucht deinen
-Borrower-Position-NFT — deshalb ist der NFT nach einer
-Liquidation noch da und wartet auf dich.
+VPFI an die Treasury verwirkt. Ein Claim verbraucht deinen
+Borrower-Position-NFT. Umgekehrt gilt das nicht: ein NFT, der nach
+einer Liquidation noch da ist, ist kein Beleg dafür, dass etwas
+auf dich wartet. Blieb nichts übrig, gibt es nichts
+abzuholen, der Versuch wird abgelehnt, und der NFT kann trotzdem
+dableiben. Lies, was der Claim sagt, statt
+den NFT als Zusage zu nehmen.
 
 ---
 

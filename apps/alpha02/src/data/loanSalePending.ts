@@ -428,6 +428,11 @@ export function useLoanSalePending(
      *  that window, and a cached clear would keep offering both sale
      *  paths on a position that is now locked. */
     isError: query.isError,
+    /** TanStack's own fetch state, surfaced so a consumer can tell a
+     *  settled answer from one whose background poll is still in
+     *  flight (Codex #1858 r10). `state` and `isError` are both
+     *  retained across a refetch, so neither can carry it. */
+    fetchStatus: query.fetchStatus,
     endedNotice,
     clearEndedNotice,
     remember,

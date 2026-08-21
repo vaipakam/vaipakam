@@ -375,20 +375,32 @@ te rend le collatéral que tu as verrouillé au début. En cas de
 défaut ou de liquidation, vérifie quand même. On ne prélève que
 la valeur qu'exigent la dette et les frais de sa clôture, et tout
 ce qui dépasse est enregistré comme tien. Sa forme dépend de la
-manière dont le prêt s'est terminé : après une liquidation
-ordinaire, ou un défaut sur un collatéral négociable, le panier est
-vendu et le reste te parvient dans l'actif du prêt lui-même. Ce
-n'est que lorsqu'un liquidateur prend le collatéral directement
-avec une décote, au lieu de le vendre, que c'est le collatéral
-lui-même qui t'attend. Souvent — sur un
+manière dont le prêt s'est terminé : si le collatéral a été vendu
+via une place de marché, le reste te parvient dans l'actif du prêt
+lui-même. S'il a été remis à la place, c'est le collatéral lui-même
+qui t'attend. Plusieurs choses le remettent, quelle que soit la manière dont le prêt
+s'est terminé : un liquidateur qui le prend directement avec une décote,
+une clôture appariée à l'intérieur du protocole contre une position
+opposée plutôt que vendue, ou une vente qui n'a pas pu se faire — là tu as le collatéral, sauf si le prêteur apporte une cotation qui
+fonctionne au moment de la réclamation — tu es alors payé dans l'actif
+du prêt ; la plupart n'en apportent aucune. Une liquidation
+ordinaire comme un défaut cherchent cet appariement interne avant
+d'aller sur le marché, donc aucun de ces deux-là ne finit toujours
+pareil : lis la réclamation plutôt que de le déduire de la façon dont
+le prêt s'est clos. La prise avec décote fait exception, et elle est
+prévisible dans l'autre sens : elle ne vend jamais, donc il te reste
+toujours le collatéral. Souvent — sur un
 défaut portant sur un collatéral que nous ne pouvons pas
 valoriser — tout le panier part et il ne reste rien, mais c'est
 une issue, pas une règle. Ce qui ne revient jamais, c'est le
 rabais de frais : sur un prêt encore soumis à la voie de frais
 VPFI retirée, le VPFI retenu au titre de la Loan Initiation Fee
-est acquis au trésor. La réclamation consomme ton NFT de position
-d'emprunteur — c'est pourquoi le NFT est toujours là après une
-liquidation, à t'attendre.
+est acquis au trésor. Réclamer consomme ton NFT de position
+d'emprunteur. L'inverse n'est pas vrai : un NFT encore présent
+après une liquidation ne prouve pas que quelque chose t'attend.
+S'il ne restait rien, il n'y a rien à récupérer, la tentative est
+refusée, et le NFT peut rester quand même. Lis ce que dit la créance plutôt que de
+prendre le NFT pour une promesse.
 
 ---
 
