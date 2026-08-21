@@ -1045,6 +1045,28 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         st !== LoanStatus.FallbackPending,
     ) ?? liveStatusCandidates.find((st) => st !== undefined);
 
+  /** `loanLive`'s chain clock, ADVANCED by local elapsed time.
+   *
+   *  `chainNow` freezes at the poll that fetched it, so every gate
+   *  comparing against it raw reads a stopped clock between polls
+   *  (Codex r20/r22 P2). I fixed that for the chooser's `maturity`
+   *  first and left the two siblings on the frozen value — so the
+   *  chooser could block while both Advanced forms stayed mounted, and
+   *  the final-hour cutoff could miss its boundary when `bannerTerms`
+   *  was unavailable.
+   *
+   *  Hoisted so there is ONE advanced clock rather than three chances
+   *  to forget. Chain-anchored still: the device supplies the elapsed
+   *  DELTA only, never an absolute time, and `Math.max(0, …)` keeps a
+   *  backwards clock from moving the boundary the wrong way. */
+  const loanLiveNowSec: bigint | undefined =
+    loanLive.data && !loanLive.isError
+      ? loanLive.data.chainNow +
+        BigInt(
+          Math.max(0, Math.floor(nowSec - loanLive.dataUpdatedAt / 1000)),
+        )
+      : undefined;
+
   /** Whether the loan is open enough for a SALE to be attempted.
    *
    *  The indexed row and the live reads can disagree in both
@@ -3051,13 +3073,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   // elapsed delta, never the absolute time, so a wrong
                   // device clock shifts the boundary by its drift
                   // rather than by its absolute error.
-                  loanLive.data.chainNow +
-                    BigInt(
-                      Math.max(
-                        0,
-                        Math.floor(nowSec - loanLive.dataUpdatedAt / 1000),
-                      ),
-                    ) >=
+                  (loanLiveNowSec ?? loanLive.data.chainNow) >=
                   loanEndTimeOf(loanLive.data.live)
                   ? 'past'
                   : 'current'
@@ -3080,7 +3096,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             }
             if (loanLive.data && !loanLive.isError) {
               const end = loanEndTimeOf(loanLive.data.live);
-              const now = loanLive.data.chainNow;
+              // Advanced, not frozen — same clock as the maturity
+              // branch above (Codex r22 P2).
+              const now = loanLiveNowSec ?? loanLive.data.chainNow;
               return end > now && BigInt(end - now) < MIN_SALE_LISTING_SECONDS;
             }
             return false;
@@ -3225,9 +3243,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // had cured the loan, even while the independent live-status
           // read said Active. A stale blocker is as wrong as a stale
           // permission — it just fails in the safe-looking direction.
-          fallbackPending={
-            resolvedLoanStatus === LoanStatus.FallbackPending
-          }
+          // ANY healthy source, not the ranked winner (Codex r21 P2).
+          // The r20 fix made `saleAttemptable` fail closed on an
+          // affirmative non-Active from any source — but left this
+          // prop, and `saleTools`, reading the RANKED resolution. So
+          // when the faster status poll saw FallbackPending while the
+          // slower strategy read still served a cached Active, the
+          // tools unmounted and the rows went on advertising both
+          // exits, complete with the Basic-mode switch and jump
+          // buttons pointing at blocks that were no longer there.
+          //
+          // I fixed the tool side and not the row side of the very
+          // split this card exists to prevent.
+          fallbackPending={liveStatusCandidates.some(
+            (st) => st === LoanStatus.FallbackPending,
+          )}
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
           // if it errors. Collapsing that to `false` showed BOTH sale
@@ -3393,7 +3423,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // A live sale listing owns the lender's exit story — the
           // pending card below explains and offers cancel/restore.
           null
-        ) : loanLive.data.chainNow <
+        ) : (loanLiveNowSec ?? loanLive.data.chainNow) <
           loanLive.data.live.startTime +
             loanLive.data.live.durationDays * 86_400n ? (
           // `isError` too, not just absence (Codex r19 P2). TanStack
