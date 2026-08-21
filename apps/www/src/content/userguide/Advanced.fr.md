@@ -781,8 +781,11 @@ prêt s'est réglé :
   qui n'a pas pu aboutir — une vente ratée bascule sur la remise du
   collatéral. La liquidation ordinaire comme un défaut temporel tentent
   cet appariement interne AVANT de passer par le marché ; la liquidation
-  avec décote, non. Aucune voie ne se termine donc toujours de la même
-  façon — c'est pourquoi il faut lire la créance, et non la voie. Une liquidation
+  avec décote, non. Aucune de ces deux voies ne se termine donc toujours de la même faç
+  on — c'est pourquoi il faut lire la créance, et non la voie. La
+  voie avec décote, elle, est prévisible, mais dans l'autre sens :
+  elle ne vend ni n'apparie, donc ce qui te reste est toujours le
+  collatéral. Une liquidation
   partielle n'est pas une clôture du tout — le prêt reste ouvert
   et aucune créance n'est créée. Consulte la créance plutôt que
   de supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le

@@ -734,9 +734,11 @@ The borrower claim returns, depending on how the loan settled:
   back to handing the collateral over. The ordinary liquidation
   route and a time-based default both try that internal match
   BEFORE reaching for an exchange, though the discounted route
-  does not. No route, then, is reliably one form or the other —
-  which is why the claim, not the route, is the thing to
-  read. A partial liquidation is not a
+  does not. So neither of those two ends reliably one way or the other, which is
+  why the claim rather than the route is the thing to read. The
+  discounted route IS reliable, and in the other direction: it
+  neither sells nor matches, so what it leaves you is always the
+  collateral. A partial liquidation is not a
   close-out at all — the loan stays open and no claim is created.
   Check the claim rather than assuming which one you have.
   On an illiquid default the whole basket usually goes, so there

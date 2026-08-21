@@ -380,9 +380,10 @@ liquidador que lo toma directamente con descuento, un cierre casado
 dentro del protocolo contra una posición opuesta en lugar de vendido, o
 una venta que no pudo hacerse — entonces se entrega el colateral. Una
 liquidación ordinaria y un default buscan ese casamiento interno antes
-de ir a un exchange; una toma con descuento no. Así que nada de esto
-acaba siempre igual: lee la reclamación en vez de deducirlo de cómo
-cerró. A menudo —en un
+de ir a un exchange; una toma con descuento no. Así que ninguno de esos dos acaba siempre igual: lee la reclamación en
+vez de deducirlo de cómo cerró. La toma con descuento es la excepción,
+y es previsible al revés: nunca vende, así que siempre te deja el
+colateral. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
 entera y no queda nada, pero eso es cómo resultó, no una regla.
 Lo que nunca vuelve es el reembolso de la comisión: en un

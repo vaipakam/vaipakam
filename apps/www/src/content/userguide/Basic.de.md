@@ -388,8 +388,10 @@ eine gegenläufige Position gematcht statt verkauft wird, oder ein
 Verkauf, der nicht zustande kam — dann wird das Collateral übergeben.
 Eine gewöhnliche Liquidation und ein Default suchen dieses interne
 Matching, bevor sie an eine Börse gehen; eine Übernahme mit Abschlag
-nicht. Also endet nichts davon immer gleich — lies den Claim, statt es
-aus der Endungsart zu erraten. Oft geht bei einem Default über Collateral, das wir
+nicht. Also endet keines von beiden immer gleich — lies den Claim, statt es
+aus der Endungsart zu erraten. Die Übernahme mit Abschlag ist die
+Ausnahme und andersherum berechenbar: sie verkauft nie, dir bleibt
+also immer das Collateral. Oft geht bei einem Default über Collateral, das wir
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
 das ist aber ein Ausgang, keine Regel. Nie zurück kommt der
 Gebühren-Rebate: bei einem Loan auf dem eingestellten

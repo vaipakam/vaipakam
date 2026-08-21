@@ -359,9 +359,10 @@ inside the protocol against an opposing position rather than
 sold, or a sale that could not go through — a failed swap hands
 the collateral over instead. An ordinary liquidation and a
 default both look for that internal match before going to an
-exchange, though a discounted seizure does not. So neither one
-always ends the same way — read the claim rather than guessing
-from how the loan closed. Often — on a default over collateral we
+exchange, though a discounted seizure does not. So neither of those two always ends the same way — read the claim
+rather than guessing from how the loan closed. A discounted seizure is
+the exception, and it is predictable the other way: it never sells, so
+it always leaves you the collateral. Often — on a default over collateral we
 cannot price — the whole basket goes and nothing is left, but
 that is how it turned out, not a rule. What never comes back is
 the fee rebate: on a loan still using the retired VPFI fee path

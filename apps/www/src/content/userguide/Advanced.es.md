@@ -784,8 +784,10 @@ liquidó el préstamo:
   completarse — una venta fallida pasa a entregar el colateral. Tanto la
   liquidación ordinaria como un default por tiempo intentan ese
   casamiento interno ANTES de acudir a un exchange; la liquidación con
-  descuento no. Así que ninguna vía acaba siempre igual — por eso lo que
-  hay que leer es la reclamación, no la vía. Una liquidación
+  descuento no. Así que ninguna de esas dos vías acaba siempre igual — por eso lo
+  que hay que leer es la reclamación, no la vía. La vía con
+  descuento sí es previsible, pero al revés: ni vende ni casa
+  internamente, así que lo que te deja es siempre el colateral. Una liquidación
   parcial no es un cierre en absoluto — el préstamo sigue abierto
   y no se crea ninguna reclamación. Consulta la reclamación en
   lugar de suponer cuál tienes. En un default sobre un activo ilíquido suele irse la

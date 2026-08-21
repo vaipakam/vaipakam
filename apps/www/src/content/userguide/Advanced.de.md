@@ -785,9 +785,10 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   ein Swap, der überhaupt nicht zustande kam — ein gescheiterter Verkauf
   fällt auf die Übergabe zurück. Die gewöhnliche Liquidation und ein
   zeitbasierter Default versuchen dieses interne Matching, BEVOR sie zur
-  Börse greifen; die Liquidation mit Abschlag tut das nicht. Also endet
-  kein Weg immer gleich — genau deshalb liest man den Claim und nicht
-  den Weg. Eine
+  Börse greifen; die Liquidation mit Abschlag tut das nicht. Also endet keiner dieser beiden Wege immer gleich — genau deshalb
+  liest man den Claim und nicht den Weg. Der Weg mit Abschlag ist
+  dagegen berechenbar, nur andersherum: er verkauft nicht und matcht
+  nicht, dir bleibt also immer das Collateral. Eine
   Teilliquidation ist überhaupt kein Close-out — der Loan bleibt
   offen und es entsteht kein Claim. Sieh in den Claim, statt zu
   raten. Bei

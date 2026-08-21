@@ -591,8 +591,8 @@ borrower claim 根据 loan 如何 settle 来返回：
   vault 中。交出它的路径不止一条，而且都与 loan 以哪种方式结束无关：liquidator 按折扣直接拿走，close-out 没有
   送去交易所、而是在内部与一个反向 position 撮合，以及 swap 根本没能完成——卖不出去时就退回为交出
   collateral。普通 liquidation 和时间型 default 都会在转向交易所之前先尝试这种内部撮合，折
-  扣式拿走则不会。所以没有哪条路径的结果是固定的——这正是应当
-  去读 claim，而不是从结束方式去推断的原因。至于部分 liquidation，它根本不是
+  扣式拿走则不会。所以这两条路径的结果都不是固定的——这正是应当去读 claim，而不是从结束方式去推断的原因。折扣式拿走反而是确定的，只是方向相反：
+  它既不卖出也不撮合，留给您的始终是 collateral。至于部分 liquidation，它根本不是
   close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要
   假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩
   什么——但那是一种结果，不是规则。始终会失去的是 rebate：若该 loan 仍在
