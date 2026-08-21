@@ -1878,16 +1878,37 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
     // keep waiting — and it is reported only if the clock runs out
     // (r30: returning on it made a merely slow page report a failure).
     lastVerdict = missingSwitchVerdict(await selfOf?.());
-    if (lastVerdict !== 'unknown' && lastVerdict !== 'blocked-pending') {
+    const jumps = await jumpsOf().count();
+    const switchThere = swOf ? (await swOf().count()) > 0 : false;
+    // CONTROLS PRESENT AND SETTLED IS THE HEALTHY CASE, and it is
+    // checked before any verdict is applied to their absence (Codex
+    // #1853 r32). Round 31 moved the readiness read ahead of this
+    // count and let its verdict return first — which turned
+    // `ready`/`yes` into the missing-switch contradiction on a page
+    // that has no switch because it is ALREADY in Advanced, jump
+    // buttons rendered and working. `ModeContext` persists the mode,
+    // so every position after the first arrives that way: the default
+    // three-position run would have reported a product regression on
+    // pages 2 and 3 and never audited them.
+    //
+    // `ready`/`yes` is a contradiction only when there is nothing on
+    // screen to reach the row with. With jumps present it is the card
+    // agreeing with itself.
+    if ((jumps > 0 || switchThere) && lastVerdict !== 'blocked-pending') {
+      return { jumps, switchThere, toolsFailed: false, timedOut: false };
+    }
+    // Nothing rendered (or the card says not to trust what is). Now the
+    // verdict about an ABSENCE is the right question to ask.
+    if (
+      jumps === 0 &&
+      !switchThere &&
+      lastVerdict !== 'unknown' &&
+      lastVerdict !== 'blocked-pending'
+    ) {
       return {
         jumps: 0, switchThere: false, toolsFailed: false, timedOut: false,
         settled: lastVerdict,
       };
-    }
-    const jumps = await jumpsOf().count();
-    const switchThere = swOf ? (await swOf().count()) > 0 : false;
-    if ((jumps > 0 || switchThere) && lastVerdict !== 'blocked-pending') {
-      return { jumps, switchThere, toolsFailed: false, timedOut: false };
     }
     // Same auto-wait trap as the recorder above (Codex #1853 r22):
     // this ran every iteration, and on an absent card each one blocked
@@ -2423,7 +2444,17 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
     };
   };
   try {
-    if ((await sw.count()) === 0) {
+    // A CACHED SWITCH IS NOT AN ACTIONABLE ONE (Codex #1853 r32). This
+    // branch decided whether to wait at all, so a Basic-mode card
+    // mid-refetch — publishing `pending` while its previous switch is
+    // still rendered — skipped the wait entirely and went straight to
+    // the click, and the reordered readiness check inside the wait
+    // never ran. Consulting the card here routes that page into the
+    // wait, where `pending` keeps polling until the read settles; if
+    // the switch is still there afterwards, the code below falls
+    // through to the click exactly as before.
+    const preSwitchVerdict = missingSwitchVerdict(await chooserSelfVerdict(page));
+    if ((await sw.count()) === 0 || preSwitchVerdict === 'blocked-pending') {
       // NO SWITCH means one of two different things, and the first
       // version of this probe reported them identically. The card
       // renders the switch only when it is in Basic mode AND some row
@@ -2756,7 +2787,14 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
     //
     // Poll for a settled state instead: either a jump exists, or the
     // sale rows have stopped saying "still reading".
-    const post = await waitForSaleRows(card, jumpsOf, page, null, late, () => watch.sample());
+    // The sampler is passed here too (Codex #1853 r32): the post-click
+    // wait had none, so cached jump buttons on a still-`pending` card
+    // were audited and accepted — the same hole this round closed on
+    // the pre-switch side, in the branch that actually does the audit.
+    const post = await waitForSaleRows(
+      card, jumpsOf, page, null, late, () => watch.sample(),
+      () => chooserSelfVerdict(page),
+    );
     const jumps = post.jumps;
     if (jumps === 0) {
       if (post.toolsFailed) {
