@@ -96,6 +96,7 @@ import {
   snapshotJumpable,
 } from './jumpability.mjs';
 import { redactUrl } from './redact.mjs';
+import { isDetailPath, visitVerdict } from './visitVerdict.mjs';
 import {
   EXECUTION_REVERTED,
   REVERT_BYTES,
@@ -3189,157 +3190,20 @@ if (racedOut.length) {
 let failures = 0;
 console.log('');
 for (const v of visited) {
-  const detail = /^\/positions\/\d+$/.test(v.path);
-  const problems = [];
-  if (v.nav) problems.push(`nav: ${v.nav}`);
-  // A 404/500 does not throw and does not fire `pageerror`: page.goto
-  // resolves and the status is merely recorded. Unchecked, a route that
-  // never loaded counted toward "routes clean" (#1529 review).
-  if (!v.nav && (v.http === null || v.http === undefined || v.http < 200 || v.http >= 300)) {
-    problems.push(`navigation returned ${v.http ?? 'no response'}`);
-  }
-  if (v.hooks) problems.push('HOOKS-ORDER CRASH');
-  if (v.pageErrors?.length) problems.push(`${v.pageErrors.length} uncaught error(s)`);
-  // A position DETAIL page for an eligible loan must show the chooser
-  // AND both newly-exposed paths. Printing handover/offset without
-  // failing on them let the drive pass while missing one of the two
-  // #1505 surfaces it claims to validate (#1529 review).
-  // A page whose chain revalidation ESTABLISHED that the loan moved is a
-  // state race, and its card-shape assertions are meaningless (Codex
-  // #1853 r10): the same transition that removed the jumps unmounts the
-  // card, so `chooser=false` and every row check fails — and `if
-  // (failures) process.exit(1)` runs BEFORE the advancedBlocked branch,
-  // so the race I had just correctly detected was still reported as a
-  // product regression.
+  const detail = isDetailPath(v.path);
+  // WHICH OBSERVATIONS BECOME VERDICTS NOW LIVES IN A TESTED MODULE
+  // (#1861). This block decided the exit code inline, with no export,
+  // so nothing could call it with a constructed record — and every
+  // defect found in it (an anchor failure suppressed in aggregate,
+  // #1853 r18; one message serving two findings, r16; a suppression
+  // keyed on this driver's own prose, r14) was found by reading rather
+  // than by running, because the live chain never presents the states
+  // the rules describe.
   //
-  // Note this is EVIDENCE-GATED, not a blanket suppression: it applies
-  // only where `jumpabilityMoved` read the chain and found a specific
-  // change. A page that merely looks odd still fails.
-  // SUPPRESS ONLY WHAT THE RACE COULD HAVE INVALIDATED (Codex #1853 r15).
-  //
-  // Round 10 suppressed the card assertions on any detected race, and
-  // justified it as "the same transition that removed the jumps unmounts
-  // the card". That reasoning was wrong about its own mechanism, which
-  // is why the fix was too broad: `text`, `lenderCardText` and
-  // `lenderShapeOf(...)` are all evaluated EARLIER in the same object
-  // literal than `lenderAdvancedOf(...)`. A transition detected during
-  // the Advanced probe therefore cannot have affected a scrape that had
-  // already happened — so discarding those observations threw away
-  // genuine missing-row regressions that were positively observed
-  // before the chain moved.
-  //
-  // What round 10 was actually protecting against is the OTHER timing:
-  // a transition that landed before the page rendered, leaving the
-  // scrape looking at a card that was correctly never mounted. That case
-  // is now detected on its own terms and carries its own flag.
-  //
-  // So the two are split by WHEN the transition happened relative to the
-  // scrape:
-  //   advancedPreRaced — before it. The observations are of a correctly
-  //                      absent card; suppress them.
-  //   advancedRaced    — during the probe, after it. The observations
-  //                      stand; the race only excuses the zero-jump
-  //                      result, which is where it was detected.
-  // Three conditions, not two: the route was blocked, the chain
-  // explains it, AND the scrape itself saw no card. The third is what
-  // makes this sound (Codex #1853 r16) — without it, a card that DID
-  // render with a row missing loses its finding whenever the chain
-  // happens to move afterwards.
-  const preRaced =
-    v.advancedBlocked === true && v.advancedPreRaced === true && v.cardAbsentAtScrape === true;
-  if (detail && !v.nav && !preRaced) {
-    if (!v.chooser) problems.push(`${ROLE} chooser MISSING on an eligible loan`);
-    else if (ROLE === 'lender') {
-      // The card is an AWARENESS surface, so what makes it correct is
-      // that every option is NAMED — an unavailable row explains itself
-      // rather than vanishing, precisely because a missing row reads as
-      // "no such option". A row absent altogether is therefore a
-      // regression even on a loan where that exit is shut.
-      if (!v.lenderBlurb) problems.push('lender card title without its own blurb');
-      if (!v.waitRow) problems.push('wait row MISSING from the lender card');
-      if (!v.sellNowRow) problems.push('sell-now row MISSING from the lender card');
-      if (!v.listRow) problems.push('listing row MISSING from the lender card');
-      // `null` = not enough rows rendered to have an order; the missing
-      // row is already reported above and must not be double-counted.
-      if (v.waitFirst === false) problems.push('wait row is NOT first on the lender card');
-      // Only when jumps actually rendered: `advancedAnchorsOk === false`
-      // means a jump button points at an anchor that is not in the
-      // document, so clicking it does nothing at all — `jump()`
-      // optional-chains the lookup, so the failure is silent by
-      // construction and invisible to a user as anything but a dead
-      // button.
-      // An unmapped row is the harness's gap, so it must not be filed
-      // as the app's defect — it takes the BLOCKED path instead.
-      //
-      // PER CHECK, NOT PER RUN (Codex #1853 r18). Round 13 suppressed
-      // the whole anchor finding whenever ANY unmapped title existed,
-      // which is right about the unmapped row and wrong about its
-      // neighbours: one new or reworded jump row would hide a positively
-      // observed dead button sitting beside it, and the run would exit 2
-      // for the harness's mapping gap while a real product defect went
-      // unprinted. `anchorAudit` keeps each row's own mapping and
-      // presence verdict precisely so this does not have to be decided
-      // in aggregate.
-      //
-      // The two verdicts are independent and both are emitted: the dead
-      // anchor is a FAIL on evidence we have, the unmapped rows still
-      // block below on evidence we could not get.
-      // A PRODUCER THAT SAW A DEFECT SAYS SO (Codex #1853 r27). Every
-      // arm below infers failure from a PATTERN of fields — a dead
-      // entry in `advancedAnchors`, or `advancedJumps === 0` — which
-      // works only for the outcomes those patterns were written
-      // against. Round 25's Basic-mode-leak guard produced a record
-      // matching neither (positive jumps, no anchors) and the reporter
-      // let the run exit clean on a directly observed product defect.
-      //
-      // A FLAG, for the same reason `advancedRaced` is one: a rule the
-      // next return has to remember to match is a rule that keeps being
-      // forgotten. Anything that observes a defect sets this, and the
-      // reporter honours it without needing to recognise the shape.
-      if (v.advancedFailed) {
-        problems.push(v.advancedWhy ?? 'the lender Advanced audit reported a failure');
-      }
-      const deadAnchors = (v.advancedAnchors ?? []).filter(
-        (a) => a.target && a.present === false,
-      );
-      if (deadAnchors.length) {
-        // NAME WHERE IT WENT, not only where it should have (Codex
-        // #1853 r26). The audit now MEASURES navigation, so
-        // `present: false` covers two different defects: an anchor
-        // that is not there, and a button bound to the wrong one. The
-        // old sentence described only the first and printed only the
-        // expected id, which on a swapped binding — both anchors
-        // present — sends a reader looking for a missing element that
-        // exists.
-        problems.push(
-          'a lender jump button did not reach its own anchor: ' +
-            deadAnchors
-              .map((a) => `${a.target} → ${a.reached ?? 'nowhere'}`)
-              .join(', '),
-        );
-      } else if (
-        // NOT WHEN THE PRODUCER ALREADY SPOKE (Codex #1853 r29). The
-        // readiness FAIL sets `advancedFailed` AND matches this
-        // inferred shape, so one defect printed twice — and a reader
-        // counting problems would have counted two. The explicit
-        // verdict wins; this arm is the inference for records that
-        // carry no verdict of their own.
-        !v.advancedFailed &&
-        v.advancedJumps === 0 &&
-        v.advancedAnchorsOk === false
-      ) {
-        // The no-op switch has NO jump button at all, so the anchor
-        // sentence above is not true of it — reporting it that way sent a
-        // reader looking for a button that was never rendered. It states
-        // its own finding instead (Codex #1853 r16).
-        problems.push(v.advancedWhy ?? 'the lender card offered the switch and rendered no jump');
-      }
-    } else {
-      if (!v.handover) problems.push('handover path MISSING from the chooser');
-      if (!v.offset) problems.push('offset path MISSING from the chooser');
-    }
-  }
-
+  // The ranking stays HERE, where it has always been: `problems`
+  // outranks `blocked` at the exit below, and the module deliberately
+  // returns both for every visit rather than choosing between them.
+  const { problems } = visitVerdict(v, ROLE);
   const verdict = problems.length ? 'FAIL' : 'ok';
   if (problems.length) failures++;
   console.log(`${verdict.padEnd(5)} ${v.path.padEnd(16)} http=${v.http ?? '-'} connected=${v.connected ?? '-'}`);
@@ -3550,34 +3414,20 @@ if (failures) process.exit(1);
 // a clean run either, because the assertion this drive advertises did
 // not execute (Codex #1853 r6). Ranked AFTER `failures` so a real
 // regression is still reported as one.
-const advBlocked = visited.filter(
-  (v) =>
-    v.advancedBlocked ||
-    (v.advancedUnmapped ?? []).length > 0 ||
-    (v.advancedUnexercised ?? []).length > 0,
-);
+// THE SAME MODULE THAT DECIDES `problems` DECIDES THIS (#1861). The two
+// verdicts were computed in different places from overlapping fields,
+// which is how a page could carry both and have one quietly erase the
+// other (#1853 r18). `visitVerdict` returns both for every visit; the
+// ranking is here, and only here.
+const advBlocked = visited
+  .map((v) => ({ v, why: visitVerdict(v, ROLE).blocked }))
+  .filter(({ why }) => why !== null);
 if (advBlocked.length) {
   console.log(
     `\nBLOCKED: the Advanced probe could not complete on ${advBlocked.length}` +
       ` page(s) — the jump-anchor assertion did not run.`,
   );
-  advBlocked.forEach((v) =>
-    console.log(
-      `  ${v.path}: ${
-        v.advancedWhy ??
-        [
-          (v.advancedUnmapped ?? []).length
-            ? `jumping row(s) this drive cannot map to an anchor: ${v.advancedUnmapped.join(', ')}`
-            : null,
-          (v.advancedUnexercised ?? []).length
-            ? `jump button(s) that could not be clicked: ${v.advancedUnexercised.join(', ')}`
-            : null,
-        ]
-          .filter(Boolean)
-          .join('; ')
-      }`,
-    ),
-  );
+  advBlocked.forEach(({ v, why }) => console.log(`  ${v.path}: ${why}`));
   process.exit(2);
 }
 if (allowlistTooNarrow.length || httpGaps.length) process.exit(2);
