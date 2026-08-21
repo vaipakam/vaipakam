@@ -238,14 +238,22 @@ _ensure_qdir() {
   # fail. Creating and removing an entry is the operation being tested,
   # so that is the operation to perform.
   _probe_f=""
-  if ! _probe_f="$(mktemp "$QDIR/.probe.XXXXXX" 2>/dev/null)" \
-     || ! rm "$_probe_f" 2>/dev/null; then
-    [ -n "$_probe_f" ] && rm -f "$_probe_f" 2>/dev/null
+  if ! _probe_f="$(mktemp "$QDIR/.probe.XXXXXX" 2>/dev/null)"; then
     echo "Error: entries cannot be created and removed in $QDIR." >&2
     echo "Refusing to assemble: fragments set aside during the run are moved" >&2
     echo "there, so this would fail only after the dated file was written." >&2
     exit 1
   fi
+  # Tracked so the trap removes it if a signal lands before the rm below.
+  PROBE="$_probe_f"
+  if ! rm "$_probe_f" 2>/dev/null; then
+    rm -f "$_probe_f" 2>/dev/null || :
+    echo "Error: entries cannot be created and removed in $QDIR." >&2
+    echo "Refusing to assemble: fragments set aside during the run are moved" >&2
+    echo "there, so this would fail only after the dated file was written." >&2
+    exit 1
+  fi
+  PROBE=""
   local a b
   a="$(stat -c '%d' "$UNREL" 2>/dev/null || stat -f '%d' "$UNREL" 2>/dev/null)" || a=""
   b="$(stat -c '%d' "$QDIR"  2>/dev/null || stat -f '%d' "$QDIR"  2>/dev/null)" || b=""
@@ -476,10 +484,10 @@ LOCK="$UNREL/.assemble.lock"
 # `LOCK_HELD` is what keeps a losing contender from removing the lock
 # that is legitimately someone else's: the trap only ever clears a lock
 # this process created.
-_ensure_qdir
 LOCK_HELD=0
 WORK=""
 SNAP=""
+PROBE=""
 # ONE cleanup for every exit path. Separate traps drifted apart once
 # already: the EXIT trap was later replaced with one that also removed
 # the temp file, which left the signal traps still cleaning only the
@@ -496,8 +504,9 @@ SNAP=""
 # Each resource is cleared BEFORE it is released, not after: a failure
 # midway must not leave the flag saying there is still something to free.
 _cleanup() {
-  local _w="$WORK" _s="$SNAP"
-  WORK=""; SNAP=""
+  local _w="$WORK" _s="$SNAP" _p="$PROBE"
+  WORK=""; SNAP=""; PROBE=""
+  if [ -n "$_p" ]; then rm -f "$_p" 2>/dev/null || :; fi
   # Every removal is NON-FATAL, and the lock release is unconditional
   # (Codex #1863 r23). `set -e` exits on the last command of an `&&`
   # list, so a failing `rm` — $DIR turned unwritable while an error was
@@ -527,9 +536,15 @@ _cleanup() {
   fi
   return 0
 }
+# The quarantine probe runs AFTER the traps are armed (Codex #1863 r29).
+# Creating a randomly-named entry before any handler exists meant a signal
+# between the `mktemp` and its `rm` left `.probe.XXXXXX` behind for good:
+# no later run reuses that name, and the recovery scan's glob skipped
+# dotfiles, so `git add -A` could stage it after an ordinary Ctrl-C.
 trap '_cleanup' EXIT
 trap '_cleanup; exit 130' INT
 trap '_cleanup; exit 143' TERM
+_ensure_qdir
 # INT/TERM are held off across the two steps that acquire the lock
 # (Codex #1863 r25). A signal arriving after `mkdir` succeeds but before
 # the flag is set ran cleanup with LOCK_HELD still 0, so an ordinary
@@ -580,9 +595,11 @@ done
 # would be lost is the operator ever hearing about it.
 shopt -s nullglob
 _setaside=()
+shopt -s dotglob
 for q in "$QDIR"/*; do
   _setaside+=("$(basename "$q")")
 done
+shopt -u dotglob
 if (( ${#_setaside[@]} > 0 )); then
   echo "Set aside by an earlier run, still in $QDIR:" >&2
   printf '  %s\n' "${_setaside[@]}" >&2
@@ -2342,6 +2359,23 @@ for f in "${frags[@]}"; do
     _pub_now="$(frag_hash "$OUT" 2>/dev/null)" || _pub_rc=$?
     if (( _pub_rc != 0 )) || [ "$_pub_now" != "$PUBLISHED_ID" ]; then
       _abort_after_write "$(basename "$OUT") is gone or altered since it was written"
+    fi
+    # The QUARANTINE is re-hashed last, so the check nearest the delete is
+    # the one about the thing being deleted (Codex #1863 r29). Hashing
+    # $OUT above is itself a long step, and a writer holding the fragment
+    # inode open from before the move can still write to it during that
+    # window — bytes then deleted having reached no file at all.
+    #
+    # Two things must hold at the moment of the `rm` and only one can be
+    # checked immediately before it. Ordering them puts the shorter window
+    # on the output — which the operator still has, whole, either way —
+    # and the shorter window on the fragment, which is the only copy.
+    # The residual gap is a few syscalls and cannot be closed by a shell.
+    _rh2_rc=0
+    _rh2="$(frag_hash "$_q")" || _rh2_rc=$?
+    if (( _rh2_rc != 0 )) || [ "$_rh2" != "${FRAG_HASH[$f]}" ]; then
+      _kept+=("${FRAG_NAME[$f]} -> .assembled/${FRAG_NAME[$f]}")
+      continue
     fi
     rm "$_q" || _abort_after_write "could not remove ${FRAG_NAME[$f]}"
     _cleared+=("${FRAG_NAME[$f]}")

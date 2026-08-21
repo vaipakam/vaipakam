@@ -1998,7 +1998,7 @@ check "the lock is still released" "$(bash "$W/drive.sh" "$W")" "released"
 # Pinned to the real definition, so the drive cannot pass while the script
 # diverges from the pattern it demonstrates.
 check "removals are non-fatal in the script" \
-  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c '|| :')" "2"
+  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c '|| :')" "3"
 # And a lock that will not come off is REPORTED rather than swallowed, which
 # is what the third `|| :` used to hide.
 check "a failed lock release is reported" \
@@ -2602,6 +2602,56 @@ chmod +x "$W/fakebin/sha256sum"
 PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "the fragment survives somewhere" \
   "$(grep -rl '0001-a' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
+
+echo "T94: a write to the quarantined fragment during the output hash is kept"
+W="$ROOT/t94"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Hashing $OUT before the delete is itself a long step, and a writer holding
+# the fragment inode open from before the move can write to it during that
+# window — bytes then deleted having reached no file at all (Codex #1863 r29).
+# The quarantine is re-hashed last, so the check nearest the delete is the one
+# about the thing being deleted.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sha256sum" <<SHIM
+#!/bin/sh
+/usr/bin/sha256sum "\$@"; _rc=\$?
+# Fire while the OUTPUT is being hashed after publication, writing through to
+# the quarantined inode by its new path.
+if [ -f "$out/ReleaseNotes-2026-08-16.md" ] && [ ! -f "$W/fired" ]; then
+  q="$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
+  if [ -f "\$q" ]; then
+    : > "$W/fired"
+    printf '## written during the output hash\n' >> "\$q"
+  fi
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/sha256sum"
+PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the later write survives" \
+  "$(grep -rl 'written during the output hash' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
+
+echo "T95: a probe left by a signal is cleaned up and reportable"
+W="$ROOT/t95"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The probe was created before any handler existed, so a signal between the
+# mktemp and its rm left `.probe.XXXXXX` behind for good — no later run reuses
+# that name, and the recovery scan skipped dotfiles (Codex #1863 r29).
+# By LINE NUMBER: the call must come after the EXIT trap is installed. An
+# awk range pattern was tried first and matched nothing under either version,
+# so it reported a failure that had nothing to do with the ordering.
+check "the probe runs after the traps" \
+  "$(_t=$(grep -n "^trap '_cleanup' EXIT" "$out/assemble.sh" | cut -d: -f1)
+     _e=$(grep -n '^_ensure_qdir$' "$out/assemble.sh" | cut -d: -f1)
+     if [ -n "$_t" ] && [ -n "$_e" ] && [ "$_e" -gt "$_t" ]; then echo after; else echo before; fi)" "after"
+check "cleanup removes the probe" \
+  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'PROBE')"  "2"
+# A leftover of any name is now reported, dotfile or not.
+mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
+: > "$W/docs/ReleaseNotes/unreleased/.assembled/.probe.Ab3xYz"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "a hidden leftover is named" "$(says "$msg" '.probe.Ab3xYz')"        "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
