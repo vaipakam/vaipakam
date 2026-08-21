@@ -727,10 +727,13 @@ The borrower claim returns, depending on how the loan settled:
   position NFT. On a retired-path loan, do not count on the fee
   rebate on this route: it is calculated at settlement but cannot
   currently be collected afterwards.
-- **Swap-to-repay** — only as much collateral is sold as the debt
-  requires. Collateral left unsold comes back to you, and a surplus
-  in the loan's own asset is paid straight to the borrower position
-  NFT holder rather than waiting as a claim.
+- **Swap-to-repay** — your collateral is sold to cover the debt, up
+  to a ceiling you set. Set that ceiling generously and more can be
+  consumed than the debt strictly needed; whatever is not consumed
+  comes back to you. A surplus in the loan's own asset is normally
+  paid straight to the borrower position NFT holder rather than
+  waiting as a claim — unless that holder is under a sanctions
+  freeze, in which case it is held as a claim instead.
 - **HF-liquidation or default** — check anyway; there may be a
   surplus. Only enough value is taken to cover the
   liquidator, the lender and the treasury, and the remainder is

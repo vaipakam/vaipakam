@@ -717,9 +717,12 @@ Borrower claim は、loan がどう settle されたかによって次を返し
   borrower position NFT の保有者に支払われます。廃止経路の loan では
   ここでの rebate を当てにしないでください。決済時に計算はされますが、
   その後は現状回収できません。
-- **swap-to-repay** — collateral は債務に必要な分だけ売られます。
-  売れ残った collateral は戻り、loan 自体の asset の余剰は claim として
-  待つのではなく borrower NFT 保有者へ直接支払われます。
+- **swap-to-repay** — collateral は債務を賄うために、あなたが定めた
+  上限まで売られます。上限を緩く設定すると、債務が厳密に必要とした
+  以上に消費されることがあります。消費されなかった分は戻ります。
+  loan 自体の asset の余剰は通常、claim として待つのではなく borrower
+  NFT 保有者へ直接支払われます — ただしその保有者が制裁による凍結の
+  対象である場合は、claim として留め置かれます。
 - **HF-liquidation または default** — それでも確認してください。surplus が
   残っている場合があります。liquidator・lender・treasury を
   まかなうぶんの価値だけが取られ、残りがあなたの claim として記録

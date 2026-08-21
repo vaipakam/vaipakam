@@ -663,9 +663,12 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
   listing에 붙은 seller fee를 뺀 금액이며, borrower position NFT
   보유자에게 지급됩니다. 폐지 경로 loan이라면 여기서 rebate를 기대하지
   마세요: 정산 시 계산은 되지만 이후 현재로서는 받을 수 없습니다.
-- **swap-to-repay** — collateral은 빚에 필요한 만큼만 팔립니다. 팔리지
-  않은 collateral은 돌아오고, loan 자체 asset의 잉여는 claim으로
-  기다리지 않고 borrower NFT 보유자에게 곧바로 지급됩니다.
+- **swap-to-repay** — collateral은 빚을 갚기 위해, 여러분이 정한 상한
+  까지 팔립니다. 상한을 넉넉히 두면 빚이 엄밀히 필요로 한 것보다 더
+  소모될 수 있고, 소모되지 않은 몫은 돌아옵니다. loan 자체 asset의
+  잉여는 보통 claim으로 기다리지 않고 borrower NFT 보유자에게 곧바로
+  지급됩니다 — 다만 그 보유자가 제재로 동결된 경우에는 claim으로
+  묶여 있게 됩니다.
 - **HF-liquidation 또는 default** — 그래도 확인해 보세요. surplus가 남아
   있을 수 있습니다. liquidator와 lender, treasury를 충당할
   만큼의 가치만 가져가고 나머지는 내 claim으로 기록됩니다. 그 형태는 한 가지로 갈립니다. collateral이

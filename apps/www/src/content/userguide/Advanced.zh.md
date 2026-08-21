@@ -588,9 +588,11 @@ borrower claim 根据 loan 如何 settle 来返回：
   卖方费用之后的金额，支付给持有 borrower position NFT 的人。若该 loan
   在已停用路径上，请不要指望这里的 rebate：结算时会计算，但之后目前
   无法领取。
-- **swap-to-repay** — 只卖出债务所需的那部分 collateral。未卖出的
-  collateral 会回到您手中，而 loan 自身 asset 的盈余会直接付给
-  borrower NFT 持有人，而不是作为 claim 等待。
+- **swap-to-repay** — 为偿还债务而卖出您的 collateral，上限由您设定。
+  上限设得宽松时，消耗的可能多于债务严格所需；未被消耗的会回到您手中。
+  loan 自身 asset 的盈余通常会直接付给 borrower NFT 持有人，而不是作为
+  claim 等待——除非该持有人处于制裁冻结之下，那样它会以 claim 的形式
+  被扣留。
 - **HF-liquidation 或 default** — 仍请查看，可能还有 surplus。系统只取走
   足以支付 liquidator、lender 和 treasury 的那部分价值，余下的会记为您的
   claim。它的形式只取决于一件事：collateral 是被卖出，还是被交出。被卖出——

@@ -778,10 +778,14 @@ liquidó el préstamo:
   de posición de prestatario. En un préstamo de la vía retirada, no
   cuentes aquí con el reembolso: se calcula al liquidar pero
   actualmente no puede cobrarse después.
-- **Swap-to-repay** — sólo se vende el colateral que exige la
-  deuda. El colateral no vendido vuelve a ti, y un excedente en el
-  activo del propio préstamo se paga directamente al titular del
-  NFT de prestatario en vez de esperar como reclamación.
+- **Swap-to-repay** — tu colateral se vende para cubrir la deuda,
+  hasta un techo que tú fijas. Si lo fijas con holgura puede
+  consumirse más de lo que la deuda exigía estrictamente; lo que no
+  se consuma vuelve a ti. Un excedente en el activo del propio
+  préstamo se paga normalmente de forma directa al titular del NFT
+  de prestatario en vez de esperar como reclamación — salvo que ese
+  titular esté bajo un bloqueo por sanciones, en cuyo caso queda
+  retenido como reclamación.
 - **Liquidación por HF o default** — compruébalo igualmente,
   puede quedar un excedente. Sólo se toma el valor suficiente
   para cubrir al liquidador, al prestamista y al tesoro, y el resto

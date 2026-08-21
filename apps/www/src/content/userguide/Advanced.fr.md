@@ -774,10 +774,13 @@ prêt s'est réglé :
   d'emprunteur. Sur un prêt de la voie retirée, ne compte pas sur le
   rabais ici : il est calculé au règlement mais ne peut
   actuellement pas être encaissé ensuite.
-- **Swap-to-repay** — on ne vend que le collatéral qu'exige la
-  dette. Le collatéral non vendu te revient, et un excédent dans
-  l'actif du prêt est versé directement au détenteur du NFT
-  d'emprunteur au lieu d'attendre sous forme de créance.
+- **Swap-to-repay** — ton collatéral est vendu pour couvrir la
+  dette, jusqu'à un plafond que tu fixes. Fixé largement, il peut en
+  être consommé plus que la dette n'exigeait strictement ; ce qui ne
+  l'est pas te revient. Un excédent dans l'actif du prêt est
+  normalement versé directement au détenteur du NFT d'emprunteur au
+  lieu d'attendre sous forme de créance — sauf si ce détenteur est
+  sous gel pour sanctions, auquel cas il est conservé en créance.
 - **Liquidation HF ou défaut** — vérifie quand même, il peut
   rester un excédent. On ne prélève que la valeur nécessaire
   pour couvrir le liquidateur, le prêteur et le trésor, et le reste

@@ -14,9 +14,11 @@ The sale routes are listed separately rather than folded in with the others,
 because what they return is different — and they differ from each other too. A
 prepay sale hands the collateral to the buyer and pays the borrower the sale
 price less the lender's entitlement, the treasury cut, and any seller fees the
-listing carried; swap-to-repay sells only as much collateral as the debt
-requires, returns what is left unsold, and pays any surplus straight to the
-borrower rather than leaving it as a claim. Grouping any of them under "your
+listing carried; swap-to-repay sells collateral up to a ceiling the borrower
+sets — a generous ceiling can consume more than the debt strictly needed —
+returns whatever is left unconsumed, and normally pays any surplus straight to
+the borrower rather than leaving it as a claim, the exception being a holder
+under a sanctions freeze, whose surplus is held as a claim instead. Grouping any of them under "your
 collateral back" would trade one wrong expectation for another.
 
 **One route deliberately promises nothing.** On a prepay sale the rebate is

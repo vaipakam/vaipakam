@@ -778,10 +778,14 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   Inhaber des Borrower-Position-NFT. Bei einem Loan auf dem
   eingestellten Weg rechne hier NICHT mit dem Rebate: er wird beim
   Settlement berechnet, ist danach aber derzeit nicht abrufbar.
-- **Swap-to-Repay** — es wird nur so viel Collateral verkauft, wie
-  die Schuld verlangt. Nicht verkauftes Collateral kommt zu dir
-  zurück, und ein Überschuss im Asset des Loans geht direkt an den
-  Inhaber des Borrower-Position-NFT statt als Claim zu warten.
+- **Swap-to-Repay** — dein Collateral wird zur Deckung der Schuld
+  verkauft, bis zu einer Obergrenze, die du setzt. Setzt du sie
+  großzügig, kann mehr verbraucht werden, als die Schuld strikt
+  benötigte; was nicht verbraucht wird, kommt zu dir zurück. Ein
+  Überschuss im Asset des Loans geht normalerweise direkt an den
+  Inhaber des Borrower-Position-NFT statt als Claim zu warten — es
+  sei denn, dieser Inhaber steht unter einem Sanktions-Freeze, dann
+  wird er als Claim gehalten.
 - **HF-Liquidation oder Default** — sieh trotzdem nach, es kann
   ein Überschuss übrig sein. Es wird nur so viel Wert
   genommen, wie Liquidator, Lender und Treasury decken; der Rest
