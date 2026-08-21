@@ -698,9 +698,11 @@ This is the #1574 r11 four-way check: the watcher's `bucket-composition` and
 backing views (`getRecycleBackingSnapshot`,
 `InteractionRewardsLensFacet.sol:775-788`) publish the reservation so a
 fresh claim spending recovery-reserved tokens alarms. **This slice, plus
-§2.2's claim-exclusion, is the piece that must land before the halt lifts**
-(§3.6a ⛔ SEQUENCING); it rides the remit ingress and needs no return
-channel.
+§2.2's claim-exclusion, was the piece that had to land before the halt
+lifted** (§3.6a ⛔ SEQUENCING); it rides the remit ingress and needs no
+return channel. Both landed — the reservation is written on the remit path
+and published by the backing view above — and #1434 P1-b then lifted the
+halt, so the sequencing this clause guards is discharged.
 
 ### 4.2 The return, settlement, and the recovery position
 
