@@ -12,14 +12,17 @@ those days from its own record of what it was funded, and a day it cannot yet
 cover **waits** rather than stopping the chain: the wait ends by itself when the
 funding arrives. What remains are per-day waits, all of them materially
 different from the chain-wide stop they replaced, because a chain-wide stop had
-no way to end on its own. A day waits until two things are true together: the
-funding it needs is present, and the accounting that establishes what it owes is
-final. That is deliberately a rule rather than a list — a day can be waiting
-because its funding record has not landed, because the budget delivered does not
-yet cover it, because it was recorded as zero and its compensation has not
-arrived, or because that compensation is present in full while the figure behind
-it is still open to revision. The last case waits with the money already there,
-which is exactly why funding alone is not the test.
+no way to end on its own. A day waits until everything it needs is in place, and
+the things it can be waiting for are given as examples rather than as a complete
+set — deliberately, because every earlier attempt to close that list was
+overtaken. A day can be waiting because its funding record has not landed,
+because the budget delivered does not yet cover it, because it was recorded as
+zero and its compensation has not arrived, because that compensation is present
+in full while the figure behind it is still open to revision, or because the
+chain's own settlement has not yet walked forward to that day — it catches up in
+bounded steps, so a chain far enough behind needs more than one attempt. The last
+two wait with the money already there, which is exactly why funding alone was
+never the test.
 
 **The documentation did not follow.** Thirty-six separate places across eleven files
 still told the reader the pause was in force and that the attempt to lift it had

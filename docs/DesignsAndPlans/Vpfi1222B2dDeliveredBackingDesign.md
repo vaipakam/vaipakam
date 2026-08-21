@@ -660,8 +660,9 @@ following either literally now would reintroduce an over-statement.
 §1 scopes d4 as "remove the `_dayPoolHalves` halt; keep the genuine `!stamped`
 wait". **That scope turned out to be incomplete, and d4 was WITHDRAWN** (owner
 decision after Codex #1433 r2: defer, keep the halt fail-closed, file a
-follow-up). **#1434 P1-b (`83483149e`) later discharged both prerequisites and
-removed the halt**. `_dayPoolHalves` itself now halts only on an unstamped
+follow-up). **#1434 later discharged both prerequisites and removed the halt** — P2-w3 met
+the zeroed-day one, P1-b (`83483149e`) met the delivered-fresh one and then
+lifted the halt. `_dayPoolHalves` itself now halts only on an unstamped
 day; a stamped day can still WAIT, via the separate `_p2DayDeltas`
 zeroed-and-open state that defers a compensable day rather than retiring it for
 zero. Both are per-day waits, but they end on different things: the unstamped
@@ -682,9 +683,11 @@ reading only the consume site makes it look absent, and why my first cut
 invented a hazard that did not exist.
 
 **What d5 did NOT discharge — the two prerequisites (Codex #1433 r2, both P1).**
-**BOTH WERE LATER DISCHARGED BY #1434 P1-b**; the analysis below is the state at
-the time of the withdrawal and its reasoning is retained because it constrains
-any future change here. Each prerequisite carries a note saying what met it.
+**BOTH WERE LATER DISCHARGED, and not by the same slice** — prerequisite 2 by
+P2-w3's zeroed-day pricing ladder, prerequisite 1 by P1-b's delivered-fresh
+bound, after which P1-b removed the halt. The analysis below is the state at the
+time of the withdrawal and its reasoning is retained because it constrains any
+future change here. Each prerequisite carries a note saying what met it.
 
 1. **The FRESH side had no delivered-funding bound on a mirror.** *(Met by
    `PoolBudget.deliveredFresh`, carried as its own term so its shortfall DEFERS
@@ -2257,8 +2260,9 @@ running sums land as new append-only tail fields.
 - **Fail-closed until lit:** every slice before d1 keeps `.complete` unset; d1
   is the sole `.complete` writer; and the mirror pricing halt is removed by
   exactly one slice — **which #1434 P1-b (`83483149e`) delivered.** d4's first
-  attempt was withdrawn with the halt left fail-closed; P1-b discharged both
-  prerequisites (§2g) and removed it. `_dayPoolHalves` itself now halts only
+  attempt was withdrawn with the halt left fail-closed; P2-w3 discharged the
+  zeroed-day prerequisite and P1-b the delivered-fresh one (§2g), after which
+  P1-b removed the halt. `_dayPoolHalves` itself now halts only
   on an unstamped day; a stamped `remitIneligible` day still defers through
   `_p2DayDeltas`'s zeroed-and-open state. None of this may be reordered.
 - **Per-chain commitment bound** (becomes real in d3): stated in governor
