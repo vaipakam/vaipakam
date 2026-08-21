@@ -1877,9 +1877,45 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
     // `blocked-pending` is the card saying it is still deciding, so we
     // keep waiting — and it is reported only if the clock runs out
     // (r30: returning on it made a merely slow page report a failure).
-    lastVerdict = missingSwitchVerdict(await selfOf?.());
+    // BRACKETED, because these are three separate round trips (Codex
+    // #1853 r33). The verdict and the two counts cannot be taken at the
+    // same instant, so a card that starts a background refetch between
+    // them yields a stale `ready` beside a current count — exactly the
+    // pending-readiness false pass this ordering exists to prevent,
+    // reconstructed out of two individually correct reads.
+    //
+    // Reading readiness again AFTER the counts and requiring the two to
+    // agree makes the whole observation one that held across the
+    // window, rather than three that were each true at a different
+    // moment. A disagreement is not an error: it is the card moving
+    // while we looked, so the loop simply goes round again with the
+    // later verdict.
+    //
+    // The alternative — one `evaluate` returning attributes and control
+    // counts together — is genuinely atomic but restates "which button
+    // is a jump" in a second place, and a duplicated selector is the
+    // defect class this file is named for. Agreement across a bracket
+    // costs one extra read and keeps the locators single-source.
+    const beforeVerdict = missingSwitchVerdict(await selfOf?.());
     const jumps = await jumpsOf().count();
     const switchThere = swOf ? (await swOf().count()) > 0 : false;
+    const afterVerdict = missingSwitchVerdict(await selfOf?.());
+    lastVerdict = afterVerdict;
+    if (beforeVerdict !== afterVerdict) {
+      // The deadline is checked HERE too. A bare `continue` would skip
+      // the one below, so a card oscillating between verdicts would
+      // loop past 45 seconds forever — the unbounded-wait class this
+      // file has already been bitten by, reintroduced through the exit
+      // rather than through an API.
+      if (Date.now() > deadline) {
+        return {
+          jumps: 0, switchThere: false, toolsFailed: false, timedOut: true,
+          settled: 'blocked-unstable',
+        };
+      }
+      await page.waitForTimeout(1_000);
+      continue;
+    }
     // CONTROLS PRESENT AND SETTLED IS THE HEALTHY CASE, and it is
     // checked before any verdict is applied to their absence (Codex
     // #1853 r32). Round 31 moved the readiness read ahead of this
@@ -2707,6 +2743,16 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
                 advancedWhy:
                   'the lender card had not settled its jumpability question ' +
                   'by the deadline (data-chooser-ready="pending")',
+              };
+            case 'blocked-unstable':
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                advancedWhy:
+                  'the lender card kept changing its readiness answer for the ' +
+                  'whole 45s window, so no reading of it and its controls was ' +
+                  'ever taken at one moment',
               };
             case 'blocked-failed':
               return {
