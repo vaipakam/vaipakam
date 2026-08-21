@@ -304,12 +304,18 @@ shell function does not exist until its definition has been read, so the first
 such failure ended with "command not found" and told the operator nothing at
 all. It had been written, reviewed, and tested, and it was unreachable.
 
-**A name this script made illegal.** Setting a note aside renames it with a
+**A name this script made illegal.** Setting a note aside renamed it with a
 prefix. A note name close to the filesystem's per-name limit is perfectly legal
 until that prefix is added, and the rename then fails — *after* publishing —
 so a first assembly always ended in the half-done state instead of finishing.
-The set-aside name is now bounded, with a fingerprint to keep it unique; the
-full name still appears on screen.
+
+Bounding the prefixed name was tried first and produced four more rounds of the
+same fault, each a different way of getting the bound wrong. That whole scheme
+was then deleted in favour of a **subdirectory**: notes are set aside into
+`unreleased/.assembled/` keeping their own names, so a name that was legal as a
+note is legal there. The question is removed rather than answered. See the
+section below for what those four rounds cost, since the lesson is worth more
+than the fix.
 
 **Another day's note aborting today's run.** Notes were copied and checked
 before the day was chosen, so a note belonging to tomorrow could stop today's
@@ -341,8 +347,18 @@ The set-aside name introduced above was measured in *characters* while the
 limit it was checked against is in *bytes*. A name of eighty-one three-byte
 characters measures eighty-four and occupies two hundred and forty-six, so it
 passed a bound it plainly exceeded, and the rename failed after publication
-again — the fix for that fault reintroducing it by another route. Measured and
-trimmed in bytes now.
+again — the fix for that fault reintroducing it by another route.
+
+Measuring in bytes was the third attempt at that bound, and there were two
+more after it: a threshold assuming one particular filesystem limit, and a
+fallback that reimposed the same assumption when the real limit could not be
+read. Five in total, all failing in the same place, all of them variations on
+one mistake — **this script had given itself the power to turn a legal name
+into an illegal one, and then tried to be careful with it.** The whole scheme
+was eventually deleted for the subdirectory described above, which does not
+need to be careful because it does not change the name at all. That is the
+most useful thing in this document: the fix that worked was the one that
+removed the capability, not the four that tried to constrain it.
 
 And the cleanup that releases the lock runs **twice** when the run is
 interrupted: once from the interrupt handler, once from the exit handler it

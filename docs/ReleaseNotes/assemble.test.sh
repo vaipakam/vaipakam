@@ -1694,6 +1694,13 @@ msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-
 check "the run stops"           "$?"                                     "1"
 check "the second one survives" "$(pending "$W")"                        "1"
 check "it says what changed"    "$(says "$msg" 'changed while this run')"  "1"
+# And it must NOT claim nothing was consumed, because the first iteration
+# deleted one before the second noticed (Codex #1863 r30). This case exercised
+# exactly that ordering and checked only that the second survived, so its
+# message could conceal that the first source was already gone.
+check "it does not claim nothing went" \
+  "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')" "0"
+check "it names what already went"  "$(says "$msg" 'Already removed before this')" "1"
 
 echo "T56: a fragment rewritten DURING the copy is refused, not published torn"
 W="$ROOT/t56"; build "$W"
@@ -2652,6 +2659,18 @@ mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
 : > "$W/docs/ReleaseNotes/unreleased/.assembled/.probe.Ab3xYz"
 msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "a hidden leftover is named" "$(says "$msg" '.probe.Ab3xYz')"        "1"
+
+echo "T96: the probe path is recorded under held signals"
+W="$ROOT/t96"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Tracking the probe path was necessary and, alone, not sufficient: bash checks
+# traps BETWEEN commands, so a signal after `mktemp` returns but before the
+# assignment leaves cleanup looking at an empty variable and the random dotfile
+# behind (Codex #1863 r30). Same two-instruction window the lock has.
+check "signals are held across it" \
+  "$(awk "/_probe_f=.\\\$\\(mktemp/{found=1} /trap '' INT TERM/{if(!found) held=NR} END{print (held?\"held\":\"open\")}" "$out/assemble.sh")" "held"
+check "and restored after recording" \
+  "$(grep -A 3 'PROBE="\$_probe_f"' "$out/assemble.sh" | grep -c "trap '_cleanup; exit 130' INT")" "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

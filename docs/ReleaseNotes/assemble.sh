@@ -238,7 +238,17 @@ _ensure_qdir() {
   # fail. Creating and removing an entry is the operation being tested,
   # so that is the operation to perform.
   _probe_f=""
+  # Signals held off across creating the entry and recording its path
+  # (Codex #1863 r30) — the same two-instruction window the lock
+  # acquisition has, and the same reason: bash checks traps BETWEEN
+  # commands, so a signal landing after `mktemp` returns but before the
+  # assignment runs leaves cleanup looking at an empty variable and the
+  # random dotfile behind. Tracking the path was necessary and, on its
+  # own, not sufficient.
+  trap '' INT TERM
   if ! _probe_f="$(mktemp "$QDIR/.probe.XXXXXX" 2>/dev/null)"; then
+    trap '_cleanup; exit 130' INT
+    trap '_cleanup; exit 143' TERM
     echo "Error: entries cannot be created and removed in $QDIR." >&2
     echo "Refusing to assemble: fragments set aside during the run are moved" >&2
     echo "there, so this would fail only after the dated file was written." >&2
@@ -246,6 +256,8 @@ _ensure_qdir() {
   fi
   # Tracked so the trap removes it if a signal lands before the rm below.
   PROBE="$_probe_f"
+  trap '_cleanup; exit 130' INT
+  trap '_cleanup; exit 143' TERM
   if ! rm "$_probe_f" 2>/dev/null; then
     rm -f "$_probe_f" 2>/dev/null || :
     echo "Error: entries cannot be created and removed in $QDIR." >&2
@@ -1293,8 +1305,24 @@ assert_output_unchanged() {  # assert_output_unchanged <what-was-about-to-happen
     echo "silently — and possibly widening a file someone just restricted." >&2
   fi
   echo "" >&2
-  echo "Nothing has been consumed and no fragment has been touched. Re-run" >&2
-  echo "once the other change has settled." >&2
+  # What this can honestly say depends on whether anything has gone
+  # already (Codex #1863 r30). In the recovery loop each removal is
+  # checked separately, so an earlier iteration may have deleted a
+  # fragment before a later one detects the change — and "nothing has
+  # been consumed" was then false, concealing that a source is gone and,
+  # if the concurrent edit removed its section, that its text now has to
+  # come back out of git.
+  if (( ${#CONSUMED[@]} > 0 )); then
+    echo "Already removed before this was noticed:" >&2
+    printf '  %s\n' "${CONSUMED[@]}" >&2
+    echo "" >&2
+    echo "Their text was in $(basename "$OUT") when they went. If the change" >&2
+    echo "above removed it, recover them from git." >&2
+  else
+    echo "Nothing has been consumed and no fragment has been touched." >&2
+  fi
+  echo "Nothing further will be consumed. Re-run once the other change has" >&2
+  echo "settled." >&2
   exit 1
 }
 
@@ -1311,6 +1339,7 @@ assert_output_unchanged() {  # assert_output_unchanged <what-was-about-to-happen
 # remembered: a new read gets recorded by the same loop, and a new act
 # inherits the same call.
 declare -A SRC_ID=()
+CONSUMED=()
 _d_n=0
 OUT_COPY=""
 
@@ -1722,6 +1751,7 @@ if (( ${#already[@]} > 0 )); then
     # before it (Codex #1863 r28).
     assert_sources_unchanged "removing ${FRAG_NAME[$f]}"
     rm "$_q"
+    CONSUMED+=("${FRAG_NAME[$f]}")
   done
   if (( ${#_changed[@]} > 0 )); then
     echo ""
