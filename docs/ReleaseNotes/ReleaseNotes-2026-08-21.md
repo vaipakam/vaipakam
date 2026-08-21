@@ -29,9 +29,10 @@ wallet-analytics checks from passing without having looked at what shipped.
 
 ## Lenders can now see what their options are — including doing nothing
 
-If you have lent on a loan, the position page now opens with a card called
-"Your options as the lender", listing every way out of the position along with
-what each one costs.
+If you have lent on a loan — an NFT rental aside, where the page does not show
+it — the position page now opens with a card called "Your options as the
+lender", listing every way out of the position along with what each one
+costs.
 
 Until now, a lender in the simple view saw **nothing at all** about this. The
 sale tools existed, but they lived behind the Advanced view, so unless you had
@@ -686,13 +687,14 @@ corrected by someone reading what the mechanism does.
 
 **A separate correction, and the most consequential one here.** The Claim
 Center guidance told a borrower that an HF-liquidation or a default returns
-**nothing**. That is not something a page can promise either way. Where the
-protocol prices the collateral and takes only what the waterfall needs — the
-liquidator, the lender, the treasury — any remainder is recorded as the
-borrower's claim, waiting in their vault until they withdraw it. Where it cannot
-price the collateral at all, that partial model does not apply: an illiquid
-default hands the entire basket to the lender and creates no borrower claim,
-which is a rule rather than an outcome. Whether a remainder exists depends on what the collateral actually
+**nothing**. Whether that is true turns on the route, and on one route it is a
+rule rather than a guess. Where the collateral cannot be priced at all, an
+illiquid default hands the entire basket to the lender and creates no borrower
+claim — there, "nothing" is exactly right and always will be. Where the protocol
+does price it and takes only what the waterfall needs — the liquidator, the
+lender, the treasury — any remainder is recorded as the borrower's claim,
+waiting in their vault until they withdraw it, and THAT is the case a page
+cannot promise either way. Whether a remainder exists depends on what the collateral actually
 realised — the liquidator's incentive and the realised slippage come out first —
 so an overcollateralised position often leaves one and is not guaranteed to. What
 the remainder consists of depends on how the position was closed: where the
@@ -701,7 +703,7 @@ was handed over instead, the collateral itself waits. Telling a borrower to look
 for the wrong token is the same error, one level down, as telling them there is
 nothing to look for. A borrower who believed the page would simply never go
 and collect it. The guidance now tells them to check, explains that an illiquid
-default usually does take the whole basket — an outcome, not a rule — and states
+default takes the whole basket as a rule rather than an unlucky outcome — and states
 what happens to the retired-path rebate: forfeited outright on a default or
 liquidation, and settled on a proper close.
 
@@ -746,10 +748,16 @@ it fails to arrive.
 
 **Known limitation, stated rather than left to be discovered.** Settlement
 passages deeper in the guides — the refinance and preclose mechanics — are covered
-by their section's scope but remain individually unqualified. A reader arriving
-directly at one of them via an anchor link may read it without that scope. They
-are not false (they describe what happens to a rebate that exists), but they are
-not self-contained, and closing that is follow-up work.
+by their section's scope but remain individually unqualified, so a reader
+arriving directly at one via an anchor link may read it without that scope.
+
+Some of them are also wrong rather than merely incomplete: several still call
+the retired-path rebate **time-weighted**, when the amount is fixed by the
+borrower's discount at the moment of settlement and not by an average over the
+loan. A reader who plans around the average will expect more than arrives.
+Correcting those, and making each passage carry its own scope, is follow-up
+work — named here rather than left to be discovered, since the first version of
+this paragraph said they were "not false", which they are not entirely.
 
 **Several connected-app surfaces are deliberately untouched and need a decision.**
 The offer-creation screen still advertises the retired rebate to a borrower at the
