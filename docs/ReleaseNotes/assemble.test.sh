@@ -930,6 +930,27 @@ check "it says what it could not read" "$(says "$msg" 'last byte')"         "1"
 check "no glued marker was written" \
   "$(count_in '.+<!-- assembled-fragment: ' "$out/ReleaseNotes-2026-08-16.md")" "0"
 
+echo "T32: an unreadable fragment aborts rather than skipping the duplicate check"
+W="$ROOT/t32"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The legacy-file stop compares each pending fragment's first heading against
+# $OUT. A grep READ ERROR there gives the same empty result as "this fragment
+# has no heading", so `|| true` would drop the fragment from the check
+# silently — a guard quietly not covering one input. Found by auditing for the
+# shape Codex flagged at r7/r8 rather than by review.
+printf '# Release Notes — 2026-08-16\n\n## 0001-a\n' > "$out/ReleaseNotes-2026-08-16.md"
+chmod 000 "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+rc=$?
+chmod 644 "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+if [ "$(id -u)" = "0" ]; then
+  ok "skipped — running as root, chmod 000 does not deny reads"
+else
+  check "the run stops"             "$rc"                          "1"
+  check "no fragment was consumed"  "$(pending "$W")"              "2"
+  check "it says it could not read" "$(says "$msg" 'could not read')" "1"
+fi
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

@@ -850,7 +850,23 @@ if [ -f "$OUT" ]; then
 
   suspect=()
   for f in "${frags[@]}"; do
-    head_line="$(grep -m1 '^#\{1,6\} ' "$f" 2>/dev/null || true)"
+    #
+    # Same class as the checksum and `tail` cases, found by auditing for
+    # it rather than by review: `|| true` here would hide a READ ERROR
+    # (grep exit >1) behind the same empty result a fragment with no
+    # heading gives. That fragment would then be dropped from the
+    # duplicate check silently, so the legacy stop never fires for it —
+    # a guard quietly not covering one input. Exit 1 (no heading) is
+    # ordinary and continues; anything above it aborts.
+    _hl_rc=0
+    head_line="$(grep -m1 '^#\{1,6\} ' "$f")" || _hl_rc=$?
+    if (( _hl_rc > 1 )); then
+      echo "Error: could not read $(basename "$f") (grep exit $_hl_rc)." >&2
+      echo "Refusing to assemble: this fragment could not be checked against" >&2
+      echo "the existing file, and skipping that check silently is how a" >&2
+      echo "duplicated section gets through." >&2
+      exit 1
+    fi
     [ -n "$head_line" ] || continue
     if grep -qxF -- "$head_line" "$OUT"; then
       suspect+=("$(basename "$f")|$head_line")
