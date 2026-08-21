@@ -1358,8 +1358,9 @@ GovernanceRunbook gains a recycling section, executed in order:
    > CONSTRUCTIBLE, which is not the same as constructed:
    > `ShareOfPoolClaimWalkTest.test_P1b_MirrorArmedDayDefersUntilDelivered`
    > shows an underfunded day DEFERRING and a funded one PRICING, which is the
-   > deferral half; it does not drive a mirror claim through to retirement, so
-   > "lift the halt and retirement happens" remains unproven. That gap is
+   > deferral half; it does not drive a mirror claim through the RECYCLED
+   > side of retirement, so "lift the halt and the recycled ledger retires"
+   > remains unproven. That gap is
    > **#1878**. Its own limits are narrower than the mesh test's and worth
    > stating exactly: it DOES fund — `setArmedFreshLedgerRaw` in the later
    > phases is what separates a clearing deferral from the old halt — but

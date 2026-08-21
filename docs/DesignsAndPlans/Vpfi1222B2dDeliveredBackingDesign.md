@@ -670,8 +670,11 @@ ends on the stamp arriving. That is NOT the same as ending on funding, and the
 difference decides who can clear it: where the canonical chain already finalized
 the day and only the message failed to land, the stamp can be rebuilt from
 canonical state by ANY caller paying the transport fee — no reward budget
-changes hands. It waits indefinitely only where there is nothing to resend,
-because the day was never finalized upstream. The zeroed-and-open one has four exits. Its quote may complete at
+changes hands. That makes the wait RECOVERABLE where the day was finalized upstream — it does
+not make it bounded. Nobody is obliged to resend; the transport can be paused,
+and deliveries can fail repeatedly. A recoverable wait with no one to recover it
+lasts exactly as long as an unrecoverable one, and where the day was never
+finalized upstream there is nothing to resend at all. The zeroed-and-open one has four exits. Its quote may complete at
 genuinely zero on both sides, in which case the day is resolved-zero and crosses
 immediately — no compensation, no deadline, nothing owed. Otherwise: its
 compensation becoming both funded AND settled (a fully funded compensation still defers while
