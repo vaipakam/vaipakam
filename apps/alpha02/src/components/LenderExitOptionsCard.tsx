@@ -93,6 +93,12 @@ export function LenderExitOptionsCard({
    *  from `statusSettled`'s, and only the readiness attribute reads it
    *  — see `LenderExitInput.maturitySettled`. */
   maturitySettled: boolean;
+  /** Did an enabled maturity read stop WITHOUT answering? Settled and
+   *  answered are different — see `LenderExitInput.maturityReadFailed`. */
+  maturityReadFailed: boolean;
+  /** The same for the status reads — see
+   *  `LenderExitInput.statusReadFailed`. */
+  statusReadFailed: boolean;
   /** Whether this position already carries a live listing. A TRI-STATE
    *  (`SaleLockState`), not a boolean: the lock refuses BOTH sale paths
    *  (`SaleOfferAlreadyExists`, and the page unmounts the instant-exit

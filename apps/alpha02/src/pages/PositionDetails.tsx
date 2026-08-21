@@ -317,13 +317,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // advanced-mode strategy cards; the status truth matters in Basic
   // mode too. (Declared BEFORE `risk`/`loanLive` so their enablement
   // can follow the RECONCILED status, not the stale row.)
+  // HOISTED so the readiness failure flags can read the SAME
+  // expression the query is enabled by (Codex #1858 r4). A flag that
+  // restates a query's enablement is a second statement of it, and this
+  // PR chain is entirely about what those do.
+  const liveStatusEnabled =
+    Boolean(readClient) &&
+    Boolean(loan.data) &&
+    (loan.data?.status === 'active' || loan.data?.status === 'fallback_pending');
   const liveStatus = useQuery({
     queryKey: ['loanLiveStatus', readChain.chainId, loan.data?.loanId],
-    enabled:
-      Boolean(readClient) &&
-      Boolean(loan.data) &&
-      (loan.data?.status === 'active' ||
-        loan.data?.status === 'fallback_pending'),
+    enabled: liveStatusEnabled,
     staleTime: 15_000,
     refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
     // Returns the STATUS plus the interest mode: the same single
@@ -660,18 +664,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // interest already settled by partials, chain time) — never a
   // hand-derived formula that can drift from what is pulled.
   // `chainNow` rides along so time gates never trust the local clock.
+  // Only the advanced strategy cards consume this (borrower:
+  // close-early/refinance; lender: early exit) — don't burn three
+  // RPC reads a minute for viewers or basic mode. Hoisted for the same
+  // reason as `liveStatusEnabled` above.
+  const loanLiveEnabled =
+    Boolean(readClient) &&
+    Boolean(loan.data) &&
+    effectivelyActive &&
+    !loanIsRental &&
+    isAdvanced &&
+    (role === 'borrower' || role === 'lender');
   const loanLive = useQuery({
     queryKey: ['loanLive', readChain.chainId, loan.data?.loanId],
-    // Only the advanced strategy cards consume this (borrower:
-    // close-early/refinance; lender: early exit) — don't burn three
-    // RPC reads a minute for viewers or basic mode.
-    enabled:
-      Boolean(readClient) &&
-      Boolean(loan.data) &&
-      effectivelyActive &&
-      !loanIsRental &&
-      isAdvanced &&
-      (role === 'borrower' || role === 'lender'),
+    enabled: loanLiveEnabled,
     staleTime: 30_000,
     refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
     queryFn: async () => {
@@ -793,10 +799,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         loan.data.status === 'fallback_pending') &&
       loan.data.assetType === AssetType.ERC20,
   );
+  // Hoisted for the same reason as `liveStatusEnabled` above.
+  const bannerTermsEnabled =
+    Boolean(readClient) && (rowPastDueCandidate || lenderNeedsLiveTerms);
   const bannerTerms = useQuery({
     queryKey: ['graceBannerTerms', readChain.chainId, loan.data?.loanId],
-    enabled:
-      Boolean(readClient) && (rowPastDueCandidate || lenderNeedsLiveTerms),
+    enabled: bannerTermsEnabled,
     staleTime: 30_000,
     refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
     // chainNow rides along (Codex #1166 r2): the contracts gate on
@@ -1064,6 +1072,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  second read arriving with a longer term flips the verdict and
    *  would retract a readiness answer already published as settled. */
   const maturitySourcesSettled = [loanLive, bannerTerms].every(sourceSettled);
+  /** Did an ENABLED source stop without contributing an answer?
+   *
+   *  Settled and answered are not the same thing (Codex #1858 r4).
+   *  `sourceSettled` counts `isError` as settled, which is right for
+   *  "is anything still in flight" and wrong as a basis for publishing
+   *  a verdict: an errored query keeps its `refetchInterval`, so a
+   *  later poll can succeed and change the answer. A `past` read off
+   *  the one source that landed, with the other errored, can become
+   *  `unknown` on that recovery; an errored status source can come
+   *  back FallbackPending and shut both jumps. Either way a `ready`
+   *  already published retracts, with no chain transition behind it —
+   *  the same defect as round 3, one level further out.
+   *
+   *  Gated on the query's OWN enablement const rather than on a
+   *  restatement of it: a disabled query that errored while it was
+   *  enabled keeps `isError` forever, and reading that flag alone
+   *  would report a Basic-mode page as failed over a query it does not
+   *  consult. */
+  const sourceFailed = (q: { isError: boolean }, enabled: boolean) => enabled && q.isError;
+  const maturitySourcesFailed =
+    sourceFailed(bannerTerms, bannerTermsEnabled) || sourceFailed(loanLive, loanLiveEnabled);
+  const statusSourcesFailed =
+    sourceFailed(liveStatus, liveStatusEnabled) || maturitySourcesFailed;
 
   const liveStatusCandidates: (LoanStatus | undefined)[] = [
     loanLive.data && !loanLive.isError
@@ -3431,6 +3462,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // reintroduced by measuring the wrong thing.
           statusSettled={statusSourcesSettled}
           maturitySettled={maturitySourcesSettled}
+          maturityReadFailed={maturitySourcesFailed}
+          statusReadFailed={statusSourcesFailed}
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
           // if it errors. Collapsing that to `false` showed BOTH sale

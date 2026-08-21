@@ -30,6 +30,8 @@ const base: LenderExitInput = {
   instantSellCandidates: 'some',
   statusSettled: true,
   maturitySettled: true,
+  maturityReadFailed: false,
+  statusReadFailed: false,
 };
 
 const rowFor = (input: Partial<LenderExitInput>, key: string) =>
@@ -65,6 +67,8 @@ describe('wait row — ordering and framing', () => {
       instantSellCandidates: 'none',
       statusSettled: false,
       maturitySettled: false,
+      maturityReadFailed: true,
+      statusReadFailed: true,
     };
     expect(buildLenderExitRows(hostile)[0].unavailable).toBeUndefined();
   });
@@ -1114,6 +1118,69 @@ describe('chooserReadiness — has the jumpability question settled?', () => {
           saleTools: 'failed' as const,
         }),
       ).toBe('pending');
+    });
+  });
+
+  describe('settled and ANSWERED are not the same thing', () => {
+    // Round 3 stopped readiness resting on a verdict whose reads were
+    // still in flight. This is the same retraction reached by the other
+    // route (Codex #1858 r4): a source that stopped by ERRORING counted
+    // as settled, so a verdict resting on whichever source landed could
+    // be published — and an errored query keeps its refetch interval,
+    // so its recovery can overturn that verdict with nothing having
+    // happened on chain.
+    it('reports failed when a maturity read errored, even past maturity', () => {
+      expect(
+        chooserReadiness({ ...base, maturity: 'past', maturityReadFailed: true }),
+      ).toBe('failed');
+    });
+
+    it('reports failed when a status read errored on an otherwise ready card', () => {
+      expect(chooserReadiness({ ...base, statusReadFailed: true })).toBe('failed');
+    });
+
+    it('is failed rather than pending — the rows HAVE settled', () => {
+      // The distinction is the whole reason `failed` exists as a third
+      // state. Pending says "wait, an answer is coming"; nothing is
+      // coming here, and a consumer asserting "the switch should be
+      // here" must not read the result as a clean negative either.
+      const out = chooserReadiness({ ...base, maturityReadFailed: true });
+      expect(out).toBe('failed');
+      expect(out).not.toBe('pending');
+    });
+
+    it('still holds an in-flight read ahead of a failed one', () => {
+      // Ordering: something outstanding could still make this a
+      // conclusive negative, which beats "settled but untrustworthy".
+      expect(
+        chooserReadiness({
+          ...base,
+          maturitySettled: false,
+          maturityReadFailed: true,
+        }),
+      ).toBe('pending');
+    });
+
+    it('does NOT hold a fallback answer behind a failed read', () => {
+      // Same asymmetry as round 3's: a positive FallbackPending
+      // observation shuts both sale routes whatever any other read
+      // later reports, so no failure can make it provisional.
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          maturityReadFailed: true,
+          statusReadFailed: true,
+        }),
+      ).toBe('ready');
+    });
+
+    it('reads a disagreement as pending, not failed', () => {
+      // Two HEALTHY sources that disagree resolve to `unknown`, and
+      // that clears on the next poll of either — so it is a wait, not
+      // an untrustworthy answer. Ordering `maturityReadFailed` ahead of
+      // the `unknown` check is what keeps these two apart.
+      expect(chooserReadiness({ ...base, maturity: 'unknown' })).toBe('pending');
     });
   });
 

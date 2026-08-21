@@ -321,6 +321,23 @@ export interface LenderExitInput {
    *  never fetch counts as answered, so Basic mode — where the
    *  advanced-only term read is disabled — is unaffected. */
   maturitySettled: boolean;
+  /** Did an enabled MATURITY read stop without contributing an answer?
+   *
+   *  Distinct from `!maturitySettled` (Codex #1858 r4). Settled means
+   *  nothing is in flight; this means a source that WAS going to
+   *  contribute did not, and — because an errored query keeps its
+   *  refetch interval — still might. A verdict resting on the sources
+   *  that did land can therefore be overturned by a recovery, which is
+   *  a retraction with no chain transition behind it.
+   *
+   *  It maps to `'failed'` rather than `'pending'`: the rows have
+   *  settled, so nobody is left waiting, but the answer must not be
+   *  read as a clean negative. */
+  maturityReadFailed: boolean;
+  /** The same question for the STATUS reads, whose failure mode is its
+   *  own: a recovered status source can report FallbackPending, which
+   *  shuts both sale routes after a positive answer was published. */
+  statusReadFailed: boolean;
 }
 
 export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
@@ -593,7 +610,7 @@ function conclusiveBlock(input: LenderExitInput): ConclusiveBlock | undefined {
  *  this arm waits for the sources that produce it. */
 function conclusivelyUnjumpable(input: LenderExitInput): boolean {
   if (input.fallbackPending) return true;
-  return input.maturity === 'past' && input.maturitySettled;
+  return input.maturity === 'past' && input.maturitySettled && !input.maturityReadFailed;
 }
 
 export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
@@ -609,20 +626,32 @@ export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
   // unjumpable, while `conclusiveBlock` would name the maturity arm and
   // send it back to `pending`.
   if (conclusivelyUnjumpable(input)) return 'ready';
-  // Both arms of the same fact: the maturity verdict is not usable
-  // until the reads behind it have finished. `'unknown'` means a query
-  // enabled for exactly that case has not answered; `!maturitySettled`
-  // means one has not answered YET even though the other already
-  // produced a verdict, which is provisional in either direction — a
-  // `'current'` can become `'unknown'` on disagreement just as a
-  // `'past'` can.
+  // The maturity verdict is not usable until the reads behind it have
+  // finished, and `!maturitySettled` covers the in-flight case: one
+  // source has produced a verdict and the other has not answered yet,
+  // which is provisional in either direction — a `'current'` can become
+  // `'unknown'` on disagreement just as a `'past'` can.
   //
   // Written out rather than left to fall through to `statusSettled`
   // below. It WOULD fall through — the maturity sources are a subset of
   // the status sources — but that is a correctness argument living in
   // two files, and this predicate exists because the last one of those
   // was wrong (Codex #1858 r3).
-  if (input.maturity === 'unknown' || !input.maturitySettled) return 'pending';
+  if (!input.maturitySettled) return 'pending';
+  // A SOURCE THAT STOPPED WITHOUT ANSWERING IS NOT A SETTLED ANSWER
+  // (Codex #1858 r4), and this is ordered ahead of `'unknown'` for a
+  // reason: an errored query keeps polling, so its recovery can move
+  // the verdict after `ready` was published. It is `'failed'` rather
+  // than `'pending'` because the rows themselves HAVE settled — a
+  // reader is not left waiting — while a consumer asserting "the
+  // switch should be here" must not read it as a clean negative. Round
+  // 3 fixed the in-flight case and left this one, which is the same
+  // retraction reached by a different route.
+  if (input.maturityReadFailed) return 'failed';
+  // Settled, nothing failed, and the two healthy sources still
+  // disagree. That clears on the next poll of either, so it is pending
+  // rather than failed.
+  if (input.maturity === 'unknown') return 'pending';
   // The status read must have SETTLED before a non-fallback answer can
   // be trusted (Codex #1858 r1). `fallbackPending` is derived by the
   // page from `liveStatusCandidates.some(...)`, so `false` means either
@@ -632,6 +661,12 @@ export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
   // yes to no after being published as settled. Only `true` is
   // self-evidencing; `false` needs this second fact to be meaningful.
   if (!input.statusSettled) return 'pending';
+  // Same rule on the status set, stated here rather than left implied
+  // by the maturity gate above. The failure mode is its own: an errored
+  // status source can recover reporting FallbackPending, which shuts
+  // both sale routes — so a `ready`/`yes` published while it was down
+  // flips to `no` with nothing having happened on chain.
+  if (input.statusReadFailed) return 'failed';
   if (input.saleTools === 'failed') return 'failed';
   if (input.saleTools === 'checking') return 'pending';
   if (input.saleLock === 'checking') return 'pending';
