@@ -1647,6 +1647,97 @@ function lenderShapeOf(text) {
  * Returns `advancedJumps: null` when the switch is not offered, which is
  * a legitimate state (every sale row unavailable), not a failure.
  */
+/**
+ * Did the inputs that make a SALE ROW JUMPABLE move during the probe?
+ *
+ * NOT `stillEligible` (Codex #1853 r9). Round 8 reused that, and it
+ * detects none of the three changes it was called to detect: its lender
+ * branch accepts Active AND FallbackPending by design, skips chain time
+ * entirely, and never reads the lender token's lock. So the fix was a
+ * no-op for its stated purpose — a re-read that cannot observe the race
+ * it exists to observe.
+ *
+ * The two functions answer genuinely different questions, which is why
+ * one cannot serve for the other:
+ *
+ *   stillEligible  — may the CARD still mount? Deliberately loose:
+ *                    FallbackPending keeps it mounted, past maturity
+ *                    keeps it mounted, because the wait row stays true.
+ *   this           — can a SALE ROW still be jumped to? Strict: both
+ *                    sale entry points require exactly Active, refuse
+ *                    past maturity, and refuse a locked position.
+ *
+ * Deliberately a SUBSET, and says so: it covers the three races named in
+ * review, not every input `buildLenderExitRows` consults. A full model
+ * would be a shadow copy of that module living in a test harness, which
+ * is the defect class this whole PR chain is about. Anything it does not
+ * cover still reports as the no-op-switch FAIL, which is the honest
+ * failure for "we could not explain this".
+ */
+async function jumpabilityMoved(loan) {
+  return discovery(`re-reading loan ${loan.id} jumpability`, async () => {
+    const [live, now, lock] = await Promise.all([
+      pub.readContract({
+        address: DIAMOND,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getLoanDetails',
+        args: [loan.id],
+      }),
+      pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
+      positionLockOf(loan.lenderTokenId),
+    ]);
+    // Both sale entry points require exactly Active — FallbackPending is
+    // enough to close them while the card stays mounted.
+    if (Number(live.status) !== STATUS_ACTIVE) return 'loan left Active during the probe';
+    if (now > live.startTime + live.durationDays * 86_400n) {
+      return 'loan crossed maturity during the probe';
+    }
+    if (lock !== 0) return 'position became locked during the probe';
+    return null;
+  });
+}
+
+/** Raw lock reason on any position token; 0 = unlocked. */
+async function positionLockOf(tokenId) {
+  try {
+    return Number(
+      await pub.readContract({
+        address: DIAMOND,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'positionLock',
+        args: [tokenId],
+      }),
+    );
+  } catch (err) {
+    if (!isRevert(err)) throw err;
+    // Reverted — treat as locked, the same direction `offsetLockedOn`
+    // takes: a skipped observation is cheaper than a false regression.
+    return -1;
+  }
+}
+
+/**
+ * Wait until the sale rows have SETTLED — a jump exists, or they have
+ * stopped saying "still reading". Shared by both entry paths into
+ * Advanced (Codex #1853 r7 for the post-click path, r9 for the
+ * already-Advanced one): `ModeContext` persists `alpha02.mode`, so once
+ * any page in this browser context switches, every later detail page
+ * renders in Advanced from the start — and hits the identical loading
+ * interval at first render, with neither switch nor jumps present.
+ */
+async function waitForSaleRows(card, jumpsOf, page) {
+  const CHECKING = /still reading the details a sale needs/i;
+  const deadline = Date.now() + 45_000;
+  for (;;) {
+    const jumps = await jumpsOf().count();
+    const stillChecking = CHECKING.test(await card.innerText().catch(() => ''));
+    if (jumps > 0 || !stillChecking || Date.now() > deadline) {
+      return { jumps, stillChecking };
+    }
+    await page.waitForTimeout(1_000);
+  }
+}
+
 async function lenderAdvancedOf(page, loan) {
   const SWITCH = /Show these tools \(switches to Advanced view\)/i;
   // SCOPED TO THE LENDER CARD (Codex #1853 r5). The borrower chooser
@@ -1668,7 +1759,25 @@ async function lenderAdvancedOf(page, loan) {
       // is jumpable, so its absence is either "already in Advanced"
       // (jumps present, anchors still worth checking) or "no row is
       // jumpable" (nothing to check, and legitimately so).
-      if ((await jumpsOf().count()) === 0) {
+      //
+      // WAIT FIRST (Codex #1853 r9). `ModeContext` persists
+      // `alpha02.mode`, so once any page in this shared browser context
+      // switches to Advanced, every LATER detail page renders in
+      // Advanced from the start — and hits the same loading interval at
+      // first render, where a slow `loanLive` leaves neither switch nor
+      // jumps. Round 7 fixed that wait for the post-click path only, so
+      // page 2 onward could be labelled `no jumpable row` and exit 0
+      // without ever auditing a row that became jumpable a second later.
+      const settled = await waitForSaleRows(card, jumpsOf, page);
+      if (settled.jumps === 0) {
+        if (settled.stillChecking) {
+          return {
+            advancedOffered: false,
+            advancedJumps: null,
+            advancedBlocked: true,
+            advancedWhy: 'sale tools still checking at first render — never settled',
+          };
+        }
         return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
       }
       return { advancedOffered: false, advancedWhy: 'already in Advanced', ...(await anchorAudit(page, card)) };
@@ -1685,16 +1794,7 @@ async function lenderAdvancedOf(page, loan) {
     //
     // Poll for a settled state instead: either a jump exists, or the
     // sale rows have stopped saying "still reading".
-    const CHECKING = /still reading the details a sale needs/i;
-    const deadline = Date.now() + 45_000;
-    let jumps = 0;
-    let stillChecking = true;
-    for (;;) {
-      jumps = await jumpsOf().count();
-      stillChecking = CHECKING.test(await card.innerText().catch(() => ''));
-      if (jumps > 0 || !stillChecking || Date.now() > deadline) break;
-      await page.waitForTimeout(1_000);
-    }
+    const { jumps, stillChecking } = await waitForSaleRows(card, jumpsOf, page);
     if (jumps === 0) {
       if (stillChecking) {
         // Never settled inside the deadline. Nothing was learned about
@@ -1716,7 +1816,7 @@ async function lenderAdvancedOf(page, loan) {
       // reacting perfectly correctly. Round 7's poll fixed the slow-RPC
       // false FAIL and left this one, because both arrive as "settled,
       // no jump" and only a chain read tells them apart.
-      const moved = loan ? await stillEligible(loan) : null;
+      const moved = loan ? await jumpabilityMoved(loan) : null;
       if (moved) {
         return {
           advancedOffered: true,
