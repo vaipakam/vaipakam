@@ -1360,9 +1360,13 @@ GovernanceRunbook gains a recycling section, executed in order:
    > shows an underfunded day DEFERRING and a funded one PRICING, which is the
    > deferral half; it does not drive a mirror claim through to retirement, so
    > "lift the halt and retirement happens" remains unproven. That gap is
-   > **#1878**. Do not cite this test for it either — its fixture delivers no
-   > funding and so cannot tell a halt from a deferral (original caveat: Codex
-   > #1439 r1).
+   > **#1878**. Its own limits are narrower than the mesh test's and worth
+   > stating exactly: it DOES fund — `setArmedFreshLedgerRaw` in the later
+   > phases is what separates a clearing deferral from the old halt — but
+   > `_armedDay` stamps a fresh half only, so the recycled leg is never
+   > exercised and no claim is driven to retirement. The "delivers no funding,
+   > cannot tell a halt from a deferral" caveat belongs to the MESH fixture
+   > (Codex #1439 r1) and was carried here in error.
 2. **RL-3 horizon knob** — only after BOTH ratified RL-3 UX safeguards
    are verified live: the free-channel pre-expiry notice (in-app
    notification center) **and the claim-center countdown surface**
