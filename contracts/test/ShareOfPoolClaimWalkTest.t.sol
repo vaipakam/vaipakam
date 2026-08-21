@@ -596,7 +596,7 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         assertEq(_preview(), 0, "bucket-short day is deferred, not previewed");
     }
 
-    // ── B2-d4 (WITHDRAWN): the mirror pricing halt STAYS ─────────────────────
+    // ── B2-d4 (DELIVERED, #1434 P1-b): the mirror pricing halt is GONE ──────
 
     /// @dev Flip this diamond to a MIRROR. `isMirrorRewardChain` is
     ///      `!isCanonical && baseChainId != 0`; this suite leaves both unset,

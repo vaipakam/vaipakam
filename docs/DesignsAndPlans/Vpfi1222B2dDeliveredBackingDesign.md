@@ -29,7 +29,7 @@ reviewable PR. The pieces, and why they couple:
 | **P2 Mirror commitment-on-arrival + two-sided netting** *(this row said "consume-on-arrival / mirror debits its own bucket" while the slice was being planned; §2e.1 superseded that before implementation — recorded here because a planning table that outlives its own correction reads as shipped behaviour)* | mirror RESERVES the locally-funded slice into its own `outstandingCommitRecycled`; the bucket drains later, pro-rata, at claim/remit. Base books `chainConsumedRecycled` / `chainOutstandingRecycledCommit`; `_stampOne` splits local vs Base top-up | must be gated by delivered backing (P4) or it cannibalises the mirror bucket |
 | **P3 Σcommitments remittance clamp** | `chainRewardBudgetForDay = min(uncappedSlice, Σcommitments − remitted − pending)`, 3 sites | needs P1's reported total + P4's ledgers |
 | **P4 Delivered-backing ledger** | `pendingRemitted` reservation at dispatch → authenticated ack → `loanSideRewardRemitted`; bounded reconciliation | **greenfield** — no ack channel exists in any direction today |
-| **P5 Mirror armed-day pricing ON** — **ATTEMPTED, WITHDRAWN (#1434); the halt STAYS** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | P2+P4 back the RECYCLED halves (done), but the halt ALSO guards the unbounded FRESH side and deliberately-zeroed days — see §2g for why, and **§2h for the zeroed-day scope** (the fresh side's receipt half shipped as #1556) |
+| **P5 Mirror armed-day pricing ON** — **DELIVERED by #1434 P1-b (`83483149e`); first attempt withdrawn, see §2g** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | P2+P4 back the RECYCLED halves (done), but the halt ALSO guards the unbounded FRESH side and deliberately-zeroed days — see §2g for why, and **§2h for the zeroed-day scope** (the fresh side's receipt half shipped as #1556) |
 | **P6 Third credit class (#1331)** | Ā-**excluded** custody-credit for remitted-recycled forfeit/expiry; provenance tag at remit arrival; `VpfiRecycled` discriminator | needs P4's provenance signal |
 | **P7 Keeper + indexer** | keeper drives the mirror→Base report send; out-of-window reconciled-day rediscovery via the `CommitmentRemitEligibilityReconciled` hook; indexer handlers + D1 | needs P1/P4 to exist first |
 
@@ -81,7 +81,7 @@ that legitimately lights it up):
   `LibVpfiRecycle.consume(recycleConsume)`. §2e.1 superseded it before
   implementation: consuming at arrival would debit the same tokens twice,
   because claims already debit as they pay.)*
-- **B2-d4 — Mirror armed-day pricing ON. ⚠️ ATTEMPTED AND WITHDRAWN — the halt
+- **B2-d4 — Mirror armed-day pricing ON. ✅ DELIVERED by #1434 P1-b (`83483149e`); the history below is why the FIRST attempt was withdrawn. ⚠️ ATTEMPTED AND WITHDRAWN — the halt
   STAYS; see §2g and #1434.** P5. The intent was to remove the
   `_dayPoolHalves` mirror halt and keep only the genuine `!stamped` wait.
   Review (#1433 r2) showed that is not yet safe: the halt also guards the
@@ -652,12 +652,14 @@ following either literally now would reintroduce an over-statement.
    **Future wire evolutions take a NEW tag, never another rung on the
    offset ladder.**
 
-## 2g. d4 pins — the halt STAYS; two prerequisites remain (#1434)
+## 2g. d4 pins — why the FIRST attempt was withdrawn (halt since lifted, #1434 P1-b)
 
 §1 scopes d4 as "remove the `_dayPoolHalves` halt; keep the genuine `!stamped`
 wait". **That scope turned out to be incomplete, and d4 was WITHDRAWN** (owner
 decision after Codex #1433 r2: defer, keep the halt fail-closed, file a
-follow-up). The halt remains in the tree. This section records why, and the two
+follow-up). **#1434 P1-b (`83483149e`) later discharged both prerequisites and
+removed the halt**; `_dayPoolHalves` now halts only on an unstamped day. This
+section is retained as the record of why, and of the two
 approaches tried and dropped along the way, so neither is repeated.
 
 **What d5 DID discharge.** The halt's originally-documented cause was that a
@@ -2235,9 +2237,10 @@ running sums land as new append-only tail fields.
 
 - **Fail-closed until lit:** every slice before d1 keeps `.complete` unset; d1
   is the sole `.complete` writer; and the mirror pricing halt is removed by
-  exactly one slice — **which is still outstanding.** d4 attempted it and was
-  withdrawn, so the halt REMAINS in the tree and its two prerequisites are
-  tracked on #1434 (§2g). None of this may be reordered.
+  exactly one slice — **which #1434 P1-b (`83483149e`) delivered.** d4's first
+  attempt was withdrawn with the halt left fail-closed; P1-b discharged both
+  prerequisites (§2g) and removed it. `_dayPoolHalves` now halts only on an
+  unstamped day. None of this may be reordered.
 - **Per-chain commitment bound** (becomes real in d3): stated in governor
   §7 #6 and **not reproduced here** — a copy is what let this line carry the
   bare `chainConsumedRecycled[c] ≤ chainReportedRecycled[c]` long after B3's
@@ -2299,9 +2302,11 @@ bound (subtraction-first — a test written from the bare `consumed ≤ reported
 rejects healthy post-B3 states),
 one-bucket-one-ledger, netting sum identity, idempotent
 commitment-on-arrival (a RESERVATION, not a bucket debit — §2e.1).
-**d4 (withdrawn): the halt is PINNED instead** — a mirror armed day prices
-nothing, with a canonical control proving the mirror flags are what stop it;
-when #1434 revives the slice, add "mirror prices its own stamp; `!stamped` still
-waits", plus a delivered-FRESH bound and a zeroed-day repricing case. d5: Ā-excluded credit
+**d4 (first attempt withdrawn; DELIVERED by #1434 P1-b)** — while the halt was
+pinned, a mirror armed day priced nothing, with a canonical control proving the
+mirror flags were what stopped it. P1-b then delivered the slice: a mirror
+prices its own stamp, `!stamped` still waits, and the coverage this line
+anticipated — a delivered-FRESH bound and a zeroed-day repricing case — landed
+with it. d5: Ā-excluded credit
 advances cumulative but not the day-bucket; 3-way forfeit/expiry classify;
 no-recycle→budget→expiry→bucket Ā inflation (the geometric-inflation guard).

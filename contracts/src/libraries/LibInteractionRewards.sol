@@ -914,10 +914,11 @@ library LibInteractionRewards {
     ///      brick a correctly-remitted claim or cannibalise the mirror's own
     ///      local recycled balance.
     ///
-    ///      **B2-d4 attempted to lift this halt and the attempt was
-    ///      WITHDRAWN — the halt STAYS. Do not remove it without the two
-    ///      prerequisites below** (design record §2g; follow-up card filed off
-    ///      #1433 r2). B2-d5 discharged the ONE precondition named above (the
+    ///      **B2-d4's FIRST attempt to lift this halt was WITHDRAWN because
+    ///      the two prerequisites below were unmet; #1434 P1-b met them and
+    ///      the halt is now GONE** (design record §2g; follow-up card filed
+    ///      off #1433 r2). The history is retained because it records what
+    ///      any future change here must still satisfy. B2-d5 discharged the ONE precondition named above (the
     ///      arriving recycled share now credits the mirror's bucket as
     ///      relocated custody), and the recycled leg is separately safe because
     ///      the ShareOfPool walk budgets it against the live bucket and DEFERS

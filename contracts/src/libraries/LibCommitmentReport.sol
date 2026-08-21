@@ -68,8 +68,10 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *
  * @dev    Mirror-only + read-only against the reward ledger: it stamps only
  *         its own accumulators, never pays out and never touches the recycle
- *         bucket, so it is safe to run while mirror armed-day CLAIM pricing
- *         is still halted (B2-d4 lifts that). Δ_D comes from
+ *         bucket, so it is safe to run irrespective of mirror armed-day
+ *         CLAIM pricing — it was safe under the blanket halt that stood
+ *         before #1434 P1-b, and is equally safe now that pricing is live.
+ *         Δ_D comes from
  *         {LibInteractionRewards.dailyDeltaForCommitment} (the
  *         halt-independent stamp read), so it never advances the halted
  *         cumulative cursor. Day-`D` coverage of an entry is IMMUTABLE by

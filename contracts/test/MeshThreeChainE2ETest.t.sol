@@ -1146,9 +1146,9 @@ contract MeshThreeChainE2ETest is Test {
      * @dev    **The operational consequence, which is the point.** Arming
      *         (`setGovernorCommitArmedFromDay`, the one-shot irreversible D*
      *         cutover) is the single switch that starts creating mirror
-     *         reservations. While mirror armed-day pricing stays halted
-     *         (#1434), those reservations accumulate with nothing retiring
-     *         them, so Base progressively under-uses mirror-local funding and
+     *         reservations. While mirror armed-day pricing STOOD halted
+     *         (before #1434 P1-b lifted it — see below), those reservations
+     *         accumulated with nothing retiring them, so Base progressively under-uses mirror-local funding and
      *         over-funds from its own bucket — the exact waste B3 removed
      *         from Base's own books, re-entering through the mirror end. It
      *         is recoverable (the totals are cumulative, so settlements after
