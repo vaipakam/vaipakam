@@ -1784,7 +1784,7 @@ async function positionLockOf(tokenId) {
  * renders in Advanced from the start — and hits the identical loading
  * interval at first render, with neither switch nor jumps present.
  */
-async function waitForSaleRows(card, jumpsOf, page, swOf) {
+async function waitForSaleRows(card, jumpsOf, page, swOf, late) {
   // TEXT STABILITY IS NOT READINESS, and round 11's version of this was
   // unsound (Codex #1853 r12). Pending copy is STATIC — "still reading
   // the details a sale needs" does not change while the read is in
@@ -1817,18 +1817,56 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
   // is the price of not having a readiness hook, and #1855 is what
   // would remove it.
   const FAILED = /one of the details a sale needs couldn.t be loaded/i;
+  // THE PENDING SENTENCE, and matching it here is sound where matching
+  // it for READINESS was not (Codex #1853 r19).
+  //
+  // Round 12's rule stands: a pending sentence is the ABSENCE of an
+  // answer, so concluding "settled" from its disappearance degrades to
+  // a false pass if the copy changes. This is the opposite direction.
+  // It is read only AT the deadline, and only to RAISE the verdict from
+  // "no jumpable row" to BLOCKED — so a reworded string degrades to the
+  // behaviour this file already had, never to a new false pass.
+  const PENDING = /still reading the details a sale needs/i;
   const deadline = Date.now() + 45_000;
   for (;;) {
+    // INSIDE THE POLL (Codex #1853 r19). The probe's eager capture runs
+    // before this loop and the wrapper's runs after the probe returns,
+    // which leaves the whole polling window uncovered: a card that
+    // mounts here and is unmounted by an ownership or status refresh
+    // before the probe finishes was positively observed and then
+    // forgotten, and the run reported a missing chooser. A recorder
+    // advertised as sticky has to be offered every observation, not the
+    // two at the ends.
+    await late?.capture();
     const jumps = await jumpsOf().count();
     const switchThere = swOf ? (await swOf().count()) > 0 : false;
     if (jumps > 0 || switchThere) {
       return { jumps, switchThere, toolsFailed: false, timedOut: false };
     }
-    if (FAILED.test(await card.innerText().catch(() => ''))) {
+    const text = await card.innerText().catch(() => '');
+    if (FAILED.test(text)) {
       return { jumps: 0, switchThere: false, toolsFailed: true, timedOut: false };
     }
     if (Date.now() > deadline) {
-      return { jumps: 0, switchThere: false, toolsFailed: false, timedOut: true };
+      // A DEADLINE IS NOT AN ANSWER WHILE THE ROWS SAY THEY ARE STILL
+      // READING (Codex #1853 r19). `timedOut` was returned here and
+      // inspected by neither caller, so 45 seconds of a page whose
+      // prerequisite query is genuinely stuck — the driver's own chain
+      // reads succeeding the whole time — read as "no jumpable row" and
+      // exited 0 with no mode switch and no anchor audited.
+      //
+      // The distinction is what the rows themselves report at the
+      // moment the clock runs out. A settled unavailability reason is
+      // an answer, and "no jumpable row" is the honest verdict for it.
+      // The checking sentence is not an answer, and outlasting the
+      // deadline makes it a failure to observe, not an observation.
+      return {
+        jumps: 0,
+        switchThere: false,
+        toolsFailed: false,
+        timedOut: true,
+        stillPending: PENDING.test(text),
+      };
     }
     await page.waitForTimeout(1_000);
   }
@@ -2029,7 +2067,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
       // jumps. Round 7 fixed that wait for the post-click path only, so
       // page 2 onward could be labelled `no jumpable row` and exit 0
       // without ever auditing a row that became jumpable a second later.
-      const settled = await waitForSaleRows(card, jumpsOf, page, () => sw);
+      const settled = await waitForSaleRows(card, jumpsOf, page, () => sw, late);
       if (settled.jumps === 0) {
         if (settled.toolsFailed) {
           return {
@@ -2037,6 +2075,26 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
             advancedJumps: null,
             advancedBlocked: true,
             advancedWhy: 'a prerequisite read failed — sale tools unavailable',
+          };
+        }
+        // STILL SAYING "READING" AT THE DEADLINE IS NOT AN ANSWER
+        // (Codex #1853 r19). `timedOut` was computed and then inspected
+        // by neither caller, so a page whose prerequisite query is
+        // genuinely stuck — while this driver's own chain reads keep
+        // succeeding — spent 45 seconds and reported `no jumpable row`.
+        // The rows had not settled; the clock had.
+        //
+        // A settled unavailability reason at the deadline still means
+        // "no jumpable row", which is why this turns on what the rows
+        // SAY rather than on the timeout alone.
+        if (settled.stillPending) {
+          return {
+            advancedOffered: false,
+            advancedJumps: null,
+            advancedBlocked: true,
+            advancedWhy:
+              'the sale rows were still reading their prerequisites when the ' +
+              '45s deadline expired — the page never settled, so nothing was observed',
           };
         }
         // A full deadline with neither jump nor switch IS the conclusive
@@ -2200,7 +2258,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
     //
     // Poll for a settled state instead: either a jump exists, or the
     // sale rows have stopped saying "still reading".
-    const post = await waitForSaleRows(card, jumpsOf, page, null);
+    const post = await waitForSaleRows(card, jumpsOf, page, null, late);
     const jumps = post.jumps;
     if (jumps === 0) {
       if (post.toolsFailed) {
@@ -2212,6 +2270,19 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
           advancedJumps: null,
           advancedBlocked: true,
           advancedWhy: 'a prerequisite read failed after the switch — sale tools unavailable',
+        };
+      }
+      // Same rule after the click, and stated in both arms rather than
+      // in the one the finding named — this file has produced seven
+      // findings of the form "fixed in one consumer, not its sibling".
+      if (post.stillPending) {
+        return {
+          advancedOffered: true,
+          advancedJumps: null,
+          advancedBlocked: true,
+          advancedWhy:
+            'the sale rows were still reading their prerequisites 45s after the ' +
+            'switch — the page never settled, so no anchor could be audited',
         };
       }
       return await noJumpVerdict();
