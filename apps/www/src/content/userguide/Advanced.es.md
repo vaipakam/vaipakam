@@ -766,11 +766,16 @@ quema en la misma transacción.
 La reclamación del prestatario devuelve, dependiendo de cómo se
 liquidó el préstamo:
 
-- **Repago total / preclose / refinance, o una venta que
-  liquide el préstamo** — tu canasta de colateral de vuelta; en
-  un préstamo que siga en la vía de comisión VPFI retirada se
-  liquida además el reembolso de VPFI ponderado por tiempo de la
-  Loan Initiation Fee, que puede ser cero.
+- **Repago total / preclose / refinance** — tu canasta de
+  colateral de vuelta; en un préstamo que siga en la vía de
+  comisión VPFI retirada se liquida además el reembolso de VPFI
+  ponderado por tiempo de la Loan Initiation Fee, que puede ser
+  cero.
+- **Una venta que liquide el préstamo** (venta prepay,
+  swap-to-repay) — el colateral va al comprador, no vuelve a ti;
+  lo que llega a tu bóveda es el resto de los ingresos una vez
+  pagados el prestamista y el tesoro. El reembolso de la vía
+  retirada se liquida aquí también, en los mismos términos.
 - **Liquidación por HF o default** — compruébalo igualmente,
   puede quedar un excedente. Sólo se toma el valor suficiente
   para cubrir al liquidador, al prestamista y al tesoro, y el resto

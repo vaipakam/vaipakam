@@ -726,11 +726,15 @@ claimable. Lender position NFT அதே transaction-இல் burn செய்
 Loan எவ்வாறு settle ஆனது என்பதைப் பொறுத்து borrower claim திருப்பித்
 தருவது:
 
-- **Full repayment / preclose / refinance, அல்லது loan-ஐ settle
-  செய்யும் விற்பனை** — உங்கள் collateral basket திரும்ப; அந்த loan
-  இன்னும் நிறுத்தப்பட்ட VPFI கட்டண வழியில் இருந்தால், Loan
-  Initiation Fee-இன் time-weighted VPFI rebate-உம் சேர்ந்து
-  தீர்க்கப்படும் (பூஜ்ஜியமாகவும் இருக்கலாம்).
+- **Full repayment / preclose / refinance** — உங்கள் collateral
+  basket திரும்ப; அந்த loan இன்னும் நிறுத்தப்பட்ட VPFI கட்டண
+  வழியில் இருந்தால், Loan Initiation Fee-இன் time-weighted VPFI
+  rebate-உம் சேர்ந்து தீர்க்கப்படும் (பூஜ்ஜியமாகவும் இருக்கலாம்).
+- **loan-ஐ settle செய்யும் விற்பனை** (prepay sale, swap-to-repay) —
+  collateral வாங்குபவருக்குச் செல்லும், உங்களுக்குத் திரும்பாது;
+  lender-க்கும் treasury-க்கும் செலுத்திய பிறகு மிஞ்சும் தொகையே
+  உங்கள் vault-க்கு வரும். நிறுத்தப்பட்ட வழியின் rebate இங்கும்
+  அதே நிபந்தனைகளில் தீர்க்கப்படும்.
 - **HF-liquidation அல்லது default** — இருந்தாலும் பார்த்துவிடுங்கள்;
   surplus மிச்சம் இருக்கலாம். Liquidator, lender, treasury ஆகியோருக்குத்
   தேவையான மதிப்பு மட்டுமே எடுக்கப்படும்; மீதி உங்கள் claim ஆகப்

@@ -655,10 +655,13 @@ burn됩니다.
 Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
 반환합니다:
 
-- **full repayment / preclose / refinance, 또는 loan을 정산하는
-  매각** — 내 collateral basket. 폐지된 VPFI 수수료 경로에 남아 있는
-  loan이라면 Loan Initiation Fee의 time-weighted VPFI rebate도 함께
-  정산되며, 0일 수도 있습니다.
+- **full repayment / preclose / refinance** — 내 collateral basket.
+  폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 Loan Initiation
+  Fee의 time-weighted VPFI rebate도 함께 정산되며, 0일 수도 있습니다.
+- **loan을 정산하는 매각**(prepay sale, swap-to-repay) — collateral은
+  구매자에게 가고 내게 돌아오지 않습니다. Vault에 들어오는 것은
+  lender와 treasury에 지급하고 남은 매각 대금입니다. 폐지 경로의
+  rebate도 같은 조건으로 여기서 정산됩니다.
 - **HF-liquidation 또는 default** — 그래도 확인해 보세요. surplus가 남아
   있을 수 있습니다. liquidator와 lender, treasury를 충당할
   만큼의 가치만 가져가고 나머지는 내 claim으로 기록됩니다. 그 형태는 loan이 어떤 경로로

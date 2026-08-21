@@ -767,11 +767,16 @@ wird in derselben Transaktion verbrannt.
 
 Der Borrower-Claim gibt je nach Settlement des Loans zurück:
 
-- **Volle Rückzahlung / Preclose / Refinance oder ein Verkauf,
-  der den Loan abschließt** — dein Collateral-Korb zurück; bei
-  einem Loan auf dem eingestellten VPFI-Gebührenweg wird dabei
-  der zeitgewichtete VPFI-Rebate aus der Loan Initiation Fee
-  abgerechnet, der auch null sein kann.
+- **Volle Rückzahlung / Preclose / Refinance** — dein
+  Collateral-Korb zurück; bei einem Loan auf dem eingestellten
+  VPFI-Gebührenweg wird dabei der zeitgewichtete VPFI-Rebate aus
+  der Loan Initiation Fee abgerechnet, der auch null sein kann.
+- **Ein Verkauf, der den Loan abschließt** (Prepay-Sale,
+  Swap-to-Repay) — das Collateral geht an den Käufer, nicht an
+  dich zurück; in deinen Vault fließt der Rest des Erlöses,
+  nachdem Lender und Treasury bezahlt sind. Der Rebate des
+  eingestellten Wegs wird auch hier zu denselben Bedingungen
+  abgerechnet.
 - **HF-Liquidation oder Default** — sieh trotzdem nach, es kann
   ein Überschuss übrig sein. Es wird nur so viel Wert
   genommen, wie Liquidator, Lender und Treasury decken; der Rest

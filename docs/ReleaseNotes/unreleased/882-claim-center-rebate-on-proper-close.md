@@ -10,6 +10,12 @@ selling the collateral to settle the loan, and the swap-to-repay routes. Six
 distinct paths settle the rebate, and copy that lists only three tells the
 borrower using a fourth that theirs is not a proper close.
 
+The sale routes are listed separately rather than folded in with the others,
+because what they return is different: the collateral goes to the buyer, and
+what reaches the borrower's vault is the remainder of the sale proceeds after
+the lender and the treasury are paid. Grouping them under "your collateral
+back" would trade one wrong expectation for another.
+
 Settling is not the same as paying out. The rebate is sized by the discount the
 borrower averaged over the loan's life, so a borrower who held no VPFI, or
 dropped to no discount, can settle properly and still receive nothing — the

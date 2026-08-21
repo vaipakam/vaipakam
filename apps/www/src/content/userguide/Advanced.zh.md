@@ -580,10 +580,13 @@ claim。lender position NFT 会在同一 transaction 中 burn。
 
 borrower claim 根据 loan 如何 settle 来返回：
 
-- **Full repayment / preclose / refinance，或结清该 loan 的一次
-  出售** — 您的 collateral basket 回来；若该 loan 仍在已停用的 VPFI
-  费用路径上，Loan Initiation Fee 的 time-weighted VPFI rebate 也会
-  一并结算（可能为零）。
+- **Full repayment / preclose / refinance** — 您的 collateral
+  basket 回来；若该 loan 仍在已停用的 VPFI 费用路径上，Loan
+  Initiation Fee 的 time-weighted VPFI rebate 也会一并结算（可能为零）。
+- **结清该 loan 的一次出售**（prepay sale、swap-to-repay）—
+  collateral 归买家，不会退还给您；进入您 vault 的是支付 lender 和
+  treasury 之后剩余的出售所得。已停用路径的 rebate 在这里同样按相同
+  条件结算。
 - **HF-liquidation 或 default** — 仍请查看，可能还有 surplus。系统只取走
   足以支付 liquidator、lender 和 treasury 的那部分价值，余下的会记为您的
   claim。它的形式取决于 loan 是以哪条路径关闭的。普通的 HF liquidation，

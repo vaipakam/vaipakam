@@ -707,10 +707,14 @@ loan が terminal state (Settled、Defaulted、Liquidated) に達すると
 Borrower claim は、loan がどう settle されたかによって次を返し
 ます:
 
-- **full repayment / preclose / refinance、または loan を決済する
-  売却** — あなたの collateral basket。廃止された VPFI 手数料経路の
-  ままの loan であれば、Loan Initiation Fee の time-weighted VPFI
-  rebate も同時に精算されます（ゼロのこともあります）。
+- **full repayment / preclose / refinance** — あなたの collateral
+  basket。廃止された VPFI 手数料経路のままの loan であれば、Loan
+  Initiation Fee の time-weighted VPFI rebate も同時に精算されます
+  （ゼロのこともあります）。
+- **loan を決済する売却**（prepay sale、swap-to-repay）— collateral
+  は買い手に渡り、あなたには戻りません。Vault に入るのは、lender と
+  treasury への支払い後に残った売却代金です。廃止経路の rebate は
+  ここでも同じ条件で精算されます。
 - **HF-liquidation または default** — それでも確認してください。surplus が
   残っている場合があります。liquidator・lender・treasury を
   まかなうぶんの価値だけが取られ、残りがあなたの claim として記録
