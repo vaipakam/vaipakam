@@ -72,9 +72,12 @@ policy は **3 required + 2 optional verifiers、threshold 1-of-2**
 
 ### 手数料割引の同意
 
-wallet-level の opt-in flag です。terminal events で、protocol が
-fee の discounted portion を vault から debit した VPFI で settle
-できるようにします。default: off。off は fee の 100% を principal
+wallet-level の opt-in flag で、保有する VPFI を手数料の割引に変えます。
+**借り手として**は、割引は Loan Initiation Fee そのものの直接的な減額で、
+loan の accept 時に lending asset で課されます。そのために vault から
+引き落とされるものはありません。**貸し手として**は、イールド割引は
+settlement 時に適用され、VPFI の価格参照が設定されていれば vault から
+VPFI で決済することもでき、その場合は貸出資産の手数料を全額保持できます。default: off。off は fee の 100% を principal
 asset で支払うという意味です。on の場合は time-weighted discount
 が適用されます。
 
@@ -96,9 +99,24 @@ grace window はありません。これにより、loan 終了直前に VPFI �
 top up して full-tier discount を取り、数秒後に withdraw する
 exploit pattern を防ぎます。
 
+**これは lender yield fee についての説明です。** 借り手の開始手数料の
+レートは loan の accept 時に一度だけ読み取られ、その後は withdraw も
+top up もそれを動かしません。
+
 discount は settlement 時の lender yield fee と borrower の
-Loan Initiation Fee に適用されます (borrower が claim するときに
-VPFI rebate として支払われます)。
+Loan Initiation Fee に適用されます。後者では、**lending asset で
+支払う手数料そのものの直接的な減額**として、loan の accept 時に
+適用されます。その手数料の支払いのために vault から VPFI が
+引き落とされることはなく、後から claim できる rebate もありません。
+
+> **Loan Initiation Fee の rebate を待っている場合は、ここを
+> 読んでください。** 以前のモデルでは、全額を VPFI で前払いし、
+> loan の存続期間中それを保管し、claim 時に一部を返していました。
+> **この経路は廃止されています。** 廃止前に開かれた loan は今も
+> その方式で決済され、以下の rebate に関する記述はそれらの loan
+> を指します。今日開かれた loan には initiation fee に対して保管
+> された VPFI はなく、未受取の rebate もありません。待っても、
+> 届きようのないお金を待つことになります。
 
 > **Network gas は別物です。** 上記の discount は Vaipakam の
 > **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、
@@ -410,7 +428,8 @@ cross-chain-facing contracts にのみあり、timelock-gated で、assets
 - **Illiquid-collateral defaults** — default はあなたの collateral
   全体を lender に transfer します。residual claim はありません。
   残るのは、claim 時に borrower として受け取る unused VPFI Loan
-  Initiation Fee rebate だけです。
+  Initiation Fee rebate だけで、それも廃止された VPFI 手数料経路の
+  ままの loan に限られます。
 
 <a id="create-offer.advanced-options"></a>
 
@@ -689,12 +708,27 @@ Borrower claim は、loan がどう settle されたかによって次を返し
 ます:
 
 - **full repayment / preclose / refinance** — あなたの collateral
-  basket と、Loan Initiation Fee からの time-weighted VPFI rebate。
-- **HF-liquidation または default** — unused VPFI Loan Initiation
-  Fee rebate のみ。これらの terminal paths では、明示的に preserve
-  されない限り 0 です。Collateral はすでに lender に渡っています。
+  basket。廃止された VPFI 手数料経路のままの loan であれば、
+  Loan Initiation Fee からの time-weighted VPFI rebate も戻ります。
+- **HF-liquidation または default** — それでも確認してください。surplus が
+  残っている場合があります。liquidator・lender・treasury を
+  まかなうぶんの価値だけが取られ、残りがあなたの claim として記録
+  されます。その形は loan が閉じた経路によります。
+  通常の HF liquidation も、取引可能な collateral の時間ベース
+  default も、どちらも collateral を売り、残余を loan の principal
+  asset で記録します。売られなかった分が vault に encumbered のまま
+  残るのは、liquidator が collateral を売らずに割引で直接引き取る
+  close-out のときだけです。部分 liquidation はそもそも close-out
+  ではありません — loan は開いたままで、claim は作られません。
+  どちらかを推測せず、claim を確認してください。Illiquid asset の default では通常バスケット全体が失われ何も
+  残りませんが、それは結果であってルールではありません。常に失われるのは
+  rebate です。廃止された VPFI 手数料経路のままの loan では、開始手数料の
+  ために保管されていた VPFI は**没収されて treasury に入り**、rebate が
+  戻るのは正常なクローズのときだけです。
 
-Borrower position NFT は同じ transaction で burn されます。
+Borrower position NFT が burn されるのは claim したときであって、loan が
+解決したときではありません。liquidation が残した surplus は、あとからでも
+受け取れます。
 
 ---
 
@@ -926,8 +960,9 @@ HF を引き上げる levers:
 HF が 1.0 を下回ると、誰でも HF-based liquidation を trigger でき
 ます。swap は lender へ返済するため、slippage-hit price であなたの
 collateral を売ります。Illiquid collateral では、default により
-collateral 全体が lender に transfer されます — claim できるのは
-unused VPFI Loan Initiation Fee rebate のみです。
+collateral 全体が lender に transfer され、claim できるものはありません。
+廃止された手数料経路のままの loan では、保管されていた VPFI は treasury に
+没収されます。
 
 <a id="loan-details.parties"></a>
 
@@ -988,9 +1023,12 @@ role に関係なく誰でも利用できる permissionless actions:
   lender が accept したら、complete refinance により loans が
   atomically に swap されます。collateral は vault から出ません。
 - **Borrower として claim** — terminal state のみ。full repayment では
-  collateral を返し、default / liquidation では unused VPFI Loan
-  Initiation Fee rebate を返します。Borrower position NFT を burn
-  します。
+  collateral を返します。default / liquidation でも surplus が
+  残ることがあります。collateral は債務とその清算費用に必要なぶんだけが
+  取られるためです — 上の Claim Center の節を参照してください。廃止された
+  手数料経路で保管されていた VPFI が没収されるのは default または
+  liquidation のときだけで、正常なクローズでは rebate が支払われます。
+  Borrower position NFT を burn します。
 
 ---
 

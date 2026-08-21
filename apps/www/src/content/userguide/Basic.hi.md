@@ -363,10 +363,20 @@ loan के बनते समय तय हो जाता है — बा�
 
 यदि आपने loan पूरी तरह चुका दिया है, तो आपका borrower claim
 वह collateral लौटा देता है जो आपने शुरुआत में लॉक किया था।
-default या liquidation पर, सिर्फ़ Loan Initiation Fee से बचा
-हुआ कोई VPFI rebate लौट सकता है — collateral पहले ही lender के
-पास जा चुका होता है। claim आपके borrower position NFT को
-atomically consume करता है।
+default या liquidation पर भी एक बार देख लें। कर्ज़ और उसे बंद करने की लागत जितना मूल्य ही लिया जाता है, और
+उससे ऊपर जो कुछ है वह आपके नाम दर्ज होता है। वह किस रूप में होगा
+यह इस पर निर्भर है कि loan कैसे ख़त्म हुआ: सामान्य liquidation के बाद,
+या बिकने योग्य collateral पर default के बाद, basket बिक जाती है और
+बचा हुआ आपको loan के अपने asset में मिलता है। collateral खुद तभी
+आपका इंतज़ार करता है जब liquidator उसे बेचने के बजाय छूट पर सीधे ले
+लेता है। अक्सर —
+ऐसे collateral पर default में जिसकी कीमत हम नहीं आँक सकते — पूरी
+basket चली जाती है और कुछ नहीं बचता, पर वह नतीजा है, नियम नहीं।
+जो कभी वापस नहीं आता वह fee rebate है: बंद किए गए VPFI fee रास्ते
+वाले loan में Loan Initiation Fee के बदले रखा गया VPFI treasury
+को ज़ब्त हो जाता है। claim आपके borrower position NFT को consume
+करता है — इसीलिए liquidation के बाद भी वह NFT मौजूद रहता है, आपका
+इंतज़ार करता हुआ।
 
 ---
 
@@ -566,8 +576,13 @@ available नहीं हैं वे greyed out रहेंगे, और to
   प्रोटोकॉल एक transaction में नए principal से पुराने loan
   को चुका देता है। collateral कभी vault से बाहर नहीं जाता।
 - **Claim** — loan settle होने के बाद full repayment पर आपका
-  collateral लौटाता है, या default में loan-initiation fee से बचा
-  हुआ कोई VPFI rebate।
+  collateral लौटाता है। Default में भी surplus बच सकता है:
+  collateral में से उतना ही लिया जाता है जितना कर्ज़ और उसे बंद
+  करने की लागत माँगे, उससे ज़्यादा जो आपने रखा था वह आपके claim
+  के रूप में दर्ज होता है। वह क्या होगा यह रास्ते पर निर्भर है —
+  Claim Center भाग देखें। बंद किए गए रास्ते में रखा VPFI सिर्फ़
+  default या liquidation पर ज़ब्त होता है; पूरा repayment,
+  preclose या refinance पर rebate मिलता ही है।
 
 ---
 

@@ -34,6 +34,7 @@ import { ListChecks } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
   buildLenderExitRows,
+  chooserReadiness,
   hasJumpableRow,
   type InstantSellCandidates,
   type LenderExitJumpTarget,
@@ -85,6 +86,31 @@ export function LenderExitOptionsCard({
   /** Live status says FallbackPending: the card stays, both sales go.
    *  See `LenderExitInput.fallbackPending`. */
   fallbackPending: boolean;
+  /** Has every enabled live status read answered? Only the readiness
+   *  attribute reads it — see `LenderExitInput.statusSettled`. */
+  statusSettled: boolean;
+  /** Has every enabled MATURITY read answered? A different query set
+   *  from `statusSettled`'s, and only the readiness attribute reads it
+   *  — see `LenderExitInput.maturitySettled`. */
+  maturitySettled: boolean;
+  /** Did an enabled maturity read stop WITHOUT answering? Settled and
+   *  answered are different — see `LenderExitInput.maturityReadFailed`. */
+  maturityReadFailed: boolean;
+  /** The same for the status reads — see
+   *  `LenderExitInput.statusReadFailed`. */
+  statusReadFailed: boolean;
+  /** Did the sale-lock read fail rather than being in flight? See
+   *  `LenderExitInput.saleLockReadFailed`. */
+  saleLockReadFailed: boolean;
+  /** Has the sale-lock read stopped? See
+   *  `LenderExitInput.saleLockSettled`. */
+  saleLockSettled: boolean;
+  /** Has the fee-entitlement read that gates both sale tools stopped?
+   *  See `LenderExitInput.saleToolsSettled`. */
+  saleToolsSettled: boolean;
+  /** Has the source that reported FallbackPending stopped? See
+   *  `LenderExitInput.fallbackSourceSettled`. */
+  fallbackSourceSettled: boolean;
   /** Whether this position already carries a live listing. A TRI-STATE
    *  (`SaleLockState`), not a boolean: the lock refuses BOTH sale paths
    *  (`SaleOfferAlreadyExists`, and the page unmounts the instant-exit
@@ -137,7 +163,28 @@ export function LenderExitOptionsCard({
   const anyJumpableRow = hasJumpableRow(rows);
 
   return (
-    <section className="card">
+    <section
+      className="card"
+      data-testid="lender-exit-card"
+      // A READINESS SIGNAL, not decoration (#1855). From outside this
+      // card the absence of the switch below is ambiguous — it is
+      // missing both while a prerequisite read is in flight and when no
+      // row is genuinely jumpable. A live review cannot tell those apart
+      // from the DOM, so it waits out a 45-second deadline per page and
+      // then still cannot distinguish a stale render from a regression.
+      //
+      // These two attributes make the card state its own answer:
+      // `ready` says the jumpability question has settled, and
+      // `jumpable` says what it settled to. With both, "the switch
+      // should be here" becomes a fact a driver can read rather than
+      // one it has to infer from an absence.
+      //
+      // Presentational-null: nothing styles or branches on these, and
+      // removing them changes no rendered pixel. They are the smallest
+      // thing that makes the invariant observable.
+      data-chooser-ready={chooserReadiness(rowInput)}
+      data-chooser-jumpable={anyJumpableRow ? 'yes' : 'no'}
+    >
       <div className="card-title">
         <ListChecks aria-hidden />
         <h3 style={{ margin: 0 }}>{copy.lenderExit.title}</h3>

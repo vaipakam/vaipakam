@@ -69,11 +69,18 @@ deploy gate.
 
 ### Fee-discount consent
 
-A wallet-level opt-in flag that lets the protocol settle the
-discounted portion of a fee in VPFI debited from your vault at
-terminal events. Default: off. Off means you pay 100% of every
-fee in the principal asset; on means the time-weighted discount
-applies.
+A wallet-level opt-in flag that turns your VPFI holding into a
+fee discount. Default: off — off means you pay 100% of every fee
+in the principal asset.
+
+The two legs work differently, and it is worth knowing which one
+you are reading about. **As a borrower**, the discount is a direct
+reduction of the Loan Initiation Fee, charged in the lending asset
+at acceptance; nothing is debited from your vault for it. **As a
+lender**, the yield-fee discount applies at settlement, and where
+the protocol has a VPFI price reference configured it can instead
+be settled in VPFI from your vault, leaving you the whole fee in
+the lending asset.
 
 Tier ladder:
 
@@ -85,17 +92,34 @@ Tier ladder:
 | 4    | > `{liveValue:tier4Min}`         | `{liveValue:tier4DiscountBps}`%   |
 
 Tier is computed against your **post-change** vault balance the
-moment you deposit or withdraw VPFI, then time-weighted across
-each loan's lifetime. An unstake re-stamps the rate at the new
-lower balance immediately for every open loan you're on — there
-is no grace window where your old (higher) tier still applies.
-This closes the gaming pattern where a user could top up VPFI
-just before a loan ends, capture the full-tier discount, and
-withdraw seconds later.
+moment you deposit or withdraw VPFI. **For the lender yield fee**
+it is then time-weighted across each loan's lifetime: an unstake
+re-stamps the rate at the new lower balance immediately for every
+open loan you're on, with no grace window where your old (higher)
+tier still applies. This closes the gaming pattern where a user
+could top up VPFI just before a loan ends, capture the full-tier
+discount, and withdraw seconds later.
+
+**The borrower's initiation-fee rate is read once, when the loan
+is accepted**, so nothing you do afterwards moves it — neither a
+withdrawal nor a top-up. The anti-gaming protection on that side
+is the minimum holding period and the history clamp described
+above, not the lifetime weighting.
 
 The discount applies to the lender yield fee at settlement, and
-to the borrower Loan Initiation Fee (paid out as a VPFI rebate
-when the borrower claims).
+to the borrower Loan Initiation Fee — where it is a **direct
+reduction of the fee you pay in the lending asset**, applied when
+the loan is accepted. No VPFI is taken from your vault to pay
+that fee, and there is no rebate to claim afterwards.
+
+> **If you are looking for a Loan Initiation Fee rebate, read
+> this.** An earlier model took the full fee in VPFI up front,
+> held it for the life of the loan, and returned part of it when
+> you claimed. **That path is retired.** Loans opened while it was
+> live still settle that way, and the rebate passages further down
+> describe those loans. A loan opened today has no VPFI held
+> against its initiation fee and no rebate pending — waiting for
+> one would mean waiting for money that cannot arrive.
 
 > **Network gas is separate.** The discount above is on Vaipakam's
 > **protocol fees** (yield fee `{liveValue:treasuryFeeBps}`%, Loan
@@ -405,9 +429,12 @@ cannot move assets.
   is permissionless — anyone can trigger it the instant your
   HF drops below 1.0.
 - **Illiquid-collateral defaults** — default transfers your
-  full collateral to the lender. There is no leftover claim;
-  only any unused VPFI Loan Initiation Fee rebate, which you
-  collect as the borrower at claim time.
+  full collateral to the lender. There is no leftover claim at
+  all. On a loan still using the retired VPFI fee path, the VPFI
+  held against its initiation fee is **forfeited** on default —
+  it goes to the protocol (and, on a matcher-created loan, the
+  matcher's configured share of it goes to the matcher), never
+  back to you, so there is nothing left to collect.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -687,14 +714,32 @@ burned in the same transaction.
 The borrower claim returns, depending on how the loan settled:
 
 - **Full repayment / preclose / refinance** — your collateral
-  basket back, plus the time-weighted VPFI rebate from the
-  Loan Initiation Fee.
-- **HF-liquidation or default** — only the unused VPFI Loan
-  Initiation Fee rebate, which on these terminal paths is zero
-  unless explicitly preserved. Collateral has already moved to
-  the lender.
+  basket back. On a loan still using the retired VPFI fee path,
+  the time-weighted Loan Initiation Fee rebate comes back with
+  it; a loan opened under the current model has none, because
+  its discount was already taken off the fee at acceptance.
+- **HF-liquidation or default** — check anyway; there may be a
+  surplus. Only enough value is taken to cover the
+  liquidator, the lender and the treasury, and the remainder is
+  recorded as your claim. Its FORM depends on the route that
+  closed the loan. An ordinary HF liquidation and a time-based
+  default on tradable collateral both sell the collateral and
+  record the residue in the loan’s principal asset. Only a
+  close-out where a liquidator takes the collateral directly at a
+  discount, instead of selling it, leaves the unsold part
+  encumbered in your vault. A partial liquidation is not a
+  close-out at all — the loan stays open and no claim is created.
+  Check the claim rather than assuming which one you have.
+  On an illiquid default the whole basket usually goes, so there
+  is nothing left — but that is an outcome, not a rule. What is
+  always lost is the rebate: on a loan still using the retired
+  VPFI fee path, the VPFI held against its initiation fee is
+  forfeited to treasury rather than returned, and a rebate comes
+  back only on a proper close.
 
-The borrower position NFT is burned in the same transaction.
+The borrower position NFT is burned when you claim, not when the
+loan resolves — so a surplus left by a liquidation is still there
+to collect afterwards.
 
 ---
 
@@ -935,8 +980,10 @@ HF up:
 Once HF goes below 1.0, anyone can trigger an HF-based
 liquidation; the swap sells your collateral at slippage-eaten
 prices to repay the lender. On illiquid collateral, default
-transfers your full collateral to the lender — only any unused
-VPFI Loan Initiation Fee rebate is left for you to claim.
+transfers your full collateral to the lender, and nothing is
+left for you to claim: on a loan still using the retired VPFI
+fee path, the VPFI held against its initiation fee is forfeited
+to treasury rather than returned.
 
 <a id="loan-details.parties"></a>
 
@@ -1103,9 +1150,11 @@ Permissionless actions available to anyone regardless of role:
   on OpenSea's marketplace UI automatically; you don't sign
   anything off-chain.
 - **Claim as borrower** — terminal-only. Returns collateral on
-  full repayment, or the unused VPFI Loan Initiation Fee
-  rebate on default / liquidation. Burns the borrower position
-  NFT.
+  full repayment; on default or liquidation there may still be a
+  surplus, since only enough collateral is taken to cover the debt
+  and the cost of closing it — see the Claim Center section above.
+  VPFI held under the retired fee path is forfeited only on
+  default or liquidation; a proper close still pays the rebate. Burns the borrower position NFT.
 
 > **If your repay tx reverts while you have a live OpenSea
 > listing** — a buyer's `Seaport.fulfillOrder` may have landed
@@ -2030,6 +2079,19 @@ to.
 Without local consent, even with VPFI staked on Base + a
 fresh cached tier on the mirror, the mirror fee path
 charges the full yield-fee.
+
+The canonical chain's flag is ALSO required, even if you
+never settle a loan there. `protocolBroadcastTierUpdate`
+forces the payload to `(0, 0)` whenever Base's
+`vpfiDiscountConsent[user]` is false, so the push that is
+supposed to carry your tier to the mirror carries zero
+instead — and the mirror then applies a tier-0 cache no
+matter what its own local consent says. A mirror-only user
+who enables consent on the mirror alone, deposits on Base,
+waits out the holding period and pushes will still be
+charged in full. Enable it on BOTH: Base to make the
+broadcast carry a real tier, and the settling chain to make
+the fee path apply it.
 
 When you disable consent on the CANONICAL chain (Base),
 mirror caches DON'T automatically clear (anti-drain measure

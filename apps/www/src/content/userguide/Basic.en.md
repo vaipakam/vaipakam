@@ -347,9 +347,21 @@ out.
 
 If you repaid the loan in full, your borrower claim returns the
 collateral you locked at the start. On default or liquidation,
-only any unused VPFI rebate from the Loan Initiation Fee is
-returned — the collateral itself has already gone to the lender.
-The claim consumes your borrower position NFT atomically.
+check anyway. Only as much value is taken as the debt and
+the costs of closing it require, and anything beyond that is
+recorded as yours. What form it takes depends on how the loan
+ended: after an ordinary liquidation, or a default on tradable
+collateral, the basket is sold and what is left reaches you as the
+loan’s own asset. Only when a liquidator takes the collateral
+directly at a discount, instead of selling it, is what waits for
+you the collateral itself. Often — on a default over collateral we
+cannot price — the whole basket goes and nothing is left, but
+that is how it turned out, not a rule. What never comes back is
+the fee rebate: on a loan still using the retired VPFI fee path
+the VPFI held against the Loan Initiation Fee is forfeited to
+treasury.
+The claim consumes your borrower position NFT — which is why the
+NFT is still there after a liquidation, waiting for you.
 
 ---
 
@@ -544,8 +556,13 @@ will be greyed out, with a small tooltip explaining why.
   protocol pays off the old loan from the new principal in one
   transaction. Collateral never leaves vault.
 - **Claim** — once the loan settles, returns your collateral on
-  full repayment, or any leftover VPFI rebate from the loan-
-  initiation fee on default.
+  full repayment. On default there may still be a
+  surplus: only enough collateral is taken to cover the debt and
+  the cost of closing it, so anything you put up beyond that is
+  recorded as yours to claim. What that is depends on the path —
+  see the Claim Center section. VPFI held under the retired fee
+  path is forfeited only on default or liquidation; a full
+  repayment, preclose or refinance still pays the rebate.
 
 ---
 

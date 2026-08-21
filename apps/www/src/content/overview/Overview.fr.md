@@ -85,9 +85,11 @@ Au moment où l'acceptation se déclenche :
 
 De modestes **frais d'initiation du prêt (`{liveValue:loanInitiationFeeBps}` %)** sont prélevés sur
 le montant prêté et dirigés vers le trésor du protocole. L'emprunteur
-reçoit donc `{liveValue:exampleBorrowerReceives}` USDC, pas 1 000. (Vous pouvez payer ces frais en
-**VPFI** à la place et l'emprunteur reçoit alors les 1 000 complets
-— plus de détails sur VPFI ci-dessous.)
+reçoit donc `{liveValue:exampleBorrowerReceives}` USDC, pas 1 000. (Détenir des **VPFI** réduit ces frais
+— à condition que l'emprunteur ait activé le réglage de remise et que
+l'actif prêté soit liquide — si bien qu'il conserve davantage des 1 000. La
+remise est déduite directement des frais, elle n'est pas remboursée ensuite.
+Plus de détails sur VPFI ci-dessous.)
 
 ### Étape 3 — Le temps passe ; l'emprunteur rembourse
 

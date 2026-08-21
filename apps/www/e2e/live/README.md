@@ -1,17 +1,39 @@
-# `apps/www` live post-deploy drives
+# Live post-deploy drives
 
-Committed drives that exercise the **deployed** marketing site. They run
-after a production deploy, per the live-review definition-of-done — not
-against a preview build, and not as part of CI.
+Committed drives that exercise **deployed** sites. They run after a
+production deploy, per the live-review definition-of-done — not against a
+preview build, and not as part of CI.
+
+They live under `apps/www` because that is where the browser tooling and the
+container setup below already are, but they are not all about the marketing
+site. Two kinds sit here:
+
+- **Marketing-site drives** — the rendered docs on `vaipakam.com`.
+- **Connected-app drives** — the wallet-connecting app. `alpha02` is the
+  surface being promoted, so it is the target that matters; the drives take
+  origins positionally and can still be pointed at a sibling app when there is
+  a reason to. `alpha02` has `@playwright/test` for its own `e2e` suite, so an
+  alpha02-only drive could live there instead; these sit here because they can
+  be aimed at any origin and share the container setup below.
+
+The table further down says which is which, and how each takes its target.
 
 ## Why these are not CI specs
 
-Each one checks something that is only true once the deployed site has
-fetched the published protocol-config snapshot from the deployed
-indexer. A preview build, a prebuild guard, or an inspection of the
-shipped bundle can all pass while the rendered page shows something
-else. That gap is the reason the live review exists, so closing it
-requires a real browser pointed at the real origin.
+The reason differs by drive, and it is worth knowing which one applies before
+trusting a result.
+
+A marketing-site drive checks something only true once the deployed page has
+fetched the published protocol-config snapshot from the deployed indexer: a
+preview build, a prebuild guard, or an inspection of the shipped bundle can all
+pass while the rendered page shows something else.
+
+A connected-app drive checks behaviour of third-party SDKs as they actually run
+in a browser against the deployed bundle — whether a wallet kit phones home, for
+instance. A type-check proves an option was accepted, not that the traffic
+stopped.
+
+Both gaps close only with a real browser pointed at the real origin.
 
 The `apps/www` prebuild guards (`check:livevalue`, `check:knobs`, and
 the rest of `pnpm --filter @vaipakam/www typecheck`) cover the
@@ -24,7 +46,20 @@ what those structurally cannot see.
 pnpm --filter @vaipakam/www exec node e2e/live/live-worked-example.mjs
 ```
 
-Override the target with `WWW_ORIGIN` (defaults to
+Not every drive takes its target the same way, so check the table below
+before substituting a filename into that command. Single-origin drives use
+`WWW_ORIGIN`; `live-wallet-telemetry.mjs` takes one or more origins as
+positional arguments instead, because it checks several apps in one run and
+a single environment variable cannot express that:
+
+```bash
+node apps/www/e2e/live/live-wallet-telemetry.mjs https://alpha02.vaipakam.com/
+```
+
+It exits with a usage message if given no origins, rather than silently
+checking a default.
+
+Override a single-origin drive's target with `WWW_ORIGIN` (defaults to
 `https://vaipakam.com`):
 
 ```bash
@@ -106,11 +141,24 @@ surface and must not be taught to accept an unverified one.
 | File | Covers | Introduced by |
 | --- | --- | --- |
 | `live-worked-example.mjs` | The Overview's worked-example figures render as derived live values with the contract's integer arithmetic and honest provenance; the help search finds a page by a figure printed on it | #1751 (#1664 items 1 + 2) |
+| `live-wallet-telemetry.mjs` | A connected-app origin constructs the Coinbase SDK and sends nothing to its telemetry host on load, AND the deployed bundle carries both telemetry-off settings (#1840). Takes origins as POSITIONAL arguments; `alpha02` is the promoted target. Fails closed unless the SDK is witnessed as constructed | #1836 (#1824), #1840 |
+
+The second one lives here rather than under the app it checks because it takes
+any origin positionally rather than belonging to one app, and because this is
+where the browser tooling and the container setup above already are.
+
+It reports two INDEPENDENT kinds of evidence, and the distinction is the point:
+observed traffic (behaviour) and a bundle assertion (configuration). The second
+exists because traffic cannot answer for WalletConnect — its provider is not
+constructed at load, so its setting could regress and every observation would
+still look clean. Configuration evidence proves the option shipped, not that
+the vendor honours it, so neither kind is reported as the other.
 
 ## Adding one
 
 Keep them dependency-free beyond `playwright`, parameterised by
-`WWW_ORIGIN`, and self-describing on stdout — someone reading the
+`WWW_ORIGIN` (or by positional origins where a drive spans several
+apps — say which in the table), and self-describing on stdout — someone reading the
 output during a release should be able to tell what was checked without
 opening the file. Query with what the page actually rendered rather
 than a hardcoded expectation wherever the invariant is "these two

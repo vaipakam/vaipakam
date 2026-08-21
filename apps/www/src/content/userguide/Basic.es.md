@@ -370,10 +370,21 @@ ese lado del préstamo queda completamente cerrado.
 
 Si repagaste el préstamo en su totalidad, tu reclamación de
 prestatario devuelve el colateral que bloqueaste al inicio. En
-default o liquidación, sólo se devuelve el reembolso de VPFI no
-usado de la Loan Initiation Fee —el colateral mismo ya se fue al
-prestamista. La reclamación consume tu NFT de posición de
-prestatario de forma atómica.
+default o liquidación, compruébalo igualmente. Sólo se toma el
+valor que exigen la deuda y los costes de cerrarla, y todo lo que
+exceda queda registrado como tuyo. Su forma depende de cómo
+terminó el préstamo: tras una liquidación ordinaria, o un default
+sobre colateral negociable, se vende la canasta y lo que sobra te
+llega en el activo del propio préstamo. Sólo cuando un liquidador
+toma el colateral directamente con descuento, en vez de venderlo,
+lo que te espera es el colateral mismo. A menudo —en un
+default sobre colateral que no podemos valorar— se va la canasta
+entera y no queda nada, pero eso es cómo resultó, no una regla.
+Lo que nunca vuelve es el reembolso de la comisión: en un
+préstamo que siga en la vía de comisión VPFI retirada, el VPFI
+retenido contra la Loan Initiation Fee se pierde en favor del
+tesoro. La reclamación consume tu NFT de posición de prestatario
+—por eso el NFT sigue ahí tras una liquidación, esperándote.
 
 ---
 
@@ -576,8 +587,13 @@ explicando por qué.
   protocolo paga el préstamo viejo desde el principal nuevo en una
   sola transacción. El colateral nunca sale del vault.
 - **Reclamar** — una vez que el préstamo se liquida, devuelve tu
-  colateral en caso de repago total, o cualquier reembolso de VPFI
-  no usado de la loan-initiation fee en caso de default.
+  colateral en caso de repago total. En caso de default puede quedar un
+  excedente: sólo se toma el colateral que exigen la deuda y el coste
+  de cerrarla, y lo que aportaste de más queda registrado como tu
+  reclamación. Qué es exactamente depende de la vía —
+  véase la sección del Claim Center. El VPFI retenido bajo la vía
+  retirada sólo se pierde en default o liquidación; un repago
+  total, un preclose o un refinance siguen pagando el reembolso.
 
 ---
 

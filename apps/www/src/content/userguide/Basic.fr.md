@@ -372,10 +372,23 @@ exécutée, ce côté du prêt est entièrement clos.
 
 Si tu as remboursé le prêt en totalité, ta réclamation d'emprunteur
 te rend le collatéral que tu as verrouillé au début. En cas de
-défaut ou de liquidation, seul le rabais VPFI inutilisé de la Loan
-Initiation Fee est rendu — le collatéral lui-même est déjà parti
-chez le prêteur. La réclamation consomme ton NFT de position
-d'emprunteur de manière atomique.
+défaut ou de liquidation, vérifie quand même. On ne prélève que
+la valeur qu'exigent la dette et les frais de sa clôture, et tout
+ce qui dépasse est enregistré comme tien. Sa forme dépend de la
+manière dont le prêt s'est terminé : après une liquidation
+ordinaire, ou un défaut sur un collatéral négociable, le panier est
+vendu et le reste te parvient dans l'actif du prêt lui-même. Ce
+n'est que lorsqu'un liquidateur prend le collatéral directement
+avec une décote, au lieu de le vendre, que c'est le collatéral
+lui-même qui t'attend. Souvent — sur un
+défaut portant sur un collatéral que nous ne pouvons pas
+valoriser — tout le panier part et il ne reste rien, mais c'est
+une issue, pas une règle. Ce qui ne revient jamais, c'est le
+rabais de frais : sur un prêt encore soumis à la voie de frais
+VPFI retirée, le VPFI retenu au titre de la Loan Initiation Fee
+est acquis au trésor. La réclamation consomme ton NFT de position
+d'emprunteur — c'est pourquoi le NFT est toujours là après une
+liquidation, à t'attendre.
 
 ---
 
@@ -586,8 +599,14 @@ info-bulle expliquant pourquoi.
   principal en une seule transaction. Le collatéral ne quitte
   jamais l'vault.
 - **Réclamer** — une fois le prêt réglé, rend ton collatéral en
-  cas de remboursement total, ou tout rabais VPFI inutilisé issu
-  des frais d'initiation du prêt en cas de défaut.
+  cas de remboursement total. En cas de défaut il peut rester un
+  excédent : on ne prélève que le collatéral qu'exigent la dette et
+  le coût de sa clôture, et ce que tu avais déposé en plus est
+  enregistré comme ta créance. Ce que c'est dépend du chemin —
+  voir la section Claim Center. Le VPFI retenu sous la voie
+  retirée n'est acquis au trésor qu'en cas de défaut ou de
+  liquidation ; un remboursement total, un preclose ou un
+  refinance versent toujours le rabais.
 
 ---
 

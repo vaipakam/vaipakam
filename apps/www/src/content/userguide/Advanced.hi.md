@@ -73,9 +73,13 @@ configuration deploy gate पर अस्वीकार कर दी जा�
 
 ### Fee-discount की सहमति
 
-Wallet-level opt-in flag, जिससे terminal events पर protocol
-fee के discounted हिस्से को आपके vault से debit किए गए VPFI
-में settle कर सकता है। Default: off. Off का मतलब है कि आप
+Wallet-level opt-in flag, जो आपके VPFI holding को fee discount में
+बदल देता है। **Borrower के रूप में** discount, Loan Initiation Fee में
+ही सीधी कटौती है जो loan accept होते समय lending asset में ली जाती है;
+इसके लिए आपके vault से कुछ नहीं काटा जाता। **Lender के रूप में** yield
+discount settlement पर लागू होता है, और यदि VPFI का price reference
+कॉन्फ़िगर हो तो उसे आपके vault से VPFI में चुकाया जा सकता है, जिससे पूरी
+fee lending asset में आपके पास रह जाती है। Default: off. Off का मतलब है कि आप
 हर fee का 100% principal asset में चुकाते हैं; on का मतलब है
 कि time-weighted discount लागू होगा।
 
@@ -97,9 +101,26 @@ tier जारी रहे। इससे वह exploit pattern बंद ह
 user loan खत्म होने से ठीक पहले VPFI top up करके पूरा-tier
 discount ले और कुछ seconds बाद withdraw कर ले।
 
+**यह lender के yield fee के बारे में है।** Borrower की initiation fee की दर
+loan accept होते समय एक बार पढ़ी जाती है; उसके बाद न withdraw से बदलती है, न
+top up से।
+
 discount lender के yield fee पर settlement के समय और borrower
-की Loan Initiation Fee पर लागू होता है (जो VPFI rebate के
-रूप में borrower के claim करते समय अदा होती है)।
+की Loan Initiation Fee पर लागू होता है — वहाँ यह **उस fee में
+सीधी कटौती** है जो आप lending asset में चुकाते हैं, और यह loan
+accept होते समय लागू होती है। वह fee चुकाने के लिए आपके vault से
+कोई VPFI नहीं लिया जाता, और बाद में claim करने के लिए कोई rebate
+नहीं होता।
+
+> **अगर आप Loan Initiation Fee के rebate का इंतज़ार कर रहे हैं,
+> तो यह पढ़ें।** पुराने model में पूरी fee पहले VPFI में ली जाती
+> थी, loan की पूरी अवधि तक custody में रखी जाती थी, और claim के
+> समय उसका एक हिस्सा लौटाया जाता था। **वह रास्ता बंद कर दिया गया
+> है।** जो loan उस समय खुले थे वे आज भी उसी तरह settle होते हैं,
+> और नीचे rebate वाले हिस्से उन्हीं loans का वर्णन करते हैं। आज
+> खोले गए loan की initiation fee के बदले कोई VPFI custody में
+> नहीं है और कोई rebate बकाया नहीं है — उसका इंतज़ार करना ऐसे पैसे
+> का इंतज़ार करना होगा जो आ ही नहीं सकता।
 
 > **Network gas अलग है।** ऊपर बताया गया discount Vaipakam की
 > **protocol fees** (yield fee `{liveValue:treasuryFeeBps}`%,
@@ -415,9 +436,10 @@ timelock-gated हैं, और assets move नहीं कर सकते।
   permissionless है — आपका HF 1.0 से नीचे गिरते ही कोई भी उसे
   trigger कर सकता है।
 - **Illiquid-collateral defaults** — default आपका पूरा
-  collateral lender को transfer कर देता है। कोई residual claim
-  नहीं बचता; सिर्फ़ कोई unused VPFI Loan Initiation Fee rebate,
-  जिसे आप borrower के रूप में claim time पर लेते हैं।
+  collateral lender को transfer कर देता है और claim करने को कुछ
+  नहीं बचता: बंद किए गए VPFI fee रास्ते वाले loan में initiation
+  fee के बदले रखा गया VPFI treasury को ज़ब्त हो जाता है, लौटाया
+  नहीं जाता।
 
 <a id="create-offer.advanced-options"></a>
 
@@ -702,14 +724,27 @@ Borrower claim इस आधार पर return करता है कि loan
 हुआ:
 
 - **पूरा repayment / preclose / refinance** — आपकी collateral
-  basket वापस, साथ में Loan Initiation Fee से time-weighted
-  VPFI rebate।
-- **HF-liquidation या default** — सिर्फ़ unused VPFI Loan
-  Initiation Fee rebate, जो इन terminal paths पर शून्य होता
-  है जब तक स्पष्ट रूप से preserve न किया गया हो। Collateral
-  पहले ही lender के पास चला गया होता है।
+  basket वापस; और अगर वह loan अब भी बंद किए गए VPFI fee रास्ते
+  पर है, तो साथ में Loan Initiation Fee से time-weighted VPFI
+  rebate भी।
+- **HF-liquidation या default** — फिर भी देख लें, surplus बचा
+  हो सकता है। Liquidator, lender और treasury को चुकाने भर का मूल्य ही लिया
+  जाता है, और बाकी आपके claim के रूप में दर्ज होता है। उसका रूप इस पर निर्भर है कि loan किस
+  रास्ते से बंद हुआ। सामान्य HF liquidation और बिकने योग्य collateral
+  पर समय-आधारित default — दोनों collateral बेचते हैं और बचा हुआ loan
+  के principal asset में दर्ज करते हैं। बिना बिका हिस्सा आपके vault में
+  encumbered सिर्फ़ तब रहता है जब liquidator collateral बेचने के बजाय
+  छूट पर सीधे ले लेता है। आंशिक liquidation तो बंद होना है ही नहीं —
+  loan खुला रहता है और कोई claim बनता ही नहीं। अनुमान लगाने के बजाय
+  claim देखें। Illiquid asset के default में आम तौर पर पूरी
+  basket चली जाती है और कुछ नहीं बचता — पर वह एक परिणाम है, नियम
+  नहीं। हमेशा जो खोता है वह rebate है: बंद किए गए VPFI fee रास्ते
+  वाले loan में initiation fee के बदले रखा गया VPFI **treasury को
+  ज़ब्त** हो जाता है, और rebate सिर्फ़ proper close पर वापस आता है।
 
-Borrower position NFT उसी transaction में burn होता है।
+Borrower position NFT तब burn होता है जब आप claim करते हैं, तब
+नहीं जब loan resolve होता है — इसलिए liquidation से बचा surplus
+बाद में भी लेने के लिए मौजूद रहता है।
 
 ---
 
@@ -946,8 +981,9 @@ HF ऊपर लाने के levers:
 HF 1.0 से नीचे जाते ही कोई भी HF-based liquidation trigger कर
 सकता है; swap आपके collateral को slippage-hit prices पर बेचकर
 lender को चुकाता है। Illiquid collateral पर default आपका पूरा
-collateral lender को transfer कर देता है — claim करने के लिए
-सिर्फ़ कोई unused VPFI Loan Initiation Fee rebate बचता है।
+collateral lender को transfer कर देता है और claim करने के लिए कुछ
+नहीं बचता: बंद किए गए रास्ते में रखा VPFI treasury को ज़ब्त हो
+जाता है।
 
 <a id="loan-details.parties"></a>
 
@@ -1010,9 +1046,11 @@ actions:
   atomic रूप से swap कर देता है, आपका collateral आपके vault
   से कभी बाहर नहीं जाता।
 - **Claim as borrower** — सिर्फ़ terminal states में। पूरे repayment पर
-  collateral लौटाता है, या default / liquidation पर
-  unused VPFI Loan Initiation Fee rebate। Borrower
-  position NFT को burn करता है।
+  collateral लौटाता है; default / liquidation पर भी surplus बच
+  सकता है, क्योंकि collateral में से उतना ही लिया जाता है जितना
+  कर्ज़ और उसे बंद करने की लागत माँगे — ऊपर का Claim Center भाग
+  देखें। बंद किए गए रास्ते में रखा VPFI सिर्फ़ default या liquidation
+  पर ज़ब्त होता है; proper close पर rebate मिलता है। Borrower position NFT को burn करता है।
 
 ---
 
