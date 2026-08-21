@@ -17,6 +17,10 @@
 #   bash docs/ReleaseNotes/assemble.sh 2026-05-20          # explicit date
 #   bash docs/ReleaseNotes/assemble.sh --allow-mixed-dates # take every pending
 #                                                          # fragment, any day
+#   bash docs/ReleaseNotes/assemble.sh --force-append      # append even where
+#                                                          # a markerless file
+#                                                          # looks like it may
+#                                                          # already hold it
 #
 # The dated file is created with a header if absent, or appended to if
 # it already exists. Review the result, add an intro paragraph by hand,
@@ -37,10 +41,16 @@
 #   to make the next run append them a SECOND time: duplicated prose in a
 #   published document, silently, with nothing lost to hint at it. Each
 #   folded fragment now leaves an invisible marker in the dated file, so
-#   the next run recognises it, removes it, and does not re-append.
+#   the next run recognises it, removes it, and does not re-append. The
+#   marker records a HASH of the fragment, not just its name, and every
+#   dated file is searched rather than only today's — see the recovery
+#   block for the several ways a name-only match went wrong.
 #
 # Either way the recovery is the same: run the script again. It says
 # which fragments it found in that state rather than acting silently.
+# Where it CANNOT tell — a dated file with no markers at all, from before
+# they existed or because one was edited away — it stops and asks rather
+# than guessing in either direction. `--force-append` is the override.
 
 set -euo pipefail
 
@@ -79,16 +89,39 @@ UNREL="$DIR/unreleased"
 # Provenance marker written after each folded fragment (#1788). An HTML
 # comment: invisible in every rendered view of the notes, and the record
 # the next run reads to tell "already folded" from "still pending".
-# Anything appended after this prefix is a fragment BASENAME followed by
-# ` -->`; the reader below matches the whole line, so prose that merely
-# mentions a filename cannot be mistaken for a marker.
+# Full form: `<!-- assembled-fragment: <basename> sha256=<hex> -->`. The
+# NAME is for the operator reading the file; the HASH is the identity the
+# recovery below matches on, because a name is neither stable (a fragment
+# can be renamed) nor unique to its content (a name can be reused for
+# different text). See that block for why getting this wrong is worse
+# than the bug it fixes.
 MARKER_PREFIX='<!-- assembled-fragment: '
+
+# Content identity for a fragment, hashed from its ORIGINAL bytes before
+# any link rewriting — which is what makes it exact rather than
+# approximate (see the recovery block below). Resolved once: `sha256sum`
+# on Linux, `shasum -a 256` on macOS, and a hard error rather than a
+# silent fallback if neither exists, because a degraded identity here
+# would authorise deleting a fragment on a guess.
+if command -v sha256sum >/dev/null 2>&1; then
+  frag_hash() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then
+  frag_hash() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+  echo "Error: neither sha256sum nor shasum found." >&2
+  echo "" >&2
+  echo "This script identifies an already-assembled fragment by the hash of" >&2
+  echo "its contents, so it cannot run safely without one of them." >&2
+  exit 1
+fi
 
 DATE=""
 ALLOW_MIXED=0
+FORCE_APPEND=0
 for a in "$@"; do
   case "$a" in
     --allow-mixed-dates) ALLOW_MIXED=1 ;;
+    --force-append) FORCE_APPEND=1 ;;
     -*)
       echo "Error: unknown option '$a'" >&2
       exit 1
@@ -456,15 +489,56 @@ fi
 # duplicated prose in a published document, with no error and nothing
 # lost to hint at it.
 #
-# Matched on the marker line this script writes, anchored to the whole
-# line, so a fragment merely NAMED in someone's prose cannot be mistaken
-# for one that was folded in. Basename identity, deliberately: content
-# identity would have to survive the link rewriting above, and the
-# rewrite is lossy in the direction that matters.
+# Identity is the fragment's CONTENT HASH, not its name (Codex #1863 r1).
+# The first version keyed on basename alone, on the stated reasoning that
+# content identity "could not survive the link rewriting". That reasoning
+# was wrong, and wrong in a way that authorised a destructive action: the
+# rewrite happens to what is APPENDED, so matching the rewritten text in
+# $OUT would indeed be approximate — but the marker records the identity
+# of the SOURCE, hashed before any rewriting, and nothing touches that.
+#
+# Basename alone was unsafe in both directions:
+#   - Same name, different content — a reused filename, or a fragment
+#     EDITED after an interrupted run — was deleted unread, taking the
+#     new text with it. Silent data loss, worse than the duplication
+#     this whole change exists to prevent.
+#   - Different name, same content — a fragment renamed between runs —
+#     was not recognised, and its content was appended a second time,
+#     which is precisely the bug, back by another door.
+# Hash identity gets both right: different content is never "already
+# assembled", and a rename is still recognised.
+#
+# Searched across every dated file, not only today's $OUT. An untracked
+# fragment is accepted for ANY date, so a run interrupted before UTC
+# midnight and resumed after it targets a DIFFERENT dated file; checking
+# only the new one wrote the same payload into two files and deleted the
+# source (Codex #1863 r1). The hash is unique to the content, so finding
+# it anywhere is proof it was folded in somewhere.
+declare -A marked_in=()
+declare -A marked_as=()
+shopt -s nullglob
+for dated in "$DIR"/ReleaseNotes-*.md; do
+  while IFS= read -r line; do
+    # `<!-- assembled-fragment: <basename> sha256=<hex> -->`, and ONLY
+    # that shape. A line matching the prefix but not the full form is
+    # ignored rather than half-parsed: `${line##* sha256=}` returns the
+    # whole line when the pattern is absent, which would enter a
+    # nonsense key that no real hash can equal — harmless today, and
+    # exactly the sort of thing that stops being harmless later.
+    [[ "$line" == *" sha256="*" -->" ]] || continue
+    marker_hash="${line##* sha256=}"; marker_hash="${marker_hash%% -->}"
+    marker_name="${line#"$MARKER_PREFIX"}"; marker_name="${marker_name%% sha256=*}"
+    [[ "$marker_hash" =~ ^[0-9a-f]{64}$ ]] || continue
+    marked_in["$marker_hash"]="$dated"
+    marked_as["$marker_hash"]="$marker_name"
+  done < <(grep -F "$MARKER_PREFIX" "$dated" 2>/dev/null || true)
+done
+
 already=()
 pending=()
 for f in "${frags[@]}"; do
-  if [ -f "$OUT" ] && grep -qxF "$MARKER_PREFIX$(basename "$f") -->" "$OUT"; then
+  h="$(frag_hash "$f")"
+  if [ -n "${marked_in[$h]+set}" ]; then
     already+=("$f")
   else
     pending+=("$f")
@@ -472,10 +546,23 @@ for f in "${frags[@]}"; do
 done
 
 if (( ${#already[@]} > 0 )); then
-  echo "Already assembled into $(basename "$OUT") — removing without re-appending:"
-  printf '  %s\n' "${already[@]##*/}"
+  echo "Already assembled — removing without re-appending:"
+  for f in "${already[@]}"; do
+    h="$(frag_hash "$f")"
+    where="$(basename "${marked_in[$h]}")"
+    was="${marked_as[$h]}"
+    if [ "$was" = "$(basename "$f")" ]; then
+      printf '  %s -> already in %s\n' "$(basename "$f")" "$where"
+    else
+      # Say so rather than acting silently: recognising a file under a
+      # name it no longer has is exactly the kind of inference an
+      # operator should get to see before it deletes something.
+      printf '  %s -> already in %s, folded in there as %s (renamed since)\n' \
+        "$(basename "$f")" "$where" "$was"
+    fi
+  done
   echo "  (an earlier run was interrupted after writing the file but before"
-  echo "   clearing these; their content is already in place)"
+  echo "   clearing these; their content is already in place, byte for byte)"
   echo ""
   for f in "${already[@]}"; do
     rm "$f"
@@ -487,6 +574,76 @@ if (( ${#pending[@]} == 0 )); then
   exit 0
 fi
 frags=("${pending[@]}")
+
+# ── Markerless outputs cannot be reasoned about ──────────────────────────────
+# A dated file written before markers existed — or one whose markers an
+# operator edited away while adding the intro paragraph — carries no
+# record of what it consumed. Absence of a marker then means either "new
+# fragment" or "already folded, no marker written", and nothing in the
+# file distinguishes them (Codex #1863 r1).
+#
+# Appending regardless is what the old script did, so it is not a
+# regression, but it does preserve the exact bug this change removes.
+# Refusing whenever markers are missing is far too strict: appending a
+# second batch to an existing dated file is normal, and every file
+# assembled before this change is markerless.
+#
+# So: refuse only on positive evidence of a duplicate — the fragment's
+# own first heading already present in $OUT — and make it an operator
+# decision rather than a silent choice either way. A heading match is a
+# HEURISTIC, which is safe as a reason to STOP and unsafe as a reason to
+# skip or delete; this only ever stops.
+if [ -f "$OUT" ]; then
+  # Does $OUT carry ANY marker? That is the discriminator. A file this
+  # script wrote has a marker for everything it folded in, so "no marker
+  # for this hash" is authoritative and the fragment really is new. A
+  # file with NO markers at all says nothing either way.
+  out_has_markers=0
+  grep -qF "$MARKER_PREFIX" "$OUT" && out_has_markers=1
+
+  suspect=()
+  for f in "${frags[@]}"; do
+    head_line="$(grep -m1 '^#\{1,6\} ' "$f" 2>/dev/null || true)"
+    [ -n "$head_line" ] || continue
+    if grep -qxF -- "$head_line" "$OUT"; then
+      suspect+=("$(basename "$f")|$head_line")
+    fi
+  done
+
+  if (( ${#suspect[@]} > 0 )) && (( out_has_markers == 0 )) && (( FORCE_APPEND == 0 )); then
+    echo "Error: $(basename "$OUT") carries no assembly markers at all, and already" >&2
+    echo "contains the heading of a fragment about to be appended. It may have been" >&2
+    echo "written by an older version of this script whose run was interrupted, in" >&2
+    echo "which case appending would duplicate it — and nothing in the file can say:" >&2
+    echo "" >&2
+    for s in "${suspect[@]}"; do
+      printf '  %s\n      %s\n' "${s%%|*}" "${s#*|}" >&2
+    done
+    echo "" >&2
+    echo "Read that section of $(basename "$OUT") and then either:" >&2
+    echo "  - it is already there  -> delete the fragment(s) by hand" >&2
+    echo "  - it is a new section  -> re-run with --force-append" >&2
+    exit 1
+  fi
+
+  if (( ${#suspect[@]} > 0 )); then
+    # $OUT has markers, so the record IS authoritative and these
+    # fragments are genuinely unfolded — most often because an
+    # interrupted run was followed by an EDIT to the still-pending
+    # fragment, which changes its hash. Appending is right: the
+    # alternative, deleting it as "already assembled" on the strength of
+    # its name, discards the edit silently, and losing text is worse
+    # than repeating it. But a repeated heading is worth a word, since
+    # the older version of that section is probably still above.
+    echo "Note: $(basename "$OUT") already contains these headings; appending anyway" >&2
+    echo "(their fragments are not recorded as folded in, so the text differs):" >&2
+    for s in "${suspect[@]}"; do
+      printf '  %s\n      %s\n' "${s%%|*}" "${s#*|}" >&2
+    done
+    echo "Check for a superseded copy of that section while reviewing." >&2
+    echo "" >&2
+  fi
+fi
 
 # ── Write to a temp file, then rename ────────────────────────────────────────
 # Everything below builds $WORK; $OUT is replaced in one `mv` at the end.
@@ -529,7 +686,7 @@ for f in "${frags[@]}"; do
   # "Crash safety" note at the top: this is what makes a re-run after an
   # interruption skip a fragment already folded in, instead of appending
   # it a second time.
-  printf '%s%s -->\n' "$MARKER_PREFIX" "$(basename "$f")" >> "$WORK"
+  printf '%s%s sha256=%s -->\n' "$MARKER_PREFIX" "$(basename "$f")" "$(frag_hash "$f")" >> "$WORK"
 done
 
 # The atomic step. Until this line $OUT is untouched, so an interruption
@@ -538,6 +695,18 @@ done
 # handles. `mv` within one directory is a rename(2): $OUT is the old file
 # or the new one, never a half-written mixture, and never a header-only
 # stub that the next run would mistake for a real existing file.
+# Refuse a destination that is not a regular file BEFORE consuming
+# anything. `mv SOURCE DIRECTORY` is a documented form: if $OUT exists as
+# a directory, the temp file is moved INSIDE it, the rename "succeeds",
+# every fragment is then deleted, and the run reports a dated file that
+# does not exist (Codex #1863 r1). `mv -T` would also do it but is GNU
+# only; an explicit test is portable and says why.
+if [ -e "$OUT" ] && [ ! -f "$OUT" ]; then
+  echo "Error: $OUT exists and is not a regular file." >&2
+  echo "Refusing to assemble: the fragments would be consumed and the" >&2
+  echo "assembled notes would not be at that path." >&2
+  exit 1
+fi
 mv "$WORK" "$OUT"
 trap - EXIT
 

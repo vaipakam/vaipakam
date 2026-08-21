@@ -72,7 +72,10 @@ sections() {  # sections <file> -> count of `## ` headings, 0 if absent
   if [ -f "$1" ]; then grep -c '^## ' "$1" || true; else echo 0; fi
 }
 says() {  # says <text> <needle> -> 1 if present, 0 if not
-  if printf '%s' "$1" | grep -q "$2"; then echo 1; else echo 0; fi
+  # -F and -- deliberately: a needle beginning with a dash (`--force-append`)
+  # is otherwise read as a grep OPTION, and the case fails with a usage error
+  # that looks like a product defect.
+  if printf '%s' "$1" | grep -qF -- "$2"; then echo 1; else echo 0; fi
 }
 
 # ── A mixed backlog must be assemblable one day at a time ────────────────────
@@ -445,8 +448,9 @@ check "no temp file survives a good run" \
   "$(find "$out" -maxdepth 1 -name '.assemble-*' | wc -l | tr -d ' ')" "0"
 # A marker exists for what was folded, and is invisible in rendered markdown —
 # it must be an HTML comment, not a visible line, since this file is published.
-check "a marker records the fragment" \
-  "$(grep -c '^<!-- assembled-fragment: 0001-a.md -->$' "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "a marker records the fragment and its hash" \
+  "$(grep -cE '^<!-- assembled-fragment: 0001-a\.md sha256=[0-9a-f]{64} -->$' \
+      "$out/ReleaseNotes-2026-08-16.md")" "1"
 check "the marker is an HTML comment" \
   "$(grep -c '^<!--.*-->$' "$out/ReleaseNotes-2026-08-16.md")" "1"
 
@@ -466,6 +470,103 @@ bash "$out/assemble.sh" 2026-08-17 >/dev/null 2>&1
 check "the mentioned fragment still assembles" \
   "$(sections "$out/ReleaseNotes-2026-08-17.md")" "1"
 check "nothing left pending"                    "$(pending "$W")" "0"
+
+# ── Marker identity must be the CONTENT, not the name (Codex #1863 r1) ───────
+# A name is neither stable nor unique to its text, and the recovery path uses
+# it to authorise deleting a fragment. Both directions are tested: same name /
+# different text must NOT be treated as already assembled, and different name /
+# same text must be.
+echo "T14: a fragment EDITED after an interrupted run is not silently deleted"
+W="$ROOT/t14"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+# The interrupted state, then the operator edits the still-pending fragment.
+printf '## 0001-a\nRewritten after the interruption.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+git -C "$W" add -A
+GIT_AUTHOR_DATE='2026-08-16T23:00:00Z' GIT_COMMITTER_DATE='2026-08-16T23:00:00Z' \
+  git -C "$W" commit -q -m edited
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the edit is appended, not discarded" \
+  "$(says "$(cat "$out/ReleaseNotes-2026-08-16.md")" 'Rewritten after the interruption')" "1"
+check "the fragment is consumed"  "$(pending "$W")" "1"
+check "and the repeated heading is flagged" \
+  "$(says "$msg" 'already contains these headings')" "1"
+
+echo "T14b: a REUSED basename with different content is treated as new"
+W="$ROOT/t14b"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+printf '## a second note\nDifferent text under a reused filename.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+git -C "$W" add -A
+GIT_AUTHOR_DATE='2026-08-16T22:00:00Z' GIT_COMMITTER_DATE='2026-08-16T22:00:00Z' \
+  git -C "$W" commit -q -m reused
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+check "the reused name's content is kept" \
+  "$(says "$(cat "$out/ReleaseNotes-2026-08-16.md")" 'Different text under a reused')" "1"
+check "both sections present"    "$(sections "$out/ReleaseNotes-2026-08-16.md")" "2"
+
+echo "T15: a fragment RENAMED between runs is recognised, not re-appended"
+W="$ROOT/t15"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/0001-a.md
+mv "$W/docs/ReleaseNotes/unreleased/0001-a.md" \
+   "$W/docs/ReleaseNotes/unreleased/0001-a-retitled.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "not duplicated under the new name" \
+  "$(sections "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "the renamed fragment is cleared" "$(pending "$W")"                "1"
+check "and the rename is stated"        "$(says "$msg" 'renamed since')" "1"
+
+echo "T16: a marker in ANOTHER dated file still counts (the midnight case)"
+W="$ROOT/t16"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The fragment must be genuinely UNTRACKED — never committed. Only then is it
+# accepted for any date, which is what makes the midnight case reachable at
+# all. A committed fragment that is deleted and recreated is still tracked, so
+# the UTC-day guard holds it back and the marker lookup never runs: the first
+# version of this case passed for that reason rather than for the one it
+# claimed, which is no test at all.
+printf '## untracked note\n' > "$W/docs/ReleaseNotes/unreleased/0003-c.md"
+cp "$W/docs/ReleaseNotes/unreleased/0003-c.md" "$ROOT/t16-copy.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "it was folded into the 08-16 file" \
+  "$(says "$(cat "$out/ReleaseNotes-2026-08-16.md")" 'untracked note')" "1"
+# Interrupted after the write: still pending, and the clock has passed midnight
+# so the default run now targets a DIFFERENT dated file.
+cp "$ROOT/t16-copy.md" "$W/docs/ReleaseNotes/unreleased/0003-c.md"
+rm -f "$W/docs/ReleaseNotes/unreleased/0001-a.md" \
+      "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+bash "$out/assemble.sh" 2026-08-17 >/dev/null 2>&1
+check "the next day's file is not created for it" \
+  "$(sections "$out/ReleaseNotes-2026-08-17.md")" "0"
+check "and the fragment is cleared"  "$(pending "$W")" "0"
+
+echo "T17: a directory at the output path is refused before anything is consumed"
+W="$ROOT/t17"; build "$W"
+out="$W/docs/ReleaseNotes"
+mkdir "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+check "run fails"                  "$?"              "1"
+check "no fragment was consumed"   "$(pending "$W")" "2"
+
+echo "T18: a MARKERLESS file that may already hold the content stops and asks"
+W="$ROOT/t18"; build "$W"
+out="$W/docs/ReleaseNotes"
+# What an interrupted run of the OLD script leaves: content in place, no
+# marker, fragment still pending. Absence of a marker cannot distinguish this
+# from a genuinely new fragment, so the script must not choose silently.
+printf '# Release Notes — 2026-08-16\n\n## 0001-a\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "run fails"                    "$?"                             "1"
+check "no fragment was consumed"     "$(pending "$W")"                "2"
+check "it names the override"        "$(says "$msg" '--force-append')" "1"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --force-append 2>&1)"
+check "the override appends"         "$?"                             "0"
+check "and consumes the fragment"    "$(pending "$W")"                "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

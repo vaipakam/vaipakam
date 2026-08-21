@@ -26,23 +26,60 @@ appends only what genuinely remains.
 
 The recovery for both is the same and needs no judgement: run the script again.
 
-### Why an invisible marker rather than comparing the text
+### What the marker records, and why it is not the filename
 
-The obvious alternative — skip a note whose content is already in the file —
-needs a way to recognise the same text after assembly has rewritten the links
-inside it. That rewriting is deliberately lossy in the direction that matters, so
-matching would have been approximate, and an approximate match here fails in both
-directions: skip something genuinely new, or duplicate something old. Matching on
-the note's filename is exact.
+The first version of this recorded only the note's filename, on the reasoning
+that recognising the *text* could not work once assembly had rewritten the links
+inside it. That reasoning was wrong, and wrong in a way that authorised deleting
+someone's work: the rewriting applies to what gets appended, while the marker
+records the identity of the source, taken before anything is rewritten. Nothing
+touches that.
 
-The marker is matched as a whole line, so a note that merely *mentions* another
-note's filename in its prose is not mistaken for one already folded in — which
-would have silently dropped it instead.
+A filename is neither stable nor unique to what is under it, and both failures
+were real. A note edited after an interrupted run — the obvious thing to do when
+resuming — kept its name, so it was recognised as already handled and deleted
+unread, losing the edit. That is worse than the duplication this change exists to
+prevent. In the other direction, a note *renamed* between runs was not recognised
+at all, and its content was added a second time, which is the original bug by
+another route.
+
+The marker now records a fingerprint of the note's contents. Different text is
+never mistaken for something already filed, a rename is still recognised (and
+said out loud, since recognising a file under a name it no longer has is worth
+showing before anything is deleted), and a note that merely *mentions* another's
+filename in its prose is not mistaken for either.
+
+Every dated file is searched, not just the one being assembled. A run interrupted
+shortly before midnight and resumed after it is aimed at a different day's file,
+and looking only there wrote the same content into two of them.
+
+### Where it genuinely cannot tell, it stops
+
+A dated file written before any of this existed carries no record of what it
+consumed, so the absence of a record means either "new" or "already filed, never
+recorded" — and nothing in the file distinguishes them. Guessing either way is
+wrong: one duplicates, the other deletes.
+
+So when a file carries no records at all *and* already contains the heading of a
+note about to be added, the run stops and asks, naming what it found and what to
+check. `--force-append` overrides it. Where the file does carry records they are
+authoritative, and the run proceeds — with a note on screen if a heading repeats,
+since the superseded version is probably still further up.
+
+Refusing a destination that is not a regular file belongs to the same instinct: a
+directory sitting at the output path silently swallows the assembled file, and
+the notes would then have been deleted for nothing.
 
 ### Verified against the fault, not just the fix
 
-The new tests were run against the old script first, and they fail there: the
-interrupted-run case produces two copies of the same section where one is
-correct. Then against the new script, where it produces one. A test for a
-crash-recovery path that was never seen failing is a test that might be checking
-nothing.
+Every new test was run against the older script first and fails there — the
+interrupted-run case produces two copies of a section where one is correct, the
+edited note is silently discarded, the renamed one is duplicated. Then against
+the new script, where each passes. A test for a recovery path that has never been
+seen failing is a test that might be checking nothing.
+
+One of them was checking nothing, briefly, and it is worth recording. The
+across-days case first "passed" against both versions — because the note it used
+was still tracked by version control, so an unrelated rule held it back and the
+part under test never ran. It only exercises what it claims with a note that was
+never committed, and it fails on the older script now.

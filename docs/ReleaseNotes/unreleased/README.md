@@ -69,11 +69,22 @@ git commit -m "docs: release notes <date>"
 in a temp file and renamed into place at the end, so it is either the old
 file or the complete new one — never a partial append. Each folded
 fragment also leaves an invisible HTML-comment marker
-(`<!-- assembled-fragment: … -->`) in the dated file, which is how a
-re-run tells a fragment already folded in from one still pending: it
-names those, removes them, and does not append them a second time. Leave
-the markers in place when editing the assembled notes; deleting one makes
-a re-run duplicate that fragment (#1788).
+(`<!-- assembled-fragment: <name> sha256=<hash> -->`) in the dated file,
+which is how a re-run tells a fragment already folded in from one still
+pending: it names those, removes them, and does not append them a second
+time.
+
+The marker matches on the **hash**, not the name, so editing a pending
+fragment after an interrupted run appends the new text rather than
+discarding it, and renaming one is still recognised. Every dated file is
+searched, so a run resumed after UTC midnight does not write the same
+content into two of them.
+
+**Leave the markers in place** when editing the assembled notes.
+Deleting one makes a re-run duplicate that fragment. If a dated file has
+no markers at all (it predates them) and already contains a pending
+fragment's heading, the script stops and asks rather than guessing —
+`--force-append` overrides it once you have checked (#1788).
 
 ### The date is the fragment's UTC merge day
 
