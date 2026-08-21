@@ -317,6 +317,29 @@ for f in "$UNREL"/*.md; do
   frags+=("$f")
 done
 
+# Set-aside files are reported BEFORE any "nothing to assemble" verdict
+# (Codex #1863 r15). A run interrupted between the rename and the removal
+# leaves a fragment existing only as `.assembled.<name>` — and the pool
+# glob does not match dotfiles, so the next run would say "No pending
+# fragments" while one sits right there. Its text is in the dated file
+# already (the rename happens after the write), so nothing is lost; what
+# would be lost is the operator ever hearing about it.
+shopt -s nullglob
+_setaside=()
+for q in "$UNREL"/.assembled.*; do
+  _setaside+=("$(basename "$q")")
+done
+if (( ${#_setaside[@]} > 0 )); then
+  echo "Set aside by an earlier run, still in $UNREL:" >&2
+  printf '  %s\n' "${_setaside[@]}" >&2
+  echo "" >&2
+  echo "Each is a fragment this script had finished folding into a dated file" >&2
+  echo "when it was interrupted, or one whose bytes changed while it was being" >&2
+  echo "read. Their content is in the dated file; compare and delete them, or" >&2
+  echo "rename one back if you want it assembled again." >&2
+  echo "" >&2
+fi
+
 if [ "${#frags[@]}" -eq 0 ]; then
   echo "No pending fragments in $UNREL — nothing to assemble."
   exit 0
@@ -1099,6 +1122,32 @@ if [ -f "$OUT" ]; then
     echo "current ownership has to be known before that is safe to do." >&2
     exit 1
   fi
+  _og_rc=0
+  out_gid="$(stat -c '%g' "$OUT" 2>/dev/null)" || _og_rc=$?
+  if (( _og_rc != 0 )); then
+    _og_rc=0
+    out_gid="$(stat -f '%g' "$OUT" 2>/dev/null)" || _og_rc=$?
+  fi
+  if (( _og_rc != 0 )) || [[ ! "$out_gid" =~ ^[0-9]+$ ]]; then
+    echo "Error: could not read the group of $(basename "$OUT")." >&2
+    echo "Refusing to assemble: replacing it installs a new file, so the" >&2
+    echo "current group has to be known before that is safe to do." >&2
+    exit 1
+  fi
+  # The GROUP matters as much as the owner (Codex #1863 r15). Outside a
+  # setgid directory the temp inode takes the runner's primary group, so
+  # a `root:65534` file quietly becomes `root:root` and the collaborators
+  # who reached it through that group lose access — the ownership refusal
+  # alone does not cover this.
+  if [ "$out_gid" != "$(id -g)" ]; then
+    echo "Error: $(basename "$OUT") has group $out_gid, not your primary group." >&2
+    echo "" >&2
+    echo "Refusing to assemble: this script replaces the dated file by" >&2
+    echo "renaming a new one over it, and the replacement takes YOUR group —" >&2
+    echo "so anyone who reaches the file through its current group would" >&2
+    echo "quietly lose access." >&2
+    exit 1
+  fi
   if [ "$out_uid" != "$(id -u)" ]; then
     echo "Error: $(basename "$OUT") is owned by uid $out_uid, not by you." >&2
     echo "" >&2
@@ -1284,6 +1333,17 @@ for f in "${frags[@]}"; do
   # which is left alone and stays pending, exactly as it should. The
   # object checked and the object deleted are now the same one by
   # construction.
+  # What the rename DOES and does not do (Codex #1863 r15 corrected an
+  # earlier overstatement here). It stops anything opening the OLD PATH
+  # from reaching this inode: a save there creates a new file, which is
+  # left alone and stays pending. It does NOT close a descriptor already
+  # open on the fragment — a writer holding one can still modify these
+  # bytes between the re-hash and the `rm`, and no rename can prevent
+  # that. So this narrows the window to the gap between two adjacent
+  # statements and removes the whole class of "a NEW writer arrived",
+  # rather than making the object immutable. The earlier comment claimed
+  # the stronger thing and was wrong.
+  #
   # DETERMINISTIC, no PID. The pool lock is held, so no other assembly can
   # be choosing names at the same time — and a name that does not depend
   # on a PID makes a leftover from an earlier crashed run both detectable
@@ -1295,7 +1355,16 @@ for f in "${frags[@]}"; do
     _abort_after_write "a set-aside file already exists at $(basename "$_q")"
   fi
   mv "$f" "$_q" || _abort_after_write "could not set aside ${FRAG_NAME[$f]}"
-  run_checked 0 "re-hashing ${FRAG_NAME[$f]} before removing it" frag_hash "$_q"
+  # NOT `run_checked`: its message is the generic pre-publication one, and
+  # by here $OUT is already replaced and this fragment already moved
+  # (Codex #1863 r15). A failure has to speak the half-done contract or
+  # the operator reads it as "refused before publishing".
+  _rh_rc=0
+  _rh="$(frag_hash "$_q")" || _rh_rc=$?
+  if (( _rh_rc != 0 )); then
+    _abort_after_write "could not re-hash ${FRAG_NAME[$f]} (now set aside as $(basename "$_q"))"
+  fi
+  CAPTURED="$_rh"
   if [ "$CAPTURED" = "${FRAG_HASH[$f]}" ]; then
     rm "$_q" || _abort_after_write "could not remove ${FRAG_NAME[$f]}"
     _cleared+=("${FRAG_NAME[$f]}")

@@ -1018,6 +1018,7 @@ cat > "$W/fakebin/stat" <<SHIM
 for a in "\$@"; do
   case "\$a" in
     '%u') echo $(id -u); exit 0 ;;
+    '%g') echo $(id -g); exit 0 ;;
   esac
 done
 exit 1
@@ -1089,6 +1090,7 @@ cat > "$W/fakebin/stat" <<SHIM
 for a in "\$@"; do
   case "\$a" in
     '%u') echo $(id -u); exit 0 ;;
+    '%g') echo $(id -g); exit 0 ;;
     '%a') echo 644; exit 3 ;;
   esac
 done
@@ -1250,6 +1252,25 @@ check "the dated file WAS written"  "$(sections "$out/ReleaseNotes-2026-08-16.md
 check "the leftover is untouched" \
   "$(cat "$W/docs/ReleaseNotes/unreleased/.assembled.0001-a.md")" "left over from a crash"
 rm -f "$W/docs/ReleaseNotes/unreleased/.assembled.0001-a.md"
+
+echo "T43: a set-aside fragment is reported, not silently invisible"
+W="$ROOT/t43"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0001-a.md" "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Interrupted between the rename and the removal, a fragment exists ONLY as
+# `.assembled.<name>` — and the pool glob does not match dotfiles, so the next
+# run would report "No pending fragments" with one sitting right there (Codex
+# #1863 r15).
+printf '## set aside earlier\n' > "$W/docs/ReleaseNotes/unreleased/.assembled.0016-x.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "it is named"              "$(says "$msg" '.assembled.0016-x.md')"   "1"
+check "and explained"            "$(says "$msg" 'Set aside by an earlier run')" "1"
+check "it is not deleted" \
+  "$([ -f "$W/docs/ReleaseNotes/unreleased/.assembled.0016-x.md" ] && echo kept || echo gone)" "kept"
+# And it is still reported when there is genuinely nothing else to do.
+check "reported even with an empty pool" \
+  "$(says "$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)" 'Set aside by an earlier run')" "1"
+rm -f "$W/docs/ReleaseNotes/unreleased/.assembled.0016-x.md"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
