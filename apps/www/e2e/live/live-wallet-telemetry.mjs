@@ -170,11 +170,32 @@ async function assertBundleSettings(page, origin) {
 
   if (urls.length === 0) return { ok: false, note: 'config NOT READ — no same-origin scripts observed' };
 
-  let js = '';
-  for (const u of urls) {
-    const r = await page.request.get(u).catch(() => null);
-    if (r && r.ok()) js += await r.text();
-  }
+  // CONCURRENT, with a per-request deadline. Serially, 11 resources at
+  // Playwright's 30s default is ~5.5 minutes of stall per origin on a
+  // degraded deployment — the check would hang exactly when something
+  // is wrong (Codex #1857 r4).
+  const bodies = await Promise.all(
+    urls.map(async (u) => {
+      // `maxRedirects: 0` — `page.request.get` FOLLOWS redirects, so a
+      // same-origin URL redirecting to a CDN would smuggle third-party
+      // JavaScript past the origin filter above and could satisfy both
+      // patterns while the app's own bundle had regressed. The final
+      // URL is re-checked too, belt and braces.
+      const r = await page.request
+        .get(u, { maxRedirects: 0, timeout: 15_000 })
+        .catch(() => null);
+      if (!r || !r.ok()) return '';
+      try {
+        if (new URL(r.url()).origin !== origin) return '';
+      } catch {
+        return '';
+      }
+      return r.text().catch(() => '');
+    }),
+  );
+  // Joined with a comment separator so a pattern cannot be formed
+  // ACROSS a file boundary by concatenation.
+  const js = bodies.filter(Boolean).join('\n/*|*/\n');
   if (!js) return { ok: false, note: 'config NOT READ — scripts could not be fetched' };
 
   const cb = CB_CONFIGURED.test(js);
@@ -204,6 +225,7 @@ const browser = await chromium.launch({
 
 let clean = 0;
 let configBad = 0;
+let configSkipped = 0;
 let emitted = 0;
 let unverified = 0;
 
@@ -296,6 +318,10 @@ for (const url of targets) {
   // navigation failed or landed elsewhere: then the scripts are not
   // this deployment's, and reading them proves nothing. A mount that
   // times out does NOT suppress it — the bundle still shipped.
+  // Null means "not evaluated"; the reporting below turns that into an
+  // explicit SKIP rather than silently omitting one of the two evidence
+  // lines and leaving the summary reading `0 config not confirmed`
+  // (Codex #1857 r4). The README promises a line per check.
   let config = null;
   if (navigatedOk) {
     config = await assertBundleSettings(page, new URL(url).origin).catch((e) => ({
@@ -335,6 +361,11 @@ for (const url of targets) {
   if (config) {
     console.log(`${config.ok ? 'PASS  ' : 'FAIL  '}${url} — ${config.note}`);
     if (!config.ok) configBad++;
+  } else {
+    console.log(
+      `SKIP  ${url} — config not inspected: navigation did not reach this origin`,
+    );
+    configSkipped++;
   }
 
   if (!didEmit && !isUnverified && !configFailed) clean++;
@@ -351,6 +382,8 @@ await browser.close();
 // An impossible summary discredits the numbers beside it.
 console.log(
   `\n${clean} clean, ${emitted} emitting telemetry, ${unverified} not verifiably exercised, ` +
-    `${configBad} config not confirmed (of ${targets.length}).`,
+    `${configBad} config not confirmed` +
+    (configSkipped ? `, ${configSkipped} config skipped` : '') +
+    ` (of ${targets.length}).`,
 );
 process.exit(emitted + unverified + configBad === 0 ? 0 : 1);
