@@ -2100,9 +2100,20 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before)
     return {
       async sample() {
         if (!loan || seen) return;
+        // A TRANSITION, not a state (Codex #1853 r25). Without the
+        // baseline test the first sample of an ALREADY-unjumpable
+        // position records an "excursion" that never happened — and
+        // because the verdict consults this before its
+        // already-unjumpable arm, the run would report the wrong one
+        // of the two, which is the confidently-wrong diagnosis round
+        // 22 was about, reintroduced by round 24's fix.
+        if (snapshotJumpable(before, observed) !== true) return;
         if (tick++ % EVERY !== 0) return;
         const mid = await jumpabilitySnapshot(loan);
         if (mid && snapshotJumpable(mid, observed) === false) {
+          // `jumpabilityMoved` is the authority on WHAT moved; the
+          // fallback only covers an input it does not model, and is
+          // reachable only because the baseline above was jumpable.
           seen = jumpabilityMoved(before, mid) ?? 'the position stopped being sellable mid-probe';
         }
       },
@@ -2464,6 +2475,30 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before)
         if (audit.advancedJumps === 0) return await noJumpVerdict(false);
         return { advancedOffered: false, advancedWhy: 'already in Advanced', ...audit };
       }
+    }
+    // THE PRE-CONDITION OF THE ASSERTION, finally checked (Codex #1853
+    // r25). The whole claim this branch makes is "the switch REVEALED
+    // the jumps" — and it never established the half that makes that a
+    // claim at all: that they were absent beforehand. A regression
+    // leaking the Advanced jump buttons into Basic while leaving the
+    // switch rendered produced a clean run, because the probe clicked,
+    // found buttons, audited their anchors and passed.
+    //
+    // A FAIL rather than BLOCKED: the switch is on the page, which
+    // means the card believes it is in Basic mode, and Basic mode
+    // showing the Advanced controls is a product defect observed
+    // directly rather than an ambiguity.
+    const jumpsBeforeSwitch = await jumpsOf().count();
+    if (jumpsBeforeSwitch > 0) {
+      return {
+        advancedOffered: true,
+        advancedJumps: jumpsBeforeSwitch,
+        advancedAnchorsOk: false,
+        advancedWhy:
+          `the Basic-mode switch was offered alongside ${jumpsBeforeSwitch} jump ` +
+          'button(s) that should only exist in Advanced — the mode transition ' +
+          'this run asserts had already happened, or never applied',
+      };
     }
     await sw.first().click({ timeout: 10_000 });
     // WAIT FOR READINESS, not a fixed sleep (Codex #1853 r7). Switching
