@@ -373,6 +373,35 @@ describe('missingSwitchVerdict — what a missing switch means', () => {
     expect(missingSwitchVerdict({ ready: null, jumpable: 'yes' })).toBe('blocked-malformed');
   });
 
+  it('separates OUR read failing from the card saying nothing (#1873)', () => {
+    // Both used to arrive as `null` and answer `unknown`, which tells
+    // the wait "this bundle publishes nothing, so trust what is
+    // rendered". That is right for a legacy build and is confidence
+    // this drive has not earned when its own `evaluate` threw.
+    expect(missingSwitchVerdict({ readFailed: true })).toBe('blocked-unreadable');
+    expect(missingSwitchVerdict(null)).toBe('unknown');
+  });
+
+  it('does not reuse blocked-failed for a read failure (#1873)', () => {
+    // `blocked-failed` is the CARD reporting that a prerequisite read of
+    // its own stopped without answering, and its reason names
+    // `data-chooser-ready="failed"`. Borrowing it here would state
+    // something about the page that never happened — one message
+    // serving two findings, which this file has been reviewed for.
+    expect(missingSwitchVerdict({ readFailed: true })).not.toBe('blocked-failed');
+    expect(missingSwitchVerdict({ ready: 'failed', jumpable: 'no' })).toBe('blocked-failed');
+  });
+
+  it('lets a read failure outrank any attributes that came with it', () => {
+    // Defensive: the sentinel is checked before every arm that reasons
+    // about published attributes, because a sampler that both threw and
+    // returned attributes is incoherent and the failure is the fact
+    // worth keeping.
+    expect(
+      missingSwitchVerdict({ readFailed: true, ready: 'ready', jumpable: 'yes' }),
+    ).toBe('blocked-unreadable');
+  });
+
   it('never returns an outcome outside its documented set (#1869)', () => {
     // The rename that named these for the CARD'S ANSWER rather than the
     // caller's verdict was mechanical, and a mechanical rename is
@@ -388,6 +417,7 @@ describe('missingSwitchVerdict — what a missing switch means', () => {
       'blocked-pending',
       'blocked-failed',
       'blocked-malformed',
+      'blocked-unreadable',
       'unknown',
     ]);
     const READY = [null, undefined, '', 'ready', 'pending', 'failed', 'raedy', 'Ready'];
@@ -401,6 +431,10 @@ describe('missingSwitchVerdict — what a missing switch means', () => {
       }
     }
     expect(missingSwitchVerdict(null)).toBe('unknown');
+    // The read-failure sentinel is not an attribute shape, so the grid
+    // above cannot produce it; fed here so the reachability assertion
+    // covers the whole union rather than the griddable part of it.
+    seen.add(missingSwitchVerdict({ readFailed: true }));
     // And every documented outcome is REACHABLE — a union member no
     // input can produce is either dead or a typo, and both are worth
     // knowing about.

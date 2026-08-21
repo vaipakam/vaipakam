@@ -229,8 +229,10 @@ export function excursionExplains(result, excursion) {
  * in `readinessAgreesWithControls` and in the reporter, where the rest
  * of the page's state is known.
  *
- * @param {{ready: string|null, jumpable: string|null}|null} v
- *   the card's attributes, or null when it publishes none
+ * @param {{ready: string|null, jumpable: string|null}|{readFailed: true}|null} v
+ *   the card's attributes; null when it publishes none; or
+ *   `{readFailed: true}` when the sampler's own read threw and never
+ *   saw the card at all (#1873)
  *
  * ONLY AN EXPLICIT `no` BUYS THE CLEAN ABSENCE (Codex #1853 r29). The
  * first version returned `claims-unjumpable` for every `jumpable` that
@@ -240,12 +242,13 @@ export function excursionExplains(result, excursion) {
  * The one verdict that ends the review cleanly is the one that has to
  * be stated outright.
  *
- * @returns {'claims-jumpable'|'claims-unjumpable'|'blocked-pending'|'blocked-failed'|'blocked-malformed'|'unknown'}
+ * @returns {'claims-jumpable'|'claims-unjumpable'|'blocked-pending'|'blocked-failed'|'blocked-malformed'|'blocked-unreadable'|'unknown'}
  *   `unknown` means the card said nothing at all and the caller keeps
  *   its own pre-#1855 verdict — an older bundle must not be reported
  *   as a product defect. `blocked-malformed` is the opposite case: the
  *   card IS publishing the contract and got it wrong, which is a
- *   finding rather than a deployment gap.
+ *   finding rather than a deployment gap. `blocked-unreadable` is neither:
+ *   it is this drive failing to look, and says nothing about the card.
  */
 export function missingSwitchVerdict(v) {
   // `unknown` means SILENCE, and nothing else (Codex #1853 r30). The
@@ -256,6 +259,10 @@ export function missingSwitchVerdict(v) {
   // legacy bundle: it is publishing, and it is wrong, which is exactly
   // the state a broken observability attribute would produce while
   // hiding the regression it was added to expose.
+  // OUR READ FAILED, which is not the card saying anything (#1873).
+  // Checked FIRST because every arm below reasons about what the card
+  // published, and this sampler never got to see it.
+  if (v?.readFailed) return 'blocked-unreadable';
   if (!v) return 'unknown';
   const said = v.ready !== null && v.ready !== undefined;
   const saidJumpable = v.jumpable !== null && v.jumpable !== undefined;
