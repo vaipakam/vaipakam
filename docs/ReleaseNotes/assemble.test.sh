@@ -1010,7 +1010,18 @@ out="$W/docs/ReleaseNotes"
 bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
 chmod 600 "$out/ReleaseNotes-2026-08-16.md"
 mkdir -p "$W/fakebin"
-printf '#!/bin/sh\nexit 1\n' > "$W/fakebin/stat"
+# Format-aware: the owner query must still succeed, or the run aborts at the
+# ownership check ahead of this one and the case stops testing the mode branch
+# it is named for.
+cat > "$W/fakebin/stat" <<SHIM
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in
+    '%u') echo $(id -u); exit 0 ;;
+  esac
+done
+exit 1
+SHIM
 chmod +x "$W/fakebin/stat"
 printf '## later note\n' > "$W/docs/ReleaseNotes/unreleased/0011-later.md"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
@@ -1073,11 +1084,12 @@ mkdir -p "$W/fakebin"
 # A shim that printed for both was already rejected by the old chain — because
 # the captured output became "644\n644" and failed the shape check — so it
 # reproduced nothing. The finding needs exactly one plausible-looking answer.
-cat > "$W/fakebin/stat" <<'SHIM'
+cat > "$W/fakebin/stat" <<SHIM
 #!/bin/sh
-for a in "$@"; do
-  case "$a" in
-    -c) echo 644; exit 3 ;;
+for a in "\$@"; do
+  case "\$a" in
+    '%u') echo $(id -u); exit 0 ;;
+    '%a') echo 644; exit 3 ;;
   esac
 done
 exit 1
@@ -1170,6 +1182,55 @@ else
   check "the mode is preserved"   "$(mode_of "$out/ReleaseNotes-2026-08-16.md")"  "460"
 fi
 chmod 644 "$out/ReleaseNotes-2026-08-16.md"
+
+echo "T40: an output owned by someone else is refused, not silently taken over"
+W="$ROOT/t40"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+printf '## later note\n' > "$W/docs/ReleaseNotes/unreleased/0015-later.md"
+# Replacing a file by renaming another over it installs a NEW inode owned by
+# the runner, so a shared dated file changes hands silently (Codex #1863 r14).
+# Only root can stage this by chowning to another uid.
+if [ "$(id -u)" != "0" ]; then
+  ok "skipped — cannot chown to another user unprivileged (CI runs as non-root; staged here)"
+else
+  chown 65534 "$out/ReleaseNotes-2026-08-16.md"
+  msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "the run stops"           "$?"                              "1"
+  # Two: 0002-b belongs to the other day and was held back by the first run,
+  # plus the one just added. Neither may be consumed by a refused run.
+  check "no fragment is consumed" "$(pending "$W")"                 "2"
+  check "it names the owner"      "$(says "$msg" 'owned by uid 65534')" "1"
+  check "the file still belongs to them" \
+    "$(stat -c '%u' "$out/ReleaseNotes-2026-08-16.md" 2>/dev/null \
+       || stat -f '%u' "$out/ReleaseNotes-2026-08-16.md")" "65534"
+  chown 0 "$out/ReleaseNotes-2026-08-16.md"
+fi
+
+echo "T41: the fragment deleted is the one that was checked"
+W="$ROOT/t41"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Hash-the-path then remove-the-path leaves a window: bytes written between the
+# two are deleted having never reached $OUT. Quarantining first makes the
+# checked object and the deleted object the same inode (Codex #1863 r14). The
+# shim writes the fragment during the read, so the re-hash differs.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<'SHIM'
+#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    */unreleased/*) printf '## rewritten mid-run\n' > "$a" ;;
+  esac
+done
+exec /usr/bin/sed "$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the run succeeds"        "$?"                                 "0"
+check "the new bytes survive somewhere" \
+  "$(grep -rl 'rewritten mid-run' "$W/docs/ReleaseNotes/unreleased" | wc -l | tr -d ' ')" "1"
+check "it says it set one aside" "$(says "$msg" 'set aside as')"      "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

@@ -273,6 +273,26 @@ fi
 # transaction that deletes files, so "the other run is probably dead" is
 # not a judgement to make on the operator's behalf.
 LOCK="$UNREL/.assemble.lock"
+# Armed BEFORE the `mkdir`, not after (Codex #1863 r14). A SIGINT landing
+# between acquiring the lock and installing the trap would leave it
+# behind — and the README and header promise that Ctrl-C releases it.
+# `LOCK_HELD` is what keeps a losing contender from removing the lock
+# that is legitimately someone else's: the trap only ever clears a lock
+# this process created.
+LOCK_HELD=0
+WORK=""
+# ONE cleanup for every exit path. Separate traps drifted apart once
+# already: the EXIT trap was later replaced with one that also removed
+# the temp file, which left the signal traps still cleaning only the
+# lock. A single function cannot fall out of step with itself.
+_cleanup() {
+  [ -n "$WORK" ] && rm -f "$WORK"
+  (( LOCK_HELD )) && rmdir "$LOCK" 2>/dev/null
+  return 0
+}
+trap '_cleanup' EXIT
+trap '_cleanup; exit 130' INT
+trap '_cleanup; exit 143' TERM
 if ! mkdir "$LOCK" 2>/dev/null; then
   echo "Error: another assembly appears to be running." >&2
   echo "" >&2
@@ -285,8 +305,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   echo "  rmdir '$LOCK'" >&2
   exit 1
 fi
-_release_lock() { rmdir "$LOCK" 2>/dev/null || true; }
-trap '_release_lock' EXIT
+LOCK_HELD=1
 
 # Collect pending fragments — every *.md except the README + template.
 shopt -s nullglob
@@ -865,7 +884,7 @@ pending=()
 ambiguous=()
 for f in "${frags[@]}"; do
   h="${FRAG_HASH[$f]}"
-  if [ -n "${marker_seen[$h|$(basename "$f")|$OUT]+set}" ]; then
+  if [ -n "${marker_seen[$h|${FRAG_NAME[$f]}|$OUT]+set}" ]; then
     already+=("$f")
   elif [ -n "${marker_where[$h]+set}" ]; then
     ambiguous+=("$f")
@@ -1043,10 +1062,6 @@ fi
 # filesystem — across a mount boundary `mv` degrades to copy-then-unlink
 # and stops being atomic, which is the whole point of doing it this way.
 WORK="$(mktemp "$DIR/.assemble-$DATE.XXXXXX")"
-# Both, not just the temp file: a bare `rm -f "$WORK"` here REPLACES the
-# lock-release trap set above, so an interrupted run would leave the lock
-# behind and block every later assembly for this date.
-trap 'rm -f "$WORK"; _release_lock' EXIT
 # `mktemp` creates 0600, and `mv` carries that mode onto $OUT — so every
 # successful assembly would quietly turn a world-readable release-notes
 # file into an owner-only one, or create the new one that way (Codex
@@ -1061,6 +1076,39 @@ trap 'rm -f "$WORK"; _release_lock' EXIT
 # (Codex #1863 r13). Resolve early so a failure aborts before anything is
 # consumed; apply late so the build is never locked out of its own file.
 if [ -f "$OUT" ]; then
+  # OWNERSHIP cannot survive the rename (Codex #1863 r14). Replacing a
+  # file by renaming another over it installs a NEW inode, owned by
+  # whoever ran the script — so a dated file owned by someone else, on a
+  # shared checkout, silently changes hands and only the new owner can
+  # chmod it afterwards. The old append wrote THROUGH the existing inode
+  # and kept all of that.
+  #
+  # Unprivileged `chown` back is not available, so the honest options are
+  # to change ownership silently or to refuse. It refuses: a metadata
+  # change nobody asked for, on a file shared with another user, is not
+  # something to do as a side effect of assembling release notes.
+  _ow_rc=0
+  out_uid="$(stat -c '%u' "$OUT" 2>/dev/null)" || _ow_rc=$?
+  if (( _ow_rc != 0 )); then
+    _ow_rc=0
+    out_uid="$(stat -f '%u' "$OUT" 2>/dev/null)" || _ow_rc=$?
+  fi
+  if (( _ow_rc != 0 )) || [[ ! "$out_uid" =~ ^[0-9]+$ ]]; then
+    echo "Error: could not read the owner of $(basename "$OUT")." >&2
+    echo "Refusing to assemble: replacing it installs a new file, so the" >&2
+    echo "current ownership has to be known before that is safe to do." >&2
+    exit 1
+  fi
+  if [ "$out_uid" != "$(id -u)" ]; then
+    echo "Error: $(basename "$OUT") is owned by uid $out_uid, not by you." >&2
+    echo "" >&2
+    echo "Refusing to assemble: this script replaces the dated file by" >&2
+    echo "renaming a new one over it, which would transfer ownership to you" >&2
+    echo "and leave the current owner unable to change its permissions." >&2
+    echo "Ask the owner to run the assembly, or take ownership deliberately" >&2
+    echo "before re-running." >&2
+    exit 1
+  fi
   # GNU first, then BSD. If BOTH fail the mode is UNKNOWN, and falling
   # back to the new-file default would silently WIDEN an existing file —
   # a deliberately restricted 0600 becoming 0644 under the usual umask,
@@ -1173,10 +1221,11 @@ done
 # Applied to the FINISHED file, so nothing above can be locked out of it.
 chmod "$FINAL_MODE" "$WORK"
 mv "$WORK" "$OUT"
-# $WORK no longer exists, so drop only its cleanup — the lock must stay
-# held until the fragments below are deleted, which is the rest of the
-# transaction.
-trap '_release_lock' EXIT
+# $WORK has become $OUT, so clear the variable rather than the trap: the
+# lock must stay held until the fragments below are deleted, which is the
+# rest of the transaction, and `_cleanup` reads this to decide whether
+# there is still a temp file to remove.
+WORK=""
 
 # Only now are the fragments consumed. An interruption between the rename
 # and these deletes leaves fragments pending whose content IS already in
@@ -1199,24 +1248,40 @@ trap '_release_lock' EXIT
 # buried.
 _kept=()
 for f in "${frags[@]}"; do
-  run_checked 0 "re-hashing ${FRAG_NAME[$f]} before removing it" frag_hash "$f"
+  # QUARANTINE first, then check, then delete (Codex #1863 r14). Hashing
+  # the path and then removing the path leaves a window: an editor
+  # writing between the two has its bytes deleted, so the earlier
+  # "nothing is deleted on a stale hash" was a stronger claim than
+  # check-then-remove could support. `mv` within one directory is a
+  # rename(2), so after it the inode we hold cannot be written by anyone
+  # still addressing the old path — a save there creates a NEW file,
+  # which is left alone and stays pending, exactly as it should. The
+  # object checked and the object deleted are now the same one by
+  # construction.
+  _q="$UNREL/.assembled.$$.${FRAG_NAME[$f]}"
+  mv "$f" "$_q"
+  run_checked 0 "re-hashing ${FRAG_NAME[$f]} before removing it" frag_hash "$_q"
   if [ "$CAPTURED" = "${FRAG_HASH[$f]}" ]; then
-    rm "$f"
+    rm "$_q"
   else
-    _kept+=("${FRAG_NAME[$f]}")
+    # Deliberately NOT moved back: the editor may already have written a
+    # new file at the original path, and restoring over it would destroy
+    # the very text this branch exists to protect.
+    _kept+=("${FRAG_NAME[$f]} -> $(basename "$_q")")
   fi
 done
 
 if (( ${#_kept[@]} > 0 )); then
   echo "" >&2
-  echo "Kept (changed while this run was reading them):" >&2
+  echo "Kept (changed while this run was reading them), set aside as:" >&2
   printf '  %s\n' "${_kept[@]}" >&2
   echo "" >&2
   echo "$(basename "$OUT") holds the version read at the start of the run, and" >&2
-  echo "its marker records THAT version — so these fragments are not" >&2
-  echo "recognised as folded in and were left in place rather than deleted." >&2
-  echo "Compare them against the assembled file and remove them by hand once" >&2
-  echo "you are satisfied nothing was lost." >&2
+  echo "its marker records THAT version — so these are not recognised as" >&2
+  echo "folded in and were set aside rather than deleted. They are in" >&2
+  echo "$UNREL under the shown names." >&2
+  echo "Compare them against the assembled file, then delete them or restore" >&2
+  echo "the name by hand once you are satisfied nothing was lost." >&2
 fi
 
 echo "Assembled ${#frags[@]} fragment(s) -> $OUT"
