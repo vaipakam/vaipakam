@@ -551,9 +551,11 @@ either. The fee path reads the consent flag at the moment a fee is charged, so
 for as long as the consent is off — three transactions' worth of time — any
 offer of yours that somebody accepts, and any loan of yours that settles, is
 charged at the full rate. Nobody needs your permission to accept a standing
-offer, and a loan can settle without you. So the pages now say to cancel
-standing offers and pick a quiet moment before starting, rather than presenting
-the sequence as free.
+offer, and a loan can settle without you. At the time, the pages answered that
+by telling readers to cancel standing offers and pick a quiet moment first,
+rather than presenting the sequence as free. That advice is superseded: the
+procedure it qualifies was withdrawn outright a round later, for the reason given
+below, so there is no longer a sequence to time carefully.
 
 That warning, as first written, then overshot in the other direction: it said
 such a charge lands **at the full rate**. Not quite. A Full tariff already paid
@@ -671,9 +673,12 @@ the wrong thing to publish: each half of it spends cross-chain budget the
 protocol funds, and the code says in as many words that repeated toggling drains
 that budget. A procedure that is harmless once and harmful at scale should not
 be printed on a page read by everyone. The pages now say plainly that there is
-no supported way to refresh an unchanged tier, that the discount returns by
-itself the next time the tier moves, and that this is the one condition here
-that can cost someone their discount through no fault of their own.
+no supported way to refresh an unchanged tier, and that the discount returns
+only when a later broadcast carries an eligible non-zero tier. Movement alone is
+not enough: a withdrawal below the first tier floor also counts as a change and
+broadcasts tier 0, which a mirror reads as no discount at all — and climbing back
+then runs the minimum-holding delay again. This is the one condition here that
+can cost someone their discount through no fault of their own.
 
 The through-line in all three is the same and worth naming once: each wrong
 sentence was written from what the mechanism seemed to imply, and each was
