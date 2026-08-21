@@ -10,9 +10,13 @@ made and withdrawn in review when two further problems came to light.
 **Both were subsequently solved, and the pause was lifted.** A chain now prices
 those days from its own record of what it was funded, and a day it cannot yet
 cover **waits** rather than stopping the chain: the wait ends by itself when the
-funding arrives. What remains is a per-day pause on a day whose funding record
-has not landed at all — a materially different thing from the chain-wide stop it
-replaced, because a chain-wide stop had no way to end on its own.
+funding arrives. Two per-day waits remain, and both are materially different
+from the chain-wide stop they replaced, because a chain-wide stop had no way to
+end on its own: a day whose funding record has not landed at all, and a day that
+was deliberately recorded as zero and is still awaiting its separately-sized
+compensation — the second of which holds a funding record and waits anyway,
+precisely so its rewards are not retired for nothing before the compensation
+reaches them.
 
 **The documentation did not follow.** Thirteen separate places across nine files
 still told the reader the pause was in force and that the attempt to lift it had
@@ -35,6 +39,14 @@ them would have introduced errors of the opposite kind. A day whose funding
 record never arrives genuinely does still halt, so that sentence is accurate. A
 dated release note from the period is a historical record of what was true when
 written. And an unrelated deployment pause merely shares the vocabulary.
+
+**A correction introduced by this change, and caught in its own review.** The
+first version of this note said the only remaining wait was a day whose funding
+record had not landed. That was a new inaccuracy of exactly the kind the change
+set out to remove — a stamped day that was deliberately zeroed also waits, and
+saying otherwise would have understated when a reader should expect rewards to
+pause. Thirteen stale statements were corrected here; introducing a fourteenth
+while doing it is the failure mode worth naming rather than quietly fixing.
 
 **The specification change is a recorded decision, not a transcription.** These
 documents are written from the project's stated intent and never copied from the

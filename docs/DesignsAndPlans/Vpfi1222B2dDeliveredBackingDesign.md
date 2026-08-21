@@ -81,14 +81,15 @@ that legitimately lights it up):
   `LibVpfiRecycle.consume(recycleConsume)`. §2e.1 superseded it before
   implementation: consuming at arrival would debit the same tokens twice,
   because claims already debit as they pay.)*
-- **B2-d4 — Mirror armed-day pricing ON. ✅ DELIVERED by #1434 P1-b (`83483149e`); the history below is why the FIRST attempt was withdrawn. ⚠️ ATTEMPTED AND WITHDRAWN — the halt
-  STAYS; see §2g and #1434.** P5. The intent was to remove the
+- **B2-d4 — Mirror armed-day pricing ON. ✅ DELIVERED by #1434 P1-b
+  (`83483149e`); #1434 is closed.** P5. The rest of this entry is HISTORY: it
+  records why the FIRST attempt was withdrawn. The intent was to remove the
   `_dayPoolHalves` mirror halt and keep only the genuine `!stamped` wait.
-  Review (#1433 r2) showed that is not yet safe: the halt also guards the
-  FRESH side, which has no delivered-funding bound on a mirror, and stops
+  Review (#1433 r2) found that was not yet safe: the halt also guarded the
+  FRESH side, which had no delivered-funding bound on a mirror, and stopped
   deliberately-zeroed (`remitIneligible`) days from advancing the cursor and
-  retiring their entries for zero. **Both prerequisites are tracked on #1434
-  and both must land before this slice can be retried.**
+  retiring their entries for zero. **Both prerequisites were tracked on #1434
+  and both landed before the slice was retried and delivered.**
   - The ordering gate below is now HISTORICAL — d5 shipped first (#1432) and
     discharged the precondition it names. It is kept because it records why
     the two were sequenced that way. **Original gate (Codex #1430 r3): d4 MUST
@@ -658,7 +659,10 @@ following either literally now would reintroduce an over-statement.
 wait". **That scope turned out to be incomplete, and d4 was WITHDRAWN** (owner
 decision after Codex #1433 r2: defer, keep the halt fail-closed, file a
 follow-up). **#1434 P1-b (`83483149e`) later discharged both prerequisites and
-removed the halt**; `_dayPoolHalves` now halts only on an unstamped day. This
+removed the halt**. `_dayPoolHalves` itself now halts only on an unstamped
+day; a stamped day can still WAIT, via the separate `_p2DayDeltas`
+zeroed-and-open state that defers a compensable day rather than retiring it for
+zero. Both are per-day waits that end when their funding arrives. This
 section is retained as the record of why, and of the two
 approaches tried and dropped along the way, so neither is repeated.
 
@@ -2239,8 +2243,9 @@ running sums land as new append-only tail fields.
   is the sole `.complete` writer; and the mirror pricing halt is removed by
   exactly one slice — **which #1434 P1-b (`83483149e`) delivered.** d4's first
   attempt was withdrawn with the halt left fail-closed; P1-b discharged both
-  prerequisites (§2g) and removed it. `_dayPoolHalves` now halts only on an
-  unstamped day. None of this may be reordered.
+  prerequisites (§2g) and removed it. `_dayPoolHalves` itself now halts only
+  on an unstamped day; a stamped `remitIneligible` day still defers through
+  `_p2DayDeltas`'s zeroed-and-open state. None of this may be reordered.
 - **Per-chain commitment bound** (becomes real in d3): stated in governor
   §7 #6 and **not reproduced here** — a copy is what let this line carry the
   bare `chainConsumedRecycled[c] ≤ chainReportedRecycled[c]` long after B3's
