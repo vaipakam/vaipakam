@@ -2341,6 +2341,28 @@ _final_gate() {
       exit 1
     fi
   done
+  # The SOURCE directory as well (Codex #1863 r36). A rename removes the
+  # source entry, so `mv` needs write permission on BOTH directories —
+  # $UNREL turning read-only during `_persist` leaves the destination
+  # probe passing and the set-aside move failing after publication.
+  local _s_probe=""
+  trap '' INT TERM
+  if ! _s_probe="$(mktemp "$UNREL/.probe.XXXXXX" 2>/dev/null)"; then
+    trap '_cleanup; exit 130' INT
+    trap '_cleanup; exit 143' TERM
+    echo "Error: entries can no longer be created in $UNREL." >&2
+    _refuse_reporting_consumed
+  fi
+  PROBE="$_s_probe"
+  trap '_cleanup; exit 130' INT
+  trap '_cleanup; exit 143' TERM
+  if ! rm "$_s_probe" 2>/dev/null; then
+    rm -f "$_s_probe" 2>/dev/null || :
+    PROBE=""
+    echo "Error: entries can no longer be removed from $UNREL." >&2
+    _refuse_reporting_consumed
+  fi
+  PROBE=""
 }
 
 # The atomic step. Until this line $OUT is untouched, so an interruption
@@ -2392,6 +2414,18 @@ fi
 # validated as absent and then overwritten anyway. A slow step belongs on
 # the far side of the last look, never between it and the act.
 _persist() { sync "$@" 2>/dev/null || sync 2>/dev/null || true; }
+# The bytes this run BUILT, recorded before the flush (Codex #1863 r36).
+# Reading the hash back off $OUT after the rename adopts whatever is
+# there rather than checking it is what was constructed — so $WORK
+# altered during `_persist`, which is deliberately slow, was published
+# and then vouched for by its own digest, with the fragments consumed on
+# the strength of it.
+_exp_rc=0
+EXPECTED_ID="$(frag_hash "$WORK")" || _exp_rc=$?
+if (( _exp_rc != 0 )) || [[ ! "$EXPECTED_ID" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "Error: could not hash the replacement before publishing it." >&2
+  _refuse_reporting_consumed
+fi
 _persist "$WORK"
 
 # ── Last look at the output before replacing it ──────────────────────────────
@@ -2423,6 +2457,12 @@ _pub_rc=0
 PUBLISHED_ID="$(frag_hash "$OUT")" || _pub_rc=$?
 if (( _pub_rc != 0 )) || [[ ! "$PUBLISHED_ID" =~ ^[0-9a-f]{64}$ ]]; then
   _abort_after_write "could not read $(basename "$OUT") back after writing it"
+fi
+# COMPARED with what was built, not merely recorded. Otherwise the
+# readback is a tautology: whatever landed becomes the thing every later
+# check agrees with.
+if [ "$PUBLISHED_ID" != "$EXPECTED_ID" ]; then
+  _abort_after_write "$(basename "$OUT") does not hold the bytes this run built"
 fi
 
 # The directory entry too, for the same reason: the rename itself is

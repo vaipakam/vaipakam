@@ -2996,6 +2996,65 @@ check "it names the reused name"  "$(says "$msg" '0001-a.md')"              "1"
 check "the new text survives" \
   "$(count_in 'saved under the same name' "$W/docs/ReleaseNotes/unreleased/0001-a.md")" "1"
 
+echo "T109: the published file must hold the bytes this run built"
+W="$ROOT/t109"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Reading the hash back off $OUT after the rename adopts whatever is there
+# rather than checking it is what was constructed — so $WORK altered during the
+# deliberately slow `_persist` was published and then vouched for by its own
+# digest, with the fragment consumed on the strength of it (Codex #1863 r36).
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  for a in "\$@"; do
+    case "\$a" in
+      *.assemble-*)
+        : > "$W/fired"
+        printf '# Release Notes — 2026-08-16\n\n## SUBSTITUTED\n' > "\$a"
+        ;;
+    esac
+  done
+fi
+exit 0
+SHIM
+chmod +x "$W/fakebin/sync"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run fails"          "$?"                                          "1"
+check "it says what is wrong"  "$(says "$msg" 'does not hold the bytes')"      "1"
+check "the fragment survives" \
+  "$(grep -rl '0001-a' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
+
+echo "T110: the gate probes the source directory as well as the destination"
+W="$ROOT/t110"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A rename removes the SOURCE entry, so `mv` needs write permission on both
+# directories. $UNREL turning read-only during `_persist` left the destination
+# probe passing and the set-aside move failing after publication
+# (Codex #1863 r36).
+check "the source is probed too" \
+  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -cF 'UNREL/.probe')" "1"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  chmod 0555 "$W/docs/ReleaseNotes/unreleased" 2>/dev/null
+fi
+exit 0
+SHIM
+chmod +x "$W/fakebin/sync"
+if [ "$(id -u)" = "0" ]; then
+  check "skipped — root writes through mode bits (CI runs it)" "1" "1"
+else
+  msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "the run stops"         "$?"                                        "1"
+  check "nothing was published" \
+    "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
+fi
+chmod 0755 "$W/docs/ReleaseNotes/unreleased" 2>/dev/null || true
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
