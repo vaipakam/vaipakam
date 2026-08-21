@@ -665,10 +665,16 @@ the zeroed-day one, P1-b (`83483149e`) met the delivered-fresh one and then
 lifted the halt. `_dayPoolHalves` itself now halts only on an unstamped
 day; a stamped day can still WAIT, via the separate `_p2DayDeltas`
 zeroed-and-open state that defers a compensable day rather than retiring it for
-zero. Both are per-day waits, but they end on different things: the unstamped
-one on funding arriving, the zeroed-and-open one on its compensation being
-both funded AND settled — a fully funded compensation still defers while its
-quote is undispatched or its credit provisional. This
+zero. Both are per-day waits, but they end on different things. The unstamped one
+ends on funding arriving, and on nothing else — if the stamp never comes it
+waits indefinitely. The zeroed-and-open one has three exits: its compensation
+becoming both funded AND settled (a fully funded compensation still defers while
+its quote is undispatched or its credit provisional), or, past the frozen
+expiry, either permissionless lapse terminal — `lapseZeroedDay` for an
+uncompensated day, `lapseShortCompensatedDay` for a confirmed-but-underfunded
+one. Both make `_p2DayDeltas` retire the day at zero. That is the difference
+that matters operationally: only ONE of these two waits can be ended by someone
+who is not holding the missing funding. This
 section is retained as the record of why, and of the two
 approaches tried and dropped along the way, so neither is repeated.
 
