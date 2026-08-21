@@ -314,8 +314,8 @@ collateral。如果发生 default 或 liquidation，也请查看一下。系统�
 取决于 loan 是如何结束的：如果 collateral 经交易所被卖出，剩余部分
 会以 loan 自身的 asset 到您手中。如果它是被交出而非卖出，等着您的
 就是 collateral 本身。交出它的情况不止一种，且都与 loan 以哪种方式结束无关：liquidator 按折扣直接拿走，close-out 没有卖出、
-而是在协议内部与一个反向 position 撮合，或者这笔卖出根本没能成交——但那里只有在 claim 时的第二次尝试也失败时，collateral 才会给到您；若成功，仍按 loan 自身的
-asset 支付。普通 liquidation 和 default 都会在去交易所之前先找这种内部撮合，所以这两种的结果都不是固定的——请读
+而是在协议内部与一个反向 position 撮合，或者这笔卖出根本没能成交——那里 collateral 会给到您——除非 lender 在 claim 时带来一份能成交的报价，那样就按 loan 自身的 asset
+支付；而大多数并不带报价。普通 liquidation 和 default 都会在去交易所之前先找这种内部撮合，所以这两种的结果都不是固定的——请读
 claim，而不要从结束方式去推断。按折扣直接拿走是例外，而且是反方向的确定：它从不卖出，留给您的始终是 collateral。在无法定价的 collateral 上发生
 default 时，往往整个 basket 都会被取走、什么也不剩，但那是结果，不是规则。
 永远不会回来的是费用 rebate：仍在已停用 VPFI 费用路径上的 loan，其为

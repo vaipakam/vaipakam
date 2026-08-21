@@ -665,8 +665,8 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
   경우 — 잔여는 loan의 principal asset으로 도착합니다. 넘겨진
   경우 남는 것은 collateral 그 자체이며, vault에 encumbered
   상태로 있습니다. 넘기는 경로는 여럿이고, 모두 loan이 어떻게 끝났는지와는 무관합니다: liquidator가 할인된 값에 직접 가져가는
-  경우, close-out이 거래소로 가지 않고 내부에서 반대편 position과 매칭되는 경우, 그리고 매각 자체가 성사되지 못한 경우 — 다만 그때 collateral이 오는 것은 claim 시점의 재시도까지 실패했을
-  때뿐이고, 재시도가 성공하면 loan의 asset으로 지급됩니다. 일반 liquidation도 시간 기반
+  경우, close-out이 거래소로 가지 않고 내부에서 반대편 position과 매칭되는 경우, 그리고 매각 자체가 성사되지 못한 경우 — 그때는 collateral이 옵니다 — claim 시점에 lender가 통하는 견적을 가져오지 않는 한 그렇고, 가져오면
+  loan의 asset으로 지급됩니다. 대부분의 claim은 견적을 아예 가져오지 않습니다. 일반 liquidation도 시간 기반
   default도 거래소로 가기 전에 그 내부 매칭을 먼저 시도하므로, 이 두 경로는 결과가 늘 같지는 않습니다 —
   그래서 경로가 아니라 claim을 읽어야 합니다. 할인 경로는 오히려 예측 가능합니다. 다만 반대 방향으로: 팔지도
   매칭하지도 않으므로 언제나 collateral이 남습니다. 부분

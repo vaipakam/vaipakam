@@ -777,10 +777,10 @@ prêt s'est réglé :
   est le collatéral lui-même, grevé dans ton vault. Plus d'une chose le remet, et aucune ne dépend de la clôture par
   laquelle tu es passé : un liquidateur qui prend le collatéral
   directement avec une décote, une clôture appariée en interne contre
-  une position opposée au lieu d'être envoyée sur le marché, et une vente qui n'a pas pu aboutir — mais là tu ne reçois le
-  collatéral que si la nouvelle tentative au moment de la
-  réclamation échoue elle aussi ; si elle réussit, tu es payé dans
-  l'actif du prêt. La liquidation ordinaire comme un défaut temporel
+  une position opposée au lieu d'être envoyée sur le marché, et une vente qui n'a pas pu aboutir — là tu reçois le collatéral, sauf si le prêteur apporte une cotation
+  qui fonctionne au moment de la réclamation — tu es alors payé dans
+  l'actif du prêt ; la plupart des réclamations n'en apportent
+  aucune. La liquidation ordinaire comme un défaut temporel
   tentent cet appariement interne AVANT de passer par le marché, si
   bien qu'aucune de ces deux voies ne se termine toujours de la même
   façon — c'est pourquoi il faut lire la créance, et non la voie. La

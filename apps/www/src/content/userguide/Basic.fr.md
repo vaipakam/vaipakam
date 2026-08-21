@@ -381,9 +381,9 @@ lui-même. S'il a été remis à la place, c'est le collatéral lui-même
 qui t'attend. Plusieurs choses le remettent, quelle que soit la manière dont le prêt
 s'est terminé : un liquidateur qui le prend directement avec une décote,
 une clôture appariée à l'intérieur du protocole contre une position
-opposée plutôt que vendue, ou une vente qui n'a pas pu se faire — mais là tu n'as le collatéral
-que si la seconde tentative au moment de la réclamation échoue aussi ;
-si elle aboutit, tu es payé dans l'actif du prêt. Une liquidation
+opposée plutôt que vendue, ou une vente qui n'a pas pu se faire — là tu as le collatéral, sauf si le prêteur apporte une cotation qui
+fonctionne au moment de la réclamation — tu es alors payé dans l'actif
+du prêt ; la plupart n'en apportent aucune. Une liquidation
 ordinaire comme un défaut cherchent cet appariement interne avant
 d'aller sur le marché, donc aucun de ces deux-là ne finit toujours
 pareil : lis la réclamation plutôt que de le déduire de la façon dont

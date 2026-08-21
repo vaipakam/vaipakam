@@ -781,9 +781,9 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   Collateral selbst, verpfändet in deinem Vault. Mehr als eines übergibt es, und keines davon hängt daran, über welchen
   Close-out du gegangen bist: ein Liquidator, der das Collateral mit
   Abschlag direkt übernimmt, ein Close-out, der intern gegen eine
-  gegenläufige Position gematcht statt an eine Börse geschickt wird, und ein Verkauf, der nicht zustande kam — dort bekommst du das
-  Collateral aber nur, wenn auch der Retry beim Claim scheitert;
-  gelingt er, wirst du doch im Asset des Loans ausgezahlt. Die
+  gegenläufige Position gematcht statt an eine Börse geschickt wird, und ein Verkauf, der nicht zustande kam — dort bekommst du das Collateral, sofern der Lender beim Claim nicht
+  ein funktionierendes Quote mitbringt — dann wirst du im Asset des
+  Loans ausgezahlt; die meisten Claims bringen gar keins mit. Die
   gewöhnliche Liquidation und ein zeitbasierter Default versuchen
   dieses interne Matching, BEVOR sie zur Börse greifen, also endet
   keiner dieser beiden Wege immer gleich — genau deshalb liest man

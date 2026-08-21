@@ -589,8 +589,8 @@ borrower claim 根据 loan 如何 settle 来返回：
   也就是经交易所路由出去——剩余会以 loan 的 principal asset 到您手中。
   被交出，剩下的就是 collateral 本身，以 encumbered 状态留在您的
   vault 中。交出它的路径不止一条，而且都与 loan 以哪种方式结束无关：liquidator 按折扣直接拿走，close-out 没有
-  送去交易所、而是在内部与一个反向 position 撮合，以及这笔卖出根本没能成交——但那里只有在 claim 时的重试也失败时，collateral 才会到您手中；重试成功的话，仍然按 loan 的
-  asset 支付。普通 liquidation 和时间型 default
+  送去交易所、而是在内部与一个反向 position 撮合，以及这笔卖出根本没能成交——那里 collateral 会到您手中——除非 lender 在 claim 时带来一份能成交的报价，那样就按 loan 的 asset
+  支付；而大多数 claim 根本不带报价。普通 liquidation 和时间型 default
   都会在转向交易所之前先尝试这种内部撮合，所以这两条路径的结果都不是固定的——这正是应当去读
   claim，而不是从结束方式去推断的原因。折扣式拿走反而是确定的，只是方向相反：它既不卖出也不撮合，留给您的始终是 collateral。至于部分 liquidation，它根本不是
   close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要

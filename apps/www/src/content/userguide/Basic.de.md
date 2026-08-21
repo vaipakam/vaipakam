@@ -384,9 +384,9 @@ hat, hängt davon ab, wie der Loan endete: wurde das Collateral
 Loans. Wurde es stattdessen übergeben, wartet das Collateral selbst
 auf dich. Mehrerlei übergibt es, egal wie der Loan endete: ein Liquidator, der es
 mit Abschlag direkt übernimmt, ein Close-out, der protokollintern gegen
-eine gegenläufige Position gematcht statt verkauft wird, oder ein Verkauf, der nicht zustande kam — dort bekommst du das
-Collateral allerdings nur, wenn auch der zweite Versuch beim Claim
-scheitert; klappt er, wirst du im Asset des Loans ausgezahlt. Eine
+eine gegenläufige Position gematcht statt verkauft wird, oder ein Verkauf, der nicht zustande kam — dort bekommst du das Collateral, sofern der Lender beim Claim kein
+funktionierendes Quote mitbringt — dann wirst du im Asset des Loans
+ausgezahlt; die meisten bringen keins mit. Eine
 gewöhnliche Liquidation und ein Default suchen dieses interne
 Matching, bevor sie an eine Börse gehen, also endet keines von beiden
 immer gleich — lies den Claim, statt es aus der Endungsart zu erraten.

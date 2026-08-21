@@ -729,9 +729,9 @@ The borrower claim returns, depending on how the loan settled:
   thing hands it over, and none of them depends on which
   close-out you are in: a liquidator taking the collateral
   directly at a discount, a close-out matched internally against
-  an opposing position instead of being sent to an exchange, and a sale that could not be completed — though there the collateral
-  comes to you only if the retry at claim time fails as well; a
-  retry that succeeds pays you in the loan's asset after all. The
+  an opposing position instead of being sent to an exchange, and a sale that could not be completed — there the collateral comes to you unless the lender brings a working
+  quote when they claim, which pays you in the loan's asset instead
+  — and most claims bring no quote at all. The
   ordinary liquidation route and a time-based default both try that
   internal match BEFORE reaching for an exchange, so neither of
   those two ends reliably one way or the other, which is why the

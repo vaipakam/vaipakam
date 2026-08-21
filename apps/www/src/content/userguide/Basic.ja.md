@@ -359,8 +359,8 @@ collateral を返します。default または liquidation の場合も、いち
 によります。collateral が取引所を通して売られた場合、残りは loan
 自体の asset で届きます。売られずに引き渡された場合は、collateral
 そのものがあなたを待ちます。引き渡し方は複数あり、loan の終わり方には関係ありません: liquidator が割引で直接引き取る場合、
-close-out が売られずにプロトコル内部で反対側の position とマッチした場合、そして売却そのものが成立しなかった場合です — ただし collateral が来るのは claim
-時の二度目も失敗したときだけで、それが成功すれば loan 自体の asset で支払われます。通常の liquidation も
+close-out が売られずにプロトコル内部で反対側の position とマッチした場合、そして売却そのものが成立しなかった場合です — そのときは collateral が来ます。claim 時に lender が通る見積もりを持ち込まないかぎりで、持ち込めば loan 自体の
+asset で支払われます。大半は持ち込みません。通常の liquidation も
 default も、取引所に向かう前にその内部マッチを探します。つまりこの二つは結果が一定ではないということで、終わり方から推測せず claim
 を読んでください。割引での引き取りは例外で、逆向きに確定しています: 売ることがないので、残るのは常に collateral です。価格を付けられない collateral の
 default では、バスケット全体が失われ何も残らないことも多いですが、

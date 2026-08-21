@@ -341,8 +341,8 @@ loan을 full repay했다면 borrower claim은 시작할 때 lock한 collateral�
 collateral이 거래소를 거쳐 팔렸다면 남은 몫은 loan 자체의 asset으로
 도착합니다. 팔리지 않고 넘겨졌다면 collateral 자체가 여러분을 기다립니다.
 넘기는 경우는 여럿이며, loan이 어떻게 끝났는지와는 무관합니다: liquidator가 할인된 값에 직접 가져가는 경우,
-close-out이 팔리지 않고 프로토콜 내부에서 반대편 position과 매칭되는 경우, 그리고 매각 자체가 성사되지 못한 경우 — 다만 그때 collateral이 오는 것은 claim 시점의 두 번째 시도까지
-실패했을 때뿐이고, 그것이 성공하면 loan 자체의 asset으로 지급됩니다. 일반 liquidation도 default도
+close-out이 팔리지 않고 프로토콜 내부에서 반대편 position과 매칭되는 경우, 그리고 매각 자체가 성사되지 못한 경우 — 그때는 collateral이 옵니다 — claim 시점에 lender가 통하는 견적을 가져오지 않는 한 그렇고, 가져오면
+loan 자체의 asset으로 지급됩니다. 대부분은 견적을 가져오지 않습니다. 일반 liquidation도 default도
 거래소로 가기 전에 그 내부 매칭을 먼저 찾으므로, 이 둘은 결과가 늘 같지는 않습니다 — 어떻게 끝났는지로 짐작하지 말고
 claim을 읽으세요. 할인된 값의 직접 인수는 예외이고, 반대 방향으로 예측 가능합니다: 팔지 않으므로 언제나
 collateral이 남습니다.

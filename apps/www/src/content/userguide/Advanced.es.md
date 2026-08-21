@@ -780,9 +780,9 @@ liquidó el préstamo:
   mismo, gravado en tu bóveda. Más de una cosa lo entrega, y ninguna depende de por cuál cierre hayas
   pasado: un liquidador que toma el colateral directamente con
   descuento, un cierre que se casa internamente contra una posición
-  opuesta en lugar de ir a un exchange, y una venta que no pudo completarse — aunque ahí el colateral te
-  llega sólo si el reintento al reclamar también falla; si sale
-  bien, cobras en el activo del préstamo. Tanto la liquidación
+  opuesta en lugar de ir a un exchange, y una venta que no pudo completarse — ahí el colateral te llega salvo que el prestamista aporte una
+  cotización que funcione al reclamar — entonces cobras en el activo
+  del préstamo; la mayoría de las reclamaciones no aportan ninguna. Tanto la liquidación
   ordinaria como un default por tiempo intentan ese casamiento
   interno ANTES de acudir a un exchange, así que ninguna de esas dos
   vías acaba siempre igual — por eso lo que hay que leer es la

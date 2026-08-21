@@ -718,8 +718,8 @@ Borrower claim は、loan がどう settle されたかによって次を返し
   通して外に出された場合 — 残余は loan の principal asset で
   届きます。引き渡された場合、残るのは collateral そのもので、
   vault に encumbered のままです。引き渡す経路は複数あり、いずれも loan の終わり方には依存しません: liquidator が割引で直接引き取る場合、
-  close-out が取引所に出されず内部で反対側の position とマッチした場合、そして売却そのものが成立しなかった場合です — ただし collateral が来るのは claim
-  時の再試行も失敗したときだけで、再試行が成功すれば loan の asset で支払われます。通常の liquidation も時間ベースの
+  close-out が取引所に出されず内部で反対側の position とマッチした場合、そして売却そのものが成立しなかった場合です — そのときは collateral が来ます。claim 時に lender が通る見積もりを持ち込まないかぎりで、持ち込めば loan の
+  asset で支払われます。大半の claim は見積もりを持ち込みません。通常の liquidation も時間ベースの
   default も、取引所に向かう前にその内部マッチを試みます。つまりこの二つの経路は結果が一定ではないということで、だからこそ経路ではなく
   claim を読むべきなのです。割引での引き取りはむしろ確定していますが、向きが逆です: 売りもマッチもしないので、残るのは常に
   collateral です。部分 liquidation はそもそも close-out

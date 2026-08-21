@@ -356,9 +356,9 @@ over instead, the collateral itself is what waits for you. More
 than one thing hands it over, whichever way the loan ended: a
 liquidator taking it directly at a discount, a close-out matched
 inside the protocol against an opposing position rather than
-sold, or a sale that could not go through — though there you get the
-collateral only if the second attempt at claim time fails too; if it
-works, you are paid in the loan's own asset. An ordinary liquidation
+sold, or a sale that could not go through — there you get the collateral unless the lender brings a quote that
+works when they claim, which pays you in the loan's own asset instead
+— and most claims bring none. An ordinary liquidation
 and a default both look for that internal match before going to an
 exchange, so neither of those two always ends the same way — read the
 claim rather than guessing from how the loan closed. A discounted
