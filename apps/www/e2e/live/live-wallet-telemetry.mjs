@@ -91,19 +91,22 @@ const SETTLE_MS = 12_000;
  * reported separately for that reason — it proves the option shipped, not
  * that the vendor honours it.
  *
- * The conditional matters, and was found the hard way. The connector sits
- * behind `...(WC_PROJECT_ID ? [walletConnect({…})] : [])`, and Vite
- * substitutes that env var at build time — so a build with no project id
- * has its whole WalletConnect call site dead-code-eliminated. Observed on
- * a sibling app: the Coinbase half of the same commit shipped while the
- * WalletConnect half was simply absent. Demanding the flag unconditionally
- * would report a leak on a deployment that cannot have one. The rule is
- * therefore: if OUR call site is in the bundle, the flag must be too.
+ * BOTH settings are required, unconditionally. There is deliberately no
+ * "this build has no WalletConnect connector, so excuse the missing
+ * flag" branch: an earlier draft had one, and it could not be made
+ * sound. The connector sits behind
+ * `...(WC_PROJECT_ID ? [walletConnect({…})] : [])` with the env var
+ * substituted at build time, so a build without a project id really can
+ * ship without the call site — but nothing in the bundle reliably says
+ * so. ConnectKit generates its OWN WalletConnect config whose minified
+ * shape is nearly identical to ours, so any marker that claims "our
+ * block is present" can be satisfied by library code.
  *
- * `universal:` is the call-site marker — it comes from the
- * `metadata.redirect: { universal }` only we pass. Library code carries
- * `projectId:` and the string "walletconnect" whether or not our call
- * survives, so neither of those can serve as the discriminator.
+ * Rather than guess, absence is reported as NOT CONFIRMED naming both
+ * causes, and counted as a configuration failure. That is the honest
+ * direction: a deployment that legitimately omits the connector gets
+ * looked at by a person once, whereas excusing absence automatically
+ * would silently excuse a regression too.
  */
 const MINIFIED_FALSE = String.raw`(?:!1|false)`;
 

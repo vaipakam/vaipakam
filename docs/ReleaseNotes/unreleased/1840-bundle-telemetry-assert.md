@@ -18,22 +18,22 @@ setting was published, not that the vendor honours it. Presenting either as the
 other would overstate what was established, which is the mistake this whole
 line of work exists to avoid.
 
-### Why it asks a conditional question
+### Why it refuses to excuse a missing setting
 
-The obvious version — demand the setting be present, always — would report a
-problem on a deployment that cannot have one.
+The tempting version of this check would let a deployment off when it has no
+second kit to configure — that kit is only included when the app is built with
+an identifier for it, and a build without one has the whole block removed before
+it ships. An earlier draft tried exactly that, and the attempt could not be made
+sound: the wallet library generates its own near-identical configuration, so any
+signal claiming "our settings block is present" can be produced by library code
+instead.
 
-The second kit is only included when the app is built with an identifier for
-it, and that identifier is substituted at build time, so a build without one has
-the entire block removed before it ships. Checking a sibling app turned up
-exactly that: the first kit's setting from a single change was present while the
-second kit's setting from the same change was simply absent, because there was
-no second kit to configure.
-
-So the check asks whether our own configuration block reached the bundle, and
-only then requires the setting inside it. The marker it looks for is a detail
-only our code passes; the vendor's own library mentions the kit throughout
-whether or not our block survived, so those mentions cannot be used to tell.
+So the check does not guess. It confirms a setting is there, and when one is
+missing it says so plainly, naming both possible reasons and leaving the
+judgement to a person. That direction is the safe one: a deployment that
+legitimately omits the kit costs someone one look, whereas excusing absence
+automatically would have excused a genuine regression on exactly the same
+evidence.
 
 ### Scope
 
