@@ -1302,8 +1302,7 @@ assert_output_unchanged() {  # assert_output_unchanged <what-was-about-to-happen
   elif [ -f "$OUT" ]; then
     if ! file_identity "$OUT"; then
       echo "Error: $(basename "$OUT") -- $IDENTITY_FAIL failed." >&2
-      echo "Nothing has been consumed; every fragment is still pending." >&2
-      exit 1
+      _refuse_reporting_consumed
     fi
     now="$IDENTITY"
   fi
@@ -1798,6 +1797,25 @@ if (( ${#already[@]} > 0 )); then
 fi
 
 if (( ${#pending[@]} == 0 )); then
+  # The pool is re-listed before saying so (Codex #1863 r33). An editor
+  # saving a new version at the original path after the recovery loop
+  # moved the old inode aside creates a genuinely pending fragment — left
+  # untouched, correctly, but the verdict was computed before it existed
+  # and announced a clear backlog with one waiting.
+  shopt -s nullglob
+  _still=()
+  for _p in "$UNREL"/*.md; do
+    case "$(basename "$_p")" in README.md | _TEMPLATE.md) continue ;; esac
+    _still+=("$(basename "$_p")")
+  done
+  if (( ${#_still[@]} > 0 )); then
+    echo "Nothing further to assemble for $DATE from what this run read."
+    echo ""
+    echo "These appeared while it was working, and are still pending:"
+    printf '  %s\n' "${_still[@]}"
+    echo "Re-run to fold them in."
+    exit 0
+  fi
   echo "Nothing left to assemble for $DATE."
   exit 0
 fi
@@ -2220,30 +2238,52 @@ _abort_after_write() {
 # The whole point of doing work before the rename is that failing there
 # costs nothing. A precondition discoverable in advance belongs in
 # advance.
-for _f in "${frags[@]}"; do
-  # The type is re-checked here as well as at the snapshot (Codex #1863
-  # r32). The earlier check is one moment near the start; a writer
-  # replacing the file with a relative symlink to identical bytes
-  # afterwards passes every hash, and only the set-aside move — after
-  # publication — discovers that the link resolves somewhere else.
-  if [ -L "$_f" ] || [ ! -f "$_f" ]; then
-    echo "Error: ${FRAG_NAME[$_f]} is no longer a regular file." >&2
-    echo "It changed type while this run was working." >&2
+# ── One gate, immediately before the rename ──────────────────────────────────
+# Every precondition that must hold AT publication is checked here rather
+# than scattered earlier (Codex #1863 r33). Three separate findings in one
+# round were the same complaint — a check sitting before some other long
+# step, with the gap between them big enough to drive through. Moving them
+# one at a time just relocates the gap, so they are gathered into a single
+# gate with nothing slow between it and the act.
+#
+# What remains after this is a handful of syscalls. That window cannot be
+# closed by a shell — there is no way to hold these files against another
+# writer — and further "move this check closer" findings are the same
+# irreducible fact rather than new defects. See #1877.
+_final_gate() {
+  assert_sources_unchanged "replacing it"
+  # The quarantine directory itself, not just its children: it was
+  # validated near startup, and another process can replace it in the
+  # meantime — the set-aside move then fails after publication.
+  if [ -L "$QDIR" ] || [ ! -d "$QDIR" ]; then
+    echo "Error: $QDIR is no longer a directory." >&2
     _refuse_reporting_consumed
   fi
-  _dest="$QDIR/${FRAG_NAME[$_f]}"
-  if [ -e "$_dest" ] || [ -L "$_dest" ]; then
-    echo "Error: a set-aside file already occupies $_dest." >&2
-    echo "" >&2
-    echo "Refusing to assemble: if ${FRAG_NAME[$_f]} had to be set aside" >&2
-    echo "during this run it would have nowhere to go, and that failure" >&2
-    echo "would happen after the dated file was already written." >&2
-    echo "" >&2
-    echo "Compare that file against the dated notes and remove it, or move" >&2
-    echo "it elsewhere, then re-run." >&2
-    exit 1
-  fi
-done
+  for _f in "${frags[@]}"; do
+    # The type is re-checked here as well as at the snapshot (Codex #1863
+    # r32). The earlier check is one moment near the start; a writer
+    # replacing the file with a relative symlink to identical bytes
+    # afterwards passes every hash, and only the set-aside move — after
+    # publication — discovers that the link resolves somewhere else.
+    if [ -L "$_f" ] || [ ! -f "$_f" ]; then
+      echo "Error: ${FRAG_NAME[$_f]} is no longer a regular file." >&2
+      echo "It changed type while this run was working." >&2
+      _refuse_reporting_consumed
+    fi
+    _dest="$QDIR/${FRAG_NAME[$_f]}"
+    if [ -e "$_dest" ] || [ -L "$_dest" ]; then
+      echo "Error: a set-aside file already occupies $_dest." >&2
+      echo "" >&2
+      echo "Refusing to assemble: if ${FRAG_NAME[$_f]} had to be set aside" >&2
+      echo "during this run it would have nowhere to go, and that failure" >&2
+      echo "would happen after the dated file was already written." >&2
+      echo "" >&2
+      echo "Compare that file against the dated notes and remove it, or move" >&2
+      echo "it elsewhere, then re-run." >&2
+      exit 1
+    fi
+  done
+}
 
 # The atomic step. Until this line $OUT is untouched, so an interruption
 # at ANY point above leaves the previous release-notes file exactly as it
@@ -2305,7 +2345,7 @@ _persist "$WORK"
 # Nothing has been consumed yet, so refusing costs nothing: the temp file
 # goes with the trap, every fragment is still pending, and a re-run
 # builds on whatever landed.
-assert_sources_unchanged "replacing it"
+_final_gate
 
 # What remains between the last check and the rename is a handful of
 # syscalls, which is as narrow as this gets without holding a lock on
@@ -2427,6 +2467,14 @@ for f in "${frags[@]}"; do
     # was never noticed, and the fragment went while the dated file held
     # none of its text. The check has to be adjacent to the act, not
     # merely somewhere upstream of it.
+    # TYPE as well as bytes (Codex #1863 r33). Comparing only the digest
+    # accepts $OUT replaced by a symlink to an identical copy elsewhere —
+    # the content matches, the fragments are consumed, and the release
+    # note path is left pointing outside the repository, so the `git add`
+    # this script prints would not commit the assembled bytes at all.
+    if [ -L "$OUT" ] || [ ! -f "$OUT" ]; then
+      _abort_after_write "$(basename "$OUT") is no longer a regular file"
+    fi
     _pub_rc=0
     _pub_now="$(frag_hash "$OUT" 2>/dev/null)" || _pub_rc=$?
     if (( _pub_rc != 0 )) || [ "$_pub_now" != "$PUBLISHED_ID" ]; then

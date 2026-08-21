@@ -2794,6 +2794,99 @@ check "it does not claim nothing went" \
   "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')"  "0"
 check "it names what already went" "$(says "$msg" 'Already removed before this')" "1"
 
+echo "T102: \$OUT replaced by a symlink after publishing stops the clearing"
+W="$ROOT/t102"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Comparing only the digest accepts $OUT replaced by a symlink to an identical
+# copy elsewhere: content matches, fragments are consumed, and the release-note
+# path ends up pointing outside the repository — so the `git add` this script
+# prints would not commit the assembled bytes at all (Codex #1863 r33).
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+f="$out/ReleaseNotes-2026-08-16.md"
+if [ -f "\$f" ] && [ ! -L "\$f" ] && [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  /bin/cp "\$f" "$W/outside.md"
+  /bin/rm -f "\$f"
+  ln -s "$W/outside.md" "\$f"
+fi
+exit 0
+SHIM
+chmod +x "$W/fakebin/sync"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run fails"            "$?"                                        "1"
+check "it says what changed"     "$(says "$msg" 'no longer a regular file')"  "1"
+# By CONTENT: the abort happens after the fragment is set aside, and `pending`
+# prunes the quarantine — so counting reports 0 for a file sitting safely there.
+check "the fragment survives" \
+  "$(grep -rl '0001-a' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
+
+echo "T103: an identity-read failure after a recovery deletion reports it"
+W="$ROOT/t103"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The changed-identity branch was routed through the consumed reporter; the
+# unreadable-identity branch beside it was not, so it still claimed every
+# fragment remained pending after one had gone (Codex #1863 r33).
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/rm" <<SHIM
+#!/bin/sh
+/bin/rm "\$@"; _rc=\$?
+case "\$*" in *.probe*) exit \$_rc ;; esac
+if [ ! -f "$W/fired" ]; then
+  case "\$*" in
+    */.assembled/*) : > "$W/fired"; chmod 000 "$out/ReleaseNotes-2026-08-16.md" ;;
+  esac
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/rm"
+if [ "$(id -u)" = "0" ]; then
+  check "skipped — root reads through mode 000 (CI runs it)" "1" "1"
+else
+  msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "the run stops"          "$?"                                             "1"
+  check "it does not claim nothing went" \
+    "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')"  "0"
+  check "it names what already went" "$(says "$msg" 'Already removed before this')" "1"
+fi
+chmod 0644 "$out/ReleaseNotes-2026-08-16.md" 2>/dev/null || true
+
+echo "T104: a fragment saved after recovery is not reported as a clear backlog"
+W="$ROOT/t104"; build "$W"
+out="$W/docs/ReleaseNotes"
+# An editor saving a new version at the original path after the recovery loop
+# moved the old inode aside creates a genuinely pending fragment. It is left
+# untouched, correctly — but the verdict was computed before it existed and
+# announced a clear backlog with one waiting (Codex #1863 r33).
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/rm" <<SHIM
+#!/bin/sh
+/bin/rm "\$@"; _rc=\$?
+case "\$*" in *.probe*) exit \$_rc ;; esac
+if [ ! -f "$W/fired" ]; then
+  case "\$*" in
+    */.assembled/*)
+      : > "$W/fired"
+      printf '## saved after recovery\n' > "$W/docs/ReleaseNotes/unreleased/0009-new.md"
+      ;;
+  esac
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/rm"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "it does not claim the pool is clear" \
+  "$(says "$msg" 'Nothing left to assemble')"                              "0"
+check "it names the newcomer"    "$(says "$msg" '0009-new.md')"             "1"
+check "and the newcomer survives" \
+  "$([ -f "$W/docs/ReleaseNotes/unreleased/0009-new.md" ] && echo kept || echo gone)" "kept"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
