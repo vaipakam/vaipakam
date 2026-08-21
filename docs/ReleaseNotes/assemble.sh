@@ -693,9 +693,12 @@ if (( ${#_stale_tmp[@]} > 0 )); then
   echo "" >&2
 fi
 
-# The pool as it stood at startup, for telling a genuinely new fragment
-# from one deliberately held back for another day.
-AT_START=("${frags[@]}")
+# Paths deliberately held back for another day, filled in by the day
+# selection below. Only these are excluded from the "appeared while
+# working" report: comparing against EVERY startup path also excluded a
+# fragment RECREATED at a path that had been cleared, which is genuinely
+# new text pending under a reused name (Codex #1863 r35).
+HELD_PATHS=()
 
 if [ "${#frags[@]}" -eq 0 ]; then
   echo "No pending fragments in $UNREL — nothing to assemble."
@@ -1042,6 +1045,7 @@ else
       selected+=("$f")
     else
       held+=("$(basename "$f")  ($added UTC)")
+      HELD_PATHS+=("$f")
     fi
   done
   if (( ${#held[@]} > 0 )); then
@@ -1578,6 +1582,14 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
   # a filename, and the hash is hex. So its presence means the file is
   # not saying what it appears to say, and stopping is the only answer
   # that neither duplicates nor deletes.
+  # Parsed under the SAME byte locale as the scan (Codex #1863 r35). The
+  # grep runs with LC_ALL=C, so it finds a record whose basename contains
+  # a byte invalid in the runner's UTF-8 locale; this regex ran under the
+  # parent locale and failed to match that same line. The fragment then
+  # read as never assembled, was appended a second time and consumed —
+  # the index seeing a record the parser cannot.
+  local_lc_all="${LC_ALL-}"; local_lc_set="${LC_ALL+set}"
+  LC_ALL=C
   while IFS= read -r line; do
     # `<!-- assembled-fragment: <basename> sha256=<hex> -->`, and ONLY
     # that shape. A line matching the prefix but not the full form is
@@ -1611,6 +1623,7 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
     # `<!-- assembled-fragment: `. If that literal ever gains one,
     # escape it there.
   done <<< "$CAPTURED"
+  if [ -n "$local_lc_set" ]; then LC_ALL="$local_lc_all"; else unset LC_ALL; fi
 done
 
 # ONE rule, and it is narrow on purpose: a fragment is consumed without
@@ -1823,7 +1836,7 @@ if (( ${#pending[@]} == 0 )); then
   _still=()
   for _p in "$UNREL"/*.md; do
     case "$(basename "$_p")" in README.md | _TEMPLATE.md) continue ;; esac
-    case " ${AT_START[*]} " in *" $_p "*) continue ;; esac
+    case " ${HELD_PATHS[*]} " in *" $_p "*) continue ;; esac
     _still+=("$(basename "$_p")")
   done
   if (( ${#_still[@]} > 0 )); then
@@ -2283,12 +2296,20 @@ _final_gate() {
   # publication (Codex #1863 r34). This is the distinction drawn last
   # round: the gap here contains a genuinely long operation, so it is a
   # real finding rather than the irreducible syscall window.
+  # Signals held across creation and recording, as `_ensure_qdir` does
+  # (Codex #1863 r35). This probe was added last round and repeated the
+  # unprotected sequence the earlier one had already been fixed for.
   local _g_probe=""
+  trap '' INT TERM
   if ! _g_probe="$(mktemp "$QDIR/.probe.XXXXXX" 2>/dev/null)"; then
+    trap '_cleanup; exit 130' INT
+    trap '_cleanup; exit 143' TERM
     echo "Error: entries can no longer be created in $QDIR." >&2
     _refuse_reporting_consumed
   fi
   PROBE="$_g_probe"
+  trap '_cleanup; exit 130' INT
+  trap '_cleanup; exit 143' TERM
   if ! rm "$_g_probe" 2>/dev/null; then
     rm -f "$_g_probe" 2>/dev/null || :
     PROBE=""

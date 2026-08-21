@@ -2928,6 +2928,74 @@ msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "it is not called a newcomer" "$(says "$msg" 'appeared while it was working')" "0"
 check "it is still held back"       "$(says "$msg" '0002-b.md')"                     "1"
 
+echo "T107: a marker whose name has a non-UTF-8 byte is still recognised"
+W="$ROOT/t107"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/"*.md 2>/dev/null || true
+printf '# unreleased\n' > "$W/docs/ReleaseNotes/unreleased/README.md"
+printf '## template\n'  > "$W/docs/ReleaseNotes/unreleased/_TEMPLATE.md"
+# The scan runs under LC_ALL=C and finds the record; the parser ran under the
+# parent locale and failed to match the same line, so the fragment read as
+# never assembled, was appended a second time and consumed (Codex #1863 r35).
+odd="$(printf '0005-od\xffd.md')"
+printf '## odd name\n' > "$W/docs/ReleaseNotes/unreleased/$odd"
+utf8=""
+for cand in C.utf8 C.UTF-8 en_US.utf8; do
+  if locale -a 2>/dev/null | grep -qxF "$cand"; then utf8="$cand"; break; fi
+done
+if [ -z "$utf8" ]; then
+  check "skipped — no UTF-8 locale installed" "1" "1"
+else
+  LC_ALL=$utf8 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+  # Restore it, as an interrupted run would leave it, and re-run.
+  printf '## odd name\n' > "$W/docs/ReleaseNotes/unreleased/$odd"
+  msg="$(LC_ALL=$utf8 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "it is recognised as already folded in" \
+    "$(says "$msg" 'removing without re-appending')"                        "1"
+  check "the section is not duplicated" \
+    "$(LC_ALL=C grep -ac '^## odd name$' "$out/ReleaseNotes-2026-08-16.md")" "1"
+fi
+
+echo "T108: a fragment recreated at a cleared path is reported as pending"
+W="$ROOT/t108"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Comparing against EVERY startup path also excluded a fragment RECREATED at a
+# path that had been cleared — genuinely new text pending under a reused name.
+# T104's shim used a DIFFERENT basename, so it could not catch this
+# (Codex #1863 r35).
+#
+# HONESTY NOTE: this case does NOT reproduce the finding — it passes against
+# the previous commit too, because with a single fragment the run does not
+# reach the branch by this route. It is a REGRESSION GUARD for the fix, not a
+# demonstration of the fault, and is not counted among the calibrated cases.
+# The fix stands on reasoning: excluding every startup path also excludes a
+# path that was cleared and then reused, which is new text.
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/rm" <<SHIM
+#!/bin/sh
+/bin/rm "\$@"; _rc=\$?
+case "\$*" in *.probe*) exit \$_rc ;; esac
+if [ ! -f "$W/fired" ]; then
+  case "\$*" in
+    */.assembled/*)
+      : > "$W/fired"
+      printf '## saved under the same name\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+      ;;
+  esac
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/rm"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "it does not claim the pool is clear" \
+  "$(says "$msg" 'Nothing left to assemble')"                              "0"
+check "it names the reused name"  "$(says "$msg" '0001-a.md')"              "1"
+check "the new text survives" \
+  "$(count_in 'saved under the same name' "$W/docs/ReleaseNotes/unreleased/0001-a.md")" "1"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
