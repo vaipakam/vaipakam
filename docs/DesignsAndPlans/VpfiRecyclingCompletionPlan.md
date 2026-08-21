@@ -1347,10 +1347,14 @@ GovernanceRunbook gains a recycling section, executed in order:
    > those paths, and `RewardRemittanceFacet`'s
    > consume/release are `onlyCanonical` so they do not provide an
    > alternative route. The stronger counterfactual "lift the halt and
-   > retirement happens" is NOT currently constructible: the armed-day
-   > mirror claim path has never been reachable, and #1434's own two
-   > prerequisites are what would make it pay. Do not cite this test for
-   > that claim (Codex #1439 r1).
+   > retirement happens" was NOT constructible when this was written: the
+   > armed-day mirror claim path had never been reachable, and #1434's own
+   > two prerequisites were what would make it pay. **Both landed with P1-b,
+   > and `ShareOfPoolClaimWalkTest.test_P1b_MirrorArmedDayDefersUntilDelivered`
+   > now constructs exactly that funded-versus-unfunded counterfactual** —
+   > cite THAT test for it, not this one, whose fixture delivers no funding
+   > and so cannot tell a halt from a deferral (original caveat: Codex
+   > #1439 r1).
 2. **RL-3 horizon knob** — only after BOTH ratified RL-3 UX safeguards
    are verified live: the free-channel pre-expiry notice (in-app
    notification center) **and the claim-center countdown surface**
