@@ -737,8 +737,8 @@ Borrower claim は、loan がどう settle されたかによって次を返し
   claim を読むべきなのです。割引での引き取りはむしろ確定していますが、向きが逆です: 売りもマッチもしないので、残るのは常に
   collateral です。部分 liquidation はそもそも close-out
   ではありません — loan は開いたままで、claim は作られません。
-  どちらかを推測せず、claim を確認してください。Illiquid asset の default では通常バスケット全体が失われ何も
-  残りませんが、それは結果であってルールではありません。rebate が戻るかどうかは
+  どちらかを推測せず、claim を確認してください。Illiquid asset の default ではバスケット全体が失われ何も
+  残りません。この経路ではそれがルールであり、結果ではありません。rebate が戻るかどうかは
   loan の終わり方によります。廃止された VPFI 手数料経路のままの loan では、開始手数料の
   ために保管されていた VPFI は default または liquidation のとき
   **没収されて treasury に入ります**。正常なクローズでは代わりに

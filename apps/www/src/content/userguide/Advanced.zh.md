@@ -604,8 +604,8 @@ borrower claim 根据 loan 如何 settle 来返回：
   都会在转向交易所之前先尝试这种内部撮合，所以这两条路径的结果都不是固定的——这正是应当去读
   claim，而不是从结束方式去推断的原因。折扣式拿走反而是确定的，只是方向相反：它既不卖出也不撮合，留给您的始终是 collateral。至于部分 liquidation，它根本不是
   close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要
-  假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩
-  什么——但那是一种结果，不是规则。rebate 会不会回来，取决于 loan 如何结束：若该 loan 仍在
+  假设是哪一种。非流动资产的 default 会拿走整个 basket，什么也不剩
+  ——在这条路径上这是规则，不是结果。rebate 会不会回来，取决于 loan 如何结束：若该 loan 仍在
   已停用的 VPFI 费用路径上，为其发起费托管的 VPFI 在 default 或
   liquidation 时会**被没收并转入 treasury**。正常关闭则会结算 rebate——金额取决于
   结算时刻您的折扣，若那时没有持仓则为零，全额被没收。

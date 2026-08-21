@@ -765,8 +765,8 @@ The borrower claim returns, depending on how the loan settled:
   nor matches, so what it leaves you is always the collateral. A partial liquidation is not a
   close-out at all — the loan stays open and no claim is created.
   Check the claim rather than assuming which one you have.
-  On an illiquid default the whole basket usually goes, so there
-  is nothing left — but that is an outcome, not a rule. Whether the rebate comes
+  On an illiquid default the whole basket goes and nothing is
+  left — that is the rule on this route, not an unlucky outcome. Whether the rebate comes
   back depends on how the loan ended: on a loan still using the retired
   VPFI fee path, the VPFI held against its initiation fee is
   forfeited to treasury on a default or liquidation. A proper

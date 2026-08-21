@@ -684,8 +684,8 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
   liquidation은 애초에 close-out이 아닙니다 — loan은 열린 채로 남고
   claim도 만들어지지 않습니다. 어느 쪽인지 추측하지 말고 claim을
   확인하세요. 비유동 자산의
-  default에서는 보통 바스켓 전체가 나가 아무것도 남지 않지만, 그것은 결과일
-  뿐 규칙이 아닙니다. rebate가 돌아오는지는 loan이 어떻게 끝났는지에 달려 있습니다: 폐지된 VPFI 수수료
+  default에서는 바스켓 전체가 나가 아무것도 남지 않습니다. 이 경로에서는
+  그것이 우연이 아니라 규칙입니다. rebate가 돌아오는지는 loan이 어떻게 끝났는지에 달려 있습니다: 폐지된 VPFI 수수료
   경로에 남아 있는 loan이라면 개시 수수료를 위해 보관되던 VPFI는
   default 또는 liquidation일 때 **treasury로 몰수됩니다**. 정상
   종료에서는 대신 rebate가 정산됩니다. 금액은 정산 시점의 할인으로

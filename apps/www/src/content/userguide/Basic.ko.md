@@ -347,8 +347,7 @@ loan 자체의 asset으로 지급됩니다. 대부분은 견적을 가져오지 
 claim을 읽으세요. 할인된 값의 직접 인수는 예외이고, 반대 방향으로 예측 가능합니다: 팔지 않으므로 언제나
 collateral이 남습니다.
 값을 매길 수 없는 collateral에 대한 default에서는
-바스켓 전체가 나가 아무것도 남지 않는 경우가 많지만, 그것은 결과일
-뿐 규칙이 아닙니다. 수수료 rebate가 돌아오는지는 loan이 어떻게
+바스켓 전체가 나가 아무것도 남지 않는 경우가 많지만, 이 경로에서는 그것이 우연이 아니라 규칙입니다. 수수료 rebate가 돌아오는지는 loan이 어떻게
 끝났는지에 달려 있습니다. 폐지된 VPFI 수수료 경로에 남아 있는 loan이라도
 정상 종료라면(repayment, early close, refinance, 또는 loan을 정산하는 매각) Loan Initiation Fee를 위해
 보관되던 VPFI의 rebate가 정산됩니다. 금액은 정산 시점의 할인으로

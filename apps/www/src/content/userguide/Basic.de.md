@@ -393,7 +393,7 @@ immer gleich — lies den Claim, statt es aus der Endungsart zu erraten.
 Die Übernahme mit Abschlag ist die Ausnahme und andersherum
 berechenbar: sie verkauft nie, dir bleibt also immer das Collateral. Oft geht bei einem Default über Collateral, das wir
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
-das ist aber ein Ausgang, keine Regel. Ob der Gebühren-Rebate
+und das ist auf diesem Weg die Regel, kein unglücklicher Ausgang. Ob der Gebühren-Rebate
 zurückkommt, hängt davon ab, wie der Loan endete: bei einem Loan
 auf dem eingestellten VPFI-Gebührenweg rechnet jeder ordnungsgemäße
 Abschluss das Rebate auf dem gegen die Loan Initiation Fee

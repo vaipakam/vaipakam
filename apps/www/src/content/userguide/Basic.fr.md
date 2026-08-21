@@ -391,8 +391,7 @@ le prêt s'est clos. La prise avec décote fait exception, et elle est
 prévisible dans l'autre sens : elle ne vend jamais, donc il te reste
 toujours le collatéral. Souvent — sur un
 défaut portant sur un collatéral que nous ne pouvons pas
-valoriser — tout le panier part et il ne reste rien, mais c'est
-une issue, pas une règle. Que le rabais de frais revienne dépend
+valoriser — tout le panier part et il ne reste rien, et sur cette voie c'est la règle, non une issue malheureuse. Que le rabais de frais revienne dépend
 de la façon dont le prêt s'est terminé : sur un prêt encore soumis
 à la voie de frais VPFI retirée, toute clôture régulière règle le rabais
 sur le VPFI retenu au titre de la Loan Initiation Fee — son montant

@@ -386,7 +386,7 @@ vez de deducirlo de cómo cerró. La toma con descuento es la excepción,
 y es previsible al revés: nunca vende, así que siempre te deja el
 colateral. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
-entera y no queda nada, pero eso es cómo resultó, no una regla.
+entera y no queda nada, y en esa vía es la regla, no un resultado desafortunado.
 Que el reembolso de la comisión vuelva depende de cómo terminó el
 préstamo: en uno que siga en la vía de comisión VPFI retirada, cualquier cierre correcto liquida el reembolso sobre el VPFI retenido
 contra la Loan Initiation Fee — su importe lo fija tu descuento en el

@@ -804,8 +804,8 @@ prêt s'est réglé :
   partielle n'est pas une clôture du tout — le prêt reste ouvert
   et aucune créance n'est créée. Consulte la créance plutôt que
   de supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le
-  panier part en général et il ne reste rien — mais c'est une
-  issue, pas une règle. Que le rabais revienne dépend de la
+  panier part et il ne reste rien — et sur cette voie c'est la
+  règle, non une issue malheureuse. Que le rabais revienne dépend de la
   clôture : sur un prêt encore soumis à la voie de frais VPFI
   retirée, le VPFI retenu au titre des frais d'initiation est
   **acquis au trésor** lors d'un défaut ou d'une liquidation. Une
