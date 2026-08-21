@@ -102,6 +102,12 @@ export function LenderExitOptionsCard({
   /** Did the sale-lock read fail rather than being in flight? See
    *  `LenderExitInput.saleLockReadFailed`. */
   saleLockReadFailed: boolean;
+  /** Has the sale-lock read stopped? See
+   *  `LenderExitInput.saleLockSettled`. */
+  saleLockSettled: boolean;
+  /** Has the source that reported FallbackPending stopped? See
+   *  `LenderExitInput.fallbackSourceSettled`. */
+  fallbackSourceSettled: boolean;
   /** Whether this position already carries a live listing. A TRI-STATE
    *  (`SaleLockState`), not a boolean: the lock refuses BOTH sale paths
    *  (`SaleOfferAlreadyExists`, and the page unmounts the instant-exit

@@ -1123,7 +1123,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  FallbackPending can no longer be cured by its own refetch: the
    *  live reads report Active, the stale one keeps saying otherwise,
    *  and every REVERSIBLE consumer stays stuck on it. */
-  const statusReads: { status: LoanStatus | undefined; fresh: boolean }[] = [
+  const statusReads: {
+    status: LoanStatus | undefined;
+    fresh: boolean;
+    /** Has THIS source stopped? Carried per reading for the same reason
+     *  `fresh` is: a fact about a reading belongs beside it, not in a
+     *  parallel array (Codex #1858 r10). */
+    settled: boolean;
+  }[] = [
     {
       status:
         loanLive.data && !loanLive.isError
@@ -1151,6 +1158,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // list below, where the answers are absorbing and a stale
       // terminal reading is only ever ahead.
       fresh: false,
+      settled: sourceSettled(loanLive),
     },
     {
       status:
@@ -1158,6 +1166,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           ? (liveStatus.data.status as LoanStatus)
           : undefined,
       fresh: liveStatusEnabled,
+      settled: sourceSettled(liveStatus),
     },
     {
       status:
@@ -1165,6 +1174,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           ? (bannerTerms.data.live.status as LoanStatus)
           : undefined,
       fresh: bannerTermsEnabled,
+      settled: sourceSettled(bannerTerms),
     },
   ];
   /** Every reading, fresh or frozen. Correct for ABSORBING answers: a
@@ -1185,6 +1195,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const freshStatusCandidates: (LoanStatus | undefined)[] = statusReads.map(
     (r) => (r.fresh ? r.status : undefined),
   );
+  /** Has the source that reported FallbackPending stopped?
+   *
+   *  Narrow on purpose (Codex #1858 r10): the fallback arm is
+   *  conclusive and skips the general status gate, which is right —
+   *  waiting on unrelated sources would restore the timeout that arm
+   *  exists to remove. But a cached FallbackPending whose own poll is
+   *  about to return Active after a cure is not conclusive yet, so the
+   *  arm waits on the read that produced it and on nothing else. */
+  const fallbackSourceSettled = statusReads
+    .filter((r) => r.fresh && r.status === LoanStatus.FallbackPending)
+    .every((r) => r.settled);
 
   /** Whether the optional seller-window call inside `readLoanLive`
    *  answered — `false` when a HEALTHY snapshot carries
@@ -3587,6 +3608,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // carry: every error there is mapped to `'checking'` so the
           // rows fail closed, and readiness needs the distinction.
           saleLockReadFailed={sale.isError}
+          // The lock read's own SETTLEDNESS, which `saleLock` also
+          // cannot carry: TanStack retains `sale.state` through a
+          // background poll, so a cached clear could publish
+          // `ready`/`yes` while the in-flight read was about to
+          // report a listing (Codex #1858 r10).
+          saleLockSettled={sourceSettled(sale)}
+          fallbackSourceSettled={fallbackSourceSettled}
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
           // if it errors. Collapsing that to `false` showed BOTH sale

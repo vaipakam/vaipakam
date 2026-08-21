@@ -353,6 +353,27 @@ export interface LenderExitInput {
    *  short-circuit above it: a confirmed listing does not care that the
    *  lock read later broke. */
   saleLockReadFailed: boolean;
+  /** Has the sale-lock read STOPPED, or is a refetch in flight?
+   *
+   *  The same rule as `maturitySettled`, on the third source (Codex
+   *  #1858 r10): a conclusive answer requires the source that produced
+   *  it to have stopped. TanStack retains `sale.state` through a
+   *  background poll, so a cached CLEAR could publish `ready`/`yes`
+   *  while the outstanding read was about to report a listing, and a
+   *  cached LISTED could publish `ready`/`no` just before one reported
+   *  a cancellation. Both are settled answers retracting on the
+   *  ordinary 30-second cycle. */
+  saleLockSettled: boolean;
+  /** Has the source that reported FallbackPending stopped?
+   *
+   *  Narrower than `statusSettled` on purpose (Codex #1858 r10). The
+   *  fallback arm is conclusive and therefore skips the general status
+   *  gate — correctly, since waiting on unrelated sources would
+   *  reintroduce the timeout that arm exists to remove. But it must
+   *  still wait on ITS OWN source: a cached FallbackPending whose poll
+   *  is about to return Active after a cure would otherwise publish a
+   *  confident `ready`/`no` and then flip. */
+  fallbackSourceSettled: boolean;
 }
 
 export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
@@ -624,7 +645,13 @@ function conclusiveBlock(input: LenderExitInput): ConclusiveBlock | undefined {
  *  settled must not retract without a chain transition behind it, so
  *  this arm waits for the sources that produce it. */
 function conclusivelyUnjumpable(input: LenderExitInput): boolean {
-  if (input.fallbackPending) return true;
+  // EVERY conclusive arm waits on its OWN source, and only its own
+  // (Codex #1858 r10). That is the rule these three arms share: a
+  // positive observation is conclusive because nothing can retract it
+  // — which stops being true while the read that produced it is still
+  // in flight. Each waits narrowly, so none reintroduces the general
+  // timeout they exist to remove.
+  if (input.fallbackPending) return input.fallbackSourceSettled;
   // A CONFIRMED LISTING SHUTS BOTH ROWS OUTRIGHT (Codex #1858 r5), and
   // it does so with no reference to maturity or status: the row builder
   // marks the listing row `alreadyListed` and the direct-sale row
@@ -636,7 +663,7 @@ function conclusivelyUnjumpable(input: LenderExitInput): boolean {
   //
   // `'checking'` is NOT this: an unanswered lock read is the ambiguous
   // case and stays pending below.
-  if (input.saleLock === 'listed') return true;
+  if (input.saleLock === 'listed') return input.saleLockSettled;
   return input.maturity === 'past' && input.maturitySettled && !input.maturityReadFailed;
 }
 
@@ -653,6 +680,14 @@ export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
   // unjumpable, while `conclusiveBlock` would name the maturity arm and
   // send it back to `pending`.
   if (conclusivelyUnjumpable(input)) return 'ready';
+  // A conclusive arm that FELL THROUGH because its own source is still
+  // fetching is a wait, not a fall-through to the general path. Stated
+  // explicitly rather than left to `statusSettled` to catch: that
+  // would be true today, since the fallback source is one of the
+  // status sources, and it is a cross-field invariant the type does
+  // not enforce — exactly the implicit reasoning round 3 removed from
+  // this function.
+  if (input.fallbackPending && !input.fallbackSourceSettled) return 'pending';
   // The maturity verdict is not usable until the reads behind it have
   // finished, and `!maturitySettled` covers the in-flight case: one
   // source has produced a verdict and the other has not answered yet,
@@ -701,6 +736,7 @@ export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
   // `'checking'` so the rows fail closed; readiness must not inherit
   // that collapse, or a broken lock RPC leaves the card pending for as
   // long as the page is open.
+  if (!input.saleLockSettled) return 'pending';
   if (input.saleLock === 'checking') {
     return input.saleLockReadFailed ? 'failed' : 'pending';
   }

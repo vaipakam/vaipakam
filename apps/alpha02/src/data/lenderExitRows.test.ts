@@ -33,6 +33,8 @@ const base: LenderExitInput = {
   maturityReadFailed: false,
   statusReadFailed: false,
   saleLockReadFailed: false,
+  saleLockSettled: true,
+  fallbackSourceSettled: true,
 };
 
 const rowFor = (input: Partial<LenderExitInput>, key: string) =>
@@ -71,6 +73,8 @@ describe('wait row — ordering and framing', () => {
       maturityReadFailed: true,
       statusReadFailed: true,
       saleLockReadFailed: true,
+      saleLockSettled: false,
+      fallbackSourceSettled: false,
     };
     expect(buildLenderExitRows(hostile)[0].unavailable).toBeUndefined();
   });
@@ -1120,6 +1124,52 @@ describe('chooserReadiness — has the jumpability question settled?', () => {
           saleTools: 'failed' as const,
         }),
       ).toBe('pending');
+    });
+  });
+
+  describe('a conclusive arm waits on its OWN source', () => {
+    // The rule the three conclusive arms share (Codex #1858 r10): a
+    // positive observation is conclusive because nothing can retract
+    // it — which stops being true while the read that produced it is
+    // still in flight. Each waits narrowly, so none reintroduces the
+    // general timeout they exist to remove.
+    it('holds a fallback answer while ITS source is refetching', () => {
+      expect(
+        chooserReadiness({ ...base, fallbackPending: true, fallbackSourceSettled: false }),
+      ).toBe('pending');
+    });
+
+    it('does not make the fallback arm wait on unrelated status sources', () => {
+      // The whole point of that arm: a fallback loan is conclusively
+      // unjumpable whatever else is outstanding.
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          statusSettled: false,
+          maturitySettled: false,
+          saleTools: 'checking' as const,
+        }),
+      ).toBe('ready');
+    });
+
+    it('holds a confirmed listing while the lock read is refetching', () => {
+      expect(
+        chooserReadiness({ ...base, saleLock: 'listed', saleLockSettled: false }),
+      ).toBe('pending');
+    });
+
+    it('publishes the listing once its own read has stopped', () => {
+      expect(
+        chooserReadiness({ ...base, saleLock: 'listed', saleLockSettled: true }),
+      ).toBe('ready');
+    });
+
+    it('holds a clear lock while its read is refetching', () => {
+      // The other direction of the same fact: a cached clear could
+      // otherwise publish `ready`/`yes` seconds before the poll
+      // reported a listing.
+      expect(chooserReadiness({ ...base, saleLockSettled: false })).toBe('pending');
     });
   });
 
