@@ -678,9 +678,14 @@ finalized upstream there is nothing to resend at all. The zeroed-and-open one ha
 genuinely zero on both sides, in which case the day is resolved-zero and crosses
 immediately — no compensation, no deadline, nothing owed. Otherwise: its
 compensation becoming both funded AND settled (a fully funded compensation still defers while
-its quote is undispatched or its credit provisional), or, past the frozen
-expiry, either permissionless lapse terminal — and the two do NOT settle
-alike. `lapseZeroedDay` crosses an uncompensated day at zero: nothing was
+its quote is undispatched or its credit provisional), or one of the two permissionless lapse
+terminals — which do not share a clock and do NOT settle alike. The
+uncompensated terminal runs on the day's FROZEN expiry, a fixed offset from
+finalization. The short-compensated one cannot use that clock at all: it arms on
+the FIRST compensation receipt and waits on a rolling window that each
+qualifying top-up extends, capped at three windows from that first receipt. So
+passing the frozen expiry does not make the short terminal callable, and an
+operator reading one deadline for both will reach for a terminal that reverts. `lapseZeroedDay` crosses an uncompensated day at zero: nothing was
 backed, nothing pays. `lapseShortCompensatedDay` takes a confirmed-but-
 underfunded day and pays the BACKED portion before the cursor advances, so the
 entries retire against what actually arrived rather than against nothing. The
