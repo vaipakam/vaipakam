@@ -2063,6 +2063,19 @@ Without local consent, even with VPFI staked on Base + a
 fresh cached tier on the mirror, the mirror fee path
 charges the full yield-fee.
 
+The canonical chain's flag is ALSO required, even if you
+never settle a loan there. `protocolBroadcastTierUpdate`
+forces the payload to `(0, 0)` whenever Base's
+`vpfiDiscountConsent[user]` is false, so the push that is
+supposed to carry your tier to the mirror carries zero
+instead — and the mirror then applies a tier-0 cache no
+matter what its own local consent says. A mirror-only user
+who enables consent on the mirror alone, deposits on Base,
+waits out the holding period and pushes will still be
+charged in full. Enable it on BOTH: Base to make the
+broadcast carry a real tier, and the settling chain to make
+the fee path apply it.
+
 When you disable consent on the CANONICAL chain (Base),
 mirror caches DON'T automatically clear (anti-drain measure
 — see below). The dapp prompts you to follow the canonical-

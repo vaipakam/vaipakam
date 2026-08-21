@@ -61,9 +61,20 @@ must have been held for a minimum period before it counts, and a mid-loan
 withdrawal reprices the whole average down to the lowest balance held; a tier
 earned on the canonical chain does not appear on another chain until it is
 pushed there; the fee-discount consent must be enabled **on the chain the loan
-settles on** — it is a per-chain setting, not one global switch; and the lender
-leg needs free VPFI on that same chain when the discount is applied, or it is
-simply not delivered.
+settles on** — it is a per-chain setting, not one global switch — **and also on
+the canonical chain**, because the message that carries a tier outward is forced
+to zero while the canonical consent is off, so a reader who settles only on a
+mirror needs both; and the lender leg needs free VPFI on that same chain when the
+discount is applied, or it is simply not delivered.
+
+**One correction runs the other way.** The pages had been saying that opting
+into the optional tariff counted as the fee-discount consent, so a borrower who
+paid the tariff need not enable the setting. It does not. The tariff authorises
+its own separate reduction, added on top; the hold-tier reduction still requires
+the consent. A tiered borrower who paid the tariff with the consent left off
+would receive the tariff's slice alone and not their tier — having paid for the
+privilege. The specification had this right and stated it precisely; the public
+copy took its heading and dropped the qualifying clause underneath.
 
 Each of these was already true and already enforced. None of them was on the
 page. Together they describe a reader who does everything the site tells them to
