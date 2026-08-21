@@ -420,23 +420,34 @@ const lenderStatusOk = (st) => st === STATUS_ACTIVE || st === STATUS_FALLBACK_PE
  * pool buys a 45-second wait and then a fabricated "chooser MISSING"
  * product regression (Codex #1853 r1).
  *
- * Fails OPEN on a read error, exactly as `useSanctionsCheck` does —
- * mirroring the app matters more here than picking a safer default,
- * because the point is to predict what the page will do. On the retail
- * deploy the oracle is commonly unset, in which case the contract
- * returns false for every address and this costs one cheap read.
+ * Does NOT fail open, and the first version did — mirroring
+ * `useSanctionsCheck`'s own `catch { return false }` (Codex #1853 r2).
+ * That mirroring was wrong, for a reason worth keeping: the app fails
+ * open on ITS OWN read over ITS OWN transport, where "I could not tell"
+ * correctly means "do not block the user". This drive reads over a
+ * DIFFERENT endpoint (`OBSERVE_RPC`), so its failure says nothing about
+ * what the page will see. If our read fails while the page's succeeds
+ * and reports the holder flagged, fail-open admits a candidate whose
+ * card is correctly suppressed — and the visit then burns the 45-second
+ * chooser timeout and files a product regression for an infrastructure
+ * discrepancy. Exactly the failure the sanctions check was added to
+ * prevent, re-entered through the error path.
+ *
+ * So the error propagates to `discovery()`, which is the harness's whole
+ * 1-vs-2 contract: an unanswered read is "could not look properly"
+ * (exit 2), never an eligibility verdict.
+ *
+ * On the retail deploy the oracle is commonly unset, in which case the
+ * contract ANSWERS false for every address — an answer, not a failure —
+ * and this costs one cheap read per candidate.
  */
 async function sanctionedAuthority(addr) {
-  try {
-    return await pub.readContract({
-      address: DIAMOND,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'isSanctionedAddress',
-      args: [addr],
-    });
-  } catch {
-    return false;
-  }
+  return pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'isSanctionedAddress',
+    args: [addr],
+  });
 }
 /** LibERC721.LockReason.PrecloseOffset — mirrors data/offsetPending.ts. */
 const LOCK_PRECLOSE_OFFSET = 1;
