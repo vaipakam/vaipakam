@@ -202,7 +202,7 @@ export function excursionExplains(result, excursion) {
 }
 
 /**
- * What does a MISSING SWITCH mean, given the card's own readiness?
+ * WHAT THE CARD SAID about its own readiness — not what that means.
  *
  * The switch's absence is ambiguous on its own — the card renders no
  * switch while a prerequisite read is in flight AND when no row is
@@ -211,24 +211,36 @@ export function excursionExplains(result, excursion) {
  * ended the guessing by having the card publish both answers; this is
  * the rule for reading them (Codex #1853 r28).
  *
- * Four outcomes, and the first is the one that makes this a P1 rather
- * than a tidy-up: a card that says the question has SETTLED and the
- * answer is YES, with no switch on the page, is stating a
- * contradiction about itself. That is a Basic-mode regression the card
- * is actively reporting, and the drive used to record it as an
- * ordinary unavailable row and exit 0.
+ * THE OUTCOMES ARE NAMED FOR THE CARD'S ANSWER, NOT FOR THE CALLER'S
+ * VERDICT (#1869), because the same answer means opposite things to
+ * different callers. `claims-jumpable` — a settled `ready`/`yes` — is a
+ * CONTRADICTION where no control is rendered, since the card says a row
+ * is reachable and offers no way to reach it; and it is AGREEMENT where
+ * the jump buttons are on screen, since the card is confirming what
+ * they imply. Same fact, opposite significance, decided entirely by
+ * what else the caller can see.
+ *
+ * It was called `fail` until #1869, which forced every reader through
+ * that inversion and made one call site — the one where it means
+ * "proceed" — look like a mistake. A name that is wrong half the time
+ * is worse than a long one.
+ *
+ * So: this function reports, and the caller judges. The judging lives
+ * in `readinessAgreesWithControls` and in the reporter, where the rest
+ * of the page's state is known.
  *
  * @param {{ready: string|null, jumpable: string|null}|null} v
  *   the card's attributes, or null when it publishes none
+ *
  * ONLY AN EXPLICIT `no` BUYS THE CLEAN ABSENCE (Codex #1853 r29). The
- * first version returned `absent` for every `jumpable` that was not
- * `yes`, so a card publishing `ready` with the second attribute
+ * first version returned `claims-unjumpable` for every `jumpable` that
+ * was not `yes`, so a card publishing `ready` with the second attribute
  * missing, misspelt or renamed — a regression in the observability
  * contract itself — read as the honest outcome and the drive exited 0.
  * The one verdict that ends the review cleanly is the one that has to
  * be stated outright.
  *
- * @returns {'fail'|'blocked-pending'|'blocked-failed'|'blocked-malformed'|'absent'|'unknown'}
+ * @returns {'claims-jumpable'|'claims-unjumpable'|'blocked-pending'|'blocked-failed'|'blocked-malformed'|'unknown'}
  *   `unknown` means the card said nothing at all and the caller keeps
  *   its own pre-#1855 verdict — an older bundle must not be reported
  *   as a product defect. `blocked-malformed` is the opposite case: the
@@ -252,7 +264,7 @@ export function missingSwitchVerdict(v) {
   if (v.ready === 'pending') return 'blocked-pending';
   if (v.ready === 'failed') return 'blocked-failed';
   if (v.ready !== 'ready') return 'blocked-malformed';
-  if (v.jumpable === 'yes') return 'fail';
-  if (v.jumpable === 'no') return 'absent';
+  if (v.jumpable === 'yes') return 'claims-jumpable';
+  if (v.jumpable === 'no') return 'claims-unjumpable';
   return 'blocked-malformed';
 }
