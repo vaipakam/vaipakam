@@ -364,8 +364,8 @@ exchange, so neither of those two always ends the same way — read the
 claim rather than guessing from how the loan closed. A discounted
 seizure is the exception, and it is predictable the other way: it
 never sells, so it always leaves you the collateral. Often — on a default over collateral we
-cannot price — the whole basket goes and nothing is left, but
-that is how it turned out, not a rule. Whether the fee rebate comes
+cannot price — the whole basket goes and nothing is left, and on that route
+that is the rule rather than how it happened to turn out. Whether the fee rebate comes
 back depends on how the loan ended: on a loan still using the
 retired VPFI fee path, any proper close
 settles the rebate on the VPFI held against the

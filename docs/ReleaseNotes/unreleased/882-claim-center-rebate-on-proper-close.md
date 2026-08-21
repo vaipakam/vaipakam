@@ -27,10 +27,12 @@ to a state the borrower claim refuses. That is a contract defect rather than a
 wording one and is filed separately; until it is resolved the guides say plainly
 not to count on a rebate there, which is the only honest thing to print.
 
-Settling is not the same as paying out. The rebate is sized by the discount the
-borrower averaged over the loan's life, so a borrower who held no VPFI, or
-dropped to no discount, can settle properly and still receive nothing — the
-whole held amount goes to treasury. What is wrong is telling every borrower it
+Settling is not the same as paying out. The rebate is sized by the discount
+standing at the moment of settlement — not by an average over the loan — so a
+borrower who held no VPFI, or has dropped below the first tier by then, can
+settle properly and still receive nothing, and the whole held amount is
+forfeited. (Where the loan was matched, part of that goes to the matcher rather
+than to treasury; from the borrower's side it is gone either way.) What is wrong is telling every borrower it
 never comes back; what would be equally wrong is telling them it always does.
 
 Both user guides said otherwise. The Claim Center section of every Basic guide
