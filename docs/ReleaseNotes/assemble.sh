@@ -166,6 +166,13 @@ run_checked() {  # run_checked <ok-codes> <what> <command> [args...]
   exit 1
 }
 
+# The decimal value of a file's final byte, or empty for an empty file.
+# Via `od` because a raw byte cannot survive a shell variable: NUL is
+# dropped outright and a trailing newline is stripped, so the two states
+# that decide whether a separator is needed are exactly the two a naive
+# capture cannot tell apart.
+last_byte_code() { tail -c1 "$1" | od -An -tu1 | tr -d '[:space:]'; }
+
 DATE=""
 ALLOW_MIXED=0
 FORCE_APPEND=0
@@ -287,6 +294,27 @@ if [ "${#frags[@]}" -eq 0 ]; then
   echo "No pending fragments in $UNREL — nothing to assemble."
   exit 0
 fi
+
+# A basename cannot be allowed to close the marker's HTML comment (Codex
+# #1863 r12). `note-->visible.md` produces
+# `<!-- assembled-fragment: note-->visible.md sha256=… -->`, which ends
+# at the name: the hash — and anything else the name carries — then
+# renders as visible text in the published notes, breaking the one
+# promise the marker makes. Refused rather than escaped, because these
+# names are ours and a legible one never contains `-->`; encoding it
+# would make the record harder to read for a case that should not exist.
+for f in "${frags[@]}"; do
+  case "$(basename "$f")" in
+    *'-->'* | *'<!--'*)
+      echo "Error: $(basename "$f") contains an HTML comment delimiter." >&2
+      echo "Refusing to assemble: the provenance marker is an HTML comment," >&2
+      echo "so such a name would end it early and print the rest of the" >&2
+      echo "marker as visible text in the published notes." >&2
+      echo "Rename the fragment." >&2
+      exit 1
+      ;;
+  esac
+done
 
 # Deterministic order — task-id-prefixed filenames sort sensibly.
 #
@@ -973,8 +1001,19 @@ if [ -f "$OUT" ]; then
   # a deliberately restricted 0600 becoming 0644 under the usual umask,
   # before the fragments are consumed (Codex #1863 r10). "I could not
   # read it" and "there is nothing to read" are different answers.
-  out_mode="$(stat -c '%a' "$OUT" 2>/dev/null || stat -f '%Lp' "$OUT" 2>/dev/null || true)"
-  if [[ ! "$out_mode" =~ ^[0-7]{3,4}$ ]]; then
+  # Each form is tried with its OWN status (Codex #1863 r12). Chained
+  # with `|| true`, a `stat` that prints a plausible `644` and exits
+  # non-zero was accepted by the regex — and an existing 0600 file was
+  # then widened to 0644 before its fragments were consumed. Shape alone
+  # cannot tell a real answer from a failed one that happens to look
+  # like one.
+  _sm_rc=0
+  out_mode="$(stat -c '%a' "$OUT" 2>/dev/null)" || _sm_rc=$?
+  if (( _sm_rc != 0 )); then
+    _sm_rc=0
+    out_mode="$(stat -f '%Lp' "$OUT" 2>/dev/null)" || _sm_rc=$?
+  fi
+  if (( _sm_rc != 0 )) || [[ ! "$out_mode" =~ ^[0-7]{3,4}$ ]]; then
     echo "Error: could not read the current mode of $(basename "$OUT")." >&2
     echo "Refusing to assemble: replacing it would have to guess a mode, and" >&2
     echo "guessing wider than it was would expose content that was" >&2
@@ -1022,11 +1061,17 @@ for f in "${frags[@]}"; do
   # the source. The line predates this change; what the marker did was
   # turn "two fragments run together" into "the recovery record for this
   # fragment is silently destroyed".
-  run_checked 0 "reading the last byte of $(basename "$f")" tail -c1 "$f"
-  _last_byte="$CAPTURED"
-  # Command substitution strips trailing newlines, so a file that ends in
-  # one yields the empty string here and needs no separator added.
-  [ -z "$_last_byte" ] || printf '\n' >> "$WORK"
+  # The final byte is examined as a NUMBER, never captured raw (Codex
+  # #1863 r12). Bash drops NUL bytes from a command substitution, so a
+  # fragment ENDING in NUL yielded an empty `CAPTURED` — read as "already
+  # ends with a newline" — and the marker was then written straight after
+  # the NUL instead of at the start of a line, where the anchored scan
+  # can never find it again. `pipefail` is set, so a failing `tail` still
+  # propagates through the pipe into run_checked.
+  run_checked 0 "reading the last byte of $(basename "$f")" last_byte_code "$f"
+  # 10 is LF. Anything else — including an empty fragment, which yields
+  # no byte at all — needs a separator before the marker.
+  [ "$CAPTURED" = "10" ] || printf '\n' >> "$WORK"
   # Provenance marker — an HTML comment, so it is invisible in every
   # rendered view and visible to the next run of this script. See the
   # "Crash safety" note at the top: this is what makes a re-run after an

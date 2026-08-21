@@ -1035,6 +1035,73 @@ check "and says it refuses to continue" \
   "$(says "$msg" 'must not continue on the strength of')"           "1"
 rmdir "$W/docs/ReleaseNotes/unreleased/0003-dir.md"
 
+echo "T34: a fragment ENDING in NUL still gets a findable marker"
+W="$ROOT/t34"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Bash drops NUL from a command substitution, so capturing the final byte gave
+# an empty string — read as "already ends with a newline" — and the marker was
+# written straight after the NUL rather than at the start of a line, where the
+# anchored scan can never find it (Codex #1863 r12). A second, ordinary
+# fragment is present so the output HAS a valid marker: that is what makes the
+# index look authoritative and lets the damaged one be appended twice.
+printf '## nul tail' > "$W/docs/ReleaseNotes/unreleased/0012-nultail.md"
+printf '\000' >> "$W/docs/ReleaseNotes/unreleased/0012-nultail.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "both were folded in"  "$(sections "$out/ReleaseNotes-2026-08-16.md")" "2"
+check "both markers are at line start" \
+  "$(count_in '^<!-- assembled-fragment: .+ sha256=[0-9a-f]{64} -->$' \
+      "$out/ReleaseNotes-2026-08-16.md")" "2"
+# Interrupted after the write: restore both, re-run.
+printf '## nul tail' > "$W/docs/ReleaseNotes/unreleased/0012-nultail.md"
+printf '\000' >> "$W/docs/ReleaseNotes/unreleased/0012-nultail.md"
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/0001-a.md
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "nothing is duplicated"  "$(sections "$out/ReleaseNotes-2026-08-16.md")" "2"
+check "and both are cleared"   "$(pending "$W")" "0"
+
+echo "T35: a stat that prints a plausible mode but FAILS is not believed"
+W="$ROOT/t35"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+chmod 600 "$out/ReleaseNotes-2026-08-16.md"
+mkdir -p "$W/fakebin"
+# Prints a believable mode AND exits non-zero. Shape alone cannot tell that
+# from a real answer, so accepting it widened an existing 0600 to 0644 before
+# consuming the fragments (Codex #1863 r12).
+# GNU form prints a believable mode and FAILS; BSD fallback fails silently.
+# A shim that printed for both was already rejected by the old chain — because
+# the captured output became "644\n644" and failed the shape check — so it
+# reproduced nothing. The finding needs exactly one plausible-looking answer.
+cat > "$W/fakebin/stat" <<'SHIM'
+#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    -c) echo 644; exit 3 ;;
+  esac
+done
+exit 1
+SHIM
+chmod +x "$W/fakebin/stat"
+printf '## later note\n' > "$W/docs/ReleaseNotes/unreleased/0013-later.md"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"           "$?"                                           "1"
+check "the file keeps 600"      "$(mode_of "$out/ReleaseNotes-2026-08-16.md")"  "600"
+check "the fragment survives"   "$(pending "$W")"                              "2"
+
+echo "T36: a fragment name that would close the marker comment is refused"
+W="$ROOT/t36"; build "$W"
+out="$W/docs/ReleaseNotes"
+# `note-->visible.md` ends the HTML comment at the name, so the hash renders as
+# visible text in the published notes — breaking the one promise the marker
+# makes (Codex #1863 r12).
+printf '## sneaky\n' > "$W/docs/ReleaseNotes/unreleased/note-->visible.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                    "1"
+check "no fragment consumed"   "$(pending "$W")"                       "3"
+check "it says why"            "$(says "$msg" 'HTML comment delimiter')" "1"
+rm -f "$W/docs/ReleaseNotes/unreleased/note-->visible.md"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

@@ -65,7 +65,8 @@ git add -A docs/ReleaseNotes/
 git commit -m "docs: release notes <date>"
 ```
 
-**If a run is interrupted, just run it again.** The dated file is built
+**If a run is interrupted, run it again** — with one caveat below. The
+dated file is built
 in a temp file and renamed into place at the end, so it is either the old
 file or the complete new one — never a partial append. Each folded
 fragment also leaves an invisible HTML-comment marker
@@ -87,6 +88,16 @@ name (a rename, or a fragment that happens to read alike) or a marker in
 another dated file (a reused fragment, or a run resumed past UTC
 midnight). Delete it by hand if it really is already folded in, or
 re-run with `--force-append` if it is genuinely new.
+
+**One case needs a manual step first.** Assembly holds a lock
+(`unreleased/.assemble.lock`) so two runs cannot overlap, and it is
+released when the script exits — including on Ctrl-C. A *hard* kill
+(`SIGKILL`, or the machine dying) leaves it behind, and every later run
+then stops with "another assembly appears to be running" until it is
+cleared. That is deliberate: the lock guards a step that deletes files,
+so a stale one is reported rather than broken automatically on a
+timer. The error prints the exact command — `rmdir <path>` — and it is
+safe to run once you know no other assembly is in progress.
 
 **Leave the markers in place** when editing the assembled notes.
 Deleting one makes a re-run duplicate that fragment. If a dated file has
