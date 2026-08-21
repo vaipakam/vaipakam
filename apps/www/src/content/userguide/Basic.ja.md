@@ -356,16 +356,21 @@ loan を full repay した場合、borrower claim は最初に lock した
 collateral を返します。default または liquidation の場合も、いちど確認してください。
 債務とその清算にかかる費用に必要なぶんの価値だけが取られ、それを
 超える分はあなたのものとして記録されます。その形は loan の終わり方
-によります。通常の liquidation のあとも、取引可能な collateral の
-default のあとも、バスケットは売られ、残りは loan 自体の asset で
-届きます。collateral そのものが残るのは、liquidator が売らずに割引で
-直接引き取ったときだけです。価格を付けられない collateral の
+によります。collateral が売られた場合 — 取引所を通した通常の
+liquidation、または取引可能な collateral の default — 残りは loan 自体の
+asset で届きます。売られずに引き渡された場合は、collateral そのものが
+あなたを待ちます。引き渡すのは二つ: liquidator が割引で直接引き取る場合と、
+通常の liquidation が売られずにプロトコル内部で別の position と
+マッチした場合です。価格を付けられない collateral の
 default では、バスケット全体が失われ何も残らないことも多いですが、
 それは結果であってルールではありません。決して戻らないのは手数料の
 rebate です。廃止された VPFI 手数料経路のままの loan では、Loan
 Initiation Fee のために保管されていた VPFI は treasury に没収されます。
-claim はあなたの borrower position NFT を consume します — だからこそ
-liquidation のあとも NFT は残り、あなたを待っています。
+claim はあなたの borrower position NFT を consume します。逆は成り立ち
+ません。liquidation のあとに NFT が残っていることは、何かが待っている
+証拠ではありません。残余がなかった場合、claim は決済済みとして記録され、
+それでも NFT は残りうる — そして claim しようとすると拒否されます。NFT を
+約束と受け取らず、claim が何と言っているかを読んでください。
 
 ---
 

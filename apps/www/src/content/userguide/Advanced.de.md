@@ -774,13 +774,16 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
 - **HF-Liquidation oder Default** — sieh trotzdem nach, es kann
   ein Überschuss übrig sein. Es wird nur so viel Wert
   genommen, wie Liquidator, Lender und Treasury decken; der Rest
-  wird als dein Claim erfasst. Seine FORM hängt davon ab, wie der Loan
-  geschlossen wurde. Eine gewöhnliche HF-Liquidation und ein
-  zeitbasierter Default auf handelbares Collateral verkaufen beide
-  das Collateral und erfassen den Rest im Principal-Asset des
-  Loans. Nur ein Close-out, bei dem ein Liquidator das Collateral
-  mit Abschlag direkt übernimmt, statt es zu verkaufen, lässt den
-  nicht verkauften Teil verpfändet in deinem Vault. Eine
+  wird als dein Claim erfasst. Seine FORM hängt an einer Frage: wurde
+  das Collateral VERKAUFT oder ÜBERGEBEN? Verkauft — eine
+  gewöhnliche Liquidation über eine Börse oder ein zeitbasierter
+  Default auf handelbares Collateral — und der Rest erreicht dich
+  im Principal-Asset des Loans. Übergeben, und was bleibt, ist das
+  Collateral selbst, verpfändet in deinem Vault. Zwei Wege
+  übergeben es: ein Liquidator, der das Collateral mit Abschlag
+  direkt übernimmt, und eine gewöhnliche Liquidation, die intern
+  gegen eine andere Position gematcht statt an eine Börse
+  geschickt wird. Eine
   Teilliquidation ist überhaupt kein Close-out — der Loan bleibt
   offen und es entsteht kein Claim. Sieh in den Claim, statt zu
   raten. Bei
@@ -793,7 +796,11 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
 
 Der Borrower-Position-NFT wird beim Claim verbrannt, nicht bei der
 Auflösung des Loans — ein von einer Liquidation übrig gelassener
-Überschuss ist also danach noch abholbar.
+Überschuss ist also danach noch abholbar. Dass der NFT noch da ist,
+belegt aber keinen Überschuss: blieb nach einer Liquidation nichts
+übrig, wird der Claim als bereits erledigt erfasst und der NFT kann
+trotzdem bleiben, der Claim wird dann abgelehnt. Lies den Claim,
+nicht den NFT.
 
 ---
 

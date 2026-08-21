@@ -713,12 +713,14 @@ Borrower claim は、loan がどう settle されたかによって次を返し
 - **HF-liquidation または default** — それでも確認してください。surplus が
   残っている場合があります。liquidator・lender・treasury を
   まかなうぶんの価値だけが取られ、残りがあなたの claim として記録
-  されます。その形は loan が閉じた経路によります。
-  通常の HF liquidation も、取引可能な collateral の時間ベース
-  default も、どちらも collateral を売り、残余を loan の principal
-  asset で記録します。売られなかった分が vault に encumbered のまま
-  残るのは、liquidator が collateral を売らずに割引で直接引き取る
-  close-out のときだけです。部分 liquidation はそもそも close-out
+  されます。その形は一点で決まります。collateral が
+  売られたのか、引き渡されたのか。売られた場合 — 取引所を通した
+  通常の liquidation、または取引可能な collateral の時間ベース
+  default — 残余は loan の principal asset で届きます。引き渡された
+  場合、残るのは collateral そのもので、vault に encumbered のまま
+  です。引き渡す経路は二つ: liquidator が割引で直接引き取る場合と、
+  通常の liquidation が取引所に出されず内部で別の position と
+  マッチした場合です。部分 liquidation はそもそも close-out
   ではありません — loan は開いたままで、claim は作られません。
   どちらかを推測せず、claim を確認してください。Illiquid asset の default では通常バスケット全体が失われ何も
   残りませんが、それは結果であってルールではありません。常に失われるのは
@@ -728,7 +730,9 @@ Borrower claim は、loan がどう settle されたかによって次を返し
 
 Borrower position NFT が burn されるのは claim したときであって、loan が
 解決したときではありません。liquidation が残した surplus は、あとからでも
-受け取れます。
+受け取れます。ただし NFT が残っていること自体は surplus の証拠ではありません。
+liquidation が何も残さなかった場合、claim は決済済みとして記録され、それでも
+NFT は残りうるため、claim は拒否されます。NFT ではなく claim を読んでください。
 
 ---
 

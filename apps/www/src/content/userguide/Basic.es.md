@@ -373,18 +373,24 @@ prestatario devuelve el colateral que bloqueaste al inicio. En
 default o liquidación, compruébalo igualmente. Sólo se toma el
 valor que exigen la deuda y los costes de cerrarla, y todo lo que
 exceda queda registrado como tuyo. Su forma depende de cómo
-terminó el préstamo: tras una liquidación ordinaria, o un default
-sobre colateral negociable, se vende la canasta y lo que sobra te
-llega en el activo del propio préstamo. Sólo cuando un liquidador
-toma el colateral directamente con descuento, en vez de venderlo,
-lo que te espera es el colateral mismo. A menudo —en un
+terminó el préstamo: si el colateral se vendió —liquidación
+ordinaria por un exchange, o default sobre colateral negociable—,
+lo que sobra te llega en el activo del propio préstamo. Si en
+cambio se entregó, lo que te espera es el colateral mismo. Dos
+cosas lo entregan: un liquidador que lo toma directamente con
+descuento, y una liquidación ordinaria casada dentro del protocolo
+contra otra posición en lugar de vendida. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
 entera y no queda nada, pero eso es cómo resultó, no una regla.
 Lo que nunca vuelve es el reembolso de la comisión: en un
 préstamo que siga en la vía de comisión VPFI retirada, el VPFI
 retenido contra la Loan Initiation Fee se pierde en favor del
-tesoro. La reclamación consume tu NFT de posición de prestatario
-—por eso el NFT sigue ahí tras una liquidación, esperándote.
+tesoro. Reclamar consume tu NFT de posición de prestatario.
+Lo contrario no se sigue: un NFT que sigue ahí tras una
+liquidación no es prueba de que algo te espere. Si no quedó nada,
+la reclamación se registra como ya saldada y el NFT puede quedarse
+igualmente —e intentar reclamarlo se rechaza. Lee lo que dice la
+reclamación en vez de tomar el NFT como una promesa.
 
 ---
 

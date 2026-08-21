@@ -585,11 +585,12 @@ borrower claim 根据 loan 如何 settle 来返回：
   Loan Initiation Fee 的 time-weighted VPFI rebate。
 - **HF-liquidation 或 default** — 仍请查看，可能还有 surplus。系统只取走
   足以支付 liquidator、lender 和 treasury 的那部分价值，余下的会记为您的
-  claim。它的形式取决于 loan 是以哪条路径关闭的。普通的 HF liquidation，
-  以及对可交易 collateral 的时间型 default，两者都会卖出 collateral，
-  并将剩余记为 loan 的 principal asset。只有当 liquidator 不卖出、而是
-  按折扣直接拿走 collateral 的那种 close-out，未卖出的部分才会以
-  encumbered 状态留在您的 vault 中。至于部分 liquidation，它根本不是
+  claim。它的形式只取决于一件事：collateral 是被卖出，还是被交出。被卖出——
+  经交易所路由的普通 liquidation，或对可交易 collateral 的时间型
+  default——剩余会以 loan 的 principal asset 到您手中。被交出，剩下的
+  就是 collateral 本身，以 encumbered 状态留在您的 vault 中。有两条
+  路径会交出它：liquidator 按折扣直接拿走，以及普通 liquidation 没有
+  送去交易所、而是在内部与另一个 position 撮合。至于部分 liquidation，它根本不是
   close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要
   假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩
   什么——但那是一种结果，不是规则。始终会失去的是 rebate：若该 loan 仍在
@@ -597,7 +598,9 @@ borrower claim 根据 loan 如何 settle 来返回：
   treasury**，且只有正常关闭才会返还 rebate。
 
 borrower position NFT 是在您 claim 时 burn，而不是在 loan 结清时——因此
-liquidation 留下的 surplus 之后仍可领取。
+liquidation 留下的 surplus 之后仍可领取。但 NFT 还在，本身并不证明有
+surplus：如果 liquidation 什么也没剩下，claim 会被记为已经结清，而 NFT
+仍可能留着，此时 claim 会被拒绝。请读 claim，而不是读 NFT。
 
 ---
 
