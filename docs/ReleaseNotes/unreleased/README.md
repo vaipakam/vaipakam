@@ -66,9 +66,9 @@ git commit -m "docs: release notes <date>"
 ```
 
 **If a run is interrupted, run it again** — with one caveat below. The
-dated file is built
-in a temp file and renamed into place at the end, so it is either the old
-file or the complete new one — never a partial append. Each folded
+dated file is built in a temp file and renamed into place at the end, so
+it is either the old file or the complete new one, never a partial
+append. Each folded
 fragment also leaves an invisible HTML-comment marker
 (`<!-- assembled-fragment: <name> sha256=<hash> -->`) in the dated file,
 which is how a re-run tells a fragment already folded in from one still
