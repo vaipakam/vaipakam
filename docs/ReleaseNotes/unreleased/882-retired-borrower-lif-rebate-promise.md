@@ -88,11 +88,21 @@ action available hits that gate and sends nothing. Pressing the button again
 does nothing. A deposit or withdrawal that leaves the tier where it is does
 nothing. The window expires and the discount on that mirror is gone.
 
-So the pages say that instead: a mirror discount lasts sixty days from the push
-that established it, and today only a change that actually moves your tier
-brings it back. A truthful description of a bad situation rather than a fix —
-the underlying gap, a holder with no reason to move their tier having no way to
-keep a discount they qualify for, is tracked separately.
+**And the second attempt was wrong too, in the same direction.** It said only a
+change that moves your tier could bring the discount back, which would have sent
+a reader to shuffle VPFI they had no reason to shuffle — and crossing a tier
+boundary and climbing back costs them the discount for the whole minimum-history
+window, so the advice was not merely useless but expensive. There is a way back
+that touches nothing: switch the fee-discount consent off on the canonical chain
+and push, which sends tier 0 and therefore differs from what was last sent, then
+switch the consent on and push again, which sends the real tier and restarts the
+sixty days. The pages now spell that out, because it is not something a reader
+would ever guess.
+
+Twice in a row, then, this note named the wrong remedy — first one that does
+nothing, then one that costs the reader. The pattern in both is the same: a
+sentence written from what the mechanism seemed to imply rather than from what
+the mechanism does.
 
 Worth noting where the correct account already lived. The Advanced guide's own
 refresh paragraph states the deduplication rule explicitly, and why it exists,
