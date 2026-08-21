@@ -1,9 +1,14 @@
 ## The guides no longer tell borrowers who repaid in full that their rebate is gone (#882)
 
-On loans still using the retired VPFI fee path, a loan that ends properly — a
-full repayment, an early close, or a refinance — **settles** the time-weighted
-rebate on the VPFI held against the Loan Initiation Fee. A default or a
-liquidation forfeits the whole amount outright.
+On loans still using the retired VPFI fee path, a loan that ends properly
+**settles** the time-weighted rebate on the VPFI held against the Loan
+Initiation Fee. A default or a liquidation forfeits the whole amount outright.
+
+Ending properly covers more routes than the three the guides used to name: a
+full repayment, an early close, a refinance, **and also the sale-based closes** —
+selling the collateral to settle the loan, and the swap-to-repay routes. Six
+distinct paths settle the rebate, and copy that lists only three tells the
+borrower using a fourth that theirs is not a proper close.
 
 Settling is not the same as paying out. The rebate is sized by the discount the
 borrower averaged over the loan's life, so a borrower who held no VPFI, or

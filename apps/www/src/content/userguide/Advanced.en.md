@@ -713,11 +713,13 @@ burned in the same transaction.
 
 The borrower claim returns, depending on how the loan settled:
 
-- **Full repayment / preclose / refinance** — your collateral
-  basket back. On a loan still using the retired VPFI fee path,
-  the time-weighted Loan Initiation Fee rebate comes back with
-  it; a loan opened under the current model has none, because
-  its discount was already taken off the fee at acceptance.
+- **Full repayment / preclose / refinance, or a sale that
+  settles the loan** — your collateral basket back. On a loan
+  still using the retired VPFI fee path, the time-weighted Loan
+  Initiation Fee rebate is settled alongside it, and can come to
+  nothing if your discount averaged nothing; a loan opened under
+  the current model has none at all, because its discount was
+  already taken off the fee at acceptance.
 - **HF-liquidation or default** — check anyway; there may be a
   surplus. Only enough value is taken to cover the
   liquidator, the lender and the treasury, and the remainder is

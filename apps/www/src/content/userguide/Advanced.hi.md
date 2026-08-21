@@ -723,10 +723,11 @@ transaction में burn होता है।
 Borrower claim इस आधार पर return करता है कि loan कैसे settle
 हुआ:
 
-- **पूरा repayment / preclose / refinance** — आपकी collateral
-  basket वापस; और अगर वह loan अब भी बंद किए गए VPFI fee रास्ते
-  पर है, तो साथ में Loan Initiation Fee से time-weighted VPFI
-  rebate भी।
+- **पूरा repayment / preclose / refinance, या loan को settle
+  करने वाली कोई sale** — आपकी collateral basket वापस; और अगर वह
+  loan अब भी बंद किए गए VPFI fee रास्ते पर है, तो साथ में Loan
+  Initiation Fee का time-weighted VPFI rebate settle होता है, जो
+  शून्य भी हो सकता है।
 - **HF-liquidation या default** — फिर भी देख लें, surplus बचा
   हो सकता है। Liquidator, lender और treasury को चुकाने भर का मूल्य ही लिया
   जाता है, और बाकी आपके claim के रूप में दर्ज होता है। उसका रूप इस पर निर्भर है कि loan किस

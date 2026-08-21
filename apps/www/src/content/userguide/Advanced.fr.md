@@ -763,10 +763,11 @@ brûlé dans la même transaction.
 La réclamation de l'emprunteur rend, selon la manière dont le
 prêt s'est réglé :
 
-- **Remboursement total / preclose / refinance** — ton panier de
-  collatéral, plus — uniquement sur un prêt encore soumis à la
-  voie de frais VPFI retirée — le rabais VPFI pondéré dans le
-  temps issu de la Loan Initiation Fee.
+- **Remboursement total / preclose / refinance, ou une vente qui
+  solde le prêt** — ton panier de collatéral ; sur un prêt encore
+  soumis à la voie de frais VPFI retirée, le rabais VPFI pondéré
+  dans le temps issu de la Loan Initiation Fee est réglé en même
+  temps, et peut être nul.
 - **Liquidation HF ou défaut** — vérifie quand même, il peut
   rester un excédent. On ne prélève que la valeur nécessaire
   pour couvrir le liquidateur, le prêteur et le trésor, et le reste
