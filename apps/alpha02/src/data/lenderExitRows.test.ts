@@ -23,6 +23,7 @@ const base: LenderExitInput = {
   saleCancel: 'yes',
   fallbackPending: false,
   saleLock: 'clear',
+  listingMayStand: false,
   heldVpfiUnresolved: false,
   borrowerOffsetPending: false,
   instantSellCandidates: 'some',
@@ -55,6 +56,7 @@ describe('wait row — ordering and framing', () => {
       saleCancel: 'no-elsewhere',
       fallbackPending: true,
       saleLock: 'listed',
+      listingMayStand: true,
       heldVpfiUnresolved: true,
       borrowerOffsetPending: true,
       instantSellCandidates: 'none',
@@ -240,7 +242,7 @@ describe('sale lock — an unanswered read is not "clear" (Codex r1 P2)', () => 
   });
 
   it('blocks the DIRECT sale too when a listing stands — its tool is unmounted, so the jump would scroll to nothing', () => {
-    expect(rowFor({ saleLock: 'listed' }, 'sell-now').unavailable).toBe(
+    expect(rowFor({ saleLock: 'listed', listingMayStand: true }, 'sell-now').unavailable).toBe(
       o.sellNowAlreadyListed,
     );
   });
@@ -395,7 +397,16 @@ describe('cost survives a live listing (Codex r5 P1)', () => {
   // held-balance transfer and reward forfeiture are pending
   // consequences, and LoanSalePendingCard states neither.
   it('keeps the cost line on both sale rows while listed, despite being unavailable', () => {
-    const rows = buildLenderExitRows({ ...base, saleLock: 'listed' });
+    // Both inputs, mirroring the call site: `saleLock === 'listed'`
+    // only arises from a confirmed `listed: true`, which is exactly
+    // what sets `listingMayStand`. They are separate inputs because
+    // they come APART on an errored poll, not because a live listing
+    // can set one without the other.
+    const rows = buildLenderExitRows({
+      ...base,
+      saleLock: 'listed',
+      listingMayStand: true,
+    });
     for (const key of ['sell-now', 'list']) {
       const row = rows.find((r) => r.key === key)!;
       expect(row.unavailable).toBeDefined();
@@ -720,7 +731,7 @@ describe('Full-tariff entitlement — the fourth loss', () => {
     // transfers on completion with everything else. If this ever
     // diverged from `costStillApplies`, one cost line would vanish
     // while its sibling stayed.
-    const row = rowFor({ lenderFeeModeFull: true, saleLock: 'listed' }, 'list');
+    const row = rowFor({ lenderFeeModeFull: true, saleLock: 'listed', listingMayStand: true }, 'list');
     expect(row.costStillApplies).toBe(true);
     expect(row.costExtra).toBe(o.costFullTariff);
     expect(row.cost).toBe(o.listCost);
@@ -790,5 +801,41 @@ describe('final-hour listing cutoff', () => {
       'list',
     );
     expect(row.unavailable).toBe(o.listUnavailableTooClose);
+  });
+});
+
+
+describe('lock trust vs listing risk — two questions, two inputs', () => {
+  it('keeps BOTH cost lines up when a listing may still stand but the poll errored', () => {
+    // saleLock 'checking' blocks the rows; listingMayStand keeps the
+    // disclosure. Collapsing these hid the held-balance and reward
+    // losses while a buyer could still accept.
+    const row = rowFor(
+      { saleLock: 'checking', listingMayStand: true, lenderFeeModeFull: true },
+      'list',
+    );
+    expect(row.unavailable).toBe(o.saleLockChecking);
+    expect(row.costStillApplies).toBe(true);
+    expect(row.cost).toBe(o.listCost);
+    expect(row.costExtra).toBe(o.costFullTariff);
+  });
+
+  it('does not claim a pending cost when no listing was ever seen', () => {
+    const row = rowFor({ saleLock: 'checking', listingMayStand: false }, 'list');
+    expect(row.costStillApplies).toBeFalsy();
+  });
+
+  it('blocks both rows while the lock is unverified — never waves them through', () => {
+    for (const key of ['sell-now', 'list']) {
+      expect(rowFor({ saleLock: 'checking' }, key).unavailable).toBe(
+        o.saleLockChecking,
+      );
+    }
+  });
+
+  it('leaves the rows takeable only once the lock reads clear', () => {
+    for (const key of ['sell-now', 'list']) {
+      expect(rowFor({ saleLock: 'clear' }, key).unavailable).toBeUndefined();
+    }
   });
 });

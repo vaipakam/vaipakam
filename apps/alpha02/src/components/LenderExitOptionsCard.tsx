@@ -92,6 +92,8 @@ export function LenderExitOptionsCard({
    *  "clear" — that showed both exits as available on a position whose
    *  lock had never been checked (Codex r1 P2). */
   saleLock: SaleLockState;
+  /** See `LenderExitInput.listingMayStand`. */
+  listingMayStand: boolean;
   /** A position with unresolved held VPFI cannot be unified to one
    *  settlement identity, so listing refuses it
    *  (`SalePositionNotConsolidatable`).

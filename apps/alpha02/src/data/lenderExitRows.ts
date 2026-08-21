@@ -255,6 +255,25 @@ export interface LenderExitInput {
   listingFlowDisabled: boolean;
   collateralIsNft: boolean;
   saleLock: SaleLockState;
+  /** A listing may STILL BE STANDING, independently of whether the
+   *  lock read is trustworthy enough to gate the rows on.
+   *
+   *  Two questions were riding on `saleLock` and they came apart in
+   *  opposite directions (Codex r20 P2 ×2):
+   *
+   *   - "may I offer this row" — must fail CLOSED, so an initial read
+   *     failure blocks rather than waving the rows through.
+   *   - "might a buyer still complete a sale" — must fail OPEN for the
+   *     COST lines, because a previously-confirmed listing does not
+   *     stop being live just because the next poll errored, and the
+   *     held-balance transfer and reward forfeiture stay pending.
+   *
+   *  Mapping an errored poll over a cached `listed` to `'checking'`
+   *  satisfied the first and broke the second: the rows went
+   *  unavailable AND both cost lines vanished, while
+   *  `LoanSalePendingCard` stayed mounted and a buyer could still
+   *  accept. One flag cannot answer both. */
+  listingMayStand: boolean;
   /** See `SaleToolsState` — applies to BOTH sale rows. */
   saleTools: SaleToolsState;
   heldVpfiUnresolved: boolean;
@@ -326,7 +345,7 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       // Same reasoning as the listing row: while a listing stands, the
       // buyer completing it incurs these same losses, and this row's
       // cost line carries the identical disclosure.
-      costStillApplies: input.saleLock === 'listed',
+      costStillApplies: input.listingMayStand,
       unavailable: pastDueOr(
         input.saleLock === 'checking'
           ? o.saleLockChecking
@@ -371,7 +390,7 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       costExtra: input.lenderFeeModeFull ? o.costFullTariff : undefined,
       note: o.listStructural,
       // A live listing is a sale in flight, not a declined option.
-      costStillApplies: input.saleLock === 'listed',
+      costStillApplies: input.listingMayStand,
       // Most structural reason wins, so a lender hears the thing they
       // cannot change before the thing they can. "Already listed" leads
       // because it is the one state with nothing to fix and something

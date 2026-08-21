@@ -3226,6 +3226,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // behind a permanent spinner, which is the same
           // unknown-presented-as-known defect one door over. Distinguish
           // "no read is possible" from "the read has not answered".
+          // Answers "might a buyer still complete", NOT "may I offer
+          // the row" — see `listingMayStand`. An affirmative cached
+          // listing keeps the COST lines up even when the poll that
+          // would reconfirm it has errored, because the held balance
+          // and the reward entry stay at risk until something proves
+          // otherwise. Falls back to false only when we have never
+          // seen a listing at all.
+          listingMayStand={sale.state?.listed === true}
           saleLock={
             !loan.data?.lenderTokenId ||
             !/^[1-9]\d*$/.test(String(loan.data.lenderTokenId))
@@ -3241,8 +3249,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   // which is exactly right, and this card's review
                   // history is largely the cost of widening unions one
                   // case at a time.
+                  // ...and `'unknown'` was the WRONG replacement
+                  // (Codex r20 P2): the row builder treats it as
+                  // non-blocking, so an initial failure on a position
+                  // that may already carry a listing offered both rows
+                  // and mounted both forms against submissions the
+                  // contracts would refuse. "No claim" is right for a
+                  // read that is not POSSIBLE and wrong for one that
+                  // failed — the first cannot be retried, the second
+                  // must fail closed. `'checking'` blocks and, unlike
+                  // the spinner case r13 fixed, the query is live and
+                  // retrying, so the wait genuinely does end.
                   sale.isError
-                  ? 'unknown'
+                  ? 'checking'
                   : 'checking'
                 : sale.state.listed === true
                   ? // Codex r10 P2 — this used to say a cached LISTED
