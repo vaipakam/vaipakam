@@ -275,12 +275,29 @@ async function devtoolsProbe(page) {
     .catch((e) => ({ error: String(e).slice(0, 200) }));
 }
 
-/** Console/network noise that is environmental in the review sandbox —
- *  tagged so the report separates it from real defects. The beacon
- *  check extracts the first URL token from the message and compares
- *  its PARSED ORIGIN (never a substring/regex host match, so a
- *  lookalike domain can't self-tag as noise — same shape as the #1145
- *  CodeQL fix; js/regex/missing-regexp-anchor rejects any un-anchored
+/** Console/network entries that are NOT app defects — tagged so the
+ *  per-route "real console errors" count stays about the app.
+ *
+ *  `csp-beacon` is tagged but is NOT environmental noise, and calling it
+ *  that was wrong (#1826). The site's CSP refuses Cloudflare's
+ *  auto-injected Web Analytics beacon because that collector is
+ *  inserted at the edge, downstream of `consent.ts`, and so cannot be
+ *  gated by consent — refusing it is the CORRECT behaviour, and the
+ *  privacy rule in `WebsiteReadme.md` requires the injection be turned
+ *  off at the zone instead (#1816). Burying it in the noise bucket
+ *  normalised a configuration defect, and would have hidden a
+ *  re-enablement after an operator switched it off. It is therefore
+ *  reported ONCE at the end of the run, by name, instead of per route:
+ *  loud enough to act on, quiet enough not to drown the sweep.
+ *
+ *  It does not fail the run. The fix is a zone setting, not a code
+ *  change, so a red sweep would block work nobody in the repo can
+ *  unblock.
+ *
+ *  The beacon check extracts the first URL token from the message and
+ *  compares its PARSED ORIGIN (never a substring/regex host match, so a
+ *  lookalike domain can't self-tag — same shape as the #1145 CodeQL
+ *  fix; js/regex/missing-regexp-anchor rejects any un-anchored
  *  hostname-looking pattern, and a mid-message URL can't be
  *  ^-anchored). */
 const BEACON_ORIGIN = 'https://static.cloudflareinsights.com';
@@ -758,6 +775,28 @@ console.log(
   `Routes: ${routesAttempted - allNavFailures.length}/${routesAttempted} loaded, ` +
     `${allNavFailures.length} did NOT load`,
 );
+// One line for the whole run (#1826). Derived from the report rather
+// than accumulated, because unlike a nav failure this is a property of
+// the DEPLOYMENT, not of any one route visit — every route sees it, so
+// counting occurrences would say more about the route list than about
+// the defect.
+const beaconRoutes = new Set();
+for (const pass of report.passes) {
+  for (const r of pass.routes ?? []) {
+    if ((r.console ?? []).some((c) => c.noise === 'csp-beacon')) beaconRoutes.add(r.route);
+  }
+}
+if (beaconRoutes.size > 0) {
+  console.warn(
+    `CONFIG DEFECT: Cloudflare Web Analytics auto-injection is ON for this zone — ` +
+      `its beacon is injected at the edge and refused by the site's CSP on ` +
+      `${beaconRoutes.size} route(s). The refusal is correct; the injection is not. ` +
+      `That collector sits downstream of the consent pipeline and cannot be gated ` +
+      `by it, so the fix is to turn the injection off at the zone, NOT to allow the ` +
+      `host in script-src (#1816). Not failing the run: the remedy is a zone ` +
+      `setting, not a code change.`,
+  );
+}
 for (const f of allNavFailures) {
   console.error(
     `  NAV FAIL [${f.session}/${f.pass}] ${f.route} after ${f.loadMs}ms — ` +
