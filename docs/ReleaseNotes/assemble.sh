@@ -400,11 +400,21 @@ SNAP=""
 _cleanup() {
   local _w="$WORK" _s="$SNAP"
   WORK=""; SNAP=""
-  [ -n "$_w" ] && rm -f "$_w"
-  [ -n "$_s" ] && rm -rf "$_s"
+  # Every removal is NON-FATAL, and the lock release is unconditional
+  # (Codex #1863 r23). `set -e` exits on the last command of an `&&`
+  # list, so a failing `rm` — $DIR turned unwritable while an error was
+  # unwinding, say — aborted this function BEFORE the lock came off. An
+  # ordinary pre-publication failure then left behind the stale lock
+  # this script documents as a hard-kill-only outcome, blocking every
+  # later run for a reason the message does not describe.
+  #
+  # Cleanup is the one place that must finish whatever it finds broken:
+  # it runs while something has already gone wrong.
+  if [ -n "$_w" ]; then rm -f "$_w" || :; fi
+  if [ -n "$_s" ]; then rm -rf "$_s" || :; fi
   if (( LOCK_HELD )); then
     LOCK_HELD=0
-    rmdir "$LOCK" 2>/dev/null
+    rmdir "$LOCK" 2>/dev/null || :
   fi
   return 0
 }
@@ -942,8 +952,13 @@ for f in "${frags[@]}"; do
   # renders as visible text in the published notes, breaking the one
   # promise the marker makes. Refused rather than escaped, because these
   # names are ours and a legible one never contains `-->`.
+  # `--!>` as well as `-->` (Codex #1863 r23). HTML treats it as an
+  # ABRUPT closing of a comment, so `note--!>visible.md` ends the marker
+  # inside the name and renders the rest — the remaining filename and the
+  # hash — as visible text in the published notes. Same broken promise as
+  # `-->`, through a sequence that is easy not to know about.
   case "${FRAG_NAME[$f]}" in
-    *'-->'* | *'<!--'*)
+    *'-->'* | *'<!--'* | *'--!>'*)
       echo "Error: ${FRAG_NAME[$f]} contains an HTML comment delimiter." >&2
       echo "Refusing to assemble: the provenance marker is an HTML comment," >&2
       echo "so such a name would end it early and print the rest of the" >&2
@@ -1111,6 +1126,7 @@ assert_output_unchanged() {  # assert_output_unchanged <what-was-about-to-happen
 # inherits the same call.
 declare -A SRC_ID=()
 _d_n=0
+OUT_COPY=""
 
 assert_sources_unchanged() {  # assert_sources_unchanged <what-was-about-to-happen>
   local p now
@@ -1204,6 +1220,13 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
     exit 1
   fi
   SRC_ID["$dated"]="${IDENTITY%% *}"
+  # The copy of the file being ASSEMBLED is kept: the replacement is
+  # built from it rather than from a fresh read of the live file
+  # (Codex #1863 r23). Reading $OUT again is another read at another
+  # moment — an editor changing it while `cat` runs and restoring it
+  # before the final check leaves the identity matching while $WORK
+  # holds the transient or torn text, which is then published.
+  if [ "$dated" = "$OUT" ]; then OUT_COPY="$_d_copy"; fi
   # The copy must equal the live file, or the baseline describes bytes
   # nobody will ever compare against and every later check passes
   # vacuously. Same bracket the fragments use, same non-guarantee.
@@ -1718,7 +1741,8 @@ fi
 # are folded into — an inconsistency in this script's own design rather
 # than a considered asymmetry, since the dated file is the published one.
 if [ -f "$OUT" ]; then
-  cat "$OUT" > "$WORK"
+  # From the COPY the baseline describes, never from $OUT again.
+  cat "$OUT_COPY" > "$WORK"
 else
   printf '# Release Notes — %s\n' "$DATE" > "$WORK"
 fi
@@ -1970,9 +1994,22 @@ for f in "${frags[@]}"; do
   # here means the "a set-aside file already exists" abort on a perfectly
   # ordinary pool. The full name is printed, so nothing is lost to the
   # operator; only the on-disk name is shortened.
+  # Budgeted against the ACTUAL per-name limit of the pool directory,
+  # not a constant that assumes 255 (Codex #1863 r23). A filesystem with
+  # a smaller limit — and some do — makes both the fixed threshold and
+  # the fixed truncated length wrong in the same direction, so `mv` fails
+  # only after $OUT is published. `getconf` answers for the real path;
+  # if it cannot, 255 is the conservative POSIX floor to fall back to.
+  _nmax="$(getconf NAME_MAX "$UNREL" 2>/dev/null)" || _nmax=""
+  [[ "$_nmax" =~ ^[0-9]+$ ]] || _nmax=255
+  (( _nmax > 32 )) || _nmax=32
   _q_name=".assembled.${FRAG_NAME[$f]}"
-  if (( $(byte_len "$_q_name") > 200 )); then
-    _q_name=".assembled.$(byte_head "${FRAG_NAME[$f]}" 160).${FRAG_HASH[$f]:0:16}"
+  if (( $(byte_len "$_q_name") > _nmax )); then
+    # ".assembled." is 11 bytes, the hash suffix ".<16 hex>" is 17, so
+    # the stem gets whatever the limit leaves after those.
+    _stem_max=$(( _nmax - 28 ))
+    (( _stem_max > 0 )) || _stem_max=1
+    _q_name=".assembled.$(byte_head "${FRAG_NAME[$f]}" "$_stem_max").${FRAG_HASH[$f]:0:16}"
   fi
   _q="$UNREL/$_q_name"
   if [ -e "$_q" ]; then

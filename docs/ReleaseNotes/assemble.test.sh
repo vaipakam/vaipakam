@@ -1922,6 +1922,113 @@ check "the other lock survives" "$(bash "$W/drive.sh" "$W")" "intact"
 check "the script clears the flag" \
   "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'LOCK_HELD=0')" "1"
 
+echo "T66: a failing temp-file removal still releases the lock"
+W="$ROOT/t66"; build "$W"
+out="$W/docs/ReleaseNotes"
+# `set -e` exits on the LAST command of an `&&` list, so a failing `rm` aborted
+# _cleanup before the lock came off — leaving the stale lock this script
+# documents as a hard-kill-only outcome after an ordinary failure (Codex #1863
+# r23). Cleanup is the one place that must finish whatever it finds broken.
+cat > "$W/drive.sh" <<'DRIVE'
+set -euo pipefail
+LOCK="$1/lock"; LOCK_HELD=0; WORK="$1/work"; SNAP=""
+rm() { return 1; }        # every removal fails
+_cleanup() {
+  local _w="$WORK" _s="$SNAP"
+  WORK=""; SNAP=""
+  if [ -n "$_w" ]; then rm -f "$_w" || :; fi
+  if [ -n "$_s" ]; then rm -rf "$_s" || :; fi
+  if (( LOCK_HELD )); then
+    LOCK_HELD=0
+    rmdir "$LOCK" 2>/dev/null || :
+  fi
+  return 0
+}
+mkdir "$LOCK"; LOCK_HELD=1
+_cleanup
+[ -d "$LOCK" ] && echo stuck || echo released
+DRIVE
+check "the lock is still released" "$(bash "$W/drive.sh" "$W")" "released"
+# Pinned to the real definition, so the drive cannot pass while the script
+# diverges from the pattern it demonstrates.
+check "removals are non-fatal in the script" \
+  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c '|| :')" "3"
+
+echo "T67: a name using the ABRUPT comment terminator is refused"
+W="$ROOT/t67"; build "$W"
+out="$W/docs/ReleaseNotes"
+# HTML treats `--!>` as an abrupt closing of a comment, so the marker ends
+# inside the name and the rest — the remaining filename and the hash — renders
+# as visible text in the published notes. Same broken promise as `-->`, via a
+# sequence that is easy not to know about (Codex #1863 r23).
+printf '## abrupt\n' > "$W/docs/ReleaseNotes/unreleased/0003-note--!>visible.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"         "$?"                                          "1"
+check "no fragment consumed"  "$(pending "$W")"                             "3"
+check "it names the reason"   "$(says "$msg" 'HTML comment delimiter')"      "1"
+rm -f "$W/docs/ReleaseNotes/unreleased/0003-note--!>visible.md"
+
+echo "T68: the replacement is built from the recorded copy, not a fresh read"
+W="$ROOT/t68"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The identity baseline comes from a working copy; reading $OUT AGAIN to build
+# the replacement is another read at another moment. An editor changing it
+# while `cat` runs and restoring it before the final check leaves the identity
+# matching while the temp file holds the transient text — which is then
+# published (Codex #1863 r23).
+printf '# Release Notes — 2026-08-16\n\n## genuine\n' > "$out/ReleaseNotes-2026-08-16.md"
+cp "$out/ReleaseNotes-2026-08-16.md" "$W/pristine.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/cat" <<SHIM
+#!/bin/sh
+# Swap in transient text for the duration of the read, then restore, so the
+# live file ends byte-identical and only a fresh read could have seen it.
+printf '# Release Notes — 2026-08-16\n\n## TRANSIENT\n' > "$out/ReleaseNotes-2026-08-16.md"
+/bin/cat "\$@"; _rc=\$?
+/bin/cp "$W/pristine.md" "$out/ReleaseNotes-2026-08-16.md"
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/cat"
+PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the transient text is not published" \
+  "$(count_in '^## TRANSIENT$' "$out/ReleaseNotes-2026-08-16.md")"          "0"
+check "the genuine text survives" \
+  "$(count_in '^## genuine$' "$out/ReleaseNotes-2026-08-16.md")"            "1"
+
+echo "T69: the quarantine bound comes from the filesystem, not a constant"
+W="$ROOT/t69"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A hard-coded 200 assumes NAME_MAX is about 255. Where it is smaller, a legal
+# source name stays under 200 while the prefixed destination exceeds the real
+# limit — and the truncated form can be too long as well (Codex #1863 r23).
+# Reproduced by making getconf report a small limit.
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+long="0003-$(printf 'y%.0s' $(seq 1 60)).md"
+printf '## medium name\n' > "$W/docs/ReleaseNotes/unreleased/$long"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/getconf" <<'SHIM'
+#!/bin/sh
+if [ "$1" = "NAME_MAX" ]; then echo 64; exit 0; fi
+exec /usr/bin/getconf "$@"
+SHIM
+chmod +x "$W/fakebin/getconf"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '## changed after reading\n' > "$W/docs/ReleaseNotes/unreleased/$long"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run completes"     "$?"                                          "0"
+check "the set-aside name fits" \
+  "$(for q in "$W/docs/ReleaseNotes/unreleased"/.assembled.*; do
+       [ -e "$q" ] || continue; n="$(basename "$q")"
+       [ "$(LC_ALL=C; echo ${#n})" -le 64 ] && echo fits || echo over
+     done)"                                                                 "fits"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
