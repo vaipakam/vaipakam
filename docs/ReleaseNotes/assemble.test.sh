@@ -71,6 +71,17 @@ pending() {  # pending <dir> -> count of pending fragments
 sections() {  # sections <file> -> count of `## ` headings, 0 if absent
   if [ -f "$1" ]; then grep -c '^## ' "$1" || true; else echo 0; fi
 }
+fixture_hash() {  # fixture_hash <file> -> sha256 of its bytes
+  # The same portable selection assemble.sh makes, for the same reason: stock
+  # macOS ships `shasum`, not `sha256sum`. Hashed from STDIN so the filename
+  # never appears in the output (see the script's own note).
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum < "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 < "$1" | cut -d' ' -f1
+  fi
+}
+
 says() {  # says <text> <needle> -> 1 if present, 0 if not
   # -F and -- deliberately: a needle beginning with a dash (`--force-append`)
   # is otherwise read as a grep OPTION, and the case fails with a usage error
@@ -463,7 +474,14 @@ out="$W/docs/ReleaseNotes"
 # quote a real marker, and an unanchored parser then reads the quotation as a
 # record and deletes the named fragment unread (Codex #1863 r2).
 MK='<!-- assembled-fragment: '
-HH="$(sha256sum < "$W/docs/ReleaseNotes/unreleased/0002-b.md" | cut -d' ' -f1)"
+HH="$(fixture_hash "$W/docs/ReleaseNotes/unreleased/0002-b.md")"
+# Assert the fixture itself. A hash that came back empty — which is what a
+# bare `sha256sum` does on stock macOS, where the script deliberately falls
+# back to `shasum` — quotes a MALFORMED marker, which matches nothing under
+# either parser and makes this case pass vacuously (Codex #1863 r3). That is
+# the exact failure this case exists to prevent, in the case itself.
+check "the fixture hash is well-formed" \
+  "$(printf '%s' "$HH" | grep -cE '^[0-9a-f]{64}$')" "1"
 {
   echo '## a'
   echo 'The marker for the sibling note looks like this:'
@@ -540,29 +558,35 @@ check "the fragment is NOT deleted"     "$(pending "$W")"                 "2"
 check "it names what it matched"        "$(says "$msg" 'same bytes as')"  "1"
 check "and offers the rename reading"   "$(says "$msg" 'delete the fragment(s) by hand')" "1"
 
-echo "T16: a marker in ANOTHER dated file still counts (the midnight case)"
+echo "T16: a marker in ANOTHER dated file stops the run (the midnight case)"
 W="$ROOT/t16"; build "$W"
 out="$W/docs/ReleaseNotes"
 # The fragment must be genuinely UNTRACKED — never committed. Only then is it
 # accepted for any date, which is what makes the midnight case reachable at
 # all. A committed fragment that is deleted and recreated is still tracked, so
 # the UTC-day guard holds it back and the marker lookup never runs: the first
-# version of this case passed for that reason rather than for the one it
-# claimed, which is no test at all.
+# version of this case passed for that reason rather than the one it claimed,
+# which is no test at all.
 printf '## untracked note\n' > "$W/docs/ReleaseNotes/unreleased/0003-c.md"
 cp "$W/docs/ReleaseNotes/unreleased/0003-c.md" "$ROOT/t16-copy.md"
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "it was folded into the 08-16 file" \
   "$(says "$(cat "$out/ReleaseNotes-2026-08-16.md")" 'untracked note')" "1"
 # Interrupted after the write: still pending, and the clock has passed midnight
-# so the default run now targets a DIFFERENT dated file.
+# so the default run now targets a DIFFERENT dated file. Its marker is in the
+# 08-16 file, which is NOT the file being assembled — indistinguishable from a
+# note reused on a later day, so the run stops rather than guessing (Codex
+# #1863 r3). What matters is that it never writes the payload into two dated
+# files, which it used to.
 cp "$ROOT/t16-copy.md" "$W/docs/ReleaseNotes/unreleased/0003-c.md"
 rm -f "$W/docs/ReleaseNotes/unreleased/0001-a.md" \
       "$W/docs/ReleaseNotes/unreleased/0002-b.md"
-bash "$out/assemble.sh" 2026-08-17 >/dev/null 2>&1
+msg="$(bash "$out/assemble.sh" 2026-08-17 2>&1)"
+check "the run stops"                "$?"                               "1"
 check "the next day's file is not created for it" \
   "$(sections "$out/ReleaseNotes-2026-08-17.md")" "0"
-check "and the fragment is cleared"  "$(pending "$W")" "0"
+check "the fragment is NOT deleted"  "$(pending "$W")"                  "1"
+check "it names the other file"      "$(says "$msg" 'ReleaseNotes-2026-08-16.md')" "1"
 
 echo "T17: a directory at the output path is refused before anything is consumed"
 W="$ROOT/t17"; build "$W"
@@ -634,13 +658,87 @@ mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
 # mktemp creates 0600 and mv carries the mode across, so a new dated file would
 # be owner-only and an existing one would be silently narrowed.
-check "a new file is group/world readable" \
-  "$(mode_of "$out/ReleaseNotes-2026-08-16.md")" "644"
+# Derived, not hardcoded: under a legitimate restrictive umask (0027, 0077)
+# the assembler correctly creates 0640 or 0600, and a fixed 644 would report a
+# regression caused only by the caller's own policy (Codex #1863 r3).
+want_new="$(printf '%o' "$(( 0666 & ~0$(umask) ))")"
+check "a new file matches what a plain redirect would create" \
+  "$(mode_of "$out/ReleaseNotes-2026-08-16.md")" "$want_new"
 chmod 640 "$out/ReleaseNotes-2026-08-16.md"
 printf '## later note\n' > "$W/docs/ReleaseNotes/unreleased/0007-later.md"
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "an existing file keeps its own mode" \
   "$(mode_of "$out/ReleaseNotes-2026-08-16.md")" "640"
+
+echo "T22: a name AND its bytes reused on a later day is not assumed to be the same note"
+W="$ROOT/t22"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0001-a.md" "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Fixed a typo.\n' > "$W/docs/ReleaseNotes/unreleased/reused.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+# Same name, same bytes, LATER day. A digest plus a name still identifies text
+# rather than an occurrence, so consuming this would delete a genuinely new
+# note and produce no file for its day (Codex #1863 r3). What distinguishes it
+# from an interrupted re-run is WHERE the marker is: there, in the file being
+# assembled; here, in another day's.
+printf '## Fixed a typo.\n' > "$W/docs/ReleaseNotes/unreleased/reused.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run stops"                "$?"                                "1"
+check "the fragment is NOT deleted"  "$(pending "$W")"                   "1"
+check "it names the other file"      "$(says "$msg" 'ReleaseNotes-2026-08-16.md')" "1"
+bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates --force-append >/dev/null 2>&1
+check "the override writes the day's file" \
+  "$(sections "$out/ReleaseNotes-2026-08-17.md")" "1"
+
+echo "T23: a marker prefix appearing only in prose does not make a file authoritative"
+W="$ROOT/t23"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The legacy-file stop keys off "does this file carry markers at all". Matching
+# the bare PREFIX let prose — or a malformed example — declare a markerless
+# legacy file authoritative and skip the stop entirely (Codex #1863 r3).
+{
+  echo '# Release Notes — 2026-08-16'
+  echo ''
+  echo 'We write a line like <!-- assembled-fragment: something.md --> after each.'
+  echo ''
+  echo '## 0001-a'
+} > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the legacy stop still fires" "$?"                              "1"
+check "no fragment was consumed"    "$(pending "$W")"                 "2"
+check "it names the override"       "$(says "$msg" '--force-append')" "1"
+
+echo "T24: an unreadable dated file aborts instead of scanning as markerless"
+W="$ROOT/t24"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+# An incomplete recovery index is worse than none: a fragment whose marker
+# lives in the unreadable file reads as never assembled and is appended again.
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/0001-a.md
+chmod 000 "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+rc=$?
+chmod 644 "$out/ReleaseNotes-2026-08-16.md"
+if [ "$(id -u)" = "0" ]; then
+  # root reads through mode 000, so the case cannot be staged this way.
+  ok "skipped — running as root, chmod 000 does not deny reads"
+else
+  check "the run stops"               "$rc"                        "1"
+  check "it says the index is incomplete" "$(says "$msg" 'incomplete')" "1"
+  check "no fragment was consumed"    "$(pending "$W")"            "2"
+fi
+
+echo "T25: a FIFO at a dated path is refused instead of hanging the run"
+W="$ROOT/t25"; build "$W"
+out="$W/docs/ReleaseNotes"
+mkfifo "$out/ReleaseNotes-2026-01-01.md"
+# grep on a FIFO with no writer blocks forever, so every assembly run would
+# hang with no output. `timeout` is the assertion: without the guard this does
+# not return.
+timeout 20 bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+check "the run returns (did not hang)" "$([ $? -eq 124 ] && echo hung || echo returned)" "returned"
+check "no fragment was consumed"       "$(pending "$W")" "2"
+rm -f "$out/ReleaseNotes-2026-01-01.md"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

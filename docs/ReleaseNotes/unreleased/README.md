@@ -79,11 +79,14 @@ fragment after an interrupted run appends the new text rather than
 discarding it. Every dated file is searched, so a run resumed after UTC
 midnight does not write the same content into two of them.
 
-If a fragment has the same bytes as one already assembled but a
-**different** name — a rename since that run, or an unrelated fragment
-carrying the same short text — the script stops and asks rather than
-guessing: delete it by hand if it is the rename, or re-run with
-`--force-append` if it is genuinely new.
+A fragment is removed without being re-appended only when its marker is
+in **the file being assembled** under **the same name** — the signature
+of an interrupted run, since resuming one means re-running for the same
+day. Any other match stops the run and says what it found: a different
+name (a rename, or a fragment that happens to read alike) or a marker in
+another dated file (a reused fragment, or a run resumed past UTC
+midnight). Delete it by hand if it really is already folded in, or
+re-run with `--force-append` if it is genuinely new.
 
 **Leave the markers in place** when editing the assembled notes.
 Deleting one makes a re-run duplicate that fragment. If a dated file has

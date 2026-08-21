@@ -47,14 +47,22 @@ The marker now records a fingerprint of the note's contents, so different text i
 never mistaken for something already filed.
 
 A fingerprint identifies the *text*, though, not which note it came from — and
-two notes can legitimately carry the same short sentence. So identical text under
-a different filename is not assumed to be a rename: that reading would delete a
-genuinely new note and leave its day with no entry at all. The run stops instead,
-says what it matched and where, and offers both readings. Deleting on a guess is
-the one outcome worth ruling out; asking is the only answer that cannot be wrong.
+two notes can legitimately carry the same short sentence, or reuse a filename
+months apart. So the rule for removing a note without adding it is deliberately
+narrow: its record must be in **the file being assembled**, under **the same
+name**. That combination is the signature of an interrupted run and nothing else,
+because resuming one means asking for the same day again.
+
+Anything else stops the run and says what it matched and where. A different name
+is a rename or a coincidence; a record in another day's file is a note reused
+later, or one whose day moved because the clock passed midnight mid-recovery.
+Each of those is two situations wanting opposite handling, and picking either
+one can delete a genuinely new note and leave its day with no entry at all.
+Stopping cannot duplicate and cannot delete; guessing can do both.
 
 A note that merely *quotes* a marker in its prose — as this very note does — is
-not mistaken for a record of one, either.
+not mistaken for a record of one, either. Nor does a file that mentions the
+marker's opening words in passing count as one that keeps records.
 
 Every dated file is searched, not just the one being assembled. A run interrupted
 shortly before midnight and resumed after it is aimed at a different day's file,

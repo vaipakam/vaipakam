@@ -526,6 +526,41 @@ declare -A marked_in=()
 declare -A marked_as=()
 shopt -s nullglob
 for dated in "$DIR"/ReleaseNotes-*.md; do
+  # Regular files only, checked BEFORE opening (Codex #1863 r3). A FIFO
+  # at one of these paths blocks `grep` forever waiting for a writer, and
+  # every assembly run then hangs with no output — the `$OUT` check
+  # further down is never reached, and would not cover a FIFO named for
+  # a different date in any case.
+  if [ ! -f "$dated" ]; then
+    echo "Error: $dated is not a regular file." >&2
+    echo "Refusing to scan it for assembly markers: the recovery index must" >&2
+    echo "cover every dated file, and this one cannot be read as one." >&2
+    exit 1
+  fi
+  # `grep` exit 1 is "no markers in this file", which is normal. Anything
+  # ABOVE 1 is a read error, and `|| true` used to flatten the two
+  # together — leaving a silently INCOMPLETE index, which is worse than
+  # no index at all: a fragment whose marker lives in the unreadable file
+  # reads as never assembled and is appended a second time (Codex #1863
+  # r3). The whole point of this scan is that finding nothing is proof.
+  #
+  # `|| _scan_rc=$?`, not a bare call then `$?`. Under `set -e` a grep
+  # that simply finds nothing (exit 1) is a failing command, so the
+  # shell would exit before the next line ever ran — silently, with no
+  # message and no assembly. The `||` list is exempt and still lets the
+  # code be captured.
+  _scan_out="$(mktemp)"
+  _scan_rc=0
+  grep -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$dated" \
+    > "$_scan_out" 2>/dev/null || _scan_rc=$?
+  if (( _scan_rc > 1 )); then
+    rm -f "$_scan_out"
+    echo "Error: could not read $dated (grep exit $_scan_rc)." >&2
+    echo "Refusing to assemble: an unreadable dated file means the record of" >&2
+    echo "what has already been folded in is incomplete, and a fragment whose" >&2
+    echo "marker lives there would be appended a second time." >&2
+    exit 1
+  fi
   while IFS= read -r line; do
     # `<!-- assembled-fragment: <basename> sha256=<hex> -->`, and ONLY
     # that shape. A line matching the prefix but not the full form is
@@ -546,29 +581,44 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
     marker_hash="${BASH_REMATCH[2]}"
     marked_in["$marker_hash"]="$dated"
     marked_as["$marker_hash"]="$marker_name"
-    # `$MARKER_PREFIX` interpolates into the pattern unescaped because it
-    # contains no ERE metacharacter — it is `<!-- assembled-fragment: `.
-    # If that literal ever gains one, escape it here.
-  done < <(grep -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$dated" 2>/dev/null || true)
+    # `$MARKER_PREFIX` interpolates into the grep pattern unescaped
+    # because it contains no ERE metacharacter — it is
+    # `<!-- assembled-fragment: `. If that literal ever gains one,
+    # escape it there.
+  done < "$_scan_out"
+  rm -f "$_scan_out"
 done
 
-# A hash identifies BYTES, not an occurrence (Codex #1863 r2). Same name
-# AND same bytes is safe to consume: whatever produced it, the identical
-# text is already in place under the identical name. A hash match under a
-# DIFFERENT name is genuinely two things at once — a fragment renamed
-# between runs, or an unrelated later fragment that happens to carry the
-# same short text — and the two want opposite handling. Deleting on the
-# assumption of a rename discards a new fragment and produces no note for
-# its day; appending on the assumption of a coincidence duplicates the
-# section. So it is not assumed either way: the run stops and says what
-# it found, which is the one response that cannot be wrong.
+# ONE rule, and it is narrow on purpose: a fragment is consumed without
+# being appended only when its marker is in THE FILE BEING ASSEMBLED,
+# under THE SAME NAME. Everything else stops the run.
+#
+# That is exactly the interrupted-run signature and nothing else. A
+# digest identifies bytes, not an occurrence (Codex #1863 r2), and a name
+# does not fix that — reusing both a name and its exact text on a later
+# day is an occurrence this run has never seen, and deleting it produces
+# no note for its day at all (Codex #1863 r3). Widening the rule to cover
+# that by treating same-name-same-bytes as ambiguous would be worse
+# still: it is the ordinary recovery case, so recovery would stop being
+# automatic at all, which is the feature.
+#
+# What separates them is WHERE the marker is. Resuming an interrupted run
+# means re-running for the same day, so the marker is in $OUT. A match in
+# a DIFFERENT dated file is either a later reuse, or a fragment whose day
+# has moved under it (an untracked fragment resumed after UTC midnight) —
+# both real, both wanting different handling, neither knowable from here.
+#
+# So the stopping cases are: a match under a different name (rename, or
+# coincidental text), and a match in a different dated file (reuse, or a
+# crossed midnight). Each is reported with what it matched and where.
+# Stopping cannot duplicate and cannot delete; guessing can do both.
 already=()
 pending=()
 ambiguous=()
 for f in "${frags[@]}"; do
   h="$(frag_hash "$f")"
   if [ -n "${marked_in[$h]+set}" ]; then
-    if [ "${marked_as[$h]}" = "$(basename "$f")" ]; then
+    if [ "${marked_as[$h]}" = "$(basename "$f")" ] && [ "${marked_in[$h]}" = "$OUT" ]; then
       already+=("$f")
     else
       ambiguous+=("$f")
@@ -580,9 +630,11 @@ done
 
 if (( ${#ambiguous[@]} > 0 )) && (( FORCE_APPEND == 0 )); then
   echo "Error: these fragments have the same contents as something already" >&2
-  echo "assembled, but under a different name. That is either a rename since" >&2
-  echo "that run, or a different fragment that happens to carry the same text," >&2
-  echo "and nothing here can tell which:" >&2
+  echo "assembled, but not in the one place that would make them the same" >&2
+  echo "occurrence — same name, in the file being assembled now. A different" >&2
+  echo "name means a rename or a coincidentally identical note; a different" >&2
+  echo "dated file means a reused note or a run resumed past UTC midnight." >&2
+  echo "Nothing here can tell which:" >&2
   echo "" >&2
   for f in "${ambiguous[@]}"; do
     h="$(frag_hash "$f")"
@@ -590,8 +642,9 @@ if (( ${#ambiguous[@]} > 0 )) && (( FORCE_APPEND == 0 )); then
       "$(basename "$f")" "${marked_as[$h]}" "$(basename "${marked_in[$h]}")" >&2
   done
   echo "" >&2
-  echo "  - a rename, already folded in  -> delete the fragment(s) by hand" >&2
-  echo "  - a new note that reads alike  -> re-run with --force-append" >&2
+  echo "  - already folded in, under that other name or into that other" >&2
+  echo "    dated file          -> delete the fragment(s) by hand" >&2
+  echo "  - a new note that reads alike -> re-run with --force-append" >&2
   exit 1
 fi
 # With --force-append the operator has said these are new. Appending is
@@ -602,8 +655,8 @@ if (( ${#ambiguous[@]} > 0 )); then
 fi
 
 if (( ${#already[@]} > 0 )); then
-  echo "Already assembled — removing without re-appending:"
-  # Every entry here matched on BOTH name and bytes — a differing name is
+  echo "Already assembled into $(basename "$OUT") — removing without re-appending:"
+  # Every entry here matched on name, bytes AND file — anything else is
   # routed to the ambiguous branch above and never reaches this loop — so
   # there is one line to print, not two.
   for f in "${already[@]}"; do
@@ -647,8 +700,19 @@ if [ -f "$OUT" ]; then
   # script wrote has a marker for everything it folded in, so "no marker
   # for this hash" is authoritative and the fragment really is new. A
   # file with NO markers at all says nothing either way.
+  #
+  # A COMPLETE, well-formed marker — not merely the prefix (Codex #1863
+  # r3). This is a separate discriminator from the parser above and was
+  # not protected by it: prose quoting the prefix, or a malformed
+  # example, set this flag and so declared a markerless legacy file
+  # "authoritative", skipping the very stop this branch exists for.
+  # `if`, not `grep … && out_has_markers=1`: with `set -e` the latter
+  # exits the whole script when grep finds nothing, which is the ordinary
+  # case here — a markerless file is exactly what this branch is for.
   out_has_markers=0
-  grep -qF "$MARKER_PREFIX" "$OUT" && out_has_markers=1
+  if grep -qE "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$OUT"; then
+    out_has_markers=1
+  fi
 
   suspect=()
   for f in "${frags[@]}"; do
