@@ -1250,7 +1250,8 @@ out="$W/docs/ReleaseNotes"
 # file trips it deterministically — and it is a real state, left behind by an
 # earlier crashed run. The name carries no PID precisely so this is
 # reproducible rather than dependent on PID reuse.
-printf 'left over from a crash\n' > "$W/docs/ReleaseNotes/unreleased/.assembled.0001-a.md"
+mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
+printf 'left over from a crash\n' > "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
 msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run fails"               "$?"                                        "1"
 check "it says the file is written" "$(says "$msg" 'HAS ALREADY BEEN WRITTEN')"  "1"
@@ -1258,27 +1259,28 @@ check "it names the leftover"       "$(says "$msg" 'already exists')"           
 # The half-done state is real, and the message has to be true about it.
 check "the dated file WAS written"  "$(sections "$out/ReleaseNotes-2026-08-16.md")" "1"
 check "the leftover is untouched" \
-  "$(cat "$W/docs/ReleaseNotes/unreleased/.assembled.0001-a.md")" "left over from a crash"
-rm -f "$W/docs/ReleaseNotes/unreleased/.assembled.0001-a.md"
+  "$(cat "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md")" "left over from a crash"
+rm -f "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
 
 echo "T43: a set-aside fragment is reported, not silently invisible"
 W="$ROOT/t43"; build "$W"
 out="$W/docs/ReleaseNotes"
 rm "$W/docs/ReleaseNotes/unreleased/0001-a.md" "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # Interrupted between the rename and the removal, a fragment exists ONLY as
-# `.assembled.<name>` — and the pool glob does not match dotfiles, so the next
+# inside `.assembled/` — and the pool glob does not match dotfiles, so the next
 # run would report "No pending fragments" with one sitting right there (Codex
 # #1863 r15).
-printf '## set aside earlier\n' > "$W/docs/ReleaseNotes/unreleased/.assembled.0016-x.md"
+mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
+printf '## set aside earlier\n' > "$W/docs/ReleaseNotes/unreleased/.assembled/0016-x.md"
 msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
-check "it is named"              "$(says "$msg" '.assembled.0016-x.md')"   "1"
+check "it is named"              "$(says "$msg" '0016-x.md')"   "1"
 check "and explained"            "$(says "$msg" 'Set aside by an earlier run')" "1"
 check "it is not deleted" \
-  "$([ -f "$W/docs/ReleaseNotes/unreleased/.assembled.0016-x.md" ] && echo kept || echo gone)" "kept"
+  "$([ -f "$W/docs/ReleaseNotes/unreleased/.assembled/0016-x.md" ] && echo kept || echo gone)" "kept"
 # And it is still reported when there is genuinely nothing else to do.
 check "reported even with an empty pool" \
   "$(says "$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)" 'Set aside by an earlier run')" "1"
-rm -f "$W/docs/ReleaseNotes/unreleased/.assembled.0016-x.md"
+rm -f "$W/docs/ReleaseNotes/unreleased/.assembled/0016-x.md"
 
 echo "T44: a fragment filename containing a newline is refused clearly"
 W="$ROOT/t44"; build "$W"
@@ -1462,16 +1464,21 @@ else
   # concurrent `chown` is undone by it — content unchanged, so no content
   # check can see it (Codex #1863 r19). The startup ownership refusal reads
   # the file long before this point.
+  # Shimmed on `cat` — the step that copies the recorded snapshot into the
+  # temp file — because it runs AFTER the startup group probe. Keyed on
+  # `sed`, the chown landed before that probe, which then refused first
+  # with its own message and this case stopped exercising the branch it
+  # is named for.
   mkdir -p "$W/fakebin"
-  cat > "$W/fakebin/sed" <<SHIM
+  cat > "$W/fakebin/cat" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   chown 65534:65534 "$out/ReleaseNotes-2026-08-16.md"
 fi
-exec /usr/bin/sed "\$@"
+exec /bin/cat "\$@"
 SHIM
-  chmod +x "$W/fakebin/sed"
+  chmod +x "$W/fakebin/cat"
   msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"          "$?"                                        "1"
   check "no fragment consumed"   "$(pending "$W")"                           "2"
@@ -1516,7 +1523,7 @@ check "the injected record never lands" \
 # And the edited fragment is not destroyed: what was folded in is the version
 # read at the start, so the newer bytes are set aside rather than deleted.
 # Checked by CONTENT, not by the original filename — a kept fragment is
-# renamed to `.assembled.<name>`, so testing for the old name reports "gone"
+# moved into `.assembled/`, so testing for the old path reports "gone"
 # for a fragment sitting safely right there. (That assertion was written the
 # wrong way first and passed the wrong verdict.)
 check "the newer bytes survive somewhere" \
@@ -1591,7 +1598,7 @@ SHIM
 chmod +x "$W/fakebin/grep"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 # By CONTENT: the recovery path quarantines before deleting now, so a kept
-# fragment lives under `.assembled.<name>` and looking for the original name
+# fragment lives inside `.assembled/` and looking for the original path
 # reports "gone" for a file sitting safely right there.
 check "the edited one is kept" \
   "$(grep -rl 'newly added line' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
@@ -2002,23 +2009,21 @@ check "the transient text is not published" \
 check "the genuine text survives" \
   "$(count_in '^## genuine$' "$out/ReleaseNotes-2026-08-16.md")"            "1"
 
-echo "T69: the quarantine bound comes from the filesystem, not a constant"
+echo "T69: a near-NAME_MAX name is set aside under its own name"
 W="$ROOT/t69"; build "$W"
 out="$W/docs/ReleaseNotes"
-# A hard-coded 200 assumes NAME_MAX is about 255. Where it is smaller, a legal
-# source name stays under 200 while the prefixed destination exceeds the real
-# limit — and the truncated form can be too long as well (Codex #1863 r23).
-# Reproduced by making getconf report a small limit.
 rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
-long="0003-$(printf 'y%.0s' $(seq 1 60)).md"
-printf '## medium name\n' > "$W/docs/ReleaseNotes/unreleased/$long"
+# The bounded-name scheme this replaces produced five rounds of findings, all
+# of them variations on "the script turned a legal name into an illegal one":
+# measured in characters not bytes, a fixed threshold, a fallback reimposing
+# it, a floor discarding smaller real limits, a second name shape the recovery
+# scan did not know. A subdirectory removes the question — the name is not
+# modified, so a name legal as a fragment is legal there (Codex #1863 r21-r25).
+long="0003-$(printf 'x%.0s' $(seq 1 240)).md"
+[ "$(LC_ALL=C; echo ${#long})" -eq 248 ] || {
+  echo "  FAIL — test bug: fixture is $(LC_ALL=C; echo ${#long}) bytes"; FAILED=1; }
+printf '## long name\n' > "$W/docs/ReleaseNotes/unreleased/$long"
 mkdir -p "$W/fakebin"
-cat > "$W/fakebin/getconf" <<'SHIM'
-#!/bin/sh
-if [ "$1" = "NAME_MAX" ]; then echo 64; exit 0; fi
-exec /usr/bin/getconf "$@"
-SHIM
-chmod +x "$W/fakebin/getconf"
 cat > "$W/fakebin/sed" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
@@ -2029,12 +2034,12 @@ exec /usr/bin/sed "\$@"
 SHIM
 chmod +x "$W/fakebin/sed"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
-check "the run completes"     "$?"                                          "0"
-check "the set-aside name fits" \
-  "$(for q in "$W/docs/ReleaseNotes/unreleased"/.assembled.*; do
-       [ -e "$q" ] || continue; n="$(basename "$q")"
-       [ "$(LC_ALL=C; echo ${#n})" -le 64 ] && echo fits || echo over
-     done)"                                                                 "fits"
+check "the run completes"      "$?"                                        "0"
+check "no name-too-long"       "$(says "$msg" 'too long')"                  "0"
+check "kept under its own name" \
+  "$([ -f "$W/docs/ReleaseNotes/unreleased/.assembled/$long" ] && echo kept || echo gone)" "kept"
+check "the newer bytes survive" \
+  "$(grep -rl 'changed after reading' "$W/docs/ReleaseNotes/unreleased" | wc -l | tr -d ' ')" "1"
 
 echo "T70: recovery deletion quarantines before it checks and removes"
 W="$ROOT/t70"; build "$W"
@@ -2091,38 +2096,6 @@ PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >
 check "the heading is not duplicated" \
   "$(count_in '^## 0001-a$' "$out/ReleaseNotes-2026-08-16.md")"             "1"
 
-echo "T72: an unknown NAME_MAX falls back to a name that always fits"
-W="$ROOT/t72"; build "$W"
-out="$W/docs/ReleaseNotes"
-rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
-# Defaulting to 255 when getconf cannot answer recreated the fixed-bound bug:
-# on a filesystem with a smaller limit it is wrong in the same direction, and
-# mv then fails only after publication (Codex #1863 r24).
-long="0003-$(printf 'z%.0s' $(seq 1 200)).md"
-printf '## long\n' > "$W/docs/ReleaseNotes/unreleased/$long"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/getconf" <<'SHIM'
-#!/bin/sh
-exit 1
-SHIM
-chmod +x "$W/fakebin/getconf"
-cat > "$W/fakebin/sed" <<SHIM
-#!/bin/sh
-if [ ! -f "$W/fired" ]; then
-  : > "$W/fired"
-  printf '## changed after reading\n' > "$W/docs/ReleaseNotes/unreleased/$long"
-fi
-exec /usr/bin/sed "\$@"
-SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
-check "the run completes"      "$?"                                        "0"
-check "the set-aside name is short" \
-  "$(for q in "$W/docs/ReleaseNotes/unreleased"/.a.*; do
-       [ -e "$q" ] || continue; n="$(basename "$q")"
-       [ "$(LC_ALL=C; echo ${#n})" -le 32 ] && echo fits || echo over
-     done)"                                                                "fits"
-
 echo "T73: a lock that cannot be released is reported, not swallowed"
 W="$ROOT/t73"; build "$W"
 out="$W/docs/ReleaseNotes"
@@ -2155,6 +2128,107 @@ check "it is recognised as already folded in" \
   "$(says "$msg" 'removing without re-appending')"                          "1"
 check "the section is not duplicated" \
   "$(count_in '^## 0001-a' "$out/ReleaseNotes-2026-08-16.md")"              "1"
+
+echo "T75: marker PRESENCE is read from the recorded copy too"
+W="$ROOT/t75"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# A markerless output already holding the heading. A valid marker present only
+# during the has-markers scan makes the file look authoritative, and the
+# duplicate-heading safeguard then DELIBERATELY appends the section again
+# (Codex #1863 r25). The heading check below it already read the copy; this one
+# did not.
+printf '# Release Notes — 2026-08-16\n\n## 0001-a\n' > "$out/ReleaseNotes-2026-08-16.md"
+cp "$out/ReleaseNotes-2026-08-16.md" "$W/pristine.md"
+_h="$(fixture_hash "$W/docs/ReleaseNotes/unreleased/0001-a.md")"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/grep" <<SHIM
+#!/bin/sh
+_m=0
+for a in "\$@"; do case "\$a" in *sha256=*) _m=1 ;; esac; done
+if [ "\$_m" = "1" ] && [ ! -f "$W/fired" ]; then
+  case "\$*" in
+    # ONLY the live dated path. Including the working-copy paths made the
+    # shim fire on the earlier index scan instead, spending its one shot
+    # before reaching the site under test — which is what the old code
+    # reads here and the new code does not.
+    *ReleaseNotes-2026-08-16.md*)
+      : > "$W/fired"
+      printf '<!-- assembled-fragment: other.md sha256=%s -->\n' "$_h" \\
+        >> "$out/ReleaseNotes-2026-08-16.md"
+      /usr/bin/grep "\$@"; _rc=\$?
+      /bin/cp "$W/pristine.md" "$out/ReleaseNotes-2026-08-16.md"
+      exit \$_rc
+      ;;
+  esac
+fi
+exec /usr/bin/grep "\$@"
+SHIM
+chmod +x "$W/fakebin/grep"
+PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the heading is not duplicated" \
+  "$(count_in '^## 0001-a$' "$out/ReleaseNotes-2026-08-16.md")"             "1"
+
+echo "T76: a dangling symlink at the quarantine path is not overwritten"
+W="$ROOT/t76"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# `-e` FOLLOWS a symlink, so a dangling one reads as absent: `mv` replaced the
+# link and the later `rm` removed whatever now sat there (Codex #1863 r25).
+mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
+ln -s "$W/nowhere.md" "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '## changed after reading\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the link is still a link" \
+  "$([ -L "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md" ] && echo link || echo gone)" "link"
+check "it says a set-aside file is there" "$(says "$msg" 'set-aside file already exists')" "1"
+
+echo "T77: the group compared is the one a NEW file here would take"
+W="$ROOT/t77"; build "$W"
+out="$W/docs/ReleaseNotes"
+if [ "$(id -u)" != "0" ]; then
+  check "skipped — setgid + chgrp need root (CI runs it)" "1" "1"
+else
+  # In a setgid directory mktemp inherits the DIRECTORY's group, not the
+  # runner's. Comparing the output against `id -g` therefore compared the wrong
+  # pair, passed, and the rename changed the output's group silently before
+  # consuming anything (Codex #1863 r25).
+  printf '# Release Notes — 2026-08-16\n\n## pre\n' > "$out/ReleaseNotes-2026-08-16.md"
+  chgrp 0 "$out/ReleaseNotes-2026-08-16.md"
+  chgrp 65534 "$out"; chmod g+s "$out"
+  msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "the run stops"        "$?"                                      "1"
+  check "no fragment consumed" "$(pending "$W")"                         "2"
+  check "it names both groups" "$(says "$msg" 'would take group')"        "1"
+  check "the group is unchanged" \
+    "$(stat -c '%g' "$out/ReleaseNotes-2026-08-16.md")"                   "0"
+  chmod g-s "$out"
+fi
+
+echo "T78: CRLF and LF headings compare as the same heading"
+W="$ROOT/t78"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# A CRLF fragment against an LF markerless output left the carriage return on
+# one side only, so an identical heading did not match and the section was
+# appended twice — the line endings deciding a question about the text
+# (Codex #1863 r25).
+printf '## dup\r\nbody\r\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n## dup\n' > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops and asks"  "$?"                                      "1"
+check "no fragment consumed"    "$(pending "$W")"                         "1"
+check "the heading is not duplicated" \
+  "$(count_in '^## dup' "$out/ReleaseNotes-2026-08-16.md")"               "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

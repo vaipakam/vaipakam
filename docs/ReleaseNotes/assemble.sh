@@ -164,64 +164,40 @@ read_mode() {  # read_mode <path>
   return 0
 }
 
-# ── Length and truncation in BYTES ───────────────────────────────────────────
-# `${#var}` counts CHARACTERS in the current locale, and filesystem
-# limits are in BYTES (Codex #1863 r22). Under a UTF-8 locale a name of
-# 81 three-byte characters plus `.md` measures 84 while occupying 246
-# bytes, so a character-based bound waves it through and the prefixed
-# destination lands over NAME_MAX — failing AFTER the dated file is
-# published, which is the worst place in this script to fail.
+# ── A file's group ───────────────────────────────────────────────────────────
+# Same GNU-then-BSD shape as read_mode, and the same reason for checking
+# the status separately from the shape.
+read_gid() {  # read_gid <path>; sets GID_READ
+  local rc=0
+  GID_READ="$(stat -c '%g' "$1" 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    rc=0
+    GID_READ="$(stat -f '%g' "$1" 2>/dev/null)" || rc=$?
+  fi
+  (( rc == 0 )) || return 1
+  [[ "$GID_READ" =~ ^[0-9]+$ ]] || return 1
+  return 0
+}
+
+# ── Where a fragment goes when it is set aside ───────────────────────────────
+# A SUBDIRECTORY, so the fragment keeps its own name (Codex #1863 r21,
+# r22, r23, r24, r25 — five rounds of the same subject).
 #
-# `local LC_ALL=C` is what makes both byte-wise: bash re-reads the locale
-# when the variable is assigned, and restores it when the function
-# returns. Truncation can split a multibyte character; the result is
-# still a legal filename, and this name is only ever a set-aside label
-# that the operator sees in full on screen.
-byte_len() { local LC_ALL=C; printf '%s' "${#1}"; }
-byte_head() { local LC_ALL=C; printf '%s' "${1:0:$2}"; }
-
-# ── Set-aside names, bounded by the REAL limit ───────────────────────────────
-# NAME_MAX is resolved ONCE, before anything is published, so a filesystem
-# that will not answer cannot be discovered at the only point where
-# failing is expensive (Codex #1863 r24). A fallback of 255 recreated the
-# fixed-bound bug it replaced: on a filesystem with a smaller limit it is
-# simply wrong in the same direction. When the limit is unknown the name
-# collapses to a short hash-only form instead, which fits anywhere.
-NAME_MAX_KNOWN=0
-NAME_MAX_BYTES=255
-_resolve_name_max() {
-  local v
-  v="$(getconf NAME_MAX "$UNREL" 2>/dev/null)" || v=""
-  if [[ "$v" =~ ^[0-9]+$ ]] && (( v >= 32 )); then
-    NAME_MAX_BYTES="$v"; NAME_MAX_KNOWN=1
-  fi
-}
-
-# quarantine_name <basename> <hash> -> a name that fits
-quarantine_name() {
-  # Separate statements: bash expands every word of a `local` command
-  # BEFORE performing any of its assignments, so referring to an earlier
-  # name in the same statement reads the OUTER one — unbound here, which
-  # `set -u` turns into an abort at the first call.
-  local base="$1"
-  local hash="$2"
-  local full=".assembled.$base"
-  if (( NAME_MAX_KNOWN )) && (( $(byte_len "$full") <= NAME_MAX_BYTES )); then
-    printf '%s' "$full"
-    return 0
-  fi
-  if (( NAME_MAX_KNOWN )); then
-    # ".assembled." is 11 bytes and ".<16 hex>" is 17.
-    local stem_max=$(( NAME_MAX_BYTES - 28 ))
-    if (( stem_max > 0 )); then
-      printf '.assembled.%s.%s' "$(byte_head "$base" "$stem_max")" "${hash:0:16}"
-      return 0
-    fi
-  fi
-  # Unknown limit, or one too small for a readable name: 19 bytes, which
-  # fits even the POSIX minimum-adjacent cases, and stays unique by hash.
-  printf '.a.%s' "${hash:0:16}"
-}
+# The previous approach glued `.assembled.` onto the front of the name.
+# That made this script capable of turning a legal name into an illegal
+# one, and every attempt to bound it produced another finding: measured
+# in characters rather than bytes, a fixed threshold assuming NAME_MAX is
+# 255, a fallback that reimposed the same assumption when `getconf`
+# failed, a floor of 32 that discarded smaller real limits, and a
+# second name shape the recovery scan did not know to look for. All of
+# it failed AFTER the dated file was published, which is the worst place
+# in this script to fail.
+#
+# A directory removes the question rather than answering it: the name is
+# not modified, so a name that was legal as a fragment is legal here. No
+# limit to query, no truncation, no second form, nothing to keep in sync.
+# Deleting the machinery fixed three of that round's findings outright.
+QDIR="$UNREL/.assembled"
 
 # ── The one invariant this script keeps ──────────────────────────────────────
 # Three rounds of review in a row (r17, r18, r19) found the same abstract
@@ -428,7 +404,6 @@ LOCK="$UNREL/.assemble.lock"
 # `LOCK_HELD` is what keeps a losing contender from removing the lock
 # that is legitimately someone else's: the trap only ever clears a lock
 # this process created.
-_resolve_name_max
 LOCK_HELD=0
 WORK=""
 SNAP=""
@@ -482,7 +457,22 @@ _cleanup() {
 trap '_cleanup' EXIT
 trap '_cleanup; exit 130' INT
 trap '_cleanup; exit 143' TERM
+# INT/TERM are held off across the two steps that acquire the lock
+# (Codex #1863 r25). A signal arriving after `mkdir` succeeds but before
+# the flag is set ran cleanup with LOCK_HELD still 0, so an ordinary
+# Ctrl-C left the lock behind — the one outcome this script documents as
+# hard-kill-only. Bash checks traps BETWEEN commands, so no ordering of
+# the two closes it; the signals have to not arrive.
+#
+# Ignored rather than deferred, which is the honest cost: a Ctrl-C landing
+# in that instant is discarded and has to be pressed again. Weighed
+# against a stale lock that blocks every later run and tells the operator
+# it was a hard kill, discarding one signal in a two-instruction window is
+# the better trade.
+trap '' INT TERM
 if ! mkdir "$LOCK" 2>/dev/null; then
+  trap '_cleanup; exit 130' INT
+  trap '_cleanup; exit 143' TERM
   echo "Error: another assembly appears to be running." >&2
   echo "" >&2
   echo "  lock: $LOCK" >&2
@@ -495,6 +485,8 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   exit 1
 fi
 LOCK_HELD=1
+trap '_cleanup; exit 130' INT
+trap '_cleanup; exit 143' TERM
 
 # Collect pending fragments — every *.md except the README + template.
 shopt -s nullglob
@@ -508,14 +500,14 @@ done
 
 # Set-aside files are reported BEFORE any "nothing to assemble" verdict
 # (Codex #1863 r15). A run interrupted between the rename and the removal
-# leaves a fragment existing only as `.assembled.<name>` — and the pool
+# leaves a fragment existing only inside `.assembled/` — and the pool
 # glob does not match dotfiles, so the next run would say "No pending
 # fragments" while one sits right there. Its text is in the dated file
 # already (the rename happens after the write), so nothing is lost; what
 # would be lost is the operator ever hearing about it.
 shopt -s nullglob
 _setaside=()
-for q in "$UNREL"/.assembled.*; do
+for q in "$QDIR"/*; do
   _setaside+=("$(basename "$q")")
 done
 if (( ${#_setaside[@]} > 0 )); then
@@ -1558,9 +1550,13 @@ if (( ${#already[@]} > 0 )); then
     # between are deleted having never been anywhere else. This path had
     # the check but not the ordering, so the protection it looked like it
     # had was the one thing it did not have.
-    _q_name="$(quarantine_name "${FRAG_NAME[$f]}" "${FRAG_HASH[$f]}")"
-    _q="$UNREL/$_q_name"
-    if [ -e "$_q" ]; then
+    _q_name="${FRAG_NAME[$f]}"
+    _q="$QDIR/$_q_name"
+    mkdir -p "$QDIR" || { echo "Error: could not create $QDIR." >&2; exit 1; }
+    # `-L` as well as `-e`: `-e` FOLLOWS a symlink, so a DANGLING one at
+    # this path reads as absent, `mv` replaces the link, and the later
+    # `rm` deletes whatever now sits there (Codex #1863 r25).
+    if [ -e "$_q" ] || [ -L "$_q" ]; then
       echo "Error: a set-aside file already exists at $_q_name." >&2
       echo "Nothing further will be consumed; move it aside and re-run." >&2
       exit 1
@@ -1628,7 +1624,7 @@ if [ -f "$OUT" ]; then
   # case here — a markerless file is exactly what this branch is for.
   out_has_markers=0
   run_checked 0,1 "checking $(basename "$OUT") for assembly markers" \
-    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->${CR}?$" "$OUT"
+    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->${CR}?$" "$OUT_COPY"
   [ -z "$CAPTURED" ] || out_has_markers=1
 
   suspect=()
@@ -1661,6 +1657,11 @@ if [ -f "$OUT" ]; then
     # was the fifth, and missing it is exactly the drift copying was
     # meant to end.
     env LC_ALL=C grep -a -m1 '^#\{1,6\} ' "${FRAG_SNAP[$f]}" > "$_head_file" 2>/dev/null || _hrc=$?
+    # Both sides are stripped of a trailing CR before comparing (Codex
+    # #1863 r25). A CRLF fragment against an LF dated file leaves the
+    # carriage return on one side only, so an identical heading does not
+    # match and the section is appended twice — the line endings deciding
+    # a question that is about the text.
     if (( _hrc > 1 )); then
       rm -f "$_head_file"
       echo "Error: reading ${FRAG_NAME[$f]} failed (exit $_hrc)." >&2
@@ -1680,8 +1681,12 @@ if [ -f "$OUT" ]; then
     # reverted before the final check, made the duplicate check pass and
     # the section be appended a second time — the same gap as the `cat`
     # one round earlier, one site over.
+    env LC_ALL=C sed -e 's/\r$//' "$_head_file" > "$_head_file.n" \
+      && mv "$_head_file.n" "$_head_file"
+    _out_n="$SNAP/out.normalised"
+    env LC_ALL=C sed -e 's/\r$//' "$OUT_COPY" > "$_out_n"
     run_checked 0,1 "checking $(basename "$OUT") for a repeated heading" \
-      env LC_ALL=C grep -a -xF -f "$_head_file" "$OUT_COPY"
+      env LC_ALL=C grep -a -xF -f "$_head_file" "$_out_n"
     if [ -n "$CAPTURED" ]; then
       suspect+=("${FRAG_NAME[$f]}")
     fi
@@ -1779,11 +1784,29 @@ if [ -f "$OUT" ]; then
   # a `root:65534` file quietly becomes `root:root` and the collaborators
   # who reached it through that group lose access — the ownership refusal
   # alone does not cover this.
-  if [ "$out_gid" != "$(id -g)" ]; then
-    echo "Error: $(basename "$OUT") has group $out_gid, not your primary group." >&2
+  # Compared against the group the REPLACEMENT will actually carry, not
+  # against `id -g` (Codex #1863 r25). In a setgid directory `mktemp`
+  # inherits the DIRECTORY's group, not the runner's — so where the two
+  # differ this check compared the wrong pair, passed, and the rename
+  # then changed the output's group silently before consuming anything.
+  # The temp file is the authority on what it is about to become.
+  _probe="$(mktemp "$DIR/.assemble-probe.XXXXXX")"
+  _pg_rc=0
+  if ! read_gid "$_probe"; then _pg_rc=1; fi
+  _new_gid="$GID_READ"
+  rm -f "$_probe"
+  if (( _pg_rc != 0 )); then
+    echo "Error: could not determine the group a new file here would take." >&2
+    echo "Refusing to assemble: replacing the dated file installs a new" >&2
+    echo "inode, so that group has to be known before it is safe." >&2
+    exit 1
+  fi
+  if [ "$out_gid" != "$_new_gid" ]; then
+    echo "Error: $(basename "$OUT") has group $out_gid; a new file here" >&2
+    echo "would take group $_new_gid." >&2
     echo "" >&2
     echo "Refusing to assemble: this script replaces the dated file by" >&2
-    echo "renaming a new one over it, and the replacement takes YOUR group —" >&2
+    echo "renaming a new one over it, and the replacement takes that group —" >&2
     echo "so anyone who reaches the file through its current group would" >&2
     echo "quietly lose access." >&2
     exit 1
@@ -2072,28 +2095,11 @@ for f in "${frags[@]}"; do
   if (( _pub_rc != 0 )) || [ "$_pub_now" != "$PUBLISHED_ID" ]; then
     _abort_after_write "$(basename "$OUT") is gone or altered since it was written"
   fi
-  # The quarantine name is BOUNDED, not the basename with a prefix glued
-  # on (Codex #1863 r21). NAME_MAX is 255 bytes per component on ext4, so
-  # a perfectly legal 250-byte fragment name becomes an illegal
-  # destination once `.assembled.` is added — and `mv` then fails AFTER
-  # the dated file is published, leaving every run to enter the half-done
-  # recovery path instead of finishing. The name a file is given must not
-  # be able to be invalid because of what this script prepends to it.
-  #
-  # Truncated to fit, with the fragment's hash making it unique — two
-  # long names sharing a prefix would otherwise collide, and colliding
-  # here means the "a set-aside file already exists" abort on a perfectly
-  # ordinary pool. The full name is printed, so nothing is lost to the
-  # operator; only the on-disk name is shortened.
-  # Budgeted against the ACTUAL per-name limit of the pool directory,
-  # not a constant that assumes 255 (Codex #1863 r23). A filesystem with
-  # a smaller limit — and some do — makes both the fixed threshold and
-  # the fixed truncated length wrong in the same direction, so `mv` fails
-  # only after $OUT is published. `getconf` answers for the real path;
-  # if it cannot, 255 is the conservative POSIX floor to fall back to.
-  _q_name="$(quarantine_name "${FRAG_NAME[$f]}" "${FRAG_HASH[$f]}")"
-  _q="$UNREL/$_q_name"
-  if [ -e "$_q" ]; then
+  _q_name="${FRAG_NAME[$f]}"
+  _q="$QDIR/$_q_name"
+  mkdir -p "$QDIR" || _abort_after_write "could not create $QDIR"
+  # `-L` as well as `-e`, for the reason given at the other site.
+  if [ -e "$_q" ] || [ -L "$_q" ]; then
     _abort_after_write "a set-aside file already exists at $(basename "$_q")"
   fi
   mv "$f" "$_q" || _abort_after_write "could not set aside ${FRAG_NAME[$f]}"
