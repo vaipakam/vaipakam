@@ -30,8 +30,10 @@ wallet-analytics checks from passing without having looked at what shipped.
 ## Lenders can now see what their options are — including doing nothing
 
 If you have lent on a loan, the position page now opens with a card called "Your
-options as the lender", listing every way out of the position along with what
-each one costs. Not every lender sees it: an NFT rental position does not show
+options as the lender", listing the protocol's own ways out of the position
+along with what each one costs. Transferring the position NFT to somebody else
+is not among them — it is a token transfer rather than a protocol flow, and the
+card does not price it. Not every lender sees it: an NFT rental position does not show
 the card, and neither does a position whose connected wallet is one the protocol
 will not transact with.
 
@@ -439,7 +441,8 @@ taken in VPFI up front, held for the life of the loan, and partly returned at
 settlement.
 
 That stopped being true when the fee model changed. A loan opened today, where
-the lending asset is one the protocol can price, has the discount applied
+the lending asset passes the protocol's liquidity test — a price alone is not
+enough, the market for it has to be deep enough too — has the discount applied
 **directly to the fee it pays in the lending asset**, at the moment the loan is
 accepted; where it cannot, the full fee is charged and there is no discount to
 apply. No VPFI is taken to pay it, nothing is held, and
