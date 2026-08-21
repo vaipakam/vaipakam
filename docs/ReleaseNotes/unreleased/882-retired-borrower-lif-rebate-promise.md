@@ -122,6 +122,26 @@ window is the hold-tier discount, not every discount, and the pages now say so.
 A warning that overstates a risk still has to be corrected, and this one
 contradicted a correction made two rounds above it.
 
+That warning also arrived wearing formatting that nothing renders. The answer it
+sits in is shown through a translation component with no support for emphasis,
+so a bolded phrase reaches the reader as literal asterisks around the words. The
+emphasis is gone from all ten languages, along with one older instance in the
+Chinese answer that had the same problem and was not mine.
+
+**And the false "a default returns nothing" turned out to be in a third and a
+fourth place.** Each guide also carries a short list of what every action does,
+and the Claim entry in both said it. Correcting only the two places a reader
+pointed at would have left the same sentence standing in eighteen other files,
+so this time every claim entry in every edition of both guides was found first
+and then corrected together — twenty in all. The entries about collateral we
+cannot price were left exactly as they were, because there the whole basket
+really does go and they were never wrong.
+
+Three rounds running, that sentence was found somewhere new. The lesson is not
+to look harder next time. It is that correcting published copy should start by
+finding every place the sentence appears, which is what happened here and not in
+the two rounds before it.
+
 The through-line in all three is the same and worth naming once: each wrong
 sentence was written from what the mechanism seemed to imply, and each was
 corrected by someone reading what the mechanism does.
