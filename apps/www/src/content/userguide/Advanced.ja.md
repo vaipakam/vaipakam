@@ -731,8 +731,8 @@ Borrower claim は、loan がどう settle されたかによって次を返し
 Borrower position NFT が burn されるのは claim したときであって、loan が
 解決したときではありません。liquidation が残した surplus は、あとからでも
 受け取れます。ただし NFT が残っていること自体は surplus の証拠ではありません。
-liquidation が何も残さなかった場合、claim は決済済みとして記録され、それでも
-NFT は残りうるため、claim は拒否されます。NFT ではなく claim を読んでください。
+liquidation が何も残さなかった場合、受け取るものはなく、claim は拒否され、
+それでも NFT は残りうる、ということです。NFT ではなく claim を読んでください。
 
 ---
 

@@ -320,8 +320,8 @@ default 时，往往整个 basket 都会被取走、什么也不剩，但那是�
 永远不会回来的是费用 rebate：仍在已停用 VPFI 费用路径上的 loan，其为
 Loan Initiation Fee 托管的 VPFI 会被没收转入 treasury。claim 会 consume
 您的 borrower position NFT。反过来却不成立：liquidation 之后 NFT 仍在，
-并不证明有什么在等着您。如果什么也没剩下，claim 会被记为已经结清，而
-NFT 仍可能留着 — 此时去 claim 会被拒绝。请读 claim 本身怎么说，不要把
+并不证明有什么在等着您。如果什么也没剩下，就没有可领取的东西，去 claim 会被拒绝，而
+NFT 仍可能留着。请读 claim 本身怎么说，不要把
 NFT 当作承诺。
 
 ---

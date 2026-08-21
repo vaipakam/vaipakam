@@ -388,8 +388,8 @@ retenido contra la Loan Initiation Fee se pierde en favor del
 tesoro. Reclamar consume tu NFT de posición de prestatario.
 Lo contrario no se sigue: un NFT que sigue ahí tras una
 liquidación no es prueba de que algo te espere. Si no quedó nada,
-la reclamación se registra como ya saldada y el NFT puede quedarse
-igualmente —e intentar reclamarlo se rechaza. Lee lo que dice la
+no hay nada que recoger, el intento se rechaza y el NFT puede
+quedarse igualmente. Lee lo que dice la
 reclamación en vez de tomar el NFT como una promesa.
 
 ---

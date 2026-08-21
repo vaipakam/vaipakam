@@ -364,10 +364,10 @@ the VPFI held against the Loan Initiation Fee is forfeited to
 treasury.
 Claiming consumes your borrower position NFT. The reverse does
 not follow: an NFT still sitting there after a liquidation is not
-evidence that anything is waiting. Where nothing was left over,
-the claim is recorded as already settled and the NFT can stay
-anyway — and trying to claim it is refused. Read what the claim
-says rather than taking the NFT as a promise.
+evidence that anything is waiting. Where nothing was left over there is
+nothing to collect, the attempt is refused, and the NFT can be
+sitting there all the same. Read what the claim says rather than
+taking the NFT as a promise.
 
 ---
 

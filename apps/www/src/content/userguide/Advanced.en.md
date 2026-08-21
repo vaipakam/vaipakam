@@ -742,9 +742,9 @@ The borrower claim returns, depending on how the loan settled:
 The borrower position NFT is burned when you claim, not when the
 loan resolves — so a surplus left by a liquidation is still there
 to collect afterwards. The NFT surviving is not itself proof of a
-surplus: where a liquidation left nothing over, the claim is
-recorded as already settled and the NFT can remain anyway, so
-claiming is refused. Read the claim, not the NFT.
+surplus: where a liquidation left nothing over there is nothing to
+collect, claiming is refused, and the NFT can remain regardless.
+Read the claim, not the NFT.
 
 ---
 

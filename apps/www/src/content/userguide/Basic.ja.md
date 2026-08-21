@@ -368,8 +368,8 @@ rebate です。廃止された VPFI 手数料経路のままの loan では、L
 Initiation Fee のために保管されていた VPFI は treasury に没収されます。
 claim はあなたの borrower position NFT を consume します。逆は成り立ち
 ません。liquidation のあとに NFT が残っていることは、何かが待っている
-証拠ではありません。残余がなかった場合、claim は決済済みとして記録され、
-それでも NFT は残りうる — そして claim しようとすると拒否されます。NFT を
+証拠ではありません。残余がなかった場合、受け取るものはなく、claim しようとすると
+拒否され、それでも NFT は残りうるということです。NFT を
 約束と受け取らず、claim が何と言っているかを読んでください。
 
 ---

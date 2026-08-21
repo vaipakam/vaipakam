@@ -599,8 +599,8 @@ borrower claim 根据 loan 如何 settle 来返回：
 
 borrower position NFT 是在您 claim 时 burn，而不是在 loan 结清时——因此
 liquidation 留下的 surplus 之后仍可领取。但 NFT 还在，本身并不证明有
-surplus：如果 liquidation 什么也没剩下，claim 会被记为已经结清，而 NFT
-仍可能留着，此时 claim 会被拒绝。请读 claim，而不是读 NFT。
+surplus：如果 liquidation 什么也没剩下，就没有可领取的东西，claim 会被拒绝，
+而 NFT 仍可能留着。请读 claim，而不是读 NFT。
 
 ---
 

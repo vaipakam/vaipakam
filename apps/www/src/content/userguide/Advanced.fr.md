@@ -793,8 +793,8 @@ Le NFT de position d'emprunteur est brûlé au moment où tu
 réclames, pas quand le prêt se résout — un excédent laissé par une
 liquidation reste donc récupérable ensuite. La survie du NFT ne
 prouve pas à elle seule qu'il y a un excédent : si une liquidation
-n'a rien laissé, la créance est enregistrée comme déjà soldée et le
-NFT peut rester quand même, la réclamation étant alors refusée. Lis
+n'a rien laissé, il n'y a rien à récupérer, la réclamation est
+refusée, et le NFT peut rester quand même. Lis
 la créance, pas le NFT.
 
 ---

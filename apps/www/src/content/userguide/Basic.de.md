@@ -394,9 +394,9 @@ VPFI-Gebührenweg wird das gegen die Loan Initiation Fee verwahrte
 VPFI an die Treasury verwirkt. Ein Claim verbraucht deinen
 Borrower-Position-NFT. Umgekehrt gilt das nicht: ein NFT, der nach
 einer Liquidation noch da ist, ist kein Beleg dafür, dass etwas
-auf dich wartet. Blieb nichts übrig, wird der Claim als bereits
-erledigt erfasst und der NFT kann trotzdem bleiben — der Versuch,
-ihn einzulösen, wird abgelehnt. Lies, was der Claim sagt, statt
+auf dich wartet. Blieb nichts übrig, gibt es nichts
+abzuholen, der Versuch wird abgelehnt, und der NFT kann trotzdem
+dableiben. Lies, was der Claim sagt, statt
 den NFT als Zusage zu nehmen.
 
 ---

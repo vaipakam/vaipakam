@@ -350,8 +350,8 @@ collateral이 팔렸다면 — 거래소를 거친 일반 liquidation,
 위해 보관되던 VPFI는 treasury로 몰수됩니다.
 claim은 borrower position NFT를 consume합니다. 그 역은 성립하지
 않습니다. liquidation 이후 NFT가 남아 있다는 사실은 무언가가 기다리고
-있다는 증거가 아닙니다. 남은 것이 없으면 claim은 이미 정산된 것으로
-기록되고 NFT는 그대로 남을 수 있으며 — claim을 시도하면 거절됩니다.
+있다는 증거가 아닙니다. 남은 것이 없으면 받아 갈 것도 없고, claim을 시도하면
+거절되며, NFT는 그대로 남을 수 있습니다.
 NFT를 약속으로 받아들이지 말고 claim이 무엇이라 말하는지 읽으세요.
 
 ---

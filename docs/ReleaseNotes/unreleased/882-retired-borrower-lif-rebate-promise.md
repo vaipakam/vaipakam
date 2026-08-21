@@ -187,12 +187,30 @@ at the surviving NFT as the reason to expect a surplus, which sends a borrower
 to sign a transaction that is refused. Both guides now say to read the claim
 and not the NFT.
 
+**A zero-surplus liquidation is not always recorded the same way.** The pages
+said the claim is filed as already settled. That is true of the ordinary and
+discounted routes and not of an exactly-matched internal one, which records no
+claim at all — so the refusal a borrower meets differs by route, while what
+they can do about it does not. The pages now say only what is true of all of
+them: there is nothing to collect, the attempt is refused, and the NFT can be
+sitting there regardless. Stating the mechanism bought nothing a reader could
+use and was another internal detail to keep in sync.
+
 **The renewal warning needed one exception.** After it was narrowed, the pages
 said a push is sent only when your tier changes. A push carries the tier's rate
 and the tier-table version too, and mirrors stop honouring a cached older
 version — so after a governance retune the button does work, and pressing it is
 the difference between your discount and no discount at all. The warning stays;
-the case where the button is worth pressing is now named.
+the case where the button is worth pressing is now named — and named
+accurately, which took a second attempt. The first version said a mirror stops
+honouring the cached version after a retune and that you would otherwise be
+charged with no discount at all. It does not, and you would not: no
+cross-chain message carries the new version, so the mirror goes on applying
+the rate it already has until a per-user push arrives. This document says so
+itself, in a section 1,400 lines further down, which the correction
+contradicted. So the push is worth making when the new rate is better for you
+and costs nothing to skip when it is not — a different situation from the
+60-day expiry, which does drop you to nothing.
 
 **And the renewal procedure has been withdrawn rather than qualified.** Two
 rounds ago these pages started describing how to refresh a lapsed mirror

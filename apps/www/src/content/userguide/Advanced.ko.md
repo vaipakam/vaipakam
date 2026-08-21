@@ -679,8 +679,8 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
 Borrower position NFT는 claim할 때 burn되며 loan이 정리될 때가 아닙니다 —
 따라서 liquidation이 남긴 surplus는 나중에도 받아 갈 수 있습니다. 다만 NFT가
 남아 있다는 것 자체가 surplus의 증거는 아닙니다. liquidation이 아무것도
-남기지 않았다면 claim은 이미 정산된 것으로 기록되고 NFT는 그대로 남을 수
-있으며, 이때 claim은 거절됩니다. NFT가 아니라 claim을 읽으세요.
+남기지 않았다면 받아 갈 것이 없고, claim은 거절되며, NFT는 그대로 남을
+수 있습니다. NFT가 아니라 claim을 읽으세요.
 
 ---
 

@@ -798,8 +798,8 @@ Der Borrower-Position-NFT wird beim Claim verbrannt, nicht bei der
 Auflösung des Loans — ein von einer Liquidation übrig gelassener
 Überschuss ist also danach noch abholbar. Dass der NFT noch da ist,
 belegt aber keinen Überschuss: blieb nach einer Liquidation nichts
-übrig, wird der Claim als bereits erledigt erfasst und der NFT kann
-trotzdem bleiben, der Claim wird dann abgelehnt. Lies den Claim,
+übrig, gibt es nichts abzuholen, der Claim wird abgelehnt, und der
+NFT kann trotzdem dableiben. Lies den Claim,
 nicht den NFT.
 
 ---

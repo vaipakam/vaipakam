@@ -795,8 +795,8 @@ El NFT de posición de prestatario se quema cuando reclamas, no
 cuando se resuelve el préstamo — así que un excedente dejado por
 una liquidación sigue ahí para recogerlo después. Que el NFT siga
 existiendo no prueba por sí solo que haya excedente: si una
-liquidación no dejó nada, la reclamación se registra como ya
-saldada y el NFT puede quedarse igualmente, y reclamar se rechaza.
+liquidación no dejó nada, no hay nada que recoger, reclamar se
+rechaza y el NFT puede quedarse igualmente.
 Lee la reclamación, no el NFT.
 
 ---

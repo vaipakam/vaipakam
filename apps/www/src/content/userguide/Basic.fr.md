@@ -391,9 +391,8 @@ VPFI retirée, le VPFI retenu au titre de la Loan Initiation Fee
 est acquis au trésor. Réclamer consomme ton NFT de position
 d'emprunteur. L'inverse n'est pas vrai : un NFT encore présent
 après une liquidation ne prouve pas que quelque chose t'attend.
-S'il ne restait rien, la créance est enregistrée comme déjà
-soldée et le NFT peut rester quand même — et tenter de la
-réclamer est refusé. Lis ce que dit la créance plutôt que de
+S'il ne restait rien, il n'y a rien à récupérer, la tentative est
+refusée, et le NFT peut rester quand même. Lis ce que dit la créance plutôt que de
 prendre le NFT pour une promesse.
 
 ---
