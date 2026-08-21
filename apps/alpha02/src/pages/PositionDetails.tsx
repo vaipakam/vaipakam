@@ -1053,8 +1053,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  rendered depends on it, so a wrong answer here cannot change what a
    *  lender sees — only whether an external check believes the card has
    *  finished deciding. */
-  const sourceSettled = (q: { isSuccess: boolean; isError: boolean; fetchStatus: string }) =>
-    q.isSuccess || q.isError || q.fetchStatus === 'idle';
+  /** Has this source stopped, for now?
+   *
+   *  `fetchStatus === 'idle'` ALONE, and the two arms it replaces were
+   *  the bug (Codex #1858 r9). TanStack keeps `isSuccess` true through
+   *  a background refetch, so `isSuccess || isError` called a source
+   *  settled while its own interval poll was in flight — and a cached
+   *  Active could publish `ready`/`yes` seconds before that poll
+   *  returned FallbackPending and flipped it to `no`.
+   *
+   *  `idle` covers every genuinely stopped state: a disabled query
+   *  (pending + idle, never going to fetch), a settled success, a
+   *  settled error. It excludes `fetching` and `paused`, which are the
+   *  two states where an answer may still be about to change.
+   *
+   *  The cost is a brief `pending` on each polling tick, which is
+   *  honest: during a refetch the answer genuinely is not settled. */
+  const sourceSettled = (q: { fetchStatus: string }) => q.fetchStatus === 'idle';
   const statusSourcesSettled = [loanLive, liveStatus, bannerTerms].every(sourceSettled);
   /** The same question for the MATURITY verdict, over its own sources.
    *
@@ -1158,6 +1173,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const liveStatusCandidates: (LoanStatus | undefined)[] = statusReads.map(
     (r) => r.status,
   );
+  /** Absorbing: once true it stays true, so a cached reading of one is
+   *  only ever AHEAD of the others, never wrong. Stated once because
+   *  two consumers judge by it — the status resolution and the sale
+   *  gate — and they disagreed about it for a round (Codex #1858 r9). */
+  const isTerminalStatus = (st: LoanStatus) =>
+    st !== LoanStatus.Active && st !== LoanStatus.FallbackPending;
   /** Only the readings whose source can still change its mind. Correct
    *  for REVERSIBLE answers — Active vs FallbackPending — where a
    *  frozen cache is a claim nothing can retract. */
@@ -1231,10 +1252,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  same reasoning does not hold (a FallbackPending CAN cure back). */
   const resolvedLoanStatus: LoanStatus | undefined =
     liveStatusCandidates.find(
-      (st) =>
-        st !== undefined &&
-        st !== LoanStatus.Active &&
-        st !== LoanStatus.FallbackPending,
+      (st) => st !== undefined && isTerminalStatus(st),
       // The non-terminal fallback ranks Active against FallbackPending,
       // and that pair IS reversible — the comment above says so — so it
       // reads only the sources that can still speak (Codex #1858 r6).
@@ -1334,21 +1352,24 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // transaction that reverts. Only affirmative answers count — an
     // unread or errored source still says nothing.
     //
-    // FRESH candidates (Codex #1858 r8). "Fails closed" is only sound
-    // over readings that can still change their mind: a pre-cure
-    // FallbackPending frozen by an Advanced → Basic → Advanced trip
-    // fails closed FOREVER, keeping both sale tools unmounted while
-    // the always-on reads report Active — and the chooser, now reading
-    // fresh candidates, publishes `ready`/`yes` with jumpable rows
-    // whose targets do not exist. That contradiction is worse than
-    // either half.
+    // BOTH LISTS, each for the kind of answer it is sound over
+    // (Codex #1858 r9). Round 8 moved this gate wholesale onto the
+    // fresh list, on the reasoning that a terminal reading is
+    // `!== Active` and so would still block — which is true only if
+    // some fresh source has ALSO seen it. Where the strategy read is
+    // the one that observed Repaid or Defaulted first, the fresh list
+    // holds nothing, the gate stayed open, and both Advanced sale
+    // forms remained mounted over a loan whose submissions revert —
+    // while `resolvedLoanStatus`, reading the full list, had already
+    // removed the chooser above them.
     //
-    // A terminal reading still blocks correctly: terminal statuses are
-    // absorbing and every one of them is `!== Active`, so the fresh
-    // list carries them from whichever source can still speak.
-    !freshStatusCandidates.some(
-      (st) => st !== undefined && st !== LoanStatus.Active,
-    );
+    // So: terminal statuses are ABSORBING and count from any source,
+    // stale or not, because a cached terminal is only ever ahead. The
+    // reversible Active-vs-FallbackPending judgement counts only from
+    // sources that can still change their mind, because a frozen
+    // FallbackPending would otherwise fail closed forever.
+    !liveStatusCandidates.some((st) => st !== undefined && isTerminalStatus(st)) &&
+    !freshStatusCandidates.some((st) => st === LoanStatus.FallbackPending);
 
   // `isError` disqualifies the snapshot here too (Codex r26 P2). This
   // consumer predates the health-check rule and was missed when the
