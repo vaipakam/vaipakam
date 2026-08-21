@@ -1354,11 +1354,14 @@ GovernanceRunbook gains a recycling section, executed in order:
    > armed-day mirror claim path had never been reachable, and #1434's own
    > two prerequisites were what would make it pay. **Both have since landed —
    > the zeroed-day pricing ladder in P2-w3, the delivered-fresh bound in P1-b,
-   > which then lifted the halt — and
+   > which then lifted the halt.** The counterfactual is therefore now
+   > CONSTRUCTIBLE, which is not the same as constructed:
    > `ShareOfPoolClaimWalkTest.test_P1b_MirrorArmedDayDefersUntilDelivered`
-   > now constructs exactly that funded-versus-unfunded counterfactual** —
-   > cite THAT test for it, not this one, whose fixture delivers no funding
-   > and so cannot tell a halt from a deferral (original caveat: Codex
+   > shows an underfunded day DEFERRING and a funded one PRICING, which is the
+   > deferral half; it does not drive a mirror claim through to retirement, so
+   > "lift the halt and retirement happens" remains unproven. That gap is
+   > **#1878**. Do not cite this test for it either — its fixture delivers no
+   > funding and so cannot tell a halt from a deferral (original caveat: Codex
    > #1439 r1).
 2. **RL-3 horizon knob** — only after BOTH ratified RL-3 UX safeguards
    are verified live: the free-channel pre-expiry notice (in-app

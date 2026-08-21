@@ -673,9 +673,14 @@ its quote is undispatched or its credit provisional), or, past the frozen
 expiry, either permissionless lapse terminal — and the two do NOT settle
 alike. `lapseZeroedDay` crosses an uncompensated day at zero: nothing was
 backed, nothing pays. `lapseShortCompensatedDay` takes a confirmed-but-
-underfunded day and pays the BACKED portion, scaling the delta by
-`pool / quoted` before the cursor advances, so the entries retire against what
-actually arrived rather than against nothing.
+underfunded day and pays the BACKED portion before the cursor advances, so the
+entries retire against what actually arrived rather than against nothing. The
+scale is not simply `pool / quoted`: the covering-entry count is shaved off the
+pool first, so the factor is `(pool − entryCount) / quoted` and a pool at or
+below that count yields zero. A short lapse therefore pays the backed portion
+where there is one and can still cross at zero when the shortfall is deep enough
+— which is why "the short lapse pays" is a description of its intent, not a
+guarantee about any particular day.
 
 Two things follow that matter operationally. Only ONE of these two waits can be
 ended by someone who is not holding the missing funding. And ending it is not

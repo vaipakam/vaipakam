@@ -5,9 +5,13 @@ days after the cross-chain cutover. That pause was deliberate: such a chain's
 reward funding arrives from the canonical chain, and until the platform could
 bound a payout by what had actually been received, resuming would have let a
 chain pay out of tokens held for unrelated obligations. An attempt to lift it was
-made and withdrawn in review when two further problems came to light.
+made and withdrawn in review when two further problems came to light — separate
+from the original cause, and from each other: the scheduled side had no limit
+against what a chain had actually received, and days deliberately recorded as
+zero would have retired themselves before their compensation could arrive.
 
-**Both were subsequently solved, and the pause was lifted.** A chain now prices
+**Both were subsequently solved — by different pieces of work — and the pause
+was lifted.** A chain now prices
 those days from its own record of what it was funded, and a day it is not yet
 ready to price **waits** rather than stopping the chain: a day short of funding
 waits for the funding, and the other waits end when whatever each is missing
@@ -17,7 +21,9 @@ for everybody on that chain — and they are not all short: a day whose funding
 record never arrives waits indefinitely. What changed is that each wait is now
 attached to a specific missing input, which can be seen, chased and supplied,
 and that one case — a day deliberately recorded as zero and awaiting
-compensation — also carries a deadline after which it settles itself. The stop
+compensation — also carries a deadline after which it can be settled by anyone,
+provided the compensation is not still sitting in a provisional state, which
+holds that route open too. The stop
 they replaced had neither: nothing to supply, and no ending. A day waits until everything it needs is in place, and
 the things it can be waiting for are given as examples rather than as a complete
 set — deliberately, because every earlier attempt to close that list was
