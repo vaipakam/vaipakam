@@ -38,8 +38,9 @@ Until now, a lender in the simple view saw **nothing at all** about this. The
 sale tools existed, but they lived behind the Advanced view, so unless you had
 already switched over you would not learn that selling your position early was
 possible, what it would cost, or that waiting is itself a choice. The card is
-informational only — it never submits anything, and each row points at the tool
-that does the actual work.
+informational only — it never submits anything, and each row that represents an
+action points at the tool that does the actual work; the waiting row has no tool
+behind it, because waiting needs none.
 
 **Waiting is listed first, on purpose.** For a borrower, the useful thing to
 surface is the ways out of a debt. For a lender the situation is reversed: the
@@ -417,7 +418,10 @@ nothing else, so waiting on it would hold up an answer it cannot affect — and 
 a position whose schedule never loads, the answer would never come at all. The
 other is a check that will never run: on a position where the app does not sweep
 the market for buyers, and on one where the listing record cannot be read at all,
-there is nothing to wait for. Treating a permanently-unanswerable check as
+there is nothing to wait for. That second one is a rule about which check is
+being waited on rather than about failures generally — a read that fails while
+some earlier source is still unsettled leaves the card pending, and one that
+fails after the answer is already determined does not change it. Treating a permanently-unanswerable check as
 "still coming" would leave the card looking undecided forever.
 
 The reason this was worth doing is that the alternative had already been tried.
@@ -510,7 +514,7 @@ carries a tier outward is forced to zero while the canonical consent is off, so 
 reader who settles only on a mirror needs both; and for a borrower the lending
 asset must be liquid, or the full fee is charged whatever they hold.
 
-Two of those need scoping rather than stating flatly. A mid-loan withdrawal
+Two of the conditions above need scoping rather than stating flatly. A mid-loan withdrawal
 repricing what you earn applies to the lender's yield-fee discount and to loans
 still on the retired path — a borrower on the current model has their initiation
 fee resolved once, at acceptance, so a later withdrawal cannot reach it. And the
@@ -530,9 +534,10 @@ read rather than one to memorise — and falls back to treating that wallet as
 tier 0 until a new push arrives. The cards had presented
 the push as an activation you perform once, so a reader could follow every
 instruction on the page, act on that mirror months later, and be charged the
-full fee with nothing on the page to explain it — the same shape of failure as
-the conditions above, except that this one arrives *after* the reader has done
-everything right. Both cards now say the tier has a shelf life.
+fee charged without their hold-tier discount, and nothing on the page to explain
+it — a Full tariff already paid keeps its own slice, so "the full fee" is the
+wrong way to picture it. The same shape of failure as the conditions above,
+except that this one arrives *after* the reader has done everything right. Both cards now say the tier has a shelf life.
 
 **And what renews it is narrower than the first attempt at this said.** That
 attempt named two renewals — pushing again, or a canonical-chain deposit or
@@ -706,9 +711,12 @@ be printed on a page read by everyone. The pages now say plainly that there is
 no supported way to refresh an unchanged tier, and that the discount returns
 only when a later broadcast carries an eligible non-zero tier. Movement alone is
 not enough: a withdrawal below the first tier floor also counts as a change and
-broadcasts tier 0, which a mirror reads as no discount at all — and climbing back
-then runs the minimum-holding delay again. This is the one condition here that
-can cost someone their discount through no fault of their own.
+broadcasts tier 0, which a mirror reads as no hold-tier discount at all — and
+climbing back then runs the minimum-holding delay again. That one is the
+reader's own doing. What costs them the discount through no fault of their own
+is the expiry above it: the cache lapses on a clock nobody told them about, and
+a retune can flip the version for everyone on a mirror the moment any other user
+pushes.
 
 The through-line in all three is the same and worth naming once: each wrong
 sentence was written from what the mechanism seemed to imply, and each was
