@@ -1843,7 +1843,13 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late) {
     if (jumps > 0 || switchThere) {
       return { jumps, switchThere, toolsFailed: false, timedOut: false };
     }
-    const text = await card.innerText().catch(() => '');
+    // Same auto-wait trap as the recorder above (Codex #1853 r22):
+    // this ran every iteration, and on an absent card each one blocked
+    // for the default timeout instead of the 1s the loop intends.
+    const text =
+      (await card.count()) === 0
+        ? ''
+        : await card.innerText({ timeout: 2_000 }).catch(() => '');
     if (FAILED.test(text)) {
       return { jumps: 0, switchThere: false, toolsFailed: true, timedOut: false };
     }
@@ -1918,13 +1924,32 @@ function lenderCardOf(page) {
 function lateScrapeRecorder(page, cardAbsentAtScrape) {
   let seen = null;
   return {
-    /** Record the card if it is on the page right now. Idempotent. */
+    /** Record the card if it is on the page right now. Idempotent.
+     *
+     *  COUNT BEFORE TEXT, and it is not a micro-optimisation (Codex
+     *  #1853 r22). `innerText()` AUTO-WAITS — on an absent card it
+     *  blocks for Playwright's default 30s before the `.catch` runs.
+     *  This is called once before the probe, once per poll iteration
+     *  and once after, so on the page it exists for — the one where
+     *  the scrape saw no card — it could spend minutes and the 1s poll
+     *  cadence never happened. The 45s deadline the drive advertises
+     *  was being blown by the code that reports on it.
+     *
+     *  `count()` does not auto-wait, so absence costs nothing; the
+     *  bounded `timeout` covers a card that unmounts between the two
+     *  calls. */
     async capture() {
       if (!cardAbsentAtScrape || seen) return;
-      const text = await lenderCardOf(page)
-        .innerText()
-        .catch(() => null);
+      const card = lenderCardOf(page);
+      if ((await card.count()) === 0) return;
+      const text = await card.innerText({ timeout: 2_000 }).catch(() => null);
       if (text !== null) seen = { chooser: true, cardRescraped: true, ...lenderShapeOf(text) };
+    },
+    /** Did the recorder ever observe the card? Distinct from `value`,
+     *  which a caller spreads — this is the fact the vanish check needs
+     *  (Codex #1853 r22). */
+    get recorded() {
+      return seen !== null;
     },
     /** What was recorded, or nothing — never a fabricated absence. */
     get value() {
@@ -1964,16 +1989,30 @@ async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
   // left alone: they already carry a reason, and overwriting it with
   // this one would lose the more specific finding.
   if (!result.advancedBlocked && snapshotCardEligible(before, observed) === false) {
+    // NAME THE FIELD THAT FAILED (Codex #1853 r22). `snapshotCardEligible`
+    // is false for three different reasons, and this sentence asserted
+    // the rarest of them: a terminal loan and a sanctions-flagged
+    // holder both land here with the token still held by the observed
+    // wallet, and the reader was sent to investigate an ownership
+    // transfer that never happened. A diagnosis is worth less than
+    // nothing when it is confidently wrong about where to look.
+    const why = !before
+      ? 'the pre-state could not be read'
+      : before.holder === null
+        ? 'the lender token was already burned'
+        : observed && before.holder !== String(observed).toLowerCase()
+          ? 'the observed wallet did not hold the position — the page can keep the ' +
+            'card mounted, switch and jumps included, for up to 60s after ownership moves'
+          : before.flagged
+            ? 'the holder was sanctions-flagged, which correctly suppresses the card'
+            : 'the loan was already terminal';
     return {
       ...late.value,
       ...result,
       advancedJumps: null,
       advancedBlocked: true,
       advancedPreRaced: cardAbsentAtScrape,
-      advancedWhy:
-        'the card was audited on a position the observed wallet did not hold when ' +
-        'the chain was read — the page can keep it mounted, switch and jumps ' +
-        'included, for up to 60s after ownership moves',
+      advancedWhy: `the card was audited on a state it should not have rendered for: ${why}`,
     };
   }
   return { ...late.value, ...result };
@@ -2033,7 +2072,21 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before)
    * nothing was learned.
    */
   const vanishedCardVerdict = async (offered) => {
-    if (!cardAbsentAtScrape && !(await cardPresent())) {
+    // EITHER OBSERVATION COUNTS (Codex #1853 r22). The condition was
+    // `!cardAbsentAtScrape`, which asks whether the INITIAL scrape saw
+    // the card — and on a slow-mounting page the initial scrape is
+    // exactly the one that missed it while the sticky recorder caught
+    // it a moment later and the probe went on to click its switch.
+    // With the check disabled on that route, a transfer away and back
+    // left two agreeing snapshots and no DOM evidence, and the healthy
+    // race was reported as a no-op-switch product FAIL.
+    //
+    // The question is "was this card ever observed", and the recorder
+    // is an observer. It was added to make a late card count; not
+    // consulting it here left it counting for the report and not for
+    // the reasoning.
+    const everObserved = !cardAbsentAtScrape || late.recorded;
+    if (everObserved && !(await cardPresent())) {
       return {
         advancedOffered: offered,
         advancedJumps: null,
