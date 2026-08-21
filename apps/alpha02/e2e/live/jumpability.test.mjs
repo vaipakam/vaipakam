@@ -329,12 +329,27 @@ describe('missingSwitchVerdict — what a missing switch means', () => {
   });
 
   it('says nothing about a bundle that publishes no attributes', () => {
-    // An older deployed bundle has no `data-chooser-ready`. Reporting
-    // that as a product defect would fail the drive on its own
-    // deployment lag, so the caller keeps its pre-#1855 verdict.
+    // An older deployed bundle has NEITHER attribute. Reporting that
+    // as a product defect would fail the drive on its own deployment
+    // lag, so the caller keeps its pre-#1855 verdict. Silence only —
+    // a card that says half the contract is the case below.
     expect(missingSwitchVerdict(null)).toBe('unknown');
     expect(missingSwitchVerdict({ ready: null, jumpable: null })).toBe('unknown');
-    expect(missingSwitchVerdict({ ready: 'something-new', jumpable: 'yes' })).toBe('unknown');
+    expect(missingSwitchVerdict({})).toBe('unknown');
+  });
+
+  it('blocks a PARTIAL contract rather than treating it as silence', () => {
+    // Round 29 tightened the `jumpable` side and left this one loose
+    // (Codex #1853 r30): one attribute present, or a misspelt `ready`,
+    // fell into the legacy path — wait out the deadline, then accept
+    // the missing switch as clean. That is a broken observability
+    // contract hiding the regression the attributes exist to expose,
+    // which is precisely what the round before had closed on the
+    // other half. `unknown` now means silence and nothing else.
+    expect(missingSwitchVerdict({ ready: null, jumpable: 'yes' })).toBe('blocked-malformed');
+    expect(missingSwitchVerdict({ ready: null, jumpable: 'no' })).toBe('blocked-malformed');
+    expect(missingSwitchVerdict({ ready: 'raedy', jumpable: 'yes' })).toBe('blocked-malformed');
+    expect(missingSwitchVerdict({ ready: 'something-new', jumpable: 'yes' })).toBe('blocked-malformed');
   });
 
   it('blocks a card that publishes readiness and botches jumpable', () => {
@@ -351,8 +366,10 @@ describe('missingSwitchVerdict — what a missing switch means', () => {
   });
 
   it('does not read jumpable without ready', () => {
-    // `jumpable` alone is a snapshot of an unsettled computation;
-    // acting on it is exactly the guess these attributes replaced.
-    expect(missingSwitchVerdict({ ready: null, jumpable: 'yes' })).toBe('unknown');
+    // `jumpable` alone is a snapshot of an unsettled computation, so
+    // it never earns a verdict on its own — and since round 30 it does
+    // not earn the legacy path either: a card publishing one half of
+    // the contract is broken, not old.
+    expect(missingSwitchVerdict({ ready: null, jumpable: 'yes' })).toBe('blocked-malformed');
   });
 });

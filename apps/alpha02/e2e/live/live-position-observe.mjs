@@ -1827,6 +1827,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
   // behaviour this file already had, never to a new false pass.
   const PENDING = /still reading the details a sale needs/i;
   const deadline = Date.now() + 45_000;
+  let lastVerdict = 'unknown';
   for (;;) {
     // INSIDE THE POLL (Codex #1853 r19). The probe's eager capture runs
     // before this loop and the wrapper's runs after the probe returns,
@@ -1868,9 +1869,20 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
     //
     // `unknown` deliberately does NOT end the wait: an older bundle
     // publishes nothing, and the deadline below is still its answer.
-    const settled = missingSwitchVerdict(await selfOf?.());
-    if (settled !== 'unknown') {
-      return { jumps: 0, switchThere: false, toolsFailed: false, timedOut: false, settled };
+    // PENDING IS THE CARD STILL WORKING, NOT AN ANSWER (Codex #1853
+    // r30). Returning on every recognised verdict included
+    // `blocked-pending`, so a normally slow page exited 2 on its FIRST
+    // tick — and the caller reported that the deadline had expired
+    // after roughly a second. That is worse than the wait it replaced:
+    // the old code was slow, this was wrong. Pending keeps the loop
+    // running and is reported below only if the clock actually runs
+    // out, which is what the card means by it.
+    lastVerdict = missingSwitchVerdict(await selfOf?.());
+    if (lastVerdict !== 'unknown' && lastVerdict !== 'blocked-pending') {
+      return {
+        jumps: 0, switchThere: false, toolsFailed: false, timedOut: false,
+        settled: lastVerdict,
+      };
     }
     // Same auto-wait trap as the recorder above (Codex #1853 r22):
     // this ran every iteration, and on an absent card each one blocked
@@ -1898,6 +1910,9 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
         toolsFailed: false,
         timedOut: true,
         stillPending: PENDING.test(text),
+        // Carried so the caller can say WHY the clock ran out when the
+        // card itself was still reporting `pending`.
+        settled: lastVerdict === 'blocked-pending' ? 'blocked-pending' : undefined,
       };
     }
     await page.waitForTimeout(1_000);
@@ -1937,13 +1952,28 @@ function lenderCardOf(page) {
  * than inventing a verdict from a missing element.
  */
 async function chooserSelfVerdict(page) {
-  const card = page.locator('[data-testid="lender-exit-card"]').first();
-  if ((await card.count()) === 0) return null;
-  const [ready, jumpable] = await Promise.all([
-    card.getAttribute('data-chooser-ready').catch(() => null),
-    card.getAttribute('data-chooser-jumpable').catch(() => null),
-  ]);
-  return ready === null && jumpable === null ? null : { ready, jumpable };
+  // ONE BOUNDED DOM READ, not two auto-waiting locator calls (Codex
+  // #1853 r30). `getAttribute` auto-waits for the element, and this
+  // context sets no default timeout — so a card unmounted between the
+  // `count()` and the read (an ownership or status refresh, which is
+  // precisely what the surrounding window watches for) blocked the
+  // poll indefinitely and sailed past the 45-second deadline it lives
+  // inside. Polling every tick turned a rare hang into a repeated
+  // exposure. The same auto-wait trap this file already fixed twice,
+  // on a third API.
+  //
+  // `evaluate` returns whatever is in the DOM at that instant and
+  // never waits for anything, so an absent card is `null` in one
+  // round trip rather than a stall.
+  return await page
+    .evaluate(() => {
+      const el = document.querySelector('[data-testid="lender-exit-card"]');
+      if (!el) return null;
+      const ready = el.getAttribute('data-chooser-ready');
+      const jumpable = el.getAttribute('data-chooser-jumpable');
+      return ready === null && jumpable === null ? null : { ready, jumpable };
+    })
+    .catch(() => null);
 }
 
 /**
@@ -2374,6 +2404,33 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
         () => chooserSelfVerdict(page),
       );
       if (settled.jumps === 0) {
+        // AN OBSERVATION OUTRANKS A LATER TRANSITION (Codex #1853
+        // r30). The card said `ready`/`yes` and rendered no switch —
+        // a contradiction that existed at the moment it was read, so
+        // nothing that happens afterwards can retract it. Consumed
+        // here, ahead of the disappearance and post-state checks,
+        // because those explain an ORDINARY absence and would
+        // otherwise convert a positively observed product failure into
+        // BLOCKED whenever the loan moved or the card unmounted right
+        // after the bad render.
+        //
+        // This is the same asymmetry this probe already applies to the
+        // card scrape: a transition detected during the probe cannot
+        // invalidate an observation the probe made before it. I wrote
+        // that rule and then ordered this verdict behind the checks it
+        // governs.
+        if (settled.settled === 'fail') {
+          return {
+            advancedOffered: false,
+            advancedJumps: 0,
+            advancedAnchorsOk: false,
+            advancedFailed: true,
+            advancedWhy:
+              'the lender card reports a settled jumpable row ' +
+              '(data-chooser-ready="ready", data-chooser-jumpable="yes") ' +
+              'and rendered no switch to reach it',
+          };
+        }
         if (settled.toolsFailed) {
           return {
             advancedOffered: false,
@@ -2566,17 +2623,11 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
           // ended for another reason, and `missingSwitchVerdict`
           // answers `unknown` for that, which is the pre-#1855 path.
           switch (settled.settled ?? 'unknown') {
-            case 'fail':
-              return {
-                advancedOffered: false,
-                advancedJumps: 0,
-                advancedAnchorsOk: false,
-                advancedFailed: true,
-                advancedWhy:
-                  'the lender card reports a settled jumpable row ' +
-                  '(data-chooser-ready="ready", data-chooser-jumpable="yes") ' +
-                  'and rendered no switch to reach it',
-              };
+            // No `fail` arm: that verdict is consumed at the top of
+            // this block, ahead of the race checks it must outrank
+            // (r30). A second copy here would be unreachable, and an
+            // unreachable copy of a rule is the next person's
+            // ambiguity about which one applies.
             case 'blocked-pending':
               return {
                 advancedOffered: false,

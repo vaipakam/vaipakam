@@ -236,10 +236,22 @@ export function excursionExplains(result, excursion) {
  *   finding rather than a deployment gap.
  */
 export function missingSwitchVerdict(v) {
-  if (!v || v.ready === null) return 'unknown';
+  // `unknown` means SILENCE, and nothing else (Codex #1853 r30). The
+  // previous version also returned it for a card publishing half the
+  // contract or an unrecognised `ready`, which sent both down the
+  // legacy path — deadline, then accept the missing switch as clean.
+  // A card that says something we cannot read is the opposite of a
+  // legacy bundle: it is publishing, and it is wrong, which is exactly
+  // the state a broken observability attribute would produce while
+  // hiding the regression it was added to expose.
+  if (!v) return 'unknown';
+  const said = v.ready !== null && v.ready !== undefined;
+  const saidJumpable = v.jumpable !== null && v.jumpable !== undefined;
+  if (!said && !saidJumpable) return 'unknown';
+  if (!said) return 'blocked-malformed';
   if (v.ready === 'pending') return 'blocked-pending';
   if (v.ready === 'failed') return 'blocked-failed';
-  if (v.ready !== 'ready') return 'unknown';
+  if (v.ready !== 'ready') return 'blocked-malformed';
   if (v.jumpable === 'yes') return 'fail';
   if (v.jumpable === 'no') return 'absent';
   return 'blocked-malformed';
