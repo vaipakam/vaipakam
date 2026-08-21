@@ -2103,6 +2103,9 @@ if [ -f "$OUT" ]; then
   # the final identity check against the restored value, while the rename
   # installed the other group permanently.
   out_gid="${OUT_ID##*:}"
+  # Kept, so the gate can confirm the replacement still carries the group
+  # that was approved rather than merely some group (Codex #1863 r38).
+  APPROVED_GID="$_new_gid"
   if (( _pg_rc != 0 )); then
     echo "Error: could not determine the group a new file here would take." >&2
     echo "Refusing to assemble: replacing the dated file installs a new" >&2
@@ -2346,7 +2349,11 @@ _final_gate() {
     # while the set-aside `mv` cannot remove that foreign entry, and it
     # fails after publication. Per fragment, since the restriction is
     # per file.
-    if (( STICKY_POOL )) && [ ! -O "$_f" ] && [ ! -O "$UNREL" ]; then
+    # `-k` read HERE, not from the startup cache (Codex #1863 r38): a
+    # pool that gains the sticky bit during `_persist` skipped the guard
+    # entirely, and the probe passed because the probe's own entry
+    # belongs to the runner.
+    if [ -k "$UNREL" ] && [ ! -O "$_f" ] && [ ! -O "$UNREL" ]; then
       echo "Error: ${FRAG_NAME[$_f]} is owned by someone else, and" >&2
       echo "$UNREL is sticky." >&2
       echo "" >&2
@@ -2374,6 +2381,16 @@ _final_gate() {
   # sources; nothing looked at $WORK, and the post-rename readback
   # compares content only — so a mode change during `_persist` published
   # a widened file and consumed the fragments.
+  # TYPE first (Codex #1863 r38). Checking the mode without the type let
+  # a same-user process swap $WORK for a FIFO carrying the expected mode:
+  # the gate passed, `mv` installed the FIFO at $OUT, and the
+  # post-publication hash then blocked forever with the real dated file
+  # already gone. A hang after publication is the worst outcome this
+  # script has — it cannot even report.
+  if [ -L "$WORK" ] || [ ! -f "$WORK" ]; then
+    echo "Error: the replacement is no longer a regular file." >&2
+    _refuse_reporting_consumed
+  fi
   if ! read_mode "$WORK"; then
     echo "Error: could not re-read the mode of the replacement." >&2
     _refuse_reporting_consumed
@@ -2383,6 +2400,23 @@ _final_gate() {
     echo "preparing it ($FINAL_MODE -> $MODE_READ)." >&2
     echo "Publishing it would install permissions this run did not choose." >&2
     _refuse_reporting_consumed
+  fi
+  # And the GROUP. A runner in several groups can change $WORK's group
+  # without touching its bytes or its mode, and the existing checks —
+  # content, mode, owner — all still passed while the rename installed a
+  # different group on the published file (Codex #1863 r38).
+  if [ -n "${APPROVED_GID:-}" ]; then
+    if ! read_gid "$WORK"; then
+      echo "Error: could not re-read the group of the replacement." >&2
+      _refuse_reporting_consumed
+    fi
+    if [ "$GID_READ" != "$APPROVED_GID" ]; then
+      echo "Error: the replacement's group changed while this run was" >&2
+      echo "preparing it ($APPROVED_GID -> $GID_READ)." >&2
+      echo "Publishing it would hand the file to a group this run did not" >&2
+      echo "approve." >&2
+      _refuse_reporting_consumed
+    fi
   fi
   # The SOURCE directory as well (Codex #1863 r36). A rename removes the
   # source entry, so `mv` needs write permission on BOTH directories —

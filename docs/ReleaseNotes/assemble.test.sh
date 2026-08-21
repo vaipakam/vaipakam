@@ -2305,7 +2305,7 @@ out="$W/docs/ReleaseNotes"
 # is not the one being installed (Codex #1863 r26). Pinned structurally —
 # reproducing the interleaving needs a mount-level race.
 check "it reads the replacement" \
-  "$(grep -c 'read_gid "\$WORK"' "$out/assemble.sh")"                    "1"
+  "$(grep -c 'read_gid "\$WORK"' "$out/assemble.sh")"                    "2"
 check "no second probe file" \
   "$(grep -c 'assemble-probe' "$out/assemble.sh")"                       "0"
 
@@ -3106,11 +3106,59 @@ out="$W/docs/ReleaseNotes"
 # not reach the check — the run fails earlier on something unrelated, so a
 # behavioural assertion would report a pass it had not earned. Said plainly
 # rather than left looking verified.
-check "the check exists"      "$(grep -c 'STICKY_POOL )) && \[ ! -O' "$out/assemble.sh")" "1"
-check "it is in the final gate" \
-  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'STICKY_POOL')"     "1"
-check "the flag is resolved once" \
-  "$(grep -c 'if \[ -k "\$UNREL" \]; then STICKY_POOL=1; fi' "$out/assemble.sh")"       "1"
+# The sticky bit is read LIVE in the gate rather than cached at startup — a
+# pool that gains it during the flush skipped the guard entirely (r38).
+check "the check exists" \
+  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -cF '[ -k "$UNREL" ] && [ ! -O')" "1"
+check "no startup cache is used" \
+  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'STICKY_POOL')"     "0"
+
+echo "T114: a replacement swapped for a FIFO is refused, not published"
+W="$ROOT/t114"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The gate validated the replacement's MODE but not its TYPE, so a same-user
+# process could swap $WORK for a FIFO carrying the expected mode: the gate
+# passed, `mv` installed the FIFO at $OUT, and the post-publication hash then
+# blocked FOREVER with the real dated file already gone (Codex #1863 r38).
+# A hang after publication is the worst outcome this script has — it cannot
+# even report.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  for a in "\$@"; do
+    case "\$a" in
+      *.assemble-*)
+        : > "$W/fired"
+        /bin/rm -f "\$a"
+        mkfifo -m 0644 "\$a" 2>/dev/null
+        ;;
+    esac
+  done
+fi
+exit 0
+SHIM
+chmod +x "$W/fakebin/sync"
+# `timeout` so a regression reports a failure instead of hanging the suite.
+msg="$(PATH="$W/fakebin:$PATH" timeout 60 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+rc=$?
+check "it did not hang"        "$([ "$rc" = "124" ] && echo hung || echo ok)"  "ok"
+check "the run stops"          "$rc"                                          "1"
+check "it says what is wrong"  "$(says "$msg" 'no longer a regular file')"     "1"
+check "nothing was published" \
+  "$([ -e "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"     "none"
+
+echo "T115: the replacement's group is rechecked before the rename"
+W="$ROOT/t115"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A runner in several groups can change $WORK's group without touching its
+# bytes or its mode — content, mode and owner all still passed while the
+# rename installed a different group on the published file (Codex #1863 r38).
+# Pinned structurally: reproducing it needs a runner with two real groups.
+check "the gate re-reads the group" \
+  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'read_gid "\$WORK"')" "1"
+check "and compares the approved one" \
+  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'APPROVED_GID')"      "3"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
