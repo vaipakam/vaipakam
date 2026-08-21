@@ -668,9 +668,8 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
   닫혔는지에 따라 다릅니다. 일반 HF liquidation과 거래 가능한
   collateral에 대한 시간 기반 default는 둘 다 collateral을 팔아
   잔여를 loan의 principal asset으로 기록합니다. 팔리지 않은 몫이
-  vault에 encumbered 상태로 남는 close-out은 둘입니다: liquidator가
-  collateral을 팔지 않고 할인된 값에 직접 가져가는 경우, 그리고 매각이
-  성사되지 못해 collateral이 그대로 배분되는 경우입니다. 부분
+  vault에 encumbered 상태로 남는 것은, liquidator가 collateral을
+  팔지 않고 할인된 값에 직접 가져가는 close-out일 때뿐입니다. 부분
   liquidation은 애초에 close-out이 아닙니다 — loan은 열린 채로 남고
   claim도 만들어지지 않습니다. 어느 쪽인지 추측하지 말고 claim을
   확인하세요. 비유동 자산의

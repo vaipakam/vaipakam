@@ -377,11 +377,10 @@ la valeur qu'exigent la dette et les frais de sa clôture, et tout
 ce qui dépasse est enregistré comme tien. Sa forme dépend de la
 manière dont le prêt s'est terminé : après une liquidation
 ordinaire, ou un défaut sur un collatéral négociable, le panier est
-vendu et le reste te parvient dans l'actif du prêt lui-même. C'est le
-collatéral lui-même qui t'attend dans deux cas : lorsqu'un
-liquidateur le prend directement avec une décote au lieu de le
-vendre, et lorsque la vente n'a pas pu aboutir et que le
-collatéral est réparti tel quel. Souvent — sur un
+vendu et le reste te parvient dans l'actif du prêt lui-même. Ce
+n'est que lorsqu'un liquidateur prend le collatéral directement
+avec une décote, au lieu de le vendre, que c'est le collatéral
+lui-même qui t'attend. Souvent — sur un
 défaut portant sur un collatéral que nous ne pouvons pas
 valoriser — tout le panier part et il ne reste rien, mais c'est
 une issue, pas une règle. Que le rabais de frais revienne dépend

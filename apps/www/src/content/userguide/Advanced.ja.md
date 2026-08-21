@@ -722,9 +722,8 @@ Borrower claim は、loan がどう settle されたかによって次を返し
   通常の HF liquidation も、取引可能な collateral の時間ベース
   default も、どちらも collateral を売り、残余を loan の principal
   asset で記録します。売られなかった分が vault に encumbered のまま
-  残る close-out は二つあります。liquidator が collateral を売らずに
-  割引で直接引き取る場合と、売却が成立せず collateral がそのまま
-  配分される場合です。部分 liquidation はそもそも close-out
+  残るのは、liquidator が collateral を売らずに割引で直接引き取る
+  close-out のときだけです。部分 liquidation はそもそも close-out
   ではありません — loan は開いたままで、claim は作られません。
   どちらかを推測せず、claim を確認してください。Illiquid asset の default では通常バスケット全体が失われ何も
   残りませんが、それは結果であってルールではありません。rebate が戻るかどうかは

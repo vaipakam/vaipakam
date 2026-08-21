@@ -358,9 +358,8 @@ collateral を返します。default または liquidation の場合も、いち
 超える分はあなたのものとして記録されます。その形は loan の終わり方
 によります。通常の liquidation のあとも、取引可能な collateral の
 default のあとも、バスケットは売られ、残りは loan 自体の asset で
-届きます。collateral そのものが残るのは二つの場合です。liquidator が売らずに
-割引で直接引き取ったときと、売却が成立せず collateral がそのまま
-配分されたときです。価格を付けられない collateral の
+届きます。collateral そのものが残るのは、liquidator が売らずに割引で
+直接引き取ったときだけです。価格を付けられない collateral の
 default では、バスケット全体が失われ何も残らないことも多いですが、
 それは結果であってルールではありません。手数料の rebate が戻るかどうかは
 loan の終わり方によります。廃止された VPFI 手数料経路のままの loan

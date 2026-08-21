@@ -375,10 +375,9 @@ valor que exigen la deuda y los costes de cerrarla, y todo lo que
 exceda queda registrado como tuyo. Su forma depende de cómo
 terminó el préstamo: tras una liquidación ordinaria, o un default
 sobre colateral negociable, se vende la canasta y lo que sobra te
-llega en el activo del propio préstamo. Lo que te espera es el colateral
-mismo en dos casos: cuando un liquidador lo toma directamente con
-descuento en vez de venderlo, y cuando la venta no pudo
-completarse y el colateral se reparte tal cual. A menudo —en un
+llega en el activo del propio préstamo. Sólo cuando un liquidador
+toma el colateral directamente con descuento, en vez de venderlo,
+lo que te espera es el colateral mismo. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
 entera y no queda nada, pero eso es cómo resultó, no una regla.
 Que el reembolso de la comisión vuelva depende de cómo terminó el

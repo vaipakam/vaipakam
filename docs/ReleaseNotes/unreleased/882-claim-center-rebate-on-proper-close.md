@@ -47,11 +47,3 @@ readers to disagreed. The Advanced editions had their tail clause corrected
 while the opening clause kept the old assertion, which is how one sentence came
 to state both. Fixing where an error is reported rather than everywhere the
 claim appears is what leaves this shape behind.
-
-**A second overclaim in the same section, corrected with it.** The guidance said
-the borrower is left the collateral *itself* only when a liquidator takes it
-directly at a discount instead of selling it. There is a second route: when the
-sale cannot be completed, the collateral is distributed as it stands and the
-borrower's share is recorded in collateral units the same way. A borrower on
-that path would have read a page telling them their claim must be in the loan's
-own asset, and gone looking for the wrong thing.

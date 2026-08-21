@@ -382,10 +382,8 @@ erfordern; alles darüber wird als deines erfasst. Welche Form es
 hat, hängt davon ab, wie der Loan endete: nach einer gewöhnlichen
 Liquidation oder einem Default auf handelbares Collateral wird der
 Korb verkauft und der Rest erreicht dich im Asset des Loans. Nur
-In zwei Fällen wartet das Collateral selbst auf dich: wenn ein
-Liquidator es mit Abschlag direkt übernimmt statt es zu verkaufen,
-und wenn der Verkauf nicht zustande kam und das Collateral so
-verteilt wird, wie es ist. Oft geht bei einem Default über Collateral, das wir
+wenn ein Liquidator das Collateral mit Abschlag direkt übernimmt,
+statt es zu verkaufen, wartet das Collateral selbst auf dich. Oft geht bei einem Default über Collateral, das wir
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
 das ist aber ein Ausgang, keine Regel. Ob der Gebühren-Rebate
 zurückkommt, hängt davon ab, wie der Loan endete: bei einem Loan

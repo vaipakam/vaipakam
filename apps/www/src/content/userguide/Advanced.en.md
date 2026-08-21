@@ -731,11 +731,10 @@ The borrower claim returns, depending on how the loan settled:
   recorded as your claim. Its FORM depends on the route that
   closed the loan. An ordinary HF liquidation and a time-based
   default on tradable collateral both sell the collateral and
-  record the residue in the loan’s principal asset. Two close-outs leave the
-  unsold part encumbered in your vault: one where a liquidator
-  takes the collateral directly at a discount instead of selling
-  it, and one where the sale could not be completed and the
-  collateral is distributed as it stands. A partial liquidation is not a
+  record the residue in the loan’s principal asset. Only a
+  close-out where a liquidator takes the collateral directly at a
+  discount, instead of selling it, leaves the unsold part
+  encumbered in your vault. A partial liquidation is not a
   close-out at all — the loan stays open and no claim is created.
   Check the claim rather than assuming which one you have.
   On an illiquid default the whole basket usually goes, so there
