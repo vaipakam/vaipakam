@@ -379,10 +379,11 @@ Borrower-Claim das Collateral zurück, das du am Anfang gesperrt
 hast. Bei Default oder Liquidation sieh trotzdem nach. Es wird nur so
 viel Wert genommen, wie die Schuld und die Kosten ihrer Auflösung
 erfordern; alles darüber wird als deines erfasst. Welche Form es
-hat, hängt davon ab, wie der Loan endete: nach einer Teilliquidation
-ist es das nicht verkaufte Collateral, das in deinem Vault bleibt;
-nach einem Default auf handelbares Collateral wird der ganze Korb
-verkauft und der Rest erreicht dich im Asset des Loans. Oft geht bei einem Default über Collateral, das wir
+hat, hängt davon ab, wie der Loan endete: nach einer gewöhnlichen
+Liquidation oder einem Default auf handelbares Collateral wird der
+Korb verkauft und der Rest erreicht dich im Asset des Loans. Nur
+wenn ein Liquidator das Collateral mit Abschlag direkt übernimmt,
+statt es zu verkaufen, wartet das Collateral selbst auf dich. Oft geht bei einem Default über Collateral, das wir
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
 das ist aber ein Ausgang, keine Regel. Nie zurück kommt der
 Gebühren-Rebate: bei einem Loan auf dem eingestellten

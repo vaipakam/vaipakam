@@ -770,12 +770,16 @@ prêt s'est réglé :
 - **Liquidation HF ou défaut** — vérifie quand même, il peut
   rester un excédent. On ne prélève que la valeur nécessaire
   pour couvrir le liquidateur, le prêteur et le trésor, et le reste
-  est enregistré comme ta créance. Sa FORME dépend du chemin : une
-  liquidation HF partielle laisse du collatéral invendu grevé dans
-  ton vault, tandis qu'un défaut temporel sur un collatéral
-  négociable vend tout le panier et enregistre le reliquat dans
-  l'actif principal du prêt. Consulte la créance plutôt que de
-  supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le
+  est enregistré comme ta créance. Sa FORME dépend de la voie par
+  laquelle le prêt s'est refermé. Une liquidation HF ordinaire et
+  un défaut temporel sur un collatéral négociable vendent tous
+  deux le collatéral et enregistrent le reliquat dans l'actif
+  principal du prêt. Seule une clôture où un liquidateur prend le
+  collatéral directement avec une décote, au lieu de le vendre,
+  laisse la part invendue grevée dans ton vault. Une liquidation
+  partielle n'est pas une clôture du tout — le prêt reste ouvert
+  et aucune créance n'est créée. Consulte la créance plutôt que
+  de supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le
   panier part en général et il ne reste rien — mais c'est une
   issue, pas une règle. Ce qui est toujours perdu, c'est le
   rabais : sur un prêt encore soumis à la voie de frais VPFI

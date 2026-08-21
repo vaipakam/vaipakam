@@ -356,9 +356,10 @@ loan を full repay した場合、borrower claim は最初に lock した
 collateral を返します。default または liquidation の場合も、いちど確認してください。
 債務とその清算にかかる費用に必要なぶんの価値だけが取られ、それを
 超える分はあなたのものとして記録されます。その形は loan の終わり方
-によります。部分的な liquidation のあとは売られなかった collateral
-がそのまま vault に残り、取引可能な collateral の default のあとは
-バスケット全体が売られ、残りは loan 自体の asset で届きます。価格を付けられない collateral の
+によります。通常の liquidation のあとも、取引可能な collateral の
+default のあとも、バスケットは売られ、残りは loan 自体の asset で
+届きます。collateral そのものが残るのは、liquidator が売らずに割引で
+直接引き取ったときだけです。価格を付けられない collateral の
 default では、バスケット全体が失われ何も残らないことも多いですが、
 それは結果であってルールではありません。決して戻らないのは手数料の
 rebate です。廃止された VPFI 手数料経路のままの loan では、Loan

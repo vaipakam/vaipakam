@@ -721,11 +721,15 @@ The borrower claim returns, depending on how the loan settled:
 - **HF-liquidation or default** — check anyway; there may be a
   surplus. Only enough value is taken to cover the
   liquidator, the lender and the treasury, and the remainder is
-  recorded as your claim. Its FORM depends on the path: a partial
-  HF liquidation leaves unsold collateral encumbered in your
-  vault, while a time-based default on tradable collateral sells
-  the whole basket and records the residue in the loan’s principal
-  asset. Check the claim rather than assuming which one you have.
+  recorded as your claim. Its FORM depends on the route that
+  closed the loan. An ordinary HF liquidation and a time-based
+  default on tradable collateral both sell the collateral and
+  record the residue in the loan’s principal asset. Only a
+  close-out where a liquidator takes the collateral directly at a
+  discount, instead of selling it, leaves the unsold part
+  encumbered in your vault. A partial liquidation is not a
+  close-out at all — the loan stays open and no claim is created.
+  Check the claim rather than assuming which one you have.
   On an illiquid default the whole basket usually goes, so there
   is nothing left — but that is an outcome, not a rule. What is
   always lost is the rebate: on a loan still using the retired

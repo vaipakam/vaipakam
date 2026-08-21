@@ -773,12 +773,16 @@ liquidó el préstamo:
 - **Liquidación por HF o default** — compruébalo igualmente,
   puede quedar un excedente. Sólo se toma el valor suficiente
   para cubrir al liquidador, al prestamista y al tesoro, y el resto
-  queda registrado como tu reclamación. Su FORMA depende de la vía:
-  una liquidación parcial por HF deja colateral sin vender gravado
-  en tu bóveda, mientras que un default por tiempo sobre colateral
-  negociable vende la canasta entera y registra el residuo en el
-  activo principal del préstamo. Consulta la reclamación en lugar de
-  suponer cuál tienes. En un default sobre un activo ilíquido suele irse la
+  queda registrado como tu reclamación. Su FORMA depende de la vía por la que
+  se cerró el préstamo. Una liquidación por HF ordinaria y un
+  default por tiempo sobre colateral negociable venden ambos el
+  colateral y registran el residuo en el activo principal del
+  préstamo. Sólo un cierre en el que un liquidador toma el
+  colateral directamente con descuento, en vez de venderlo, deja
+  gravada en tu bóveda la parte no vendida. Una liquidación
+  parcial no es un cierre en absoluto — el préstamo sigue abierto
+  y no se crea ninguna reclamación. Consulta la reclamación en
+  lugar de suponer cuál tienes. En un default sobre un activo ilíquido suele irse la
   canasta entera y no queda nada — pero eso es un resultado, no
   una regla. Lo que siempre se pierde es el reembolso: en un
   préstamo que siga en la vía de comisión VPFI retirada, el VPFI

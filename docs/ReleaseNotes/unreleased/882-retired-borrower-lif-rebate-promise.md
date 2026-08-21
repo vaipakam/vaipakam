@@ -150,12 +150,25 @@ borrower who refinanced could have been told to give up a claim that was waiting
 for them — the same shape of harm the whole correction was meant to undo, caused
 by the correction.
 
-The second: describing the surplus as collateral waiting in your vault is only
-true after a partial liquidation. When a default sells tradable collateral, the
-whole basket goes and what is left reaches you as the loan's own asset instead.
-Telling a borrower to look for the wrong thing is a quieter failure than telling
-them there is nothing, but it is the same kind. Both guides now say the form
-depends on how the loan ended, and to look at the claim rather than assume.
+The second: the surplus was described as the wrong asset. Telling a borrower to
+look for the wrong thing is a quieter failure than telling them there is
+nothing, but it is the same kind — they go looking, do not find what the page
+named, and conclude the page is wrong about everything else too.
+
+It took two attempts to get right, and the first attempt is worth recording
+because it was confidently wrong in a new way. It said the collateral waits in
+your vault after a partial liquidation, and that the whole basket is sold on a
+time-based default. The second half was true. The first named the wrong route
+twice over: a partial liquidation is not a close-out at all — the loan stays
+open and no claim is created — and the ordinary liquidation, which is the common
+one, sells the collateral exactly as a default does and hands back the loan's
+own asset. Only a close-out where a liquidator takes the collateral directly at
+a discount, rather than selling it, leaves the collateral itself waiting. So the
+correction pointed most borrowers at the wrong thing while sounding more precise
+than the sentence it replaced.
+
+Both guides now name all three routes and say which asset each returns, and
+still say to look at the claim rather than assume.
 
 **And the renewal procedure has been withdrawn rather than qualified.** Two
 rounds ago these pages started describing how to refresh a lapsed mirror

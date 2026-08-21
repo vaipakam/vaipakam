@@ -585,10 +585,13 @@ borrower claim 根据 loan 如何 settle 来返回：
   Loan Initiation Fee 的 time-weighted VPFI rebate。
 - **HF-liquidation 或 default** — 仍请查看，可能还有 surplus。系统只取走
   足以支付 liquidator、lender 和 treasury 的那部分价值，余下的会记为您的
-  claim。它的形式取决于路径：部分 HF liquidation 会把未卖出的 collateral
-  以 encumbered 状态留在您的 vault 中，而对可交易 collateral 的时间型
-  default 会卖出整个 basket，并将剩余记为 loan 的 principal asset。请查看
-  claim，而不要假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩
+  claim。它的形式取决于 loan 是以哪条路径关闭的。普通的 HF liquidation，
+  以及对可交易 collateral 的时间型 default，两者都会卖出 collateral，
+  并将剩余记为 loan 的 principal asset。只有当 liquidator 不卖出、而是
+  按折扣直接拿走 collateral 的那种 close-out，未卖出的部分才会以
+  encumbered 状态留在您的 vault 中。至于部分 liquidation，它根本不是
+  close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要
+  假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩
   什么——但那是一种结果，不是规则。始终会失去的是 rebate：若该 loan 仍在
   已停用的 VPFI 费用路径上，为其发起费托管的 VPFI 会**被没收并转入
   treasury**，且只有正常关闭才会返还 rebate。

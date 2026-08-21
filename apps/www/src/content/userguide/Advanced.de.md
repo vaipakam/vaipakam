@@ -774,11 +774,16 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
 - **HF-Liquidation oder Default** — sieh trotzdem nach, es kann
   ein Überschuss übrig sein. Es wird nur so viel Wert
   genommen, wie Liquidator, Lender und Treasury decken; der Rest
-  wird als dein Claim erfasst. Seine FORM hängt vom Pfad ab: eine
-  partielle HF-Liquidation lässt unverkauftes Collateral verpfändet
-  in deinem Vault, während ein zeitbasierter Default auf handelbares
-  Collateral den ganzen Korb verkauft und den Rest im Principal-Asset
-  des Loans erfasst. Sieh in den Claim, statt zu raten. Bei
+  wird als dein Claim erfasst. Seine FORM hängt davon ab, wie der Loan
+  geschlossen wurde. Eine gewöhnliche HF-Liquidation und ein
+  zeitbasierter Default auf handelbares Collateral verkaufen beide
+  das Collateral und erfassen den Rest im Principal-Asset des
+  Loans. Nur ein Close-out, bei dem ein Liquidator das Collateral
+  mit Abschlag direkt übernimmt, statt es zu verkaufen, lässt den
+  nicht verkauften Teil verpfändet in deinem Vault. Eine
+  Teilliquidation ist überhaupt kein Close-out — der Loan bleibt
+  offen und es entsteht kein Claim. Sieh in den Claim, statt zu
+  raten. Bei
   einem Default auf ein illiquides Asset geht meist der ganze Korb
   weg, dann bleibt nichts — das ist ein Ergebnis, keine Regel.
   Immer verloren ist das Rebate: bei einem Loan auf dem

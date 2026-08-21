@@ -729,11 +729,14 @@ Borrower claim इस आधार पर return करता है कि loan
   rebate भी।
 - **HF-liquidation या default** — फिर भी देख लें, surplus बचा
   हो सकता है। Liquidator, lender और treasury को चुकाने भर का मूल्य ही लिया
-  जाता है, और बाकी आपके claim के रूप में दर्ज होता है। उसका रूप
-  रास्ते पर निर्भर है: आंशिक HF liquidation बिना बिका collateral
-  आपके vault में encumbered छोड़ती है, जबकि बिकने योग्य collateral
-  पर समय-आधारित default पूरी basket बेच देता है और बचा हुआ loan के
-  principal asset में दर्ज करता है। अनुमान लगाने के बजाय claim देखें। Illiquid asset के default में आम तौर पर पूरी
+  जाता है, और बाकी आपके claim के रूप में दर्ज होता है। उसका रूप इस पर निर्भर है कि loan किस
+  रास्ते से बंद हुआ। सामान्य HF liquidation और बिकने योग्य collateral
+  पर समय-आधारित default — दोनों collateral बेचते हैं और बचा हुआ loan
+  के principal asset में दर्ज करते हैं। बिना बिका हिस्सा आपके vault में
+  encumbered सिर्फ़ तब रहता है जब liquidator collateral बेचने के बजाय
+  छूट पर सीधे ले लेता है। आंशिक liquidation तो बंद होना है ही नहीं —
+  loan खुला रहता है और कोई claim बनता ही नहीं। अनुमान लगाने के बजाय
+  claim देखें। Illiquid asset के default में आम तौर पर पूरी
   basket चली जाती है और कुछ नहीं बचता — पर वह एक परिणाम है, नियम
   नहीं। हमेशा जो खोता है वह rebate है: बंद किए गए VPFI fee रास्ते
   वाले loan में initiation fee के बदले रखा गया VPFI **treasury को

@@ -311,9 +311,10 @@ lender position NFT — transaction 确认后，loan 的 lender 这一侧
 如果您已经全额 repay loan，borrower claim 会返还您一开始锁定的
 collateral。如果发生 default 或 liquidation，也请查看一下。系统只会取走偿还债务
 和了结它所需的那部分价值，超出的部分都会记在您名下。它以什么形式存在，
-取决于 loan 是如何结束的：部分 liquidation 之后，那是未被卖出的
-collateral，仍留在您的 vault 中；而在可交易 collateral 的 default 之后，
-整个 basket 会被卖出，剩余部分以 loan 自身的 asset 到您手中。在无法定价的 collateral 上发生
+取决于 loan 是如何结束的：普通 liquidation 之后，或可交易 collateral
+的 default 之后，basket 会被卖出，剩余部分以 loan 自身的 asset 到您
+手中。只有当 liquidator 不卖出、而是按折扣直接拿走 collateral 时，
+等着您的才是 collateral 本身。在无法定价的 collateral 上发生
 default 时，往往整个 basket 都会被取走、什么也不剩，但那是结果，不是规则。
 永远不会回来的是费用 rebate：仍在已停用 VPFI 费用路径上的 loan，其为
 Loan Initiation Fee 托管的 VPFI 会被没收转入 treasury。claim 会 consume

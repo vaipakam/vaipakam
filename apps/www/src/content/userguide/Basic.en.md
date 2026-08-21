@@ -350,10 +350,11 @@ collateral you locked at the start. On default or liquidation,
 check anyway. Only as much value is taken as the debt and
 the costs of closing it require, and anything beyond that is
 recorded as yours. What form it takes depends on how the loan
-ended: after a partial liquidation it is the collateral that was
-not sold, still in your vault; after a default on tradable
-collateral the whole basket is sold and what is left reaches you
-as the loan’s own asset. Often — on a default over collateral we
+ended: after an ordinary liquidation, or a default on tradable
+collateral, the basket is sold and what is left reaches you as the
+loan’s own asset. Only when a liquidator takes the collateral
+directly at a discount, instead of selling it, is what waits for
+you the collateral itself. Often — on a default over collateral we
 cannot price — the whole basket goes and nothing is left, but
 that is how it turned out, not a rule. What never comes back is
 the fee rebate: on a loan still using the retired VPFI fee path

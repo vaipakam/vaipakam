@@ -713,11 +713,14 @@ Borrower claim は、loan がどう settle されたかによって次を返し
 - **HF-liquidation または default** — それでも確認してください。surplus が
   残っている場合があります。liquidator・lender・treasury を
   まかなうぶんの価値だけが取られ、残りがあなたの claim として記録
-  されます。その形は経路によります。部分的な HF liquidation では
-  売られなかった collateral が vault に encumbered のまま残り、
-  取引可能な collateral の時間ベース default ではバスケット全体が
-  売られ、残余は loan の principal asset で記録されます。どちらかを
-  推測せず、claim を確認してください。Illiquid asset の default では通常バスケット全体が失われ何も
+  されます。その形は loan が閉じた経路によります。
+  通常の HF liquidation も、取引可能な collateral の時間ベース
+  default も、どちらも collateral を売り、残余を loan の principal
+  asset で記録します。売られなかった分が vault に encumbered のまま
+  残るのは、liquidator が collateral を売らずに割引で直接引き取る
+  close-out のときだけです。部分 liquidation はそもそも close-out
+  ではありません — loan は開いたままで、claim は作られません。
+  どちらかを推測せず、claim を確認してください。Illiquid asset の default では通常バスケット全体が失われ何も
   残りませんが、それは結果であってルールではありません。常に失われるのは
   rebate です。廃止された VPFI 手数料経路のままの loan では、開始手数料の
   ために保管されていた VPFI は**没収されて treasury に入り**、rebate が

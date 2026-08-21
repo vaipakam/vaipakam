@@ -376,9 +376,11 @@ défaut ou de liquidation, vérifie quand même. On ne prélève que
 la valeur qu'exigent la dette et les frais de sa clôture, et tout
 ce qui dépasse est enregistré comme tien. Sa forme dépend de la
 manière dont le prêt s'est terminé : après une liquidation
-partielle, c'est le collatéral non vendu, toujours dans ton vault ;
-après un défaut sur un collatéral négociable, tout le panier est
-vendu et le reste te parvient dans l'actif du prêt lui-même. Souvent — sur un
+ordinaire, ou un défaut sur un collatéral négociable, le panier est
+vendu et le reste te parvient dans l'actif du prêt lui-même. Ce
+n'est que lorsqu'un liquidateur prend le collatéral directement
+avec une décote, au lieu de le vendre, que c'est le collatéral
+lui-même qui t'attend. Souvent — sur un
 défaut portant sur un collatéral que nous ne pouvons pas
 valoriser — tout le panier part et il ne reste rien, mais c'est
 une issue, pas une règle. Ce qui ne revient jamais, c'est le

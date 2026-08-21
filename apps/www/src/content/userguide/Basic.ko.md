@@ -338,9 +338,10 @@ loan을 full repay했다면 borrower claim은 시작할 때 lock한 collateral�
 돌려줍니다. default 또는 liquidation 시에도 한 번 확인해 보세요. 빚과 그것을
 정리하는 비용에 필요한 만큼의 가치만 가져가며, 그것을 넘는 몫은 내
 것으로 기록됩니다. 그 형태는 loan이 어떻게 끝났는지에 따라 다릅니다:
-부분 liquidation 뒤에는 팔리지 않은 collateral이 vault에 그대로
-남고, 거래 가능한 collateral의 default 뒤에는 바스켓 전체가 팔려
-남은 몫이 loan 자체의 asset으로 도착합니다. 값을 매길 수 없는 collateral에 대한 default에서는
+일반 liquidation 뒤에도, 거래 가능한 collateral의 default 뒤에도
+바스켓은 팔리고 남은 몫이 loan 자체의 asset으로 도착합니다.
+collateral 자체가 남는 것은 liquidator가 팔지 않고 할인된 값에
+직접 가져갔을 때뿐입니다. 값을 매길 수 없는 collateral에 대한 default에서는
 바스켓 전체가 나가 아무것도 남지 않는 경우가 많지만, 그것은 결과일
 뿐 규칙이 아닙니다. 결코 돌아오지 않는 것은 수수료 rebate입니다:
 폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 Loan Initiation Fee를

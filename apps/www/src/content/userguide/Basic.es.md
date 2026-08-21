@@ -373,10 +373,11 @@ prestatario devuelve el colateral que bloqueaste al inicio. En
 default o liquidación, compruébalo igualmente. Sólo se toma el
 valor que exigen la deuda y los costes de cerrarla, y todo lo que
 exceda queda registrado como tuyo. Su forma depende de cómo
-terminó el préstamo: tras una liquidación parcial es el colateral
-que no se vendió, aún en tu bóveda; tras un default sobre colateral
-negociable se vende la canasta entera y lo que sobra te llega en el
-activo del propio préstamo. A menudo —en un
+terminó el préstamo: tras una liquidación ordinaria, o un default
+sobre colateral negociable, se vende la canasta y lo que sobra te
+llega en el activo del propio préstamo. Sólo cuando un liquidador
+toma el colateral directamente con descuento, en vez de venderlo,
+lo que te espera es el colateral mismo. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
 entera y no queda nada, pero eso es cómo resultó, no una regla.
 Lo que nunca vuelve es el reembolso de la comisión: en un

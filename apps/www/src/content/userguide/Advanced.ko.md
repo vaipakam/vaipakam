@@ -660,11 +660,15 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
   Fee에서 나온 time-weighted VPFI rebate도 함께 받습니다.
 - **HF-liquidation 또는 default** — 그래도 확인해 보세요. surplus가 남아
   있을 수 있습니다. liquidator와 lender, treasury를 충당할
-  만큼의 가치만 가져가고 나머지는 내 claim으로 기록됩니다. 그 형태는
-  경로에 따라 다릅니다: 부분 HF liquidation은 팔리지 않은 collateral을
-  vault에 encumbered 상태로 남기고, 거래 가능한 collateral에 대한
-  시간 기반 default는 바스켓 전체를 팔아 잔여를 loan의 principal
-  asset으로 기록합니다. 어느 쪽인지 추측하지 말고 claim을 확인하세요. 비유동 자산의
+  만큼의 가치만 가져가고 나머지는 내 claim으로 기록됩니다. 그 형태는 loan이 어떤 경로로
+  닫혔는지에 따라 다릅니다. 일반 HF liquidation과 거래 가능한
+  collateral에 대한 시간 기반 default는 둘 다 collateral을 팔아
+  잔여를 loan의 principal asset으로 기록합니다. 팔리지 않은 몫이
+  vault에 encumbered 상태로 남는 것은, liquidator가 collateral을
+  팔지 않고 할인된 값에 직접 가져가는 close-out일 때뿐입니다. 부분
+  liquidation은 애초에 close-out이 아닙니다 — loan은 열린 채로 남고
+  claim도 만들어지지 않습니다. 어느 쪽인지 추측하지 말고 claim을
+  확인하세요. 비유동 자산의
   default에서는 보통 바스켓 전체가 나가 아무것도 남지 않지만, 그것은 결과일
   뿐 규칙이 아닙니다. 언제나 잃는 것은 rebate입니다: 폐지된 VPFI 수수료
   경로에 남아 있는 loan이라면 개시 수수료를 위해 보관되던 VPFI는
