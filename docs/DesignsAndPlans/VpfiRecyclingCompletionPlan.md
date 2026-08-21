@@ -1352,8 +1352,10 @@ GovernanceRunbook gains a recycling section, executed in order:
    > alternative route. The stronger counterfactual "lift the halt and
    > retirement happens" was NOT constructible when this was written: the
    > armed-day mirror claim path had never been reachable, and #1434's own
-   > two prerequisites were what would make it pay. **Both landed with P1-b,
-   > and `ShareOfPoolClaimWalkTest.test_P1b_MirrorArmedDayDefersUntilDelivered`
+   > two prerequisites were what would make it pay. **Both have since landed —
+   > the zeroed-day pricing ladder in P2-w3, the delivered-fresh bound in P1-b,
+   > which then lifted the halt — and
+   > `ShareOfPoolClaimWalkTest.test_P1b_MirrorArmedDayDefersUntilDelivered`
    > now constructs exactly that funded-versus-unfunded counterfactual** —
    > cite THAT test for it, not this one, whose fixture delivers no funding
    > and so cannot tell a halt from a deferral (original caveat: Codex

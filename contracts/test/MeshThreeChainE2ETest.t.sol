@@ -1175,9 +1175,9 @@ contract MeshThreeChainE2ETest is Test {
      *         and is established elsewhere.** This note used to say it was
      *         not, because the armed-day mirror claim path had never been
      *         reachable and #1434's own prerequisites were exactly what would
-     *         make it pay. P1-b shipped them (zeroed-day repricing landed in
-     *         w3; the delivered-fresh bound and its deferral semantics in
-     *         P1-b), so causation is now demonstrable by holding the fixture
+     *         make it pay. Both have since landed — zeroed-day repricing in
+     *         P2-w3, the delivered-fresh bound and its deferral semantics in
+     *         P1-b — so causation is now demonstrable by holding the fixture
      *         fixed and varying ONLY the delivered funding.
      *         `ShareOfPoolClaimWalkTest.test_P1b_MirrorArmedDayDefersUntilDelivered`
      *         does exactly that across three phases — unfunded pays zero with
