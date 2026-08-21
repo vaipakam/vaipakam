@@ -1291,6 +1291,109 @@ check "no fragment consumed"   "$(pending "$W")"                     "3"
 check "it says what is wrong"  "$(says "$msg" 'contains a newline')"  "1"
 rm -f "$W/docs/ReleaseNotes/unreleased/$(printf 'two\nlines').md"
 
+echo "T45: an edit to the dated file mid-run is not overwritten"
+W="$ROOT/t45"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The run snapshots $OUT with `cat`, appends to the snapshot, then renames it
+# over $OUT — so anything written to $OUT in between is discarded while the
+# fragments are consumed and the run reports success (Codex #1863 r17). The
+# pool lock excludes other assembler runs, not an editor.
+#
+# `sed` is the injection point because the script calls it exactly once, in
+# the fragment loop, which is after the `cat` and before the `mv`. A shim
+# firing anywhere earlier would land INSIDE the snapshot and prove nothing.
+printf '# Release Notes — 2026-08-16\n\n## pre-existing\n' > "$out/ReleaseNotes-2026-08-16.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '\n## edited by someone else\n' >> "$out/ReleaseNotes-2026-08-16.md"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"            "$?"                                       "1"
+check "no fragment consumed"     "$(pending "$W")"                          "2"
+check "it says what happened"    "$(says "$msg" 'changed while this run')"   "1"
+check "the other edit survives" \
+  "$(count_in '^## edited by someone else$' "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "nothing was appended" \
+  "$(count_in '^## 0001-a$' "$out/ReleaseNotes-2026-08-16.md")"              "0"
+
+echo "T45b: a dated file CREATED mid-run is not clobbered"
+W="$ROOT/t45b"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The absent case takes the other branch — the snapshot is a fresh header
+# rather than a copy — and an empty recorded hash must not read as "matches".
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '# Release Notes — 2026-08-16\n\n## created by someone else\n' \
+    > "$out/ReleaseNotes-2026-08-16.md"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"           "$?"                                     "1"
+check "no fragment consumed"    "$(pending "$W")"                        "2"
+check "it names that branch"    "$(says "$msg" 'else created it')"       "1"
+check "the other file survives" \
+  "$(count_in '^## created by someone else$' "$out/ReleaseNotes-2026-08-16.md")" "1"
+
+echo "T46: a dated file that BECOMES a symlink mid-run is refused"
+W="$ROOT/t46"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The startup shape guards describe $OUT as it was then. `-f` follows links,
+# so a path that became one since would hash as a regular file and the rename
+# would replace the LINK, leaving the target untouched with every fragment
+# consumed. The link points at BYTE-IDENTICAL content on purpose: the hash
+# re-check cannot fire, so only the shape re-check can, which is what makes
+# this case about the shape re-check.
+printf '# Release Notes — 2026-08-16\n\n## pre-existing\n' > "$out/ReleaseNotes-2026-08-16.md"
+cp "$out/ReleaseNotes-2026-08-16.md" "$W/real-target.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  rm -f "$out/ReleaseNotes-2026-08-16.md"
+  ln -s "$W/real-target.md" "$out/ReleaseNotes-2026-08-16.md"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                        "1"
+check "no fragment consumed"   "$(pending "$W")"                           "2"
+check "it names the link"      "$(says "$msg" 'become a symbolic link')"    "1"
+check "still a link"           "$([ -L "$out/ReleaseNotes-2026-08-16.md" ] && echo yes || echo no)" "yes"
+check "the target is untouched" \
+  "$(count_in '^## 0001-a$' "$W/real-target.md")"                          "0"
+
+echo "T47: a temp file left by a hard kill is reported, not staged silently"
+W="$ROOT/t47"; build "$W"
+out="$W/docs/ReleaseNotes"
+# SIGKILL cannot run the EXIT trap, so the `.assemble-<date>.XXXXXX` snapshot
+# survives in docs/ReleaseNotes/ where nothing else looks — and the
+# `git add -A docs/ReleaseNotes/` this script prints would stage it (Codex
+# #1863 r17).
+printf '# Release Notes — 2026-08-16\n\n## half written\n' > "$out/.assemble-2026-08-16.Ab3xYz"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "it is named"      "$(says "$msg" '.assemble-2026-08-16.Ab3xYz')"         "1"
+check "and explained"    "$(says "$msg" 'Left behind by an interrupted run')"   "1"
+check "it is not deleted" \
+  "$([ -f "$out/.assemble-2026-08-16.Ab3xYz" ] && echo kept || echo gone)"      "kept"
+# Reported even when there is genuinely nothing else to do — the same rule the
+# set-aside scan follows, and for the same reason.
+check "reported with an empty pool" \
+  "$(says "$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)" 'Left behind by an interrupted run')" "1"
+rm -f "$out/.assemble-2026-08-16.Ab3xYz"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

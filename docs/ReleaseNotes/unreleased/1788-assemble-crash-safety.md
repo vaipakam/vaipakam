@@ -132,6 +132,51 @@ the start, and its record describes that version, so deleting the newer one woul
 throw away writing that never reached the file. Those are kept, named on screen,
 and left for a human to compare.
 
+### The protection the notes had, and the assembled file did not
+
+Building off to one side and renaming into place is what makes an interrupted
+run harmless, and it introduced a fault of its own that took until the last
+review round to see. The run copies the existing dated file, appends to the
+copy, and renames the copy over the original — so anything written to the
+original in between is overwritten. The fragments are consumed, the run reports
+success, and someone's edit is simply gone.
+
+Holding the pending pile does not help. That keeps two assemblies apart; it
+knows nothing about a person with the file open, or a script appending to it.
+
+This was an inconsistency in the design rather than a considered asymmetry. A
+*note* that changes while the run is reading it is already kept and reported —
+that protection was added earlier in this same work. The dated file, which is
+the published one, had nothing. It does now: its identity is recorded when it is
+copied and re-checked immediately before the replacement goes in, and any
+difference refuses the run with nothing consumed and every note still pending.
+The shape checks are re-run at the same moment, because a path that *became* a
+symbolic link since the run started would otherwise be replaced by the rename,
+leaving the file it pointed at untouched while every note was deleted.
+
+Refusing costs nothing here — the run has not consumed anything yet, so the
+recovery is to run it again once the other change has settled, and it is built
+on top.
+
+### Two smaller ones from the same round
+
+The replacement's bytes are now pushed to disk before the notes are removed.
+Renaming is atomic for what a running system *sees*, which is not the same as
+what survives a power cut: with write-back caching the deletions can reach disk
+while the new file's contents have not, and the text is then gone from both
+places. This one is best-effort by choice — it narrows a rare window and cannot
+break anything by not happening, so failing an assembly because the flush is
+unavailable would trade a rare fault for a common one. It is also the one change
+here with no test behind it, because reproducing it needs a real power cut
+rather than a shell script, and saying otherwise would be inventing coverage.
+
+And a hard kill leaves the half-built copy behind, since no trap runs. It sits
+in the release-notes directory where nothing else looks, and the `git add`
+this script prints at the end would stage it for commit. Every later run now
+names it — reported rather than deleted, on the same reasoning as the stale
+lock: a temp file belonging to a run that is still alive is indistinguishable
+from an abandoned one.
+
 ### Verified against the fault, not just the fix
 
 Every test covering a **behaviour that changed** was run against the older

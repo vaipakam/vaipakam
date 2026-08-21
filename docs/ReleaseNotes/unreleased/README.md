@@ -89,6 +89,24 @@ another dated file (a reused fragment, or a run resumed past UTC
 midnight). Delete it by hand if it really is already folded in, or
 re-run with `--force-append` if it is genuinely new.
 
+**If the dated file changes while a run is building its replacement, the
+run stops.** Assembly copies the existing file, appends to the copy, and
+renames the copy into place — so an edit landing in between would be
+overwritten while the fragments were consumed and the run reported
+success. The lock only keeps two assemblies apart; it does not know
+about an editor. The file's identity is re-checked immediately before
+the rename, and a change refuses the whole run with nothing consumed.
+Re-run once the other change has settled and it is built on top.
+
+**A hard kill can also leave a temp file behind** — a
+`.assemble-<date>.XXXXXX` in `docs/ReleaseNotes/`, which is a partly- or
+fully-built copy that was never renamed into place. Nothing depends on
+it and no dated file is missing anything because of it, but
+`git add -A docs/ReleaseNotes/` would stage it, so every later run names
+it until it is deleted. Like the lock, it is reported rather than
+removed automatically: a temp file belonging to a run that is still
+alive looks exactly the same.
+
 **One case needs a manual step first.** Assembly holds a lock
 (`unreleased/.assemble.lock`) so two runs cannot overlap, and it is
 released when the script exits — including on Ctrl-C. A *hard* kill

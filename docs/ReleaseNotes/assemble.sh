@@ -340,6 +340,38 @@ if (( ${#_setaside[@]} > 0 )); then
   echo "" >&2
 fi
 
+# Leftover assembly temp files, reported for the same reason and at the
+# same point (Codex #1863 r17). The EXIT trap removes `$WORK` on every
+# ordinary exit including Ctrl-C, but a SIGKILL or a dead machine cannot
+# run a trap — so a `.assemble-<date>.XXXXXX` snapshot survives in
+# $DIR, where nothing else ever looks. It is a DOTFILE but not an
+# ignored one, so the `git add -A docs/ReleaseNotes/` this script prints
+# at the end would stage it for commit, and a half-written copy of a
+# release-notes file is not a thing to discover in a diff.
+#
+# Reported, never deleted — the same rule the stale lock follows. This
+# script's whole subject is not destroying things on a guess about
+# whether another run is still alive, and a temp file belonging to a
+# LIVE concurrent run is indistinguishable from an abandoned one by
+# inspection. (The lock makes that overlap unlikely, not impossible: a
+# run killed hard leaves the lock behind too, and clearing the lock by
+# hand is exactly the documented recovery.)
+shopt -s nullglob
+_stale_tmp=()
+for t in "$DIR"/.assemble-*; do
+  _stale_tmp+=("$(basename "$t")")
+done
+if (( ${#_stale_tmp[@]} > 0 )); then
+  echo "Left behind by an interrupted run, still in $DIR:" >&2
+  printf '  %s\n' "${_stale_tmp[@]}" >&2
+  echo "" >&2
+  echo "Each is a partly- or fully-built copy of a dated file that was never" >&2
+  echo "renamed into place. Nothing here depends on them and no dated file is" >&2
+  echo "missing anything because of them. Delete them once you have looked --" >&2
+  echo "otherwise 'git add -A docs/ReleaseNotes/' will stage one." >&2
+  echo "" >&2
+fi
+
 if [ "${#frags[@]}" -eq 0 ]; then
   echo "No pending fragments in $UNREL — nothing to assemble."
   exit 0
@@ -1205,9 +1237,30 @@ else
   FINAL_MODE="$(printf '%o' "$(( 0666 & ~0$(umask) ))")"
 fi
 
+# The output's identity is recorded HERE and re-checked immediately
+# before the rename (Codex #1863 r17). Everything below builds on a
+# SNAPSHOT of $OUT taken by the `cat`, and the rename then installs that
+# snapshot plus the new sections — so any edit landing in between is
+# overwritten and gone, while the run deletes the fragments and reports
+# success. The pool lock does not help: it excludes other assembler
+# runs, not a person with the file open in an editor, or a script
+# appending to it.
+#
+# This is the protection the fragments already had, applied to the file
+# they are folded into. Not applying it there was an inconsistency in
+# this script's own design rather than a considered asymmetry — a
+# fragment changing under the run is kept and reported, while the dated
+# file changing under the run was silently discarded, and the dated file
+# is the published one.
+#
+# An empty string means "was absent", which no real digest can collide
+# with.
 if [ -f "$OUT" ]; then
+  run_checked 0 "reading $(basename "$OUT")" frag_hash "$OUT"
+  OUT_HASH_AT_SNAPSHOT="$CAPTURED"
   cat "$OUT" > "$WORK"
 else
+  OUT_HASH_AT_SNAPSHOT=""
   printf '# Release Notes — %s\n' "$DATE" > "$WORK"
 fi
 
@@ -1287,7 +1340,78 @@ done
 # stub that the next run would mistake for a real existing file.
 # Applied to the FINISHED file, so nothing above can be locked out of it.
 chmod "$FINAL_MODE" "$WORK"
+
+# ── Last look at the output before replacing it ──────────────────────────────
+# The shape guards ran at startup and the content was snapshotted after
+# them; both are re-checked here, because both describe $OUT as it was
+# some time ago and the rename acts on $OUT as it is now (Codex #1863
+# r17). Nothing has been consumed yet, so this can still refuse and cost
+# nothing: the temp file is removed by the trap, every fragment is still
+# pending, and a re-run picks up the edit.
+#
+# The shape re-checks are not decoration. `-f` follows symlinks, so a
+# path that BECAME a link since startup would still hash as a regular
+# file here and the rename would replace the link, leaving the target
+# untouched with every fragment consumed — the exact failure the startup
+# guard exists to stop, arriving through the window this check closes.
+if [ -e "$OUT" ] && [ ! -f "$OUT" ]; then
+  echo "Error: $(basename "$OUT") is no longer a regular file." >&2
+  echo "It changed shape while this run was building its replacement." >&2
+  echo "Nothing has been consumed; every fragment is still pending." >&2
+  exit 1
+fi
+if [ -L "$OUT" ]; then
+  echo "Error: $(basename "$OUT") has become a symbolic link." >&2
+  echo "It changed shape while this run was building its replacement." >&2
+  echo "Nothing has been consumed; every fragment is still pending." >&2
+  exit 1
+fi
+_out_now=""
+if [ -f "$OUT" ]; then
+  run_checked 0 "re-reading $(basename "$OUT")" frag_hash "$OUT"
+  _out_now="$CAPTURED"
+fi
+if [ "$_out_now" != "$OUT_HASH_AT_SNAPSHOT" ]; then
+  echo "Error: $(basename "$OUT") changed while this run was building its" >&2
+  echo "replacement." >&2
+  echo "" >&2
+  if [ -z "$OUT_HASH_AT_SNAPSHOT" ]; then
+    echo "It did not exist when this run started and does now, so something" >&2
+    echo "else created it." >&2
+  elif [ -z "$_out_now" ]; then
+    echo "It existed when this run started and does not now, so something" >&2
+    echo "else removed it." >&2
+  else
+    echo "This run holds a copy of the earlier version, so renaming over it" >&2
+    echo "would discard whatever was added in between." >&2
+  fi
+  echo "" >&2
+  echo "Nothing has been consumed and no fragment has been touched. Re-run" >&2
+  echo "once the other change has settled and it will be built on top." >&2
+  exit 1
+fi
+
+# Push the replacement's bytes to disk BEFORE the fragments — the only
+# copies of that text — are removed (Codex #1863 r17). `mv` within a
+# directory is a rename(2), which is atomic for what a running system
+# SEES, but says nothing about what survives a power cut: with write-back
+# caching the deletions can reach disk while the new file's data has not,
+# and the text is then gone from both places.
+#
+# Best-effort on purpose, and the one deliberate exception to this
+# script's no-silent-failure rule. It narrows a crash window and cannot
+# corrupt anything by not happening, so aborting a release-notes assembly
+# because `sync` is missing or refuses a file argument would trade a rare
+# fault for a common one. GNU `sync` takes file operands; BSD/macOS
+# `sync` does not, hence the fallback to the whole-system form.
+_persist() { sync "$@" 2>/dev/null || sync 2>/dev/null || true; }
+_persist "$WORK"
+
 mv "$WORK" "$OUT"
+# The directory entry too, for the same reason: the rename itself is
+# metadata, and the fragments about to be deleted are metadata in the
+# same filesystem.
+_persist "$DIR"
 # $WORK has become $OUT, so clear the variable rather than the trap: the
 # lock must stay held until the fragments below are deleted, which is the
 # rest of the transaction, and `_cleanup` reads this to decide whether
