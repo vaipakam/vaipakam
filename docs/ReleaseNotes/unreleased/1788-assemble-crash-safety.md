@@ -39,10 +39,10 @@ The second is a **stale lock**. Assembly holds one so two runs cannot overlap,
 released whenever the script exits, including on Ctrl-C. A hard kill leaves it
 behind because no handler runs at all — and so does anything that stops the
 release itself from working, such as the directory turning read-only mid-run.
-Either way later runs stop until it is cleared, and the run that could not
-release it says so with the command to remove it. That is deliberate too: the lock guards a step that deletes files, so a
-stale one is reported with the exact command to remove it rather than broken
-automatically on a guess about whether the other run is still alive.
+Either way later runs stop until it is cleared. That is deliberate: the lock
+guards a step that deletes files, so a stale one is reported — with the exact
+command to remove it, where the run was alive enough to say so — rather than
+broken automatically on a guess about whether the other run is still going.
 
 In both cases the run says what it found and what to check.
 
@@ -388,6 +388,36 @@ things being distinguished became the same thing and the case could not fail.
 It now picks a locale that exists, *verifies that this locale really does count
 characters*, and says plainly that it skipped if none is available. A test whose
 premise silently evaporates is worse than no test, because it reports a pass.
+
+### What this is protecting against, and what it is not
+
+Worth saying plainly, because it is the difference between a long list of fixes
+and a coherent one.
+
+All of the above is about **an ordinary environment behaving awkwardly**: a run
+interrupted partway, an editor saving a note at the wrong moment, a second
+assembly started by mistake, a filesystem refusing something, a filename or a
+byte the shell mishandles. Those happen by accident, routinely, and each one of
+them costs text — which is why a script that folds five files together has this
+much care in it.
+
+It is **not** protecting against somebody hostile who can already write to the
+release-notes directory. Not because those attacks are imaginary, but because
+anyone with that access can delete the notes, rewrite the published file, or
+edit the assembler itself, none of which involves racing anything. Hardening
+against the most awkward of their options while the direct ones stay open buys
+the appearance of safety and not the thing.
+
+One concrete consequence is recorded rather than quietly left: the lock is a
+directory, and someone with write access to the pool can remove it and start a
+second run. That is a genuine property of this kind of lock, it cannot be fixed
+in a shell without a primitive the shell does not have, and it is out of scope
+for the reason above rather than by oversight.
+
+Where a defence costs nothing it is taken anyway — the replacement is built in a
+private directory, and no permission change is applied to a path another party
+could substitute. The line is drawn at contorting the design for an adversary
+who does not need to beat it.
 
 ### Verified against the fault, not just the fix
 

@@ -3178,8 +3178,13 @@ out="$W/docs/ReleaseNotes"
 # (Codex #1863 r39). A 0700 directory removes the capability instead.
 check "it builds inside a private directory" \
   "$(grep -c 'WORKDIR="\$(mktemp -d' "$out/assemble.sh")"                   "1"
-check "which is locked down" \
-  "$(grep -c 'chmod 700 "\$WORKDIR"' "$out/assemble.sh")"                   "1"
+# NOT by a chmod: `mktemp -d` creates 0700 already, and the chmod was itself
+# the exposure — it follows a command-line symlink, so a co-tenant able to
+# rename the entry could redirect it (Codex #1863 r40). Asserting the mode of
+# the directory a real run creates is the honest check; asserting the chmod
+# would now pin the vulnerability in place.
+check "which is private by construction" \
+  "$(grep -c 'chmod 700 "\$WORKDIR"' "$out/assemble.sh")"                   "0"
 check "and cleaned up" \
   "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'rm -rf "\$_wd"')" "1"
 # Behaviourally: a normal run still publishes and leaves nothing behind.

@@ -312,6 +312,39 @@ _ensure_qdir() {
   fi
 }
 
+# ── What this script defends against, and what it does not ───────────────────
+# Stated because forty rounds of review kept escalating past it, and an
+# unstated boundary cannot be argued with (Codex #1863 r40).
+#
+# IN SCOPE. The operator's own environment behaving ordinarily but
+# awkwardly: a run interrupted at any point, an editor saving a file
+# mid-run, a second assembly started by mistake, a filesystem that
+# refuses something, a name or byte the shell handles badly. Everything
+# above is about those, and they are the reason a release-notes
+# assembler needs any of this: they happen by accident, routinely, and
+# they cost text.
+#
+# NOT IN SCOPE. A hostile co-tenant with write access to
+# docs/ReleaseNotes/. Not because such races are unreal — they are — but
+# because anyone holding that access can delete the fragments, rewrite
+# the dated file, or edit THIS SCRIPT, all without racing anything. A
+# guard here would protect the least convenient of their options while
+# the direct ones stay open, which is the appearance of security rather
+# than security.
+#
+# The concrete consequence: the pool lock is a directory, and a
+# co-tenant with write access to the pool can remove it and let a second
+# run start. That is a real property of directory locking in a shared
+# directory, it is not fixable in bash without a locking primitive the
+# shell does not have, and it is out of scope for the reason above
+# rather than by oversight. See #1877.
+#
+# Where a defence costs nothing, it is taken anyway — the replacement is
+# built inside a private directory, and no `chmod` is applied to a path
+# another party could substitute. Cheap is worth doing; the line is
+# drawn at contorting the design for an adversary who does not need to
+# beat it.
+
 # ── The one invariant this script keeps ──────────────────────────────────────
 # Three rounds of review in a row (r17, r18, r19) found the same abstract
 # fault in three different places: evidence read at one moment
@@ -2041,8 +2074,15 @@ fi
 # window: nobody else can create or unlink entries inside it. Still under
 # $DIR, so the rename stays within one filesystem, which is what makes it
 # atomic.
+# No `chmod` on it: `mktemp -d` already creates the directory 0700, and
+# the chmod was both redundant and the whole exposure (Codex #1863 r40).
+# `chmod` follows a command-line symlink, so a co-tenant able to rename
+# this entry and drop a link at the same path could have redirected it
+# onto one of their choosing. Removing the call removes the vector — the
+# same lesson as the work file itself one round earlier, and the second
+# time on this PR that the fix was to delete something rather than guard
+# it.
 WORKDIR="$(mktemp -d "$DIR/.assemble-$DATE.XXXXXX")"
-chmod 700 "$WORKDIR"
 WORK="$WORKDIR/replacement"
 : > "$WORK"
 # `mktemp` creates 0600, and `mv` carries that mode onto $OUT — so every
