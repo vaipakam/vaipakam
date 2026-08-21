@@ -1432,6 +1432,15 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // reason). Falls back to the full body when the card is absent, so
     // the `card=false` verdict is still computed from something.
     ...(ROLE === 'lender' && loan ? lenderShapeOf(lenderCardText ?? text) : {}),
+    // WHAT THE SCRAPE ACTUALLY SAW (Codex #1853 r16). The
+    // suppression below needs to know whether the card was on the
+    // page AT THIS MOMENT — not whether a chain read taken later,
+    // inside `lenderAdvancedOf`, can explain an absence. Those are
+    // different facts, and round 15 used the second as proof of the
+    // first: a card that rendered here WITH A ROW MISSING, on a loan
+    // that then went terminal before the snapshot, had its genuine
+    // regression suppressed as a pre-render race.
+    cardAbsentAtScrape: ROLE === 'lender' && loan ? lenderCardText === null : false,
     // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
     // running it). The lender card exists only on `/positions/<id>`, and
     // on the LIST route the card locator matches nothing — but a
@@ -1443,7 +1452,9 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // FAILURE safe; it does nothing about the 30 seconds spent reaching
     // it — which is the same "handled the error, ignored the cost"
     // shape as the r3 rental read that could end the run.
-    ...(ROLE === 'lender' && loan ? await lenderAdvancedOf(page, loan) : {}),
+    ...(ROLE === 'lender' && loan
+      ? await lenderAdvancedOf(page, loan, lenderCardText === null)
+      : {}),
     holdCard: holdCard > 0,
     freeHeld: freeHeld > 0,
     connected: !/Connect wallet/i.test(text.slice(0, 400)),
@@ -1799,7 +1810,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
     }
     await page.waitForTimeout(1_000);
   }
-}async function lenderAdvancedOf(page, loan) {
+}async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
   const SWITCH = /Show these tools \(switches to Advanced view\)/i;
   // SCOPED TO THE LENDER CARD (Codex #1853 r5). The borrower chooser
   // uses the IDENTICAL labels — `copy.earlyRepay.switchToAdvanced` and
@@ -1884,7 +1895,16 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
       advancedOffered: offered,
       advancedJumps: 0,
       advancedAnchorsOk: false,
-      advancedWhy: 'switch offered but no jump rendered after it settled',
+      // The reason has to match which control was actually on the page
+      // (Codex #1853 r16). A later detail page inherits Advanced mode
+      // from `ModeContext`, so it reaches this verdict with NO switch
+      // ever rendered — and the reporter prints this string as the FAIL
+      // diagnosis, sending the reader to investigate a Basic-mode control
+      // that was never there. Same defect as the anchor sentence one
+      // round ago: one message serving two different findings.
+      advancedWhy: offered
+        ? 'switch offered but no jump rendered after it settled'
+        : 'already in Advanced, and no jump rendered after the rows settled',
     };
   };
   try {
@@ -1948,7 +1968,14 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
           // unmountable pre-state suppresses the shape assertions.
           if (!(await cardPresent())) {
             const pre = snapshotCardEligible(before, observed);
-            if (pre === false) {
+            // BOTH conditions, and the first is the one round 15 lacked
+            // (Codex #1853 r16). `cardAbsentAtScrape` is what the shape
+            // scrape actually saw; `pre` is a chain read taken later that
+            // can merely EXPLAIN an absence. Requiring both means a card
+            // that did render — with a row missing — keeps its finding no
+            // matter what the chain did afterwards, because the
+            // observation was real when it was made.
+            if (cardAbsentAtScrape && pre === false) {
               return {
                 advancedOffered: false,
                 advancedJumps: null,
@@ -1965,6 +1992,34 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
                   'the lender card could not be mounted when the probe read the chain — ' +
                   'the position went terminal, left this wallet, or its holder was flagged ' +
                   'before the page rendered',
+              };
+            }
+            // THE WAIT IS ALSO A WINDOW (Codex #1853 r16). `before` can
+            // be perfectly jumpable and the card still unmount during the
+            // 45 seconds `waitForSaleRows` spends polling — the loan goes
+            // terminal, the position is sold, the holder is flagged. The
+            // pre-state test above cannot see that by construction, so
+            // the route returned `no jumpable row` and exited 0 with the
+            // Advanced audit never performed and nothing marking it.
+            //
+            // Re-read AFTER the wait and ask the same mount question of
+            // the post-state. This costs five chain reads only on the
+            // path where the card has already gone missing.
+            const post = loan ? await jumpabilitySnapshot(loan) : null;
+            if (snapshotCardEligible(post, observed) === false) {
+              const moved = jumpabilityMoved(before, post);
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                // NOT `advancedPreRaced`: this transition happened after
+                // the scrape, so whatever the scrape saw still stands and
+                // must not be suppressed. It only explains why no audit
+                // was possible.
+                advancedRaced: true,
+                advancedWhy:
+                  'the lender card unmounted while the probe waited' +
+                  (moved ? `: ${moved}` : ' — the position is no longer one this card renders for'),
               };
             }
           }
@@ -2186,7 +2241,13 @@ for (const v of visited) {
   //   advancedRaced    — during the probe, after it. The observations
   //                      stand; the race only excuses the zero-jump
   //                      result, which is where it was detected.
-  const preRaced = v.advancedBlocked === true && v.advancedPreRaced === true;
+  // Three conditions, not two: the route was blocked, the chain
+  // explains it, AND the scrape itself saw no card. The third is what
+  // makes this sound (Codex #1853 r16) — without it, a card that DID
+  // render with a row missing loses its finding whenever the chain
+  // happens to move afterwards.
+  const preRaced =
+    v.advancedBlocked === true && v.advancedPreRaced === true && v.cardAbsentAtScrape === true;
   if (detail && !v.nav && !preRaced) {
     if (!v.chooser) problems.push(`${ROLE} chooser MISSING on an eligible loan`);
     else if (ROLE === 'lender') {
