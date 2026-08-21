@@ -717,10 +717,12 @@ The borrower claim returns, depending on how the loan settled:
   basket back. On a loan still using the retired VPFI fee path,
   the Loan Initiation Fee rebate is settled alongside it, sized by
   the discount standing at the moment of settlement for the wallet
-  recorded as the loan's borrower — usually you, but if the position
-  NFT has changed hands the figure still follows the original
-  borrower's holdings, not the new owner's — so it comes to nothing
-  if that wallet holds nothing by then; a loan opened under the current model has none at all,
+  recorded as the loan's borrower. On the ordinary routes that record
+  is moved to whoever holds the position NFT before settlement runs,
+  so for a transferred position it is normally the new owner's
+  holdings that size it. Where a close-out skips that step, it stays
+  the original borrower's — so it comes to nothing if the wallet that
+  ends up recorded holds nothing by then; a loan opened under the current model has none at all,
   because its discount was already taken off the fee at
   acceptance.
 - **A prepay sale that settles the loan** — this one is not a claim
