@@ -666,8 +666,12 @@ lifted the halt. `_dayPoolHalves` itself now halts only on an unstamped
 day; a stamped day can still WAIT, via the separate `_p2DayDeltas`
 zeroed-and-open state that defers a compensable day rather than retiring it for
 zero. Both are per-day waits, but they end on different things. The unstamped one
-ends on funding arriving, and on nothing else — if the stamp never comes it
-waits indefinitely. The zeroed-and-open one has four exits. Its quote may complete at
+ends on the stamp arriving. That is NOT the same as ending on funding, and the
+difference decides who can clear it: where the canonical chain already finalized
+the day and only the message failed to land, the stamp can be rebuilt from
+canonical state by ANY caller paying the transport fee — no reward budget
+changes hands. It waits indefinitely only where there is nothing to resend,
+because the day was never finalized upstream. The zeroed-and-open one has four exits. Its quote may complete at
 genuinely zero on both sides, in which case the day is resolved-zero and crosses
 immediately — no compensation, no deadline, nothing owed. Otherwise: its
 compensation becoming both funded AND settled (a fully funded compensation still defers while
@@ -684,8 +688,10 @@ where there is one and can still cross at zero when the shortfall is deep enough
 — which is why "the short lapse pays" is a description of its intent, not a
 guarantee about any particular day.
 
-Two things follow that matter operationally. Only ONE of these two waits can be
-ended by someone who is not holding the missing funding. And ending it is not
+Two things follow that matter operationally. Neither wait is the exclusive
+property of whoever holds the funding — the zeroed-and-open one through its two
+lapse terminals, the unstamped one through the permissionless resend above —
+so an operator is not the only party who can clear either. And ending it is not
 uniformly a write-off: on the short-funded path the lapse is how the backed
 value gets paid at all. This
 section is retained as the record of why, and of the two

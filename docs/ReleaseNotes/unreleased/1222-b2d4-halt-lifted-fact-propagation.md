@@ -18,7 +18,9 @@ waits for the funding, and the other waits end when whatever each is missing
 arrives. What remains are per-day waits. They still hold a chain up while they
 last — days are settled oldest-first, so a day that waits blocks every later one
 for everybody on that chain — and they are not all short: a day whose funding
-record never arrives waits indefinitely. What changed is that each wait is now
+record never arrives waits indefinitely unless someone re-sends it, which anyone
+can do — at the cost of delivery only, not of the funding — whenever the record
+was already settled centrally and only its delivery failed. What changed is that each wait is now
 attached to a specific missing input, which can be seen, chased and supplied,
 and that one case — a day deliberately recorded as zero and awaiting
 compensation — also carries a deadline after which it can be settled by anyone,
@@ -55,9 +57,8 @@ here on purpose. Every version of this paragraph that carried one was overtaken
 within a round, and a stale count reads as a completeness claim, which is the
 thing this change is least able to make.
 
-**Three nearby statements were deliberately left standing**, because correcting
-them would have introduced errors of the opposite kind. A day whose funding
-record never arrives genuinely does still halt, so that sentence is accurate. A
+**Two nearby statements were deliberately left standing**, because correcting
+them would have introduced errors of the opposite kind. A
 dated release note from the period is a historical record of what was true when
 written. And an unrelated deployment pause merely shares the vocabulary.
 

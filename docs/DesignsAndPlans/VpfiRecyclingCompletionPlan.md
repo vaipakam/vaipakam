@@ -1363,8 +1363,14 @@ GovernanceRunbook gains a recycling section, executed in order:
    > **#1878**. Its own limits are narrower than the mesh test's and worth
    > stating exactly: it DOES fund — `setArmedFreshLedgerRaw` in the later
    > phases is what separates a clearing deferral from the old halt — but
-   > `_armedDay` stamps a fresh half only, so the recycled leg is never
-   > exercised and no claim is driven to retirement. The "delivers no funding,
+   > `_armedDay` stamps a fresh half only. The fixture DOES
+   > retire the reward entry — the walk claims the funded window, advances the
+   > entry's cursor to its end day and marks it processed. What it never
+   > retires is the RECYCLED outstanding-commitment ledger: a zero recycled
+   > half reserves nothing, so there is no recycled reservation for the walk to
+   > draw down or release. Saying "no claim is driven to retirement" overstated
+   > that into the entry itself and would send a reader looking for a gap that
+   > is not there. The "delivers no funding,
    > cannot tell a halt from a deferral" caveat belongs to the MESH fixture
    > (Codex #1439 r1) and was carried here in error.
 2. **RL-3 horizon knob** — only after BOTH ratified RL-3 UX safeguards
