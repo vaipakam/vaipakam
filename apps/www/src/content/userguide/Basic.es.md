@@ -370,11 +370,17 @@ ese lado del préstamo queda completamente cerrado.
 
 Si repagaste el préstamo en su totalidad, tu reclamación de
 prestatario devuelve el colateral que bloqueaste al inicio. En
-default o liquidación no se devuelve nada —el colateral ya se fue
-al prestamista, y en un préstamo que siga en la vía de comisión
-VPFI retirada el VPFI retenido contra la Loan Initiation Fee se
-pierde en favor del tesoro en lugar de devolverse. La reclamación consume tu NFT de posición de
-prestatario de forma atómica.
+default o liquidación, compruébalo igualmente. Sólo se toma el
+colateral que exigen la deuda y los costes de cerrarla, así que
+si habías aportado más, el resto queda registrado como tuyo y
+espera en tu bóveda hasta que lo reclames. A menudo —en un
+default sobre colateral que no podemos valorar— se va la canasta
+entera y no queda nada, pero eso es cómo resultó, no una regla.
+Lo que nunca vuelve es el reembolso de la comisión: en un
+préstamo que siga en la vía de comisión VPFI retirada, el VPFI
+retenido contra la Loan Initiation Fee se pierde en favor del
+tesoro. La reclamación consume tu NFT de posición de prestatario
+—por eso el NFT sigue ahí tras una liquidación, esperándote.
 
 ---
 

@@ -347,11 +347,17 @@ out.
 
 If you repaid the loan in full, your borrower claim returns the
 collateral you locked at the start. On default or liquidation,
-nothing comes back — the collateral itself has already gone to
-the lender, and on a loan still using the retired VPFI fee path
+check anyway. Only as much collateral is taken as the debt and
+the costs of closing it require, so if you had put up more than
+that, the remainder is recorded as yours and waits in your vault
+until you claim it. Often — on a default over collateral we
+cannot price — the whole basket goes and nothing is left, but
+that is how it turned out, not a rule. What never comes back is
+the fee rebate: on a loan still using the retired VPFI fee path
 the VPFI held against the Loan Initiation Fee is forfeited to
-treasury rather than returned.
-The claim consumes your borrower position NFT atomically.
+treasury.
+The claim consumes your borrower position NFT — which is why the
+NFT is still there after a liquidation, waiting for you.
 
 ---
 

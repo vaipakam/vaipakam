@@ -372,11 +372,18 @@ exécutée, ce côté du prêt est entièrement clos.
 
 Si tu as remboursé le prêt en totalité, ta réclamation d'emprunteur
 te rend le collatéral que tu as verrouillé au début. En cas de
-défaut ou de liquidation, rien n'est rendu — le collatéral lui-même
-est déjà parti chez le prêteur, et sur un prêt encore soumis à la
-voie de frais VPFI retirée le VPFI retenu au titre de la Loan
-Initiation Fee est acquis au trésor plutôt que restitué. La réclamation consomme ton NFT de position
-d'emprunteur de manière atomique.
+défaut ou de liquidation, vérifie quand même. On ne prélève que
+le collatéral qu'exigent la dette et les frais de sa clôture : si
+tu en avais déposé davantage, le reste est enregistré comme tien
+et attend dans ton vault que tu le réclames. Souvent — sur un
+défaut portant sur un collatéral que nous ne pouvons pas
+valoriser — tout le panier part et il ne reste rien, mais c'est
+une issue, pas une règle. Ce qui ne revient jamais, c'est le
+rabais de frais : sur un prêt encore soumis à la voie de frais
+VPFI retirée, le VPFI retenu au titre de la Loan Initiation Fee
+est acquis au trésor. La réclamation consomme ton NFT de position
+d'emprunteur — c'est pourquoi le NFT est toujours là après une
+liquidation, à t'attendre.
 
 ---
 

@@ -335,11 +335,16 @@ loan은 완전히 close됩니다.
 #### 내가 borrower인 경우
 
 loan을 full repay했다면 borrower claim은 시작할 때 lock한 collateral을
-돌려줍니다. default 또는 liquidation 시에는 반환되는 것이 없습니다 —
-collateral 자체는 이미 lender에게 갔고, 폐지된 VPFI 수수료 경로에 남아
-있는 loan이라면 Loan Initiation Fee를 위해 보관되던 VPFI는 treasury로
-몰수되어 돌려주지 않습니다.
-claim은 borrower position NFT를 atomically consume합니다.
+돌려줍니다. default 또는 liquidation 시에도 한 번 확인해 보세요. collateral은
+빚과 그것을 정리하는 비용에 필요한 만큼만 가져가므로, 그보다 많이
+맡겨 두었다면 나머지는 내 몫으로 기록되어 claim할 때까지 vault에
+남아 있습니다. 값을 매길 수 없는 collateral에 대한 default에서는
+바스켓 전체가 나가 아무것도 남지 않는 경우가 많지만, 그것은 결과일
+뿐 규칙이 아닙니다. 결코 돌아오지 않는 것은 수수료 rebate입니다:
+폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 Loan Initiation Fee를
+위해 보관되던 VPFI는 treasury로 몰수됩니다.
+claim은 borrower position NFT를 consume합니다 — 그래서 liquidation
+이후에도 그 NFT는 남아 여러분을 기다립니다.
 
 ---
 
