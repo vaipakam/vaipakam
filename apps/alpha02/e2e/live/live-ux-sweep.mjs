@@ -93,6 +93,12 @@ import {
   SITE,
   visit,
 } from './driver.mjs';
+// The beacon verdict lives in its own module so it can be unit-tested
+// (`beaconScan.test.mjs`). Its first revision traversed one level too
+// shallow and would have returned "nothing found" forever — a privacy
+// check silently turned into a no-op, indistinguishable from a clean
+// deployment (Codex #1859 r3 P2). What runs here is what the tests pin.
+import { BEACON_ORIGIN, isBeaconRefusalMessage, isBeaconUrl, scanBeacon } from './beaconScan.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(HERE, 'shots', 'ux-sweep');
@@ -341,16 +347,8 @@ async function devtoolsProbe(page) {
  *  fix; js/regex/missing-regexp-anchor rejects any un-anchored
  *  hostname-looking pattern, and a mid-message URL can't be
  *  ^-anchored). */
-const BEACON_ORIGIN = 'https://static.cloudflareinsights.com';
 function classifyNoise(text) {
-  const urlToken = text.match(/https?:\/\/[^\s'"]+/);
-  if (urlToken) {
-    try {
-      if (new URL(urlToken[0]).origin === BEACON_ORIGIN) return 'csp-beacon';
-    } catch {
-      /* not a parseable URL — fall through */
-    }
-  }
+  if (isBeaconRefusalMessage(text)) return 'csp-beacon';
   if (/WebSocket connection.*ws\/chain.*failed/.test(text)) return 'sandbox-page-ws';
   return null;
 }
@@ -573,13 +571,7 @@ page.on('response', async (res) => {
   // correctly-refused deployment of running an ungated collector — a
   // false report of the worse defect, inside the check that exists to
   // report this one honestly.
-  try {
-    if (new URL(url).origin === BEACON_ORIGIN) {
-      s.beacon?.push(`${status} ${url.slice(0, 160)}`);
-    }
-  } catch {
-    /* not a parseable URL — cannot be the beacon origin */
-  }
+  if (isBeaconUrl(url)) s.beacon?.push(`${status} ${url.slice(0, 160)}`);
   // The driver's undici route shim strips upstream content-length;
   // Playwright re-synthesizes it on fulfill, but don't depend on that:
   // prefer the CDP-measured body size (Codex #1154 P2).
@@ -872,18 +864,10 @@ console.log(
 // `permittedRequests` is fed by RESPONSES, not requests: a refused
 // request still fires a request event, so keying on that would accuse a
 // correctly-refused deployment of running the collector.
-const beaconRefusedRoutes = new Set();
-const beaconPermitted = [...backgroundBeacon];
-for (const pass of report.passes) {
-  for (const r of pass.routes ?? []) {
-    if ((r.console ?? []).some((c) => c.noise === 'csp-beacon')) beaconRefusedRoutes.add(r.route);
-    for (const b of r.beacon ?? []) beaconPermitted.push(`${r.route}: ${b}`);
-  }
-}
-report.beacon = {
-  refusedRoutes: [...beaconRefusedRoutes],
-  permittedRequests: beaconPermitted,
-};
+const beacon = scanBeacon(report, backgroundBeacon);
+const beaconRefusedRoutes = beacon.refusedRoutes;
+const beaconPermitted = beacon.permittedRequests;
+report.beacon = beacon;
 // Reported as ONE line each, not per route: this is a property of the
 // DEPLOYMENT, so an occurrence count would say more about the length of
 // the route list than about the defect.
@@ -899,11 +883,11 @@ if (beaconPermitted.length > 0) {
       `response: ${beaconPermitted[0]}`,
   );
 }
-if (beaconRefusedRoutes.size > 0) {
+if (beaconRefusedRoutes.length > 0) {
   console.error(
     `CONFIG DEFECT: Cloudflare Web Analytics auto-injection is ON for this zone — ` +
       `its beacon is injected at the edge and refused by the site's CSP on ` +
-      `${beaconRefusedRoutes.size} route(s). The refusal is correct; the injection ` +
+      `${beaconRefusedRoutes.length} route(s). The refusal is correct; the injection ` +
       `is not. That collector sits downstream of the consent pipeline and cannot be ` +
       `gated by it, so the fix is to turn the injection off at the zone, NOT to allow ` +
       `the host in script-src (#1816) — doing that converts this into the worse form ` +
@@ -950,8 +934,7 @@ if (allBlockedRequests.length > 0) {
 if (
   allBlockedRequests.length > 0 ||
   allNavFailures.length > 0 ||
-  beaconRefusedRoutes.size > 0 ||
-  beaconPermitted.length > 0
+  beacon.failed
 ) {
   if (allNavFailures.length > 0) {
     console.error(
