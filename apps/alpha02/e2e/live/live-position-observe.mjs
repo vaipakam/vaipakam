@@ -1974,27 +1974,29 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
     // ACCEPTED ONLY WHEN THE CARD AGREES (Codex #1853 r34). Excluding
     // just `blocked-pending` let every other non-agreeing verdict
     // through: a card reporting `ready`/`no` while a stale jump button
-    // is still rendered passed both bracket reads as `absent`, the
+    // is still rendered passed both bracket reads as
+    // `claims-unjumpable`, the
     // audit ran on that button, and the review exited 0 on a card
     // contradicting its own verdict. `blocked-failed` and
     // `blocked-malformed` took the same route.
     //
-    // Only two verdicts justify acting on what is rendered: `fail`,
-    // which is `ready`/`yes` — the card saying a row IS jumpable, so
-    // buttons are consistent with it — and `unknown`, a legacy bundle
-    // where the controls are the only evidence there is.
+    // Only two verdicts justify acting on what is rendered:
+    // `claims-jumpable`, which is `ready`/`yes` — the card saying a row
+    // IS jumpable, so buttons are consistent with it — and `unknown`, a
+    // legacy bundle where the controls are the only evidence there is.
     //
-    // (`fail` reads oddly here. `missingSwitchVerdict` names its
-    // outcomes for the missing-switch question, where `ready`/`yes`
-    // with nothing rendered is the contradiction. With controls
-    // present the same reading is agreement. Same fact, opposite
-    // meaning, decided by what else is on the page.)
+    // (The paragraph that stood here apologised for the old name: `fail`
+    // meant CONTRADICTION with nothing rendered and AGREEMENT with
+    // controls present, and the reader had to hold the inversion. #1869
+    // renamed the outcome to what the card SAID, which is the same in
+    // both places; whether saying it is a failure is this caller's
+    // judgement to make and now reads as one.)
     const agrees = readinessAgreesWithControls(lastVerdict);
     if ((jumps > 0 || switchThere) && agrees) {
       return { jumps, switchThere, toolsFailed: false, timedOut: false };
     }
-    // Rendered controls the card does not stand behind. `absent` is the
-    // stable disagreement — both bracket reads said no row is jumpable
+    // Rendered controls the card does not stand behind.
+    // `claims-unjumpable` is the stable disagreement — both bracket reads said no row is jumpable
     // while a jump control was on screen — and gets its own reason
     // rather than borrowing one that would misdescribe it.
     // SETTLED disagreements only (Codex #1853 r35). Round 34's version
@@ -2015,7 +2017,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
         switchThere,
         toolsFailed: false,
         timedOut: false,
-        settled: lastVerdict === 'absent' ? 'blocked-contradiction' : lastVerdict,
+        settled: lastVerdict === 'claims-unjumpable' ? 'blocked-contradiction' : lastVerdict,
       };
     }
     // Nothing rendered (or the card says not to trust what is). Now the
@@ -2418,10 +2420,10 @@ async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
  * function now rather than a switch in one branch, so the next path
  * that ends in zero jumps has to go through it.
  *
- * `unknown` and `absent` return null deliberately: the first is a
- * legacy bundle with nothing to say, the second is the card settling
- * on "no row is jumpable", which is the honest absence and not a
- * block.
+ * `unknown` and `claims-unjumpable` return null deliberately: the
+ * first is a legacy bundle with nothing to say, the second is the card
+ * settling on "no row is jumpable", which is the honest absence and
+ * not a block.
  */
 function readinessAgreesWithControls(verdict) {
   // The allowlist, in ONE place (Codex #1853 r35). Round 34 wrote it
@@ -2431,11 +2433,11 @@ function readinessAgreesWithControls(verdict) {
   // still clicked. Same rule, two sites, one updated — the defect this
   // PR is about, on the fix for that defect.
   //
-  // `fail` is `ready`/`yes`: the card saying a row IS jumpable, which
-  // agrees with controls being on screen. `unknown` is a legacy bundle
+  // `claims-jumpable` is `ready`/`yes`: the card saying a row IS
+  // jumpable, which agrees with controls being on screen. `unknown` is a legacy bundle
   // publishing nothing, where the controls are the only evidence there
   // is. Nothing else licenses acting on a rendered control.
-  return verdict === 'fail' || verdict === 'unknown';
+  return verdict === 'claims-jumpable' || verdict === 'unknown';
 }
 
 function readinessBlock(settled, offered = false) {
@@ -2681,7 +2683,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
         // invalidate an observation the probe made before it. I wrote
         // that rule and then ordered this verdict behind the checks it
         // governs.
-        if (settled.settled === 'fail') {
+        if (settled.settled === 'claims-jumpable') {
           return {
             advancedOffered: false,
             advancedJumps: 0,

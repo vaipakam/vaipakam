@@ -305,12 +305,12 @@ describe('missingSwitchVerdict — what a missing switch means', () => {
     // there is no switch to act on it. That is a Basic-mode
     // regression the card is reporting about itself, and the drive
     // used to record it as an ordinary unavailable row and exit 0.
-    expect(missingSwitchVerdict({ ready: 'ready', jumpable: 'yes' })).toBe('fail');
+    expect(missingSwitchVerdict({ ready: 'ready', jumpable: 'yes' })).toBe('claims-jumpable');
   });
 
   it('accepts the settled-and-not-jumpable absence', () => {
     // The one case where a missing switch is the honest outcome.
-    expect(missingSwitchVerdict({ ready: 'ready', jumpable: 'no' })).toBe('absent');
+    expect(missingSwitchVerdict({ ready: 'ready', jumpable: 'no' })).toBe('claims-unjumpable');
   });
 
   it('blocks rather than passes while the card is still deciding', () => {
@@ -356,7 +356,7 @@ describe('missingSwitchVerdict — what a missing switch means', () => {
     // The distinction from `unknown` above (Codex #1853 r29). Nothing
     // published is a deployment gap; a `ready` with no recognised
     // second attribute is the contract itself broken, and the first
-    // version handed that the clean `absent` — so a regression in the
+    // version handed that the clean `claims-unjumpable` — so a regression in the
     // observability hook would have ended the review with a pass.
     // Only an explicit `no` buys the clean answer.
     expect(missingSwitchVerdict({ ready: 'ready', jumpable: null })).toBe('blocked-malformed');
@@ -371,5 +371,39 @@ describe('missingSwitchVerdict — what a missing switch means', () => {
     // not earn the legacy path either: a card publishing one half of
     // the contract is broken, not old.
     expect(missingSwitchVerdict({ ready: null, jumpable: 'yes' })).toBe('blocked-malformed');
+  });
+
+  it('never returns an outcome outside its documented set (#1869)', () => {
+    // The rename that named these for the CARD'S ANSWER rather than the
+    // caller's verdict was mechanical, and a mechanical rename is
+    // exactly the change that leaves one string behind. This sweeps the
+    // whole input space the attributes can take — including the shapes
+    // a broken observability contract would produce — and pins every
+    // result against the `@returns` union, so a future outcome added to
+    // the code without the doc, or a name changed in one arm only,
+    // fails here rather than in a live run six weeks later.
+    const OUTCOMES = new Set([
+      'claims-jumpable',
+      'claims-unjumpable',
+      'blocked-pending',
+      'blocked-failed',
+      'blocked-malformed',
+      'unknown',
+    ]);
+    const READY = [null, undefined, '', 'ready', 'pending', 'failed', 'raedy', 'Ready'];
+    const JUMPABLE = [null, undefined, '', 'yes', 'no', 'Yes', 'maybe'];
+    const seen = new Set();
+    for (const ready of READY) {
+      for (const jumpable of JUMPABLE) {
+        const got = missingSwitchVerdict({ ready, jumpable });
+        expect(OUTCOMES.has(got), `${ready}/${jumpable} → ${got}`).toBe(true);
+        seen.add(got);
+      }
+    }
+    expect(missingSwitchVerdict(null)).toBe('unknown');
+    // And every documented outcome is REACHABLE — a union member no
+    // input can produce is either dead or a typo, and both are worth
+    // knowing about.
+    expect([...OUTCOMES].filter((o) => !seen.has(o))).toEqual([]);
   });
 });
