@@ -503,9 +503,11 @@ discount still says a balance on any chain is enough and presents the consent as
 a one-time switch, so a reader who follows that section alone can still end up
 with no discount. That gap is real and is not closed here.
 
-**A sixth condition is that the push is not a one-time step.** A mirror stops
-honouring a pushed tier sixty days after the most recent push and falls back to
-treating that wallet as tier 0 until a new one arrives. The cards had presented
+**A further condition is that the push is not a one-time step.** A mirror stops
+honouring a pushed tier once it passes a maximum age — sixty days by default,
+though governance can set it anywhere in a bounded range, so it is a deadline to
+read rather than one to memorise — and falls back to treating that wallet as
+tier 0 until a new push arrives. The cards had presented
 the push as an activation you perform once, so a reader could follow every
 instruction on the page, act on that mirror months later, and be charged the
 full fee with nothing on the page to explain it — the same shape of failure as
@@ -519,8 +521,8 @@ a reader they could restore something they cannot. A push is only sent when the
 tier, its rate, its projected expiry or the tier table itself has changed. An
 identical one is deliberately skipped, so the protocol's cross-chain budget is
 not spent re-sending a message the mirror already holds. For the reader this
-paragraph is about — a steady holding, no tier movement, sixty days — every
-action available hits that gate and sends nothing. Pressing the button again
+paragraph is about — a steady holding, no tier movement, the window running out
+— every action available hits that gate and sends nothing. Pressing the button again
 does nothing. A deposit or withdrawal that leaves the tier where it is does
 nothing. The window expires and the discount on that mirror is gone.
 
