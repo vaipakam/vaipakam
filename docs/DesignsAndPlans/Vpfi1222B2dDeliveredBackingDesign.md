@@ -670,11 +670,17 @@ ends on funding arriving, and on nothing else — if the stamp never comes it
 waits indefinitely. The zeroed-and-open one has three exits: its compensation
 becoming both funded AND settled (a fully funded compensation still defers while
 its quote is undispatched or its credit provisional), or, past the frozen
-expiry, either permissionless lapse terminal — `lapseZeroedDay` for an
-uncompensated day, `lapseShortCompensatedDay` for a confirmed-but-underfunded
-one. Both make `_p2DayDeltas` retire the day at zero. That is the difference
-that matters operationally: only ONE of these two waits can be ended by someone
-who is not holding the missing funding. This
+expiry, either permissionless lapse terminal — and the two do NOT settle
+alike. `lapseZeroedDay` crosses an uncompensated day at zero: nothing was
+backed, nothing pays. `lapseShortCompensatedDay` takes a confirmed-but-
+underfunded day and pays the BACKED portion, scaling the delta by
+`pool / quoted` before the cursor advances, so the entries retire against what
+actually arrived rather than against nothing.
+
+Two things follow that matter operationally. Only ONE of these two waits can be
+ended by someone who is not holding the missing funding. And ending it is not
+uniformly a write-off: on the short-funded path the lapse is how the backed
+value gets paid at all. This
 section is retained as the record of why, and of the two
 approaches tried and dropped along the way, so neither is repeated.
 
