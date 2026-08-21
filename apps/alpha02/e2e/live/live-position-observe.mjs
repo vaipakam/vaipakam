@@ -1781,6 +1781,35 @@ async function positionLockOf(tokenId) {
  * interval at first render, with neither switch nor jumps present.
  */
 async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
+  // THE SAMPLER IS REQUIRED, and this guard is the whole of #1868.
+  //
+  // It used to be read as `selfOf?.()`, so a caller that simply forgot
+  // the argument got `undefined` on every poll, `missingSwitchVerdict`
+  // answered `unknown`, and the wait fell back to inferring jumpability
+  // from whatever was rendered — the pre-#1855 behaviour this drive was
+  // rewritten to end. That is a correct fallback for a DEPLOYMENT that
+  // publishes no attributes and a silent downgrade for a CALLER that
+  // forgot one, and from inside this function the two are identical.
+  //
+  // Both existing call sites pass it. The failure this prevents is the
+  // third one, added later by someone who has not read this comment:
+  // they get a crash on the first run instead of a green review that
+  // stopped checking the thing it advertises.
+  //
+  // A LEGACY BUNDLE NEEDS NO SPECIAL SAMPLER, which is worth stating
+  // because #1868 asked for one and it turned out to be unnecessary.
+  // `chooserSelfVerdict` already answers `null` when the attributes are
+  // absent, so a drive against a pre-#1855 build passes the ordinary
+  // sampler and gets the ordinary fallback. The legacy path was never
+  // reached by OMITTING the argument on purpose — only by accident.
+  if (typeof selfOf !== 'function') {
+    throw new TypeError(
+      'waitForSaleRows: the readiness sampler is required. Pass ' +
+        '`() => chooserSelfVerdict(page)` — it returns null by itself ' +
+        'on a bundle that publishes no data-chooser-* attributes, which ' +
+        'is the legacy fallback.',
+    );
+  }
   // TEXT STABILITY IS NOT READINESS, and round 11's version of this was
   // unsound (Codex #1853 r12). Pending copy is STATIC — "still reading
   // the details a sale needs" does not change while the read is in
@@ -1897,10 +1926,10 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
     // is a jump" in a second place, and a duplicated selector is the
     // defect class this file is named for. Agreement across a bracket
     // costs one extra read and keeps the locators single-source.
-    const beforeVerdict = missingSwitchVerdict(await selfOf?.());
+    const beforeVerdict = missingSwitchVerdict(await selfOf());
     const jumps = await jumpsOf().count();
     const switchThere = swOf ? (await swOf().count()) > 0 : false;
-    const afterVerdict = missingSwitchVerdict(await selfOf?.());
+    const afterVerdict = missingSwitchVerdict(await selfOf());
     lastVerdict = afterVerdict;
     if (beforeVerdict !== afterVerdict) {
       // The deadline is checked HERE too. A bare `continue` would skip
