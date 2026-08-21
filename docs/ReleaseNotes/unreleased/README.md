@@ -65,7 +65,8 @@ git add -A docs/ReleaseNotes/
 git commit -m "docs: release notes <date>"
 ```
 
-**If a run is interrupted, run it again** — with one caveat below. The
+**If a run is interrupted, run it again** — with two cases below that
+need a manual step first. The
 dated file is built in a temp file and renamed into place at the end, so
 it is either the old file or the complete new one, never a partial
 append. Each folded
@@ -140,7 +141,15 @@ it until it is deleted. Like the lock, it is reported rather than
 removed automatically: a temp file belonging to a run that is still
 alive looks exactly the same.
 
-**One case needs a manual step first.** Assembly holds a lock
+**A fragment may be waiting in `unreleased/.assembled/`.** A hard kill
+between setting a fragment aside and removing it leaves it there with no
+pending copy for a re-run to pick up, so assembly reports it and stops
+short of deciding. That is deliberate — the run cannot tell whether that
+copy is the one already folded in or a newer edit — but it does mean a
+re-run alone is not always enough. Compare it against the dated file,
+then delete it or move it back up a level to assemble it.
+
+**The other case is a stale lock.** Assembly holds a lock
 (`unreleased/.assemble.lock`) so two runs cannot overlap, and it is
 released when the script exits — including on Ctrl-C. A *hard* kill
 (`SIGKILL`, or the machine dying) leaves it behind, and every later run

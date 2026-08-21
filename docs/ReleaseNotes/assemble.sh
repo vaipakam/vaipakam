@@ -1304,26 +1304,7 @@ assert_output_unchanged() {  # assert_output_unchanged <what-was-about-to-happen
     echo "Replacing it now would put the older ones back, undoing that" >&2
     echo "silently — and possibly widening a file someone just restricted." >&2
   fi
-  echo "" >&2
-  # What this can honestly say depends on whether anything has gone
-  # already (Codex #1863 r30). In the recovery loop each removal is
-  # checked separately, so an earlier iteration may have deleted a
-  # fragment before a later one detects the change — and "nothing has
-  # been consumed" was then false, concealing that a source is gone and,
-  # if the concurrent edit removed its section, that its text now has to
-  # come back out of git.
-  if (( ${#CONSUMED[@]} > 0 )); then
-    echo "Already removed before this was noticed:" >&2
-    printf '  %s\n' "${CONSUMED[@]}" >&2
-    echo "" >&2
-    echo "Their text was in $(basename "$OUT") when they went. If the change" >&2
-    echo "above removed it, recover them from git." >&2
-  else
-    echo "Nothing has been consumed and no fragment has been touched." >&2
-  fi
-  echo "Nothing further will be consumed. Re-run once the other change has" >&2
-  echo "settled." >&2
-  exit 1
+  _refuse_reporting_consumed
 }
 
 # ── Every file the index read, not just the one being written ────────────────
@@ -1341,6 +1322,30 @@ assert_output_unchanged() {  # assert_output_unchanged <what-was-about-to-happen
 declare -A SRC_ID=()
 CONSUMED=()
 _d_n=0
+
+# ── Refusing, once, wherever it happens ──────────────────────────────────────
+# What a refusal can honestly say depends on whether anything has gone
+# already, and EVERY exit reachable mid-consumption has to say the same
+# thing (Codex #1863 r30, r31). The consumed-aware wording was added to
+# one branch and the others still claimed nothing had been touched — so a
+# run that had already deleted a fragment could report the opposite,
+# concealing both the loss and the fact that its text may now have to come
+# back out of git. One reporter, called by all of them.
+_refuse_reporting_consumed() {
+  echo "" >&2
+  if (( ${#CONSUMED[@]} > 0 )); then
+    echo "Already removed before this was noticed:" >&2
+    printf '  %s\n' "${CONSUMED[@]}" >&2
+    echo "" >&2
+    echo "Their text was in $(basename "$OUT") when they went. If the change" >&2
+    echo "above removed it, recover them from git." >&2
+  else
+    echo "Nothing has been consumed and no fragment has been touched." >&2
+  fi
+  echo "Nothing further will be consumed. Re-run once the other change has" >&2
+  echo "settled." >&2
+  exit 1
+}
 OUT_COPY=""
 
 assert_sources_unchanged() {  # assert_sources_unchanged <what-was-about-to-happen>
@@ -1356,16 +1361,13 @@ assert_sources_unchanged() {  # assert_sources_unchanged <what-was-about-to-happ
       echo "" >&2
       echo "It was not there when the records were read, so this run cannot" >&2
       echo "know whether it already holds any of these sections." >&2
-      echo "" >&2
-      echo "Nothing has been consumed. Re-run to read it." >&2
-      exit 1
+      _refuse_reporting_consumed
     fi
     seen=$(( seen + 1 ))
   done
   if (( seen != ${#SRC_ID[@]} )); then
     echo "Error: a dated file this run had read is gone." >&2
-    echo "Nothing further will be consumed. Re-run once things have settled." >&2
-    exit 1
+    _refuse_reporting_consumed
   fi
   # The output's own shape and metadata are checked FIRST, because that
   # function carries the detailed messages — which file, which way it
@@ -1387,8 +1389,7 @@ assert_sources_unchanged() {  # assert_sources_unchanged <what-was-about-to-happ
     if [ -f "$p" ] && [ ! -L "$p" ]; then
       if ! file_identity "$p"; then
         echo "Error: $(basename "$p") -- $IDENTITY_FAIL failed." >&2
-        echo "Nothing further will be consumed." >&2
-        exit 1
+        _refuse_reporting_consumed
       fi
       # CONTENT only for the other dated files. Their permissions are
       # nobody's business here — this run neither replaces them nor
@@ -1403,9 +1404,7 @@ assert_sources_unchanged() {  # assert_sources_unchanged <what-was-about-to-happ
       echo "This run's decisions about what is already filed were read from" >&2
       echo "it, so $1 could duplicate a section or delete one that is no" >&2
       echo "longer recorded anywhere." >&2
-      echo "" >&2
-      echo "Nothing further will be consumed. Re-run once it has settled." >&2
-      exit 1
+      _refuse_reporting_consumed
     fi
   done
 }
@@ -1750,6 +1749,17 @@ if (( ${#already[@]} > 0 )); then
     # so the evidence is re-checked adjacent to the delete rather than
     # before it (Codex #1863 r28).
     assert_sources_unchanged "removing ${FRAG_NAME[$f]}"
+    # And the QUARANTINE last of all (Codex #1863 r31), because the call
+    # above performs several long hashes of its own — a writer holding
+    # the fragment inode open from before the move can append during
+    # them, and those bytes would then be removed having reached no file.
+    # The clearing loop already ordered it this way; this one did not.
+    _rrh_rc=0
+    _rrh="$(frag_hash "$_q")" || _rrh_rc=$?
+    if (( _rrh_rc != 0 )) || [ "$_rrh" != "${FRAG_HASH[$f]}" ]; then
+      _changed+=("${FRAG_NAME[$f]} -> .assembled/$_q_name")
+      continue
+    fi
     rm "$_q"
     CONSUMED+=("${FRAG_NAME[$f]}")
   done

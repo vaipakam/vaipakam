@@ -2672,6 +2672,63 @@ check "signals are held across it" \
 check "and restored after recording" \
   "$(grep -A 3 'PROBE="\$_probe_f"' "$out/assemble.sh" | grep -c "trap '_cleanup; exit 130' INT")" "1"
 
+echo "T97: every mid-consumption refusal reports what already went"
+W="$ROOT/t97"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The consumed-aware wording was added to ONE exit branch; the others still
+# claimed nothing had been touched, so a run that had already deleted a
+# fragment could report the opposite (Codex #1863 r31). Here a NEW dated file
+# appears after the first removal, which exits through a different branch.
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/rm" <<SHIM
+#!/bin/sh
+/bin/rm "\$@"; _rc=\$?
+case "\$*" in *.probe*) exit \$_rc ;; esac
+if [ ! -f "$W/fired" ]; then
+  case "\$*" in
+    */.assembled/*)
+      : > "$W/fired"
+      printf '# Release Notes — 2026-08-14\n' > "$out/ReleaseNotes-2026-08-14.md"
+      ;;
+  esac
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/rm"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                          "1"
+check "it names the newcomer"  "$(says "$msg" '2026-08-14.md appeared')"      "1"
+check "it does not claim nothing went" \
+  "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')" "0"
+check "it names what already went" "$(says "$msg" 'Already removed before this')" "1"
+
+echo "T98: the recovery loop re-hashes the quarantine last too"
+W="$ROOT/t98"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The source validation before the delete performs several long hashes of its
+# own, during which a writer holding the fragment inode open can append — bytes
+# then removed having reached no file (Codex #1863 r31). The clearing loop
+# already ordered it this way; the recovery loop did not.
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sha256sum" <<SHIM
+#!/bin/sh
+/usr/bin/sha256sum "\$@"; _rc=\$?
+q="$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
+if [ -f "\$q" ] && [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '## appended during validation\n' >> "\$q"
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/sha256sum"
+PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the appended bytes survive" \
+  "$(grep -rl 'appended during validation' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

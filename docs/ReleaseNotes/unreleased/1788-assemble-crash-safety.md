@@ -26,6 +26,13 @@ appends only what genuinely remains.
 
 The recovery for both is the same: run the script again.
 
+Two states still need a person first, and both are deliberate. A stale lock left
+by a hard kill is reported rather than cleared on a guess about whether the other
+run is still alive. And a note set aside mid-run — moved out of the pending pile
+but not yet removed when the machine died — is reported rather than acted on,
+because nothing in the file says whether it is the copy already folded in or a
+newer edit. In each case the run says what it found and what to check.
+
 One case needs a manual step first. Assembly holds a lock so two runs cannot
 overlap, released whenever the script exits — including on Ctrl-C. A *hard* kill,
 or the machine dying, leaves it behind, and later runs then stop until it is
