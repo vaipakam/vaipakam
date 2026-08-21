@@ -667,8 +667,10 @@ day; a stamped day can still WAIT, via the separate `_p2DayDeltas`
 zeroed-and-open state that defers a compensable day rather than retiring it for
 zero. Both are per-day waits, but they end on different things. The unstamped one
 ends on funding arriving, and on nothing else — if the stamp never comes it
-waits indefinitely. The zeroed-and-open one has three exits: its compensation
-becoming both funded AND settled (a fully funded compensation still defers while
+waits indefinitely. The zeroed-and-open one has four exits. Its quote may complete at
+genuinely zero on both sides, in which case the day is resolved-zero and crosses
+immediately — no compensation, no deadline, nothing owed. Otherwise: its
+compensation becoming both funded AND settled (a fully funded compensation still defers while
 its quote is undispatched or its credit provisional), or, past the frozen
 expiry, either permissionless lapse terminal — and the two do NOT settle
 alike. `lapseZeroedDay` crosses an uncompensated day at zero: nothing was
