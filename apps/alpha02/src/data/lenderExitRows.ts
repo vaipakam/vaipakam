@@ -292,6 +292,15 @@ export interface LenderExitInput {
    *  than as a rediscovery of this asymmetry. */
   borrowerOffsetPending: boolean;
   instantSellCandidates: InstantSellCandidates;
+  /** Has ANY live status read answered yet?
+   *
+   *  Only `chooserReadiness` consults this; no row's wording or
+   *  availability depends on it, so the rendered card is unchanged.
+   *  It exists because `fallbackPending` cannot carry its own third
+   *  state: the page derives it with `.some(...)` over the live-status
+   *  candidates, so `true` is self-evidencing while `false` is
+   *  ambiguous between "not fallback" and "nothing has answered". */
+  statusSettled: boolean;
 }
 
 export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
@@ -320,14 +329,18 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
   // Ranked above the listing lock: a fallback-pending loan refuses both
   // sales outright, so "cancel the listing first" would be advice that
   // does not lead anywhere (Codex r8 P2).
-  const pastDueOr = (reason: string | undefined) =>
-    input.maturity === 'past'
-      ? copy.lenderExit.pastDue
-      : input.maturity === 'unknown'
-        ? copy.lenderExit.options.maturityUnknown
-        : input.fallbackPending
-          ? o.saleFallbackPending
-          : reason;
+  const pastDueOr = (reason: string | undefined) => {
+    switch (conclusiveBlock(input)) {
+      case 'past-due':
+        return copy.lenderExit.pastDue;
+      case 'maturity-unknown':
+        return copy.lenderExit.options.maturityUnknown;
+      case 'fallback':
+        return o.saleFallbackPending;
+      default:
+        return reason;
+    }
+  };
 
   /** The sell-now row's verdict, hoisted so the LISTING row can read
    *  it (Codex r22 P2). The final-hour message reassures the lender
@@ -501,10 +514,47 @@ export function hasJumpableRow(rows: LenderExitRow[]): boolean {
  */
 export type ChooserReadiness = 'ready' | 'pending' | 'failed';
 
+
+/** The HEAD of the sale rows' unavailability precedence — the blocks
+ *  that decide both rows outright, before any narrower reason is read.
+ *
+ *  Extracted so `pastDueOr` and `chooserReadiness` cannot drift
+ *  (Codex #1858 r1). They had the same precedence written twice, in
+ *  different orders, and diverged immediately: the rows short-circuit
+ *  on past maturity while readiness went on waiting for a sale-lock
+ *  read whose answer could no longer matter. Two statements of one rule
+ *  is the shadow-model defect this whole PR chain keeps finding, and it
+ *  reappeared inside the fix for it. */
+type ConclusiveBlock = 'past-due' | 'maturity-unknown' | 'fallback';
+
+function conclusiveBlock(input: LenderExitInput): ConclusiveBlock | undefined {
+  if (input.maturity === 'past') return 'past-due';
+  if (input.maturity === 'unknown') return 'maturity-unknown';
+  if (input.fallbackPending) return 'fallback';
+  return undefined;
+}
+
 export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
+  const head = conclusiveBlock(input);
+  // A CONCLUSIVE NEGATIVE IS AN ANSWER (Codex #1858 r1). Past maturity
+  // and a fallback-settling loan shut BOTH sale rows outright, ahead of
+  // every narrower reason — so the question is already decided and no
+  // later read can change it. Reporting `pending` there kept a past-due
+  // page undecided behind a slow or failing secondary read, preserving
+  // the very timeout this predicate exists to remove.
+  if (head === 'past-due' || head === 'fallback') return 'ready';
+  if (head === 'maturity-unknown') return 'pending';
+  // The status read must have SETTLED before a non-fallback answer can
+  // be trusted (Codex #1858 r1). `fallbackPending` is derived by the
+  // page from `liveStatusCandidates.some(...)`, so `false` means either
+  // "not fallback" or "no status read has answered yet" — and if an
+  // outstanding query then reports FallbackPending, the head above
+  // turns both jumps off and a `ready` answer would have flipped from
+  // yes to no after being published as settled. Only `true` is
+  // self-evidencing; `false` needs this second fact to be meaningful.
+  if (!input.statusSettled) return 'pending';
   if (input.saleTools === 'failed') return 'failed';
   if (input.saleTools === 'checking') return 'pending';
-  if (input.maturity === 'unknown') return 'pending';
   if (input.saleLock === 'checking') return 'pending';
   if (input.instantSellCandidates === 'checking') return 'pending';
   return 'ready';

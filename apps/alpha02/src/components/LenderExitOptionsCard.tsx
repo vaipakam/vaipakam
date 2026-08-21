@@ -86,6 +86,9 @@ export function LenderExitOptionsCard({
   /** Live status says FallbackPending: the card stays, both sales go.
    *  See `LenderExitInput.fallbackPending`. */
   fallbackPending: boolean;
+  /** Has any live status read answered? Only the readiness attribute
+   *  reads it — see `LenderExitInput.statusSettled`. */
+  statusSettled: boolean;
   /** Whether this position already carries a live listing. A TRI-STATE
    *  (`SaleLockState`), not a boolean: the lock refuses BOTH sale paths
    *  (`SaleOfferAlreadyExists`, and the page unmounts the instant-exit

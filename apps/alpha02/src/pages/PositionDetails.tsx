@@ -3385,6 +3385,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           fallbackPending={liveStatusCandidates.some(
             (st) => st === LoanStatus.FallbackPending,
           )}
+          // The companion fact `fallbackPending` cannot carry (#1855):
+          // that prop is a `.some(...)`, so `false` means either "not
+          // fallback" or "no read has answered". Only the readiness
+          // attribute consults this; nothing rendered depends on it.
+          statusSettled={liveStatusCandidates.some((st) => st !== undefined)}
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
           // if it errors. Collapsing that to `false` showed BOTH sale

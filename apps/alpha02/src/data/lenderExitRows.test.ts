@@ -28,6 +28,7 @@ const base: LenderExitInput = {
   heldVpfiUnresolved: false,
   borrowerOffsetPending: false,
   instantSellCandidates: 'some',
+  statusSettled: true,
 };
 
 const rowFor = (input: Partial<LenderExitInput>, key: string) =>
@@ -61,6 +62,7 @@ describe('wait row — ordering and framing', () => {
       heldVpfiUnresolved: true,
       borrowerOffsetPending: true,
       instantSellCandidates: 'none',
+      statusSettled: false,
     };
     expect(buildLenderExitRows(hostile)[0].unavailable).toBeUndefined();
   });
@@ -967,5 +969,74 @@ describe('chooserReadiness — has the jumpability question settled?', () => {
     const pastDue = { ...base, maturity: 'past' as const };
     expect(chooserReadiness(pastDue)).toBe('ready');
     expect(hasJumpableRow(buildLenderExitRows(pastDue))).toBe(false);
+  });
+
+  describe('a conclusive negative does not wait on reads that cannot matter', () => {
+    // The combination the first version of this suite MISSED, because
+    // every case inherited fully-settled secondaries from `base` (Codex
+    // #1858 r1). Past maturity shuts both sale rows ahead of every
+    // narrower reason, so a still-checking lock or sweep cannot change
+    // the answer — and reporting `pending` there kept a past-due page
+    // undecided behind a slow read, which is the exact timeout this
+    // predicate exists to remove.
+    const stillLoading = {
+      saleTools: 'checking' as const,
+      saleLock: 'checking' as const,
+      instantSellCandidates: 'checking' as const,
+    };
+
+    it('is ready past maturity even with every secondary read in flight', () => {
+      const input = { ...base, maturity: 'past' as const, ...stillLoading };
+      expect(chooserReadiness(input)).toBe('ready');
+      expect(hasJumpableRow(buildLenderExitRows(input))).toBe(false);
+    });
+
+    it('is ready past maturity even when a prerequisite read FAILED', () => {
+      const input = { ...base, maturity: 'past' as const, saleTools: 'failed' as const };
+      expect(chooserReadiness(input)).toBe('ready');
+    });
+
+    it('is ready on a fallback-settling loan with reads in flight', () => {
+      // Same shape: a fallback-pending loan refuses both sales outright.
+      const input = { ...base, fallbackPending: true, ...stillLoading };
+      expect(chooserReadiness(input)).toBe('ready');
+      expect(hasJumpableRow(buildLenderExitRows(input))).toBe(false);
+    });
+
+    it('agrees with the rows about which blocks are conclusive', () => {
+      // The anti-drift assertion. `pastDueOr` and `chooserReadiness` now
+      // share one precedence head; this pins that they still agree
+      // rather than trusting the extraction to hold.
+      for (const head of [{ maturity: 'past' as const }, { fallbackPending: true }]) {
+        const input = { ...base, ...head, ...stillLoading };
+        expect(chooserReadiness(input)).toBe('ready');
+        expect(hasJumpableRow(buildLenderExitRows(input))).toBe(false);
+      }
+    });
+  });
+
+  describe('an unsettled status read is not a settled answer', () => {
+    // `fallbackPending` is a `.some(...)` on the page, so `false` means
+    // either "not fallback" or "nothing has answered yet" (Codex #1858
+    // r1). Publishing `ready` on the ambiguous case let the answer flip
+    // from yes to no when the outstanding query reported
+    // FallbackPending — a settled verdict that unsettled itself.
+    it('is pending while no live status read has answered', () => {
+      expect(chooserReadiness({ ...base, statusSettled: false })).toBe('pending');
+    });
+
+    it('stays pending even when another input has already failed', () => {
+      // Pending outranks failed here: the status answer could still make
+      // this a conclusive negative, which is a better answer than
+      // "settled but untrustworthy".
+      const input = { ...base, statusSettled: false, saleTools: 'failed' as const };
+      expect(chooserReadiness(input)).toBe('pending');
+    });
+
+    it('does not gate a conclusive negative on the status read', () => {
+      expect(chooserReadiness({ ...base, maturity: 'past', statusSettled: false })).toBe(
+        'ready',
+      );
+    });
   });
 });
