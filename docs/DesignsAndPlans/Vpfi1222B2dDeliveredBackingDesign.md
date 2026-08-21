@@ -682,9 +682,14 @@ reading only the consume site makes it look absent, and why my first cut
 invented a hazard that did not exist.
 
 **What d5 did NOT discharge — the two prerequisites (Codex #1433 r2, both P1).**
+**BOTH WERE LATER DISCHARGED BY #1434 P1-b**; the analysis below is the state at
+the time of the withdrawal and its reasoning is retained because it constrains
+any future change here. Each prerequisite carries a note saying what met it.
 
-1. **The FRESH side has no delivered-funding bound on a mirror.** Fresh is
-   entirely Base-funded and arrives with the remit, but the walk bounds it only
+1. **The FRESH side had no delivered-funding bound on a mirror.** *(Met by
+   `PoolBudget.deliveredFresh`, carried as its own term so its shortfall DEFERS
+   — see the fix-shape note below, which anticipated exactly this.)* Fresh is
+   entirely Base-funded and arrives with the remit, but the walk bounded it only
    by `poolRemaining()` — on a mirror that is the GLOBAL 69M cap less LOCAL
    payouts, not what has been received. Lifting the halt would let a mirror pay
    fresh before its remit lands, out of VPFI the Diamond holds for other
@@ -801,7 +806,10 @@ invented a hazard that did not exist.
      operator-driven path into pricing and needs the same evidence discipline
      as the rest of d2's manual vehicle.
 
-   Until BOTH exist, a zeroed day must stay unpriced rather than be walked.
+   Until BOTH existed, a zeroed day had to stay unpriced rather than be
+   walked. *(Both now exist: the zeroed-day pricing ladder supplies the
+   mirror-observable signal and the per-side figures, so a compensated day is
+   priceable without rewriting the ordinary funding stamp.)*
 
 **The withdrawn approach, and why it was worse than the problem** (Codex #1433
 r1 — 4×P1 + 1×P2 on one mechanism). I gated pricing on a per-day
@@ -832,9 +840,11 @@ r1 — 4×P1 + 1×P2 on one mechanism). I gated pricing on a per-day
   every declared day fully backed.
 
 **Pin: no arrival-marker gate.** An arrival EVENT is the wrong proxy for a
-backing VALUE. When the halt does eventually lift (#1434), the fresh-side
-prerequisite must be met with a delivered-funding BUDGET in `PoolBudget.fresh`,
-matching the recycled side's existing shape — not with a per-day flag.
+backing VALUE. When the halt lifted (#1434 P1-b), the fresh-side prerequisite
+was met with a delivered-funding BUDGET as this pin required — carried as
+`PoolBudget.deliveredFresh` rather than by overloading `PoolBudget.fresh`,
+because the fresh path truncates terminally and a growing budget must DEFER.
+Not a per-day flag, which is what this pin exists to rule out.
 
 **Pin: a backing refusal must be a pool-budget DEFERRAL, never a
 `_dayPoolHalves` halt.** Both stop at the offending day — `processUserSideDay`

@@ -1920,8 +1920,10 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertEq(armed, 7, "arming day travels in-band");
     }
 
-    /// Codex #1417 r7 — a MIRROR must fail-closed on armed-day pricing until
-    /// B2-d arms mirror consumption. If it priced the V2 stamp's recycled
+    /// Codex #1417 r7 — a MIRROR had to fail-closed on armed-day pricing
+    /// until B2-d armed mirror consumption; B2-d has since shipped and the
+    /// halt was lifted by #1434 P1-b, so what protects the bucket now is the
+    /// delivered bound rather than a refusal to price. If it priced the V2 stamp's recycled
     /// equivalents and then debited the LOCAL bucket at claim (canonical
     /// `consume` semantics), a remittance-funded reward would cannibalise
     /// the mirror's own recycled balance — the exact mirror consumption the

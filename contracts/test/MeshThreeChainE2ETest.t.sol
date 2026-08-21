@@ -1137,11 +1137,13 @@ contract MeshThreeChainE2ETest is Test {
     }
 
     /**
-     * @notice The #1434 coupling, which only a three-chain e2e can show:
-     *         with arming ON but mirror settlement still blocked, Base's
-     *         per-chain reservation for a mirror GROWS with every armed day
-     *         and its modelled availability FALLS — while that mirror's own
-     *         bucket is untouched and its settlement totals stay at zero.
+     * @notice The #1434 coupling, which only a three-chain e2e could show:
+     *         with arming ON while mirror settlement was still blocked,
+     *         Base's per-chain reservation for a mirror GREW with every armed
+     *         day and its modelled availability FELL — while that mirror's own
+     *         bucket stayed untouched and its settlement totals stayed at
+     *         zero. P1-b lifted that block; the test pins the coupling this
+     *         fixture still reproduces by holding funding back.
      *
      * @dev    **The operational consequence, which is the point.** Arming
      *         (`setGovernorCommitArmedFromDay`, the one-shot irreversible D*
