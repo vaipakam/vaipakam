@@ -1156,7 +1156,8 @@ Permissionless actions available to anyone regardless of role:
   surplus, since only enough collateral is taken to cover the debt
   and the cost of closing it — see the Claim Center section above.
   VPFI held under the retired fee path is forfeited only on
-  default or liquidation; a proper close still pays the rebate. Burns the borrower position NFT.
+  default or liquidation; a proper close settles the
+  time-weighted rebate, which can be zero. Burns the borrower position NFT.
 
 > **If your repay tx reverts while you have a live OpenSea
 > listing** — a buyer's `Seaport.fulfillOrder` may have landed

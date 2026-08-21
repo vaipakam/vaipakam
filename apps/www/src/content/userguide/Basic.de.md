@@ -610,7 +610,7 @@ mit einem kleinen Tooltip, das erklärt, warum.
   siehe den Claim-Center-Abschnitt. VPFI, das unter dem
   eingestellten Gebührenweg verwahrt war, wird nur bei Default
   oder Liquidation verwirkt; volle Rückzahlung, Preclose oder
-  Refinance zahlen den Rebate weiterhin aus.
+  Refinance rechnen das zeitgewichtete Rebate ab, das null sein kann.
 
 ---
 

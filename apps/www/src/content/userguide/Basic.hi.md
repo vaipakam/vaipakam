@@ -586,7 +586,8 @@ available नहीं हैं वे greyed out रहेंगे, और to
   के रूप में दर्ज होता है। वह क्या होगा यह रास्ते पर निर्भर है —
   Claim Center भाग देखें। बंद किए गए रास्ते में रखा VPFI सिर्फ़
   default या liquidation पर ज़ब्त होता है; पूरा repayment,
-  preclose या refinance पर rebate मिलता ही है।
+  preclose या refinance पर time-weighted rebate settle होता है, जो
+  शून्य भी हो सकता है।
 
 ---
 

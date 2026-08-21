@@ -1053,7 +1053,8 @@ actions:
   सकता है, क्योंकि collateral में से उतना ही लिया जाता है जितना
   कर्ज़ और उसे बंद करने की लागत माँगे — ऊपर का Claim Center भाग
   देखें। बंद किए गए रास्ते में रखा VPFI सिर्फ़ default या liquidation
-  पर ज़ब्त होता है; proper close पर rebate मिलता है। Borrower position NFT को burn करता है।
+  पर ज़ब्त होता है; proper close पर time-weighted
+  rebate settle होता है, जो शून्य भी हो सकता है। Borrower position NFT को burn करता है।
 
 ---
 

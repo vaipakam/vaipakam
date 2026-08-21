@@ -1059,8 +1059,8 @@ Role-இப் பொருட்படுத்தாமல் யாரும�
   இருக்கலாம் — கடனுக்கும் அதை முடிக்கும் செலவுக்கும் தேவையான அளவு
   collateral மட்டுமே எடுக்கப்படுவதால்; மேலே உள்ள Claim Center பகுதியைப்
   பார்க்கவும். நிறுத்தப்பட்ட வழியில் வைக்கப்பட்டிருந்த VPFI, default அல்லது
-  liquidation-இல் மட்டுமே பறிமுதல் ஆகும்; proper close-இல் rebate
-  வழங்கப்படும். Borrower position NFT-ஐ burn செய்கிறது.
+  liquidation-இல் மட்டுமே பறிமுதல் ஆகும்; proper close-இல்
+  time-weighted rebate தீர்க்கப்படும் (பூஜ்ஜியமாகவும் இருக்கலாம்). Borrower position NFT-ஐ burn செய்கிறது.
 
 ---
 

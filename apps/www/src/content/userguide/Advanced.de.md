@@ -1122,7 +1122,8 @@ verfügbar sind:
   genommen wird, wie Schuld und Auflösungskosten erfordern — siehe
   den Claim-Center-Abschnitt oben. VPFI, das unter dem eingestellten
   Gebührenweg verwahrt war, wird nur bei Default oder Liquidation
-  verwirkt; ein ordnungsgemäßer Abschluss zahlt den Rebate aus. Verbrennt den Borrower-Position-NFT.
+  verwirkt; ein ordnungsgemäßer Abschluss rechnet das
+  zeitgewichtete Rebate ab, das null sein kann. Verbrennt den Borrower-Position-NFT.
 
 ---
 

@@ -1114,8 +1114,8 @@ del rol:
   excedente, ya que sólo se toma el colateral que exigen la deuda y
   el coste de cerrarla — véase la sección del Claim Center más
   arriba. El VPFI retenido bajo la vía retirada sólo se pierde en
-  default o liquidación; un cierre correcto sigue pagando el
-  reembolso. Quema el NFT de posición de
+  default o liquidación; un cierre correcto liquida el reembolso
+  ponderado por tiempo, que puede ser cero. Quema el NFT de posición de
   prestatario.
 
 ---

@@ -1029,7 +1029,8 @@ role に関係なく誰でも利用できる permissionless actions:
   残ることがあります。collateral は債務とその清算費用に必要なぶんだけが
   取られるためです — 上の Claim Center の節を参照してください。廃止された
   手数料経路で保管されていた VPFI が没収されるのは default または
-  liquidation のときだけで、正常なクローズでは rebate が支払われます。
+  liquidation のときだけで、正常なクローズでは時間加重の rebate が
+  精算されます（ゼロのこともあります）。
   Borrower position NFT を burn します。
 
 ---

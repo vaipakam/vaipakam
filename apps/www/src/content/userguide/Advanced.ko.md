@@ -955,8 +955,8 @@ role과 관계없이 누구나 사용할 수 있는 permissionless actions:
   반환합니다. default / liquidation 시에도 surplus가 남을 수 있습니다. collateral은
   빚과 그것을 정리하는 비용에 필요한 만큼만 가져가기 때문입니다 — 위의
   Claim Center 절을 참고하세요. 폐지된 수수료 경로에서 보관되던 VPFI는
-  default 또는 liquidation에서만 몰수되며, 정상 종료에서는 rebate가
-  지급됩니다. Borrower position
+  default 또는 liquidation에서만 몰수되며, 정상 종료에서는 시간가중 rebate가
+  정산됩니다(0일 수도 있습니다). Borrower position
   NFT를 burn합니다.
 
 ---

@@ -623,7 +623,7 @@ default உங்கள் முழு collateral-ஐ lender-க்கு trans
   Claim Center பகுதியைப் பார்க்கவும். நிறுத்தப்பட்ட வழியில்
   வைக்கப்பட்டிருந்த VPFI, default அல்லது liquidation-இல் மட்டுமே
   பறிமுதல் ஆகும்; முழு repayment, preclose அல்லது refinance-இல்
-  rebate வழங்கப்படும்.
+  time-weighted rebate தீர்க்கப்படும் (பூஜ்ஜியமாகவும் இருக்கலாம்).
 
 ---
 

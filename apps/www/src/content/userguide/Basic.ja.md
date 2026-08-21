@@ -574,7 +574,7 @@ role-specific tabs で各 side の options を確認できます。今は
   Claim Center の節を参照してください。廃止された手数料経路で
   保管されていた VPFI が没収されるのは default または
   liquidation のときだけで、full repayment・preclose・refinance
-  では rebate が支払われます。
+  では時間加重の rebate が精算されます（ゼロのこともあります）。
 
 ---
 

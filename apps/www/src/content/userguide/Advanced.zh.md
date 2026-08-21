@@ -870,7 +870,7 @@ locked" 等)。
 - **Claim as borrower** — 仅在 terminal state 可用。full repayment 时返还
   collateral；default / liquidation 时也可能还有 surplus，因为系统只取走偿还债务
   和了结它所需的那部分 collateral——参见上文的 Claim Center 一节。已停用
-  费用路径下托管的 VPFI 只在 default 或 liquidation 时被没收；正常关闭仍会支付 rebate。会 burn borrower position NFT。
+  费用路径下托管的 VPFI 只在 default 或 liquidation 时被没收；正常关闭会结算按时间加权的 rebate（可能为零）。会 burn borrower position NFT。
 
 ---
 

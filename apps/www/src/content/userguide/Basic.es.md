@@ -596,7 +596,8 @@ explicando por qué.
   reclamación. Qué es exactamente depende de la vía —
   véase la sección del Claim Center. El VPFI retenido bajo la vía
   retirada sólo se pierde en default o liquidación; un repago
-  total, un preclose o un refinance siguen pagando el reembolso.
+  total, un preclose o un refinance liquidan el reembolso ponderado
+  por tiempo, que puede ser cero.
 
 ---
 

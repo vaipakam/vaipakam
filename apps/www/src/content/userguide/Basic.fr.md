@@ -610,7 +610,7 @@ info-bulle expliquant pourquoi.
   voir la section Claim Center. Le VPFI retenu sous la voie
   retirée n'est acquis au trésor qu'en cas de défaut ou de
   liquidation ; un remboursement total, un preclose ou un
-  refinance versent toujours le rabais.
+  refinance règlent le rabais pondéré dans le temps, qui peut être nul.
 
 ---
 

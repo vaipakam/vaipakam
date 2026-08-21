@@ -565,7 +565,8 @@ will be greyed out, with a small tooltip explaining why.
   recorded as yours to claim. What that is depends on the path —
   see the Claim Center section. VPFI held under the retired fee
   path is forfeited only on default or liquidation; a full
-  repayment, preclose or refinance still pays the rebate.
+  repayment, preclose or refinance settles the time-weighted rebate,
+  which can be zero.
 
 ---
 

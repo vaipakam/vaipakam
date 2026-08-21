@@ -546,7 +546,7 @@ side의 options를 정리합니다. 지금 사용할 수 없는 buttons는 greye
   claim으로 기록됩니다. 그것이 무엇인지는 경로에 따라 다릅니다 —
   Claim Center 절을 참고하세요. 폐지된 수수료 경로에서 보관되던
   VPFI는 default 또는 liquidation에서만 몰수되며, full repayment나
-  preclose, refinance에서는 rebate가 그대로 지급됩니다.
+  preclose, refinance에서는 시간가중 rebate가 정산됩니다(0일 수도 있습니다).
 
 ---
 

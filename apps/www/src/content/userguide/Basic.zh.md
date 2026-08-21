@@ -502,7 +502,7 @@ default 会把您的全部 collateral 转给 lender，您没有后续 claim。
 - **Claim** — 一旦 loan settle，若已全额 repayment，则返还您的
   collateral；若 default，也可能还有 surplus：系统只取走偿还债务
   和了结它所需的那部分 collateral，您多存入的部分会记为您的 claim。
-  具体是什么取决于路径——参见 Claim Center 一节。已停用费用路径下托管的 VPFI 只在 default 或 liquidation 时被没收；全额 repayment、preclose 或 refinance 仍会支付 rebate。
+  具体是什么取决于路径——参见 Claim Center 一节。已停用费用路径下托管的 VPFI 只在 default 或 liquidation 时被没收；全额 repayment、preclose 或 refinance 会结算按时间加权的 rebate（可能为零）。
 
 ---
 

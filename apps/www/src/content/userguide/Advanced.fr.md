@@ -1115,7 +1115,8 @@ Actions permissionless disponibles à tous quel que soit le rôle :
   collatéral qu'exigent la dette et le coût de sa clôture — voir la
   section Claim Center ci-dessus. Le VPFI retenu sous la voie
   retirée n'est acquis au trésor qu'en cas de défaut ou de
-  liquidation ; une clôture régulière verse le rabais. Brûle le NFT de position
+  liquidation ; une clôture régulière règle le rabais
+  pondéré dans le temps, qui peut être nul. Brûle le NFT de position
   d'emprunteur.
 
 ---
