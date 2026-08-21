@@ -1106,10 +1106,12 @@ verfügbar sind:
   Refinance-Abschluss die Loans atomar, ohne dass das
   Collateral deinen Vault verlässt.
 - **Als Borrower claimen** — nur in terminalen Zuständen. Gibt das
-  Collateral bei voller Rückzahlung zurück; bei Default /
-  Liquidation gibt es nichts zurückzugeben, da VPFI, das unter dem
-  eingestellten Gebührenweg verwahrt war, an die Treasury verwirkt
-  wird. Verbrennt den Borrower-Position-NFT.
+  Collateral bei voller Rückzahlung zurück; bei Default oder
+  Liquidation kann ein Überschuss bleiben, da nur so viel Collateral
+  genommen wird, wie Schuld und Auflösungskosten erfordern — siehe
+  den Claim-Center-Abschnitt oben. VPFI, das unter dem eingestellten
+  Gebührenweg verwahrt war, wird in beiden Fällen an die Treasury
+  verwirkt. Verbrennt den Borrower-Position-NFT.
 
 ---
 

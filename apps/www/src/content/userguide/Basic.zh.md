@@ -494,8 +494,9 @@ default 会把您的全部 collateral 转给 lender，您没有后续 claim。
   transaction 中用新 principal 偿还旧 loan。Collateral 永不离开
   vault。
 - **Claim** — 一旦 loan settle，若已全额 repayment，则返还您的
-  collateral；若 default，则没有可返还的东西：collateral 已转给
-  lender，已停用费用路径下托管的 VPFI 会被没收转入 treasury。
+  collateral；若 default，也可能还有 surplus：系统只取走偿还债务
+  和了结它所需的那部分 collateral，您多存入的部分会记为您的 claim。
+  已停用费用路径下托管的 VPFI 无论哪种情况都会被没收转入 treasury。
 
 ---
 

@@ -594,9 +594,11 @@ info-bulle expliquant pourquoi.
   principal en une seule transaction. Le collatéral ne quitte
   jamais l'vault.
 - **Réclamer** — une fois le prêt réglé, rend ton collatéral en
-  cas de remboursement total. En cas de défaut il n'y a rien à
-  rendre : le collatéral est parti chez le prêteur et le VPFI retenu
-  sous la voie retirée est acquis au trésor.
+  cas de remboursement total. En cas de défaut il peut rester un
+  excédent : on ne prélève que le collatéral qu'exigent la dette et
+  le coût de sa clôture, et ce que tu avais déposé en plus est
+  enregistré comme ta créance. Le VPFI retenu sous la voie retirée
+  est acquis au trésor dans tous les cas.
 
 ---
 

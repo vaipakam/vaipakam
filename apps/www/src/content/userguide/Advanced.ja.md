@@ -1017,8 +1017,11 @@ role に関係なく誰でも利用できる permissionless actions:
   lender が accept したら、complete refinance により loans が
   atomically に swap されます。collateral は vault から出ません。
 - **Borrower として claim** — terminal state のみ。full repayment では
-  collateral を返します。default / liquidation では返すものはなく、
-  廃止された手数料経路で保管されていた VPFI は treasury に没収されます。
+  collateral を返します。default / liquidation でも surplus が
+  残ることがあります。collateral は債務とその清算費用に必要なぶんだけが
+  取られるためです — 上の Claim Center の節を参照してください。廃止された
+  手数料経路で保管されていた VPFI は、いずれの場合も treasury に
+  没収されます。
   Borrower position NFT を burn します。
 
 ---

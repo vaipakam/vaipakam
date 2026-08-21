@@ -1143,9 +1143,11 @@ Permissionless actions available to anyone regardless of role:
   on OpenSea's marketplace UI automatically; you don't sign
   anything off-chain.
 - **Claim as borrower** — terminal-only. Returns collateral on
-  full repayment; on default / liquidation there is nothing to
-  return, since any VPFI held under the retired fee path is
-  forfeited to treasury. Burns the borrower position NFT.
+  full repayment; on default or liquidation there may still be a
+  surplus, since only enough collateral is taken to cover the debt
+  and the cost of closing it — see the Claim Center section above.
+  Any VPFI held under the retired fee path is forfeited to treasury
+  either way. Burns the borrower position NFT.
 
 > **If your repay tx reverts while you have a live OpenSea
 > listing** — a buyer's `Seaport.fulfillOrder` may have landed

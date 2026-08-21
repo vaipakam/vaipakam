@@ -583,9 +583,11 @@ explicando por qué.
   protocolo paga el préstamo viejo desde el principal nuevo en una
   sola transacción. El colateral nunca sale del vault.
 - **Reclamar** — una vez que el préstamo se liquida, devuelve tu
-  colateral en caso de repago total. En caso de default no hay nada
-  que devolver: el colateral se fue al prestamista y el VPFI retenido
-  bajo la vía retirada se pierde en favor del tesoro.
+  colateral en caso de repago total. En caso de default puede quedar un
+  excedente: sólo se toma el colateral que exigen la deuda y el coste
+  de cerrarla, y lo que aportaste de más queda registrado como tu
+  reclamación. El VPFI retenido bajo la vía retirada se pierde en
+  favor del tesoro en cualquier caso.
 
 ---
 

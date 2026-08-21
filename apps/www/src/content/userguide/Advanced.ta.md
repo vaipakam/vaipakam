@@ -1045,9 +1045,11 @@ Role-இப் பொருட்படுத்தாமல் யாரும�
   ஒரு lender accept செய்தவுடன், complete refinance, collateral உங்கள்
   vault-ஐ விட்டு வெளியேறாமல் loans-ஐ atomically swap செய்கிறது.
 - **Claim as borrower** — Terminal state-இல் மட்டும். Full repayment-இல் collateral-ஐ,
-  திருப்பித் தருகிறது; default / liquidation-இல் திருப்பித் தர எதுவும்
-  இல்லை, நிறுத்தப்பட்ட வழியில் வைக்கப்பட்டிருந்த VPFI treasury-க்கு
-  பறிமுதல் ஆகும். Borrower position NFT-ஐ burn செய்கிறது.
+  திருப்பித் தருகிறது; default / liquidation-இல் surplus மிச்சம்
+  இருக்கலாம் — கடனுக்கும் அதை முடிக்கும் செலவுக்கும் தேவையான அளவு
+  collateral மட்டுமே எடுக்கப்படுவதால்; மேலே உள்ள Claim Center பகுதியைப்
+  பார்க்கவும். நிறுத்தப்பட்ட வழியில் வைக்கப்பட்டிருந்த VPFI இரு
+  நிலையிலும் treasury-க்கு பறிமுதல் ஆகும். Borrower position NFT-ஐ burn செய்கிறது.
 
 ---
 

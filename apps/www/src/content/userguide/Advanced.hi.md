@@ -1042,9 +1042,11 @@ actions:
   atomic रूप से swap कर देता है, आपका collateral आपके vault
   से कभी बाहर नहीं जाता।
 - **Claim as borrower** — सिर्फ़ terminal states में। पूरे repayment पर
-  collateral लौटाता है; default / liquidation पर लौटाने को कुछ
-  नहीं होता, क्योंकि बंद किए गए रास्ते में रखा VPFI treasury को
-  ज़ब्त हो जाता है। Borrower position NFT को burn करता है।
+  collateral लौटाता है; default / liquidation पर भी surplus बच
+  सकता है, क्योंकि collateral में से उतना ही लिया जाता है जितना
+  कर्ज़ और उसे बंद करने की लागत माँगे — ऊपर का Claim Center भाग
+  देखें। बंद किए गए रास्ते में रखा VPFI दोनों ही स्थितियों में
+  treasury को ज़ब्त हो जाता है। Borrower position NFT को burn करता है।
 
 ---
 

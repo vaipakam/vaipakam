@@ -596,10 +596,11 @@ mit einem kleinen Tooltip, das erklärt, warum.
   das Protokoll zahlt den alten Loan vom neuen Principal in einer
   Transaktion ab. Das Collateral verlässt nie den Vault.
 - **Claim** — sobald der Loan settled, gibt dein Collateral bei
-  voller Rückzahlung zurück. Bei Default gibt es nichts
-  zurückzugeben: das Collateral ging an den Lender, und VPFI, das
-  unter dem eingestellten Gebührenweg verwahrt war, wird an die
-  Treasury verwirkt.
+  voller Rückzahlung zurück. Bei Default kann ein Überschuss
+  bleiben: es wird nur so viel Collateral genommen, wie Schuld und
+  Auflösungskosten erfordern, alles darüber wird als dein Claim
+  erfasst. VPFI, das unter dem eingestellten Gebührenweg verwahrt
+  war, wird in beiden Fällen an die Treasury verwirkt.
 
 ---
 

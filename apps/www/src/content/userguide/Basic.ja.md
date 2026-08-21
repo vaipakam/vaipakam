@@ -562,9 +562,11 @@ role-specific tabs で各 side の options を確認できます。今は
   は 1 transaction で、新しい principal から古い loan を返済
   します。collateral は vault から出ません。
 - **Claim** — loan が settle された後、full repayment なら
-  collateral を返します。default では返すものはありません:
-  collateral は lender に渡り、廃止された手数料経路で保管されていた
-  VPFI は treasury に没収されます。
+  collateral を返します。default でも surplus が残ることがあります。
+  collateral は債務とその清算費用に必要なぶんだけが取られ、それを
+  超えて預けていた分はあなたの claim として記録されます。廃止された
+  手数料経路で保管されていた VPFI は、いずれの場合も treasury に
+  没収されます。
 
 ---
 

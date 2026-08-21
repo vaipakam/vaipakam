@@ -1101,9 +1101,11 @@ Actions permissionless disponibles à tous quel que soit le rôle :
   finaliser le refinancement échange les prêts atomiquement
   sans que le collatéral ne quitte ton vault.
 - **Réclamer en tant qu'emprunteur** — uniquement en état terminal. Rend
-  le collatéral en cas de remboursement total ; en défaut /
-  liquidation il n'y a rien à rendre, le VPFI retenu sous la voie
-  retirée étant acquis au trésor. Brûle le NFT de position
+  le collatéral en cas de remboursement total ; en défaut ou
+  liquidation il peut rester un excédent, car on ne prélève que le
+  collatéral qu'exigent la dette et le coût de sa clôture — voir la
+  section Claim Center ci-dessus. Le VPFI retenu sous la voie
+  retirée est acquis au trésor dans tous les cas. Brûle le NFT de position
   d'emprunteur.
 
 ---

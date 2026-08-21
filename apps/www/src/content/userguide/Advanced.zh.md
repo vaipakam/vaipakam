@@ -861,8 +861,9 @@ locked" 等)。
   complete refinance 会 atomically swap loans，collateral 始终不离开
   您的 vault。
 - **Claim as borrower** — 仅在 terminal state 可用。full repayment 时返还
-  collateral；default / liquidation 时没有可返还的东西，已停用费用路径下
-  托管的 VPFI 会被没收转入 treasury。会 burn borrower position NFT。
+  collateral；default / liquidation 时也可能还有 surplus，因为系统只取走偿还债务
+  和了结它所需的那部分 collateral——参见上文的 Claim Center 一节。已停用
+  费用路径下托管的 VPFI 无论哪种情况都会被没收转入 treasury。会 burn borrower position NFT。
 
 ---
 

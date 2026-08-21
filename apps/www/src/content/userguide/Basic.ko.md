@@ -535,8 +535,10 @@ side의 options를 정리합니다. 지금 사용할 수 없는 buttons는 greye
   transaction으로 새 principal에서 옛 loan을 갚습니다. collateral은
   vault를 떠나지 않습니다.
 - **Claim** — loan이 settle되면 full repayment 시 collateral을 돌려주고,
-  default 시에는 돌려줄 것이 없습니다: collateral은 lender에게 갔고,
-  폐지된 수수료 경로에서 보관되던 VPFI는 treasury로 몰수됩니다.
+  default 시에도 surplus가 남을 수 있습니다: collateral은 빚과 그것을
+  정리하는 비용에 필요한 만큼만 가져가며, 그보다 많이 맡긴 몫은 내
+  claim으로 기록됩니다. 폐지된 수수료 경로에서 보관되던 VPFI는 어느
+  경우든 treasury로 몰수됩니다.
 
 ---
 

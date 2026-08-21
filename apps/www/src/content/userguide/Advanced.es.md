@@ -1100,9 +1100,11 @@ del rol:
   refinance intercambia los préstamos atómicamente sin que el
   colateral salga de tu vault.
 - **Reclamar como prestatario** — sólo en estados terminales. Devuelve el
-  colateral en repago total; en default / liquidación no hay nada
-  que devolver, ya que el VPFI retenido bajo la vía retirada se
-  pierde en favor del tesoro. Quema el NFT de posición de
+  colateral en repago total; en default o liquidación puede quedar un
+  excedente, ya que sólo se toma el colateral que exigen la deuda y
+  el coste de cerrarla — véase la sección del Claim Center más
+  arriba. El VPFI retenido bajo la vía retirada se pierde en favor
+  del tesoro en cualquier caso. Quema el NFT de posición de
   prestatario.
 
 ---

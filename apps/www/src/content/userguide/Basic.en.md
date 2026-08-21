@@ -552,9 +552,11 @@ will be greyed out, with a small tooltip explaining why.
   protocol pays off the old loan from the new principal in one
   transaction. Collateral never leaves vault.
 - **Claim** — once the loan settles, returns your collateral on
-  full repayment. On default there is nothing to return: the
-  collateral has gone to the lender, and any VPFI held under the
-  retired fee path is forfeited to treasury.
+  full repayment. On default there may still be a
+  surplus: only enough collateral is taken to cover the debt and
+  the cost of closing it, so anything you put up beyond that is
+  recorded as yours to claim. Any VPFI held under the retired fee
+  path is forfeited to treasury either way.
 
 ---
 

@@ -573,9 +573,11 @@ available नहीं हैं वे greyed out रहेंगे, और to
   प्रोटोकॉल एक transaction में नए principal से पुराने loan
   को चुका देता है। collateral कभी vault से बाहर नहीं जाता।
 - **Claim** — loan settle होने के बाद full repayment पर आपका
-  collateral लौटाता है। Default में लौटाने को कुछ नहीं होता:
-  collateral lender के पास चला गया और बंद किए गए रास्ते में रखा
-  VPFI treasury को ज़ब्त हो जाता है।
+  collateral लौटाता है। Default में भी surplus बच सकता है:
+  collateral में से उतना ही लिया जाता है जितना कर्ज़ और उसे बंद
+  करने की लागत माँगे, उससे ज़्यादा जो आपने रखा था वह आपके claim
+  के रूप में दर्ज होता है। बंद किए गए रास्ते में रखा VPFI दोनों
+  ही स्थितियों में treasury को ज़ब्त हो जाता है।
 
 ---
 
