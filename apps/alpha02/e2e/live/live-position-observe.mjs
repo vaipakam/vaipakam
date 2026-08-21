@@ -1779,7 +1779,7 @@ async function positionLockOf(tokenId) {
  * renders in Advanced from the start — and hits the identical loading
  * interval at first render, with neither switch nor jumps present.
  */
-async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch) {
+async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
   // TEXT STABILITY IS NOT READINESS, and round 11's version of this was
   // unsound (Codex #1853 r12). Pending copy is STATIC — "still reading
   // the details a sale needs" does not change while the read is in
@@ -1789,10 +1789,12 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch) {
   // claimed to eliminate. I described that change as closing a class.
   // It closed the enumeration and left the hole.
   //
-  // There is no positive readiness signal available from outside: the
-  // card exposes no test hook (#1855), and the only DOM evidence that a
-  // row became jumpable IS the jump button. So absence is treated as
-  // conclusive ONLY at the deadline:
+  // There IS a positive readiness signal now (#1855 shipped), and it is
+  // polled below — `selfOf` reads the card's own
+  // `data-chooser-ready` / `data-chooser-jumpable`, so a card that has
+  // settled ends the wait immediately instead of paying the deadline.
+  // The arms below remain the fallback for a bundle that publishes
+  // nothing, which is why the deadline still exists at all:
   //
   //   - a jump appears                  → settled, audit it
   //   - the switch appears              → settled, click it
@@ -1807,10 +1809,12 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch) {
   // dropped this arm entirely when it removed the enumeration, so a
   // persistent failure became "settled".
   //
-  // The cost is the full deadline on a page that genuinely has no
-  // jumpable row — the common case on a chain of past-due loans. That
-  // is the price of not having a readiness hook, and #1855 is what
-  // would remove it.
+  // That cost — the full deadline on a page that genuinely has no
+  // jumpable row, which is most of a past-due chain — is what the
+  // readiness poll removes (Codex #1853 r29). Consuming the attributes
+  // only AFTER this function returned left the 45 seconds per position
+  // exactly where they were, so the hook #1855 added to delete the
+  // wait was being read too late to delete anything.
   const FAILED = /one of the details a sale needs couldn.t be loaded/i;
   // THE PENDING SENTENCE, and matching it here is sound where matching
   // it for READINESS was not (Codex #1853 r19).
@@ -1854,6 +1858,19 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch) {
     const switchThere = swOf ? (await swOf().count()) > 0 : false;
     if (jumps > 0 || switchThere) {
       return { jumps, switchThere, toolsFailed: false, timedOut: false };
+    }
+    // THE CARD'S OWN ANSWER, ASKED EVERY TICK (Codex #1853 r29). Every
+    // other arm here reasons from an absence and therefore cannot
+    // conclude before the deadline. This one is a positive statement,
+    // so the moment it is recognised the wait is over — which is the
+    // entire point of the attributes and the reason the common
+    // past-due page no longer costs 45 seconds.
+    //
+    // `unknown` deliberately does NOT end the wait: an older bundle
+    // publishes nothing, and the deadline below is still its answer.
+    const settled = missingSwitchVerdict(await selfOf?.());
+    if (settled !== 'unknown') {
+      return { jumps: 0, switchThere: false, toolsFailed: false, timedOut: false, settled };
     }
     // Same auto-wait trap as the recorder above (Codex #1853 r22):
     // this ran every iteration, and on an absent card each one blocked
@@ -2352,7 +2369,10 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
       // jumps. Round 7 fixed that wait for the post-click path only, so
       // page 2 onward could be labelled `no jumpable row` and exit 0
       // without ever auditing a row that became jumpable a second later.
-      const settled = await waitForSaleRows(card, jumpsOf, page, () => sw, late, () => watch.sample());
+      const settled = await waitForSaleRows(
+        card, jumpsOf, page, () => sw, late, () => watch.sample(),
+        () => chooserSelfVerdict(page),
+      );
       if (settled.jumps === 0) {
         if (settled.toolsFailed) {
           return {
@@ -2539,8 +2559,13 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
           // nothing to do" and "the card says it has a jumpable row
           // and is not offering the switch", which is a Basic-mode
           // regression the drive was reporting as a clean run.
-          const self = await chooserSelfVerdict(page);
-          switch (missingSwitchVerdict(self)) {
+          // The wait already asked, every tick — re-reading here would
+          // reach the same answer one poll later and would keep the
+          // deadline that reading it early exists to remove (Codex
+          // #1853 r29). `settled.settled` is absent only when the wait
+          // ended for another reason, and `missingSwitchVerdict`
+          // answers `unknown` for that, which is the pre-#1855 path.
+          switch (settled.settled ?? 'unknown') {
             case 'fail':
               return {
                 advancedOffered: false,
@@ -2570,6 +2595,16 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
                   'a read the lender card needs stopped without answering ' +
                   '(data-chooser-ready="failed"), so the missing switch is ' +
                   'unexplained rather than correct',
+              };
+            case 'blocked-malformed':
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                advancedWhy:
+                  'the lender card published data-chooser-ready="ready" without a ' +
+                  'recognised data-chooser-jumpable — the observability contract ' +
+                  'itself is broken, so the missing switch cannot be read either way',
               };
             default:
               // 'absent' — settled, and settled to no. The one case
@@ -3006,7 +3041,17 @@ for (const v of visited) {
               .map((a) => `${a.target} → ${a.reached ?? 'nowhere'}`)
               .join(', '),
         );
-      } else if (v.advancedJumps === 0 && v.advancedAnchorsOk === false) {
+      } else if (
+        // NOT WHEN THE PRODUCER ALREADY SPOKE (Codex #1853 r29). The
+        // readiness FAIL sets `advancedFailed` AND matches this
+        // inferred shape, so one defect printed twice — and a reader
+        // counting problems would have counted two. The explicit
+        // verdict wins; this arm is the inference for records that
+        // carry no verdict of their own.
+        !v.advancedFailed &&
+        v.advancedJumps === 0 &&
+        v.advancedAnchorsOk === false
+      ) {
         // The no-op switch has NO jump button at all, so the anchor
         // sentence above is not true of it — reporting it that way sent a
         // reader looking for a button that was never rendered. It states

@@ -220,15 +220,27 @@ export function excursionExplains(result, excursion) {
  *
  * @param {{ready: string|null, jumpable: string|null}|null} v
  *   the card's attributes, or null when it publishes none
- * @returns {'fail'|'blocked-pending'|'blocked-failed'|'absent'|'unknown'}
- *   `unknown` means the card said nothing and the caller keeps its own
- *   pre-#1855 verdict — an older bundle must not be reported as a
- *   product defect.
+ * ONLY AN EXPLICIT `no` BUYS THE CLEAN ABSENCE (Codex #1853 r29). The
+ * first version returned `absent` for every `jumpable` that was not
+ * `yes`, so a card publishing `ready` with the second attribute
+ * missing, misspelt or renamed — a regression in the observability
+ * contract itself — read as the honest outcome and the drive exited 0.
+ * The one verdict that ends the review cleanly is the one that has to
+ * be stated outright.
+ *
+ * @returns {'fail'|'blocked-pending'|'blocked-failed'|'blocked-malformed'|'absent'|'unknown'}
+ *   `unknown` means the card said nothing at all and the caller keeps
+ *   its own pre-#1855 verdict — an older bundle must not be reported
+ *   as a product defect. `blocked-malformed` is the opposite case: the
+ *   card IS publishing the contract and got it wrong, which is a
+ *   finding rather than a deployment gap.
  */
 export function missingSwitchVerdict(v) {
   if (!v || v.ready === null) return 'unknown';
   if (v.ready === 'pending') return 'blocked-pending';
   if (v.ready === 'failed') return 'blocked-failed';
-  if (v.ready === 'ready') return v.jumpable === 'yes' ? 'fail' : 'absent';
-  return 'unknown';
+  if (v.ready !== 'ready') return 'unknown';
+  if (v.jumpable === 'yes') return 'fail';
+  if (v.jumpable === 'no') return 'absent';
+  return 'blocked-malformed';
 }

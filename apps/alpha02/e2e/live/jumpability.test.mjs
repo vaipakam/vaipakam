@@ -337,6 +337,19 @@ describe('missingSwitchVerdict — what a missing switch means', () => {
     expect(missingSwitchVerdict({ ready: 'something-new', jumpable: 'yes' })).toBe('unknown');
   });
 
+  it('blocks a card that publishes readiness and botches jumpable', () => {
+    // The distinction from `unknown` above (Codex #1853 r29). Nothing
+    // published is a deployment gap; a `ready` with no recognised
+    // second attribute is the contract itself broken, and the first
+    // version handed that the clean `absent` — so a regression in the
+    // observability hook would have ended the review with a pass.
+    // Only an explicit `no` buys the clean answer.
+    expect(missingSwitchVerdict({ ready: 'ready', jumpable: null })).toBe('blocked-malformed');
+    expect(missingSwitchVerdict({ ready: 'ready', jumpable: '' })).toBe('blocked-malformed');
+    expect(missingSwitchVerdict({ ready: 'ready', jumpable: 'No' })).toBe('blocked-malformed');
+    expect(missingSwitchVerdict({ ready: 'ready', jumpable: 'maybe' })).toBe('blocked-malformed');
+  });
+
   it('does not read jumpable without ready', () => {
     // `jumpable` alone is a snapshot of an unsettled computation;
     // acting on it is exactly the guess these attributes replaced.
