@@ -141,13 +141,18 @@ it until it is deleted. Like the lock, it is reported rather than
 removed automatically: a temp file belonging to a run that is still
 alive looks exactly the same.
 
-**A fragment may be waiting in `unreleased/.assembled/`.** A hard kill
-between setting a fragment aside and removing it leaves it there with no
-pending copy for a re-run to pick up, so assembly reports it and stops
-short of deciding. That is deliberate — the run cannot tell whether that
-copy is the one already folded in or a newer edit — but it does mean a
-re-run alone is not always enough. Compare it against the dated file,
-then delete it or move it back up a level to assemble it.
+**A fragment may be waiting in `unreleased/.assembled/`.** Any
+interruption — an ordinary Ctrl-C, not only a hard kill — between setting
+a fragment aside and removing it leaves it there with no pending copy for
+a re-run to pick up. Cleanup does not move it back, on purpose: the
+original path may by then hold something newly saved, and restoring the
+older copy over it would destroy exactly the text this mechanism exists
+to protect.
+
+So assembly reports it and stops short of deciding: the run cannot tell
+whether that copy is the one already folded in or a newer edit. It does
+mean a re-run alone is not always enough. Compare it against the dated
+file, then delete it or move it back up a level to assemble it.
 
 **The other case is a stale lock.** Assembly holds a lock
 (`unreleased/.assemble.lock`) so two runs cannot overlap, and it is

@@ -2887,6 +2887,47 @@ check "it names the newcomer"    "$(says "$msg" '0009-new.md')"             "1"
 check "and the newcomer survives" \
   "$([ -f "$W/docs/ReleaseNotes/unreleased/0009-new.md" ] && echo kept || echo gone)" "kept"
 
+echo "T105: quarantine writability is rechecked in the final gate"
+W="$ROOT/t105"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The startup probe answers for startup. A mode change during `_persist` —
+# slow by design — left the gate passing on a directory the set-aside move
+# would be refused by, after publication (Codex #1863 r34).
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  chmod 0555 "$W/docs/ReleaseNotes/unreleased/.assembled" 2>/dev/null
+fi
+exit 0
+SHIM
+chmod +x "$W/fakebin/sync"
+if [ "$(id -u)" = "0" ]; then
+  check "skipped — root writes through mode bits (CI runs it)" "1" "1"
+else
+  msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "the run stops"          "$?"                                        "1"
+  check "nothing was published" \
+    "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
+  check "no fragment consumed"   "$(pending "$W")"                           "2"
+  check "it says why"            "$(says "$msg" 'can no longer be')"          "1"
+fi
+chmod 0755 "$W/docs/ReleaseNotes/unreleased/.assembled" 2>/dev/null || true
+
+echo "T106: a fragment held back for another day is not called a newcomer"
+W="$ROOT/t106"; build "$W"
+out="$W/docs/ReleaseNotes"
+# 0002-b belongs to 08-17 and is held back deliberately. After recovery clears
+# the last 08-16 fragment, the rescan called it something that "appeared while
+# working" and advised a re-run — wrong twice over, since re-running for 08-16
+# holds it back again (Codex #1863 r34).
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "it is not called a newcomer" "$(says "$msg" 'appeared while it was working')" "0"
+check "it is still held back"       "$(says "$msg" '0002-b.md')"                     "1"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

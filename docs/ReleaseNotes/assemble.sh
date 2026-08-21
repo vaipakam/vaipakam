@@ -49,16 +49,24 @@
 # Either way the recovery is the same: run the script again. It says
 # which fragments it found in that state rather than acting silently.
 #
-# TWO exceptions need a manual step, both after a HARD kill (SIGKILL, or
-# the machine dying), where no trap runs.
+# TWO states need a manual step.
 #
-# The first: a fragment moved into `unreleased/.assembled/` but not yet
-# removed leaves no pending copy for a re-run to pick up. It is reported
-# rather than acted on, because nothing distinguishes "already folded in"
-# from "a newer edit" — compare it against the dated file, then delete it
-# or move it back up a level.
+# The first is NOT limited to a hard kill (Codex #1863 r34). An ordinary
+# Ctrl-C landing after a fragment has been moved into
+# `unreleased/.assembled/` but before it is hashed or removed leaves it
+# there: cleanup releases the lock and removes temporary files, but it
+# does not move a fragment back. It is reported rather than acted on,
+# because nothing distinguishes "already folded in" from "a newer edit" —
+# compare it against the dated file, then delete it or move it back up a
+# level.
 #
-# The second: the lock directory is left behind.
+# Cleanup deliberately does not restore it. By then the original path may
+# hold a file somebody has just saved, and putting the older copy back
+# over it would destroy the newer text — the fault this whole mechanism
+# exists to prevent, committed by the recovery for it.
+#
+# The second needs a HARD kill (SIGKILL, or the machine dying), where no
+# trap runs at all: the lock directory is left behind.
 # Later runs then stop with "another assembly appears to be running"
 # until it is removed. Deliberate — the lock guards a step that deletes
 # files, so a stale one is reported with its `rmdir` rather than cleared
@@ -684,6 +692,10 @@ if (( ${#_stale_tmp[@]} > 0 )); then
   echo "have looked -- otherwise 'git add -A docs/ReleaseNotes/' stages one." >&2
   echo "" >&2
 fi
+
+# The pool as it stood at startup, for telling a genuinely new fragment
+# from one deliberately held back for another day.
+AT_START=("${frags[@]}")
 
 if [ "${#frags[@]}" -eq 0 ]; then
   echo "No pending fragments in $UNREL — nothing to assemble."
@@ -1802,10 +1814,16 @@ if (( ${#pending[@]} == 0 )); then
   # moved the old inode aside creates a genuinely pending fragment — left
   # untouched, correctly, but the verdict was computed before it existed
   # and announced a clear backlog with one waiting.
+  # Compared against what was there at STARTUP (Codex #1863 r34). A
+  # fragment belonging to another day is held back deliberately and was
+  # present all along — calling it something that "appeared while
+  # working" and advising a re-run is wrong twice over, since re-running
+  # for this date holds it back again.
   shopt -s nullglob
   _still=()
   for _p in "$UNREL"/*.md; do
     case "$(basename "$_p")" in README.md | _TEMPLATE.md) continue ;; esac
+    case " ${AT_START[*]} " in *" $_p "*) continue ;; esac
     _still+=("$(basename "$_p")")
   done
   if (( ${#_still[@]} > 0 )); then
@@ -2259,6 +2277,25 @@ _final_gate() {
     echo "Error: $QDIR is no longer a directory." >&2
     _refuse_reporting_consumed
   fi
+  # And still WRITABLE. The startup probe answers for startup; a mode
+  # change during `_persist` — which is slow by design — leaves the gate
+  # passing on a directory the set-aside move will be refused by, after
+  # publication (Codex #1863 r34). This is the distinction drawn last
+  # round: the gap here contains a genuinely long operation, so it is a
+  # real finding rather than the irreducible syscall window.
+  local _g_probe=""
+  if ! _g_probe="$(mktemp "$QDIR/.probe.XXXXXX" 2>/dev/null)"; then
+    echo "Error: entries can no longer be created in $QDIR." >&2
+    _refuse_reporting_consumed
+  fi
+  PROBE="$_g_probe"
+  if ! rm "$_g_probe" 2>/dev/null; then
+    rm -f "$_g_probe" 2>/dev/null || :
+    PROBE=""
+    echo "Error: entries can no longer be removed from $QDIR." >&2
+    _refuse_reporting_consumed
+  fi
+  PROBE=""
   for _f in "${frags[@]}"; do
     # The type is re-checked here as well as at the snapshot (Codex #1863
     # r32). The earlier check is one moment near the start; a writer
