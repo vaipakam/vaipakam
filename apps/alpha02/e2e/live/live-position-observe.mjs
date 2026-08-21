@@ -1777,7 +1777,7 @@ async function positionLockOf(tokenId) {
  * renders in Advanced from the start — and hits the identical loading
  * interval at first render, with neither switch nor jumps present.
  */
-async function waitForSaleRows(card, jumpsOf, page, swOf, late) {
+async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch) {
   // TEXT STABILITY IS NOT READINESS, and round 11's version of this was
   // unsound (Codex #1853 r12). Pending copy is STATIC — "still reading
   // the details a sale needs" does not change while the read is in
@@ -1831,6 +1831,23 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late) {
     // advertised as sticky has to be offered every observation, not the
     // two at the ends.
     await late?.capture();
+    // A REVERSIBLE STATUS TRANSITION LEAVES NO TRACE EITHER (Codex
+    // #1853 r24). An Active loan can enter FallbackPending after the
+    // pre-state snapshot and cure back before the post-state read: the
+    // two chain samples agree, and the DOM check cannot help because
+    // FallbackPending deliberately KEEPS the card mounted while
+    // removing every jump. The probe then sees a switch, no jumps, and
+    // nothing moved — the no-op-switch product FAIL, on a page that
+    // behaved correctly throughout.
+    //
+    // Ownership round trips were caught by watching the DOM; this one
+    // is only visible on chain, so it is sampled here — sparsely, and
+    // the limit is stated rather than papered over: this observes the
+    // status at a few points inside the window, not continuously, so a
+    // transition that opens and closes between two samples is still
+    // invisible. #1855's readiness attribute is what removes the guess
+    // entirely.
+    await watch?.();
     const jumps = await jumpsOf().count();
     const switchThere = swOf ? (await swOf().count()) > 0 : false;
     if (jumps > 0 || switchThere) {
@@ -2055,8 +2072,51 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before)
   // reads is the wrong thing to economise on here. Taken by the WRAPPER
   // and passed in (Codex #1853 r21), so the stale-owner verdict can be
   // applied to every exit rather than to the routes that surfaced it.
+
+  /**
+   * Watches for a REVERSIBLE status transition inside the probe window.
+   *
+   * The third axis on which a round trip hides (Codex #1853 r24).
+   * Ownership round trips are caught by the DOM — the card unmounts.
+   * A FallbackPending excursion is not: the card deliberately stays up
+   * to explain it, while `buildLenderExitRows` removes both jumps. So
+   * before and after agree, the card never disappears, and the honest
+   * behaviour reads as a no-op-switch FAIL.
+   *
+   * SPARSE ON PURPOSE, and the limit is stated rather than hidden: one
+   * chain read every `EVERY` poll ticks, so a transition that opens
+   * and closes between two samples is still invisible. That is a real
+   * gap and it is smaller than the one it replaces; #1855's readiness
+   * attribute removes the guess rather than narrowing it.
+   *
+   * Cheap by construction — a no-op when there is no loan to read, and
+   * it stops sampling once it has seen something, since one
+   * observation is all the verdict needs.
+   */
+  const statusWatcher = () => {
+    const EVERY = 8;
+    let tick = 0;
+    let seen = null;
+    return {
+      async sample() {
+        if (!loan || seen) return;
+        if (tick++ % EVERY !== 0) return;
+        const mid = await jumpabilitySnapshot(loan);
+        if (mid && snapshotJumpable(mid, observed) === false) {
+          seen = jumpabilityMoved(before, mid) ?? 'the position stopped being sellable mid-probe';
+        }
+      },
+      get excursion() {
+        return seen;
+      },
+    };
+  };
+
   const jumpsOf = () => card.getByRole('button', { name: /Go to this option/i });
   const cardPresent = async () => (await card.count()) > 0;
+  // ONE watcher across the whole probe, so an excursion seen before the
+  // click still explains a zero-jump result after it.
+  const watch = statusWatcher();
   // EAGER, and before any branch decides anything (Codex #1853 r18).
   // Taken here rather than per-return so no route can be the one that
   // forgets: if the card is already on the page, its shape is banked now
@@ -2162,6 +2222,17 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before)
     // the first is the more decisive (Codex #1853 r20).
     const stale = await vanishedCardVerdict(offered);
     if (stale) return stale;
+    // An excursion observed DURING the probe explains the zero jumps
+    // even though both end-samples agree (Codex #1853 r24).
+    if (watch.excursion) {
+      return {
+        advancedOffered: offered,
+        advancedJumps: null,
+        advancedBlocked: true,
+        advancedRaced: true,
+        advancedWhy: `the position was briefly unsellable during the probe: ${watch.excursion}`,
+      };
+    }
     if (snapshotJumpable(before, observed) === false) {
       return {
         advancedOffered: offered,
@@ -2206,7 +2277,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before)
       // jumps. Round 7 fixed that wait for the post-click path only, so
       // page 2 onward could be labelled `no jumpable row` and exit 0
       // without ever auditing a row that became jumpable a second later.
-      const settled = await waitForSaleRows(card, jumpsOf, page, () => sw, late);
+      const settled = await waitForSaleRows(card, jumpsOf, page, () => sw, late, () => watch.sample());
       if (settled.jumps === 0) {
         if (settled.toolsFailed) {
           return {
@@ -2406,7 +2477,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before)
     //
     // Poll for a settled state instead: either a jump exists, or the
     // sale rows have stopped saying "still reading".
-    const post = await waitForSaleRows(card, jumpsOf, page, null, late);
+    const post = await waitForSaleRows(card, jumpsOf, page, null, late, () => watch.sample());
     const jumps = post.jumps;
     if (jumps === 0) {
       if (post.toolsFailed) {
