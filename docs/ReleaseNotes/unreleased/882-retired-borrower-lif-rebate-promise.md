@@ -167,17 +167,20 @@ a discount, rather than selling it, leaves the collateral itself waiting. So the
 correction pointed most borrowers at the wrong thing while sounding more precise
 than the sentence it replaced.
 
-It took a third attempt to get right, and the second was wrong in a way the
-first had made likely: it enumerated ROUTES, so the route it had not heard of
-was simply absent. An ordinary liquidation does not always go to an exchange —
-where another position can absorb it, the protocol matches it internally and
-the borrower's residue is the collateral, not the loan's asset. Naming three
-routes left that one out; naming four would have left out the fifth.
+It took several attempts, and each wrong one was wrong in a way the first had
+made likely: it enumerated ROUTES, so the route it had not heard of was simply
+absent. An ordinary liquidation does not always go to an exchange — where
+another position can absorb it, the protocol matches it internally and the
+borrower's residue is the collateral, not the loan's asset. Naming three routes
+left that one out. Naming four left out the failed swap, which also ends in the
+collateral being handed over. And a correction that removed the enumeration
+from one side of the sentence promptly grew a fresh one on the other.
 
 So the guides no longer enumerate routes at all. They state the one thing the
 answer actually turns on: whether the collateral was SOLD or HANDED OVER. Sold
-returns the loan's own asset, handed over returns the collateral, and both ways
-of handing it over are named as examples rather than as the list.
+returns the loan's own asset, handed over returns the collateral, and the ways
+of handing it over are named as open examples rather than as a closed list —
+with no count attached, since the count is the thing that kept going stale.
 
 **And the position NFT is not proof that anything is waiting.** Where a
 liquidation left nothing over, the claim is recorded as already settled — and
