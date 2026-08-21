@@ -155,7 +155,17 @@ async function assertBundleSettings(page, origin) {
       .filter((e) => e.initiatorType === 'script' || /\.js(\?|$)/.test(e.name))
       .map((e) => e.name);
     const fromDom = Array.from(document.querySelectorAll('script[src]')).map((s) => s.src);
-    return Array.from(new Set([...fromTiming, ...fromDom])).filter((u) => u.startsWith(o));
+    // Parsed origin equality, NOT a prefix test: `https://app.example`
+    // prefixes `https://app.example-cdn.com/wallet.js`, so `startsWith`
+    // would admit a third-party script whose contents could satisfy both
+    // patterns while the app's own bundle had regressed (Codex #1857 r3).
+    return Array.from(new Set([...fromTiming, ...fromDom])).filter((u) => {
+      try {
+        return new URL(u).origin === o;
+      } catch {
+        return false;
+      }
+    });
   }, origin);
 
   if (urls.length === 0) return { ok: false, note: 'config NOT READ — no same-origin scripts observed' };
@@ -216,6 +226,11 @@ for (const url of targets) {
   });
 
   let readinessError = null;
+  // Navigation reached the right origin — a weaker precondition than
+  // full readiness, and the correct one for the config check: the
+  // SERVED BUNDLE is evidence about what shipped whether or not the app
+  // finished mounting (Codex #1857 r3).
+  let navigatedOk = false;
   try {
     // `domcontentloaded`, not `networkidle`: the connected app holds
     // long-lived connections (RPC / websocket), so networkidle never
@@ -232,6 +247,7 @@ for (const url of targets) {
     const landed = new URL(page.url()).origin;
     const asked = new URL(url).origin;
     if (landed !== asked) throw new Error(`redirected to ${landed}`);
+    navigatedOk = true;
 
     // Witness 1 — the APP rendered, not merely "#root has children".
     // alpha02 ships a static `#boot-splash` INSIDE `#root` in its
@@ -277,10 +293,11 @@ for (const url of targets) {
   // execution and configuration are different claims, and folding a
   // config failure into "not verifiably exercised" said the app never
   // ran when it demonstrably had (Codex #1857 r1). Skipped when
-  // readiness failed: scripts off a page that never mounted prove
-  // nothing about what the app would run.
+  // navigation failed or landed elsewhere: then the scripts are not
+  // this deployment's, and reading them proves nothing. A mount that
+  // times out does NOT suppress it — the bundle still shipped.
   let config = null;
-  if (readinessError === null) {
+  if (navigatedOk) {
     config = await assertBundleSettings(page, new URL(url).origin).catch((e) => ({
       ok: false,
       note: `config NOT READ — ${String(e).split('\n')[0]}`,
@@ -291,6 +308,7 @@ for (const url of targets) {
   const isUnverified = readinessError !== null;
   const configFailed = config !== null && !config.ok;
 
+  // Traffic evidence.
   if (didEmit) {
     console.log(`FAIL  ${url} — ${hits.length} telemetry request(s) on load:`);
     for (const h of hits) console.log(`        ${h}`);
@@ -300,15 +318,11 @@ for (const url of targets) {
     console.log(`FAIL  ${url} — not verifiably exercised: ${readinessError}`);
     unverified++;
   }
-  // Printed on EVERY path where it was evaluated, not only on an
-  // overall pass — otherwise configuration success vanished from the
-  // report whenever traffic happened to fail.
-  if (config) {
-    console.log(`${config.ok ? 'PASS  ' : 'FAIL  '}${url} — ${config.note}`);
-    if (!config.ok) configBad++;
-  }
-  if (!didEmit && !isUnverified && !configFailed) {
-    clean++;
+  // A traffic PASS is reported on its own terms. Suppressing it when
+  // the configuration check failed hid one kind of evidence behind the
+  // other, which is the separation this drive exists to keep (Codex
+  // #1857 r3). The origin still does not count as clean.
+  if (!didEmit && !isUnverified) {
     console.log(`PASS  ${url} — Coinbase SDK constructed and silent (cbwsdk.store present)`);
     console.log(
       wcExercised
@@ -316,6 +330,14 @@ for (const url of targets) {
         : '        WalletConnect: not exercised at load — see the config line',
     );
   }
+
+  // Configuration evidence, independent of the above.
+  if (config) {
+    console.log(`${config.ok ? 'PASS  ' : 'FAIL  '}${url} — ${config.note}`);
+    if (!config.ok) configBad++;
+  }
+
+  if (!didEmit && !isUnverified && !configFailed) clean++;
 
   await ctx.close();
 }
