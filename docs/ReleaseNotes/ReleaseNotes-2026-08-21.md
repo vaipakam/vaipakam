@@ -431,7 +431,7 @@ there is no rebate. A borrower reading the old pages would have been waiting for
 money that could never arrive — and would have had no way to discover that from
 the pages themselves.
 
-Every public page now says what actually happens, and says it in the same place
+The documentation and site copy now say what actually happens, and say it in the same place
 the old promise stood: the discount is a direct reduction, no VPFI leaves the
 vault to pay the fee, and there is nothing to claim afterwards.
 
@@ -511,7 +511,7 @@ tier 0 until a new push arrives. The cards had presented
 the push as an activation you perform once, so a reader could follow every
 instruction on the page, act on that mirror months later, and be charged the
 full fee with nothing on the page to explain it — the same shape of failure as
-the five above, except that this one arrives *after* the reader has done
+the conditions above, except that this one arrives *after* the reader has done
 everything right. Both cards now say the tier has a shelf life.
 
 **And what renews it is narrower than the first attempt at this said.** That
@@ -541,11 +541,11 @@ changed.
 
 Three times in a row, then, this note named the wrong remedy — first one that
 does nothing, then one that costs the reader, then one that costs everyone
-else. The pattern in both is the same: a
+else. The pattern in all three is the same: a
 sentence written from what the mechanism seemed to imply rather than from what
 the mechanism does.
 
-**Three times, as it turned out.** The consent round-trip is real, but the
+**And again, on what the round-trip itself costs.** The consent round-trip is real, but the
 first description of it said it costs nothing but gas, and that is not true
 either. The fee path reads the consent flag at the moment a fee is charged, so
 for as long as the consent is off — three transactions' worth of time — any
@@ -681,13 +681,16 @@ corrected by someone reading what the mechanism does.
 
 **A separate correction, and the most consequential one here.** The Claim
 Center guidance told a borrower that an HF-liquidation or a default returns
-**nothing**. That is false whenever the position was overcollateralised: only
-enough collateral is taken to cover the liquidator, the lender and the treasury,
-and the remainder is recorded as the borrower's claim and stays in their vault
-until they withdraw it. A borrower who believed the page would simply never go
+**nothing**. That is not something a page can promise either way: only enough
+collateral is taken to cover the liquidator, the lender and the treasury, and any
+remainder is recorded as the borrower's claim and stays in their vault until they
+withdraw it. Whether a remainder exists depends on what the collateral actually
+realised — the liquidator's incentive and the realised slippage come out first —
+so an overcollateralised position often leaves one and is not guaranteed to. A borrower who believed the page would simply never go
 and collect it. The guidance now tells them to check, explains that an illiquid
-default usually does take the whole basket — an outcome, not a rule — and keeps
-the one thing that is always lost, which is the rebate.
+default usually does take the whole basket — an outcome, not a rule — and states
+what happens to the retired-path rebate: forfeited outright on a default or
+liquidation, and settled on a proper close.
 
 The same passage also said the borrower position NFT is burned when the loan
 resolves. It is burned when the borrower *claims*, which is exactly the
