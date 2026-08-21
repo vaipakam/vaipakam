@@ -11,9 +11,13 @@ made and withdrawn in review when two further problems came to light.
 those days from its own record of what it was funded, and a day it is not yet
 ready to price **waits** rather than stopping the chain: a day short of funding
 waits for the funding, and the other waits end when whatever each is missing
-arrives. What remains are per-day waits, all of them materially
-different from the chain-wide stop they replaced, because a chain-wide stop had
-no way to end on its own. A day waits until everything it needs is in place, and
+arrives. What remains are per-day waits. They still hold a chain up while they
+last — days are settled oldest-first, so a day that waits blocks every later one
+for everybody on that chain — and the difference from the blanket stop they
+replaced is not that they reach less far but that each one ends: when its own
+missing piece arrives, or, for a deliberately-zeroed day, at its deadline
+whether compensation comes or not. The old stop had no ending condition at
+all. A day waits until everything it needs is in place, and
 the things it can be waiting for are given as examples rather than as a complete
 set — deliberately, because every earlier attempt to close that list was
 overtaken. A day can be waiting because its funding record has not landed,
