@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   excursionExplains,
   jumpabilityMoved,
+  missingSwitchVerdict,
   snapshotCardEligible,
   snapshotJumpable,
 } from './jumpability.mjs';
@@ -294,5 +295,51 @@ describe('excursionExplains — which results a mid-probe race accounts for', ()
     // that crashes here reports nothing at all about the page.
     expect(excursionExplains(undefined, MOVED)).toBe(true);
     expect(excursionExplains(null, null)).toBe(false);
+  });
+});
+
+describe('missingSwitchVerdict — what a missing switch means', () => {
+  it('FAILS the settled-and-jumpable contradiction', () => {
+    // The finding (Codex #1853 r28), and the reason #1855 exists: the
+    // card says the question has settled and the answer is yes, and
+    // there is no switch to act on it. That is a Basic-mode
+    // regression the card is reporting about itself, and the drive
+    // used to record it as an ordinary unavailable row and exit 0.
+    expect(missingSwitchVerdict({ ready: 'ready', jumpable: 'yes' })).toBe('fail');
+  });
+
+  it('accepts the settled-and-not-jumpable absence', () => {
+    // The one case where a missing switch is the honest outcome.
+    expect(missingSwitchVerdict({ ready: 'ready', jumpable: 'no' })).toBe('absent');
+  });
+
+  it('blocks rather than passes while the card is still deciding', () => {
+    // The ambiguity the 45-second deadline could never resolve: a
+    // pending card and a genuinely unjumpable one look identical from
+    // the DOM, and only one of them is a clean review.
+    expect(missingSwitchVerdict({ ready: 'pending', jumpable: 'no' })).toBe('blocked-pending');
+    expect(missingSwitchVerdict({ ready: 'pending', jumpable: 'yes' })).toBe('blocked-pending');
+  });
+
+  it('blocks when a read the card needs could not answer', () => {
+    // Distinct from pending: nothing further is coming, but the
+    // missing switch is unexplained rather than correct — so it must
+    // not read as a clean negative either.
+    expect(missingSwitchVerdict({ ready: 'failed', jumpable: 'no' })).toBe('blocked-failed');
+  });
+
+  it('says nothing about a bundle that publishes no attributes', () => {
+    // An older deployed bundle has no `data-chooser-ready`. Reporting
+    // that as a product defect would fail the drive on its own
+    // deployment lag, so the caller keeps its pre-#1855 verdict.
+    expect(missingSwitchVerdict(null)).toBe('unknown');
+    expect(missingSwitchVerdict({ ready: null, jumpable: null })).toBe('unknown');
+    expect(missingSwitchVerdict({ ready: 'something-new', jumpable: 'yes' })).toBe('unknown');
+  });
+
+  it('does not read jumpable without ready', () => {
+    // `jumpable` alone is a snapshot of an unsettled computation;
+    // acting on it is exactly the guess these attributes replaced.
+    expect(missingSwitchVerdict({ ready: null, jumpable: 'yes' })).toBe('unknown');
   });
 });

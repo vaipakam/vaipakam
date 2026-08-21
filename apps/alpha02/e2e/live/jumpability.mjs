@@ -200,3 +200,35 @@ export function excursionExplains(result, excursion) {
   if (result?.advancedBlocked) return false;
   return !result?.advancedJumps;
 }
+
+/**
+ * What does a MISSING SWITCH mean, given the card's own readiness?
+ *
+ * The switch's absence is ambiguous on its own — the card renders no
+ * switch while a prerequisite read is in flight AND when no row is
+ * genuinely jumpable — and the drive spent 27 review rounds inferring
+ * between those from chain snapshots and a 45-second deadline. #1855
+ * ended the guessing by having the card publish both answers; this is
+ * the rule for reading them (Codex #1853 r28).
+ *
+ * Four outcomes, and the first is the one that makes this a P1 rather
+ * than a tidy-up: a card that says the question has SETTLED and the
+ * answer is YES, with no switch on the page, is stating a
+ * contradiction about itself. That is a Basic-mode regression the card
+ * is actively reporting, and the drive used to record it as an
+ * ordinary unavailable row and exit 0.
+ *
+ * @param {{ready: string|null, jumpable: string|null}|null} v
+ *   the card's attributes, or null when it publishes none
+ * @returns {'fail'|'blocked-pending'|'blocked-failed'|'absent'|'unknown'}
+ *   `unknown` means the card said nothing and the caller keeps its own
+ *   pre-#1855 verdict — an older bundle must not be reported as a
+ *   product defect.
+ */
+export function missingSwitchVerdict(v) {
+  if (!v || v.ready === null) return 'unknown';
+  if (v.ready === 'pending') return 'blocked-pending';
+  if (v.ready === 'failed') return 'blocked-failed';
+  if (v.ready === 'ready') return v.jumpable === 'yes' ? 'fail' : 'absent';
+  return 'unknown';
+}

@@ -91,6 +91,7 @@ import {
 import {
   excursionExplains,
   jumpabilityMoved,
+  missingSwitchVerdict,
   snapshotCardEligible,
   snapshotJumpable,
 } from './jumpability.mjs';
@@ -1899,6 +1900,36 @@ function lenderCardOf(page) {
 }
 
 /**
+ * The card's OWN answer to the question this probe keeps guessing at.
+ *
+ * `LenderExitOptionsCard` publishes `data-chooser-ready` (has the
+ * jumpability question settled) and `data-chooser-jumpable` (what it
+ * settled to) — the whole point of #1855, and shipped in `5bd8077`.
+ * Until this read existed the drive inferred both from an ABSENCE:
+ * no switch on the page, so presumably no jumpable row. That inference
+ * cannot tell a still-loading card from a genuinely unjumpable one,
+ * and — the case that makes it a P1 rather than a slow path — it
+ * cannot tell either of them from a Basic-mode regression that drops
+ * the switch while the card itself says `ready` / `yes` (Codex #1853
+ * r28). That contradiction is a product defect the card is TELLING us
+ * about, and the drive was reporting it as an ordinary unavailable
+ * row and exiting 0.
+ *
+ * Returns `null` when the attributes are absent — an older bundle, or
+ * no card — so callers fall back to their previous behaviour rather
+ * than inventing a verdict from a missing element.
+ */
+async function chooserSelfVerdict(page) {
+  const card = page.locator('[data-testid="lender-exit-card"]').first();
+  if ((await card.count()) === 0) return null;
+  const [ready, jumpable] = await Promise.all([
+    card.getAttribute('data-chooser-ready').catch(() => null),
+    card.getAttribute('data-chooser-jumpable').catch(() => null),
+  ]);
+  return ready === null && jumpable === null ? null : { ready, jumpable };
+}
+
+/**
  * The card's text, or `null`, WITHOUT paying an auto-wait for absence.
  *
  * `innerText()` auto-waits: on a card that is not there it blocks for
@@ -2500,6 +2531,53 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
           // of somebody else's position.
           const stale = await vanishedCardVerdict(false);
           if (stale) return stale;
+          // ASK THE CARD instead of inferring from its silence (Codex
+          // #1853 r28). Everything above this line reasons about an
+          // ABSENCE — no switch, so presumably nothing to switch to —
+          // and #1855 shipped the attributes that end that guess.
+          // Reading them is the difference between "the review found
+          // nothing to do" and "the card says it has a jumpable row
+          // and is not offering the switch", which is a Basic-mode
+          // regression the drive was reporting as a clean run.
+          const self = await chooserSelfVerdict(page);
+          switch (missingSwitchVerdict(self)) {
+            case 'fail':
+              return {
+                advancedOffered: false,
+                advancedJumps: 0,
+                advancedAnchorsOk: false,
+                advancedFailed: true,
+                advancedWhy:
+                  'the lender card reports a settled jumpable row ' +
+                  '(data-chooser-ready="ready", data-chooser-jumpable="yes") ' +
+                  'and rendered no switch to reach it',
+              };
+            case 'blocked-pending':
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                advancedWhy:
+                  'the lender card had not settled its jumpability question ' +
+                  'by the deadline (data-chooser-ready="pending")',
+              };
+            case 'blocked-failed':
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                advancedWhy:
+                  'a read the lender card needs stopped without answering ' +
+                  '(data-chooser-ready="failed"), so the missing switch is ' +
+                  'unexplained rather than correct',
+              };
+            default:
+              // 'absent' — settled, and settled to no. The one case
+              // where a missing switch is the honest outcome.
+              // 'unknown' — the card published nothing (older bundle),
+              // so keep the pre-#1855 verdict rather than invent one.
+              break;
+          }
           return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
         }
         // It appeared while we waited: fall through to the click path.
