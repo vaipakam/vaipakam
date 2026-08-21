@@ -8,9 +8,10 @@ chain pay out of tokens held for unrelated obligations. An attempt to lift it wa
 made and withdrawn in review when two further problems came to light.
 
 **Both were subsequently solved, and the pause was lifted.** A chain now prices
-those days from its own record of what it was funded, and a day it cannot yet
-cover **waits** rather than stopping the chain: the wait ends by itself when the
-funding arrives. What remains are per-day waits, all of them materially
+those days from its own record of what it was funded, and a day it is not yet
+ready to price **waits** rather than stopping the chain: a day short of funding
+waits for the funding, and the other waits end when whatever each is missing
+arrives. What remains are per-day waits, all of them materially
 different from the chain-wide stop they replaced, because a chain-wide stop had
 no way to end on its own. A day waits until everything it needs is in place, and
 the things it can be waiting for are given as examples rather than as a complete

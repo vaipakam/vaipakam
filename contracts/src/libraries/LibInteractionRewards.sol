@@ -915,8 +915,9 @@ library LibInteractionRewards {
     ///      local recycled balance.
     ///
     ///      **B2-d4's FIRST attempt to lift this halt was WITHDRAWN because
-    ///      the two prerequisites below were unmet; #1434 P1-b met them and
-    ///      the halt is now GONE** (design record §2g; follow-up card filed
+    ///      the two prerequisites below were unmet; #1434 met them — the
+    ///      zeroed-day ladder in P2-w3, the delivered-fresh bound in P1-b —
+    ///      and the halt is now GONE** (design record §2g; follow-up card filed
     ///      off #1433 r2). The history is retained because it records what
     ///      any future change here must still satisfy. B2-d5 discharged the ONE precondition named above (the
     ///      arriving recycled share now credits the mirror's bucket as

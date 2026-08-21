@@ -131,10 +131,12 @@ So:
   is kept, unchanged) and applies without a clock — healed the same way.
   Nothing is rejected, so nothing wedges (12b's "reject → halt forever"
   horn never opens).
-- The **halt-lift ordering** makes this safe globally: `_dayPoolHalves`
-  halts every armed mirror day today (`LibInteractionRewards.sol:966`), and
-  P1-b lifts it only after P2 ships, so no armed day is priced or retired
-  anywhere before the clock machinery exists. There is no pre-V3 armed-day
+- The **halt-lift ordering** made this safe globally: `_dayPoolHalves` halted
+  every armed mirror day while it stood, and P1-b was to lift it only after P2
+  shipped, so no armed day could be priced or retired anywhere before the clock
+  machinery existed. That ordering HELD — P2-w3's ladder landed first and P1-b
+  then lifted the halt — so this is now a record of why the sequence mattered,
+  not a pending constraint. There is no pre-V3 armed-day
   damage to migrate — the gate only has to hold going forward.
 
 ### 1.2 R5 — the versioned lapse schedule (copy the tier-table pattern)

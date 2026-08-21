@@ -2330,7 +2330,7 @@ commitment-on-arrival (a RESERVATION, not a bucket debit — §2e.1).
 pinned, a mirror armed day priced nothing, with a canonical control proving the
 mirror flags were what stopped it. P1-b then delivered the slice: a mirror
 prices its own stamp, `!stamped` still waits, and the coverage this line
-anticipated — a delivered-FRESH bound and a zeroed-day repricing case — landed
-with it. d5: Ā-excluded credit
+anticipated landed across two slices: the delivered-FRESH bound with P1-b, the
+zeroed-day repricing case with P2-w3. d5: Ā-excluded credit
 advances cumulative but not the day-bucket; 3-way forfeit/expiry classify;
 no-recycle→budget→expiry→bucket Ā inflation (the geometric-inflation guard).
