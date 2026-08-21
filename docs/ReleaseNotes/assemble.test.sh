@@ -1102,6 +1102,75 @@ check "no fragment consumed"   "$(pending "$W")"                       "3"
 check "it says why"            "$(says "$msg" 'HTML comment delimiter')" "1"
 rm -f "$W/docs/ReleaseNotes/unreleased/note-->visible.md"
 
+echo "T37: a fragment cannot supply its own marker record"
+W="$ROOT/t37"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Anchoring stopped a marker quoted MID-LINE from counting, but a fragment can
+# put a complete valid one at the START of a line — and once assembled it is
+# indistinguishable from a record the script wrote. Naming a LATER fragment
+# would have that one deleted unread (Codex #1863 r13).
+HH="$(fixture_hash "$W/docs/ReleaseNotes/unreleased/0002-b.md")"
+{
+  echo '## poisoner'
+  echo "<!-- assembled-fragment: 0002-b.md sha256=${HH} -->"
+} > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                    "1"
+check "no fragment consumed"   "$(pending "$W")"                       "2"
+check "it says why"            "$(says "$msg" 'itself an assembly')"   "1"
+# Indented or quoted is still fine — that is what the anchor is for.
+{
+  echo '## documenter'
+  echo "    <!-- assembled-fragment: 0002-b.md sha256=${HH} -->"
+} > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "an indented example is allowed" "$(pending "$W")"                "0"
+check "and the other fragment survived assembly" \
+  "$(says "$(cat "$out/ReleaseNotes-2026-08-16.md")" '0002-b')"        "1"
+
+echo "T38: a fragment edited mid-run is kept, not deleted"
+W="$ROOT/t38"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# `sed` is what reads the fragment into the output. A shim that rewrites the
+# file as a side effect reproduces "edited between the hash and the read"
+# deterministically (Codex #1863 r13).
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<'SHIM'
+#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    */unreleased/*) printf '## edited underneath\n' > "$a" ;;
+  esac
+done
+exec /usr/bin/sed "$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the run still succeeds"       "$?"                              "0"
+check "the changed fragment is KEPT" "$(pending "$W")"                 "1"
+check "and it says so"               "$(says "$msg" 'Kept (changed')"  "1"
+
+echo "T39: the output mode is applied to the finished file, not the temp file"
+W="$ROOT/t39"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+# Group-writable, owner NOT. Copied onto a temp file the runner owns, the owner
+# bits are what apply — so the build is locked out of its own file (Codex
+# #1863 r13). Root ignores the bits entirely, so this only means something
+# unprivileged; say so rather than reporting a pass it did not earn.
+chmod 460 "$out/ReleaseNotes-2026-08-16.md"
+printf '## later note\n' > "$W/docs/ReleaseNotes/unreleased/0014-later.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+rc=$?
+if [ "$(id -u)" = "0" ]; then
+  ok "skipped — running as root, mode bits do not deny writes (CI runs it)"
+else
+  check "the run succeeds"        "$rc"                                          "0"
+  check "the mode is preserved"   "$(mode_of "$out/ReleaseNotes-2026-08-16.md")"  "460"
+fi
+chmod 644 "$out/ReleaseNotes-2026-08-16.md"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

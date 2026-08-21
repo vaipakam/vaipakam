@@ -48,6 +48,14 @@
 #
 # Either way the recovery is the same: run the script again. It says
 # which fragments it found in that state rather than acting silently.
+#
+# ONE exception, and it needs a manual step: a HARD kill (SIGKILL, or the
+# machine dying) leaves the lock directory behind, because no trap runs.
+# Later runs then stop with "another assembly appears to be running"
+# until it is removed. Deliberate — the lock guards a step that deletes
+# files, so a stale one is reported with its `rmdir` rather than cleared
+# on a guess about whether the other process is alive. Ordinary
+# interruption, Ctrl-C included, releases it.
 # Where it CANNOT tell — a dated file with no markers at all, from before
 # they existed or because one was edited away — it stops and asks rather
 # than guessing in either direction. `--force-append` is the override.
@@ -295,18 +303,27 @@ if [ "${#frags[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# A basename cannot be allowed to close the marker's HTML comment (Codex
-# #1863 r12). `note-->visible.md` produces
-# `<!-- assembled-fragment: note-->visible.md sha256=… -->`, which ends
-# at the name: the hash — and anything else the name carries — then
-# renders as visible text in the published notes, breaking the one
-# promise the marker makes. Refused rather than escaped, because these
-# names are ours and a legible one never contains `-->`; encoding it
-# would make the record harder to read for a case that should not exist.
+# One CHECKED basename per fragment, resolved once and reused (Codex
+# #1863 r13). Inline `$(basename "$f")` in the test below could fail
+# transiently, and its empty output would slip past the rejection while a
+# later successful call wrote the forbidden name into the marker — the
+# check and the use disagreeing about what the name even is. Resolving it
+# once removes that gap by construction, the same way FRAG_HASH does for
+# the digest.
+declare -A FRAG_NAME=()
 for f in "${frags[@]}"; do
-  case "$(basename "$f")" in
+  run_checked 0 "naming $f" basename "$f"
+  FRAG_NAME["$f"]="$CAPTURED"
+  # A basename cannot be allowed to close the marker's HTML comment
+  # (#1863 r12). `note-->visible.md` produces
+  # `<!-- assembled-fragment: note-->visible.md sha256=… -->`, which ends
+  # at the name: the hash — and anything else the name carries — then
+  # renders as visible text in the published notes, breaking the one
+  # promise the marker makes. Refused rather than escaped, because these
+  # names are ours and a legible one never contains `-->`.
+  case "${FRAG_NAME[$f]}" in
     *'-->'* | *'<!--'*)
-      echo "Error: $(basename "$f") contains an HTML comment delimiter." >&2
+      echo "Error: ${FRAG_NAME[$f]} contains an HTML comment delimiter." >&2
       echo "Refusing to assemble: the provenance marker is an HTML comment," >&2
       echo "so such a name would end it early and print the rest of the" >&2
       echo "marker as visible text in the published notes." >&2
@@ -314,6 +331,30 @@ for f in "${frags[@]}"; do
       exit 1
       ;;
   esac
+  # A fragment must not be able to WRITE THE INDEX (Codex #1863 r13).
+  # Anchoring the parser stopped a marker quoted mid-line from counting,
+  # but a fragment can put a complete, valid marker at the start of one —
+  # and once assembled it is indistinguishable from a record this script
+  # wrote. Naming a fragment from a LATER batch would make the next run
+  # delete that one unread, having never written its text anywhere.
+  # Content is untrusted input to the index, so it is refused at the door.
+  # A fragment DOCUMENTING this mechanism can still quote a marker
+  # indented or in a blockquote, which is what the anchor is for.
+  run_checked 0,1 "checking ${FRAG_NAME[$f]} for embedded marker records" \
+    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$f"
+  if [ -n "$CAPTURED" ]; then
+    echo "Error: ${FRAG_NAME[$f]} contains a line that is itself an assembly" >&2
+    echo "marker:" >&2
+    echo "" >&2
+    printf '  %s\n' "$CAPTURED" >&2
+    echo "" >&2
+    echo "Refusing to assemble: those records are what a later run trusts to" >&2
+    echo "decide a fragment is already folded in, so one supplied by a" >&2
+    echo "fragment could make a DIFFERENT fragment be deleted unread." >&2
+    echo "Indent it or quote it in a blockquote if you are documenting the" >&2
+    echo "format." >&2
+    exit 1
+  fi
 done
 
 # Deterministic order — task-id-prefixed filenames sort sensibly.
@@ -720,8 +761,13 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
   # the index silently loses that fragment's record and recovery appends
   # it again (Codex #1863 r9). These are Markdown inputs; read them as
   # text.
+  # `LC_ALL=C`: `-a` changes BINARY-file handling, not multibyte matching,
+  # so under a UTF-8 locale a basename containing an invalid byte makes
+  # GNU grep fail to match that fragment's own marker — the record is
+  # there and the index cannot see it (Codex #1863 r13). These records are
+  # bytes by construction; parse them as bytes.
   run_checked 0,1 "scanning $(basename "$dated") for assembly markers" \
-    grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$dated"
+    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$dated"
   while IFS= read -r line; do
     # `<!-- assembled-fragment: <basename> sha256=<hex> -->`, and ONLY
     # that shape. A line matching the prefix but not the full form is
@@ -913,7 +959,7 @@ if [ -f "$OUT" ]; then
   # case here — a markerless file is exactly what this branch is for.
   out_has_markers=0
   run_checked 0,1 "checking $(basename "$OUT") for assembly markers" \
-    grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$OUT"
+    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$OUT"
   [ -z "$CAPTURED" ] || out_has_markers=1
 
   suspect=()
@@ -929,19 +975,35 @@ if [ -f "$OUT" ]; then
     # Exit 1 (no heading in this fragment) is ordinary and skips it; a
     # read error is not, and would drop the fragment from this check
     # silently — a guard quietly not covering one of its inputs.
-    run_checked 0,1 "reading $(basename "$f")" grep -a -m1 '^#\{1,6\} ' "$f"
-    head_line="$CAPTURED"
-    [ -n "$head_line" ] || continue
+    # The heading is compared through a PATTERN FILE, never a variable
+    # (Codex #1863 r13). Bash strips NUL from a command substitution, so a
+    # heading containing one arrives altered — and the fixed-string search
+    # then looks for text the file does not contain, misses the duplicate
+    # it exists to catch, and the section is appended a second time. Both
+    # halves stay as bytes on disk: extract, then match with `-f`.
+    _head_file="$(mktemp)"
+    _hrc=0
+    env LC_ALL=C grep -a -m1 '^#\{1,6\} ' "$f" > "$_head_file" 2>/dev/null || _hrc=$?
+    if (( _hrc > 1 )); then
+      rm -f "$_head_file"
+      echo "Error: reading ${FRAG_NAME[$f]} failed (exit $_hrc)." >&2
+      echo "Refusing to assemble: this fragment could not be checked against" >&2
+      echo "the existing file, and skipping that check silently is how a" >&2
+      echo "duplicated section gets through." >&2
+      exit 1
+    fi
+    if [ ! -s "$_head_file" ]; then rm -f "$_head_file"; continue; fi
     # Status, not just the boolean. As an `if` condition a grep ERROR
     # (exit 2) is indistinguishable from an ordinary no-match, so a
     # transient read failure would quietly clear the duplicate check and
     # let the section be appended twice (Codex #1863 r9). `-x` via `-F`
     # with the whole line, and `-a` for the same NUL reason as above.
     run_checked 0,1 "checking $(basename "$OUT") for a repeated heading" \
-      grep -a -xF -- "$head_line" "$OUT"
+      env LC_ALL=C grep -a -xF -f "$_head_file" "$OUT"
     if [ -n "$CAPTURED" ]; then
-      suspect+=("$(basename "$f")|$head_line")
+      suspect+=("${FRAG_NAME[$f]}")
     fi
+    rm -f "$_head_file"
   done
 
   if (( ${#suspect[@]} > 0 )) && (( out_has_markers == 0 )) && (( FORCE_APPEND == 0 )); then
@@ -950,9 +1012,7 @@ if [ -f "$OUT" ]; then
     echo "written by an older version of this script whose run was interrupted, in" >&2
     echo "which case appending would duplicate it — and nothing in the file can say:" >&2
     echo "" >&2
-    for s in "${suspect[@]}"; do
-      printf '  %s\n      %s\n' "${s%%|*}" "${s#*|}" >&2
-    done
+    printf '  %s\n' "${suspect[@]}" >&2
     echo "" >&2
     echo "Read that section of $(basename "$OUT") and then either:" >&2
     echo "  - it is already there  -> delete the fragment(s) by hand" >&2
@@ -971,9 +1031,7 @@ if [ -f "$OUT" ]; then
     # the older version of that section is probably still above.
     echo "Note: $(basename "$OUT") already contains these headings; appending anyway" >&2
     echo "(their fragments are not recorded as folded in, so the text differs):" >&2
-    for s in "${suspect[@]}"; do
-      printf '  %s\n      %s\n' "${s%%|*}" "${s#*|}" >&2
-    done
+    printf '  %s\n' "${suspect[@]}" >&2
     echo "Check for a superseded copy of that section while reviewing." >&2
     echo "" >&2
   fi
@@ -995,6 +1053,13 @@ trap 'rm -f "$WORK"; _release_lock' EXIT
 # #1863 r2). Restore what an ordinary file would have had: the existing
 # file's own mode when appending, otherwise 0666 less the umask, which
 # is what a plain `>` redirect produces.
+# NOTE: the mode is only RESOLVED here; it is applied to $WORK further
+# down, immediately before the rename. Applying it now can make the temp
+# file unwritable to the very process building it — an existing output
+# with mode 0460 (group-writable, owner not) copied onto a temp file the
+# runner OWNS is evaluated by the owner bits, so the next write fails
+# (Codex #1863 r13). Resolve early so a failure aborts before anything is
+# consumed; apply late so the build is never locked out of its own file.
 if [ -f "$OUT" ]; then
   # GNU first, then BSD. If BOTH fail the mode is UNKNOWN, and falling
   # back to the new-file default would silently WIDEN an existing file —
@@ -1020,9 +1085,9 @@ if [ -f "$OUT" ]; then
     echo "deliberately restricted." >&2
     exit 1
   fi
-  chmod "$out_mode" "$WORK"
+  FINAL_MODE="$out_mode"
 else
-  chmod "$(printf '%o' "$(( 0666 & ~0$(umask) ))")" "$WORK"
+  FINAL_MODE="$(printf '%o' "$(( 0666 & ~0$(umask) ))")"
 fi
 
 if [ -f "$OUT" ]; then
@@ -1095,9 +1160,8 @@ for f in "${frags[@]}"; do
   # output is WRITTEN INTO THE FILE, not at the dozens of message-only
   # uses. A wrong word in an error message is a cosmetic fault; a wrong
   # word in the recovery record is a duplicated section.
-  run_checked 0 "naming $f for its marker" basename "$f"
   printf '%s%s sha256=%s -->\n' \
-    "$MARKER_PREFIX" "$CAPTURED" "${FRAG_HASH[$f]}" >> "$WORK"
+    "$MARKER_PREFIX" "${FRAG_NAME[$f]}" "${FRAG_HASH[$f]}" >> "$WORK"
 done
 
 # The atomic step. Until this line $OUT is untouched, so an interruption
@@ -1106,6 +1170,8 @@ done
 # handles. `mv` within one directory is a rename(2): $OUT is the old file
 # or the new one, never a half-written mixture, and never a header-only
 # stub that the next run would mistake for a real existing file.
+# Applied to the FINISHED file, so nothing above can be locked out of it.
+chmod "$FINAL_MODE" "$WORK"
 mv "$WORK" "$OUT"
 # $WORK no longer exists, so drop only its cleanup — the lock must stay
 # held until the fragments below are deleted, which is the rest of the
@@ -1118,9 +1184,40 @@ trap '_release_lock' EXIT
 # cannot be renamed as a unit. The markers written above are what make
 # that state recoverable: the next run reads them, skips those fragments
 # rather than duplicating them, and deletes them.
+# Re-hash before removing (Codex #1863 r13). A fragment can be edited
+# between the hash taken at classification and the read that built the
+# output — an editor saving during the run. Deleting it then would throw
+# away text that never reached $OUT, and the marker in $OUT would name a
+# digest the file no longer has, so a later run would not recognise it
+# either. Both halves are visible from here: if the bytes moved, the
+# fragment is KEPT and said out loud.
+#
+# What this does NOT do is make the read atomic. The output may already
+# contain the older text under the older digest; what it guarantees is
+# that nothing is deleted on the strength of a hash that has since gone
+# stale, so no writing is lost and the divergence is reported rather than
+# buried.
+_kept=()
 for f in "${frags[@]}"; do
-  rm "$f"
+  run_checked 0 "re-hashing ${FRAG_NAME[$f]} before removing it" frag_hash "$f"
+  if [ "$CAPTURED" = "${FRAG_HASH[$f]}" ]; then
+    rm "$f"
+  else
+    _kept+=("${FRAG_NAME[$f]}")
+  fi
 done
+
+if (( ${#_kept[@]} > 0 )); then
+  echo "" >&2
+  echo "Kept (changed while this run was reading them):" >&2
+  printf '  %s\n' "${_kept[@]}" >&2
+  echo "" >&2
+  echo "$(basename "$OUT") holds the version read at the start of the run, and" >&2
+  echo "its marker records THAT version — so these fragments are not" >&2
+  echo "recognised as folded in and were left in place rather than deleted." >&2
+  echo "Compare them against the assembled file and remove them by hand once" >&2
+  echo "you are satisfied nothing was lost." >&2
+fi
 
 echo "Assembled ${#frags[@]} fragment(s) -> $OUT"
 echo ""

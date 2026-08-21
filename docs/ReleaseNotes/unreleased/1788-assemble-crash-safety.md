@@ -24,7 +24,14 @@ Each folded note now leaves an invisible marker in the dated file, so a later ru
 recognises what is already there, says so by name, removes those notes, and
 appends only what genuinely remains.
 
-The recovery for both is the same and needs no judgement: run the script again.
+The recovery for both is the same: run the script again.
+
+One case needs a manual step first. Assembly holds a lock so two runs cannot
+overlap, released whenever the script exits — including on Ctrl-C. A *hard* kill,
+or the machine dying, leaves it behind, and later runs then stop until it is
+cleared. That is deliberate: the lock guards a step that deletes files, so a
+stale one is reported, with the exact command to remove it, rather than broken
+automatically on a guess about whether the other run is still alive.
 
 ### What the marker records, and why it is not the filename
 
@@ -105,6 +112,25 @@ pending notes. A note not yet tied to a particular day is eligible for whichever
 day is asked for, so two runs on different days can pick up the same one, and it
 then lands in one file while being deleted out from under the other. What two
 runs contend for is the pile, so that is what is held.
+
+### A fragment cannot write the record, and a changed one is not deleted
+
+Two smaller protections, both about trusting the wrong thing.
+
+The records are what a later run believes about what has already been filed, so
+a note is not allowed to contain one. Anchoring the reader stopped a record
+*quoted mid-sentence* from counting, but a note could still put a complete one at
+the start of a line — and once assembled, nothing distinguishes it from a record
+the script wrote. One naming a note from a later batch would have that note
+deleted unread, its text never written anywhere. Notes documenting the format can
+still quote a record indented or in a blockquote, which is what the anchoring is
+for.
+
+And a note that changes *while the run is reading it* — an editor saving at the
+wrong moment — is no longer removed. The assembled file holds the version read at
+the start, and its record describes that version, so deleting the newer one would
+throw away writing that never reached the file. Those are kept, named on screen,
+and left for a human to compare.
 
 ### Verified against the fault, not just the fix
 
