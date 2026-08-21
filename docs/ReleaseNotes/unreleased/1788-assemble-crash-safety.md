@@ -43,11 +43,18 @@ prevent. In the other direction, a note *renamed* between runs was not recognise
 at all, and its content was added a second time, which is the original bug by
 another route.
 
-The marker now records a fingerprint of the note's contents. Different text is
-never mistaken for something already filed, a rename is still recognised (and
-said out loud, since recognising a file under a name it no longer has is worth
-showing before anything is deleted), and a note that merely *mentions* another's
-filename in its prose is not mistaken for either.
+The marker now records a fingerprint of the note's contents, so different text is
+never mistaken for something already filed.
+
+A fingerprint identifies the *text*, though, not which note it came from — and
+two notes can legitimately carry the same short sentence. So identical text under
+a different filename is not assumed to be a rename: that reading would delete a
+genuinely new note and leave its day with no entry at all. The run stops instead,
+says what it matched and where, and offers both readings. Deleting on a guess is
+the one outcome worth ruling out; asking is the only answer that cannot be wrong.
+
+A note that merely *quotes* a marker in its prose — as this very note does — is
+not mistaken for a record of one, either.
 
 Every dated file is searched, not just the one being assembled. A run interrupted
 shortly before midnight and resumed after it is aimed at a different day's file,

@@ -103,10 +103,18 @@ MARKER_PREFIX='<!-- assembled-fragment: '
 # on Linux, `shasum -a 256` on macOS, and a hard error rather than a
 # silent fallback if neither exists, because a degraded identity here
 # would authorise deleting a fragment on a guess.
+#
+# Hashed from STDIN, never by passing the path (Codex #1863 r2). Both
+# tools escape a filename containing a backslash and prefix the whole
+# line with `\`, so `cut -f1` returns `\<hash>` — which is written into
+# the marker, then rejected by the strict parser below, so the fragment
+# is never recognised on recovery and its section is appended twice. The
+# one file shape that most needs the guarantee is the one that loses it.
+# Redirecting the file in removes the filename from the output entirely.
 if command -v sha256sum >/dev/null 2>&1; then
-  frag_hash() { sha256sum "$1" | cut -d' ' -f1; }
+  frag_hash() { sha256sum < "$1" | cut -d' ' -f1; }
 elif command -v shasum >/dev/null 2>&1; then
-  frag_hash() { shasum -a 256 "$1" | cut -d' ' -f1; }
+  frag_hash() { shasum -a 256 < "$1" | cut -d' ' -f1; }
 else
   echo "Error: neither sha256sum nor shasum found." >&2
   echo "" >&2
@@ -525,41 +533,82 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
     # whole line when the pattern is absent, which would enter a
     # nonsense key that no real hash can equal — harmless today, and
     # exactly the sort of thing that stops being harmless later.
-    [[ "$line" == *" sha256="*" -->" ]] || continue
-    marker_hash="${line##* sha256=}"; marker_hash="${marker_hash%% -->}"
-    marker_name="${line#"$MARKER_PREFIX"}"; marker_name="${marker_name%% sha256=*}"
-    [[ "$marker_hash" =~ ^[0-9a-f]{64}$ ]] || continue
+    #
+    # ANCHORED to the whole line, and read as a whole. An unanchored
+    # match accepted a marker-shaped string quoted inside prose — a
+    # blockquote in these very notes, say, or a fragment documenting
+    # this mechanism — and a quoted example could then authorise
+    # deleting a real fragment unread (Codex #1863 r2). The grep below
+    # is anchored for the same reason; this is the second gate, not the
+    # only one.
+    [[ "$line" =~ ^"$MARKER_PREFIX"(.+)" sha256="([0-9a-f]{64})" -->"$ ]] || continue
+    marker_name="${BASH_REMATCH[1]}"
+    marker_hash="${BASH_REMATCH[2]}"
     marked_in["$marker_hash"]="$dated"
     marked_as["$marker_hash"]="$marker_name"
-  done < <(grep -F "$MARKER_PREFIX" "$dated" 2>/dev/null || true)
+    # `$MARKER_PREFIX` interpolates into the pattern unescaped because it
+    # contains no ERE metacharacter — it is `<!-- assembled-fragment: `.
+    # If that literal ever gains one, escape it here.
+  done < <(grep -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$dated" 2>/dev/null || true)
 done
 
+# A hash identifies BYTES, not an occurrence (Codex #1863 r2). Same name
+# AND same bytes is safe to consume: whatever produced it, the identical
+# text is already in place under the identical name. A hash match under a
+# DIFFERENT name is genuinely two things at once — a fragment renamed
+# between runs, or an unrelated later fragment that happens to carry the
+# same short text — and the two want opposite handling. Deleting on the
+# assumption of a rename discards a new fragment and produces no note for
+# its day; appending on the assumption of a coincidence duplicates the
+# section. So it is not assumed either way: the run stops and says what
+# it found, which is the one response that cannot be wrong.
 already=()
 pending=()
+ambiguous=()
 for f in "${frags[@]}"; do
   h="$(frag_hash "$f")"
   if [ -n "${marked_in[$h]+set}" ]; then
-    already+=("$f")
+    if [ "${marked_as[$h]}" = "$(basename "$f")" ]; then
+      already+=("$f")
+    else
+      ambiguous+=("$f")
+    fi
   else
     pending+=("$f")
   fi
 done
 
+if (( ${#ambiguous[@]} > 0 )) && (( FORCE_APPEND == 0 )); then
+  echo "Error: these fragments have the same contents as something already" >&2
+  echo "assembled, but under a different name. That is either a rename since" >&2
+  echo "that run, or a different fragment that happens to carry the same text," >&2
+  echo "and nothing here can tell which:" >&2
+  echo "" >&2
+  for f in "${ambiguous[@]}"; do
+    h="$(frag_hash "$f")"
+    printf '  %s\n      same bytes as %s, folded into %s\n' \
+      "$(basename "$f")" "${marked_as[$h]}" "$(basename "${marked_in[$h]}")" >&2
+  done
+  echo "" >&2
+  echo "  - a rename, already folded in  -> delete the fragment(s) by hand" >&2
+  echo "  - a new note that reads alike  -> re-run with --force-append" >&2
+  exit 1
+fi
+# With --force-append the operator has said these are new. Appending is
+# then the safe reading of that instruction: it keeps the text either
+# way, where deleting would not.
+if (( ${#ambiguous[@]} > 0 )); then
+  pending+=("${ambiguous[@]}")
+fi
+
 if (( ${#already[@]} > 0 )); then
   echo "Already assembled — removing without re-appending:"
+  # Every entry here matched on BOTH name and bytes — a differing name is
+  # routed to the ambiguous branch above and never reaches this loop — so
+  # there is one line to print, not two.
   for f in "${already[@]}"; do
-    h="$(frag_hash "$f")"
-    where="$(basename "${marked_in[$h]}")"
-    was="${marked_as[$h]}"
-    if [ "$was" = "$(basename "$f")" ]; then
-      printf '  %s -> already in %s\n' "$(basename "$f")" "$where"
-    else
-      # Say so rather than acting silently: recognising a file under a
-      # name it no longer has is exactly the kind of inference an
-      # operator should get to see before it deletes something.
-      printf '  %s -> already in %s, folded in there as %s (renamed since)\n' \
-        "$(basename "$f")" "$where" "$was"
-    fi
+    printf '  %s -> already in %s\n' \
+      "$(basename "$f")" "$(basename "${marked_in[$(frag_hash "$f")]}")"
   done
   echo "  (an earlier run was interrupted after writing the file but before"
   echo "   clearing these; their content is already in place, byte for byte)"
@@ -652,6 +701,20 @@ fi
 # and stops being atomic, which is the whole point of doing it this way.
 WORK="$(mktemp "$DIR/.assemble-$DATE.XXXXXX")"
 trap 'rm -f "$WORK"' EXIT
+# `mktemp` creates 0600, and `mv` carries that mode onto $OUT — so every
+# successful assembly would quietly turn a world-readable release-notes
+# file into an owner-only one, or create the new one that way (Codex
+# #1863 r2). Restore what an ordinary file would have had: the existing
+# file's own mode when appending, otherwise 0666 less the umask, which
+# is what a plain `>` redirect produces.
+if [ -f "$OUT" ]; then
+  out_mode="$(stat -c '%a' "$OUT" 2>/dev/null || stat -f '%Lp' "$OUT" 2>/dev/null || true)"
+fi
+if [ -n "${out_mode:-}" ]; then
+  chmod "$out_mode" "$WORK"
+else
+  chmod "$(printf '%o' "$(( 0666 & ~0$(umask) ))")" "$WORK"
+fi
 
 if [ -f "$OUT" ]; then
   cat "$OUT" > "$WORK"

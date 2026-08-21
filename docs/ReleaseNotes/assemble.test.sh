@@ -454,21 +454,35 @@ check "a marker records the fragment and its hash" \
 check "the marker is an HTML comment" \
   "$(grep -c '^<!--.*-->$' "$out/ReleaseNotes-2026-08-16.md")" "1"
 
-echo "T13b: prose that merely NAMES a fragment is not mistaken for a marker"
+echo "T13b: a marker-shaped line inside PROSE is not treated as a marker"
 W="$ROOT/t13b"; build "$W"
 out="$W/docs/ReleaseNotes"
-# A fragment whose own text mentions another fragment's filename. Matching on a
-# substring rather than the whole marker line would drop 0002-b.md unassembled
-# while reporting success — a fragment silently lost, the inverse of T12.
-printf '## a\nSee 0002-b.md and <!-- assembled-fragment: 0002-b.md --> inline.\n' \
-  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+# The quoted marker must carry the REAL hash of the fragment it names —
+# otherwise it matches nothing and the case is vacuous whichever parser runs.
+# That is what makes it dangerous: a fragment documenting this mechanism would
+# quote a real marker, and an unanchored parser then reads the quotation as a
+# record and deletes the named fragment unread (Codex #1863 r2).
+MK='<!-- assembled-fragment: '
+HH="$(sha256sum < "$W/docs/ReleaseNotes/unreleased/0002-b.md" | cut -d' ' -f1)"
+{
+  echo '## a'
+  echo 'The marker for the sibling note looks like this:'
+  echo ''
+  echo "> ${MK}0002-b.md sha256=${HH} -->"
+  echo ''
+  echo 'and indented:'
+  echo ''
+  echo "    ${MK}0002-b.md sha256=${HH} -->"
+} > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 git -C "$W" add -A
 GIT_AUTHOR_DATE='2026-08-16T23:00:00Z' GIT_COMMITTER_DATE='2026-08-16T23:00:00Z' \
   git -C "$W" commit -q -m mention
 bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
 bash "$out/assemble.sh" 2026-08-17 >/dev/null 2>&1
-check "the mentioned fragment still assembles" \
+check "the quoted fragment still assembles" \
   "$(sections "$out/ReleaseNotes-2026-08-17.md")" "1"
+check "its text is present, not just deleted" \
+  "$(says "$(cat "$out/ReleaseNotes-2026-08-17.md")" '0002-b')" "1"
 check "nothing left pending"                    "$(pending "$W")" "0"
 
 # ── Marker identity must be the CONTENT, not the name (Codex #1863 r1) ───────
@@ -507,7 +521,7 @@ check "the reused name's content is kept" \
   "$(says "$(cat "$out/ReleaseNotes-2026-08-16.md")" 'Different text under a reused')" "1"
 check "both sections present"    "$(sections "$out/ReleaseNotes-2026-08-16.md")" "2"
 
-echo "T15: a fragment RENAMED between runs is recognised, not re-appended"
+echo "T15: a fragment RENAMED between runs stops the run rather than being guessed at"
 W="$ROOT/t15"; build "$W"
 out="$W/docs/ReleaseNotes"
 bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
@@ -515,10 +529,16 @@ git -C "$W" checkout -- docs/ReleaseNotes/unreleased/0001-a.md
 mv "$W/docs/ReleaseNotes/unreleased/0001-a.md" \
    "$W/docs/ReleaseNotes/unreleased/0001-a-retitled.md"
 msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
-check "not duplicated under the new name" \
-  "$(sections "$out/ReleaseNotes-2026-08-16.md")" "1"
-check "the renamed fragment is cleared" "$(pending "$W")"                "1"
-check "and the rename is stated"        "$(says "$msg" 'renamed since')" "1"
+# Deliberately NOT auto-consumed (Codex #1863 r2). Same bytes under a different
+# name is a rename OR an unrelated fragment carrying the same text, and the two
+# want opposite handling — delete, or append. Stopping is the only response
+# that cannot be wrong; what matters is that it never duplicates and never
+# deletes on a guess.
+check "the run stops"                   "$?"                              "1"
+check "not duplicated"                  "$(sections "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "the fragment is NOT deleted"     "$(pending "$W")"                 "2"
+check "it names what it matched"        "$(says "$msg" 'same bytes as')"  "1"
+check "and offers the rename reading"   "$(says "$msg" 'delete the fragment(s) by hand')" "1"
 
 echo "T16: a marker in ANOTHER dated file still counts (the midnight case)"
 W="$ROOT/t16"; build "$W"
@@ -567,6 +587,60 @@ check "it names the override"        "$(says "$msg" '--force-append')" "1"
 msg="$(bash "$out/assemble.sh" 2026-08-16 --force-append 2>&1)"
 check "the override appends"         "$?"                             "0"
 check "and consumes the fragment"    "$(pending "$W")"                "1"
+
+echo "T19: a filename containing a backslash still hashes correctly"
+W="$ROOT/t19"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0001-a.md" "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# `sha256sum FILE` escapes such a name and prefixes the line with a backslash,
+# so a path-based hash yields `\<hash>` and the marker is written unparseable —
+# the fragment is then never recognised on recovery. Hashing stdin avoids it.
+BS_FRAG="$W/docs/ReleaseNotes/unreleased/0004-we\\ird.md"
+printf '## backslash note\n' > "$BS_FRAG"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "a well-formed marker is written" \
+  "$(grep -cE '^<!-- assembled-fragment: .+ sha256=[0-9a-f]{64} -->$' \
+      "$out/ReleaseNotes-2026-08-16.md")" "1"
+# And the recovery it exists for actually works for this file.
+printf '## backslash note\n' > "$BS_FRAG"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "it is recognised, not duplicated" \
+  "$(sections "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "and cleared"  "$(pending "$W")" "0"
+
+echo "T20: identical bytes under a different name are not assumed to be a rename"
+W="$ROOT/t20"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0001-a.md" "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Fixed a typo.\n' > "$W/docs/ReleaseNotes/unreleased/0005-first.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+# A DIFFERENT, later fragment that happens to carry the same short text. A
+# content hash identifies bytes, not an occurrence, so treating this as the
+# earlier one renamed would delete it and produce no note for its day.
+printf '## Fixed a typo.\n' > "$W/docs/ReleaseNotes/unreleased/0006-second.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run stops"               "$?"                              "1"
+check "the fragment is NOT deleted" "$(pending "$W")"                 "1"
+check "it explains both readings"   "$(says "$msg" 'same bytes as')"  "1"
+check "and names the override"      "$(says "$msg" '--force-append')" "1"
+bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates --force-append >/dev/null 2>&1
+check "the override appends it"     "$(sections "$out/ReleaseNotes-2026-08-17.md")" "1"
+check "and consumes it"             "$(pending "$W")"                 "0"
+
+echo "T21: the assembled file stays readable, not owner-only"
+W="$ROOT/t21"; build "$W"
+out="$W/docs/ReleaseNotes"
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+# mktemp creates 0600 and mv carries the mode across, so a new dated file would
+# be owner-only and an existing one would be silently narrowed.
+check "a new file is group/world readable" \
+  "$(mode_of "$out/ReleaseNotes-2026-08-16.md")" "644"
+chmod 640 "$out/ReleaseNotes-2026-08-16.md"
+printf '## later note\n' > "$W/docs/ReleaseNotes/unreleased/0007-later.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "an existing file keeps its own mode" \
+  "$(mode_of "$out/ReleaseNotes-2026-08-16.md")" "640"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
