@@ -97,9 +97,19 @@ success. The lock only keeps two assemblies apart; it does not know
 about an editor. The file's identity is re-checked immediately before
 the rename, and a change refuses the whole run with nothing consumed.
 Re-run once the other change has settled and it is built on top. A
-change to its *permissions* refuses the run for the same reason — the
-mode is worked out before the build, so replacing the file would put the
-older, wider one back.
+change to its *permissions or ownership* refuses the run for the same
+reason — replacing the file installs a new one carrying what the run
+worked out earlier, so it would quietly put the older, wider settings
+back. The same check runs before fragments are removed on the
+already-assembled path, which can otherwise finish without ever
+reaching it.
+
+**Each fragment is copied once, and the run reads only the copy.** So a
+fragment edited while assembly is in progress cannot make the different
+stages disagree about what it said, and what lands in the dated file is
+always the version read at the start. The edited one is then set aside
+rather than deleted (as `.assembled.<name>`) and named on screen, so the
+newer text is never the thing that gets thrown away.
 
 **A hard kill can also leave a temp file behind** — a
 `.assemble-<date>.XXXXXX` in `docs/ReleaseNotes/`, which is a partly- or

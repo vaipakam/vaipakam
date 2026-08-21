@@ -158,6 +158,63 @@ read_mode() {  # read_mode <path>
   return 0
 }
 
+# ── The one invariant this script keeps ──────────────────────────────────────
+# Three rounds of review in a row (r17, r18, r19) found the same abstract
+# fault in three different places: evidence read at one moment
+# authorising an irreversible act at a later one. Mode, then ownership,
+# then marker records. Patching the third instance would have invited a
+# fourth, so the rule is stated once and enforced the same way
+# everywhere:
+#
+#   NOTHING IRREVERSIBLE HAPPENS WITHOUT REVALIDATING THE EVIDENCE IT
+#   RESTS ON, AGAINST BYTES THAT CANNOT HAVE CHANGED UNDER THE RUN.
+#
+# This script does exactly three irreversible things — replace the dated
+# file, delete a fragment recognised as already folded in, and delete a
+# fragment it has just folded in — and each is now preceded by that
+# check. Fragment evidence is made immutable a second way, by copying
+# each fragment once and reading only the copy (see FRAG_SNAP below), so
+# validation, hashing and assembly cannot disagree about what a fragment
+# said.
+#
+# ── A file's full identity ───────────────────────────────────────────────────
+# Content plus the metadata a replacement would carry over. The rename
+# installs a NEW inode owned by whoever ran the script and wearing the
+# mode this run resolved, so a concurrent `chmod` or `chown` is undone by
+# it — silently, and in the widening direction, which is the direction
+# that matters (Codex #1863 r18, r19). Content-only revalidation cannot
+# see either, because nothing about the content changed.
+# IDENTITY_FAIL names the part that failed, so the caller's message can
+# say which — "could not read it" is three different faults, and the one
+# that matters most (the mode) is the one that silently widens a
+# restricted file if it is ever guessed at.
+file_identity() {  # file_identity <path>; sets IDENTITY, non-zero on failure
+  local rc=0 _own
+  IDENTITY_FAIL=""
+  if ! read_mode "$1"; then
+    IDENTITY_FAIL="reading its current mode"
+    return 1
+  fi
+  # GNU first, then BSD, same shape as read_mode and for the same reason.
+  _own="$(stat -c '%u:%g' "$1" 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    rc=0
+    _own="$(stat -f '%u:%g' "$1" 2>/dev/null)" || rc=$?
+  fi
+  if (( rc != 0 )) || [[ ! "$_own" =~ ^[0-9]+:[0-9]+$ ]]; then
+    IDENTITY_FAIL="reading its owner"
+    return 1
+  fi
+  rc=0
+  IDENTITY="$(frag_hash "$1")" || rc=$?
+  if (( rc != 0 )) || [[ ! "$IDENTITY" =~ ^[0-9a-f]{64}$ ]]; then
+    IDENTITY_FAIL="reading its contents"
+    return 1
+  fi
+  IDENTITY="$IDENTITY mode=$MODE_READ owner=$_own"
+  return 0
+}
+
 # ── Running a command whose failure must not be silent ───────────────────────
 # Four separate findings on #1863 (r6, r7, r8, and one found by auditing
 # for the same shape) were ONE defect written four times:
@@ -308,12 +365,14 @@ LOCK="$UNREL/.assemble.lock"
 # this process created.
 LOCK_HELD=0
 WORK=""
+SNAP=""
 # ONE cleanup for every exit path. Separate traps drifted apart once
 # already: the EXIT trap was later replaced with one that also removed
 # the temp file, which left the signal traps still cleaning only the
 # lock. A single function cannot fall out of step with itself.
 _cleanup() {
   [ -n "$WORK" ] && rm -f "$WORK"
+  [ -n "$SNAP" ] && rm -rf "$SNAP"
   (( LOCK_HELD )) && rmdir "$LOCK" 2>/dev/null
   return 0
 }
@@ -392,10 +451,11 @@ if (( ${#_stale_tmp[@]} > 0 )); then
   echo "Left behind by an interrupted run, still in $DIR:" >&2
   printf '  %s\n' "${_stale_tmp[@]}" >&2
   echo "" >&2
-  echo "Each is a partly- or fully-built copy of a dated file that was never" >&2
-  echo "renamed into place. Nothing here depends on them and no dated file is" >&2
-  echo "missing anything because of them. Delete them once you have looked --" >&2
-  echo "otherwise 'git add -A docs/ReleaseNotes/' will stage one." >&2
+  echo "Each is scratch work from an assembly that was killed outright: a" >&2
+  echo "dated file built but never renamed into place, or a directory of" >&2
+  echo "working copies of the fragments. Nothing here depends on them and no" >&2
+  echo "dated file is missing anything because of them. Delete them once you" >&2
+  echo "have looked -- otherwise 'git add -A docs/ReleaseNotes/' stages one." >&2
   echo "" >&2
 fi
 
@@ -411,10 +471,41 @@ fi
 # check and the use disagreeing about what the name even is. Resolving it
 # once removes that gap by construction, the same way FRAG_HASH does for
 # the digest.
+# Each fragment is copied ONCE, and every later read is of the copy
+# (Codex #1863 r19). The run otherwise reads a fragment four times — to
+# reject an embedded marker record, to hash it, to assemble it, to check
+# the last byte — and a fragment edited between any two of those reads
+# makes them disagree about what it said. The gate that refuses a
+# fragment carrying its own marker record was the one that mattered:
+# pass it, then gain such a line before the hash is taken, and the
+# injected record is hashed, assembled and trusted as though this script
+# had written it — which can have a DIFFERENT fragment deleted unread.
+#
+# Validating harder cannot fix that, because the flaw is not in the
+# validation; it is that the bytes validated and the bytes used were
+# read at two different moments. Copying first removes the gap by
+# construction, and no ordering of checks can.
+#
+# The ORIGINAL is still what gets re-hashed before deletion — that
+# comparison is the point, and it is what keeps a fragment edited during
+# the run from being thrown away.
+SNAP="$(mktemp -d "$DIR/.assemble-snap-$DATE.XXXXXX")"
+declare -A FRAG_SNAP=()
+_n=0
 declare -A FRAG_NAME=()
 for f in "${frags[@]}"; do
   run_checked 0 "naming $f" basename "$f"
   FRAG_NAME["$f"]="$CAPTURED"
+  # Numbered, not named: a fragment basename can contain anything the
+  # filesystem allows, and the copy's path is this script's own business.
+  _n=$(( _n + 1 ))
+  # Through run_checked like every other command whose failure matters:
+  # without the copy, the checks below and the text actually folded in
+  # could describe different versions of the fragment, which is the whole
+  # point of taking one.
+  run_checked 0 "taking a working copy of ${FRAG_NAME[$f]}" \
+    cp "$f" "$SNAP/$_n"
+  FRAG_SNAP["$f"]="$SNAP/$_n"
   # A basename cannot be allowed to close the marker's HTML comment
   # (#1863 r12). `note-->visible.md` produces
   # `<!-- assembled-fragment: note-->visible.md sha256=… -->`, which ends
@@ -460,7 +551,7 @@ for f in "${frags[@]}"; do
   # A fragment DOCUMENTING this mechanism can still quote a marker
   # indented or in a blockquote, which is what the anchor is for.
   run_checked 0,1 "checking ${FRAG_NAME[$f]} for embedded marker records" \
-    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$f"
+    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "${FRAG_SNAP[$f]}"
   if [ -n "$CAPTURED" ]; then
     echo "Error: ${FRAG_NAME[$f]} contains a line that is itself an assembly" >&2
     echo "marker:" >&2
@@ -843,6 +934,80 @@ fi
 # `marker_seen` answers "is this exact fragment recorded in this exact
 # file"; `marker_where` accumulates every place a given hash appears, for
 # the message when the answer is no.
+# The output's identity is captured HERE, immediately before the scan
+# that reads its records, and re-checked before each irreversible act
+# that trusts them (Codex #1863 r19). One baseline, taken once, so the
+# marker evidence, the copy made later, and the file finally replaced are
+# all provably the same file.
+#
+# Scope is $OUT alone, deliberately. Records found in OTHER dated files
+# feed the `ambiguous` branch, which refuses or appends — it never
+# deletes — so a change there cannot cost anyone a fragment. It is the
+# records in the file being assembled that authorise removal.
+#
+# An empty string means "was absent", which no real identity collides
+# with.
+OUT_ID=""
+if [ -f "$OUT" ]; then
+  if ! file_identity "$OUT"; then
+    echo "Error: $(basename "$OUT") -- $IDENTITY_FAIL failed." >&2
+    echo "Refusing to assemble: every later decision about deleting a" >&2
+    echo "fragment rests on knowing this file has not changed underneath," >&2
+    echo "and replacing it would have to guess a mode -- guessing wider" >&2
+    echo "than it was would expose content that was deliberately" >&2
+    echo "restricted." >&2
+    exit 1
+  fi
+  OUT_ID="$IDENTITY"
+  # The mode the replacement must wear, taken from the SAME read as the
+  # baseline. Resolved separately it was a second `stat` at a second
+  # moment, which is one more chance for the two to disagree about the
+  # same file — the shape of fault this whole section exists to remove.
+  OUT_MODE="$MODE_READ"
+fi
+
+# Re-read that identity and refuse if it moved. Called before anything
+# irreversible; the message names the act being refused, since "the file
+# changed" means something different at each of them.
+assert_output_unchanged() {  # assert_output_unchanged <what-was-about-to-happen>
+  local now=""
+  if [ -e "$OUT" ] && [ ! -f "$OUT" ]; then now="__not-a-regular-file__"
+  elif [ -L "$OUT" ]; then now="__symlink__"
+  elif [ -f "$OUT" ]; then
+    if ! file_identity "$OUT"; then
+      echo "Error: $(basename "$OUT") -- $IDENTITY_FAIL failed." >&2
+      echo "Nothing has been consumed; every fragment is still pending." >&2
+      exit 1
+    fi
+    now="$IDENTITY"
+  fi
+  [ "$now" = "$OUT_ID" ] && return 0
+  echo "Error: $(basename "$OUT") changed while this run was working." >&2
+  echo "" >&2
+  if [ -z "$OUT_ID" ]; then
+    echo "It did not exist when this run started and does now, so something" >&2
+    echo "else created it." >&2
+  elif [ -z "$now" ]; then
+    echo "It existed when this run started and does not now, so something" >&2
+    echo "else removed it." >&2
+  elif [ "$now" = "__symlink__" ] || [ "$now" = "__not-a-regular-file__" ]; then
+    echo "It is no longer a regular file, so it changed shape rather than" >&2
+    echo "content — and replacing it would not put the notes where they" >&2
+    echo "belong." >&2
+  elif [ "${now%% *}" != "${OUT_ID%% *}" ]; then
+    echo "Its contents differ from the copy this run is working from, so" >&2
+    echo "$1 would discard whatever was written in between." >&2
+  else
+    echo "Its permissions or ownership changed (${OUT_ID#* } -> ${now#* })." >&2
+    echo "Replacing it now would put the older ones back, undoing that" >&2
+    echo "silently — and possibly widening a file someone just restricted." >&2
+  fi
+  echo "" >&2
+  echo "Nothing has been consumed and no fragment has been touched. Re-run" >&2
+  echo "once the other change has settled." >&2
+  exit 1
+}
+
 declare -A marker_seen=()
 declare -A marker_where=()
 shopt -s nullglob
@@ -963,7 +1128,7 @@ for f in "${frags[@]}"; do
   # marker, so the fragment would be appended again. `|| true` was there
   # to stop `set -e` pre-empting the message; `|| _hrc=$?` does that and
   # keeps the status.
-  run_checked 0 "hashing $(basename "$f")" frag_hash "$f"
+  run_checked 0 "hashing ${FRAG_NAME[$f]}" frag_hash "${FRAG_SNAP[$f]}"
   _h="$CAPTURED"
   # Status AND shape, because they catch different faults: a tool that
   # exits non-zero while printing a plausible 64-hex value, and one that
@@ -1023,6 +1188,13 @@ if (( ${#ambiguous[@]} > 0 )); then
 fi
 
 if (( ${#already[@]} > 0 )); then
+  # The records that authorise these deletions were read from $OUT some
+  # time ago; the deletions happen now (Codex #1863 r19). If the file
+  # changed in between, the evidence may describe text it no longer
+  # holds — and when EVERY fragment takes this path the run exits below
+  # without ever reaching the check before the rename, so this is the
+  # only place that can catch it.
+  assert_output_unchanged "removing the fragments already folded into it"
   echo "Already assembled into $(basename "$OUT") — removing without re-appending:"
   # Every entry here matched on name, bytes AND file — anything else is
   # routed to the ambiguous branch above and never reaches this loop — so
@@ -1033,9 +1205,31 @@ if (( ${#already[@]} > 0 )); then
   echo "  (an earlier run was interrupted after writing the file but before"
   echo "   clearing these; their content is already in place, byte for byte)"
   echo ""
+  # The fragment is re-hashed before it goes, exactly as the consumption
+  # loop at the end does. Found by auditing this path for the class the
+  # review had just flagged twice, rather than by a review round: this
+  # loop deleted outright, so a fragment EDITED since the snapshot was
+  # thrown away while the dated file held only the older text — which is
+  # the fault that path already refuses to commit, sitting unguarded a
+  # few lines away.
+  _changed=()
   for f in "${already[@]}"; do
+    _rc=0
+    _now="$(frag_hash "$f")" || _rc=$?
+    if (( _rc != 0 )) || [ "$_now" != "${FRAG_HASH[$f]}" ]; then
+      _changed+=("${FRAG_NAME[$f]}")
+      continue
+    fi
     rm "$f"
   done
+  if (( ${#_changed[@]} > 0 )); then
+    echo ""
+    echo "Kept (changed since this run read them, or unreadable now):" >&2
+    printf '  %s\n' "${_changed[@]}" >&2
+    echo "The version already in $(basename "$OUT") is the older one, so these" >&2
+    echo "are left for you to compare rather than deleted." >&2
+    echo ""
+  fi
 fi
 
 if (( ${#pending[@]} == 0 )); then
@@ -1247,46 +1441,30 @@ if [ -f "$OUT" ]; then
   # cannot tell a real answer from a failed one that happens to look
   # like one.
   #
-  # Extracted into `read_mode` because the mode is now read TWICE — here
-  # and again just before the rename (Codex #1863 r18). Two copies of a
-  # portability chain this fiddly drift; one copy cannot.
-  if read_mode "$OUT"; then
-    FINAL_MODE="$MODE_READ"
-  else
-    echo "Error: could not read the current mode of $(basename "$OUT")." >&2
-    echo "Refusing to assemble: replacing it would have to guess a mode, and" >&2
-    echo "guessing wider than it was would expose content that was" >&2
-    echo "deliberately restricted." >&2
-    exit 1
-  fi
+  # Taken from the identity captured before the marker scan rather than
+  # read again here (Codex #1863 r18, r19). `read_mode` is where the
+  # portability chain lives; this is just the value it produced, carried
+  # forward so the mode applied to the replacement and the mode the final
+  # check compares against came from one read of one file.
+  FINAL_MODE="$OUT_MODE"
 else
   FINAL_MODE="$(printf '%o' "$(( 0666 & ~0$(umask) ))")"
 fi
 
-# The output's identity is recorded HERE and re-checked immediately
-# before the rename (Codex #1863 r17). Everything below builds on a
-# SNAPSHOT of $OUT taken by the `cat`, and the rename then installs that
-# snapshot plus the new sections — so any edit landing in between is
-# overwritten and gone, while the run deletes the fragments and reports
-# success. The pool lock does not help: it excludes other assembler
-# runs, not a person with the file open in an editor, or a script
-# appending to it.
+# Everything below builds on this COPY of $OUT, and the rename installs
+# the copy plus the new sections — so an edit landing in between would be
+# overwritten and gone, while the run deleted the fragments and reported
+# success (Codex #1863 r17). The pool lock does not help: it excludes
+# other assembler runs, not a person with the file open in an editor.
 #
-# This is the protection the fragments already had, applied to the file
-# they are folded into. Not applying it there was an inconsistency in
-# this script's own design rather than a considered asymmetry — a
-# fragment changing under the run is kept and reported, while the dated
-# file changing under the run was silently discarded, and the dated file
-# is the published one.
-#
-# An empty string means "was absent", which no real digest can collide
-# with.
+# What makes that safe is the baseline recorded before the marker scan
+# and the `assert_output_unchanged` call below, not anything here. This
+# is the protection the fragments already had, applied to the file they
+# are folded into — an inconsistency in this script's own design rather
+# than a considered asymmetry, since the dated file is the published one.
 if [ -f "$OUT" ]; then
-  run_checked 0 "reading $(basename "$OUT")" frag_hash "$OUT"
-  OUT_HASH_AT_SNAPSHOT="$CAPTURED"
   cat "$OUT" > "$WORK"
 else
-  OUT_HASH_AT_SNAPSHOT=""
   printf '# Release Notes — %s\n' "$DATE" > "$WORK"
 fi
 
@@ -1309,7 +1487,7 @@ for f in "${frags[@]}"; do
   sed -E '
     s|\]\(\.\./\.\./|](\.\./|g
     s|\]\(\./|](\.\./|g
-  ' "$f" >> "$WORK"
+  ' "${FRAG_SNAP[$f]}" >> "$WORK"
   # Ensure a trailing newline between fragments.
   #
   # `tail`'s status is captured, not discarded (Codex #1863 r8). On
@@ -1327,7 +1505,7 @@ for f in "${frags[@]}"; do
   # the NUL instead of at the start of a line, where the anchored scan
   # can never find it again. `pipefail` is set, so a failing `tail` still
   # propagates through the pipe into run_checked.
-  run_checked 0 "reading the last byte of $(basename "$f")" last_byte_code "$f"
+  run_checked 0 "reading the last byte of ${FRAG_NAME[$f]}" last_byte_code "${FRAG_SNAP[$f]}"
   # 10 is LF. Anything else — including an empty fragment, which yields
   # no byte at all — needs a separator before the marker.
   [ "$CAPTURED" = "10" ] || printf '\n' >> "$WORK"
@@ -1391,85 +1569,15 @@ _persist() { sync "$@" 2>/dev/null || sync 2>/dev/null || true; }
 _persist "$WORK"
 
 # ── Last look at the output before replacing it ──────────────────────────────
-# The shape guards ran at startup and the content was snapshotted after
-# them; both are re-checked here, because both describe $OUT as it was
-# some time ago and the rename acts on $OUT as it is now (Codex #1863
-# r17). Nothing has been consumed yet, so this can still refuse and cost
-# nothing: the temp file is removed by the trap, every fragment is still
-# pending, and a re-run picks up the edit.
+# One call, against the baseline taken before the marker scan. Content,
+# shape, mode and ownership are all one question here: "is this still the
+# file this run was working from?" (Codex #1863 r17, r18, r19 — three
+# rounds of the same fault, answered once.)
 #
-# The shape re-checks are not decoration. `-f` follows symlinks, so a
-# path that BECAME a link since startup would still hash as a regular
-# file here and the rename would replace the link, leaving the target
-# untouched with every fragment consumed — the exact failure the startup
-# guard exists to stop, arriving through the window this check closes.
-if [ -e "$OUT" ] && [ ! -f "$OUT" ]; then
-  echo "Error: $(basename "$OUT") is no longer a regular file." >&2
-  echo "It changed shape while this run was building its replacement." >&2
-  echo "Nothing has been consumed; every fragment is still pending." >&2
-  exit 1
-fi
-if [ -L "$OUT" ]; then
-  echo "Error: $(basename "$OUT") has become a symbolic link." >&2
-  echo "It changed shape while this run was building its replacement." >&2
-  echo "Nothing has been consumed; every fragment is still pending." >&2
-  exit 1
-fi
-_out_now=""
-if [ -f "$OUT" ]; then
-  run_checked 0 "re-reading $(basename "$OUT")" frag_hash "$OUT"
-  _out_now="$CAPTURED"
-fi
-if [ "$_out_now" != "$OUT_HASH_AT_SNAPSHOT" ]; then
-  echo "Error: $(basename "$OUT") changed while this run was building its" >&2
-  echo "replacement." >&2
-  echo "" >&2
-  if [ -z "$OUT_HASH_AT_SNAPSHOT" ]; then
-    echo "It did not exist when this run started and does now, so something" >&2
-    echo "else created it." >&2
-  elif [ -z "$_out_now" ]; then
-    echo "It existed when this run started and does not now, so something" >&2
-    echo "else removed it." >&2
-  else
-    echo "This run holds a copy of the earlier version, so renaming over it" >&2
-    echo "would discard whatever was added in between." >&2
-  fi
-  echo "" >&2
-  echo "Nothing has been consumed and no fragment has been touched. Re-run" >&2
-  echo "once the other change has settled and it will be built on top." >&2
-  exit 1
-fi
-
-# The MODE is re-checked too, and it is a separate question from the
-# content (Codex #1863 r18). `FINAL_MODE` was resolved before the build
-# and is applied to the temp file, so a `chmod 600` landing on $OUT
-# meanwhile is undone by the rename — the replacement arrives wearing the
-# older, wider mode, and the fragments are consumed on a run that reports
-# success. That is the exact fault the mode-preservation code exists to
-# prevent, reached through timing instead of a missing read: content is
-# unchanged, so nothing above notices.
-#
-# Refusing rather than re-deriving, to match the check above it. A
-# permission change arriving mid-run is somebody acting on this file
-# deliberately, and re-running picks up the new mode as the baseline.
-if [ -n "$OUT_HASH_AT_SNAPSHOT" ]; then
-  if ! read_mode "$OUT"; then
-    echo "Error: could not re-read the mode of $(basename "$OUT")." >&2
-    echo "Nothing has been consumed; every fragment is still pending." >&2
-    exit 1
-  fi
-  if [ "$MODE_READ" != "$FINAL_MODE" ]; then
-    echo "Error: the permissions on $(basename "$OUT") changed while this run" >&2
-    echo "was building its replacement ($FINAL_MODE -> $MODE_READ)." >&2
-    echo "" >&2
-    echo "Replacing it now would put the older mode back, undoing that change" >&2
-    echo "silently — and widening a file someone had just restricted." >&2
-    echo "" >&2
-    echo "Nothing has been consumed and no fragment has been touched. Re-run" >&2
-    echo "to assemble with the new permissions." >&2
-    exit 1
-  fi
-fi
+# Nothing has been consumed yet, so refusing costs nothing: the temp file
+# goes with the trap, every fragment is still pending, and a re-run
+# builds on whatever landed.
+assert_output_unchanged "replacing it"
 
 # What remains between the last check and the rename is a handful of
 # syscalls, which is as narrow as this gets without holding a lock on

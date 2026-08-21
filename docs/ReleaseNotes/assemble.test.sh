@@ -1155,14 +1155,16 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # file as a side effect reproduces "edited between the hash and the read"
 # deterministically (Codex #1863 r13).
 mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<'SHIM'
+cat > "$W/fakebin/sed" <<SHIM
 #!/bin/sh
-for a in "$@"; do
-  case "$a" in
-    */unreleased/*) printf '## edited underneath\n' > "$a" ;;
-  esac
-done
-exec /usr/bin/sed "$@"
+# Writes the ORIGINAL fragment, not whatever path sed was handed. Since the
+# run now assembles from a working COPY taken up front, a shim keyed on
+# sed's argument never touches a fragment at all and the case silently
+# stops testing anything (found when the copy landed). What is under test
+# is a fragment changing after the run has read it and before it is
+# removed, so the shim edits the fragment where it actually lives.
+printf '## edited underneath\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+exec /usr/bin/sed "\$@"
 SHIM
 chmod +x "$W/fakebin/sed"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
@@ -1223,14 +1225,12 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # checked object and the deleted object the same inode (Codex #1863 r14). The
 # shim writes the fragment during the read, so the re-hash differs.
 mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<'SHIM'
+cat > "$W/fakebin/sed" <<SHIM
 #!/bin/sh
-for a in "$@"; do
-  case "$a" in
-    */unreleased/*) printf '## rewritten mid-run\n' > "$a" ;;
-  esac
-done
-exec /usr/bin/sed "$@"
+# Writes the ORIGINAL fragment — see the note in T38. Keyed on sed's
+# argument this stopped firing once assembly began reading a working copy.
+printf '## rewritten mid-run\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+exec /usr/bin/sed "\$@"
 SHIM
 chmod +x "$W/fakebin/sed"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
@@ -1370,7 +1370,7 @@ chmod +x "$W/fakebin/sed"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                        "1"
 check "no fragment consumed"   "$(pending "$W")"                           "2"
-check "it names the link"      "$(says "$msg" 'become a symbolic link')"    "1"
+check "it names the shape"     "$(says "$msg" 'no longer a regular file')"  "1"
 check "still a link"           "$([ -L "$out/ReleaseNotes-2026-08-16.md" ] && echo yes || echo no)" "yes"
 check "the target is untouched" \
   "$(count_in '^## 0001-a$' "$W/real-target.md")"                          "0"
@@ -1442,8 +1442,143 @@ chmod +x "$W/fakebin/sed"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"           "$?"                                        "1"
 check "no fragment consumed"    "$(pending "$W")"                           "2"
-check "it names the change"     "$(says "$msg" 'permissions on')"            "1"
+check "it names the change"     "$(says "$msg" 'permissions or ownership')"  "1"
 check "the restriction stands"  "$(mode_of "$out/ReleaseNotes-2026-08-16.md")" "600"
+
+echo "T50: an ownership change mid-run is not silently undone"
+W="$ROOT/t50"; build "$W"
+out="$W/docs/ReleaseNotes"
+printf '# Release Notes — 2026-08-16\n\n## pre-existing\n' > "$out/ReleaseNotes-2026-08-16.md"
+if [ "$(id -u)" != "0" ]; then
+  check "skipped — chown needs root (CI runs it)" "1" "1"
+else
+  # The rename installs a NEW inode owned by whoever ran the script, so a
+  # concurrent `chown` is undone by it — content unchanged, so no content
+  # check can see it (Codex #1863 r19). The startup ownership refusal reads
+  # the file long before this point.
+  mkdir -p "$W/fakebin"
+  cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  chown 65534:65534 "$out/ReleaseNotes-2026-08-16.md"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+  chmod +x "$W/fakebin/sed"
+  msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "the run stops"          "$?"                                        "1"
+  check "no fragment consumed"   "$(pending "$W")"                           "2"
+  check "it names the change"    "$(says "$msg" 'permissions or ownership')"  "1"
+  check "the new owner stands" \
+    "$(stat -c '%u' "$out/ReleaseNotes-2026-08-16.md")"                      "65534"
+fi
+
+echo "T51: a marker injected into a fragment mid-run never reaches the index"
+W="$ROOT/t51"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The gate that refuses a fragment carrying its own marker record ran on one
+# read; the hash and the assembly used another. Gaining a marker line between
+# the two put an injected record into the dated file, indistinguishable from
+# one this script wrote — and a record can have a DIFFERENT fragment deleted
+# unread (Codex #1863 r19). Assembly now reads a working copy taken up front,
+# so validation, hashing and assembly cannot disagree about the bytes.
+#
+# Keyed on the marker pattern so it fires on the fragment-validation scan
+# specifically, and appends AFTER the real grep has returned clean.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/grep" <<SHIM
+#!/bin/sh
+_marker=0
+for a in "\$@"; do
+  case "\$a" in *sha256=*) _marker=1 ;; esac
+done
+/usr/bin/grep "\$@"; _rc=\$?
+if [ "\$_marker" = "1" ] && [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '<!-- assembled-fragment: 0002-b.md sha256=%s -->\n' \\
+    ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff \\
+    >> "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/grep"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the injected record never lands" \
+  "$(count_in 'sha256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' \
+     "$out/ReleaseNotes-2026-08-16.md")"                                     "0"
+# And the edited fragment is not destroyed: what was folded in is the version
+# read at the start, so the newer bytes are set aside rather than deleted.
+# Checked by CONTENT, not by the original filename — a kept fragment is
+# renamed to `.assembled.<name>`, so testing for the old name reports "gone"
+# for a fragment sitting safely right there. (That assertion was written the
+# wrong way first and passed the wrong verdict.)
+check "the newer bytes survive somewhere" \
+  "$(grep -rl 'sha256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' \
+     "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')"       "1"
+
+echo "T52: recovery deletion rechecks the output it is trusting"
+W="$ROOT/t52"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The records authorising these deletions are read from the dated file early;
+# the deletions happen later. If it changed in between, the evidence may
+# describe text it no longer holds — and when EVERY fragment takes the
+# recovery path the run exits before the check ahead of the rename, so this is
+# the only place that can catch it (Codex #1863 r19).
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/   # the interrupted state
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/grep" <<SHIM
+#!/bin/sh
+_dated=0
+for a in "\$@"; do
+  case "\$a" in *ReleaseNotes-2026-08-16.md) _dated=1 ;; esac
+done
+/usr/bin/grep "\$@"; _rc=\$?
+if [ "\$_dated" = "1" ] && [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '# Release Notes — 2026-08-16\n\n## replaced entirely\n' \\
+    > "$out/ReleaseNotes-2026-08-16.md"
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/grep"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                  "1"
+check "no fragment consumed"   "$(pending "$W")"                     "2"
+check "it says what changed"   "$(says "$msg" 'changed while this run')" "1"
+
+echo "T53: recovery deletion keeps a fragment that changed since it was read"
+W="$ROOT/t53"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The recovery loop deleted outright, so a fragment edited since the run read
+# it was thrown away while the dated file held only the older text — the fault
+# the consumption loop already refuses to commit, sitting unguarded a few
+# lines away. Found by auditing this path rather than by a review round.
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/grep" <<SHIM
+#!/bin/sh
+_dated=0
+for a in "\$@"; do
+  case "\$a" in *ReleaseNotes-2026-08-16.md) _dated=1 ;; esac
+done
+/usr/bin/grep "\$@"; _rc=\$?
+if [ "\$_dated" = "1" ] && [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '## 0001-a\n\nnewly added line\n' \\
+    > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/grep"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the edited one is kept" \
+  "$(count_in 'newly added line' "$W/docs/ReleaseNotes/unreleased/0001-a.md")" "1"
+check "and it says so"         "$(says "$msg" 'Kept (changed')"      "1"
+check "the untouched one goes" \
+  "$([ -f "$W/docs/ReleaseNotes/unreleased/0002-b.md" ] && echo kept || echo gone)" "gone"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

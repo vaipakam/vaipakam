@@ -204,6 +204,50 @@ names it — reported rather than deleted, on the same reasoning as the stale
 lock: a temp file belonging to a run that is still alive is indistinguishable
 from an abandoned one.
 
+### One rule, instead of a fourth patch
+
+Three review rounds in a row found the same fault in three different places:
+the file's permissions, then its ownership, then the records saying which notes
+were already filed. Each time the fix was correct and each time the next round
+found the same shape next door — because the shape was never the thing being
+fixed. Evidence was being read at one moment and acted on at a later one, and
+patching instance three was an invitation to look for instance four.
+
+So it is written down once and applied everywhere instead:
+
+> Nothing irreversible happens without re-checking the evidence it rests on,
+> against bytes that cannot have changed underneath the run.
+
+This script does exactly three irreversible things — replace the dated file,
+remove a note it recognises as already filed, and remove one it has just filed.
+Each is now preceded by that check, through the same piece of code, so a fourth
+one cannot be added without inheriting it. What "unchanged" means was widened
+too, from the contents alone to the contents *and* the permissions and
+ownership a replacement would silently carry over.
+
+The notes themselves are protected a second way, because for them a check is
+not enough. Each is copied once at the start, and every later read is of the
+copy. The run otherwise reads a note four times — to reject one carrying a
+forged record, to fingerprint it, to fold it in, to check where it ends — and a
+note edited between any two of those reads makes them disagree about what it
+said. The gate that matters is the first: pass it, then gain a forged record
+before the fingerprint is taken, and the forgery is filed and trusted as though
+this script had written it, which can have a *different* note deleted unread.
+No amount of stricter validation fixes that, because the validation was never
+wrong; it was reading different bytes from the ones that got used. Copying
+first removes the gap rather than narrowing it.
+
+The original is still what gets re-checked before removal — that comparison is
+the whole point, and it is what keeps a note edited during the run from being
+thrown away.
+
+Auditing the same paths for the same shape turned up one more, in the recovery
+route rather than in anything a review had flagged: notes recognised as already
+filed were removed outright, with none of the re-checking their newly-filed
+counterparts get a few lines below. A note edited since the run read it was
+discarded while the dated file held only the older version. It is now kept and
+named, the same as the other path.
+
 ### Verified against the fault, not just the fix
 
 Every test covering a **behaviour that changed** was run against the older
