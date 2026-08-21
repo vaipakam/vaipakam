@@ -77,8 +77,9 @@ nothing, because the terms shown on the page carry the rate, the duration and
 the due date and have never carried the interest schedule — so it sent the
 reader somewhere that could not answer, and they only found out after the trip.
 
-**Each sale row states its cost before you open anything**, and states the whole
-of it: selling early costs the larger of the interest built up so far or the
+**A sale row that is open to you states its cost before you open anything**, and
+states the whole of it (a row that is unavailable, with no listing standing,
+shows why rather than a price): selling early costs the larger of the interest built up so far or the
 buyer's rate top-up — never both — and on top of that, any balance already being
 held for you on the loan transfers to the buyer and your pending reward entry
 for the position is given up. On a position carrying a Full plan, the row names
@@ -494,8 +495,9 @@ affirmatively told readers it does not matter which chain holds the balance, and
 that the consent is switched on once. Both are false, not merely partial. A
 reader who holds on the canonical chain and borrows there is saved by
 coincidence — the two requirements collapse into one for them — but anyone
-settling on a mirror follows that advice into no discount at all, and nothing on
-the page tells them which of the two they are. That is why the section is called
+settling on a mirror follows that advice into losing the hold-tier discount —
+all of it, though a Full tariff already paid keeps its own slice — and nothing
+on the page tells them which of the two they are. That is why the section is called
 out below as still uncorrected rather than counted among the fixes.
 The pages that set expectations now state the conditions that actually govern
 it — not as a closed list, since assembling one is what kept going wrong: the
@@ -608,9 +610,10 @@ the two rounds before it.
 **Sweeping it introduced two new errors of its own, which is worth admitting
 rather than quietly fixing.** The first: a sentence saying the VPFI held under
 the retired fee path is forfeited "either way" read as covering a proper close
-too, when a full repayment, preclose or refinance all still pay the rebate. So a
-borrower who refinanced could have been told to give up a claim that was waiting
-for them — the same shape of harm the whole correction was meant to undo, caused
+too, when a full repayment, preclose or refinance all still settle the rebate —
+which is not the same as all paying one, since a borrower at tier 0 by then
+settles for nothing. So a borrower who refinanced could have been told to give up
+a claim that may well have been waiting for them — the same shape of harm the whole correction was meant to undo, caused
 by the correction.
 
 The second: the surplus was described as the wrong asset. Telling a borrower to
@@ -780,7 +783,9 @@ arriving directly at one via an anchor link may read it without that scope.
 Some of them are also wrong rather than merely incomplete: several still call
 the retired-path rebate **time-weighted**, when the amount is fixed by the
 borrower's discount at the moment of settlement and not by an average over the
-loan. A reader who plans around the average will expect more than arrives.
+loan. A reader who plans around the average will be wrong in whichever direction
+their holdings moved: they expect more than arrives if their tier fell, less if
+it rose.
 Correcting those, and making each passage carry its own scope, is follow-up
 work — named here rather than left to be discovered, since the first version of
 this paragraph said they were "not false", which they are not entirely.
