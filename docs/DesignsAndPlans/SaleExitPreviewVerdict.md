@@ -197,10 +197,62 @@ Append-only; a retired blocker's bit is burned, never reused.
 | 8 | Relist cooldown active (item 1) | — | ✅ |
 | 9 | Final-hour window (item 2) | — | ✅ |
 | 10 | Listing already present (item 8) | ✅ | ✅ |
+| 11 | Diamond globally paused | ✅ | ✅ |
+| 12 | Remaining term exceeds the live offer-duration cap | — | ✅ |
+| 13 | Party screened by the sanctions oracle | ✅ | ✅ |
 
 The route masks are the columns: a bit marked `—` is never set in that map,
 and a caller must ignore it there rather than treating an unset bit as a
 verdict.
+
+**Bits 11–13 were added by review after the table already claimed to be
+complete**, which is worth recording as a pattern rather than three separate
+corrections: each is a refusal that lives *outside* the sale facets, so
+enumerating the sale entry points' own guards — the method that produced bits
+0–10 and produced them correctly — could not have found any of them.
+
+- **Bit 11 — the global pause.** Both entry points are `whenNotPaused`, so a
+  protocol-wide pause closes both routes. §4.2 corrected the *per-asset* pause
+  mapping and, in doing so, made this omission harder to see: the document now
+  discussed pausing at length and still classified only the asset legs, so a
+  fully-checked preview would report both routes eligible during exactly the
+  incident an operator paused for. The per-asset bits are not a superset of
+  this one; a Diamond can be paused with every asset unpaused.
+- **Bit 12 — the offer-duration cap.** The listing route passes the loan's
+  remaining duration into `OfferCreateFacet._createOfferSetup`, which reverts
+  `OfferDurationExceedsCap` against the live `cfgMaxOfferDurationDays`. This is
+  a Diamond-local, loan-level, governance-tunable comparison — squarely in the
+  tractable class — and it was missed because the listing route reaches it
+  *through the generic offer-creation path* rather than raising it in
+  `EarlyWithdrawalFacet` itself. A lender on a long-dated loan meets it after
+  governance lowers the cap, having done nothing.
+- **Bit 13 — sanctions screening.** `_createLoanSaleOfferImpl` screens both the
+  caller and the resolved holder; `sellLoanViaBuyOffer` screens the caller and
+  requires the caller to *be* the holder. This is the one bit whose meaning
+  depends on the ABI question below, which is why it came last.
+
+**What `lender` means, since the ABI never said.** It is the **prospective
+caller** — the address the client would submit from — and the view resolves
+the current holder itself from the position NFT. Both are needed and they are
+not always the same address: the listing route accepts a caller who is not the
+holder and screens both, while the direct route additionally requires
+`caller == holder`. So:
+
+- Bit 13 is set in a route's map if **either** the passed `lender` or the
+  resolved holder is screened, per that route's rules.
+- A `lender` who is not the current holder sets bit 13's neighbour — see the
+  authorization note below — in `directBlockers` only.
+
+**Bit 14 — caller is not the current holder**, `directBlockers` only. Split
+out from 13 rather than folded into it because the two have different remedies
+and only one of them is the lender's to act on: a screened address has no
+remedy on this surface, while a non-holder is usually simply the wrong
+connected wallet. Collapsing them would produce a card that tells someone who
+switched accounts that they are sanctioned.
+
+The `lender` parameter also means the preview is **holder-relative, not
+loan-relative**, and callers must not cache a verdict across a wallet change.
+Stated because the loan-level framing in §8 invites exactly that assumption.
 
 **Two of these columns were wrong on their first pass, in opposite
 directions**, which is why the masks are stated per-bit rather than described:
@@ -243,7 +295,13 @@ and function shapes. A hand-maintained TS mirror is not an acceptable
 substitute here for the same reason the Worker ABIs are generated rather than
 typed by hand: the failure is silent and positional.
 
-This applies to `temporalVerdict`'s enum (§4.3.1) as well as the two bitmaps.
+This applies to **both** enums of §4.3.1 — `windowVerdict` and
+`listingVerdict` — as well as to the two bitmaps. The previous revision named
+`temporalVerdict`, the single enum that revision replaced; following the
+requirement literally would have generated a schema for a field that no longer
+exists while leaving both real encodings hand-maintained in TypeScript. A
+generation requirement that names the wrong artifact is worse than none,
+because it reads as satisfied.
 
 ### 4.2 Both routes pause — the earlier claim was wrong
 
@@ -316,16 +374,48 @@ helps; cooldown is the longer bar of the two listing-only ones.
 | --- | --- |
 | 0 | `None` — no listing linked |
 | 1 | `Fillable` — stands, unexpired, bounds hold right now |
-| 2 | `EndedUnfilled` — stands but no buyer can complete |
+| 2 | `EndedUnfilled` — **expired or terminal**: the listing's own window has closed |
 | 3 | `AcceptedPendingCompletion` — accepted, awaiting `completeLoanSale`, loan still Active |
 | 5 | `AcceptedButUncompletable` — accepted, loan TERMINAL (`Repaid`/`Settled`/`Defaulted`/`InternalMatched`): stuck |
 | 6 | `AcceptedAwaitingCure` — accepted, loan `FallbackPending`: recoverable |
 | 4 | `BoundsViolated` — unexpired, but a fill would revert today |
 | 255 | `Indeterminate` |
 
-Precedence 5 > 6 > 3 > 2 > 4 > 1 > 0, and **independent of `windowVerdict`** — a
-lender past maturity with value 3 still sees "complete this sale", because
-that is what the protocol still permits.
+| 7 | `FillableAndTeardownable` — legacy GTC: a buyer can fill it AND a third party can tear it down |
+
+Precedence 5 > 6 > 3 > 7 > 2 > 4 > 1 > 0, and **independent of
+`windowVerdict`** — a lender past maturity with value 3 still sees "complete
+this sale", because that is what the protocol still permits.
+
+**Value 2's definition was circular, and the precedence made value 4
+unreachable.** Defining `EndedUnfilled` as "stands but no buyer can complete"
+described value 4 as well — a bounds violation is precisely a state where no
+buyer can complete — so under `2 > 4` every bounds failure resolved to 2 and
+the diagnostic value could never be returned. That is the worse of the two
+outcomes it could have had: value 4 exists to offer *cancel and relist*, a
+remedy the lender can act on, while value 2 offers only cleanup. The
+definition is now anchored to the listing's **own window** — expired, or its
+loan terminal — which is a fact about time rather than about fillability, and
+therefore disjoint from a bounds check on live values.
+
+**Value 7 is not a precedence problem; it is two capabilities held at once.**
+For a legacy GTC listing (`expiresAt == 0`) the protocol genuinely disagrees
+with itself: `OfferAcceptFacet`'s `isOfferExpired` treats the sentinel as
+never expiring, so a buyer can fill it, while `teardownStaleSaleListing`
+treats the same sentinel as immediately clearable, so a third party can remove
+it. Both are live at the same instant and the outcome is decided by whichever
+transaction lands first.
+
+The previous revision asserted that precedence made the lifecycle states
+mutually exclusive. It does not — no ordering of 1 and 2 describes a listing
+that is simultaneously fillable and tearable, because the exclusivity claim was
+about the *encoding* and this is a property of the *chain*. Ranking it below
+the accepted states and above 2 says the honest thing: this listing may still
+sell and may vanish, and a lender who wants either outcome specifically should
+act rather than wait. The alternative — returning independent `fillable` and
+`teardownable` booleans — was considered and rejected only because it would
+make every ordinary listing carry two fields to express one state; the race is
+confined to legacy rows and shrinks as they clear.
 
 **Value 5 is a genuine protocol dead end; value 6 is emphatically not**, and
 collapsing them was a real error in the previous revision — every non-Active
@@ -424,6 +514,52 @@ its zero value. Stated as a hard rule because the zero value is the natural
 default of an unwritten function, which makes this the easiest of all these
 mistakes to make by simply not doing something.
 
+#### 4.5.1 The complete availability rule
+
+The rule has been stated three times in this section, each time about the
+field under discussion, and the result was that **the enums never entered the
+gate at all** — every version said "bits, plus `admissionCode`". A conforming
+client could therefore read `windowVerdict == PastMaturity` and still advertise
+both exits, because nothing told it not to. Past maturity is not a corner: an
+`Active` loan stays `Active` through its whole grace period, with every bit
+legitimately clear, while listing reverts at `EarlyWithdrawalFacet:353-356` and
+every valid direct-sale offer fails the zero-remaining-days check at
+`EarlyWithdrawalDirectFacet:288-292`. So the gap covered the single most
+predictable refusal in the set — the one that arrives on schedule, for every
+loan, at a time known in advance.
+
+Stated once, completely, so there is nothing left to omit. **A route is
+available only when all of the following hold:**
+
+1. Every bit in that route's mask is **checked** in `checkedMask` and **clear**
+   in that route's blocker map.
+2. `admissionCode == 0`. Any other value, 255 included, blocks both routes.
+3. `windowVerdict` is route-compatible: `Open` for either route;
+   `RelistCooldown` and `FinalHourWindow` block **listing only**;
+   `PastMaturity` and `Indeterminate` block **both**.
+4. `listingVerdict` is route-compatible: `None` for either route. Every other
+   value blocks **both** routes, including the direct one — see below.
+
+Anything else is unknown, and unknown renders as unknown, never as permission.
+
+**Point 4 is the one that looks wrong and is not.** A listing's state appears
+to be the listing route's business, and the earlier draft of this rule said so
+— it told the direct row to accept `None`, `Fillable` and `Indeterminate`, and
+called any listing-only value in a direct verdict a contract bug. That is
+backwards: `EarlyWithdrawalDirectFacet` reverts `SaleOfferAlreadyExists`
+whenever `loanToSaleOfferId[loanId]` is nonzero, and it does not care what
+state that listing is in. Live, expired, accepted, bounds-violated — the link
+alone closes the direct route. Under the old rule a lender with a *live*
+listing would have been shown the instant sale as available, which is both the
+commonest listing state and the one the #1839 chooser has blocked on both rows
+since its first round. The document would have specified a regression against
+behaviour already shipped.
+
+Bit 10 encodes the same fact and is marked for both routes, so a conforming
+client that checked only the bits would have been saved by it. That is not a
+reason to leave the enum rule wrong: two fields describing one condition must
+agree, or the next reader has to work out which one is authoritative.
+
 ### 4.6 Shared classifiers, or this is just a second copy
 
 A sibling view alone does **not** remove the shadow copy. Several
@@ -481,9 +617,37 @@ precisely so this is checkable rather than argued.
   anchor.
 - **Pricing.** The preview says *whether*, never *how much*.
 
-**A sibling, not an extension of `saleAdmission`.** Widening that selector's
-return would break `LibSaleSolvency`, which the *mutating* guards call — a
-fund-moving path changed to improve a read-only one.
+**A sibling, not an extension of `saleAdmission` — and the reason given for
+that was wrong.** The earlier text said widening `saleAdmission`'s return would
+*break* `LibSaleSolvency`, and therefore a fund-moving path. It would not.
+Appending return words does not change the selector; deployed callers decode
+only the first three words and tolerate trailing returndata, and
+`LibSaleSolvency.saleSolvency`'s low-level path explicitly checks for **at
+least** 96 bytes before decoding those three. A fresh source build would need
+its typed destructuring adjusted — a compile error, loud and local — but there
+is no runtime break and no behavioural change to any guard.
+
+So the sibling is not forced by a safety constraint. It has to stand on
+weaker, real grounds, and it is worth being clear that these are preferences
+rather than requirements:
+
+- **The two answer different questions.** `saleAdmission` classifies solvency
+  admission; this view aggregates eleven unrelated refusals plus two lifecycle
+  enums. Merging them gives one selector two jobs and a return tuple whose
+  first three words mean something different from the rest.
+- **The guards would pay for the aggregate.** `LibSaleSolvency` is on the
+  *mutating* path. Extending the selector it calls means every guarded write
+  executes the listing lookups, pause reads and cooldown comparisons it has no
+  use for — turning a read-only convenience into gas on the fund-moving path.
+  This is the substantive argument, and it is about **cost**, not safety.
+- **Append-only returns are a one-way door.** The bitmaps are already
+  append-only by design (§4.1); making the admission selector's tuple
+  append-only as well couples two schemas that will not evolve together.
+
+Recording the correction rather than quietly substituting the better argument:
+a design justified by a danger that does not exist is a design nobody has
+actually weighed. The conclusion survives; the reasoning that carried it did
+not.
 
 ## 5. Costs, stated honestly
 
@@ -501,12 +665,37 @@ the hosting model is a cross-facet call rather than an inlined `internal`
 library (§4.6): consumers pay for a call and an error map, not for the logic.
 Even so, that delta is measured before adoption, not assumed.
 
-**One extra read per position page.** Against the read-diet this is the
-real cost. It is one call that replaces **eight** that would otherwise
-be needed, and it is a `view` on storage the page's other reads already
-touch. If the diet cannot afford one call, it cannot afford the feature,
-and the honest response is to keep the rows silent rather than to guess
-— which is what they do today.
+**One extra read per position page — but not one cheap one, and the earlier
+accounting was flattering.** It is a single RPC round trip, which is the number
+that matters to the client. What that trip does on the node is not eight cheap
+Diamond-local storage loads:
+
+- **Item 2 is not a read at all.** `MIN_SALE_LISTING_SECONDS` is a
+  compile-time constant, so counting it as an RPC saving inflated the
+  denominator. It never cost a call.
+- **Item 3 is the expensive one, by a wide margin.** `saleAdmission` runs live
+  liquidity, health-factor and LTV logic that reaches external Chainlink
+  feeds, secondary oracles, token metadata and pool state. Describing it
+  alongside a storage read as "eight cheap local reads" understated it by
+  whatever the oracle path costs, which is most of the call.
+
+The honest form: **one round trip replacing up to seven, of which one does
+real work and the rest are storage loads.** That is still the right trade for
+a client — round trips are what a position page is short of, and the oracle
+work happens on the node either way — but it changes the *availability*
+argument materially, and that is the half the earlier text got wrong by
+omission. A call whose dominant cost is oracle-reaching is a call that can
+fail, be slow, or return `Indeterminate` under exactly the conditions §4.4
+exists for. The preview is not merely cheaper than the alternative; it
+inherits the alternative's fragility, concentrated into one place.
+
+Concentrating it is arguably the point — one failure the card can name beats
+seven it must reason about — but it must be argued rather than hidden behind
+an averaged cost.
+
+If the diet cannot afford this call, it cannot afford the feature, and the
+honest response is to keep the rows silent rather than to guess — which is what
+they do today.
 
 **A new selector to register.** `DeployDiamond`, `HelperTest`,
 `FacetSelectors` (RiskPreviewFacet already has a getter, so its parity case
@@ -627,7 +816,7 @@ Items 1 and 2 are **not** in it, correcting an earlier revision. Calling
 them "pure storage reads" confused reading a value with classifying it: the
 cooldown needs the inline `block.timestamp` comparison and the final-hour
 window needs the `_boundListingExpiry` maturity predicate, so producing their
-`temporalVerdict` means reproducing exactly the logic §4.6 makes a
+`windowVerdict` means reproducing exactly the logic §4.6 makes a
 precondition for adopting any of this. A first pass that shipped them would
 ship the duplicated predicates this design exists to eliminate — with the
 proposal's own adoption rule written three sections above it.
@@ -638,9 +827,44 @@ revision removed them from the first batch and assigned them to nothing, which
 under the `checkedMask` rule means the listing route could never graduate from
 unknown for 8b and neither route for 8c. Removing a check from a batch is not
 the same as scheduling it, and the difference is invisible until a permanently
-unknown row shows up in production. Item 3 is already exposed. That makes the first batch smaller and
-less useful than the version it replaces, which is the honest consequence of
-taking §4.6 seriously rather than a reason to relax it.
+unknown row shows up in production. Item 3 is already exposed.
+
+**Every bit must appear in exactly one batch, and three did not.** The
+paragraphs above assign items by discussing them, which is how the following
+went unscheduled — each was *added* to the tractable set in a later revision
+and the rollout, written earlier, never grew to match:
+
+- **Item 0 (bit 0, loan not Active)** — added as the "most important" check in
+  the revision that introduced it, and then assigned to no batch at all. Under
+  §4.5's rule an unchecked bit forces **both** routes to unknown for **every**
+  loan, so following this rollout literally would have shipped a preview that
+  could never report either route available. The single most consequential
+  scheduling omission possible, produced by adding a field and not revisiting a
+  list.
+- **Bits 11 and 13/14 (global pause, sanctions, holder)** — the global pause is
+  a bare `paused()` read with no predicate, so it joins **the first batch**
+  with items 6 and 7. Sanctions and holder resolution are also predicate-free
+  lookups, but they are the only bits that depend on the `lender` argument's
+  semantics, so they land with the classifier extraction where that contract is
+  settled rather than assumed.
+- **Bit 12 (offer-duration cap)** — with the classifier extraction. The
+  comparison itself is trivial, but it lives inside
+  `OfferCreateFacet._createOfferSetup`, so classifying it in the preview first
+  duplicates a guard, which is the §4.6 violation again.
+
+Item 0 lands with the classifier extraction: `LoanStatus` is read directly, but
+which statuses block a sale is a predicate the guards enforce inline.
+
+**The full assignment, so nothing is scheduled by prose:** first batch — bits
+4, 5, 11. Classifier-extraction batch — bits 0, 2, 3, 6, 7, 8, 9, 10, 12, 13,
+14, plus both enums. Already exposed — bit 1 (item 3).
+
+That makes the first batch smaller and less useful than the version it
+replaces, which is the honest consequence of taking §4.6 seriously rather than
+a reason to relax it. It also means the first pass reports **unknown for both
+routes on every loan**, since bit 0 is unchecked — it is a plumbing milestone,
+not a user-visible one, and §7's per-chain gate should keep the card on
+map-only behaviour throughout it.
 
 **Given a no:** strip the card's availability claims to what it can answer from
 data the page already holds, and say in the copy that the tool performs the
@@ -754,3 +978,67 @@ condition of adoption three sections above.** If a rule is that easy to lose
 while actively holding it in mind, expecting it to survive an implementation
 under deadline is not a reasonable bet — and that is an argument about §8's
 recommendation, not a note about §8's rollout table.
+
+**Rounds six through thirteen — and then a decision to stop.** These found
+eleven more, and the character of the findings changed partway through, which
+is the most useful thing in this section.
+
+The first several were still substantive gaps in the *contract surface* the
+document claimed to enumerate:
+
+- **The global pause** (bit 11) was never classified, in a document that had
+  already corrected itself once about pausing and discussed it at length.
+- **The offer-duration cap** (bit 12) reaches the listing route through generic
+  offer creation, so enumerating the sale facets' own guards could not find it.
+- **Sanctions screening and holder authorization** (bits 13, 14) were absent,
+  and surfacing them exposed that the ABI had never said what its `lender`
+  argument meant — caller, holder, or either.
+
+Then three findings about the document's *internal consistency*, each of which
+would have produced a wrong implementation from a faithful reading:
+
+- The availability rule was stated three times, about whichever field was under
+  discussion, and consequently **never included the two enums** — so a
+  conforming client could advertise both exits past maturity.
+- The direct row was told to accept listing-only verdicts, which
+  **specified a regression** against behaviour #1839 shipped: any linked
+  listing closes the direct route.
+- `listingVerdict`'s value 2 was defined circularly, making value 4
+  unreachable and silently deleting the one remedy a lender can act on.
+
+And two corrections to arguments rather than facts:
+
+- The cost accounting called `saleAdmission` one of "eight cheap local reads"
+  and counted a **compile-time constant** as an RPC saving. The oracle-reaching
+  call is most of the cost, and its fragility is inherited, not avoided.
+- The stated reason for a sibling over extending `saleAdmission` — that it
+  would break a fund-moving path — is **false**. Appending return words breaks
+  no deployed caller. The conclusion survives on cost and separation-of-concerns
+  grounds; the safety argument that carried it did not exist.
+
+**Stopping here, and saying why.** This is a docs-only PR under a two-round
+review cap, and it is being merged at thirteen. Every finding in those extra
+eleven rounds was real and roughly half were consequential, so the rounds were
+not wasted — but that is the trap rather than a justification. A proposal
+document can absorb review indefinitely, because there is always another
+contract path to enumerate and always another sentence that is not quite
+precise enough, and none of it is load-bearing until someone decides whether to
+build the thing.
+
+**The document's purpose is to support the §6 fork, and it now does.** Both
+options are stated, the preview-backed one is costed honestly including the
+parts that weaken it, and the classifier-extraction precondition is explicit.
+Continuing to refine an ABI that may never be cut is work performed against a
+decision nobody has made yet.
+
+Two things follow, and they point in opposite directions:
+
+- If the answer is **yes**, this document is a starting point and not a
+  specification. Twelve rounds found defects in it at a roughly constant rate,
+  including several introduced by the corrections themselves. There is no
+  reason to think the next twelve would find fewer, and an implementation will
+  surface more than any amount of reading.
+- If the answer is **no**, §6's map-only option needs none of this, and the
+  right reading of thirteen rounds is that it is the cheaper answer as well as
+  a defensible one — which is now stated in §8 and was not obvious when this
+  was written.
