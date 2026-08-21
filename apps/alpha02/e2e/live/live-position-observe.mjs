@@ -1909,7 +1909,18 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
       // rather than through an API.
       if (Date.now() > deadline) {
         return {
-          jumps: 0, switchThere: false, toolsFailed: false, timedOut: true,
+          // REPORT THE SWITCH WE ACTUALLY SAW (Codex #1853 r37). Every
+          // return in this loop used to hardcode `false` here, which was
+          // inert while the value went unread — and stopped being inert
+          // last round, when `readinessBlock`'s consumption was hoisted
+          // out of the `!switchThere` branch. A card that oscillates
+          // while its switch is plainly rendered was then filed under
+          // the missing-switch route.
+          //
+          // `switchThere` is the count taken in THIS iteration, between
+          // the two verdict reads; it is the observation, not an
+          // assumption about it.
+          jumps: 0, switchThere, toolsFailed: false, timedOut: true,
           settled: 'blocked-unstable',
         };
       }
@@ -1995,7 +2006,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
     // for the default timeout instead of the 1s the loop intends.
     const text = (await readLenderCardText(page, card)) ?? '';
     if (FAILED.test(text)) {
-      return { jumps: 0, switchThere: false, toolsFailed: true, timedOut: false };
+      return { jumps: 0, switchThere, toolsFailed: true, timedOut: false };
     }
     if (Date.now() > deadline) {
       // A DEADLINE IS NOT AN ANSWER WHILE THE ROWS SAY THEY ARE STILL
@@ -2012,7 +2023,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
       // deadline makes it a failure to observe, not an observation.
       return {
         jumps: 0,
-        switchThere: false,
+        switchThere,
         toolsFailed: false,
         timedOut: true,
         stillPending: PENDING.test(text),
@@ -2654,7 +2665,13 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
         }
         if (settled.toolsFailed) {
           return {
-            advancedOffered: false,
+            // SAME CARRY AS `readinessBlock` (Codex #1853 r37). These
+            // two returns sit either side of the block consumption and
+            // describe the same kind of outcome — the drive stopped
+            // before the switch could be used — so hardcoding `false`
+            // here would keep filing them under "no switch was offered"
+            // for the exact cases the round-37 fix is about.
+            advancedOffered: settled.switchThere === true,
             advancedJumps: null,
             advancedBlocked: true,
             advancedWhy: 'a prerequisite read failed — sale tools unavailable',
@@ -2686,7 +2703,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
         // SAY rather than on the timeout alone.
         if (settled.stillPending) {
           return {
-            advancedOffered: false,
+            advancedOffered: settled.switchThere === true,
             advancedJumps: null,
             advancedBlocked: true,
             advancedWhy:
