@@ -1400,14 +1400,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     /Rendered (more|fewer) hooks|Rules of Hooks|change in the order of Hooks/i.test(e),
   );
   const lenderCardText =
-    ROLE === 'lender' && loan
-      ? await page
-          .locator('section.card')
-          .filter({ hasText: CHOOSER.title })
-          .first()
-          .innerText()
-          .catch(() => null)
-      : null;
+    ROLE === 'lender' && loan ? await readLenderCardText(page) : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const out = {
@@ -1846,10 +1839,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late) {
     // Same auto-wait trap as the recorder above (Codex #1853 r22):
     // this ran every iteration, and on an absent card each one blocked
     // for the default timeout instead of the 1s the loop intends.
-    const text =
-      (await card.count()) === 0
-        ? ''
-        : await card.innerText({ timeout: 2_000 }).catch(() => '');
+    const text = (await readLenderCardText(page, card)) ?? '';
     if (FAILED.test(text)) {
       return { jumps: 0, switchThere: false, toolsFailed: true, timedOut: false };
     }
@@ -1888,6 +1878,31 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late) {
  */
 function lenderCardOf(page) {
   return page.locator('section.card').filter({ hasText: CHOOSER.title }).first();
+}
+
+/**
+ * The card's text, or `null`, WITHOUT paying an auto-wait for absence.
+ *
+ * `innerText()` auto-waits: on a card that is not there it blocks for
+ * Playwright's default 30 seconds before the `.catch` runs. Round 22
+ * fixed that at the two sites the finding named and left the initial
+ * scrape — which runs after the separate 45s chooser wait and before
+ * the probe's own 45s window, so an absent-card visit could still pass
+ * two minutes (Codex #1853 r23).
+ *
+ * That is the NINTH time on this PR that a rule was applied to the
+ * sites a finding named rather than to every site it governs, and the
+ * eighth was the same rule one round earlier. So this is a function
+ * rather than a pattern: a `count()` guard somebody has to remember is
+ * a rule, and a rule is what keeps being forgotten.
+ *
+ * `count()` does not auto-wait, so absence is free; the bounded
+ * `timeout` covers a card that unmounts between the two calls.
+ */
+async function readLenderCardText(page, card) {
+  const target = card ?? lenderCardOf(page);
+  if ((await target.count()) === 0) return null;
+  return await target.innerText({ timeout: 2_000 }).catch(() => null);
 }
 
 /**
@@ -1940,9 +1955,7 @@ function lateScrapeRecorder(page, cardAbsentAtScrape) {
      *  calls. */
     async capture() {
       if (!cardAbsentAtScrape || seen) return;
-      const card = lenderCardOf(page);
-      if ((await card.count()) === 0) return;
-      const text = await card.innerText({ timeout: 2_000 }).catch(() => null);
+      const text = await readLenderCardText(page);
       if (text !== null) seen = { chooser: true, cardRescraped: true, ...lenderShapeOf(text) };
     },
     /** Did the recorder ever observe the card? Distinct from `value`,
