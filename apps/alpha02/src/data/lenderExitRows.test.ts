@@ -34,6 +34,7 @@ const base: LenderExitInput = {
   statusReadFailed: false,
   saleLockReadFailed: false,
   saleLockSettled: true,
+  saleToolsSettled: true,
   fallbackSourceSettled: true,
 };
 
@@ -74,6 +75,7 @@ describe('wait row — ordering and framing', () => {
       statusReadFailed: true,
       saleLockReadFailed: true,
       saleLockSettled: false,
+      saleToolsSettled: false,
       fallbackSourceSettled: false,
     };
     expect(buildLenderExitRows(hostile)[0].unavailable).toBeUndefined();
@@ -1351,6 +1353,92 @@ describe('chooserReadiness — has the jumpability question settled?', () => {
       // Without the fallback the maturity answer genuinely can still
       // change the outcome, so waiting is right.
       expect(chooserReadiness({ ...base, maturity: 'unknown' })).toBe('pending');
+    });
+  });
+
+  describe('the conclusive arms are independent, not a precedence chain', () => {
+    // Round 10 gave each arm its own settled gate, and round 11 found
+    // that writing them as early returns had quietly made the FIRST
+    // matching arm the only one consulted: an arm whose own source was
+    // refetching answered for the whole predicate and masked every arm
+    // after it. Each of these is independently sufficient — a page
+    // whose listing is confirmed does not become less decided because
+    // an unrelated read is in flight.
+    it('publishes a settled listing while the fallback source is refetching', () => {
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          fallbackSourceSettled: false,
+          saleLock: 'listed',
+          saleLockSettled: true,
+        }),
+      ).toBe('ready');
+    });
+
+    it('publishes a settled past maturity while the lock read is refetching', () => {
+      expect(
+        chooserReadiness({
+          ...base,
+          maturity: 'past',
+          maturitySettled: true,
+          saleLock: 'listed',
+          saleLockSettled: false,
+        }),
+      ).toBe('ready');
+    });
+
+    it('still waits when NO arm is both matched and settled', () => {
+      // The masking fix must not turn the predicate into "any arm
+      // matched": each arm's own settled gate still binds.
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          fallbackSourceSettled: false,
+          saleLock: 'listed',
+          saleLockSettled: false,
+        }),
+      ).toBe('pending');
+    });
+  });
+
+  describe('the read that gates BOTH sale tools must have stopped', () => {
+    // The fourth prerequisite, missed by the settlement wiring until
+    // round 11. `saleTools` is derived from retained data and
+    // `isError`, and both survive a background refetch — so a cached
+    // `'ready'` published a settled `ready`/`yes`, and a failed
+    // refetch then turned it `'failed'` with nothing having happened
+    // on chain.
+    it('holds a ready card while the fee-entitlement read is refetching', () => {
+      expect(chooserReadiness({ ...base, saleToolsSettled: false })).toBe('pending');
+    });
+
+    it('is pending, not failed, while a FAILED tools answer refetches', () => {
+      // Ordering: something outstanding could still clear the failure,
+      // and the same rule applies here as everywhere else — an
+      // in-flight read beats a settled-but-untrustworthy one.
+      expect(
+        chooserReadiness({ ...base, saleTools: 'failed', saleToolsSettled: false }),
+      ).toBe('pending');
+    });
+
+    it('reports failed once that answer has stopped', () => {
+      expect(
+        chooserReadiness({ ...base, saleTools: 'failed', saleToolsSettled: true }),
+      ).toBe('failed');
+    });
+
+    it('does NOT hold a conclusive negative behind it', () => {
+      // Same asymmetry the other arms have: both sale rows are already
+      // shut, so no tools answer can reopen them.
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          saleToolsSettled: false,
+        }),
+      ).toBe('ready');
     });
   });
 });

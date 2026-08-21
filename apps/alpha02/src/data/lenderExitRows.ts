@@ -364,6 +364,16 @@ export interface LenderExitInput {
    *  a cancellation. Both are settled answers retracting on the
    *  ordinary 30-second cycle. */
   saleLockSettled: boolean;
+  /** Has the fee-entitlement read that gates BOTH sale tools stopped?
+   *
+   *  The fourth prerequisite, and the one the settlement wiring had
+   *  missed (Codex #1858 r11). `saleTools` is derived from retained
+   *  data and `isError`, both of which survive a background refetch —
+   *  so a cached `'ready'` published a settled `ready`/`yes` and a
+   *  failed refetch then turned it to `'failed'`, flipping the answer
+   *  with no chain transition. Same shape as the sale lock, on the
+   *  read that gates both rows rather than one. */
+  saleToolsSettled: boolean;
   /** Has the source that reported FallbackPending stopped?
    *
    *  Narrower than `statusSettled` on purpose (Codex #1858 r10). The
@@ -645,26 +655,32 @@ function conclusiveBlock(input: LenderExitInput): ConclusiveBlock | undefined {
  *  settled must not retract without a chain transition behind it, so
  *  this arm waits for the sources that produce it. */
 function conclusivelyUnjumpable(input: LenderExitInput): boolean {
-  // EVERY conclusive arm waits on its OWN source, and only its own
-  // (Codex #1858 r10). That is the rule these three arms share: a
-  // positive observation is conclusive because nothing can retract it
-  // — which stops being true while the read that produced it is still
-  // in flight. Each waits narrowly, so none reintroduces the general
-  // timeout they exist to remove.
-  if (input.fallbackPending) return input.fallbackSourceSettled;
-  // A CONFIRMED LISTING SHUTS BOTH ROWS OUTRIGHT (Codex #1858 r5), and
-  // it does so with no reference to maturity or status: the row builder
-  // marks the listing row `alreadyListed` and the direct-sale row
-  // refused-while-listed, for every value of the reads this predicate
-  // was waiting on. Only a chain action that clears the listing reopens
-  // either route, so holding the verdict behind a slow or failed
-  // prerequisite preserved exactly the timeout it exists to remove —
-  // on the population that already has a definite answer.
+  // AN OR OVER INDEPENDENT ARMS, not a precedence chain (Codex #1858
+  // r11). Written as early returns, an arm whose own source was
+  // refetching answered `false` for the whole predicate and masked the
+  // arms after it — so a fallback loan with a refetching status source
+  // reported `pending` even when a SETTLED confirmed listing, or a
+  // settled past-maturity, already proved both rows shut. Each of
+  // these is independently sufficient; none is a tie-breaker for the
+  // others, and a chain of early returns silently made them one.
   //
-  // `'checking'` is NOT this: an unanswered lock read is the ambiguous
+  // Each arm still waits on its OWN source and only its own (r10): a
+  // positive observation is conclusive because nothing can retract it,
+  // which stops being true while the read that produced it is in
+  // flight. Waiting narrowly is what keeps these arms from
+  // reintroducing the general timeout they exist to remove.
+  //
+  // A CONFIRMED LISTING shuts both rows with no reference to maturity
+  // or status (r5) — the row builder marks the listing row
+  // `alreadyListed` and the direct-sale row refused-while-listed for
+  // every value of the reads this predicate would otherwise wait on.
+  // `'checking'` is NOT that: an unanswered lock read is the ambiguous
   // case and stays pending below.
-  if (input.saleLock === 'listed') return input.saleLockSettled;
-  return input.maturity === 'past' && input.maturitySettled && !input.maturityReadFailed;
+  return (
+    (input.fallbackPending && input.fallbackSourceSettled) ||
+    (input.saleLock === 'listed' && input.saleLockSettled) ||
+    (input.maturity === 'past' && input.maturitySettled && !input.maturityReadFailed)
+  );
 }
 
 export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
@@ -729,6 +745,7 @@ export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
   // both sale routes — so a `ready`/`yes` published while it was down
   // flips to `no` with nothing having happened on chain.
   if (input.statusReadFailed) return 'failed';
+  if (!input.saleToolsSettled) return 'pending';
   if (input.saleTools === 'failed') return 'failed';
   if (input.saleTools === 'checking') return 'pending';
   // A lock that CANNOT answer is settled-but-untrustworthy, not a wait

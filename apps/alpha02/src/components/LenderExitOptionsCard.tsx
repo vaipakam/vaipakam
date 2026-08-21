@@ -105,6 +105,9 @@ export function LenderExitOptionsCard({
   /** Has the sale-lock read stopped? See
    *  `LenderExitInput.saleLockSettled`. */
   saleLockSettled: boolean;
+  /** Has the fee-entitlement read that gates both sale tools stopped?
+   *  See `LenderExitInput.saleToolsSettled`. */
+  saleToolsSettled: boolean;
   /** Has the source that reported FallbackPending stopped? See
    *  `LenderExitInput.fallbackSourceSettled`. */
   fallbackSourceSettled: boolean;

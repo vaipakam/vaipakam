@@ -709,6 +709,54 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     },
   });
 
+  /** Did the advanced-only strategy read answer during the CURRENT
+   *  enabled period?
+   *
+   *  Round 7 excluded that read from the reversible status question
+   *  outright, because enablement here is a user-controlled toggle and
+   *  a re-enabled query re-admits its pre-toggle cache. That is right
+   *  about the cache and wrong about a reading taken since (Codex
+   *  #1858 r11): when both always-on reads have FAILED and the
+   *  strategy read has genuinely answered FallbackPending in this
+   *  Advanced session, excluding it leaves the page reporting Active
+   *  from an indexed row and offering sale forms whose submissions
+   *  revert.
+   *
+   *  So the test is not enablement and not staleness — it is whether
+   *  the query has produced a NEW answer since it was switched on. The
+   *  baseline is the query's own `dataUpdatedAt` at the moment of the
+   *  flip, so the comparison needs no wall clock and cannot be skewed
+   *  by one: a re-admitted pre-toggle cache carries the baseline's own
+   *  stamp and fails the `>`, while any fetch landing afterwards
+   *  advances past it.
+   *
+   *  Adjusted DURING RENDER rather than in an effect — the pattern
+   *  React documents for state derived from a changing input. The
+   *  effect form was two bugs at once: `setState` in an effect commits
+   *  a throwaway render (which is what the lint rule objects to), and
+   *  the `useRef` form before it schedules no re-render at all, so the
+   *  "corrects on the next frame" it promised actually waited on the
+   *  next 60-second poll. Adjusting here, React re-runs the body
+   *  before committing, so the flip render is already correct.
+   *
+   *  It lives beside the query rather than beside its consumer because
+   *  the consumer sits after this component's `!loan.data` early
+   *  return, where no hook may be called. */
+  const [loanLiveEnablement, setLoanLiveEnablement] = useState(() => ({
+    enabled: loanLiveEnabled,
+    baselineUpdatedAt: loanLive.dataUpdatedAt,
+  }));
+  if (loanLiveEnablement.enabled !== loanLiveEnabled) {
+    setLoanLiveEnablement({
+      enabled: loanLiveEnabled,
+      baselineUpdatedAt: loanLive.dataUpdatedAt,
+    });
+  }
+  const loanLiveAnsweredWhileEnabled =
+    loanLiveEnabled &&
+    loanLiveEnablement.enabled &&
+    loanLive.dataUpdatedAt > loanLiveEnablement.baselineUpdatedAt;
+
   // Balance gates: approve() succeeds regardless of balance, so check
   // the wallet actually holds the typed amount before any approval.
   const collateralBalance = useTokenBalance(
@@ -1136,8 +1184,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         loanLive.data && !loanLive.isError
           ? (loanLive.data.live.status as LoanStatus)
           : undefined,
-      // NEVER admitted to the reversible question, enabled or not
-      // (Codex #1858 r7). Round 6 gated this on `loanLiveEnabled`,
+      // Admitted to the reversible question ONLY when it answered
+      // during the current enabled period (Codex #1858 r7 then r11).
+      // Round 6 gated this on `loanLiveEnabled`,
       // which is a user-controlled toggle: flip to Basic, let the
       // borrower cure a cached FallbackPending, flip back, and the
       // pre-cure snapshot is treated as a fresh reading the instant
@@ -1157,7 +1206,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // cache a mode toggle can freeze. It stays in the full candidate
       // list below, where the answers are absorbing and a stale
       // terminal reading is only ever ahead.
-      fresh: false,
+      fresh: loanLiveAnsweredWhileEnabled,
       settled: sourceSettled(loanLive),
     },
     {
@@ -3614,6 +3663,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // `ready`/`yes` while the in-flight read was about to
           // report a listing (Codex #1858 r10).
           saleLockSettled={sourceSettled(sale)}
+          // The FOURTH prerequisite's settledness, and the one the
+          // wiring had missed (Codex #1858 r11). `saleTools` is derived
+          // from retained data and `isError`, both of which survive a
+          // background refetch, so a cached `'ready'` published a
+          // settled answer that a failed refetch then turned to
+          // `'failed'`.
+          saleToolsSettled={sourceSettled(feeEnt)}
           fallbackSourceSettled={fallbackSourceSettled}
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
