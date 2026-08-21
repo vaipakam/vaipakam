@@ -714,13 +714,16 @@ Borrower claim は、loan がどう settle されたかによって次を返し
   残っている場合があります。liquidator・lender・treasury を
   まかなうぶんの価値だけが取られ、残りがあなたの claim として記録
   されます。その形は一点で決まります。collateral が
-  売られたのか、引き渡されたのか。売られた場合 — 取引所を通した
-  通常の liquidation、または取引可能な collateral の時間ベース
-  default — 残余は loan の principal asset で届きます。引き渡された
-  場合、残るのは collateral そのもので、vault に encumbered のまま
-  です。引き渡す経路は二つ: liquidator が割引で直接引き取る場合と、
-  通常の liquidation が取引所に出されず内部で別の position と
-  マッチした場合です。部分 liquidation はそもそも close-out
+  売られたのか、引き渡されたのか。売られた場合 — つまり取引所を
+  通して外に出された場合 — 残余は loan の principal asset で
+  届きます。引き渡された場合、残るのは collateral そのもので、
+  vault に encumbered のままです。引き渡す経路は二つあり、
+  どちらも loan の終わり方には依存しません: liquidator が割引で
+  直接引き取る場合と、close-out が取引所に出されず内部で反対側の
+  position とマッチした場合です。HF liquidation も時間ベースの
+  default も、まずその内部マッチを試みます。つまりどちらの経路も
+  結果が一定ではないということで、だからこそ経路ではなく claim を
+  読むべきなのです。部分 liquidation はそもそも close-out
   ではありません — loan は開いたままで、claim は作られません。
   どちらかを推測せず、claim を確認してください。Illiquid asset の default では通常バスケット全体が失われ何も
   残りませんが、それは結果であってルールではありません。常に失われるのは

@@ -771,14 +771,18 @@ prêt s'est réglé :
   rester un excédent. On ne prélève que la valeur nécessaire
   pour couvrir le liquidateur, le prêteur et le trésor, et le reste
   est enregistré comme ta créance. Sa FORME tient à une seule chose : le
-  collatéral a-t-il été VENDU ou REMIS ? Vendu — une liquidation
-  ordinaire passée par une place de marché, ou un défaut temporel
-  sur un collatéral négociable — et le reliquat te parvient dans
-  l'actif principal du prêt. Remis, et ce qui reste est le
-  collatéral lui-même, grevé dans ton vault. Deux voies le
-  remettent : un liquidateur qui prend le collatéral directement
-  avec une décote, et une liquidation ordinaire appariée en interne
-  contre une autre position au lieu d'être envoyée sur le marché. Une liquidation
+  collatéral a-t-il été VENDU ou REMIS ? Vendu — c'est-à-dire
+  acheminé au dehors par une place de marché — et le reliquat te
+  parvient dans l'actif principal du prêt. Remis, et ce qui reste
+  est le collatéral lui-même, grevé dans ton vault. Deux voies le
+  remettent, et aucune ne dépend de la clôture par laquelle tu es
+  passé : un liquidateur qui prend le collatéral directement avec
+  une décote, et une clôture appariée en interne contre une
+  position opposée au lieu d'être envoyée sur le marché. Une
+  liquidation HF comme un défaut temporel tentent D'ABORD cet
+  appariement interne, si bien qu'aucune des deux voies ne se
+  termine toujours de la même façon — c'est pourquoi il faut lire
+  la créance, et non la voie. Une liquidation
   partielle n'est pas une clôture du tout — le prêt reste ouvert
   et aucune créance n'est créée. Consulte la créance plutôt que
   de supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le

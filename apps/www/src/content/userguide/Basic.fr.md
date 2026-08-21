@@ -375,14 +375,17 @@ te rend le collatéral que tu as verrouillé au début. En cas de
 défaut ou de liquidation, vérifie quand même. On ne prélève que
 la valeur qu'exigent la dette et les frais de sa clôture, et tout
 ce qui dépasse est enregistré comme tien. Sa forme dépend de la
-manière dont le prêt s'est terminé : si le collatéral a été vendu —
-liquidation ordinaire via une place de marché, ou défaut sur un
-collatéral négociable —, le reste te parvient dans l'actif du prêt
+manière dont le prêt s'est terminé : si le collatéral a été vendu
+via une place de marché, le reste te parvient dans l'actif du prêt
 lui-même. S'il a été remis à la place, c'est le collatéral lui-même
-qui t'attend. Deux choses le remettent : un liquidateur qui le
-prend directement avec une décote, et une liquidation ordinaire
-appariée à l'intérieur du protocole contre une autre position
-plutôt que vendue. Souvent — sur un
+qui t'attend. Deux choses le remettent, quelle que soit la manière
+dont le prêt s'est terminé : un liquidateur qui le prend
+directement avec une décote, et une clôture appariée à l'intérieur
+du protocole contre une position opposée plutôt que vendue. Une
+liquidation comme un défaut tentent d'abord cet appariement
+interne, donc ni l'un ni l'autre ne finit toujours pareil : lis la
+réclamation plutôt que de le déduire de la façon dont le prêt
+s'est clos. Souvent — sur un
 défaut portant sur un collatéral que nous ne pouvons pas
 valoriser — tout le panier part et il ne reste rien, mais c'est
 une issue, pas une règle. Ce qui ne revient jamais, c'est le

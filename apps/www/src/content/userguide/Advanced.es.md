@@ -774,14 +774,17 @@ liquidó el préstamo:
   puede quedar un excedente. Sólo se toma el valor suficiente
   para cubrir al liquidador, al prestamista y al tesoro, y el resto
   queda registrado como tu reclamación. Su FORMA depende de una sola cosa: si el
-  colateral se VENDIÓ o se ENTREGÓ. Vendido —una liquidación
-  ordinaria enrutada por un exchange, o un default por tiempo sobre
-  colateral negociable— y el residuo te llega en el activo
+  colateral se VENDIÓ o se ENTREGÓ. Vendido —es decir, enrutado
+  hacia fuera por un exchange— y el residuo te llega en el activo
   principal del préstamo. Entregado, y lo que queda es el colateral
-  mismo, gravado en tu bóveda. Dos vías lo entregan: un liquidador
-  que toma el colateral directamente con descuento, y una
-  liquidación ordinaria que se casa internamente contra otra
-  posición en lugar de ir a un exchange. Una liquidación
+  mismo, gravado en tu bóveda. Dos vías lo entregan, y ninguna
+  depende de por cuál cierre hayas pasado: un liquidador que toma
+  el colateral directamente con descuento, y un cierre que se casa
+  internamente contra una posición opuesta en lugar de ir a un
+  exchange. Tanto una liquidación por HF como un default por tiempo
+  intentan PRIMERO ese casamiento interno, así que ninguna de las
+  dos vías acaba siempre igual — por eso lo que hay que leer es la
+  reclamación, no la vía. Una liquidación
   parcial no es un cierre en absoluto — el préstamo sigue abierto
   y no se crea ninguna reclamación. Consulta la reclamación en
   lugar de suponer cuál tienes. En un default sobre un activo ilíquido suele irse la

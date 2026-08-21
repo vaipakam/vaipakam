@@ -350,13 +350,15 @@ collateral you locked at the start. On default or liquidation,
 check anyway. Only as much value is taken as the debt and
 the costs of closing it require, and anything beyond that is
 recorded as yours. What form it takes depends on how the loan
-ended: if the collateral was sold — an ordinary
-liquidation through an exchange, or a default on tradable
-collateral — what is left reaches you as the loan’s own asset. If
-it was handed over instead, the collateral itself is what waits
-for you. Two things hand it over: a liquidator taking it directly
-at a discount, and an ordinary liquidation matched inside the
-protocol against another position rather than sold. Often — on a default over collateral we
+ended: if the collateral was sold out through an exchange, what
+is left reaches you as the loan’s own asset. If it was handed
+over instead, the collateral itself is what waits for you. Two
+things hand it over, whichever way the loan ended: a liquidator
+taking it directly at a discount, and a close-out matched inside
+the protocol against an opposing position rather than sold. Both
+a liquidation and a default try that internal match first, so
+neither one always ends the same way — read the claim rather than
+guessing from how the loan closed. Often — on a default over collateral we
 cannot price — the whole basket goes and nothing is left, but
 that is how it turned out, not a rule. What never comes back is
 the fee rebate: on a loan still using the retired VPFI fee path

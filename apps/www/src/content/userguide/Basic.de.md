@@ -379,14 +379,16 @@ Borrower-Claim das Collateral zurück, das du am Anfang gesperrt
 hast. Bei Default oder Liquidation sieh trotzdem nach. Es wird nur so
 viel Wert genommen, wie die Schuld und die Kosten ihrer Auflösung
 erfordern; alles darüber wird als deines erfasst. Welche Form es
-hat, hängt davon ab, wie der Loan endete: wurde das Collateral verkauft —
-gewöhnliche Liquidation über eine Börse, oder Default auf
-handelbares Collateral —, erreicht dich der Rest im Asset des
+hat, hängt davon ab, wie der Loan endete: wurde das Collateral
+über eine Börse verkauft, erreicht dich der Rest im Asset des
 Loans. Wurde es stattdessen übergeben, wartet das Collateral selbst
-auf dich. Zweierlei übergibt es: ein Liquidator, der es mit
-Abschlag direkt übernimmt, und eine gewöhnliche Liquidation, die
-protokollintern gegen eine andere Position gematcht statt verkauft
-wird. Oft geht bei einem Default über Collateral, das wir
+auf dich. Zweierlei übergibt es, egal wie der Loan endete: ein
+Liquidator, der es mit Abschlag direkt übernimmt, und ein
+Close-out, der protokollintern gegen eine gegenläufige Position
+gematcht statt verkauft wird. Sowohl eine Liquidation als auch ein
+Default versuchen dieses interne Matching zuerst, also endet keines
+von beiden immer gleich — lies den Claim, statt es aus der
+Endungsart zu erraten. Oft geht bei einem Default über Collateral, das wir
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
 das ist aber ein Ausgang, keine Regel. Nie zurück kommt der
 Gebühren-Rebate: bei einem Loan auf dem eingestellten

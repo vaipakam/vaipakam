@@ -661,13 +661,15 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
 - **HF-liquidation 또는 default** — 그래도 확인해 보세요. surplus가 남아
   있을 수 있습니다. liquidator와 lender, treasury를 충당할
   만큼의 가치만 가져가고 나머지는 내 claim으로 기록됩니다. 그 형태는 한 가지로 갈립니다. collateral이
-  팔렸는가, 넘겨졌는가. 팔린 경우 — 거래소를 거친 일반 liquidation,
-  또는 거래 가능한 collateral에 대한 시간 기반 default — 잔여는
-  loan의 principal asset으로 도착합니다. 넘겨진 경우 남는 것은
-  collateral 그 자체이며, vault에 encumbered 상태로 있습니다.
-  넘기는 경로는 둘입니다: liquidator가 할인된 값에 직접 가져가는
-  경우, 그리고 일반 liquidation이 거래소로 가지 않고 내부에서 다른
-  position과 매칭되는 경우. 부분
+  팔렸는가, 넘겨졌는가. 팔린 경우 — 즉 거래소를 거쳐 밖으로 나간
+  경우 — 잔여는 loan의 principal asset으로 도착합니다. 넘겨진
+  경우 남는 것은 collateral 그 자체이며, vault에 encumbered
+  상태로 있습니다. 넘기는 경로는 둘이고, 둘 다 loan이 어떻게
+  끝났는지와는 무관합니다: liquidator가 할인된 값에 직접 가져가는
+  경우, 그리고 close-out이 거래소로 가지 않고 내부에서 반대편
+  position과 매칭되는 경우. HF liquidation도 시간 기반 default도
+  그 내부 매칭을 먼저 시도하므로, 어느 경로든 결과가 늘 같지는
+  않습니다 — 그래서 경로가 아니라 claim을 읽어야 합니다. 부분
   liquidation은 애초에 close-out이 아닙니다 — loan은 열린 채로 남고
   claim도 만들어지지 않습니다. 어느 쪽인지 추측하지 말고 claim을
   확인하세요. 비유동 자산의

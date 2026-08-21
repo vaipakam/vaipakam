@@ -730,13 +730,16 @@ Borrower claim इस आधार पर return करता है कि loan
 - **HF-liquidation या default** — फिर भी देख लें, surplus बचा
   हो सकता है। Liquidator, lender और treasury को चुकाने भर का मूल्य ही लिया
   जाता है, और बाकी आपके claim के रूप में दर्ज होता है। उसका रूप एक ही बात पर टिका है: collateral
-  बेचा गया या सौंपा गया। बेचा गया — exchange के ज़रिए हुई सामान्य
-  liquidation, या बिकने योग्य collateral पर समय-आधारित default — तो
-  बचा हुआ आपको loan के principal asset में मिलता है। सौंपा गया, तो जो
-  बचता है वह collateral ही है, आपके vault में encumbered। दो रास्ते उसे
-  सौंपते हैं: liquidator का छूट पर सीधे ले लेना, और वह सामान्य
-  liquidation जो exchange भेजे जाने के बजाय अंदरूनी तौर पर किसी दूसरे
-  position से match हो जाती है। आंशिक liquidation तो बंद होना है ही नहीं —
+  बेचा गया या सौंपा गया। बेचा गया — यानी exchange के ज़रिए बाहर
+  भेजा गया — तो बचा हुआ आपको loan के principal asset में मिलता है।
+  सौंपा गया, तो जो बचता है वह collateral ही है, आपके vault में
+  encumbered। दो रास्ते उसे सौंपते हैं, और इनमें से कोई भी इस पर
+  निर्भर नहीं कि loan किस तरह बंद हुआ: liquidator का छूट पर सीधे ले
+  लेना, और वह close-out जो exchange भेजे जाने के बजाय अंदरूनी तौर पर
+  किसी विपरीत position से match हो जाता है। HF liquidation और
+  समय-आधारित default, दोनों पहले वही अंदरूनी match आज़माते हैं —
+  इसलिए किसी एक रास्ते का नतीजा हमेशा एक-सा नहीं होता; यही वजह है कि
+  रास्ता नहीं, claim पढ़ना चाहिए। आंशिक liquidation तो बंद होना है ही नहीं —
   loan खुला रहता है और कोई claim बनता ही नहीं। अनुमान लगाने के बजाय
   claim देखें। Illiquid asset के default में आम तौर पर पूरी
   basket चली जाती है और कुछ नहीं बचता — पर वह एक परिणाम है, नियम

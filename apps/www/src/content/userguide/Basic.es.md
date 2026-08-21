@@ -373,13 +373,15 @@ prestatario devuelve el colateral que bloqueaste al inicio. En
 default o liquidación, compruébalo igualmente. Sólo se toma el
 valor que exigen la deuda y los costes de cerrarla, y todo lo que
 exceda queda registrado como tuyo. Su forma depende de cómo
-terminó el préstamo: si el colateral se vendió —liquidación
-ordinaria por un exchange, o default sobre colateral negociable—,
+terminó el préstamo: si el colateral se vendió por un exchange,
 lo que sobra te llega en el activo del propio préstamo. Si en
 cambio se entregó, lo que te espera es el colateral mismo. Dos
-cosas lo entregan: un liquidador que lo toma directamente con
-descuento, y una liquidación ordinaria casada dentro del protocolo
-contra otra posición en lugar de vendida. A menudo —en un
+cosas lo entregan, termine como termine el préstamo: un liquidador
+que lo toma directamente con descuento, y un cierre casado dentro
+del protocolo contra una posición opuesta en lugar de vendido.
+Tanto una liquidación como un default intentan primero ese
+casamiento interno, así que ninguno de los dos acaba siempre
+igual: lee la reclamación en vez de deducirlo de cómo cerró. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
 entera y no queda nada, pero eso es cómo resultó, no una regla.
 Lo que nunca vuelve es el reembolso de la comisión: en un

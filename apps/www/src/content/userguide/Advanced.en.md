@@ -722,14 +722,17 @@ The borrower claim returns, depending on how the loan settled:
   surplus. Only enough value is taken to cover the
   liquidator, the lender and the treasury, and the remainder is
   recorded as your claim. Its FORM turns on one thing: whether
-  the collateral was SOLD or HANDED OVER. Sold — an ordinary
-  liquidation routed through an exchange, or a time-based default
-  on tradable collateral — and the residue reaches you in the
-  loan’s principal asset. Handed over, and what is left is the
-  collateral itself, encumbered in your vault. Two routes hand it
-  over: a liquidator taking the collateral directly at a discount,
-  and an ordinary liquidation that is matched internally against
-  another position rather than sent to an exchange. A partial liquidation is not a
+  the collateral was SOLD or HANDED OVER. Sold — routed out
+  through an exchange — and the residue reaches you in the loan’s
+  principal asset. Handed over, and what is left is the
+  collateral itself, encumbered in your vault. Two things hand it
+  over, and neither of them depends on which close-out you are
+  in: a liquidator taking the collateral directly at a discount,
+  and a close-out matched internally against an opposing position
+  instead of being sent to an exchange. An HF liquidation and a
+  time-based default both try that internal match FIRST, so
+  neither route is reliably one form or the other — which is why
+  the claim, not the route, is the thing to read. A partial liquidation is not a
   close-out at all — the loan stays open and no claim is created.
   Check the claim rather than assuming which one you have.
   On an illiquid default the whole basket usually goes, so there
