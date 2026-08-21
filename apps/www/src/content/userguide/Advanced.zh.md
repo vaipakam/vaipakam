@@ -588,10 +588,10 @@ borrower claim 根据 loan 如何 settle 来返回：
   claim。它的形式只取决于一件事：collateral 是被卖出，还是被交出。被卖出——
   也就是经交易所路由出去——剩余会以 loan 的 principal asset 到您手中。
   被交出，剩下的就是 collateral 本身，以 encumbered 状态留在您的
-  vault 中。有两条路径会交出它，而且都与 loan 以哪种方式结束无关：
-  liquidator 按折扣直接拿走，以及 close-out 没有送去交易所、而是在
-  内部与一个反向 position 撮合。HF liquidation 和时间型 default 都会
-  先尝试这种内部撮合，所以两条路径的结果都不是固定的——这正是应当
+  vault 中。交出它的路径不止一条，而且都与 loan 以哪种方式结束无关：liquidator 按折扣直接拿走，close-out 没有
+  送去交易所、而是在内部与一个反向 position 撮合，以及 swap 根本没能完成——卖不出去时就退回为交出
+  collateral。普通 liquidation 和时间型 default 都会在转向交易所之前先尝试这种内部撮合，折
+  扣式拿走则不会。所以没有哪条路径的结果是固定的——这正是应当
   去读 claim，而不是从结束方式去推断的原因。至于部分 liquidation，它根本不是
   close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要
   假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩

@@ -778,15 +778,16 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   das Collateral VERKAUFT oder ÜBERGEBEN? Verkauft — also über
   eine Börse nach draußen geleitet — und der Rest erreicht dich
   im Principal-Asset des Loans. Übergeben, und was bleibt, ist das
-  Collateral selbst, verpfändet in deinem Vault. Zwei Wege
-  übergeben es, und keiner davon hängt daran, über welchen
-  Close-out du gegangen bist: ein Liquidator, der das Collateral
-  mit Abschlag direkt übernimmt, und ein Close-out, der intern
-  gegen eine gegenläufige Position gematcht statt an eine Börse
-  geschickt wird. Eine HF-Liquidation und ein zeitbasierter Default
-  versuchen ZUERST dieses interne Matching, also endet keiner der
-  beiden Wege immer gleich — genau deshalb liest man den Claim und
-  nicht den Weg. Eine
+  Collateral selbst, verpfändet in deinem Vault. Mehr als eines übergibt es, und keines davon hängt daran, über welchen
+  Close-out du gegangen bist: ein Liquidator, der das Collateral mit
+  Abschlag direkt übernimmt, ein Close-out, der intern gegen eine
+  gegenläufige Position gematcht statt an eine Börse geschickt wird, und
+  ein Swap, der überhaupt nicht zustande kam — ein gescheiterter Verkauf
+  fällt auf die Übergabe zurück. Die gewöhnliche Liquidation und ein
+  zeitbasierter Default versuchen dieses interne Matching, BEVOR sie zur
+  Börse greifen; die Liquidation mit Abschlag tut das nicht. Also endet
+  kein Weg immer gleich — genau deshalb liest man den Claim und nicht
+  den Weg. Eine
   Teilliquidation ist überhaupt kein Close-out — der Loan bleibt
   offen und es entsteht kein Claim. Sieh in den Claim, statt zu
   raten. Bei

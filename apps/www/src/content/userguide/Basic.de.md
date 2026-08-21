@@ -382,13 +382,14 @@ erfordern; alles darüber wird als deines erfasst. Welche Form es
 hat, hängt davon ab, wie der Loan endete: wurde das Collateral
 über eine Börse verkauft, erreicht dich der Rest im Asset des
 Loans. Wurde es stattdessen übergeben, wartet das Collateral selbst
-auf dich. Zweierlei übergibt es, egal wie der Loan endete: ein
-Liquidator, der es mit Abschlag direkt übernimmt, und ein
-Close-out, der protokollintern gegen eine gegenläufige Position
-gematcht statt verkauft wird. Sowohl eine Liquidation als auch ein
-Default versuchen dieses interne Matching zuerst, also endet keines
-von beiden immer gleich — lies den Claim, statt es aus der
-Endungsart zu erraten. Oft geht bei einem Default über Collateral, das wir
+auf dich. Mehrerlei übergibt es, egal wie der Loan endete: ein Liquidator, der es
+mit Abschlag direkt übernimmt, ein Close-out, der protokollintern gegen
+eine gegenläufige Position gematcht statt verkauft wird, oder ein
+Verkauf, der nicht zustande kam — dann wird das Collateral übergeben.
+Eine gewöhnliche Liquidation und ein Default suchen dieses interne
+Matching, bevor sie an eine Börse gehen; eine Übernahme mit Abschlag
+nicht. Also endet nichts davon immer gleich — lies den Claim, statt es
+aus der Endungsart zu erraten. Oft geht bei einem Default über Collateral, das wir
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
 das ist aber ein Ausgang, keine Regel. Nie zurück kommt der
 Gebühren-Rebate: bei einem Loan auf dem eingestellten

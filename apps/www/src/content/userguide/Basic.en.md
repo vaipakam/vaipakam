@@ -352,13 +352,16 @@ the costs of closing it require, and anything beyond that is
 recorded as yours. What form it takes depends on how the loan
 ended: if the collateral was sold out through an exchange, what
 is left reaches you as the loan’s own asset. If it was handed
-over instead, the collateral itself is what waits for you. Two
-things hand it over, whichever way the loan ended: a liquidator
-taking it directly at a discount, and a close-out matched inside
-the protocol against an opposing position rather than sold. Both
-a liquidation and a default try that internal match first, so
-neither one always ends the same way — read the claim rather than
-guessing from how the loan closed. Often — on a default over collateral we
+over instead, the collateral itself is what waits for you. More
+than one thing hands it over, whichever way the loan ended: a
+liquidator taking it directly at a discount, a close-out matched
+inside the protocol against an opposing position rather than
+sold, or a sale that could not go through — a failed swap hands
+the collateral over instead. An ordinary liquidation and a
+default both look for that internal match before going to an
+exchange, though a discounted seizure does not. So neither one
+always ends the same way — read the claim rather than guessing
+from how the loan closed. Often — on a default over collateral we
 cannot price — the whole basket goes and nothing is left, but
 that is how it turned out, not a rule. What never comes back is
 the fee rebate: on a loan still using the retired VPFI fee path

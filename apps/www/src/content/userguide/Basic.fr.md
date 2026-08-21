@@ -378,13 +378,14 @@ ce qui dépasse est enregistré comme tien. Sa forme dépend de la
 manière dont le prêt s'est terminé : si le collatéral a été vendu
 via une place de marché, le reste te parvient dans l'actif du prêt
 lui-même. S'il a été remis à la place, c'est le collatéral lui-même
-qui t'attend. Deux choses le remettent, quelle que soit la manière
-dont le prêt s'est terminé : un liquidateur qui le prend
-directement avec une décote, et une clôture appariée à l'intérieur
-du protocole contre une position opposée plutôt que vendue. Une
-liquidation comme un défaut tentent d'abord cet appariement
-interne, donc ni l'un ni l'autre ne finit toujours pareil : lis la
-réclamation plutôt que de le déduire de la façon dont le prêt
+qui t'attend. Plusieurs choses le remettent, quelle que soit la manière dont le prêt
+s'est terminé : un liquidateur qui le prend directement avec une décote,
+une clôture appariée à l'intérieur du protocole contre une position
+opposée plutôt que vendue, ou une vente qui n'a pas pu se faire — le
+collatéral est alors remis. Une liquidation ordinaire comme un défaut
+cherchent cet appariement interne avant d'aller sur le marché ; une
+prise avec décote, non. Rien de tout cela ne finit donc toujours pareil
+: lis la réclamation plutôt que de le déduire de la façon dont le prêt
 s'est clos. Souvent — sur un
 défaut portant sur un collatéral que nous ne pouvons pas
 valoriser — tout le panier part et il ne reste rien, mais c'est

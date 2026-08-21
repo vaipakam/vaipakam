@@ -313,10 +313,10 @@ collateral。如果发生 default 或 liquidation，也请查看一下。系统�
 和了结它所需的那部分价值，超出的部分都会记在您名下。它以什么形式存在，
 取决于 loan 是如何结束的：如果 collateral 经交易所被卖出，剩余部分
 会以 loan 自身的 asset 到您手中。如果它是被交出而非卖出，等着您的
-就是 collateral 本身。有两种情况会交出它，且都与 loan 以哪种方式
-结束无关：liquidator 按折扣直接拿走，以及 close-out 没有卖出、而是
-在协议内部与一个反向 position 撮合。liquidation 和 default 都会先
-尝试这种内部撮合，所以两者的结果都不是固定的——请读 claim，而不要
+就是 collateral 本身。交出它的情况不止一种，且都与 loan 以哪种方式结束无关：liquidator 按折扣直接拿走，close-out 没有卖出、
+而是在协议内部与一个反向 position 撮合，或者这笔卖出根本没能成交——那就改为交出 collateral。普通
+liquidation 和 default 都会在去交易所之前先找这种内部撮合，按折扣直接拿走则不会。所以哪一种的结果都不是固定
+的——请读 claim，而不要
 从结束方式去推断。在无法定价的 collateral 上发生
 default 时，往往整个 basket 都会被取走、什么也不剩，但那是结果，不是规则。
 永远不会回来的是费用 rebate：仍在已停用 VPFI 费用路径上的 loan，其为
