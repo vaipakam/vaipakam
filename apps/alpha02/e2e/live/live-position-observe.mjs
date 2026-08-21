@@ -1685,21 +1685,9 @@ function lenderShapeOf(text) {
  * cover still reports as the no-op-switch FAIL, which is the honest
  * failure for "we could not explain this".
  */
-async function jumpabilityMoved(loan) {
-  return discovery(`re-reading loan ${loan.id} jumpability`, async () => {
-    // HOLDER AND SANCTIONS TOO (Codex #1853 r11). Both unmount the card
-    // outright — a transferred lender NFT or a newly flagged holder —
-    // so they remove the jumps just as surely as a status change, and
-    // omitting them meant those races returned "nothing moved" and were
-    // reported as a product FAIL.
-    //
-    // They are the two conditions `stillEligible` checks and this did
-    // not, which is the mirror of round 9: there I reused a function too
-    // loose for this question, here I wrote one too narrow. The union is
-    // what "can this row still be jumped to" actually requires, and the
-    // two checks remain separate functions because they are asked at
-    // different moments about different things.
-    const [live, now, lock, holderNow, flaggedNow] = await Promise.all([
+async function jumpabilitySnapshot(loan) {
+  return discovery(`reading loan ${loan.id} jumpability inputs`, async () => {
+    const [live, now, lock, holder, flagged] = await Promise.all([
       pub.readContract({
         address: DIAMOND,
         abi: DIAMOND_ABI_VIEM,
@@ -1711,27 +1699,56 @@ async function jumpabilityMoved(loan) {
       lenderAuthorityOf(loan),
       sanctionedAuthorityUncached(observed),
     ]);
-    if (holderNow === null) return 'lender token burned during the probe';
-    if (holderNow.toLowerCase() !== observed.toLowerCase()) {
-      return 'position transferred during the probe';
-    }
-    if (flaggedNow) return 'holder sanctions-flagged during the probe';
-    // Both sale entry points require exactly Active — FallbackPending is
-    // enough to close them while the card stays mounted.
-    if (Number(live.status) !== STATUS_ACTIVE) return 'loan left Active during the probe';
-    // `>=`, matching the page and the contracts (Codex #1853 r10). The
-    // card classifies maturity inclusively and the Advanced tool block
-    // gates on a strict `<`, so AT the boundary second both jumps are
-    // correctly gone — and a `>` here returned "nothing moved", turning
-    // the healthy zero-jump result into a product FAIL. This is the
-    // identical off-by-one #1839 fixed in its own round 18, reproduced
-    // in the drive built to review it.
-    if (now >= live.startTime + live.durationDays * 86_400n) {
-      return 'loan reached maturity during the probe';
-    }
-    if (lock !== 0) return 'position became locked during the probe';
-    return null;
+    return {
+      active: Number(live.status) === STATUS_ACTIVE,
+      // `>=`, matching the page and the contracts: AT the boundary
+      // second both jumps are correctly gone (Codex #1853 r10).
+      matured: now >= live.startTime + live.durationDays * 86_400n,
+      locked: lock !== 0,
+      holder: holder === null ? null : holder.toLowerCase(),
+      flagged: Boolean(flagged),
+    };
   });
+}
+
+/**
+ * Did the inputs that make a SALE ROW JUMPABLE actually CHANGE?
+ *
+ * A before/after comparison, not a post-hoc read of the current state
+ * (Codex #1853 r12). The previous version read only the state AFTER the
+ * click and called any unjumpable value a race — so a candidate that was
+ * ALREADY FallbackPending (which lender eligibility explicitly admits),
+ * already past maturity, or already locked before the page rendered
+ * would be reported as "left Active during the probe" and exit BLOCKED.
+ * Nothing had moved. And that is the direction that hides a real defect:
+ * if a Basic-mode regression wrongly offered the switch on such a
+ * position, clicking it yields no jumps and the drive would excuse it as
+ * a race instead of failing.
+ *
+ * NOT `stillEligible`, which asks whether the CARD may mount and is
+ * deliberately loose — it accepts FallbackPending and past maturity,
+ * because the wait row stays true (Codex #1853 r9). This asks the
+ * strict question, and its inputs are a SUPERSET of that one's: status,
+ * maturity, lock, holder, sanctions (r11 added the last two).
+ *
+ * Deliberately a subset of everything `buildLenderExitRows` consults. A
+ * complete model would be a shadow copy of that module living in a test
+ * harness — the defect class this whole PR chain is about — so anything
+ * uncovered still reports as the no-op-switch FAIL, the honest failure
+ * for "we cannot explain this".
+ */
+async function jumpabilityMoved(before, after) {
+  if (!before || !after) return null;
+  if (before.active && !after.active) return 'loan left Active during the probe';
+  if (!before.matured && after.matured) return 'loan reached maturity during the probe';
+  if (!before.locked && after.locked) return 'position became locked during the probe';
+  if (before.holder !== after.holder) {
+    return after.holder === null
+      ? 'lender token burned during the probe'
+      : 'position transferred during the probe';
+  }
+  if (!before.flagged && after.flagged) return 'holder sanctions-flagged during the probe';
+  return null;
 }
 
 /** Raw lock reason on any position token; 0 = unlocked. */
@@ -1763,47 +1780,54 @@ async function positionLockOf(tokenId) {
  * interval at first render, with neither switch nor jumps present.
  */
 async function waitForSaleRows(card, jumpsOf, page, swOf) {
-  // STABILITY, not an enumeration of loading sentences (Codex #1853 r11).
+  // TEXT STABILITY IS NOT READINESS, and round 11's version of this was
+  // unsound (Codex #1853 r12). Pending copy is STATIC — "still reading
+  // the details a sale needs" does not change while the read is in
+  // flight — so three identical samples meant "the loading message has
+  // not changed", never "the read finished". A read slower than three
+  // seconds settled falsely, which is the same silent false PASS r11
+  // claimed to eliminate. I described that change as closing a class.
+  // It closed the enumeration and left the hole.
   //
-  // Three rounds running I extended this by adding whichever transient
-  // copy the finding named: r7 the `saleTools` checking sentence, r10
-  // `saleToolsFailed`, and r11 pointed out that `saleLock === 'checking'`
-  // and `maturity === 'unknown'` ALSO remove the switch and every jump
-  // and match neither. Enumerating them is a losing game — the set is
-  // whatever `buildLenderExitRows` currently ranks above the rows, which
-  // is exactly the module this drive must not shadow — and every miss is
-  // a silent false PASS.
+  // There is no positive readiness signal available from outside: the
+  // card exposes no test hook (#1855), and the only DOM evidence that a
+  // row became jumpable IS the jump button. So absence is treated as
+  // conclusive ONLY at the deadline:
   //
-  // So the wait no longer asks "is it still loading". It asks whether
-  // the card has STOPPED CHANGING, which is copy-independent and covers
-  // transient states nobody has enumerated yet:
+  //   - a jump appears                  → settled, audit it
+  //   - the switch appears              → settled, click it
+  //   - the explicit FAILED sentence    → definite non-ready, BLOCKED
+  //   - deadline with none of the above → no jumpable row
   //
-  //   - a jump appears        → settled, audit it
-  //   - the switch appears    → settled, click it
-  //   - text stable 3× 1s     → settled, whatever it says
-  //   - deadline              → give up, and say so
+  // The failed sentence stays copy-matched deliberately, and the
+  // asymmetry is the point: it is a DEFINITE answer ("this could not be
+  // loaded"), where the checking sentences are merely the absence of
+  // one. Matching on a definite answer degrades to a longer wait if the
+  // copy changes; matching on absence degrades to a false pass. Round 11
+  // dropped this arm entirely when it removed the enumeration, so a
+  // persistent failure became "settled".
   //
-  // The stability window costs a few seconds on a page that genuinely
-  // has no jumpable row. That is the right price: the alternative is
-  // being wrong about which of those it is.
+  // The cost is the full deadline on a page that genuinely has no
+  // jumpable row — the common case on a chain of past-due loans. That
+  // is the price of not having a readiness hook, and #1855 is what
+  // would remove it.
+  const FAILED = /one of the details a sale needs couldn.t be loaded/i;
   const deadline = Date.now() + 45_000;
-  let last = null;
-  let stable = 0;
   for (;;) {
     const jumps = await jumpsOf().count();
     const switchThere = swOf ? (await swOf().count()) > 0 : false;
-    const text = await card.innerText().catch(() => '');
-    if (jumps > 0 || switchThere) return { jumps, switchThere, settled: true, timedOut: false };
-    stable = text === last ? stable + 1 : 0;
-    last = text;
-    if (stable >= 3) return { jumps: 0, switchThere: false, settled: true, timedOut: false };
+    if (jumps > 0 || switchThere) {
+      return { jumps, switchThere, toolsFailed: false, timedOut: false };
+    }
+    if (FAILED.test(await card.innerText().catch(() => ''))) {
+      return { jumps: 0, switchThere: false, toolsFailed: true, timedOut: false };
+    }
     if (Date.now() > deadline) {
-      return { jumps: 0, switchThere: false, settled: false, timedOut: true };
+      return { jumps: 0, switchThere: false, toolsFailed: false, timedOut: true };
     }
     await page.waitForTimeout(1_000);
   }
-}
-async function lenderAdvancedOf(page, loan) {
+}async function lenderAdvancedOf(page, loan) {
   const SWITCH = /Show these tools \(switches to Advanced view\)/i;
   // SCOPED TO THE LENDER CARD (Codex #1853 r5). The borrower chooser
   // uses the IDENTICAL labels — `copy.earlyRepay.switchToAdvanced` and
@@ -1835,14 +1859,16 @@ async function lenderAdvancedOf(page, loan) {
       // without ever auditing a row that became jumpable a second later.
       const settled = await waitForSaleRows(card, jumpsOf, page, () => sw);
       if (settled.jumps === 0) {
-        if (settled.timedOut) {
+        if (settled.toolsFailed) {
           return {
             advancedOffered: false,
             advancedJumps: null,
             advancedBlocked: true,
-            advancedWhy: 'card never stopped changing at first render — never settled',
+            advancedWhy: 'a prerequisite read failed — sale tools unavailable',
           };
         }
+        // A full deadline with neither jump nor switch IS the conclusive
+        // "no jumpable row" — that is what the wait now means.
         // RE-CHECK THE SWITCH (Codex #1853 r10). On a Basic page still
         // loading at first render there is no switch AND no jumps, so we
         // land here — but once `saleTools` becomes ready the switch
@@ -1862,6 +1888,9 @@ async function lenderAdvancedOf(page, loan) {
         return { advancedOffered: false, advancedWhy: 'already in Advanced', ...(await anchorAudit(page, card)) };
       }
     }
+    // Snapshot BEFORE the click, so the comparison below measures a
+    // change rather than a state (Codex #1853 r12).
+    const before = loan ? await jumpabilitySnapshot(loan) : null;
     await sw.first().click({ timeout: 10_000 });
     // WAIT FOR READINESS, not a fixed sleep (Codex #1853 r7). Switching
     // starts the Advanced-only `loanLive` read, and while it is in
@@ -1877,15 +1906,15 @@ async function lenderAdvancedOf(page, loan) {
     const post = await waitForSaleRows(card, jumpsOf, page, null);
     const jumps = post.jumps;
     if (jumps === 0) {
-      if (post.timedOut) {
-        // Never stopped changing inside the deadline. Nothing was
-        // learned — whatever read decides is still outstanding — so this
-        // is "could not look", the same verdict as a probe that threw.
+      if (post.toolsFailed) {
+        // A definite non-ready answer, not a no-op switch: the card is
+        // correctly reporting that a prerequisite could not be loaded,
+        // so the anchor audit could not run and nothing was learned.
         return {
           advancedOffered: true,
           advancedJumps: null,
           advancedBlocked: true,
-          advancedWhy: 'card never stopped changing after the switch — never settled',
+          advancedWhy: 'a prerequisite read failed after the switch — sale tools unavailable',
         };
       }
       // Settled with no jump — but CHECK WHETHER THE CHAIN MOVED first
@@ -1897,7 +1926,7 @@ async function lenderAdvancedOf(page, loan) {
       // reacting perfectly correctly. Round 7's poll fixed the slow-RPC
       // false FAIL and left this one, because both arrive as "settled,
       // no jump" and only a chain read tells them apart.
-      const moved = loan ? await jumpabilityMoved(loan) : null;
+      const moved = loan ? jumpabilityMoved(before, await jumpabilitySnapshot(loan)) : null;
       if (moved) {
         return {
           advancedOffered: true,
