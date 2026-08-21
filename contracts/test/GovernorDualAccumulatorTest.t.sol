@@ -1926,8 +1926,13 @@ contract GovernorDualAccumulatorTest is SetupTest {
     /// delivered bound rather than a refusal to price. If it priced the V2 stamp's recycled
     /// equivalents and then debited the LOCAL bucket at claim (canonical
     /// `consume` semantics), a remittance-funded reward would cannibalise
-    /// the mirror's own recycled balance — the exact mirror consumption the
-    /// delivered bound now defers rather than the halt forbidding it. An UNFUNDED armed day defers, so a mirror claim
+    /// the mirror's own recycled balance — the exact mirror consumption that
+    /// is now bounded rather than forbidden. Note WHICH bound does it: the
+    /// recycled leg is capped by `PoolBudget.recycled`, seeded from the live
+    /// `recycleBucket`, so the bucket cannot be overdrawn. P1-b's
+    /// `deliveredFresh` bounds the FRESH leg only — it is what releases this
+    /// test's deferral, not what protects the bucket, and on a day with little
+    /// fresh liability it protects nothing here at all. An UNFUNDED armed day defers, so a mirror claim
     /// never touches its bucket. Before #1434 P1-b this held for a different
     /// reason — the blanket halt meant armed mirror days never priced at all
     /// — and the funded half below is what distinguishes the two; see its
