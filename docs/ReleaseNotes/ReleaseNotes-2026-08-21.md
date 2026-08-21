@@ -682,11 +682,16 @@ corrected by someone reading what the mechanism does.
 **A separate correction, and the most consequential one here.** The Claim
 Center guidance told a borrower that an HF-liquidation or a default returns
 **nothing**. That is not something a page can promise either way: only enough
-collateral is taken to cover the liquidator, the lender and the treasury, and any
-remainder is recorded as the borrower's claim and stays in their vault until they
+value is taken to cover the liquidator, the lender and the treasury, and any
+remainder is recorded as the borrower's claim, waiting in their vault until they
 withdraw it. Whether a remainder exists depends on what the collateral actually
 realised — the liquidator's incentive and the realised slippage come out first —
-so an overcollateralised position often leaves one and is not guaranteed to. A borrower who believed the page would simply never go
+so an overcollateralised position often leaves one and is not guaranteed to. What
+the remainder consists of depends on how the position was closed: where the
+collateral was sold, what waits is the proceeds in the loan's own asset; where it
+was handed over instead, the collateral itself waits. Telling a borrower to look
+for the wrong token is the same error, one level down, as telling them there is
+nothing to look for. A borrower who believed the page would simply never go
 and collect it. The guidance now tells them to check, explains that an illiquid
 default usually does take the whole basket — an outcome, not a rule — and states
 what happens to the retired-path rebate: forfeited outright on a default or
