@@ -1455,6 +1455,11 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     ...(ROLE === 'lender' && loan
       ? await lenderAdvancedOf(page, loan, lenderCardText === null)
       : {}),
+    // Spread AFTER the shape scrape on purpose: where the probe observed
+    // the card the scrape had missed, its later reading replaces the
+    // earlier absence (Codex #1853 r17). Order is the mechanism here, so
+    // moving this line above `lenderShapeOf` silently restores the bug.
+
     holdCard: holdCard > 0,
     freeHeld: freeHeld > 0,
     connected: !/Connect wallet/i.test(text.slice(0, 400)),
@@ -1837,6 +1842,30 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
   const cardPresent = async () => (await card.count()) > 0;
 
   /**
+   * The scrape can be too EARLY as well as too late (Codex #1853 r17).
+   *
+   * If the ownership, status or sanctions reads outrun the initial card
+   * scrape, the visit records `chooser: false` and an empty row shape —
+   * and then this probe goes on to observe the card, click its switch
+   * and audit its anchors successfully. The reporter was still reading
+   * the earlier cached absence, so a healthy late-rendering page was
+   * filed as `lender chooser MISSING` along with every row, on the same
+   * visit that had just interacted with that card.
+   *
+   * Every previous fix here treated the scrape as authoritative and the
+   * probe as the thing needing qualification. This is the same fact from
+   * the other end: a later positive observation is BETTER evidence than
+   * an earlier absence, because the card cannot un-render into having
+   * been there.
+   */
+  const rescrapeIfLate = async () => {
+    if (!cardAbsentAtScrape) return {};
+    const text = await card.innerText().catch(() => null);
+    if (text === null) return {};
+    return { chooser: true, cardRescraped: true, ...lenderShapeOf(text) };
+  };
+
+  /**
    * The one verdict for "the card ended up with no jump button".
    *
    * Every route into that outcome routes through here (Codex #1853
@@ -1966,7 +1995,8 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
           // which is much looser than jumpability: past maturity and
           // FallbackPending both keep it mounted. Only a genuinely
           // unmountable pre-state suppresses the shape assertions.
-          if (!(await cardPresent())) {
+          const cardGoneNow = !(await cardPresent());
+          if (cardGoneNow) {
             const pre = snapshotCardEligible(before, observed);
             // BOTH conditions, and the first is the one round 15 lacked
             // (Codex #1853 r16). `cardAbsentAtScrape` is what the shape
@@ -2003,11 +2033,10 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
             // Advanced audit never performed and nothing marking it.
             //
             // Re-read AFTER the wait and ask the same mount question of
-            // the post-state. This costs five chain reads only on the
-            // path where the card has already gone missing.
-            const post = loan ? await jumpabilitySnapshot(loan) : null;
-            if (snapshotCardEligible(post, observed) === false) {
-              const moved = jumpabilityMoved(before, post);
+            // the post-state.
+            const postGone = loan ? await jumpabilitySnapshot(loan) : null;
+            if (snapshotCardEligible(postGone, observed) === false) {
+              const moved = jumpabilityMoved(before, postGone);
               return {
                 advancedOffered: false,
                 advancedJumps: null,
@@ -2022,6 +2051,57 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
                   (moved ? `: ${moved}` : ' — the position is no longer one this card renders for'),
               };
             }
+            // A REVERSIBLE TRANSITION LEAVES NO TRACE IN A BEFORE/AFTER
+            // (Codex #1853 r17). The position can transfer away, the
+            // page's 60s ownership poll can unmount the card, and the
+            // position can transfer back — leaving `before` and `post`
+            // identical and `snapshotCardEligible(post)` true, while the
+            // card demonstrably went missing in between. No comparison
+            // of two chain samples can see a round trip that closed
+            // between them; only the DOM observation can, and we have
+            // just made it.
+            //
+            // So a card that WAS scraped and is now gone is BLOCKED on
+            // that evidence alone, regardless of what the chain says.
+            if (!cardAbsentAtScrape) {
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                advancedRaced: true,
+                advancedWhy:
+                  'the lender card was scraped and then vanished during the wait — ' +
+                  'the chain reads either side agree, so a transition reversed inside ' +
+                  'the window and no audit was possible',
+              };
+            }
+          }
+          // STILL RE-READ WHEN THE CARD STAYED MOUNTED (Codex #1853 r17).
+          // The card deliberately survives FallbackPending, maturity and
+          // a position lock — `PositionDetails` keeps it up so the wait
+          // row can explain them — while `buildLenderExitRows` removes
+          // BOTH jumps for exactly those states. So a during-wait
+          // transition of that kind leaves the card present and the jumps
+          // gone, and gating this re-read on the card's absence skipped
+          // precisely the case where the card is designed to stay.
+          //
+          // Guarding on `cardPresent()` was a proxy for "did something
+          // change", and it was the wrong proxy: the card's presence is
+          // not what the sale rows depend on.
+          if (loan && snapshotJumpable(before, observed) === true) {
+            const post = await jumpabilitySnapshot(loan);
+            if (snapshotJumpable(post, observed) === false) {
+              const moved = jumpabilityMoved(before, post);
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                advancedRaced: true,
+                advancedWhy:
+                  'the position stopped being sellable while the probe waited' +
+                  (moved ? `: ${moved}` : ''),
+              };
+            }
           }
           return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
         }
@@ -2029,7 +2109,12 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
       } else {
         const audit = await anchorAudit(page, card);
         if (audit.advancedJumps === 0) return await noJumpVerdict(false);
-        return { advancedOffered: false, advancedWhy: 'already in Advanced', ...audit };
+        return {
+          advancedOffered: false,
+          advancedWhy: 'already in Advanced',
+          ...(await rescrapeIfLate()),
+          ...audit,
+        };
       }
     }
     await sw.first().click({ timeout: 10_000 });
@@ -2068,7 +2153,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
     // Both entries into the audit route a zero through the same verdict.
     const audit = await anchorAudit(page, card);
     if (audit.advancedJumps === 0) return await noJumpVerdict();
-    return { advancedOffered: true, ...audit };
+    return { advancedOffered: true, ...(await rescrapeIfLate()), ...audit };
   } catch (e) {
     // "Could not look" is exit 2, NOT a clean observation (Codex #1853
     // r6). Reporting it and returning was half right: it is correctly
