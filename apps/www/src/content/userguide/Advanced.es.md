@@ -771,11 +771,17 @@ liquidó el préstamo:
   comisión VPFI retirada se liquida además el reembolso de VPFI
   ponderado por tiempo de la Loan Initiation Fee, que puede ser
   cero.
-- **Una venta que liquide el préstamo** (venta prepay,
-  swap-to-repay) — el colateral va al comprador, no vuelve a ti;
-  lo que llega a tu bóveda es el resto de los ingresos una vez
-  pagados el prestamista y el tesoro. El reembolso de la vía
-  retirada se liquida aquí también, en los mismos términos.
+- **Una venta prepay que liquide el préstamo** — el colateral va al
+  comprador, no vuelve a ti. Recibes el precio de venta menos el
+  derecho del prestamista, el recorte de tesorería y las comisiones
+  de vendedor que llevara el listado, pagado a quien tenga el NFT
+  de posición de prestatario. En un préstamo de la vía retirada, no
+  cuentes aquí con el reembolso: se calcula al liquidar pero
+  actualmente no puede cobrarse después.
+- **Swap-to-repay** — sólo se vende el colateral que exige la
+  deuda. El colateral no vendido vuelve a ti, y un excedente en el
+  activo del propio préstamo se paga directamente al titular del
+  NFT de prestatario en vez de esperar como reclamación.
 - **Liquidación por HF o default** — compruébalo igualmente,
   puede quedar un excedente. Sólo se toma el valor suficiente
   para cubrir al liquidador, al prestamista y al tesoro, y el resto

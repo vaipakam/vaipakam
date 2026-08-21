@@ -711,10 +711,15 @@ Borrower claim は、loan がどう settle されたかによって次を返し
   basket。廃止された VPFI 手数料経路のままの loan であれば、Loan
   Initiation Fee の time-weighted VPFI rebate も同時に精算されます
   （ゼロのこともあります）。
-- **loan を決済する売却**（prepay sale、swap-to-repay）— collateral
-  は買い手に渡り、あなたには戻りません。Vault に入るのは、lender と
-  treasury への支払い後に残った売却代金です。廃止経路の rebate は
-  ここでも同じ条件で精算されます。
+- **loan を決済する prepay sale** — collateral は買い手に渡り、
+  あなたには戻りません。受け取るのは、売却価格から lender の取り分、
+  treasury の控除、listing に付いていた seller fee を差し引いた額で、
+  borrower position NFT の保有者に支払われます。廃止経路の loan では
+  ここでの rebate を当てにしないでください。決済時に計算はされますが、
+  その後は現状回収できません。
+- **swap-to-repay** — collateral は債務に必要な分だけ売られます。
+  売れ残った collateral は戻り、loan 自体の asset の余剰は claim として
+  待つのではなく borrower NFT 保有者へ直接支払われます。
 - **HF-liquidation または default** — それでも確認してください。surplus が
   残っている場合があります。liquidator・lender・treasury を
   まかなうぶんの価値だけが取られ、残りがあなたの claim として記録
@@ -1222,7 +1227,7 @@ atomic に land します。トランザクションは完全に成功する(ロ
 
 ### ケース 4 — いずれかの側に非流動的（Illiquid）資産がある
 
-非流動的資産パス。貸付アセット、担保アセット、または 그 両方が、プロトコルの分類器で Liquid（流動的）とみなされない場合（Chainlinkフィードがない、または出来高しきい値を超える Uniswap V3 型の集中流動性プールがない場合）。NFT担保やロングテールのトークンで一般的です。
+非流動的資産パス。貸付アセット、担保アセット、またはその両方が、プロトコルの分類器で Liquid（流動的）とみなされない場合（Chainlinkフィードがない、または出来高しきい値を超える Uniswap V3 型の集中流動性プールがない場合）。NFT担保やロングテールのトークンで一般的です。
 
 デフォルト時に何が起こるか:
 

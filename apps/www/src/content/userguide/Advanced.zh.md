@@ -583,10 +583,14 @@ borrower claim 根据 loan 如何 settle 来返回：
 - **Full repayment / preclose / refinance** — 您的 collateral
   basket 回来；若该 loan 仍在已停用的 VPFI 费用路径上，Loan
   Initiation Fee 的 time-weighted VPFI rebate 也会一并结算（可能为零）。
-- **结清该 loan 的一次出售**（prepay sale、swap-to-repay）—
-  collateral 归买家，不会退还给您；进入您 vault 的是支付 lender 和
-  treasury 之后剩余的出售所得。已停用路径的 rebate 在这里同样按相同
-  条件结算。
+- **结清该 loan 的 prepay sale** — collateral 归买家，不会退还给您。
+  您拿到的是售价减去 lender 应得、treasury 抽成以及 listing 上带的
+  卖方费用之后的金额，支付给持有 borrower position NFT 的人。若该 loan
+  在已停用路径上，请不要指望这里的 rebate：结算时会计算，但之后目前
+  无法领取。
+- **swap-to-repay** — 只卖出债务所需的那部分 collateral。未卖出的
+  collateral 会回到您手中，而 loan 自身 asset 的盈余会直接付给
+  borrower NFT 持有人，而不是作为 claim 等待。
 - **HF-liquidation 或 default** — 仍请查看，可能还有 surplus。系统只取走
   足以支付 liquidator、lender 和 treasury 的那部分价值，余下的会记为您的
   claim。它的形式只取决于一件事：collateral 是被卖出，还是被交出。被卖出——

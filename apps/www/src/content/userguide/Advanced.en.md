@@ -720,11 +720,17 @@ The borrower claim returns, depending on how the loan settled:
   nothing; a loan opened under the current model has none at all,
   because its discount was already taken off the fee at
   acceptance.
-- **A sale that settles the loan** (prepay sale, swap-to-repay) —
-  the collateral goes to the buyer, not back to you; what lands in
-  your vault is the remainder of the proceeds once the lender and
-  the treasury are paid. The retired-path rebate is settled here
-  too, on the same terms.
+- **A prepay sale that settles the loan** — the collateral goes to
+  the buyer, not back to you. What you receive is the sale price
+  less the lender's entitlement, the treasury cut and any seller
+  fees the listing carried, paid to whoever holds the borrower
+  position NFT. On a retired-path loan, do not count on the fee
+  rebate on this route: it is calculated at settlement but cannot
+  currently be collected afterwards.
+- **Swap-to-repay** — only as much collateral is sold as the debt
+  requires. Collateral left unsold comes back to you, and a surplus
+  in the loan's own asset is paid straight to the borrower position
+  NFT holder rather than waiting as a claim.
 - **HF-liquidation or default** — check anyway; there may be a
   surplus. Only enough value is taken to cover the
   liquidator, the lender and the treasury, and the remainder is

@@ -11,10 +11,19 @@ distinct paths settle the rebate, and copy that lists only three tells the
 borrower using a fourth that theirs is not a proper close.
 
 The sale routes are listed separately rather than folded in with the others,
-because what they return is different: the collateral goes to the buyer, and
-what reaches the borrower's vault is the remainder of the sale proceeds after
-the lender and the treasury are paid. Grouping them under "your collateral
-back" would trade one wrong expectation for another.
+because what they return is different — and they differ from each other too. A
+prepay sale hands the collateral to the buyer and pays the borrower the sale
+price less the lender's entitlement, the treasury cut, and any seller fees the
+listing carried; swap-to-repay sells only as much collateral as the debt
+requires, returns what is left unsold, and pays any surplus straight to the
+borrower rather than leaving it as a claim. Grouping any of them under "your
+collateral back" would trade one wrong expectation for another.
+
+**One route deliberately promises nothing.** On a prepay sale the rebate is
+calculated at settlement and then cannot be collected, because the loan is moved
+to a state the borrower claim refuses. That is a contract defect rather than a
+wording one and is filed separately; until it is resolved the guides say plainly
+not to count on a rebate there, which is the only honest thing to print.
 
 Settling is not the same as paying out. The rebate is sized by the discount the
 borrower averaged over the loan's life, so a borrower who held no VPFI, or

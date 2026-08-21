@@ -658,10 +658,14 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
 - **full repayment / preclose / refinance** — 내 collateral basket.
   폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 Loan Initiation
   Fee의 time-weighted VPFI rebate도 함께 정산되며, 0일 수도 있습니다.
-- **loan을 정산하는 매각**(prepay sale, swap-to-repay) — collateral은
-  구매자에게 가고 내게 돌아오지 않습니다. Vault에 들어오는 것은
-  lender와 treasury에 지급하고 남은 매각 대금입니다. 폐지 경로의
-  rebate도 같은 조건으로 여기서 정산됩니다.
+- **loan을 정산하는 prepay sale** — collateral은 구매자에게 가고 내게
+  돌아오지 않습니다. 받는 것은 매각가에서 lender 몫, treasury 컷,
+  listing에 붙은 seller fee를 뺀 금액이며, borrower position NFT
+  보유자에게 지급됩니다. 폐지 경로 loan이라면 여기서 rebate를 기대하지
+  마세요: 정산 시 계산은 되지만 이후 현재로서는 받을 수 없습니다.
+- **swap-to-repay** — collateral은 빚에 필요한 만큼만 팔립니다. 팔리지
+  않은 collateral은 돌아오고, loan 자체 asset의 잉여는 claim으로
+  기다리지 않고 borrower NFT 보유자에게 곧바로 지급됩니다.
 - **HF-liquidation 또는 default** — 그래도 확인해 보세요. surplus가 남아
   있을 수 있습니다. liquidator와 lender, treasury를 충당할
   만큼의 가치만 가져가고 나머지는 내 claim으로 기록됩니다. 그 형태는 한 가지로 갈립니다. collateral이

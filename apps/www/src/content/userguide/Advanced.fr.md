@@ -767,11 +767,17 @@ prêt s'est réglé :
   collatéral ; sur un prêt encore soumis à la voie de frais VPFI
   retirée, le rabais VPFI pondéré dans le temps issu de la Loan
   Initiation Fee est réglé en même temps, et peut être nul.
-- **Une vente qui solde le prêt** (vente prepay, swap-to-repay) —
-  le collatéral part chez l'acheteur et ne te revient pas ; ce qui
-  arrive dans ton vault est le reliquat du produit une fois le
-  prêteur et le trésor payés. Le rabais de la voie retirée est
-  réglé là aussi, aux mêmes conditions.
+- **Une vente prepay qui solde le prêt** — le collatéral part chez
+  l'acheteur et ne te revient pas. Tu reçois le prix de vente moins
+  le droit du prêteur, la coupe de trésorerie et les frais vendeur
+  éventuels de l'annonce, versés au détenteur du NFT de position
+  d'emprunteur. Sur un prêt de la voie retirée, ne compte pas sur le
+  rabais ici : il est calculé au règlement mais ne peut
+  actuellement pas être encaissé ensuite.
+- **Swap-to-repay** — on ne vend que le collatéral qu'exige la
+  dette. Le collatéral non vendu te revient, et un excédent dans
+  l'actif du prêt est versé directement au détenteur du NFT
+  d'emprunteur au lieu d'attendre sous forme de créance.
 - **Liquidation HF ou défaut** — vérifie quand même, il peut
   rester un excédent. On ne prélève que la valeur nécessaire
   pour couvrir le liquidateur, le prêteur et le trésor, et le reste

@@ -771,12 +771,17 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   Collateral-Korb zurück; bei einem Loan auf dem eingestellten
   VPFI-Gebührenweg wird dabei der zeitgewichtete VPFI-Rebate aus
   der Loan Initiation Fee abgerechnet, der auch null sein kann.
-- **Ein Verkauf, der den Loan abschließt** (Prepay-Sale,
-  Swap-to-Repay) — das Collateral geht an den Käufer, nicht an
-  dich zurück; in deinen Vault fließt der Rest des Erlöses,
-  nachdem Lender und Treasury bezahlt sind. Der Rebate des
-  eingestellten Wegs wird auch hier zu denselben Bedingungen
-  abgerechnet.
+- **Ein Prepay-Sale, der den Loan abschließt** — das Collateral
+  geht an den Käufer, nicht an dich zurück. Du erhältst den
+  Verkaufspreis abzüglich des Lender-Anspruchs, des Treasury-Anteils
+  und etwaiger Verkäufergebühren des Listings, ausgezahlt an den
+  Inhaber des Borrower-Position-NFT. Bei einem Loan auf dem
+  eingestellten Weg rechne hier NICHT mit dem Rebate: er wird beim
+  Settlement berechnet, ist danach aber derzeit nicht abrufbar.
+- **Swap-to-Repay** — es wird nur so viel Collateral verkauft, wie
+  die Schuld verlangt. Nicht verkauftes Collateral kommt zu dir
+  zurück, und ein Überschuss im Asset des Loans geht direkt an den
+  Inhaber des Borrower-Position-NFT statt als Claim zu warten.
 - **HF-Liquidation oder Default** — sieh trotzdem nach, es kann
   ein Überschuss übrig sein. Es wird nur so viel Wert
   genommen, wie Liquidator, Lender und Treasury decken; der Rest
