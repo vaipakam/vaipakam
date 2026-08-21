@@ -784,9 +784,11 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   geschlossen wurde. Eine gewöhnliche HF-Liquidation und ein
   zeitbasierter Default auf handelbares Collateral verkaufen beide
   das Collateral und erfassen den Rest im Principal-Asset des
-  Loans. Nur ein Close-out, bei dem ein Liquidator das Collateral
-  mit Abschlag direkt übernimmt, statt es zu verkaufen, lässt den
-  nicht verkauften Teil verpfändet in deinem Vault. Eine
+  Loans. Zwei Close-outs lassen den nicht verkauften Teil verpfändet in
+  deinem Vault: eines, bei dem ein Liquidator das Collateral mit
+  Abschlag direkt übernimmt statt es zu verkaufen, und eines, bei
+  dem der Verkauf nicht zustande kam und das Collateral so
+  verteilt wird, wie es ist. Eine
   Teilliquidation ist überhaupt kein Close-out — der Loan bleibt
   offen und es entsteht kein Claim. Sieh in den Claim, statt zu
   raten. Bei

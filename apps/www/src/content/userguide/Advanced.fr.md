@@ -779,9 +779,10 @@ prêt s'est réglé :
   laquelle le prêt s'est refermé. Une liquidation HF ordinaire et
   un défaut temporel sur un collatéral négociable vendent tous
   deux le collatéral et enregistrent le reliquat dans l'actif
-  principal du prêt. Seule une clôture où un liquidateur prend le
-  collatéral directement avec une décote, au lieu de le vendre,
-  laisse la part invendue grevée dans ton vault. Une liquidation
+  principal du prêt. Deux clôtures laissent la part invendue grevée dans ton vault :
+  celle où un liquidateur prend le collatéral directement avec une
+  décote au lieu de le vendre, et celle où la vente n'a pas pu
+  aboutir et où le collatéral est réparti tel quel. Une liquidation
   partielle n'est pas une clôture du tout — le prêt reste ouvert
   et aucune créance n'est créée. Consulte la créance plutôt que
   de supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le

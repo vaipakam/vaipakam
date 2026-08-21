@@ -738,8 +738,9 @@ Borrower claim इस आधार पर return करता है कि loan
   रास्ते से बंद हुआ। सामान्य HF liquidation और बिकने योग्य collateral
   पर समय-आधारित default — दोनों collateral बेचते हैं और बचा हुआ loan
   के principal asset में दर्ज करते हैं। बिना बिका हिस्सा आपके vault में
-  encumbered सिर्फ़ तब रहता है जब liquidator collateral बेचने के बजाय
-  छूट पर सीधे ले लेता है। आंशिक liquidation तो बंद होना है ही नहीं —
+  encumbered दो हालात में रहता है: जब liquidator collateral बेचने के
+  बजाय छूट पर सीधे ले लेता है, और जब बिक्री पूरी नहीं हो पाती और
+  collateral जैसा है वैसा ही बाँट दिया जाता है। आंशिक liquidation तो बंद होना है ही नहीं —
   loan खुला रहता है और कोई claim बनता ही नहीं। अनुमान लगाने के बजाय
   claim देखें। Illiquid asset के default में आम तौर पर पूरी
   basket चली जाती है और कुछ नहीं बचता — पर वह एक परिणाम है, नियम

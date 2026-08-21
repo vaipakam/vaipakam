@@ -352,9 +352,10 @@ the costs of closing it require, and anything beyond that is
 recorded as yours. What form it takes depends on how the loan
 ended: after an ordinary liquidation, or a default on tradable
 collateral, the basket is sold and what is left reaches you as the
-loan’s own asset. Only when a liquidator takes the collateral
-directly at a discount, instead of selling it, is what waits for
-you the collateral itself. Often — on a default over collateral we
+loan’s own asset. What waits for you is the collateral
+itself in two cases: when a liquidator takes it directly at a
+discount instead of selling it, and when the sale could not be
+completed and the collateral is shared out as it stands. Often — on a default over collateral we
 cannot price — the whole basket goes and nothing is left, but
 that is how it turned out, not a rule. Whether the fee rebate comes
 back depends on how the loan ended: on a loan still using the

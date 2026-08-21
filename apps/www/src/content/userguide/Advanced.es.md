@@ -783,9 +783,10 @@ liquidó el préstamo:
   se cerró el préstamo. Una liquidación por HF ordinaria y un
   default por tiempo sobre colateral negociable venden ambos el
   colateral y registran el residuo en el activo principal del
-  préstamo. Sólo un cierre en el que un liquidador toma el
-  colateral directamente con descuento, en vez de venderlo, deja
-  gravada en tu bóveda la parte no vendida. Una liquidación
+  préstamo. Dos cierres dejan gravada en tu bóveda la parte no vendida: uno
+  en el que un liquidador toma el colateral directamente con
+  descuento en vez de venderlo, y otro en el que la venta no pudo
+  completarse y el colateral se reparte tal cual. Una liquidación
   parcial no es un cierre en absoluto — el préstamo sigue abierto
   y no se crea ninguna reclamación. Consulta la reclamación en
   lugar de suponer cuál tienes. En un default sobre un activo ilíquido suele irse la
