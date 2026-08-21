@@ -317,9 +317,12 @@ collateral。如果发生 default 或 liquidation，也请查看一下。系统�
 而是在协议内部与一个反向 position 撮合，或者这笔卖出根本没能成交——那里 collateral 会给到您——除非 lender 在 claim 时带来一份能成交的报价，那样就按 loan 自身的 asset
 支付；而大多数并不带报价。普通 liquidation 和 default 都会在去交易所之前先找这种内部撮合，所以这两种的结果都不是固定的——请读
 claim，而不要从结束方式去推断。按折扣直接拿走是例外，而且是反方向的确定：它从不卖出，留给您的始终是 collateral。在无法定价的 collateral 上发生
-default 时，往往整个 basket 都会被取走、什么也不剩，但那是结果，不是规则。
-永远不会回来的是费用 rebate：仍在已停用 VPFI 费用路径上的 loan，其为
-Loan Initiation Fee 托管的 VPFI 会被没收转入 treasury。claim 会 consume
+default 时，整个 basket 都会被取走、什么也不剩——在这条路径上这是规则，而非不走运的结果。
+费用 rebate 会不会回来，取决于 loan 如何结束：即使仍在已停用 VPFI
+费用路径上的 loan，任何正常关闭都会结算为
+Loan Initiation Fee 托管的 VPFI 的 rebate——金额取决于结算时刻您的
+折扣，若那时没有持仓则可能为零，全额被没收。default 或 liquidation 会将其全部没收；以 prepay 出售结清的 loan
+目前也无法发放，请勿在该路径上指望它。claim 会 consume
 您的 borrower position NFT。反过来却不成立：liquidation 之后 NFT 仍在，
 并不证明有什么在等着您。如果什么也没剩下，就没有可领取的东西，去 claim 会被拒绝，而
 NFT 仍可能留着。请读 claim 本身怎么说，不要把
@@ -503,7 +506,7 @@ default 会把您的全部 collateral 转给 lender，您没有后续 claim。
 - **Claim** — 一旦 loan settle，若已全额 repayment，则返还您的
   collateral；若 default，也可能还有 surplus：系统只取走偿还债务
   和了结它所需的那部分 collateral，您多存入的部分会记为您的 claim。
-  具体是什么取决于路径——参见 Claim Center 一节。已停用费用路径下托管的 VPFI 只在 default 或 liquidation 时被没收；全额 repayment、preclose 或 refinance 仍会支付 rebate。
+  具体是什么取决于路径——参见 Claim Center 一节。已停用费用路径下托管的 VPFI 只在 default 或 liquidation 时被没收；任何正常关闭都会结算 rebate（可能为零）。
 
 ---
 

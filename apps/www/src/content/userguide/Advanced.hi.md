@@ -724,9 +724,22 @@ Borrower claim इस आधार पर return करता है कि loan
 हुआ:
 
 - **पूरा repayment / preclose / refinance** — आपकी collateral
-  basket वापस; और अगर वह loan अब भी बंद किए गए VPFI fee रास्ते
-  पर है, तो साथ में Loan Initiation Fee से time-weighted VPFI
-  rebate भी।
+  basket वापस; और अगर वह loan अब भी बंद किए गए VPFI fee रास्ते पर
+  है, तो साथ में Loan Initiation Fee का VPFI rebate
+  settle होता है, जो शून्य भी हो सकता है।
+- **loan को settle करने वाली prepay sale** — collateral खरीदार को
+  जाता है, आपको वापस नहीं। आपको बिक्री मूल्य में से lender का हक,
+  treasury कटौती और listing पर लगे seller fees घटाकर मिलता है, जो
+  borrower position NFT रखने वाले को चुकाया जाता है। बंद किए गए
+  रास्ते वाले loan में यहाँ rebate की उम्मीद न रखें: वह settlement
+  पर गणना तो होता है, पर उसके बाद फ़िलहाल वसूला नहीं जा सकता।
+- **Swap-to-repay** — कर्ज़ चुकाने के लिए आपका collateral बेचा
+  जाता है, आपकी तय की हुई सीमा तक। सीमा उदारता से रखें तो कर्ज़ की
+  सख़्त ज़रूरत से ज़्यादा भी खर्च हो सकता है; जो खर्च नहीं होता वह
+  आपको वापस मिलता है। loan के अपने asset में बचा surplus आम तौर पर
+  claim की तरह इंतज़ार करने के बजाय सीधे borrower NFT धारक को
+  चुकाया जाता है — बशर्ते वह धारक sanctions freeze में न हो; उस
+  स्थिति में वह claim के रूप में रोक लिया जाता है।
 - **HF-liquidation या default** — फिर भी देख लें, surplus बचा
   हो सकता है। Liquidator, lender और treasury को चुकाने भर का मूल्य ही लिया
   जाता है, और बाकी आपके claim के रूप में दर्ज होता है। उसका रूप एक ही बात पर टिका है: collateral
@@ -747,9 +760,12 @@ Borrower claim इस आधार पर return करता है कि loan
   loan खुला रहता है और कोई claim बनता ही नहीं। अनुमान लगाने के बजाय
   claim देखें। Illiquid asset के default में आम तौर पर पूरी
   basket चली जाती है और कुछ नहीं बचता — पर वह एक परिणाम है, नियम
-  नहीं। हमेशा जो खोता है वह rebate है: बंद किए गए VPFI fee रास्ते
-  वाले loan में initiation fee के बदले रखा गया VPFI **treasury को
-  ज़ब्त** हो जाता है, और rebate सिर्फ़ proper close पर वापस आता है।
+  नहीं। rebate वापस आएगा या नहीं यह इस पर निर्भर है कि loan कैसे ख़त्म हुआ: बंद किए गए VPFI fee रास्ते
+  वाले loan में initiation fee के बदले रखा गया VPFI default या
+  liquidation पर **treasury को ज़ब्त** हो जाता है। Proper close
+  पर उसके बजाय rebate settle होता है — जो शून्य भी
+  हो सकता है, और तब पूरी राशि ज़ब्त हो जाती है, यदि settle
+  होने के समय आपका discount शून्य हो।
 
 Borrower position NFT तब burn होता है जब आप claim करते हैं, तब
 नहीं जब loan resolve होता है — इसलिए liquidation से बचा surplus
@@ -1046,7 +1062,7 @@ actions:
 
 - **Repay** — पूरा या partial. Partial repayment outstanding
   कम करता है और HF ऊपर लाता है; full repayment terminal
-  settlement trigger करता है, जिसमें time-weighted VPFI Loan
+  settlement trigger करता है, जिसमें VPFI Loan
   Initiation Fee rebate शामिल है।
 - **Preclose direct** — अपने wallet से अभी outstanding amount
   चुकाएँ, collateral release करें, rebate settle करें।
@@ -1062,7 +1078,8 @@ actions:
   सकता है, क्योंकि collateral में से उतना ही लिया जाता है जितना
   कर्ज़ और उसे बंद करने की लागत माँगे — ऊपर का Claim Center भाग
   देखें। बंद किए गए रास्ते में रखा VPFI सिर्फ़ default या liquidation
-  पर ज़ब्त होता है; proper close पर rebate मिलता है। Borrower position NFT को burn करता है।
+  पर ज़ब्त होता है; proper close पर rebate settle होता है, जिसका
+  आकार settle होने के समय आपके discount से तय होता है — शून्य भी हो सकता है। Borrower position NFT को burn करता है।
 
 ---
 

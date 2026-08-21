@@ -726,10 +726,24 @@ claimable. Lender position NFT அதே transaction-இல் burn செய்
 Loan எவ்வாறு settle ஆனது என்பதைப் பொறுத்து borrower claim திருப்பித்
 தருவது:
 
-- **Full repayment / preclose / refinance** — உங்கள் collateral basket
-  திரும்ப; அந்த loan இன்னும் நிறுத்தப்பட்ட VPFI கட்டண வழியில்
-  இருந்தால், Loan Initiation Fee-இலிருந்து time-weighted VPFI
-  rebate-உம் சேர்ந்து.
+- **Full repayment / preclose / refinance** — உங்கள் collateral
+  basket திரும்ப; அந்த loan இன்னும் நிறுத்தப்பட்ட VPFI கட்டண
+  வழியில் இருந்தால், Loan Initiation Fee-இன் VPFI
+  rebate-உம் சேர்ந்து தீர்க்கப்படும் (பூஜ்ஜியமாகவும் இருக்கலாம்).
+- **loan-ஐ settle செய்யும் prepay sale** — collateral வாங்குபவருக்குச்
+  செல்லும், உங்களுக்குத் திரும்பாது. விற்பனை விலையிலிருந்து lender-ன்
+  உரிமை, treasury வெட்டு, listing-இல் இருந்த seller fees ஆகியவை போக
+  மீதி உங்களுக்கு — borrower position NFT வைத்திருப்பவருக்குச்
+  செலுத்தப்படும். நிறுத்தப்பட்ட வழி loan-இல் இங்கே rebate-ஐ
+  எதிர்பார்க்க வேண்டாம்: settlement-இல் கணக்கிடப்பட்டாலும், அதன்
+  பிறகு தற்போது வசூலிக்க முடியாது.
+- **Swap-to-repay** — கடனை ஈடுசெய்ய உங்கள் collateral, நீங்கள்
+  நிர்ணயிக்கும் உச்சவரம்பு வரை விற்கப்படும். வரம்பைத் தாராளமாக
+  வைத்தால், கடன் கண்டிப்பாகக் கோரியதை விட அதிகம் செலவாகலாம்;
+  செலவாகாதது உங்களுக்குத் திரும்பும். loan-ன் சொந்த asset-இல் உள்ள
+  உபரி வழக்கமாக claim-ஆகக் காத்திராமல் நேரடியாக borrower NFT
+  வைத்திருப்பவருக்குச் செலுத்தப்படும் — அவர் sanctions freeze-இல்
+  இருந்தால் மட்டும் அது claim-ஆகத் தடுத்து வைக்கப்படும்.
 - **HF-liquidation அல்லது default** — இருந்தாலும் பார்த்துவிடுங்கள்;
   surplus மிச்சம் இருக்கலாம். Liquidator, lender, treasury ஆகியோருக்குத்
   தேவையான மதிப்பு மட்டுமே எடுக்கப்படும்; மீதி உங்கள் claim ஆகப்
@@ -752,11 +766,14 @@ Loan எவ்வாறு settle ஆனது என்பதைப் பொ�
   அது எப்போதும் collateral-ஐயே விட்டுச்செல்லும். பகுதி liquidation என்பது close-out-ஏ அல்ல —
   loan திறந்தே இருக்கும், claim-உம் உருவாகாது. எது என்று ஊகிக்காமல்
   claim-ஐப் பாருங்கள். Illiquid asset-இன்
-  default-இல் பொதுவாக முழு basket-உம் போய்விடும், எதுவும் மிஞ்சாது —
-  ஆனால் அது ஒரு விளைவு, விதி அல்ல. எப்போதும் இழக்கப்படுவது rebate:
+  default-இல் முழு basket-உம் போய்விடும், எதுவும் மிஞ்சாது —
+  இந்த வழியில் அதுவே விதி, விளைவு அல்ல. rebate திரும்புமா என்பது loan எப்படி முடிந்தது என்பதைப் பொறுத்தது:
   நிறுத்தப்பட்ட VPFI கட்டண வழியில் உள்ள loan-இல் தொடக்கக் கட்டணத்திற்காக
-  வைக்கப்பட்டிருந்த VPFI **treasury-க்கு பறிமுதல் ஆகும்**; rebate proper
-  close-இல் மட்டுமே திரும்பும்.
+  வைக்கப்பட்டிருந்த VPFI, default அல்லது liquidation-இல்
+  **treasury-க்கு பறிமுதல் ஆகும்**. Proper close-இல் அதற்குப் பதிலாக
+  rebate தீர்க்கப்படும். தொகை settle ஆகும் தருணத்தில் உங்கள்
+  தள்ளுபடியைப் பொறுத்தது — அப்போது எதுவும் வைத்திருக்கவில்லை என்றால்
+  அது பூஜ்ஜியமாகி, முழுத் தொகையும் பறிமுதல் ஆகும்.
 
 Borrower position NFT நீங்கள் claim செய்யும்போது burn ஆகும், loan
 தீரும்போது அல்ல — எனவே liquidation விட்டுச்சென்ற surplus பின்னரும்
@@ -1054,7 +1071,7 @@ Role-இப் பொருட்படுத்தாமல் யாரும�
 
 - **Repay** — Full அல்லது partial. Partial repayment outstanding-ஐக் குறைத்து
   HF-ஐ உயர்த்துகிறது; full terminal settlement-ஐத் தூண்டுகிறது,
-  time-weighted VPFI Loan Initiation Fee rebate உட்பட.
+  VPFI Loan Initiation Fee rebate உட்பட.
 - **Preclose direct** — இப்போது உங்கள் wallet-இலிருந்து outstanding
   amount-இல் செலுத்துங்கள், collateral-ஐ release செய்யுங்கள், rebate-ஐ
   settle செய்யுங்கள்.
@@ -1069,8 +1086,8 @@ Role-இப் பொருட்படுத்தாமல் யாரும�
   இருக்கலாம் — கடனுக்கும் அதை முடிக்கும் செலவுக்கும் தேவையான அளவு
   collateral மட்டுமே எடுக்கப்படுவதால்; மேலே உள்ள Claim Center பகுதியைப்
   பார்க்கவும். நிறுத்தப்பட்ட வழியில் வைக்கப்பட்டிருந்த VPFI, default அல்லது
-  liquidation-இல் மட்டுமே பறிமுதல் ஆகும்; proper close-இல் rebate
-  வழங்கப்படும். Borrower position NFT-ஐ burn செய்கிறது.
+  liquidation-இல் மட்டுமே பறிமுதல் ஆகும்; proper close-இல்
+  rebate தீர்க்கப்படும் (பூஜ்ஜியமாகவும் இருக்கலாம்). Borrower position NFT-ஐ burn செய்கிறது.
 
 ---
 

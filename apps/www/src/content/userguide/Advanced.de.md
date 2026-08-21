@@ -768,9 +768,24 @@ wird in derselben Transaktion verbrannt.
 Der Borrower-Claim gibt je nach Settlement des Loans zurück:
 
 - **Volle Rückzahlung / Preclose / Refinance** — dein
-  Collateral-Korb zurück, plus — nur bei einem Loan auf dem
-  eingestellten VPFI-Gebührenweg — den zeitgewichteten
-  VPFI-Rebate aus der Loan Initiation Fee.
+  Collateral-Korb zurück; bei einem Loan auf dem eingestellten
+  VPFI-Gebührenweg wird dabei der zeitgewichtete VPFI-Rebate aus
+  der Loan Initiation Fee abgerechnet, der auch null sein kann.
+- **Ein Prepay-Sale, der den Loan abschließt** — das Collateral
+  geht an den Käufer, nicht an dich zurück. Du erhältst den
+  Verkaufspreis abzüglich des Lender-Anspruchs, des Treasury-Anteils
+  und etwaiger Verkäufergebühren des Listings, ausgezahlt an den
+  Inhaber des Borrower-Position-NFT. Bei einem Loan auf dem
+  eingestellten Weg rechne hier NICHT mit dem Rebate: er wird beim
+  Settlement berechnet, ist danach aber derzeit nicht abrufbar.
+- **Swap-to-Repay** — dein Collateral wird zur Deckung der Schuld
+  verkauft, bis zu einer Obergrenze, die du setzt. Setzt du sie
+  großzügig, kann mehr verbraucht werden, als die Schuld strikt
+  benötigte; was nicht verbraucht wird, kommt zu dir zurück. Ein
+  Überschuss im Asset des Loans geht normalerweise direkt an den
+  Inhaber des Borrower-Position-NFT statt als Claim zu warten — es
+  sei denn, dieser Inhaber steht unter einem Sanktions-Freeze, dann
+  wird er als Claim gehalten.
 - **HF-Liquidation oder Default** — sieh trotzdem nach, es kann
   ein Überschuss übrig sein. Es wird nur so viel Wert
   genommen, wie Liquidator, Lender und Treasury decken; der Rest
@@ -795,10 +810,13 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   raten. Bei
   einem Default auf ein illiquides Asset geht meist der ganze Korb
   weg, dann bleibt nichts — das ist ein Ergebnis, keine Regel.
-  Immer verloren ist das Rebate: bei einem Loan auf dem
+  Ob das Rebate zurückkommt, hängt vom Abschluss ab: bei einem Loan auf dem
   eingestellten VPFI-Gebührenweg wird das gegen die Initiation-Fee
-  verwahrte VPFI **an die Treasury verwirkt**, und ein Rebate kommt
-  nur bei einem ordnungsgemäßen Abschluss zurück.
+  verwahrte VPFI bei einem Default oder einer Liquidation **an die
+  Treasury verwirkt**. Ein ordnungsgemäßer Abschluss rechnet
+  stattdessen das zeitgewichtete Rebate ab — das null sein kann,
+  womit der ganze Betrag verfällt, wenn dein Rabatt im Moment
+  der Abrechnung null ist.
 
 Der Borrower-Position-NFT wird beim Claim verbrannt, nicht bei der
 Auflösung des Loans — ein von einer Liquidation übrig gelassener
@@ -1132,7 +1150,8 @@ verfügbar sind:
   genommen wird, wie Schuld und Auflösungskosten erfordern — siehe
   den Claim-Center-Abschnitt oben. VPFI, das unter dem eingestellten
   Gebührenweg verwahrt war, wird nur bei Default oder Liquidation
-  verwirkt; ein ordnungsgemäßer Abschluss zahlt den Rebate aus. Verbrennt den Borrower-Position-NFT.
+  verwirkt; ein ordnungsgemäßer Abschluss rechnet das
+  zeitgewichtete Rebate ab, das null sein kann. Verbrennt den Borrower-Position-NFT.
 
 ---
 

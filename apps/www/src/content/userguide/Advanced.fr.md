@@ -764,9 +764,23 @@ La réclamation de l'emprunteur rend, selon la manière dont le
 prêt s'est réglé :
 
 - **Remboursement total / preclose / refinance** — ton panier de
-  collatéral, plus — uniquement sur un prêt encore soumis à la
-  voie de frais VPFI retirée — le rabais VPFI pondéré dans le
-  temps issu de la Loan Initiation Fee.
+  collatéral ; sur un prêt encore soumis à la voie de frais VPFI
+  retirée, le rabais VPFI pondéré dans le temps issu de la Loan
+  Initiation Fee est réglé en même temps, et peut être nul.
+- **Une vente prepay qui solde le prêt** — le collatéral part chez
+  l'acheteur et ne te revient pas. Tu reçois le prix de vente moins
+  le droit du prêteur, la coupe de trésorerie et les frais vendeur
+  éventuels de l'annonce, versés au détenteur du NFT de position
+  d'emprunteur. Sur un prêt de la voie retirée, ne compte pas sur le
+  rabais ici : il est calculé au règlement mais ne peut
+  actuellement pas être encaissé ensuite.
+- **Swap-to-repay** — ton collatéral est vendu pour couvrir la
+  dette, jusqu'à un plafond que tu fixes. Fixé largement, il peut en
+  être consommé plus que la dette n'exigeait strictement ; ce qui ne
+  l'est pas te revient. Un excédent dans l'actif du prêt est
+  normalement versé directement au détenteur du NFT d'emprunteur au
+  lieu d'attendre sous forme de créance — sauf si ce détenteur est
+  sous gel pour sanctions, auquel cas il est conservé en créance.
 - **Liquidation HF ou défaut** — vérifie quand même, il peut
   rester un excédent. On ne prélève que la valeur nécessaire
   pour couvrir le liquidateur, le prêteur et le trésor, et le reste
@@ -790,12 +804,14 @@ prêt s'est réglé :
   partielle n'est pas une clôture du tout — le prêt reste ouvert
   et aucune créance n'est créée. Consulte la créance plutôt que
   de supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le
-  panier part en général et il ne reste rien — mais c'est une
-  issue, pas une règle. Ce qui est toujours perdu, c'est le
-  rabais : sur un prêt encore soumis à la voie de frais VPFI
+  panier part et il ne reste rien — et sur cette voie c'est la
+  règle, non une issue malheureuse. Que le rabais revienne dépend de la
+  clôture : sur un prêt encore soumis à la voie de frais VPFI
   retirée, le VPFI retenu au titre des frais d'initiation est
-  **acquis au trésor**, et un rabais ne revient que lors d'une
-  clôture régulière.
+  **acquis au trésor** lors d'un défaut ou d'une liquidation. Une
+  clôture régulière règle au contraire le rabais pondéré dans le
+  temps — qui peut être nul, tout le montant étant alors
+  perdu, si ta remise est nulle au moment du règlement.
 
 Le NFT de position d'emprunteur est brûlé au moment où tu
 réclames, pas quand le prêt se résout — un excédent laissé par une
@@ -1127,7 +1143,8 @@ Actions permissionless disponibles à tous quel que soit le rôle :
   collatéral qu'exigent la dette et le coût de sa clôture — voir la
   section Claim Center ci-dessus. Le VPFI retenu sous la voie
   retirée n'est acquis au trésor qu'en cas de défaut ou de
-  liquidation ; une clôture régulière verse le rabais. Brûle le NFT de position
+  liquidation ; une clôture régulière règle le rabais
+  pondéré dans le temps, qui peut être nul. Brûle le NFT de position
   d'emprunteur.
 
 ---

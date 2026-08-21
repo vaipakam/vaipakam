@@ -391,11 +391,14 @@ le prêt s'est clos. La prise avec décote fait exception, et elle est
 prévisible dans l'autre sens : elle ne vend jamais, donc il te reste
 toujours le collatéral. Souvent — sur un
 défaut portant sur un collatéral que nous ne pouvons pas
-valoriser — tout le panier part et il ne reste rien, mais c'est
-une issue, pas une règle. Ce qui ne revient jamais, c'est le
-rabais de frais : sur un prêt encore soumis à la voie de frais
-VPFI retirée, le VPFI retenu au titre de la Loan Initiation Fee
-est acquis au trésor. Réclamer consomme ton NFT de position
+valoriser — tout le panier part et il ne reste rien, et sur cette voie c'est la règle, non une issue malheureuse. Que le rabais de frais revienne dépend
+de la façon dont le prêt s'est terminé : sur un prêt encore soumis
+à la voie de frais VPFI retirée, toute clôture régulière règle le rabais
+sur le VPFI retenu au titre de la Loan Initiation Fee — son montant
+est fixé par ta remise au moment du règlement, il peut donc être nul
+et entièrement perdu si tu ne détiens plus rien à cet instant. Un défaut ou une
+liquidation le font perdre en totalité, et un prêt soldé par une vente
+prepay ne peut pas non plus le verser actuellement : n'y compte pas. Réclamer consomme ton NFT de position
 d'emprunteur. L'inverse n'est pas vrai : un NFT encore présent
 après une liquidation ne prouve pas que quelque chose t'attend.
 S'il ne restait rien, il n'y a rien à récupérer, la tentative est
@@ -618,7 +621,7 @@ info-bulle expliquant pourquoi.
   voir la section Claim Center. Le VPFI retenu sous la voie
   retirée n'est acquis au trésor qu'en cas de défaut ou de
   liquidation ; un remboursement total, un preclose ou un
-  refinance versent toujours le rabais.
+  refinance règlent le rabais pondéré dans le temps, qui peut être nul.
 
 ---
 

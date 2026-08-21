@@ -363,10 +363,16 @@ close-out が売られずにプロトコル内部で反対側の position とマ
 asset で支払われます。大半は持ち込みません。通常の liquidation も
 default も、取引所に向かう前にその内部マッチを探します。つまりこの二つは結果が一定ではないということで、終わり方から推測せず claim
 を読んでください。割引での引き取りは例外で、逆向きに確定しています: 売ることがないので、残るのは常に collateral です。価格を付けられない collateral の
-default では、バスケット全体が失われ何も残らないことも多いですが、
-それは結果であってルールではありません。決して戻らないのは手数料の
-rebate です。廃止された VPFI 手数料経路のままの loan では、Loan
-Initiation Fee のために保管されていた VPFI は treasury に没収されます。
+default では、バスケット全体が失われ何も残りません。
+この経路ではそれが結果ではなくルールです。手数料の rebate が戻るかどうかは
+loan の終わり方によります。廃止された VPFI 手数料経路のままの loan
+でも、正常なクローズであれば（repayment、early close、refinance、または loan を決済する売却）Loan Initiation Fee
+のために保管されていた VPFI の rebate が精算されます。金額は決済時点の
+割引で決まるため、その時点で何も保有していなければゼロとなり、全額が
+treasury に入ります。
+全額が没収されるのは default または liquidation のときです。prepay
+売却で閉じられた loan では、現状そもそも支払われないため、その経路では
+当てにしないでください。
 claim はあなたの borrower position NFT を consume します。逆は成り立ち
 ません。liquidation のあとに NFT が残っていることは、何かが待っている
 証拠ではありません。残余がなかった場合、受け取るものはなく、claim しようとすると
@@ -576,8 +582,8 @@ role-specific tabs で各 side の options を確認できます。今は
   超えて預けていた分はあなたの claim として記録されます。それが何かは経路によります —
   Claim Center の節を参照してください。廃止された手数料経路で
   保管されていた VPFI が没収されるのは default または
-  liquidation のときだけで、full repayment・preclose・refinance
-  では rebate が支払われます。
+  liquidation のときだけで、正常なクローズ
+  ではrebate が精算されます（ゼロのこともあります）。
 
 ---
 

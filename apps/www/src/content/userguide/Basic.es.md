@@ -386,11 +386,14 @@ vez de deducirlo de cómo cerró. La toma con descuento es la excepción,
 y es previsible al revés: nunca vende, así que siempre te deja el
 colateral. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
-entera y no queda nada, pero eso es cómo resultó, no una regla.
-Lo que nunca vuelve es el reembolso de la comisión: en un
-préstamo que siga en la vía de comisión VPFI retirada, el VPFI
-retenido contra la Loan Initiation Fee se pierde en favor del
-tesoro. Reclamar consume tu NFT de posición de prestatario.
+entera y no queda nada, y en esa vía es la regla, no un resultado desafortunado.
+Que el reembolso de la comisión vuelva depende de cómo terminó el
+préstamo: en uno que siga en la vía de comisión VPFI retirada, cualquier cierre correcto liquida el reembolso sobre el VPFI retenido
+contra la Loan Initiation Fee — su importe lo fija tu descuento en el
+momento de la liquidación, así que puede ser cero y perderse por
+completo si para entonces no mantienes nada. Un incumplimiento o una liquidación lo pierden por completo, y un
+préstamo cerrado mediante una venta prepay tampoco puede pagarlo
+actualmente, así que no cuentes con él por esa vía. Reclamar consume tu NFT de posición de prestatario.
 Lo contrario no se sigue: un NFT que sigue ahí tras una
 liquidación no es prueba de que algo te espere. Si no quedó nada,
 no hay nada que recoger, el intento se rechaza y el NFT puede
@@ -604,7 +607,8 @@ explicando por qué.
   reclamación. Qué es exactamente depende de la vía —
   véase la sección del Claim Center. El VPFI retenido bajo la vía
   retirada sólo se pierde en default o liquidación; un repago
-  total, un preclose o un refinance siguen pagando el reembolso.
+  total, un preclose o un refinance liquidan el reembolso ponderado
+  por tiempo, que puede ser cero.
 
 ---
 

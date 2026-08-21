@@ -767,9 +767,25 @@ La reclamación del prestatario devuelve, dependiendo de cómo se
 liquidó el préstamo:
 
 - **Repago total / preclose / refinance** — tu canasta de
-  colateral de vuelta, más —sólo en un préstamo que siga en la
-  vía de comisión VPFI retirada— el reembolso de VPFI ponderado
-  por tiempo de la Loan Initiation Fee.
+  colateral de vuelta; en un préstamo que siga en la vía de
+  comisión VPFI retirada se liquida además el reembolso de VPFI
+  ponderado por tiempo de la Loan Initiation Fee, que puede ser
+  cero.
+- **Una venta prepay que liquide el préstamo** — el colateral va al
+  comprador, no vuelve a ti. Recibes el precio de venta menos el
+  derecho del prestamista, el recorte de tesorería y las comisiones
+  de vendedor que llevara el listado, pagado a quien tenga el NFT
+  de posición de prestatario. En un préstamo de la vía retirada, no
+  cuentes aquí con el reembolso: se calcula al liquidar pero
+  actualmente no puede cobrarse después.
+- **Swap-to-repay** — tu colateral se vende para cubrir la deuda,
+  hasta un techo que tú fijas. Si lo fijas con holgura puede
+  consumirse más de lo que la deuda exigía estrictamente; lo que no
+  se consuma vuelve a ti. Un excedente en el activo del propio
+  préstamo se paga normalmente de forma directa al titular del NFT
+  de prestatario en vez de esperar como reclamación — salvo que ese
+  titular esté bajo un bloqueo por sanciones, en cuyo caso queda
+  retenido como reclamación.
 - **Liquidación por HF o default** — compruébalo igualmente,
   puede quedar un excedente. Sólo se toma el valor suficiente
   para cubrir al liquidador, al prestamista y al tesoro, y el resto
@@ -793,10 +809,13 @@ liquidó el préstamo:
   y no se crea ninguna reclamación. Consulta la reclamación en
   lugar de suponer cuál tienes. En un default sobre un activo ilíquido suele irse la
   canasta entera y no queda nada — pero eso es un resultado, no
-  una regla. Lo que siempre se pierde es el reembolso: en un
+  una regla. Que el reembolso vuelva depende de cómo terminó el préstamo: en un
   préstamo que siga en la vía de comisión VPFI retirada, el VPFI
   retenido contra la comisión de inicio **se pierde en favor del
-  tesoro**, y un reembolso sólo vuelve en un cierre correcto.
+  tesoro** en un incumplimiento o una liquidación. Un cierre
+  correcto liquida en cambio el reembolso ponderado por tiempo —
+  que puede ser cero, y entonces todo el importe se pierde, si
+  tu descuento es cero en el momento de la liquidación.
 
 El NFT de posición de prestatario se quema cuando reclamas, no
 cuando se resuelve el préstamo — así que un excedente dejado por
@@ -1124,8 +1143,8 @@ del rol:
   excedente, ya que sólo se toma el colateral que exigen la deuda y
   el coste de cerrarla — véase la sección del Claim Center más
   arriba. El VPFI retenido bajo la vía retirada sólo se pierde en
-  default o liquidación; un cierre correcto sigue pagando el
-  reembolso. Quema el NFT de posición de
+  default o liquidación; un cierre correcto liquida el reembolso
+  ponderado por tiempo, que puede ser cero. Quema el NFT de posición de
   prestatario.
 
 ---

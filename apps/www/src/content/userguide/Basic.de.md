@@ -393,10 +393,15 @@ immer gleich — lies den Claim, statt es aus der Endungsart zu erraten.
 Die Übernahme mit Abschlag ist die Ausnahme und andersherum
 berechenbar: sie verkauft nie, dir bleibt also immer das Collateral. Oft geht bei einem Default über Collateral, das wir
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
-das ist aber ein Ausgang, keine Regel. Nie zurück kommt der
-Gebühren-Rebate: bei einem Loan auf dem eingestellten
-VPFI-Gebührenweg wird das gegen die Loan Initiation Fee verwahrte
-VPFI an die Treasury verwirkt. Ein Claim verbraucht deinen
+und das ist auf diesem Weg die Regel, kein unglücklicher Ausgang. Ob der Gebühren-Rebate
+zurückkommt, hängt davon ab, wie der Loan endete: bei einem Loan
+auf dem eingestellten VPFI-Gebührenweg rechnet jeder ordnungsgemäße
+Abschluss das Rebate auf dem gegen die Loan Initiation Fee
+verwahrten VPFI ab — seine Höhe bestimmt dein Rabatt im Moment der
+Abrechnung, es kann also null sein und dann vollständig verfallen,
+wenn du zu diesem Zeitpunkt nichts mehr hältst. Ein Default oder eine Liquidation lässt es vollständig verfallen —
+und ein per Prepay-Sale geschlossener Loan kann es derzeit ebenfalls
+nicht auszahlen, rechne dort also nicht damit. Der Claim verbraucht deinen
 Borrower-Position-NFT. Umgekehrt gilt das nicht: ein NFT, der nach
 einer Liquidation noch da ist, ist kein Beleg dafür, dass etwas
 auf dich wartet. Blieb nichts übrig, gibt es nichts
@@ -617,8 +622,8 @@ mit einem kleinen Tooltip, das erklärt, warum.
   erfasst. Was genau, hängt vom Pfad ab —
   siehe den Claim-Center-Abschnitt. VPFI, das unter dem
   eingestellten Gebührenweg verwahrt war, wird nur bei Default
-  oder Liquidation verwirkt; volle Rückzahlung, Preclose oder
-  Refinance zahlen den Rebate weiterhin aus.
+  oder Liquidation verwirkt; jeder ordnungsgemäße Abschluss rechnet
+  das Rebate ab, das null sein kann.
 
 ---
 
