@@ -108,8 +108,13 @@ reaching it.
 fragment edited while assembly is in progress cannot make the different
 stages disagree about what it said, and what lands in the dated file is
 always the version read at the start. The edited one is then set aside
-rather than deleted (as `.assembled.<name>`) and named on screen, so the
-newer text is never the thing that gets thrown away. A fragment rewritten
+rather than deleted and named on screen, so the newer text is never the
+thing that gets thrown away — it lands in `unreleased/.assembled/<name>`,
+keeping its own name. That directory is
+hidden, so `git add -A` would stage anything in it; the run names what it
+put there. A set-aside fragment is **not** necessarily already in the
+dated file: one set aside because it *changed* holds the newer text while
+the dated file holds what was read first, so compare before deleting. A fragment rewritten
 *during* its copy stops the run outright, since the copy could otherwise
 hold half of one version and half of another.
 

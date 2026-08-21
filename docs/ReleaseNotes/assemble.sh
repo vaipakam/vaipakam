@@ -199,6 +199,58 @@ read_gid() {  # read_gid <path>; sets GID_READ
 # Deleting the machinery fixed three of that round's findings outright.
 QDIR="$UNREL/.assembled"
 
+# Created and checked BEFORE anything is published (Codex #1863 r26).
+# Introduced as a step inside the clearing loop, its first failure — a
+# stale file or a dangling symlink sitting at that path — happened only
+# AFTER the dated file was renamed into place, leaving the run half done
+# and every retry blocked at the same point. A prerequisite this script
+# invented must not be able to fail where failure is expensive.
+#
+# Also verified to be on the SAME FILESYSTEM as the pool. `mv` is only
+# the atomic rename the set-aside argument depends on within one
+# filesystem; across a mount boundary it degrades to copy-then-unlink,
+# and a writer opening the original path between the two has its bytes
+# unlinked while the copy keeps the older text (Codex #1863 r26). That
+# is precisely the loss the quarantine exists to prevent, so it is
+# refused rather than accepted quietly.
+_ensure_qdir() {
+  if [ -L "$QDIR" ] || { [ -e "$QDIR" ] && [ ! -d "$QDIR" ]; }; then
+    echo "Error: $QDIR exists and is not a directory." >&2
+    echo "Refusing to assemble: fragments set aside during the run are moved" >&2
+    echo "there, and this would fail after the dated file was written." >&2
+    exit 1
+  fi
+  if ! mkdir -p "$QDIR"; then
+    echo "Error: could not create $QDIR." >&2
+    echo "Refusing to assemble: see above; the failure is cheap here and" >&2
+    echo "expensive later." >&2
+    exit 1
+  fi
+  local a b
+  a="$(stat -c '%d' "$UNREL" 2>/dev/null || stat -f '%d' "$UNREL" 2>/dev/null)" || a=""
+  b="$(stat -c '%d' "$QDIR"  2>/dev/null || stat -f '%d' "$QDIR"  2>/dev/null)" || b=""
+  if [ -z "$a" ] || [ -z "$b" ]; then
+    # "Cannot tell" is not "is wrong". Refusing here would make a working
+    # `stat` a hard dependency of assembling release notes, for a check
+    # guarding an arrangement nobody has: this directory is created
+    # inside the pool, so it differs only if something is mounted there.
+    # Said out loud rather than assumed either way.
+    echo "Warning: could not confirm $QDIR is on the same filesystem as the" >&2
+    echo "pool. If it is a mount point, setting a fragment aside is a copy" >&2
+    echo "and delete rather than a rename, and a concurrent write to the" >&2
+    echo "original could be lost." >&2
+  elif [ "$a" != "$b" ]; then
+    echo "Error: $QDIR is not on the same filesystem as $UNREL." >&2
+    echo "" >&2
+    echo "Refusing to assemble: setting a fragment aside relies on the move" >&2
+    echo "being a rename. Across a filesystem boundary it becomes a copy" >&2
+    echo "followed by a delete, and anything writing to the original path in" >&2
+    echo "between has its text deleted while the copy keeps the older" >&2
+    echo "version — the loss setting aside exists to prevent." >&2
+    exit 1
+  fi
+}
+
 # ── The one invariant this script keeps ──────────────────────────────────────
 # Three rounds of review in a row (r17, r18, r19) found the same abstract
 # fault in three different places: evidence read at one moment
@@ -404,6 +456,7 @@ LOCK="$UNREL/.assemble.lock"
 # `LOCK_HELD` is what keeps a losing contender from removing the lock
 # that is legitimately someone else's: the trap only ever clears a lock
 # this process created.
+_ensure_qdir
 LOCK_HELD=0
 WORK=""
 SNAP=""
@@ -511,13 +564,18 @@ for q in "$QDIR"/*; do
   _setaside+=("$(basename "$q")")
 done
 if (( ${#_setaside[@]} > 0 )); then
-  echo "Set aside by an earlier run, still in $UNREL:" >&2
+  echo "Set aside by an earlier run, still in $QDIR:" >&2
   printf '  %s\n' "${_setaside[@]}" >&2
   echo "" >&2
-  echo "Each is a fragment this script had finished folding into a dated file" >&2
-  echo "when it was interrupted, or one whose bytes changed while it was being" >&2
-  echo "read. Their content is in the dated file; compare and delete them, or" >&2
-  echo "rename one back if you want it assembled again." >&2
+  echo "Each is either a fragment this script had finished folding into a" >&2
+  echo "dated file when it was interrupted, or one whose bytes CHANGED while" >&2
+  echo "it was being read." >&2
+  echo "" >&2
+  echo "Those are not the same, and the difference matters (Codex #1863 r26):" >&2
+  echo "an interrupted one is already in the dated file, but a CHANGED one" >&2
+  echo "holds the newer text while the dated file holds only what was read" >&2
+  echo "first — so it may be the sole copy of an edit. Compare each against" >&2
+  echo "the dated file before deleting it, or move one back to assemble it." >&2
   echo "" >&2
 fi
 
@@ -1205,8 +1263,22 @@ assert_sources_unchanged() {  # assert_sources_unchanged <what-was-about-to-happ
     echo "Nothing further will be consumed. Re-run once things have settled." >&2
     exit 1
   fi
+  # The output's own shape and metadata are checked FIRST, because that
+  # function carries the detailed messages — which file, which way it
+  # changed, what replacing it would do. Reaching it through the generic
+  # per-file loop instead produced a correct refusal with a vaguer
+  # explanation.
+  assert_output_unchanged "$1"
   for p in "${!SRC_ID[@]}"; do
-    if [ "$p" = "$OUT" ]; then continue; fi   # covered in full below
+    # $OUT is NOT exempt from the content comparison (Codex #1863 r26).
+    # It was, on the reasoning that assert_output_unchanged covers it in
+    # full — but that compares against OUT_ID, read BEFORE the copy,
+    # while the markers were parsed FROM the copy. A file changed after
+    # the identity read, still changed through the copy, and restored
+    # before the deletion left a marker that existed only in the copy
+    # authorising a removal, with the older identity passing. Both
+    # baselines have to hold: the bytes actually indexed, and the
+    # metadata the replacement will carry.
     now=""
     if [ -f "$p" ] && [ ! -L "$p" ]; then
       if ! file_identity "$p"; then
@@ -1232,7 +1304,6 @@ assert_sources_unchanged() {  # assert_sources_unchanged <what-was-about-to-happ
       exit 1
     fi
   done
-  assert_output_unchanged "$1"
 }
 
 declare -A marker_seen=()
@@ -1552,7 +1623,6 @@ if (( ${#already[@]} > 0 )); then
     # had was the one thing it did not have.
     _q_name="${FRAG_NAME[$f]}"
     _q="$QDIR/$_q_name"
-    mkdir -p "$QDIR" || { echo "Error: could not create $QDIR." >&2; exit 1; }
     # `-L` as well as `-e`: `-e` FOLLOWS a symlink, so a DANGLING one at
     # this path reads as absent, `mv` replaces the link, and the later
     # `rm` deletes whatever now sits there (Codex #1863 r25).
@@ -1569,7 +1639,7 @@ if (( ${#already[@]} > 0 )); then
     _rc=0
     _now="$(frag_hash "$_q")" || _rc=$?
     if (( _rc != 0 )) || [ "$_now" != "${FRAG_HASH[$f]}" ]; then
-      _changed+=("${FRAG_NAME[$f]} -> $_q_name")
+      _changed+=("${FRAG_NAME[$f]} -> .assembled/$_q_name")
       continue
     fi
     rm "$_q"
@@ -1790,11 +1860,15 @@ if [ -f "$OUT" ]; then
   # differ this check compared the wrong pair, passed, and the rename
   # then changed the output's group silently before consuming anything.
   # The temp file is the authority on what it is about to become.
-  _probe="$(mktemp "$DIR/.assemble-probe.XXXXXX")"
+  # $WORK itself, not a second temp file (Codex #1863 r26). A probe is a
+  # different inode created at a different moment: if the directory's
+  # group or setgid bit changes between the two `mktemp` calls, the probe
+  # can inherit the current group while $WORK still carries the old one,
+  # and the check then passes about a file that is not the one being
+  # installed. The replacement is the only authority on what it will be.
   _pg_rc=0
-  if ! read_gid "$_probe"; then _pg_rc=1; fi
+  if ! read_gid "$WORK"; then _pg_rc=1; fi
   _new_gid="$GID_READ"
-  rm -f "$_probe"
   if (( _pg_rc != 0 )); then
     echo "Error: could not determine the group a new file here would take." >&2
     echo "Refusing to assemble: replacing the dated file installs a new" >&2
@@ -1811,6 +1885,13 @@ if [ -f "$OUT" ]; then
     echo "quietly lose access." >&2
     exit 1
   fi
+  # Compared against the owner recorded in the baseline, not a fresh read
+  # (Codex #1863 r26). A file chowned to the runner for the duration of
+  # this `stat` and restored afterwards passed here AND passed the final
+  # identity check against its restored owner — and the rename then
+  # transferred ownership permanently. One coherent version of the
+  # metadata governs the rename, and it is the one already on record.
+  out_uid="${OUT_ID##*owner=}"; out_uid="${out_uid%%:*}"
   if [ "$out_uid" != "$(id -u)" ]; then
     echo "Error: $(basename "$OUT") is owned by uid $out_uid, not by you." >&2
     echo "" >&2
@@ -2097,7 +2178,6 @@ for f in "${frags[@]}"; do
   fi
   _q_name="${FRAG_NAME[$f]}"
   _q="$QDIR/$_q_name"
-  mkdir -p "$QDIR" || _abort_after_write "could not create $QDIR"
   # `-L` as well as `-e`, for the reason given at the other site.
   if [ -e "$_q" ] || [ -L "$_q" ]; then
     _abort_after_write "a set-aside file already exists at $(basename "$_q")"
@@ -2120,7 +2200,7 @@ for f in "${frags[@]}"; do
     # Deliberately NOT moved back: the editor may already have written a
     # new file at the original path, and restoring over it would destroy
     # the very text this branch exists to protect.
-    _kept+=("${FRAG_NAME[$f]} -> $(basename "$_q")")
+    _kept+=("${FRAG_NAME[$f]} -> .assembled/${FRAG_NAME[$f]}")
   fi
 done
 
@@ -2132,9 +2212,11 @@ if (( ${#_kept[@]} > 0 )); then
   echo "$(basename "$OUT") holds the version read at the start of the run, and" >&2
   echo "its marker records THAT version — so these are not recognised as" >&2
   echo "folded in and were set aside rather than deleted. They are in" >&2
-  echo "$UNREL under the shown names." >&2
-  echo "Compare them against the assembled file, then delete them or restore" >&2
-  echo "the name by hand once you are satisfied nothing was lost." >&2
+  echo "$QDIR — a hidden directory, so 'git add -A' would stage them." >&2
+  echo "" >&2
+  echo "Each holds the NEWER text while the dated file holds what was read" >&2
+  echo "first, so one of these may be the only copy of an edit. Compare" >&2
+  echo "before deleting; move one back up a level to assemble it instead." >&2
 fi
 
 echo "Assembled ${#frags[@]} fragment(s) -> $OUT"

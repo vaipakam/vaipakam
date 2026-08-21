@@ -2230,6 +2230,128 @@ check "no fragment consumed"    "$(pending "$W")"                         "1"
 check "the heading is not duplicated" \
   "$(count_in '^## dup' "$out/ReleaseNotes-2026-08-16.md")"               "1"
 
+echo "T79: the quarantine directory is validated before publication"
+W="$ROOT/t79"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Created inside the clearing loop, its first failure happened only AFTER the
+# dated file was renamed into place — half-done, with every retry blocked at
+# the same point. A prerequisite this script invented must not be able to fail
+# where failure is expensive (Codex #1863 r26).
+printf 'not a directory\n' > "$W/docs/ReleaseNotes/unreleased/.assembled"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                     "1"
+check "no fragment consumed"   "$(pending "$W")"                        "2"
+check "nothing was published" \
+  "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)" "none"
+check "it says what is wrong"  "$(says "$msg" 'is not a directory')"     "1"
+rm -f "$W/docs/ReleaseNotes/unreleased/.assembled"
+
+echo "T80: the group compared is the replacement's own, not a later probe"
+W="$ROOT/t80"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A probe is a different inode created at a different moment: if the setgid bit
+# changes between the two mktemp calls, the probe inherits the current group
+# while $WORK still carries the old one, and the check passes about a file that
+# is not the one being installed (Codex #1863 r26). Pinned structurally —
+# reproducing the interleaving needs a mount-level race.
+check "it reads the replacement" \
+  "$(grep -c 'read_gid "\$WORK"' "$out/assemble.sh")"                    "1"
+check "no second probe file" \
+  "$(grep -c 'assemble-probe' "$out/assemble.sh")"                       "0"
+
+echo "T81: a transient chown during the owner read does not transfer ownership"
+W="$ROOT/t81"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The owner check re-read $OUT. A file chowned to the runner for the duration
+# of that stat and restored afterwards passed here AND passed the final
+# identity check against its restored owner — and the rename then transferred
+# ownership permanently (Codex #1863 r26). The comparison now comes from the
+# recorded baseline, so one coherent version of the metadata governs it.
+check "the owner comes from the baseline" \
+  "$(grep -c 'out_uid="\${OUT_ID##\*owner=}"' "$out/assemble.sh")"        "1"
+if [ "$(id -u)" = "0" ]; then
+  printf '# Release Notes — 2026-08-16\n\n## pre\n' > "$out/ReleaseNotes-2026-08-16.md"
+  chown 65534:65534 "$out/ReleaseNotes-2026-08-16.md"
+  msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "a foreign owner still refuses" "$?"                             "1"
+  check "ownership is unchanged" \
+    "$(stat -c '%u' "$out/ReleaseNotes-2026-08-16.md")"                  "65534"
+else
+  check "skipped — chown needs root (CI runs it)" "1" "1"
+fi
+
+echo "T82: a marker seen only in the copy cannot authorise a deletion"
+W="$ROOT/t82"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# $OUT was exempt from the content comparison, on the reasoning that
+# assert_output_unchanged covered it — but that compares against the identity
+# read BEFORE the copy, while the markers are parsed FROM the copy. Changed
+# after the identity read, still changed through the copy, restored before the
+# deletion: a marker existing only in the copy authorised removal while the
+# older identity passed (Codex #1863 r26).
+printf '# Release Notes — 2026-08-16\n\n## something\n' > "$out/ReleaseNotes-2026-08-16.md"
+cp "$out/ReleaseNotes-2026-08-16.md" "$W/pristine.md"
+_h="$(fixture_hash "$W/docs/ReleaseNotes/unreleased/0001-a.md")"
+mkdir -p "$W/fakebin"
+# HONESTY NOTE: this case does NOT reproduce the finding. Two shim
+# placements were tried and both were intercepted by an earlier guard — the
+# copy/re-read bracket added in r21 — so it passes against the code it was
+# written for. It is therefore a REGRESSION GUARD for the fix, not a
+# demonstration of the fault, and is recorded as such rather than counted
+# among the calibrated cases. The fix itself stands on reasoning: the
+# exemption discarded SRC_ID[$OUT], the one digest describing the bytes the
+# markers were actually parsed from.
+#
+# The change must PERSIST through the copy AND the re-read that brackets it,
+# and be reverted only afterwards. Restoring immediately after `cp` is caught
+# by that bracket instead — an earlier guard, a different finding, and the
+# case then passes against the very code it was written for.
+cat > "$W/fakebin/cp" <<SHIM
+#!/bin/sh
+case "\$*" in
+  */ReleaseNotes-2026-08-16.md*)
+    printf '<!-- assembled-fragment: 0001-a.md sha256=%s -->\n' "$_h" \\
+      >> "$out/ReleaseNotes-2026-08-16.md"
+    ;;
+esac
+exec /bin/cp "\$@"
+SHIM
+chmod +x "$W/fakebin/cp"
+cat > "$W/fakebin/grep" <<SHIM
+#!/bin/sh
+/usr/bin/grep "\$@"; _rc=\$?
+for a in "\$@"; do
+  case "\$a" in
+    *sha256=*)
+      if [ ! -f "$W/restored" ]; then
+        : > "$W/restored"
+        /bin/cp "$W/pristine.md" "$out/ReleaseNotes-2026-08-16.md"
+      fi
+      ;;
+  esac
+done
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/grep"
+PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "0001-a is not destroyed" \
+  "$(grep -rl '0001-a' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
+
+echo "T83: the set-aside report does not claim changed copies are already filed"
+W="$ROOT/t83"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A fragment set aside because it CHANGED holds the newer text while the dated
+# file holds only what was read first. Telling the operator its content is
+# already in the dated file invites deleting the sole copy of an edit
+# (Codex #1863 r26).
+mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
+printf '## set aside\n' > "$W/docs/ReleaseNotes/unreleased/.assembled/0016-x.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "it does not claim they are filed" "$(says "$msg" 'Their content is in the dated file')" "0"
+check "it says to compare first"         "$(says "$msg" 'before deleting')"                    "1"
+check "it names the directory"           "$(says "$msg" '.assembled')"                         "1"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
