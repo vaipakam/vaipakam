@@ -23,7 +23,10 @@
  *      defect (a `useCallback` below the page's early returns) that
  *      survived fourteen review rounds, typecheck, the production build
  *      and a green preview deploy because none of those can see it.
- *   2. The chooser for the observed ROLE renders on a real active loan:
+ *   2. The chooser for the observed ROLE renders on a real loan — Active
+ *      for a borrower run, Active OR FallbackPending for a lender one,
+ *      since the lender card mounts on both so its fallback explanation
+ *      stays visible:
  *      the #1505 "Ways to repay or exit early" card naming the handover
  *      and offset paths, or — with OBSERVE_ROLE=lender — the #1839 "Your
  *      options as the lender" card naming all three of its options with
@@ -703,7 +706,19 @@ for (const id of ids) {
   // on them.
   // Only for loans that clear the cheap gates, and only for the lender
   // run — the borrower chooser has no sanctions gate.
-  if (ROLE === 'lender' && lenderStatusOk(loan.status) && loan.authority) {
+  // The ERC-20 gate belongs HERE, not only in the predicate below (Codex
+  // #1853 r3). `discovery()` terminates the whole drive on a read
+  // failure, so a transient failure on a read taken for a loan the
+  // predicate always discards — an NFT rental — reports BLOCKED and
+  // denies the review to every eligible ERC-20 position on the chain.
+  // A read whose answer cannot change any verdict must not be able to
+  // end the run.
+  if (
+    ROLE === 'lender' &&
+    lenderStatusOk(loan.status) &&
+    loan.assetType === ASSET_ERC20 &&
+    loan.authority
+  ) {
     loan.authoritySanctioned = await discovery(
       `reading the sanctions status of ${loan.authority}`,
       () => sanctionedAuthority(loan.authority),
@@ -840,8 +855,24 @@ liveBrowser = browser;
 //
 // Codex reported `newContext`; the other three are the same shape and
 // were still bare.
+// `locale` is PINNED (Codex #1853 r3). Every copy assertion in this drive
+// — both chooser titles and all of `lenderShapeOf` — is English, while
+// alpha02 ships nine translated locales and detects from
+// `navigator.languages`. On a host whose Chromium defaults to one of
+// them, the app would correctly load that bundle and every string check
+// would miss, so the drive would wait out the 45-second chooser timeout
+// and file a product regression whose only cause is the harness's
+// assumption about its own machine.
+//
+// Pinning beats asserting locale-independent structure here: the card
+// has no test ids, and the thing worth checking IS the copy — that each
+// option is named, and in which order. A structural assertion would pass
+// on a card rendering the wrong sentences.
 const ctx = await discovery('creating the browser context', () =>
-  browser.newContext({ viewport: { width: 1280, height: 1000 } }),
+  browser.newContext({
+    viewport: { width: 1280, height: 1000 },
+    locale: 'en-US',
+  }),
 );
 
 /** Every refusal, with why — a too-narrow allowlist must be visible. */
