@@ -2122,7 +2122,24 @@ async function chooserSelfVerdict(page) {
       const jumpable = el.getAttribute('data-chooser-jumpable');
       return ready === null && jumpable === null ? null : { ready, jumpable };
     })
-    .catch(() => null);
+    // A READ THAT FAILED IS NOT A CARD THAT SAID NOTHING (#1873).
+    //
+    // This used to be `.catch(() => null)`, and `null` is the legacy
+    // answer: it means "this bundle publishes no attributes, so accept
+    // the rendered controls as the only evidence there is". An
+    // `evaluate` that threw — the page navigated, the context closed,
+    // the frame detached — knows nothing about the bundle, and turning
+    // it into a positive instruction to trust the DOM is the
+    // silent-pass shape the whole three-verdict contract exists to
+    // prevent. "Could not look" is BLOCKED.
+    //
+    // NOT reused as `{ ready: 'failed' }`, which would map to the
+    // existing `blocked-failed` and cost nothing to write. That verdict's
+    // reason says `data-chooser-ready="failed"` — a statement about what
+    // the CARD published — and the card published nothing here; our own
+    // read fell over. One message serving two different findings is a
+    // defect this file has already been reviewed for.
+    .catch(() => ({ readFailed: true }));
 }
 
 /**
@@ -2460,6 +2477,12 @@ function readinessBlock(settled, offered = false) {
       'the lender card rendered jump controls while its own verdict said no ' +
       'row is jumpable; the two come from one computation in one render, so ' +
       'they disagreeing means the controls cannot be trusted as live',
+    // OUR failure, not the card's (#1873), and worded so a reader is not
+    // sent looking at the page for a fault that is on this side of it.
+    'blocked-unreadable':
+      "this drive's own read of the lender card's readiness attributes threw " +
+      '— the page navigated, the context closed, or the frame detached — so ' +
+      'nothing was learned about what the card was reporting',
   }[settled];
   if (!why) return null;
   return {
