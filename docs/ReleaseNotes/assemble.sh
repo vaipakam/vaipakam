@@ -1246,6 +1246,32 @@ WORK=""
 # that nothing is deleted on the strength of a hash that has since gone
 # stale, so no writing is lost and the divergence is reported rather than
 # buried.
+# Failing HERE is different from failing anywhere else in this script,
+# and the message has to say so. $OUT has already been replaced, so the
+# run cannot simply be retried from scratch: some fragments are cleared,
+# some are not, and the operator needs to know which. Bare `mv`/`rm`
+# would abort under `set -e` with the tool's own status and no word about
+# any of that — the same silence the whole PR has been closing, in the
+# one place where the file is already published.
+_cleared=()
+_abort_after_write() {
+  echo "" >&2
+  echo "Error: $1." >&2
+  echo "" >&2
+  echo "$(basename "$OUT") HAS ALREADY BEEN WRITTEN — this failure is in the" >&2
+  echo "clearing step that follows it, so the run is half done." >&2
+  if (( ${#_cleared[@]} > 0 )); then
+    echo "" >&2
+    echo "Already cleared (their content is in the dated file):" >&2
+    printf '  %s\n' "${_cleared[@]}" >&2
+  fi
+  echo "" >&2
+  echo "Everything still in $UNREL is either uncleared or set aside. Re-running" >&2
+  echo "is safe: the markers in the dated file are how the next run recognises" >&2
+  echo "what is already folded in." >&2
+  exit 1
+}
+
 _kept=()
 for f in "${frags[@]}"; do
   # QUARANTINE first, then check, then delete (Codex #1863 r14). Hashing
@@ -1258,11 +1284,21 @@ for f in "${frags[@]}"; do
   # which is left alone and stays pending, exactly as it should. The
   # object checked and the object deleted are now the same one by
   # construction.
-  _q="$UNREL/.assembled.$$.${FRAG_NAME[$f]}"
-  mv "$f" "$_q"
+  # DETERMINISTIC, no PID. The pool lock is held, so no other assembly can
+  # be choosing names at the same time — and a name that does not depend
+  # on a PID makes a leftover from an earlier crashed run both detectable
+  # and reproducible, instead of a collision that only happens when a PID
+  # is reused. A file already there is a fragment somebody has not looked
+  # at yet, so it is reported rather than overwritten.
+  _q="$UNREL/.assembled.${FRAG_NAME[$f]}"
+  if [ -e "$_q" ]; then
+    _abort_after_write "a set-aside file already exists at $(basename "$_q")"
+  fi
+  mv "$f" "$_q" || _abort_after_write "could not set aside ${FRAG_NAME[$f]}"
   run_checked 0 "re-hashing ${FRAG_NAME[$f]} before removing it" frag_hash "$_q"
   if [ "$CAPTURED" = "${FRAG_HASH[$f]}" ]; then
-    rm "$_q"
+    rm "$_q" || _abort_after_write "could not remove ${FRAG_NAME[$f]}"
+    _cleared+=("${FRAG_NAME[$f]}")
   else
     # Deliberately NOT moved back: the editor may already have written a
     # new file at the original path, and restoring over it would destroy

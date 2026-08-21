@@ -1232,6 +1232,25 @@ check "the new bytes survive somewhere" \
   "$(grep -rl 'rewritten mid-run' "$W/docs/ReleaseNotes/unreleased" | wc -l | tr -d ' ')" "1"
 check "it says it set one aside" "$(says "$msg" 'set aside as')"      "1"
 
+echo "T42: a failure DURING clearing says the file is already written"
+W="$ROOT/t42"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Failing here is unlike failing anywhere else: $OUT is already replaced, so
+# the run is half done and the operator needs to know. A leftover set-aside
+# file trips it deterministically — and it is a real state, left behind by an
+# earlier crashed run. The name carries no PID precisely so this is
+# reproducible rather than dependent on PID reuse.
+printf 'left over from a crash\n' > "$W/docs/ReleaseNotes/unreleased/.assembled.0001-a.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the run fails"               "$?"                                        "1"
+check "it says the file is written" "$(says "$msg" 'HAS ALREADY BEEN WRITTEN')"  "1"
+check "it names the leftover"       "$(says "$msg" 'already exists')"            "1"
+# The half-done state is real, and the message has to be true about it.
+check "the dated file WAS written"  "$(sections "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "the leftover is untouched" \
+  "$(cat "$W/docs/ReleaseNotes/unreleased/.assembled.0001-a.md")" "left over from a crash"
+rm -f "$W/docs/ReleaseNotes/unreleased/.assembled.0001-a.md"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
