@@ -1930,8 +1930,37 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
     // `ready`/`yes` is a contradiction only when there is nothing on
     // screen to reach the row with. With jumps present it is the card
     // agreeing with itself.
-    if ((jumps > 0 || switchThere) && lastVerdict !== 'blocked-pending') {
+    // ACCEPTED ONLY WHEN THE CARD AGREES (Codex #1853 r34). Excluding
+    // just `blocked-pending` let every other non-agreeing verdict
+    // through: a card reporting `ready`/`no` while a stale jump button
+    // is still rendered passed both bracket reads as `absent`, the
+    // audit ran on that button, and the review exited 0 on a card
+    // contradicting its own verdict. `blocked-failed` and
+    // `blocked-malformed` took the same route.
+    //
+    // Only two verdicts justify acting on what is rendered: `fail`,
+    // which is `ready`/`yes` — the card saying a row IS jumpable, so
+    // buttons are consistent with it — and `unknown`, a legacy bundle
+    // where the controls are the only evidence there is.
+    //
+    // (`fail` reads oddly here. `missingSwitchVerdict` names its
+    // outcomes for the missing-switch question, where `ready`/`yes`
+    // with nothing rendered is the contradiction. With controls
+    // present the same reading is agreement. Same fact, opposite
+    // meaning, decided by what else is on the page.)
+    const agrees = lastVerdict === 'fail' || lastVerdict === 'unknown';
+    if ((jumps > 0 || switchThere) && agrees) {
       return { jumps, switchThere, toolsFailed: false, timedOut: false };
+    }
+    // Rendered controls the card does not stand behind. `absent` is the
+    // stable disagreement — both bracket reads said no row is jumpable
+    // while a jump control was on screen — and gets its own reason
+    // rather than borrowing one that would misdescribe it.
+    if (jumps > 0 || switchThere) {
+      return {
+        jumps: 0, switchThere: false, toolsFailed: false, timedOut: false,
+        settled: lastVerdict === 'absent' ? 'blocked-contradiction' : lastVerdict,
+      };
     }
     // Nothing rendered (or the card says not to trust what is). Now the
     // verdict about an ABSENCE is the right question to ask.
@@ -2315,6 +2344,57 @@ async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
     };
   }
   return { ...late.value, ...result };
+}
+
+/**
+ * The BLOCKED result a readiness verdict implies, or null.
+ *
+ * One mapping, because there are two paths that end in "no jumps" —
+ * the switch never appeared, and the switch was clicked and revealed
+ * nothing — and only the first consumed the card's verdict (Codex
+ * #1853 r34). The post-click path called the no-op-switch judgement
+ * directly, so an unstable, failed or malformed readiness answer
+ * became a product FAIL there whenever the chain snapshots still
+ * looked jumpable.
+ *
+ * That is this PR's own recurring defect once more: a rule written at
+ * the site a finding pointed to and not at its sibling. It is a
+ * function now rather than a switch in one branch, so the next path
+ * that ends in zero jumps has to go through it.
+ *
+ * `unknown` and `absent` return null deliberately: the first is a
+ * legacy bundle with nothing to say, the second is the card settling
+ * on "no row is jumpable", which is the honest absence and not a
+ * block.
+ */
+function readinessBlock(settled) {
+  const why = {
+    'blocked-pending':
+      'the lender card had not settled its jumpability question by the ' +
+      'deadline (data-chooser-ready="pending")',
+    'blocked-unstable':
+      'the lender card kept changing its readiness answer for the whole 45s ' +
+      'window, so no reading of it and its controls was ever taken at one moment',
+    'blocked-failed':
+      'a read the lender card needs stopped without answering ' +
+      '(data-chooser-ready="failed"), so the absence of jumps is unexplained ' +
+      'rather than correct',
+    'blocked-malformed':
+      'the lender card published a readiness contract this drive cannot read ' +
+      '— a partial or unrecognised data-chooser-ready/jumpable pair — so its ' +
+      'controls cannot be judged either way',
+    'blocked-contradiction':
+      'the lender card rendered jump controls while its own verdict said no ' +
+      'row is jumpable; the two come from one computation in one render, so ' +
+      'they disagreeing means the controls cannot be trusted as live',
+  }[settled];
+  if (!why) return null;
+  return {
+    advancedOffered: false,
+    advancedJumps: null,
+    advancedBlocked: true,
+    advancedWhy: why,
+  };
 }
 
 async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before, watch) {
@@ -2729,58 +2809,8 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
           // #1853 r29). `settled.settled` is absent only when the wait
           // ended for another reason, and `missingSwitchVerdict`
           // answers `unknown` for that, which is the pre-#1855 path.
-          switch (settled.settled ?? 'unknown') {
-            // No `fail` arm: that verdict is consumed at the top of
-            // this block, ahead of the race checks it must outrank
-            // (r30). A second copy here would be unreachable, and an
-            // unreachable copy of a rule is the next person's
-            // ambiguity about which one applies.
-            case 'blocked-pending':
-              return {
-                advancedOffered: false,
-                advancedJumps: null,
-                advancedBlocked: true,
-                advancedWhy:
-                  'the lender card had not settled its jumpability question ' +
-                  'by the deadline (data-chooser-ready="pending")',
-              };
-            case 'blocked-unstable':
-              return {
-                advancedOffered: false,
-                advancedJumps: null,
-                advancedBlocked: true,
-                advancedWhy:
-                  'the lender card kept changing its readiness answer for the ' +
-                  'whole 45s window, so no reading of it and its controls was ' +
-                  'ever taken at one moment',
-              };
-            case 'blocked-failed':
-              return {
-                advancedOffered: false,
-                advancedJumps: null,
-                advancedBlocked: true,
-                advancedWhy:
-                  'a read the lender card needs stopped without answering ' +
-                  '(data-chooser-ready="failed"), so the missing switch is ' +
-                  'unexplained rather than correct',
-              };
-            case 'blocked-malformed':
-              return {
-                advancedOffered: false,
-                advancedJumps: null,
-                advancedBlocked: true,
-                advancedWhy:
-                  'the lender card published data-chooser-ready="ready" without a ' +
-                  'recognised data-chooser-jumpable — the observability contract ' +
-                  'itself is broken, so the missing switch cannot be read either way',
-              };
-            default:
-              // 'absent' — settled, and settled to no. The one case
-              // where a missing switch is the honest outcome.
-              // 'unknown' — the card published nothing (older bundle),
-              // so keep the pre-#1855 verdict rather than invent one.
-              break;
-          }
+          const blocked = readinessBlock(settled.settled);
+          if (blocked) return blocked;
           return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
         }
         // It appeared while we waited: fall through to the click path.
@@ -2843,6 +2873,14 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before,
     );
     const jumps = post.jumps;
     if (jumps === 0) {
+      // THE SAME MAPPING THE OTHER ZERO-JUMP PATH USES (Codex #1853
+      // r34). This branch went straight to the no-op-switch judgement,
+      // so an unstable, failed or malformed readiness answer became a
+      // product FAIL here whenever the chain snapshots still looked
+      // jumpable — the verdict was computed, carried back, and thrown
+      // away at the one site that most needed it.
+      const blockedPost = readinessBlock(post.settled);
+      if (blockedPost) return blockedPost;
       if (post.toolsFailed) {
         // A definite non-ready answer, not a no-op switch: the card is
         // correctly reporting that a prerequisite could not be loaded,
