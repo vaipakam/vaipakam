@@ -226,6 +226,18 @@ _ensure_qdir() {
     echo "expensive later." >&2
     exit 1
   fi
+  # WRITABLE, not merely present (Codex #1863 r27). `mkdir -p` succeeds on
+  # a directory that already exists whatever its mode, so a 0555 one
+  # passed the check and the first set-aside then failed after the dated
+  # file had been published. Existence was never the question; being able
+  # to put a file there is.
+  if ! ( : > "$QDIR/.probe" ) 2>/dev/null; then
+    echo "Error: $QDIR is not writable." >&2
+    echo "Refusing to assemble: fragments set aside during the run are moved" >&2
+    echo "there, so this would fail only after the dated file was written." >&2
+    exit 1
+  fi
+  rm -f "$QDIR/.probe" || :
   local a b
   a="$(stat -c '%d' "$UNREL" 2>/dev/null || stat -f '%d' "$UNREL" 2>/dev/null)" || a=""
   b="$(stat -c '%d' "$QDIR"  2>/dev/null || stat -f '%d' "$QDIR"  2>/dev/null)" || b=""
@@ -1751,10 +1763,22 @@ if [ -f "$OUT" ]; then
     # reverted before the final check, made the duplicate check pass and
     # the section be appended a second time — the same gap as the `cat`
     # one round earlier, one site over.
-    env LC_ALL=C sed -e 's/\r$//' "$_head_file" > "$_head_file.n" \
-      && mv "$_head_file.n" "$_head_file"
+    # Both normalisations are CHECKED (Codex #1863 r27). As the left side
+    # of an `&&` list the first was exempt from `set -e`, so a failure
+    # left the pattern file unnormalised and the comparison silently went
+    # back to being decided by line endings — the duplicate appended and
+    # the fragment deleted, on a run reporting success.
+    run_checked 0 "normalising the heading of ${FRAG_NAME[$f]}" \
+      env LC_ALL=C sed -e 's/\r$//' "$_head_file"
+    printf '%s\n' "$CAPTURED" > "$_head_file"
     _out_n="$SNAP/out.normalised"
-    env LC_ALL=C sed -e 's/\r$//' "$OUT_COPY" > "$_out_n"
+    if ! env LC_ALL=C sed -e 's/\r$//' "$OUT_COPY" > "$_out_n"; then
+      rm -f "$_head_file"
+      echo "Error: could not normalise $(basename "$OUT") for comparison." >&2
+      echo "Refusing to assemble: skipping that check silently is how a" >&2
+      echo "duplicated section gets through." >&2
+      exit 1
+    fi
     run_checked 0,1 "checking $(basename "$OUT") for a repeated heading" \
       env LC_ALL=C grep -a -xF -f "$_head_file" "$_out_n"
     if [ -n "$CAPTURED" ]; then
@@ -1869,6 +1893,12 @@ if [ -f "$OUT" ]; then
   _pg_rc=0
   if ! read_gid "$WORK"; then _pg_rc=1; fi
   _new_gid="$GID_READ"
+  # And the EXISTING group comes from the baseline, not a fresh stat
+  # (Codex #1863 r27) — the same fix the uid check already had. A chgrp
+  # covering only this read, reverted afterwards, passed here AND passed
+  # the final identity check against the restored value, while the rename
+  # installed the other group permanently.
+  out_gid="${OUT_ID##*:}"
   if (( _pg_rc != 0 )); then
     echo "Error: could not determine the group a new file here would take." >&2
     echo "Refusing to assemble: replacing the dated file installs a new" >&2
@@ -2037,6 +2067,30 @@ _abort_after_write() {
   exit 1
 }
 
+# Every set-aside destination is checked BEFORE publishing (Codex #1863
+# r27). A pending fragment sharing a basename with an earlier set-aside
+# file collided only in the clearing loop — after the rename — so a first
+# run published its section and then stopped half done, and every retry
+# hit the same wall until the operator moved the quarantine by hand.
+#
+# The whole point of doing work before the rename is that failing there
+# costs nothing. A precondition discoverable in advance belongs in
+# advance.
+for _f in "${frags[@]}"; do
+  _dest="$QDIR/${FRAG_NAME[$_f]}"
+  if [ -e "$_dest" ] || [ -L "$_dest" ]; then
+    echo "Error: a set-aside file already occupies $_dest." >&2
+    echo "" >&2
+    echo "Refusing to assemble: if ${FRAG_NAME[$_f]} had to be set aside" >&2
+    echo "during this run it would have nowhere to go, and that failure" >&2
+    echo "would happen after the dated file was already written." >&2
+    echo "" >&2
+    echo "Compare that file against the dated notes and remove it, or move" >&2
+    echo "it elsewhere, then re-run." >&2
+    exit 1
+  fi
+done
+
 # The atomic step. Until this line $OUT is untouched, so an interruption
 # at ANY point above leaves the previous release-notes file exactly as it
 # was and every fragment still pending — the state a plain re-run
@@ -2045,6 +2099,27 @@ _abort_after_write() {
 # stub that the next run would mistake for a real existing file.
 # Applied to the FINISHED file, so nothing above can be locked out of it.
 chmod "$FINAL_MODE" "$WORK"
+# VERIFIED, not assumed (Codex #1863 r27). Linux clears the set-group-ID
+# bit on a chmod by a user who is not a member of the file's group, and
+# `chmod` still exits 0 — so a 2755 output was replaced by a 0755 one on
+# a successful-looking run that then consumed the fragments. A command
+# reporting success is not evidence the file now has the mode asked for.
+if ! read_mode "$WORK"; then
+  echo "Error: could not read back the mode of the replacement." >&2
+  echo "Nothing has been consumed; every fragment is still pending." >&2
+  exit 1
+fi
+if [ "$MODE_READ" != "$FINAL_MODE" ]; then
+  echo "Error: the replacement could not be given mode $FINAL_MODE" >&2
+  echo "(it has $MODE_READ)." >&2
+  echo "" >&2
+  echo "This happens when a bit cannot be set by you — the set-group-ID bit" >&2
+  echo "is dropped for a user outside the file's group, and chmod reports" >&2
+  echo "success anyway. Replacing the file would silently drop it." >&2
+  echo "" >&2
+  echo "Nothing has been consumed and no fragment has been touched." >&2
+  exit 1
+fi
 
 # Push the replacement's bytes to disk BEFORE the fragments — the only
 # copies of that text — are removed (Codex #1863 r17). `mv` within a

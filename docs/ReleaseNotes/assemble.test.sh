@@ -73,7 +73,14 @@ pending() {  # pending <dir> -> count of pending fragments
   # two lines and would be counted twice — the same newline-delimited
   # miscount T44 is about, in the helper that checks it. Counting the
   # delimiters is exact whatever the names contain.
-  find "$1/docs/ReleaseNotes/unreleased" -type f -name '*.md' \
+  # `.assembled/` is PRUNED. Set-aside fragments moved there are the
+  # opposite of pending — they have been dealt with — and counting them
+  # made every assertion in a case that quarantines something measure the
+  # wrong number. The quarantine used to be a dotfile beside the pool,
+  # which this never matched; as a subdirectory it is descended into.
+  find "$1/docs/ReleaseNotes/unreleased" \
+    -name .assembled -prune -o \
+    -type f -name '*.md' \
     ! -name README.md ! -name _TEMPLATE.md -print0 \
     | tr -d -c '\0' | wc -c | tr -d ' '
 }
@@ -1172,7 +1179,11 @@ SHIM
 chmod +x "$W/fakebin/sed"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run still succeeds"       "$?"                              "0"
-check "the changed fragment is KEPT" "$(pending "$W")"                 "1"
+# By CONTENT, not by the pending count: a kept fragment now lives in the
+# quarantine directory, which `pending` deliberately prunes, so counting it
+# measures the opposite of what this case is about.
+check "the changed fragment is KEPT" \
+  "$(grep -rl 'edited underneath' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 check "and it says so"               "$(says "$msg" 'Kept (changed')"  "1"
 
 echo "T39: the output mode is applied to the finished file, not the temp file"
@@ -1246,21 +1257,28 @@ echo "T42: a failure DURING clearing says the file is already written"
 W="$ROOT/t42"; build "$W"
 out="$W/docs/ReleaseNotes"
 # Failing here is unlike failing anywhere else: $OUT is already replaced, so
-# the run is half done and the operator needs to know. A leftover set-aside
-# file trips it deterministically — and it is a real state, left behind by an
-# earlier crashed run. The name carries no PID precisely so this is
-# reproducible rather than dependent on PID reuse.
-mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
-printf 'left over from a crash\n' > "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
-msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+# the run is half done and the operator needs to know.
+#
+# This used to be staged with a leftover set-aside file. That collision is
+# now caught BEFORE publication (Codex #1863 r27), which is the better
+# behaviour and leaves this case with nothing to trip. A failing `mv`
+# reproduces the state directly: the set-aside move is the first thing the
+# clearing loop does after the rename.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/mv" <<'SHIM'
+#!/bin/sh
+# Only the set-aside move, not the publication rename that precedes it.
+case "$*" in */.assembled/*) exit 1 ;; esac
+exec /bin/mv "$@"
+SHIM
+chmod +x "$W/fakebin/mv"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run fails"               "$?"                                        "1"
 check "it says the file is written" "$(says "$msg" 'HAS ALREADY BEEN WRITTEN')"  "1"
-check "it names the leftover"       "$(says "$msg" 'already exists')"            "1"
+check "it names the fragment"       "$(says "$msg" 'could not set aside')"       "1"
 # The half-done state is real, and the message has to be true about it.
 check "the dated file WAS written"  "$(sections "$out/ReleaseNotes-2026-08-16.md")" "1"
-check "the leftover is untouched" \
-  "$(cat "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md")" "left over from a crash"
-rm -f "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
+check "the fragment is still there" "$(pending "$W")"                            "2"
 
 echo "T43: a set-aside fragment is reported, not silently invisible"
 W="$ROOT/t43"; build "$W"
@@ -1642,6 +1660,9 @@ mkdir -p "$W/fakebin"
 cat > "$W/fakebin/rm" <<SHIM
 #!/bin/sh
 /bin/rm "\$@"; _rc=\$?
+# The quarantine writability probe is an `rm` too, and it runs first — it
+# spent this shim's one shot before the loop under test ever started.
+case "\$*" in *.probe*) exit \$_rc ;; esac
 if [ ! -f "$W/fired" ]; then
   case "\$*" in
     */unreleased/*)
@@ -2057,6 +2078,9 @@ mkdir -p "$W/fakebin"
 # changed — the original path before this fix, the quarantine after it.
 cat > "$W/fakebin/rm" <<SHIM
 #!/bin/sh
+# Ignore the quarantine writability probe: it is an `rm` that runs before
+# the loop under test and would otherwise spend this shim's one shot.
+case "\$*" in *.probe*) exec /bin/rm "\$@" ;; esac
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '## written after the hash\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
@@ -2190,7 +2214,11 @@ chmod +x "$W/fakebin/sed"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the link is still a link" \
   "$([ -L "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md" ] && echo link || echo gone)" "link"
-check "it says a set-aside file is there" "$(says "$msg" 'set-aside file already exists')" "1"
+# Now caught BEFORE publication rather than during clearing, which is the
+# better place — so the message is the pre-publication one.
+check "it says a set-aside file is there" "$(says "$msg" 'set-aside file already occupies')" "1"
+check "nothing was published" \
+  "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
 
 echo "T77: the group compared is the one a NEW file here would take"
 W="$ROOT/t77"; build "$W"
@@ -2351,6 +2379,116 @@ msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "it does not claim they are filed" "$(says "$msg" 'Their content is in the dated file')" "0"
 check "it says to compare first"         "$(says "$msg" 'before deleting')"                    "1"
 check "it names the directory"           "$(says "$msg" '.assembled')"                         "1"
+
+echo "T84: an unwritable quarantine directory is refused before publishing"
+W="$ROOT/t84"; build "$W"
+out="$W/docs/ReleaseNotes"
+# `mkdir -p` succeeds on a directory that already exists, whatever its mode, so
+# a 0555 one passed and the first set-aside failed only after the dated file
+# had been published (Codex #1863 r27). Existence was never the question.
+mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
+chmod 0555 "$W/docs/ReleaseNotes/unreleased/.assembled"
+if [ "$(id -u)" = "0" ]; then
+  check "skipped — root writes through mode bits (CI runs it)" "1" "1"
+else
+  msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "the run stops"        "$?"                                       "1"
+  check "nothing was published" \
+    "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)" "none"
+  check "it says why"          "$(says "$msg" 'is not writable')"          "1"
+fi
+chmod 0755 "$W/docs/ReleaseNotes/unreleased/.assembled"
+
+echo "T85: a quarantine collision is refused before publishing, not after"
+W="$ROOT/t85"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A pending fragment sharing a basename with an earlier set-aside file collided
+# only in the clearing loop — after the rename — so a first run published its
+# section and stopped half done, and every retry hit the same wall until the
+# operator moved the quarantine by hand (Codex #1863 r27).
+mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
+printf 'left over from a crash\n' > "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"         "$?"                                        "1"
+check "nothing was published" \
+  "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
+check "no fragment consumed"  "$(pending "$W")"                           "2"
+check "it names the clash"    "$(says "$msg" 'already occupies')"          "1"
+check "the leftover is untouched" \
+  "$(cat "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md")" "left over from a crash"
+
+echo "T86: a mode that cannot be applied stops the run before publishing"
+W="$ROOT/t86"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Linux clears the set-group-ID bit on a chmod by a user outside the file's
+# group, and `chmod` still exits 0 — so a 2755 output was replaced by a 0755
+# one on a successful-looking run that then consumed the fragments
+# (Codex #1863 r27). A command reporting success is not evidence the file has
+# the mode asked for. Reproduced with a chmod that silently drops a bit.
+printf '# Release Notes — 2026-08-16\n\n## pre\n' > "$out/ReleaseNotes-2026-08-16.md"
+chmod 0755 "$out/ReleaseNotes-2026-08-16.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/chmod" <<'SHIM'
+#!/bin/sh
+# Applies a DIFFERENT mode and reports success, exactly as the kernel does
+# when it refuses a bit the caller may not set.
+last=""
+for a in "$@"; do last="$a"; done
+/bin/chmod 0700 "$last" 2>/dev/null
+exit 0
+SHIM
+chmod +x "$W/fakebin/chmod"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"         "$?"                                        "1"
+check "no fragment consumed"  "$(pending "$W")"                           "2"
+check "it names both modes"   "$(says "$msg" 'could not be given mode')"   "1"
+check "the output keeps its mode" \
+  "$(mode_of "$out/ReleaseNotes-2026-08-16.md")"                          "755"
+
+echo "T87: a failing heading normalisation aborts instead of comparing raw"
+W="$ROOT/t87"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# As the left side of an `&&` list the first `sed` was exempt from `set -e`, so
+# a failure left the pattern unnormalised and the comparison went back to being
+# decided by line endings — duplicate appended, fragment deleted, run reporting
+# success (Codex #1863 r27).
+printf '## dup\r\nbody\r\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n## dup\n' > "$out/ReleaseNotes-2026-08-16.md"
+mkdir -p "$W/fakebin"
+# Fails ONLY the heading normalisation, not the one applied to the dated
+# file. Failing both made the SECOND abort under `set -e`, so the old code
+# stopped and the case reported a pass it had not earned — the finding is
+# specifically that the FIRST is exempt, being the left side of an `&&`.
+cat > "$W/fakebin/sed" <<'SHIM'
+#!/bin/sh
+_norm=0; _dated=0
+for a in "$@"; do
+  case "$a" in
+    's/\r$//') _norm=1 ;;
+    *dated.*)   _dated=1 ;;
+  esac
+done
+[ "$_norm" = "1" ] && [ "$_dated" = "0" ] && exit 4
+exec /usr/bin/sed "$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"        "$?"                                          "1"
+check "no fragment consumed" "$(pending "$W")"                             "1"
+check "the heading is not duplicated" \
+  "$(count_in '^## dup' "$out/ReleaseNotes-2026-08-16.md")"                "1"
+
+echo "T88: the compared group comes from the baseline, not a fresh read"
+W="$ROOT/t88"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A chgrp covering only that read, reverted afterwards, passed the check AND
+# passed the final identity check against the restored value, while the rename
+# installed the other group permanently (Codex #1863 r27) — the same fault the
+# uid check had one round earlier. Pinned structurally: reproducing it needs a
+# stat that lies for exactly one call.
+check "the group comes from OUT_ID" \
+  "$(grep -c 'out_gid="\${OUT_ID##\*:}"' "$out/assemble.sh")"               "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
